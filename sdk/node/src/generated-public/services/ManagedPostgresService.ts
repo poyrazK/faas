@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppPostgresBindingList } from '../models/AppPostgresBindingList.js';
 import type { ChangeManagedPostgresComputePolicyRequest } from '../models/ChangeManagedPostgresComputePolicyRequest.js';
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
@@ -21,6 +22,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class ManagedPostgresService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Show plan and region PostgreSQL feature support
    * Returns configured provider-neutral support after plan limits without provider calls. provisioning_enabled includes qualification and canary gates. Current usage, budget, and quota admission are checked separately at reservation. Existing databases remain pinned to their original backend.
@@ -36,7 +38,7 @@ export class ManagedPostgresService {
      */
     region?: string,
   }): CancelablePromise<ManagedPostgresCapabilities | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/capabilities',
       query: {
@@ -51,7 +53,7 @@ export class ManagedPostgresService {
    * @throws ApiError
    */
   public static listManagedPostgresDatabases(): CancelablePromise<ManagedPostgresDatabaseList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases',
     });
@@ -74,7 +76,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresDatabase> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases',
       headers: {
@@ -98,7 +100,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases/{id}',
       path: {
@@ -133,7 +135,7 @@ export class ManagedPostgresService {
      */
     purge?: boolean,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/postgres/databases/{id}',
       path: {
@@ -169,7 +171,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases/{id}/undelete',
       path: {
@@ -191,7 +193,7 @@ export class ManagedPostgresService {
    * @throws ApiError
    */
   public static getManagedPostgresUsage(): CancelablePromise<ManagedPostgresUsageResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/managed-postgres-usage',
     });
@@ -213,7 +215,7 @@ export class ManagedPostgresService {
     id: string,
     requestBody: ChangeManagedPostgresComputePolicyRequest,
   }): CancelablePromise<Problem | ManagedPostgresComputePolicyChange> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases/{id}/compute-policy',
       path: {
@@ -243,7 +245,7 @@ export class ManagedPostgresService {
      */
     changeId: string,
   }): CancelablePromise<ManagedPostgresComputePolicyChange | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases/{id}/compute-policy-changes/{change_id}',
       path: {
@@ -269,7 +271,7 @@ export class ManagedPostgresService {
     id: string,
     requestBody: ResizeManagedPostgresDatabaseRequest,
   }): CancelablePromise<Problem | ManagedPostgresResize> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases/{id}/resize',
       path: {
@@ -299,7 +301,7 @@ export class ManagedPostgresService {
      */
     resizeId: string,
   }): CancelablePromise<ManagedPostgresResize | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases/{id}/resizes/{resize_id}',
       path: {
@@ -332,7 +334,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresDatabase> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases/{id}/restore',
       path: {
@@ -360,11 +362,39 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresConnectionBudget | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases/{id}/connection-budget',
       path: {
         'id': id,
+      },
+    });
+  }
+  /**
+   * List an app's managed PostgreSQL bindings
+   * Lists the app's live managed PostgreSQL bindings on every database it
+   * is bound to, including organization databases and project environment
+   * copies. Deleting the app is refused while a binding listed here is not
+   * being deleted. Bindings on an environment copy are removed by tearing
+   * down that environment.
+   *
+   * @returns AppPostgresBindingList The app's bindings on every database, without credential material
+   * @returns Problem App lookup, permission or binding listing error
+   * @throws ApiError
+   */
+  public static listAppPostgresBindings({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppPostgresBindingList | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/postgres-bindings',
+      path: {
+        'slug': slug,
       },
     });
   }
@@ -382,7 +412,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresBindingList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases/{id}/bindings',
       path: {
@@ -414,7 +444,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresBinding> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases/{id}/bindings',
       path: {
@@ -441,7 +471,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/bindings/{id}',
       path: {
@@ -470,7 +500,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/postgres/bindings/{id}',
       path: {
@@ -503,7 +533,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/bindings/{id}/rotate',
       path: {
@@ -529,7 +559,7 @@ export class ManagedPostgresService {
      */
     organization: string,
   }): CancelablePromise<ManagedPostgresDatabaseList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/databases',
       path: {
@@ -566,7 +596,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresDatabase> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases',
       path: {
@@ -604,7 +634,7 @@ export class ManagedPostgresService {
      */
     region?: string,
   }): CancelablePromise<ManagedPostgresCapabilities | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/capabilities',
       path: {
@@ -640,7 +670,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/databases/{id}',
       path: {
@@ -686,7 +716,7 @@ export class ManagedPostgresService {
      */
     purge?: boolean,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/postgres/databases/{id}',
       path: {
@@ -726,7 +756,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresBindingList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/bindings',
       path: {
@@ -769,7 +799,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresBinding> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/bindings',
       path: {
@@ -808,7 +838,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/bindings/{id}',
       path: {
@@ -849,7 +879,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/postgres/bindings/{id}',
       path: {
@@ -891,7 +921,7 @@ export class ManagedPostgresService {
      */
     resizeId: string,
   }): CancelablePromise<ManagedPostgresResize | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/resizes/{resize_id}',
       path: {
@@ -931,7 +961,7 @@ export class ManagedPostgresService {
      */
     changeId: string,
   }): CancelablePromise<ManagedPostgresComputePolicyChange | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/compute-policy-changes/{change_id}',
       path: {
@@ -973,7 +1003,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/undelete',
       path: {
@@ -1019,7 +1049,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresDatabase> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/restore',
       path: {
@@ -1060,7 +1090,7 @@ export class ManagedPostgresService {
     id: string,
     requestBody: ResizeManagedPostgresDatabaseRequest,
   }): CancelablePromise<Problem | ManagedPostgresResize> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/resize',
       path: {
@@ -1098,7 +1128,7 @@ export class ManagedPostgresService {
     id: string,
     requestBody: ChangeManagedPostgresComputePolicyRequest,
   }): CancelablePromise<Problem | ManagedPostgresComputePolicyChange> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/compute-policy',
       path: {
@@ -1141,7 +1171,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/bindings/{id}/rotate',
       path: {
@@ -1173,7 +1203,7 @@ export class ManagedPostgresService {
      */
     organization: string,
   }): CancelablePromise<ManagedPostgresUsageResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/usage',
       path: {

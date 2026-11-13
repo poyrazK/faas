@@ -11,19 +11,51 @@ import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { rewriteImportsToJs, writeModelsBarrel, patchBinaryResponses, patchAutomationPathEncoding } from '../scripts/post-process.mjs';
+import { rewriteImportsToJs, writeModelsBarrel, patchBinaryResponses, patchStoredWorkflowPathEncoding, patchClientCore, patchClientServices } from '../scripts/post-process.mjs';
 
-test('automation path post-processing is repeatable and fails closed on generator drift', async () => {
+test('client isolation patches are repeatable and fail closed on core and service drift', async () => {
+  await withTempDir(async dir => {
+    await mkdir(join(dir, 'core'));
+    await mkdir(join(dir, 'services'));
+    const configPath = join(dir, 'core', 'OpenAPI.ts');
+    const requestPath = join(dir, 'core', 'request.ts');
+    const servicePath = join(dir, 'services', 'AppsService.ts');
+    await writeFile(configPath, 'export type OpenAPIConfig = {\n  BASE: string;\n};\nexport const OpenAPI: OpenAPIConfig = {\n  ENCODE_PATH: undefined,\n};\n');
+    await writeFile(requestPath, 'return await fetch(url, request);\n');
+    await writeFile(servicePath, 'export class AppsService {\n  public static getApp() { return __request(OpenAPI, { method: "GET" }); }\n}\n');
+    await patchClientCore(dir);
+    await patchClientServices(dir);
+    const paths = [configPath, requestPath, servicePath];
+    const first = await Promise.all(paths.map(path => readFile(path, 'utf8')));
+    assert.match(first[0], /FETCH\?: typeof fetch/);
+    assert.match(first[0], /OpenAPIConfig = createOpenAPIConfig\(\)/);
+    assert.match(first[1], /\(config.FETCH \?\? fetch\)\(url, request\)/);
+    assert.match(first[2], /__request\(this\?\.clientConfig \?\? OpenAPI/);
+    await patchClientCore(dir);
+    await patchClientServices(dir);
+    assert.deepEqual(await Promise.all(paths.map(path => readFile(path, 'utf8'))), first);
+    await writeFile(requestPath, 'return await newTransport(url);');
+    await assert.rejects(patchClientCore(dir), /client isolation generator anchor missing/);
+    await writeFile(servicePath, 'export class AppsService { call() { return __request(otherConfig, {}); } }');
+    await assert.rejects(patchClientServices(dir), /client isolation request anchor missing/);
+    await writeFile(servicePath, 'template changed');
+    await assert.rejects(patchClientServices(dir), /client isolation generator anchor missing/);
+    await writeFile(configPath, 'template changed');
+    await assert.rejects(patchClientCore(dir), /client isolation generator anchor missing/);
+  });
+});
+
+test('stored workflow path post-processing is repeatable and fails closed on generator drift', async () => {
   await withTempDir(async dir => {
     await mkdir(join(dir, 'core'));
     const path = join(dir, 'core', 'request.ts');
     await writeFile(path, 'const encoder = config.ENCODE_PATH || encodeURI;\n');
-    await patchAutomationPathEncoding(dir);
+    await patchStoredWorkflowPathEncoding(dir);
     const first = await readFile(path, 'utf8');
-    await patchAutomationPathEncoding(dir);
+    await patchStoredWorkflowPathEncoding(dir);
     assert.equal(await readFile(path, 'utf8'), first);
     await writeFile(path, 'generator changed\n');
-    await assert.rejects(patchAutomationPathEncoding(dir), /generator anchor missing/);
+    await assert.rejects(patchStoredWorkflowPathEncoding(dir), /generator anchor missing/);
   });
 });
 

@@ -25,6 +25,23 @@ vmmd_outbound_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
 faas_vmmd_outbound_relay_tls_managed: false
 faas_vmmd_outbound_relay_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
 
+# ADR-20261110210000 §3 slice 3c: secretd's tcp://<control plane private
+# address>:8098 (secretd_service's faas_secretd_listen). Set, this node gets a
+# node-identity secretd client leaf issued on the control plane
+# (tasks/secretd_client.yml) and its schedd grants peers the secrets of the
+# apps it owns (compute_only_service). Set it on every compute node first.
+faas_secretd_target: ""
+# Then, one node at a time: true makes vmmd open app secrets through secretd
+# instead of this node's runtime identity. Needs faas_secretd_target and
+# faas_seal_domain_runtime_binding_required.
+faas_vmmd_secretd_open: false
+# ADR-20261110210000 slice 3i: true makes vmmd open sealed edge-rule request
+# header values through secretd for this node's instances. Needs
+# faas_secretd_target. Turn it on for every compute node before any gateway's
+# faas_gateway_edge_header_secrets is inject.
+faas_vmmd_edge_header_secrets: false
+faas_vmmd_secretd_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
+
 # ADR-149 prepared networks: vmmd keeps this many unused wake namespaces
 # (netns + TAP + nft) ready so a restore claims one instead of building it.
 # The code default is 0 (off). PR #4396 measured the restore p95 target only
@@ -59,6 +76,13 @@ vmmd_cpu_template: ""
 vmmd_adoption_record: false
 vmmd_adopt_running_vms: false
 vmmd_adopt_admitted_runtimes: false
+
+# vmmd_flat_tenant_cgroups launches new tenant VMs directly under
+# faas-tenant.slice instead of their plan's sub-slice (ADR-20261109172421
+# step 6.5). Turn it on only once every compute node runs a vmmd that reads
+# flat VMs; turn it off, and let flat VMs park, before rolling vmmd back past
+# that release. Rendered in the same drop-in as the adoption switches.
+vmmd_flat_tenant_cgroups: false
 
 # Connection survival (docs/adr/20261017-connection-survival-across-data-path-restarts.md),
 # phase P1: with all three on and the adoption switches above, an instance's
@@ -102,3 +126,5 @@ faas_workload_identity_issuer: ""
 faas_credential_attach_keys_src: ""
 faas_credential_attach_writes: plain
 faas_credential_attach_plain_lookup: true
+# The manifest's hot_path.local_vmmd_data_socket sets it on compute nodes.
+faas_vmmd_local_data_socket: false

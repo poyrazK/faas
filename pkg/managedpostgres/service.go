@@ -39,6 +39,10 @@ type ServiceOptions struct {
 	// It is evaluated immediately before the store's atomic reservation so
 	// plan entitlements remain race-safe while the service stays provider-neutral.
 	MaxDatabasesPerAccount func(context.Context, string) (int, error)
+	// MaxBranchesPerAccount supplies the usage subject's branch allowance
+	// (ADR-20261106103654 amendment 1). Nil gives no allowance, so a
+	// short-lived branch is refused.
+	MaxBranchesPerAccount func(context.Context, string) (int, error)
 	// FreePlan reports whether a usage subject is on the Free plan, for the
 	// fleet's paid reserve. Nil reserves nothing.
 	FreePlan func(context.Context, string) (bool, error)
@@ -59,6 +63,7 @@ type Service struct {
 	admit                  func(context.Context, string) error
 	admitResize            func(context.Context, string, Spec) error
 	maxDatabasesPerAccount func(context.Context, string) (int, error)
+	maxBranchesPerAccount  func(context.Context, string) (int, error)
 	freePlan               func(context.Context, string) (bool, error)
 }
 
@@ -90,6 +95,14 @@ type RestoreDatabaseRequest struct {
 	// giving it the restore slot: a database switch's copy becomes the
 	// app's database, and the slot's end would revoke its bindings.
 	WithinLimit bool
+	// Latest restores from the most recent point apid can name: its clock
+	// minus LatestRestoreLag (ADR-20261106103654). PointInTime must be zero.
+	// Repeating a latest restore adopts the copy of the same source and TTL
+	// under that name, whatever point it was taken at.
+	Latest bool
+	// TTL, when set, ends the copy at its creation plus TTL: the branch
+	// sweep purges it then. It must be within [MinBranchTTL, MaxBranchTTL].
+	TTL time.Duration
 }
 
 type RestoreSourceDefinition struct {
@@ -152,6 +165,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 		admit:                  options.Admit,
 		admitResize:            options.AdmitResize,
 		maxDatabasesPerAccount: options.MaxDatabasesPerAccount,
+		maxBranchesPerAccount:  options.MaxBranchesPerAccount,
 		freePlan:               options.FreePlan,
 	}, nil
 }
@@ -202,7 +216,7 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 		if existing.Restorable(s.now()) {
 			return Database{}, fmt.Errorf("%w: the name %q belongs to a database scheduled for deletion; undelete it, or delete it with purge=true to reuse the name now", ErrConflict, request.Name)
 		}
-		if reservedID != "" && existing.ID != reservedID {
+		if reservedID != "" && existing.ID != reservedID || !existing.Preview.IsZero() {
 			return Database{}, ErrConflict
 		}
 		if _, err := s.Get(ctx, existing.AccountID, existing.ID); err != nil {
@@ -288,7 +302,14 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if !s.operationsEnabled() {
 		return Database{}, false, ErrProvisioningClosed
 	}
-	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() {
+	if request.Latest {
+		if !request.PointInTime.IsZero() {
+			return Database{}, false, ErrInvalid
+		}
+		request.PointInTime = s.now().Add(-LatestRestoreLag)
+	}
+	if request.AccountID == "" || request.SourceDatabaseID == "" || !ValidName(request.Name) || request.PointInTime.IsZero() || !validBranchTTL(request.TTL) ||
+		request.WithinLimit && request.TTL > 0 {
 		return Database{}, false, ErrInvalid
 	}
 	if !s.provisioningAllowed(ctx, request.AccountID) {
@@ -298,8 +319,8 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if err != nil {
 		return Database{}, false, err
 	}
-	if source.State != StateReady || source.ProviderResourceID == "" {
-		return Database{}, false, ErrConflict
+	if !source.Preview.IsZero() {
+		return Database{}, false, ErrPreviewDatabase
 	}
 	now := s.now()
 	currentRestoreWindow := source.Spec.RestoreWindowSeconds
@@ -320,11 +341,15 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		if _, err := s.Get(ctx, existing.AccountID, existing.ID); err != nil {
 			return Database{}, false, err
 		}
-		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !existing.RestorePointInTime.Equal(request.PointInTime) {
+		if existing.RestoreSourceDatabaseID != request.SourceDatabaseID || !request.Latest && !existing.RestorePointInTime.Equal(request.PointInTime) ||
+			!branchExpiryMatches(existing, request.TTL) {
 			return Database{}, false, ErrConflict
 		}
 		if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(existing, source) {
 			return Database{}, false, ErrConflict
+		}
+		if request.WithinLimit && !existing.RestoreSlotUntil.IsZero() {
+			return Database{}, false, ErrQuotaExceeded
 		}
 		if existing.State == StateReady {
 			return existing, false, nil
@@ -335,6 +360,11 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if !errors.Is(err, ErrNotFound) {
 		return Database{}, false, err
 	}
+	// Readiness admits a new restore. An already reserved target owns its
+	// recovery intent even if the source is now updating or being deleted.
+	if source.State != StateReady || source.ProviderResourceID == "" {
+		return Database{}, false, ErrConflict
+	}
 	if !request.PointInTime.Before(now) || currentRestoreWindow <= 0 || source.Spec.RestoreWindowSeconds <= 0 ||
 		now.Sub(request.PointInTime) > time.Duration(currentRestoreWindow)*time.Second ||
 		now.Sub(request.PointInTime) > time.Duration(source.Spec.RestoreWindowSeconds)*time.Second {
@@ -344,7 +374,15 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	// such a point only after the target is reserved, leaving a failed row
 	// on the account's database quota (production-us hunt #9).
 	if request.PointInTime.Before(source.CreatedAt) {
+		if request.Latest {
+			return Database{}, false, fmt.Errorf("%w: the source database was created less than %s ago; retry in a few seconds", ErrInvalid, LatestRestoreLag)
+		}
 		return Database{}, false, fmt.Errorf("%w: point in time is before the source database was created (%s)", ErrInvalid, source.CreatedAt.UTC().Format(time.RFC3339))
+	}
+	// A major upgrade preserves the older major's recovery archive. Persist
+	// that historical major before any target or quota slot is reserved.
+	if source.Spec, err = s.resolveRestoreSpec(ctx, source, request.PointInTime, request.SourceDefinition != nil); err != nil {
+		return Database{}, false, err
 	}
 	reservationLimit, err := s.AdmitRestoreReservation(ctx, request.AccountID, RestoreSourceDefinition{
 		Spec: source.Spec, BackendID: source.BackendID, BackendFingerprint: source.BackendFingerprint, ProviderResourceID: source.ProviderResourceID, DataResourceID: source.DataResourceID})
@@ -353,6 +391,18 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	}
 	if request.WithinLimit {
 		ctx = reserveWithinLimit(ctx)
+	}
+	var expiresAt time.Time
+	if request.TTL > 0 {
+		expiresAt = now.Add(request.TTL)
+	}
+	if inBranchAllowanceTTL(request.TTL) {
+		// A short-lived branch takes a place in the branch allowance, not
+		// the database limit (ADR-20261106103654 amendment 1).
+		if reservationLimit, err = s.branchAllowance(ctx, request.AccountID); err != nil {
+			return Database{}, false, err
+		}
+		ctx = reserveAsBranch(ctx, reservationLimit)
 	}
 	database, created, err := s.store.Reserve(ctx, Database{
 		ID:                      s.newID(),
@@ -365,6 +415,7 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 		RestoreSourceDatabaseID: source.ID,
 		RestoreSourceResourceID: databaseDataResource(source),
 		RestorePointInTime:      request.PointInTime.UTC(),
+		ExpiresAt:               expiresAt,
 		State:                   StateProvisioning,
 		DesiredGeneration:       1,
 		CreatedAt:               now,
@@ -373,11 +424,15 @@ func (s *Service) RestoreWithResult(ctx context.Context, request RestoreDatabase
 	if err != nil {
 		return Database{}, false, quotaDetail(err, reservationLimit)
 	}
-	if database.RestoreSourceDatabaseID != request.SourceDatabaseID || !database.RestorePointInTime.Equal(request.PointInTime.UTC()) {
+	if database.RestoreSourceDatabaseID != request.SourceDatabaseID || !request.Latest && !database.RestorePointInTime.Equal(request.PointInTime.UTC()) ||
+		!branchExpiryMatches(database, request.TTL) {
 		return Database{}, false, ErrConflict
 	}
 	if request.SourceDefinition != nil && !restoreMatchesSourceDefinition(database, source) {
 		return Database{}, false, ErrConflict
+	}
+	if request.WithinLimit && !database.RestoreSlotUntil.IsZero() {
+		return Database{}, false, ErrQuotaExceeded
 	}
 	if database.State == StateReady {
 		return database, created, nil
@@ -848,6 +903,9 @@ func quotaDetail(err error, limit int) error {
 	// The restore slot refusal names the copy to purge itself.
 	if !errors.Is(err, ErrQuotaExceeded) || errors.Is(err, ErrRestoreSlotInUse) {
 		return err
+	}
+	if errors.Is(err, ErrBranchLimit) {
+		return fmt.Errorf("%w (%d of %d short-lived branches in use)", err, limit, limit)
 	}
 	return fmt.Errorf("%w: the account already has %d of %d databases (provisioning and restoring ones count); delete one or upgrade the plan", err, limit, limit)
 }

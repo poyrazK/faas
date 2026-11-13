@@ -183,7 +183,7 @@ func assertNativeLargeVerification(t *testing.T, ctx context.Context, store *Pos
 	}
 	fresh := startNativeDataAPI(t, ctx, targetURL, reader)
 	defer fresh.close()
-	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,large_note", ""); status != 200 || strings.TrimSpace(body) != "[]" {
+	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,large_note", ""); status != 503 || !strings.Contains(body, "mirror_unavailable") {
 		t.Fatalf("large mirror opened before refresh: %d %s", status, body)
 	}
 	// Keep a previously verified range changing through finalization. The final
@@ -270,7 +270,7 @@ func assertNativeLargeVerification(t *testing.T, ctx context.Context, store *Pos
 			t.Fatalf("dirty-range corruption accepted: %+v", p)
 		}
 	}
-	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,large_note", ""); status != 200 || strings.TrimSpace(body) != "[]" {
+	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,large_note", ""); status != 503 || !strings.Contains(body, "mirror_unavailable") {
 		t.Fatal("mismatch reopened reads")
 	}
 	// Restore the original fixture cardinality before explicit recovery.
@@ -298,7 +298,7 @@ func assertNativeLargeVerification(t *testing.T, ctx context.Context, store *Pos
 	if _, err = source.Exec(ctx, `ALTER TABLE public.orders ALTER COLUMN large_note TYPE text USING coalesce(large_note,'changed without CDC')`); err != nil {
 		t.Fatal(err)
 	}
-	wait(func(v Pipeline) bool { return v.State == "blocked" && v.Reason == "live_table_mismatch" })
+	wait(func(v Pipeline) bool { return v.State == "resync_required" && v.Reason == "source_storage_changed" })
 	if get().VerificationProgress.ID == beforeRewrite {
 		t.Fatal("source rewrite reused old clean ranges")
 	}

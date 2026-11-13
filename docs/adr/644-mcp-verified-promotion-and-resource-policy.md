@@ -21,7 +21,9 @@
   schema migrations and gateway policies remain separately reviewed operations.
   Gateway policies advertise resource metadata, reject missing/malformed/expired
   JWTs, bound request bodies, inspect exact JSON-RPC fields, enforce execution
-  scopes, and put an expiry deadline on downstream streams. Router-authored
+  scopes, and put an expiry deadline on downstream streams. The gate rejects
+  duplicate or case-ambiguous authorization fields so the guest cannot parse a
+  different method or catalog entry from the same request. Router-authored
   canonical hosts carry the same policy onto previews and aliases; JWT policy
   read failures fail closed. Providers retain
   registration, login, consent and issuance. Applications retain catalog

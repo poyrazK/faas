@@ -1,0 +1,27 @@
+✖ preflight refuses removal of a key still needed by a retained legacy task (215.971797ms)
+ℹ preflight accepted missing key=true; claim authentication failed=true; retained queue=[{"status":"queued","attempt_count":0},{"status":"queued","attempt_count":0}]; restoring retained key recovers the task=true
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 430.095244
+
+✖ failing tests:
+
+test at docs/ops/evidence/20261111-mcp-investigation/node_round5_repro_test.mjs:14:1
+✖ preflight refuses removal of a key still needed by a retained legacy task (215.971797ms)
+  AssertionError [ERR_ASSERTION]: startup succeeds because only the first legacy payload is authenticated; the next claim cannot process retained work
+      at TestContext.<anonymous> (file:///workspace/faas/docs/ops/evidence/20261111-mcp-investigation/node_round5_repro_test.mjs:63:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

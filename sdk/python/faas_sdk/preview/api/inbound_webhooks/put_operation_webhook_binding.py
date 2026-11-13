@@ -121,7 +121,7 @@ def sync_detailed(
     The named operation must exist on the environment's live deployment;
     every event resolves it again and admission pins it. expected_version is
     zero for creation and the returned version for updates.
-    take_over_delivery must be true. Automation and managed exclusive
+    take_over_delivery must be true. Stored workflow and managed exclusive
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
 
@@ -178,7 +178,7 @@ def sync(
     The named operation must exist on the environment's live deployment;
     every event resolves it again and admission pins it. expected_version is
     zero for creation and the returned version for updates.
-    take_over_delivery must be true. Automation and managed exclusive
+    take_over_delivery must be true. Stored workflow and managed exclusive
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
 
@@ -230,7 +230,7 @@ async def asyncio_detailed(
     The named operation must exist on the environment's live deployment;
     every event resolves it again and admission pins it. expected_version is
     zero for creation and the returned version for updates.
-    take_over_delivery must be true. Automation and managed exclusive
+    take_over_delivery must be true. Stored workflow and managed exclusive
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
 
@@ -285,7 +285,7 @@ async def asyncio(
     The named operation must exist on the environment's live deployment;
     every event resolves it again and admission pins it. expected_version is
     zero for creation and the returned version for updates.
-    take_over_delivery must be true. Automation and managed exclusive
+    take_over_delivery must be true. Stored workflow and managed exclusive
     operation bindings must be removed first. An empty event_types list
     admits every verified event; other types are acknowledged as ignored.
 

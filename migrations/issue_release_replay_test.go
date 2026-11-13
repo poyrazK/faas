@@ -13,6 +13,7 @@ import (
 
 // adr: 1490, 1498. Issues upgrades retain other products' webhook events, and
 // replay must preserve a captured override channel even without retained delivery rows.
+// The recovery polling event is stored_workflow.* since ADR-20261107190000.
 func TestIssueReleaseWebhookVocabularyAndRoutingReplay(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := t.Context()
@@ -23,7 +24,7 @@ func TestIssueReleaseWebhookVocabularyAndRoutingReplay(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='app_webhook_event_outbox'::regclass AND conname='app_webhook_event_outbox_event_chk'`).Scan(&definition); err != nil {
 		t.Fatal(err)
 	}
-	for _, event := range []string{"realtime.channel.published", "automation.recovery_polling_status", "issue.frequency_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered"} {
+	for _, event := range []string{"realtime.channel.published", "stored_workflow.recovery_polling_status", "issue.frequency_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered"} {
 		if !strings.Contains(definition, event) {
 			t.Fatalf("Issues migrations removed webhook event %q", event)
 		}

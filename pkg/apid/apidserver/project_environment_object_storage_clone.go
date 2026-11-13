@@ -148,39 +148,11 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 	if !ok {
 		return "", 0, errors.New("object storage credential store is unavailable")
 	}
-	accessKeyID, secretAccessKey, err := api.GenerateObjectS3Credential()
+	credential, values, err := s.createProjectEnvironmentObjectStorageCredential(r.Context(), acct, target, plan, bucket, s.objectStorage.PublicEndpoint)
 	if err != nil {
-		return "", 0, fmt.Errorf("generate isolated object storage credential: %w", err)
+		return "", 0, err
 	}
-	recipients, kid, recipientErr := storageCredentialRecipients()
-	if recipientErr != nil {
-		return "", 0, fmt.Errorf("object storage credential sealing: %w", recipientErr)
-	}
-	sealed, err := secretbox.SealBytesTo(recipients, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
-	if err != nil {
-		return "", 0, fmt.Errorf("seal isolated object storage credential: %w", err)
-	}
-	credentialID := uuid.NewString()
-	values := object.ObjectStorageBindingSecretValues(
-		object.ObjectStorageBindingSecretKeys(plan.objectCred.ManagedPrefix), s.objectStorage.PublicEndpoint,
-		s.objectStorage.PublicRegion, bucket.Name, accessKeyID, secretAccessKey,
-	)
-	limits := api.MustLimitsFor(acct.Plan)
-	secrets, problem := s.object.SealObjectStorageBindingValues(acct, plan.app, credentialID, target, values, limits)
-	if problem != nil {
-		return "", 0, errors.New(problem.Detail)
-	}
-	credential, err := store.CreateObjectS3ComputeBinding(r.Context(), state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
-		ID: credentialID, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
-		SecretSealed: sealed, KID: kid, Label: plan.objectCred.Label,
-		Permission: plan.objectCred.Permission, Status: state.ObjectS3CredentialStatusActive,
-		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix,
-	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
-	if err != nil {
-		return "", 0, fmt.Errorf("create isolated object storage credential: %w", err)
-	}
-	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, plan.app, "binding_created", target, "")
-	bucketID := bucket.ID
+	bucketID, credentialID := bucket.ID, credential.ID
 	*cleanup = append(*cleanup, func(ctx context.Context) error {
 		changed, err := store.RevokeObjectS3ComputeBinding(ctx, acct.ID, bucketID, credentialID)
 		if err == nil && changed {
@@ -188,7 +160,51 @@ func (s *server) prepareIsolatedProjectEnvironmentObjectStorageBinding(
 		}
 		return err
 	})
-	return credential.ID, len(values), nil
+	return credential.ID, values, nil
+}
+
+// createProjectEnvironmentObjectStorageCredential binds bucket into target
+// with a fresh credential shaped like the plan's source binding: the same
+// label, permission and managed secret prefix. endpoint is the S3 endpoint
+// the binding's secrets name.
+func (s *server) createProjectEnvironmentObjectStorageCredential(ctx context.Context, acct state.Account, target string, plan projectEnvironmentBindingClone, bucket state.ObjectBucket, endpoint string) (state.ObjectS3Credential, int, error) {
+	store, ok := s.store.(state.ObjectS3CredentialBindingStore)
+	if !ok {
+		return state.ObjectS3Credential{}, 0, errors.New("object storage credential store is unavailable")
+	}
+	accessKeyID, secretAccessKey, err := api.GenerateObjectS3Credential()
+	if err != nil {
+		return state.ObjectS3Credential{}, 0, fmt.Errorf("generate isolated object storage credential: %w", err)
+	}
+	recipients, kid, recipientErr := storageCredentialRecipients()
+	if recipientErr != nil {
+		return state.ObjectS3Credential{}, 0, fmt.Errorf("object storage credential sealing: %w", recipientErr)
+	}
+	sealed, err := secretbox.SealBytesTo(recipients, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
+	if err != nil {
+		return state.ObjectS3Credential{}, 0, fmt.Errorf("seal isolated object storage credential: %w", err)
+	}
+	credentialID := uuid.NewString()
+	values := object.ObjectStorageBindingSecretValues(
+		object.ObjectStorageBindingSecretKeys(plan.objectCred.ManagedPrefix), endpoint,
+		s.objectStorage.PublicRegion, bucket.Name, accessKeyID, secretAccessKey,
+	)
+	limits := api.MustLimitsFor(acct.Plan)
+	secrets, problem := s.object.SealObjectStorageBindingValues(acct, plan.app, credentialID, target, values, limits)
+	if problem != nil {
+		return state.ObjectS3Credential{}, 0, errors.New(problem.Detail)
+	}
+	credential, err := store.CreateObjectS3ComputeBinding(ctx, state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
+		ID: credentialID, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
+		SecretSealed: sealed, KID: kid, Label: plan.objectCred.Label,
+		Permission: plan.objectCred.Permission, Status: state.ObjectS3CredentialStatusActive,
+		ManagedAppID: plan.app.ID, ManagedScope: target, ManagedPrefix: plan.objectCred.ManagedPrefix, KeyPrefix: plan.objectCred.KeyPrefix,
+	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
+	if err != nil {
+		return state.ObjectS3Credential{}, 0, fmt.Errorf("create isolated object storage credential: %w", err)
+	}
+	s.notifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, plan.app, "binding_created", target, "")
+	return credential, len(values), nil
 }
 
 func (s *server) deleteProjectEnvironmentObjectStorageCloneBucket(ctx context.Context, accountID, appID, scope, bucketID, sourceBucketID string) error {

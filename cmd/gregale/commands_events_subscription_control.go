@@ -26,7 +26,7 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	}
 	var rate *int
 	if action == "resume" {
-		rate = fs.Int("rate", api.EventSubscriptionDrainRateDefault, "admissions per second (1..100; 0 removes pacing)")
+		rate = fs.Int("rate", api.EventSubscriptionDrainRateDefault, "admissions per second (1..100, default 10; the pace stays after the backlog drains; 0 removes pacing)")
 	}
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -37,7 +37,7 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 			usage += " --max-pending N"
 		}
 		if action == "resume" {
-			usage += " [--rate N]"
+			usage += " [--rate N (default 10, kept after draining; 0 removes pacing)]"
 		}
 		if action != "status" {
 			usage += " --yes"
@@ -102,6 +102,11 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 	_, _ = fmt.Fprintf(osStdout, "Live deliveries %d | effective subscription limit %d | configured %d (0=plan default)\n", out.LiveDeliveries, out.EffectiveMaxPendingDeliveries, out.MaxPendingDeliveries)
 	if action == "status" {
 		printSubscriptionCapacityCommandBudget(out.CapacityCommandBudget)
+	}
+	if action == "resume" && out.RatePerSecond > 0 {
+		// ADR-798 keeps the pace after the backlog drains; a plain resume
+		// left consumers at 10/s with no word (Hunt 34 H34-19).
+		_, _ = fmt.Fprintf(osStdout, "Delivery stays paced at %d/s after the backlog drains; resume with --rate 0 to remove pacing.\n", out.RatePerSecond)
 	}
 	if receipt := out.CapacityCommandReceipt; receipt != nil {
 		_, _ = fmt.Fprintf(osStdout, "Command %s | original %s setting %d (effective %d, plan %d) | retained until %s\n", receipt.CommandID, receipt.Outcome, receipt.RequestedMaxPendingDeliveries, receipt.EffectiveMaxPendingDeliveries, receipt.PlanMaxPendingDeliveries, receipt.RetainUntil.Format("2006-01-02T15:04:05Z07:00"))

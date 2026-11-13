@@ -103,7 +103,7 @@ func TestCopySourceHeadersMustBeSigned(t *testing.T) {
 	r.Header.Set("X-Amz-Copy-Source", "assets/source")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
-	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "SignatureDoesNotMatch") {
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "AccessDenied") {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	// The same holds if a condition is appended to an otherwise signed copy.
@@ -131,6 +131,7 @@ func TestCopyHeadersCannotBeIgnoredByOtherOperations(t *testing.T) {
 			r := signedGatewayRequest(t, tc.method, tc.target, nil, "UNSIGNED-PAYLOAD")
 			r.Header.Set("X-Amz-Copy-Source", "assets/source")
 			r.Header.Set("X-Amz-Copy-Source-If-Match", `"source"`)
+			signGatewayRequest(t, r, "UNSIGNED-PAYLOAD")
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, r)
 			if w.Code != http.StatusNotImplemented || len(p.copyRequests) != 0 || len(p.presignRequests) != 0 {

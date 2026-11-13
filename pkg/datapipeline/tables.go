@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -28,6 +27,7 @@ func relationNames(relations []relation) []string {
 	return names
 }
 func tablePlan(p Pipeline, before, after []relation) SchemaChange {
+	after = recordedSourceMetadata(p, preserveMissingMetadata(after, before))
 	plan := schemaPlan(p, before, after) // Reuse exact definition/generation identity.
 	if p.SchemaChange != nil && p.SchemaChange.SelectionID != "" {
 		plan.SelectionID = p.SchemaChange.SelectionID
@@ -38,7 +38,7 @@ func tablePlan(p Pipeline, before, after []relation) SchemaChange {
 	plan.RequestedTables = relationNames(after)
 	for _, old := range before {
 		i := slices.IndexFunc(after, func(r relation) bool { return r.Name == old.Name })
-		if i < 0 || !reflect.DeepEqual(old, after[i]) {
+		if i < 0 || !sameVerificationRelation(old, after[i]) {
 			plan.Supported = false
 		}
 	}
@@ -146,7 +146,7 @@ func (s *PostgresStore) RequestTables(ctx context.Context, account, id string, r
 		return ErrConflict
 	}
 	tables := append(slices.Clone(p.Tables), added...)
-	if err = ValidateCreate(api.CreateDataPipelineRequest{Name: p.Name, SourceConnectionID: p.SourceConnectionID, DatabaseID: p.DatabaseID, ReadSubjects: p.ReadSubjects, Tables: tables}); err != nil {
+	if err = validatePipeline(api.CreateDataPipelineRequest{Name: p.Name, SourceConnectionID: p.SourceConnectionID, DatabaseID: p.DatabaseID, ReadSubjects: p.ReadSubjects, Tables: tables}); err != nil {
 		return err
 	}
 	slices.Sort(tables)

@@ -12,7 +12,9 @@ import (
 const (
 	defaultQueueWorkloadQueueName   = "default"
 	defaultQueueWorkloadTargetDepth = 10.0
-	defaultQueueWorkloadConcurrency = 1
+	// 0 keeps an existing binding's concurrency and lets apid choose a new
+	// binding's: re-running setup used to reset it to 1 (ADR-20261112200000).
+	defaultQueueWorkloadConcurrency = 0
 )
 
 // queueWorkloadClient is the single server-side control-plane surface used by
@@ -33,8 +35,8 @@ func setupQueueWorkloadWithRetry(ctx context.Context, client queueWorkloadClient
 	if targetDepth <= 0 {
 		return api.QueueWorkloadProfileResponse{}, fmt.Errorf("target depth must be greater than zero")
 	}
-	if maxConcurrency < 1 {
-		return api.QueueWorkloadProfileResponse{}, fmt.Errorf("max concurrency must be at least one")
+	if maxConcurrency < 0 { // 0 keeps the binding's current value (ADR-20261112200000)
+		return api.QueueWorkloadProfileResponse{}, fmt.Errorf("max concurrency must not be negative")
 	}
 	result, err := client.ConfigureQueueWorkload(ctx, slug, api.QueueWorkloadProfileRequest{
 		QueueName: queueName, TargetDepth: targetDepth, MaxConcurrency: maxConcurrency, RetryPolicy: retryPolicy, Force: force,
@@ -92,7 +94,7 @@ func cmdQueueSetup(args []string) int {
 	fs := newFlagSet("queue setup", flag.ContinueOnError)
 	queueName := fs.String("queue-name", defaultQueueWorkloadQueueName, "logical queue name")
 	targetDepth := fs.Float64("target-depth", defaultQueueWorkloadTargetDepth, "messages per worker before scaling out")
-	maxConcurrency := fs.Int("max-concurrency", defaultQueueWorkloadConcurrency, "maximum concurrent deliveries per worker")
+	maxConcurrency := fs.Int("max-concurrency", defaultQueueWorkloadConcurrency, "maximum concurrent deliveries across the worker pool (default: keep the current value; 10 for a new binding)")
 	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts (0 uses the plan default)")
 	retryBaseSeconds := fs.Float64("retry-base-seconds", 0, "base retry delay in seconds")
 	retryMaxSeconds := fs.Float64("retry-max-seconds", 0, "maximum retry delay in seconds")

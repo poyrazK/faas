@@ -42,6 +42,12 @@ func callBeforeCheckpointHook(hook api.BeforeCheckpointHook, port int) error {
 }
 
 func callLifecycleHook(name, header, path string, timeout time.Duration, port int) error {
+	return callLifecycleHookWith(name, header, path, timeout, port, nil, nil)
+}
+
+// callLifecycleHookWith adds extra request headers and lets verify reject a
+// 2xx answer (the identity reload checks the hook's acknowledgement).
+func callLifecycleHookWith(name, header, path string, timeout time.Duration, port int, extra map[string]string, verify func(*http.Response) error) error {
 	if port <= 0 || port > 65535 {
 		return fmt.Errorf("%s: invalid application port %d", name, port)
 	}
@@ -59,6 +65,9 @@ func callLifecycleHook(name, header, path string, timeout time.Duration, port in
 	// Gateway forwarding strips inbound x-faas-* headers, so a public
 	// request cannot impersonate this loopback-only lifecycle call.
 	req.Header.Set(header, "1")
+	for key, value := range extra {
+		req.Header.Set(key, value)
+	}
 	client := &http.Client{
 		Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true},
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -72,6 +81,9 @@ func callLifecycleHook(name, header, path string, timeout time.Duration, port in
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("%s returned HTTP %d", name, resp.StatusCode)
+	}
+	if verify != nil {
+		return verify(resp)
 	}
 	return nil
 }

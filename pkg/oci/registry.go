@@ -232,6 +232,18 @@ func (c *RegistryClient) resolveHTTPClient() {
 		// Never leave a registry client without a deadline.
 		c.hc.Timeout = time.Duration(api.OCIPullTimeoutSeconds) * time.Second
 	}
+	transport := c.hc.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	if base, ok := transport.(*http.Transport); ok {
+		clone := base.Clone()
+		// Retain at least one idle socket per parallel setup slot. Active
+		// blob bodies have a separate stall budget and may outlive these slots.
+		clone.MaxIdleConnsPerHost = max(clone.MaxIdleConnsPerHost, cap(c.pullSlots))
+		clone.MaxIdleConns = max(clone.MaxIdleConns, clone.MaxIdleConnsPerHost)
+		c.hc.Transport = clone
+	}
 	c.stallTimeout = c.hc.Timeout
 	c.blobHC = blobClient(c.hc)
 }
@@ -253,10 +265,10 @@ func blobClient(hc *http.Client) *http.Client {
 	default:
 		return nil
 	}
-	if tr.ResponseHeaderTimeout == 0 {
+	if tr.ResponseHeaderTimeout <= 0 || tr.ResponseHeaderTimeout > hc.Timeout {
 		tr.ResponseHeaderTimeout = hc.Timeout
 	}
-	if tr.TLSHandshakeTimeout == 0 {
+	if tr.TLSHandshakeTimeout <= 0 || tr.TLSHandshakeTimeout > hc.Timeout {
 		tr.TLSHandshakeTimeout = hc.Timeout
 	}
 	clone := *hc
@@ -511,6 +523,7 @@ func (c *RegistryClient) fetchManifestJSONWithAuth(ctx context.Context, url stri
 }
 
 func (c *RegistryClient) fetchManifestJSONWithAuthLimit(ctx context.Context, url string, auth *BasicAuth, maxBytes int64) ([]byte, string, error) {
+	ctx = withProxy(ctx, auth)
 	resp, err := c.getManifest(ctx, url, "")
 	if err != nil {
 		return nil, "", err
@@ -604,7 +617,7 @@ func (c *RegistryClient) openBlobWithAuth(ctx context.Context, r Reference, dige
 	// fill the shared pool.
 	var rc io.ReadCloser
 	var err error
-	if auth != nil && (auth.Username != "" || auth.Password != "") {
+	if auth.credentialed() {
 		rc, err = c.blobCache.OpenScoped(ctx, c.baseURL(r)+"/"+r.Repository, digest, fetch)
 	} else {
 		rc, err = c.blobCache.Open(ctx, digest, fetch)
@@ -626,6 +639,7 @@ func (c *RegistryClient) openBlobWithAuth(ctx context.Context, r Reference, dige
 // blobs to storage URLs that are often signed for GET only, so it is not
 // followed.
 func (c *RegistryClient) confirmBlobInRepository(ctx context.Context, r Reference, digest string, auth *BasicAuth) error {
+	ctx = withProxy(ctx, auth)
 	url := c.baseURL(r) + "/v2/" + r.Repository + "/blobs/" + digest
 	hc := *c.hc
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -669,6 +683,7 @@ func (c *RegistryClient) confirmBlobInRepository(ctx context.Context, r Referenc
 }
 
 func (c *RegistryClient) openBlobNetworkWithAuth(ctx context.Context, r Reference, digest string, auth *BasicAuth) (string, io.ReadCloser, error) {
+	ctx = withProxy(ctx, auth)
 	url := c.baseURL(r) + "/v2/" + r.Repository + "/blobs/" + digest
 	resp, err := c.getBlob(ctx, url, "")
 	if err != nil {
@@ -741,6 +756,7 @@ func (c *RegistryClient) baseURL(r Reference) string {
 // resolveDigestWithAuth resolves r to its manifest digest. `auth == nil` is
 // the anonymous path (issue #461 / ADR-062).
 func (c *RegistryClient) resolveDigestWithAuth(ctx context.Context, r Reference, auth *BasicAuth) (string, error) {
+	ctx = withProxy(ctx, auth)
 	if r.Digest != "" {
 		body, _, err := c.fetchManifestJSONWithAuth(ctx, c.baseURL(r)+"/v2/"+r.Repository+"/manifests/"+r.Digest, auth)
 		if err != nil {
@@ -836,6 +852,11 @@ func (c *RegistryClient) doPullRequest(ctx context.Context, req *http.Request) (
 func (c *RegistryClient) doPullRequestWith(ctx context.Context, hc *http.Client, req *http.Request) (*http.Response, error) {
 	if c == nil || hc == nil {
 		return nil, errors.New("oci: registry client is not initialized")
+	}
+	if rt, ok := ctx.Value(proxyTransportKey{}).(http.RoundTripper); ok {
+		// ADR-20261110210000 slice 3j: the proxy holds the credential,
+		// follows the registry's redirects and answers its challenges.
+		hc = &http.Client{Transport: rt, CheckRedirect: hc.CheckRedirect}
 	}
 	for attempt := 0; ; attempt++ {
 		if err := c.acquirePullSlot(ctx); err != nil {
@@ -941,6 +962,9 @@ func retryablePullError(err error) bool {
 // directly, over HTTPS only (ADR-20261025124445). An anonymous pull has
 // nothing to answer Basic with and fails as before.
 func (c *RegistryClient) authorization(ctx context.Context, challenges []string, auth *BasicAuth) (string, error) {
+	if auth.Proxied() {
+		return "", errProxyUnauthorized
+	}
 	header := strings.Join(challenges, ", ")
 	ch := parseChallenge(header)
 	if ch.realm == "" && auth != nil && auth.Username != "" && challengeOffersBasic(header) {

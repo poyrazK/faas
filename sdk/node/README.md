@@ -10,7 +10,7 @@
 
 `@gregale/sdk-node` exposes generally available and beta capabilities only:
 the client generated from `sdk/openapi.yaml` and the helpers for those
-capabilities (`FaaSClient`, error sentinels, idempotency, SSE, webhook and
+capabilities (`createClient`, legacy `FaaSClient`, error sentinels, idempotency, SSE, webhook and
 service-caller verification, release context). The `./browser`,
 `./secrets/runtime` and `./workflows` subpaths are part of it too.
 
@@ -28,13 +28,9 @@ webhook requests. See
 [`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
 for usage and delivery-ID deduplication guidance.
 
-> **Heads-up: publish state.** The manifest name is now the conventional
-> scoped form `@gregale/sdk-node`. It was previously `gregale` + `/skd-node`
-> — a typo that npm rejects outright, since an unscoped name may not contain
-> a slash. `private` is cleared and the `repository` field is set. `publishConfig.access` stays `restricted` until the licensing
-> question in [`sdk/README-publishing.md`](../README-publishing.md) is
-> settled — the current LICENSE is proprietary and non-redistributable.
-> **Nothing is on the public npm registry yet.**
+> **Publication:** this client SDK is Apache-2.0 licensed and configured for
+> public npm access. It is not published to npm yet. Use the installation
+> steps below; [SDK publishing](../README-publishing.md) tracks release setup.
 >
 > **Heads-up: pre-1.0.** Version `0.1.0` is the pre-1.0 signal. The
 > public API may shift between `0.x` releases. Pin to an exact version
@@ -50,20 +46,15 @@ for usage and delivery-ID deduplication guidance.
 
 ## Install
 
-Once the package is published:
+Install from a pinned checkout of the public SDK repository.
+npm cannot install a package from a subdirectory of a git repo, and `dist/`
+is a build artifact that is not committed.
 
 ```sh
-npm install @gregale/sdk-node
-```
-
-**Today it is not published yet**, so install from a locally built tarball.
-npm cannot install a package from a subdirectory of a git repo, so
-`npm install github:poyrazK/faas#<tag>` does *not* work — the repo root has
-no `package.json`, and `dist/` is a build artifact that is not committed.
-
-```sh
-git clone https://github.com/poyrazK/faas.git
-cd faas/sdk/node
+git clone https://github.com/gregale-dev/gregale-js.git
+cd gregale-js
+git checkout <commit>
+cd packages/sdk-node
 npm ci && npm run build
 npm pack --pack-destination /tmp     # -> /tmp/gregale-sdk-node-0.1.0.tgz
 
@@ -71,9 +62,35 @@ cd /path/to/your/project
 npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
 
+Replace `<commit>` with the full SHA of the SDK revision you reviewed. Commit
+the tarball inside your project and the updated lockfile for reproducible
+builds; see [Install the SDKs](../../docs/sdks.md#node). Maintainers can also
+obtain a verified tarball from the `sdk-mirror` workflow's
+`sdk-install-gregale-js` artifact, with its checksum in `sdk-install.json`.
+
+### First request
+
+Use your existing credential through `FAAS_TOKEN`, never a literal in source:
+
+<!-- sdk-install-quickstart:start -->
+```js
+import { AccountService, FaaSClient } from '@gregale/sdk-node';
+
+const client = new FaaSClient(process.env.FAAS_API ?? 'https://api.gregale.dev', {
+  token: process.env.FAAS_TOKEN,
+});
+try {
+  const account = await AccountService.getAccount();
+  console.log(account.plan);
+} finally {
+  client.uninstall();
+}
+```
+<!-- sdk-install-quickstart:end -->
+
 ## PostgreSQL pools across checkpoint, restore and thaw
 
-The `@gregale/sdk-node/postgres/runtime` subpath exports `createPostgresPool`,
+The `@gregale/sdk-node/preview/postgres/runtime` subpath exports `createPostgresPool`,
 `postgresPoolConfig`, and `PostgresPoolError`. Install `pg` separately. This
 runtime has no control-plane client or driver dependency, and does not install
 process handlers. The CLI's `rest-api-postgres` starter bundles the same compiled
@@ -201,15 +218,15 @@ Native listener qualification remains pending; see the
 ## Quick start
 
 ```ts
-import { FaaSClient, AppsService, ErrNotFound } from '@gregale/sdk-node';
+import { createClient, ErrNotFound } from '@gregale/sdk-node';
 
-const client = new FaaSClient('https://api.example.com', {
+const client = createClient('https://api.example.com', {
   token: process.env.FAAS_TOKEN!,
   retry: { maxAttempts: 3, backoffMs: 100 },
 });
 
 try {
-  const app = await AppsService.getApp({ slug: 'hello' });
+  const app = await client.apps.getApp({ slug: 'hello' });
   console.log(app.url);
 } catch (err) {
   if (err instanceof ErrNotFound) {
@@ -226,6 +243,63 @@ parsed RFC 7807 `Problem` envelope, the HTTP status, and the daemon's
 `tx_id` for support tickets. Any other problem (a 400 `validation_failed`,
 a 409, a 422 or a 500) is thrown as the base `FaasError`: test it with
 `isFaasError(err)` and read `err.problem.code`.
+
+### Independent clients and migration
+
+Use `createClient` for concurrent developers, agents, accounts, or endpoints in
+one Node process. Each client owns its token, base URL, retry policy, timeout,
+logger, transport, and default idempotency key. It never changes `OpenAPI` or
+`globalThis.fetch`. The default transport is the platform fetch captured when
+the SDK loads; pass `fetch` explicitly to use your own instrumentation or proxy.
+
+```ts
+import { createClient } from '@gregale/sdk-node';
+
+const alice = createClient('https://api.example.com', { token: aliceToken });
+const bob = createClient('https://api.example.com', { token: bobToken });
+const [aliceApp, bobApp] = await Promise.all([
+  alice.apps.getApp({ slug: 'alice-app' }),
+  bob.apps.getApp({ slug: 'bob-app' }),
+]);
+
+alice.setToken(rotatedAliceToken);
+alice.setBaseURL('https://other.example.com');
+```
+
+Service namespaces remove `Service` and lowercase the first letter:
+`AppsService` becomes `client.apps`, `ManagedPostgresService` becomes
+`client.managedPostgres`. Method arguments, response types, typed errors,
+binary downloads, and `.cancel()` are unchanged. Detached methods retain their
+client binding. Configuration changes apply to future calls; requests already
+started, including retries, keep their original configuration. Base URLs accept
+HTTP(S) and optional path prefixes, without embedded credentials, query, or fragment.
+
+| Existing caller | Isolated caller |
+| --- | --- |
+| `new FaaSClient(url, options)` | `createClient(url, options)` |
+| `AppsService.getApp({ slug })` | `client.apps.getApp({ slug })` |
+| `client.setToken(token)` | `client.setToken(token)` |
+| Shared `OpenAPI.BASE` | `client.setBaseURL(url)` |
+| `client.install()` / `client.uninstall()` | No installation lifecycle needed |
+
+`FaaSClient` is deprecated but remains available with its existing process-wide
+behavior. Existing static imports continue working. Migrate one caller at a
+time: isolated clients can run alongside the legacy singleton, including while
+it installs or removes its fetch wrapper. Keep at most one legacy singleton.
+
+For the complete generated surface, import `createClient` from
+`@gregale/sdk-node/preview`; the default factory retains the GA/beta boundary.
+The preview factory also binds `client.runExecution(...)` and
+`client.watchExecution(...)` to the client. Standalone execution exports and
+other helpers that read shared `OpenAPI` retain the legacy singleton contract;
+use bound client methods for isolated requests. Helpers with explicit
+authentication options keep their own contract.
+
+Mutations receive a fresh key per logical call, reused across retries. Prefer
+the method's `idempotencyKey` option when available. `setIdempotencyKey(key)`
+pins an instance default for resuming one operation, and
+`setIdempotencyKey(undefined)` clears it. Explicit request keys take precedence.
+Use a distinct key for every independent mutation, especially concurrent ones.
 
 ## Supported surface
 
@@ -831,6 +905,15 @@ Omitting the helper or carrier makes a call unlinked to the parent deadline.
 The platform's complete-path acceptance is still pending; see
 [the deadline contract](../../docs/ops/traffic-total-deadline.md).
 
+The helper also captures `X-Faas-Deadline-Ms`, the time Gregale gives the
+request to run, and `serviceFetch` sends the time still left on each managed
+call, so the service proxy ends a downstream call when the caller's request
+runs out (ADR-20261102082606). It only shortens: a smaller value you set on the
+call is kept, and a request with no time left sends `1`, which the proxy
+refuses without waking the target. `gregaleRequestTimeRemainingMs()` returns
+the time left inside the handler. The proxy honours the header once the
+platform enables service-call deadlines.
+
 ### Browser SPA release pinning
 
 For an SSR-rendered document, put the release selected on the inbound page
@@ -943,6 +1026,16 @@ as it is emitted and reconnects with the latest event cursor if the SSE
 connection drops:
 
 ```ts
+import { createClient } from '@gregale/sdk-node/preview';
+
+const client = createClient('https://api.example.com', {
+  token: process.env.GREGALE_API_KEY,
+});
+const execution = await client.runs.createExecution({
+  requestBody: { runtime: 'node22', source: "console.log('hello')" },
+  idempotencyKey: 'my-logical-execution',
+});
+
 for await (const event of client.watchExecution(execution.id)) {
   if (event.type === 'stdout' || event.type === 'stderr') {
     process.stdout.write(event.data.chunk ?? '');
@@ -951,8 +1044,9 @@ for await (const event of client.watchExecution(execution.id)) {
 }
 ```
 
-`RunsService.streamExecutionEvents()` remains available when a raw SSE body
-is needed. `watchExecution` is the recommended agent-runtime path.
+`client.runs.streamExecutionEvents()` remains available for the generated
+buffered SSE response. `client.watchExecution` incrementally consumes the live
+body and is the recommended agent-runtime path.
 
 For the common submit-and-wait flow, `runExecution` composes create, resumable
 watching, and the terminal receipt:
@@ -961,12 +1055,49 @@ watching, and the terminal receipt:
 const receipt = await client.runExecution(
   { runtime: 'node22', source: "console.log('hello')" },
   {
+    idempotencyKey: 'another-logical-execution',
+    signal: AbortSignal.timeout(60_000),
     onEvent: (event) => {
       if (event.type === 'stdout') process.stdout.write(event.data.chunk ?? '');
     },
   },
 );
 ```
+
+Both methods are available on the isolated preview client. Tokens, endpoint
+path prefixes, transport, logging, retries, and idempotency settings stay bound
+to that client. Each invocation captures one configuration snapshot: changing
+the client token or endpoint affects future workflows, while an active workflow
+keeps its original configuration through reconnects and the final receipt GET.
+`watchExecution` captures when called, before its iterator is first consumed.
+Detached helper methods keep their client binding.
+
+Reconnecting only reads events; it never repeats execution submission. Overlapping
+frames with an already seen integer event ID are skipped. Cursorless events
+retain their delivery semantics and can repeat. Event callbacks run in order;
+callback errors stop observation and release the stream. An initial connection
+failure, authorization error, or malformed event is surfaced to the caller.
+After connecting, transient failures reconnect until completion or cancellation.
+
+Pass an `AbortSignal` to bound the whole workflow, including submission,
+reconnect delays, body reads, and the final receipt request. A client's
+`timeoutMs` applies to each HTTP request; ordinary requests default to 30 seconds,
+and SSE has no default deadline. Aborting one workflow stops its local I/O;
+it does not request server-side execution cancellation. Use
+`client.runs.cancelExecution({ id })` to request that separately.
+
+The returned terminal receipt includes result data and exported artifacts;
+use `decodeExecutionArtifact` to verify and decode an artifact. For recovery
+after a process restart, retain the receipt ID from `client.runs.createExecution`
+and the last successfully processed event ID, then resume with
+`client.watchExecution(id, { after, signal })`. Cursor state in a running iterator
+is held in memory. To rotate credentials during observation, start a new watcher
+from the retained cursor after updating the client.
+
+Existing `FaaSClient` convenience methods and standalone `runExecution` /
+`watchExecution` exports remain available and use shared process configuration.
+Migrate by replacing `new FaaSClient(...)` with the preview `createClient(...)`
+and calling these methods on the returned client.
 
 The source/files bundle is available only in the disposable guest's ephemeral
 scratch filesystem; no customer storage disk is attached.

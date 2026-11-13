@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // CheckOAuthProvider follows only the explicit, validated source configuration.
@@ -17,6 +18,9 @@ import (
 // Public metadata does not establish real token issuance or token authorization.
 func CheckOAuthProvider(ctx context.Context, auth AuthConfig) []Check {
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if _, bounded := ctx.Deadline(); !bounded {
+		client.Timeout = 10 * time.Second
+	}
 	return checkOAuthProvider(ctx, client, auth)
 }
 
@@ -50,21 +54,22 @@ func checkOAuthProvider(ctx context.Context, client *http.Client, auth AuthConfi
 	add("oauth_provider_discovery", ok, "OIDC or OAuth authorization-server discovery must match the reviewed issuer and JWKS URL.")
 	var keys struct {
 		Keys []struct {
-			Kty string `json:"kty"`
-			Use string `json:"use"`
-			Alg string `json:"alg"`
-			N   string `json:"n"`
-			E   string `json:"e"`
-			D   string `json:"d"`
-			P   string `json:"p"`
-			Q   string `json:"q"`
-			DP  string `json:"dp"`
-			DQ  string `json:"dq"`
-			QI  string `json:"qi"`
-			K   string `json:"k"`
-			Crv string `json:"crv"`
-			X   string `json:"x"`
-			Y   string `json:"y"`
+			Kty    string          `json:"kty"`
+			Use    string          `json:"use"`
+			Alg    string          `json:"alg"`
+			N      string          `json:"n"`
+			E      string          `json:"e"`
+			D      string          `json:"d"`
+			P      string          `json:"p"`
+			Q      string          `json:"q"`
+			DP     string          `json:"dp"`
+			DQ     string          `json:"dq"`
+			QI     string          `json:"qi"`
+			K      string          `json:"k"`
+			Crv    string          `json:"crv"`
+			X      string          `json:"x"`
+			Y      string          `json:"y"`
+			KeyOps json.RawMessage `json:"key_ops"`
 		} `json:"keys"`
 	}
 	ok = doctorPublicJSON(ctx, client, auth.JWKSURL, &keys)
@@ -73,7 +78,7 @@ func checkOAuthProvider(ctx context.Context, client *http.Client, auth AuthConfi
 		if key.D != "" || key.K != "" || key.P != "" || key.Q != "" || key.DP != "" || key.DQ != "" || key.QI != "" {
 			ok = false
 		}
-		if key.Use == "" || key.Use == "sig" {
+		if (key.Use == "" || key.Use == "sig") && doctorJWKAllowsVerification(key.KeyOps) {
 			if key.Kty == "RSA" && (key.Alg == "" || key.Alg == "RS256") && doctorRSAKey(key.N, key.E) {
 				usable = true
 			}
@@ -84,6 +89,25 @@ func checkOAuthProvider(ctx context.Context, client *http.Client, auth AuthConfi
 	}
 	add("oauth_signing_keys", ok && usable, "JWKS must expose a public signing key compatible with the starters' RS256/ES256 contract and no private key material.")
 	return checks
+}
+
+func doctorJWKAllowsVerification(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return true
+	}
+	var operations []any
+	if json.Unmarshal(raw, &operations) != nil {
+		return false
+	}
+	allowed := false
+	for _, operation := range operations {
+		value, ok := operation.(string)
+		if !ok {
+			return false
+		}
+		allowed = allowed || value == "verify"
+	}
+	return allowed
 }
 
 func doctorHTTPS(value string) bool {

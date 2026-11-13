@@ -311,6 +311,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// dashboard reflects reality on every box.
 	webhookSvc.Ops = ops
 	webhookSvc.Bindings = storeAdapter
+	webhookSvc.DeliveryTargets = deliveryStore
 	webhookSvc.IssueCallbacks = storeAdapter.store
 	webhookSvc.Installs = installsAdapter
 	webhookSvc.Source = source
@@ -436,7 +437,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					WithStreamer(newSourceRefStreamer(installsAdapter, &tokenCacheAdapter{cache: tokens}, nil, log))
 				realSvc.BranchHeads = githubd.NewHTTPBranchHeads(tokens, deps.httpClient())
 				realSvc.CIPullRequests = githubd.NewHTTPCIPullRequests(tokens, deps.httpClient())
-				realSvc.IssueComments = githubd.NewHTTPIssueComments(tokens, deps.httpClient())
+				realSvc.IssueComments = githubd.NewHTTPIssueComments(tokens, deps.httpClient(), checks.AppID)
 				realSvc.CIChanges = githubd.NewHTTPCIChangedFiles(tokens, deps.httpClient())
 				realSvc.ProtectedBranches = githubd.NewHTTPProtectedBranches(tokens, deps.httpClient())
 				realSvc.ReviewedMerges = githubd.NewHTTPReviewedMerges(tokens, deps.httpClient())
@@ -508,6 +509,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				ops.Registry().MustRegister(appConfigMetrics)
 				go githubd.RunHookDeliveryMonitor(ctx, &githubd.HookDeliveryMonitor{
 					MintJWT:          auth.MintAppJWT,
+					Recovery:         deliveryStore,
 					Client:           deps.httpClient(),
 					Metrics:          hookDeliveryMetrics,
 					AppConfigMetrics: appConfigMetrics,

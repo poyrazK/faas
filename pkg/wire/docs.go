@@ -46,6 +46,10 @@ const (
 	// that takes payment, not a page that explains billing.
 	DashboardBillingURL = "https://" + PlatformHost + "/dashboard/billing"
 
+	// DashboardAccountURL is the account page: sessions, API keys and
+	// security activity.
+	DashboardAccountURL = "https://" + PlatformHost + "/dashboard/account"
+
 	// PlatformHost is the platform contact host used in outbound
 	// User-Agent headers (OCI registry traffic — ghcr.io, ECR,
 	// Docker Hub, etc.). Distinct from DocsHost because the

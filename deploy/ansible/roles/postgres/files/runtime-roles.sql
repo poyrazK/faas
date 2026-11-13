@@ -25,7 +25,7 @@ BEGIN
 	END IF;
 	ALTER ROLE faas_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 	FOREACH r IN ARRAY ARRAY['faas_apid', 'faas_schedd', 'faas_meterd', 'faas_githubd',
-		'faas_outboundd', 'faas_bridged', 'faas_mcp_bridge', 'faas_shared'] LOOP
+		'faas_outboundd', 'faas_bridged', 'faas_mcp_bridge', 'faas_shared', 'faas_signd', 'faas_secretd'] LOOP
 		IF to_regrole(r) IS NULL THEN
 			EXECUTE format('CREATE ROLE %I LOGIN', r);
 		END IF;
@@ -34,12 +34,18 @@ BEGIN
 			EXECUTE format('GRANT faas_runtime TO %I', r);
 		END IF;
 	END LOOP;
-	IF to_regrole('faas_compute') IS NOT NULL THEN
-		ALTER ROLE faas_compute LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-		IF NOT pg_has_role('faas_compute', 'faas_runtime', 'MEMBER') THEN
-			GRANT faas_runtime TO faas_compute;
+	-- Password-authenticated compute roles: faas_compute, and the per-daemon
+	-- compute roles of step 3 (scripts/ci/compute_db_roles.py UNIT_ROLES),
+	-- each present only once Ansible has created it from its secret.
+	FOREACH r IN ARRAY ARRAY['faas_compute', 'faas_vmmd', 'faas_node_schedd', 'faas_imaged',
+		'faas_builderd', 'faas_gatewayd_internal', 'faas_gatewayd_edge'] LOOP
+		IF to_regrole(r) IS NOT NULL THEN
+			EXECUTE format('ALTER ROLE %I LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS', r);
+			IF NOT pg_has_role(r, 'faas_runtime', 'MEMBER') THEN
+				EXECUTE format('GRANT faas_runtime TO %I', r);
+			END IF;
 		END IF;
-	END IF;
+	END LOOP;
 END
 $$;
 
@@ -68,9 +74,133 @@ BEGIN
 	END IF;
 	-- Issue #574: deployctl writes the release history as the owner; daemons
 	-- only read it, so none can rewrite what was deployed.
+	-- Cost-control activation history is written only by the schema-owner
+	-- trigger; a runtime bootstrap must not restore direct mutation rights.
+	IF to_regclass('public.billing_plan_activations') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE ON public.billing_plan_activations FROM faas_runtime;
+	END IF;
 	IF to_regclass('public.platform_release_activations') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE ON public.platform_release_activations FROM faas_runtime;
 	END IF;
+	-- ADR-20261107180000: the apps domains' certificates are edgednsd's.
+	-- Every compute node logs in as a faas_runtime member (faas_compute), and
+	-- a row it wrote would be served by every edge and trusted by the
+	-- Certificate Transparency watch. Only faas_shared, the control plane's
+	-- `faas` OS user that edgednsd runs as, inserts and prunes them.
+	IF to_regclass('public.edge_tls_certificates') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE ON public.edge_tls_certificates FROM faas_runtime;
+		GRANT INSERT, DELETE ON public.edge_tls_certificates TO faas_shared;
+	END IF;
+	-- ADR-20261109170000: a row in artifact_signatures is the control plane's
+	-- word that a node built that layer for that deployment, and signd signs
+	-- each key once. Only faas_signd, the control plane's signd, inserts one;
+	-- nobody updates or deletes a row.
+	IF to_regclass('public.artifact_signatures') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE ON public.artifact_signatures FROM faas_runtime;
+		GRANT SELECT, INSERT ON public.artifact_signatures TO faas_signd;
+	END IF;
+	-- ADR-20261110210000 §4: the owner-authority mode and its record are the
+	-- owner's; a compute login could otherwise switch the check off or erase
+	-- what it did. The apps trigger writes the record as its definer.
+	IF to_regclass('public.app_owner_authority') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.app_owner_authority FROM faas_runtime;
+	END IF;
+	IF to_regclass('public.app_owner_writes') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.app_owner_writes FROM faas_runtime;
+	END IF;
+	-- ADR-20261110210000 §3: secretd's grants decide which peer node may open
+	-- an app's secrets, and its audit names every open. A compute login that
+	-- could write either would grant itself or erase what it opened. Only
+	-- faas_secretd, the control plane's secretd, writes grants (after
+	-- checking the grantor owns the app) and appends to the audit, which
+	-- nobody updates or deletes.
+	IF to_regclass('public.secret_grants') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_grants FROM faas_runtime;
+		GRANT SELECT, INSERT, UPDATE, DELETE ON public.secret_grants TO faas_secretd;
+	END IF;
+	IF to_regclass('public.secret_open_audit') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_open_audit FROM faas_runtime;
+		GRANT SELECT, INSERT ON public.secret_open_audit TO faas_secretd;
+	END IF;
+	-- ADR-20261110210000 slice 3h: basic-auth verifiers decide which
+	-- password every node's edge accepts for an app. Only apid, which has the
+	-- plaintext when the customer sets it, writes them.
+	IF to_regclass('public.app_basic_auth_verifiers') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.app_basic_auth_verifiers FROM faas_runtime;
+		GRANT SELECT, INSERT, DELETE ON public.app_basic_auth_verifiers TO faas_apid;
+	END IF;
+	-- ADR-20261110210000 slice 1c: which node a login belongs to decides
+	-- which compute rows it may write. A login that could write the map
+	-- could claim another node's rows; only the schema owner writes it.
+	IF to_regclass('public.compute_node_db_logins') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.compute_node_db_logins FROM faas_runtime;
+	END IF;
+	-- ADR-20261112160000: neond holds the Neon keys and only needs to know
+	-- which Neon projects and branches live databases run on. Its login is
+	-- not a faas_runtime member: it reads managed_postgres_databases and
+	-- nothing else.
+	IF to_regrole('faas_neond') IS NULL THEN
+		CREATE ROLE faas_neond LOGIN;
+	END IF;
+	ALTER ROLE faas_neond LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+	IF pg_has_role('faas_neond', 'faas_runtime', 'MEMBER') THEN
+		REVOKE faas_runtime FROM faas_neond;
+	END IF;
+	GRANT USAGE ON SCHEMA public TO faas_neond;
+	IF to_regclass('public.managed_postgres_databases') IS NOT NULL THEN
+		GRANT SELECT ON public.managed_postgres_databases TO faas_neond;
+	END IF;
+	-- Project keys are neond's alone: no faas_runtime member reads them.
+	IF to_regclass('public.neon_project_keys') IS NOT NULL THEN
+		REVOKE ALL ON public.neon_project_keys FROM faas_runtime;
+		GRANT SELECT, INSERT, UPDATE ON public.neon_project_keys TO faas_neond;
+	END IF;
+END
+$$;
+
+-- ADR-20261110210000 slice 1c-2: faas_node_logins (NOLOGIN) groups the
+-- per-node compute logins node_join creates (compute-node-db-logins.sql).
+-- pg_hba admits its members only by a fleet-CA client certificate whose CN is
+-- the login; compute_node_db_logins maps each to its node. The group itself
+-- holds no privilege: a login's row DML comes from faas_runtime.
+DO $$
+BEGIN
+	IF to_regrole('faas_node_logins') IS NULL THEN
+		CREATE ROLE faas_node_logins NOLOGIN;
+	END IF;
+	ALTER ROLE faas_node_logins NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+END
+$$;
+
+-- ADR-20261110210000 §4: faas_owner_authority (NOLOGIN) names the logins
+-- that may set an app's owner node once app_owner_authority.mode is enforce:
+-- the control plane's schedd (peer-authenticated, so it cannot log in from a
+-- compute node) and the schema owner. No compute role is ever a member.
+DO $$
+DECLARE
+	r text;
+BEGIN
+	IF to_regrole('faas_owner_authority') IS NULL THEN
+		CREATE ROLE faas_owner_authority NOLOGIN;
+	END IF;
+	ALTER ROLE faas_owner_authority NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+	FOREACH r IN ARRAY ARRAY['faas_schedd', 'faas'] LOOP
+		IF to_regrole(r) IS NOT NULL AND NOT pg_has_role(r, 'faas_owner_authority', 'MEMBER') THEN
+			EXECUTE format('GRANT faas_owner_authority TO %I', r);
+		END IF;
+	END LOOP;
+	-- A compute login that became a member by mistake is removed, per-node
+	-- logins (faas_node_logins, slice 1c-2) included.
+	FOREACH r IN ARRAY ARRAY['faas_compute', 'faas_vmmd', 'faas_node_schedd', 'faas_imaged',
+		'faas_builderd', 'faas_gatewayd_internal', 'faas_gatewayd_edge', 'faas_runtime']
+		|| ARRAY(SELECT m.member::regrole::text FROM pg_catalog.pg_auth_members m
+		          WHERE m.roleid = to_regrole('faas_node_logins')) LOOP
+		IF to_regrole(r) IS NOT NULL AND EXISTS (
+			SELECT 1 FROM pg_catalog.pg_auth_members
+			 WHERE roleid = to_regrole('faas_owner_authority') AND member = to_regrole(r)) THEN
+			EXECUTE format('REVOKE faas_owner_authority FROM %I', r);
+		END IF;
+	END LOOP;
 END
 $$;
 -- Objects the next migrations create carry the same grants. Only objects the

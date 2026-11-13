@@ -15,6 +15,7 @@ func ensureTableRecoveryReceipt(ctx context.Context, target receiptSQL) error {
  subscription_oid oid NOT NULL,publication_oid oid NOT NULL,attempt integer NOT NULL CHECK(attempt>0),
  stage text NOT NULL CHECK(stage IN ('retiring','detached','cleared','published','copying','complete')));
  ALTER TABLE gregale_pipeline.table_recoveries ADD COLUMN IF NOT EXISTS recovery_kind text NOT NULL DEFAULT '';
+ ALTER TABLE gregale_pipeline.table_recoveries ADD COLUMN IF NOT EXISTS copy_retry boolean NOT NULL DEFAULT false;
  DO $$ BEGIN
  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='gregale_pipeline.table_recoveries'::regclass AND conname='table_recoveries_recovery_kind_check' AND pg_get_constraintdef(oid) LIKE '%live%') THEN
  ALTER TABLE gregale_pipeline.table_recoveries DROP CONSTRAINT IF EXISTS table_recoveries_recovery_kind_check;
@@ -28,8 +29,8 @@ func loadTableRecovery(ctx context.Context, p Pipeline, target receiptSQL) (stri
 	var saved TableRecovery
 	var generation int64
 	var change string
-	err := target.QueryRow(ctx, `SELECT generation,change_id,recovery_id,table_name,table_oid,subscription_oid,publication_oid,attempt,stage,recovery_kind
- FROM gregale_pipeline.table_recoveries WHERE pipeline_id=$1`, p.ID).Scan(&generation, &change, &saved.ID, &saved.Table, &saved.TableOID, &saved.SubscriptionOID, &saved.PublicationOID, &saved.Attempt, &saved.Stage, &saved.Kind)
+	err := target.QueryRow(ctx, `SELECT generation,change_id,recovery_id,table_name,table_oid,subscription_oid,publication_oid,attempt,stage,recovery_kind,copy_retry
+ FROM gregale_pipeline.table_recoveries WHERE pipeline_id=$1`, p.ID).Scan(&generation, &change, &saved.ID, &saved.Table, &saved.TableOID, &saved.SubscriptionOID, &saved.PublicationOID, &saved.Attempt, &saved.Stage, &saved.Kind, &saved.CopyRetry)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -97,13 +98,13 @@ func beginTableRecovery(ctx context.Context, p Pipeline, target *pgx.Conn, curre
 	if err = gateRecoveredTable(ctx, p, tx); err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO gregale_pipeline.table_recoveries(pipeline_id,generation,recovery_id,table_name,table_oid,subscription_oid,publication_oid,attempt,change_id,recovery_kind,stage)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'retiring') ON CONFLICT(pipeline_id) DO UPDATE SET
+	tag, err := tx.Exec(ctx, `INSERT INTO gregale_pipeline.table_recoveries(pipeline_id,generation,recovery_id,table_name,table_oid,subscription_oid,publication_oid,attempt,change_id,recovery_kind,copy_retry,stage)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'retiring') ON CONFLICT(pipeline_id) DO UPDATE SET
  generation=excluded.generation,change_id=excluded.change_id,recovery_id=excluded.recovery_id,table_name=excluded.table_name,table_oid=excluded.table_oid,
- subscription_oid=excluded.subscription_oid,publication_oid=excluded.publication_oid,attempt=excluded.attempt,stage=excluded.stage,recovery_kind=excluded.recovery_kind
+ subscription_oid=excluded.subscription_oid,publication_oid=excluded.publication_oid,attempt=excluded.attempt,stage=excluded.stage,recovery_kind=excluded.recovery_kind,copy_retry=excluded.copy_retry
  WHERE table_recoveries.generation=excluded.generation AND
  ((table_recoveries.change_id=excluded.change_id AND table_recoveries.attempt<excluded.attempt)
- OR (table_recoveries.change_id<>excluded.change_id AND table_recoveries.stage='complete'))`, p.ID, p.Generation, r.ID, r.Table, r.TableOID, r.SubscriptionOID, r.PublicationOID, r.Attempt, p.SchemaApproval, r.Kind)
+ OR (table_recoveries.change_id<>excluded.change_id AND table_recoveries.stage='complete'))`, p.ID, p.Generation, r.ID, r.Table, r.TableOID, r.SubscriptionOID, r.PublicationOID, r.Attempt, p.SchemaApproval, r.Kind, r.CopyRetry)
 	if err != nil {
 		return err
 	}

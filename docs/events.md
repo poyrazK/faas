@@ -279,6 +279,24 @@ subscriptions and disables none; update `gregale.yaml` to the new name.
 Numbers in filters are kept exactly, so a filter
 on an integer ID larger than 2^53 matches only that ID.
 
+### Filter limits
+
+Each event is stored with a copy of the filter of every subscription that may
+receive it, so filters are bounded on every plan:
+
+| Limit | Value |
+|---|---:|
+| Filter size, as compact JSON | 8 KiB (8,192 bytes) |
+| Filter nesting depth (objects and arrays; the top-level object is 1) | 8 |
+
+`{"data":{"amount":{"$gt":100}}}` is 31 bytes and 3 levels deep. A deploy,
+stage deploy or batch trigger create whose `event_triggers` filter goes past a
+limit is refused with `422 event_subscription_filter_too_large` or `422
+event_subscription_filter_too_deep`, naming the limit and the observed value,
+and changes nothing. Subscriptions created before the limits keep delivering;
+declaring one again must fit them. To narrow a broad subscription, prefer a
+more specific `source` and `type` over a longer filter.
+
 ### Delivery identity
 
 Delivery is at least once. A handler can see the same event more than once:
@@ -433,7 +451,7 @@ While it is paused:
 - Events already accepted are kept and wait to be routed; routing resumes when
   the pause ends. Delivery-age limits keep counting while they wait.
 - Deliveries that already became invocations run as usual.
-- Object-storage notifications, inbound webhook automation and other events
+- Object-storage notifications, inbound webhook stored workflow and other events
   Gregale publishes for you are still accepted and wait with the rest.
 
 ### Publish rate

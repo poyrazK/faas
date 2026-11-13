@@ -350,7 +350,7 @@ func (m *MemStore) ReconcileDeploymentCrons(_ context.Context) ([]CronActivation
 		m.recordCronOutcomeLocked(appID, a, a.Status, reason)
 		m.deploymentCronActivations[appID] = a
 	}
-	return changes, nil
+	return append(changes, m.reconcileEnvironmentCronsLocked()...), nil
 }
 func (s *PgStore) ReconcileDeploymentCrons(ctx context.Context) ([]CronActivationChange, error) {
 	ids, err := sqlc.New().ListReadyCronActivations(ctx, s.pool)
@@ -359,7 +359,12 @@ func (s *PgStore) ReconcileDeploymentCrons(ctx context.Context) ([]CronActivatio
 	}
 	changes := []CronActivationChange{}
 	for _, id := range ids {
-		change, err := s.reconcileDeploymentCron(ctx, id)
+		var change *CronActivationChange
+		err := s.retryAfterDetachingCronHistory(ctx, func() error {
+			var err error
+			change, err = s.reconcileDeploymentCron(ctx, id)
+			return err
+		})
 		if err != nil {
 			return changes, err
 		}
@@ -367,7 +372,8 @@ func (s *PgStore) ReconcileDeploymentCrons(ctx context.Context) ([]CronActivatio
 			changes = append(changes, *change)
 		}
 	}
-	return changes, nil
+	environments, err := s.reconcileEnvironmentDeploymentCrons(ctx)
+	return append(changes, environments...), err
 }
 func (s *PgStore) reconcileDeploymentCron(ctx context.Context, appID string) (*CronActivationChange, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})

@@ -33,11 +33,16 @@ type EnvironmentWorkloadGraph struct {
 }
 
 type EnvironmentWorkloadGraphMember struct {
-	Resource                  string                                     `json:"resource"`
-	AppID                     string                                     `json:"app_id"`
-	Variables                 map[string]string                          `json:"variables,omitempty"`
-	JobID                     string                                     `json:"job_id,omitempty"`
-	Function                  bool                                       `json:"function,omitempty"`
+	Resource  string            `json:"resource"`
+	AppID     string            `json:"app_id"`
+	Variables map[string]string `json:"variables,omitempty"`
+	JobID     string            `json:"job_id,omitempty"`
+	Function  bool              `json:"function,omitempty"`
+	// NoFrameworkReadySignal marks an app without a runtime runner. Only a
+	// runner signals framework-ready, so such a candidate owes no
+	// framework-ready receipt, as production stamps none for it (ADR
+	// 20261023093000). Absent on older graphs, which keeps the receipt required.
+	NoFrameworkReadySignal    bool                                       `json:"no_framework_ready_signal,omitempty"`
 	CandidateDeploymentID     string                                     `json:"candidate_deployment_id,omitempty"`
 	ExecutionMode             string                                     `json:"execution_mode,omitempty"`
 	QueueBindings             map[string]EnvironmentScopedQueueBinding   `json:"queue_bindings,omitempty"`
@@ -132,7 +137,8 @@ func preparationGraph(snapshot gitOpsIntentSnapshot, revision EnvironmentDesired
 			}
 			serviceBindings[bindingName] = EnvironmentScopedServiceBinding{Workload: binding.Workload, EnvKey: binding.EnvKey, TargetAppID: targetAppID}
 		}
-		member := EnvironmentWorkloadGraphMember{Resource: resource, AppID: app.ID, Variables: cloneStringMap(desired.Definition.Workloads[name].Variables), Function: app.Type == AppTypeFunction, ExecutionMode: executionMode,
+		member := EnvironmentWorkloadGraphMember{Resource: resource, AppID: app.ID, Variables: cloneStringMap(desired.Definition.Workloads[name].Variables), Function: app.Type == AppTypeFunction,
+			NoFrameworkReadySignal: app.RuntimeBase == "", ExecutionMode: executionMode,
 			QueueBindings: queueBindings, QueueModes: map[string]string{}, QueueBindingsConfigured: len(desired.Definition.Workloads[name].QueueBindings) != 0,
 			JobSmokeConfigured:        desired.Definition.Workloads[name].JobSmoke != nil,
 			ScheduleConfigured:        desired.Definition.Workloads[name].Schedule != nil,

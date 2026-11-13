@@ -146,8 +146,7 @@ func TestRouteLatencyWeightedEvidenceAndAtomicGate(t *testing.T) {
 				if current.CanaryStep != 0 || current.TrafficPercent != 1 {
 					t.Fatal("latency hold wrote traffic")
 				}
-				audits, err := s.ListDeploymentAudit(t.Context(), d.ID, 10)
-				if err != nil || len(audits) != 0 {
+				if audits := advanceAudits(mustDeploymentAudits(t, s, d.ID)); len(audits) != 0 {
 					t.Fatal("latency hold wrote traffic audit")
 				}
 			}

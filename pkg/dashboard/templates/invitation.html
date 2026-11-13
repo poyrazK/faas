@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">body { font: 16px/1.5 system-ui,sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1rem; } button { font: inherit; padding: .5rem; }</style>
+</head>
+<body>
+  <main>
+    <h1>Organization invitation</h1>
+    <p>Signed in as <strong>{{.Account.Email}}</strong>.</p>
+    <p id="details" role="status">Reading the invitation…</p>
+    <form id="accept-form" hidden><button type="submit" id="accept">Accept invitation</button></form>
+    <p id="result" role="status" aria-live="polite"></p>
+    <p><a href="/dashboard/">Open dashboard</a></p>
+  </main>
+  <script nonce="{{.Nonce}}">
+    (() => {
+      const endpoint = '/v1/invitations/' + encodeURIComponent({{.Data}});
+      const form = document.getElementById('accept-form');
+      const button = document.getElementById('accept');
+      const details = document.getElementById('details');
+      const result = document.getElementById('result');
+      async function request(url, options) {
+        const response = await fetch(url, {credentials: 'same-origin', ...options});
+        const body = await response.json();
+        if (!response.ok) {
+          if (body.code === 'step_up_required' || body.code === 'mfa_required') {
+            location.assign('/dashboard/mfa?next=' + encodeURIComponent(location.pathname));
+          }
+          throw new Error(body.detail || body.title || 'Please try again.');
+        }
+        return body;
+      }
+      request(endpoint).then(invitation => {
+        details.textContent = 'Join ' + invitation.org_slug + ' as ' + invitation.role + '.';
+        form.hidden = invitation.status !== 'pending';
+        if (form.hidden) result.textContent = 'This invitation is no longer pending. Ask for a new invitation if you still need access.';
+      }).catch(error => { details.textContent = error.message; });
+      form.addEventListener('submit', async event => {
+        event.preventDefault(); button.disabled = true;
+        try {
+          await request(endpoint + '/accept', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+          form.hidden = true;
+          result.textContent = 'Invitation accepted. You can open the dashboard.';
+        } catch (error) { result.textContent = error.message; }
+        finally { button.disabled = false; }
+      });
+    })();
+  </script>
+</body>
+</html>

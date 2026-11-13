@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +17,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/behaviorcompare"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"golang.org/x/net/http/httpguts"
 )
 
 const testHTTPBodyLimit = 1 << 20
@@ -27,14 +30,19 @@ var testHTTPHeaderPattern = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
 // Requests run before wait_for; checks run after it. Captures are available to
 // later steps in either list and to invocation wait conditions.
 type testHTTPRequest struct {
-	Name    string            `yaml:"name"`
-	As      string            `yaml:"as"`
-	Method  string            `yaml:"method"`
-	Path    string            `yaml:"path"`
-	Headers map[string]string `yaml:"headers"`
-	JSON    any               `yaml:"json"`
-	Expect  testHTTPExpect    `yaml:"expect"`
-	Capture map[string]string `yaml:"capture"`
+	Name     string            `yaml:"name"`
+	As       string            `yaml:"as"`
+	Method   string            `yaml:"method"`
+	Path     string            `yaml:"path"`
+	Headers  map[string]string `yaml:"headers"`
+	JSON     any               `yaml:"json,omitempty"`
+	JSONNull bool              `yaml:"-" json:"json_null,omitempty"` // Preserve explicit null in replay/workload identities.
+	Expect   testHTTPExpect    `yaml:"expect"`
+	Capture  map[string]string `yaml:"capture"`
+}
+
+func (r testHTTPRequest) hasJSONBody() bool {
+	return r.JSON != nil || r.JSONNull
 }
 
 type testHTTPExpect struct {
@@ -49,6 +57,7 @@ type testHTTPRequestEvidence struct {
 	Name                       string `json:"name"`
 	Method                     string `json:"method"`
 	Path                       string `json:"path"`
+	PathTemplateSHA256         string `json:"path_template_sha256,omitempty"`
 	Status                     int    `json:"status,omitempty"`
 	DurationMS                 int64  `json:"duration_ms"`
 	Passed                     bool   `json:"passed"`
@@ -94,7 +103,9 @@ func testHTTPDataFields(scenario testScenario) []string {
 			steps = append(steps, scenarioStep.Restart.Readiness)
 			steps = append(steps, scenarioStep.Restart.StorageChecks...)
 		}
+		collectTestHTTPDeadlineData(scenarioStep.Load, collect)
 	}
+	collectTestHTTPDeadlineData(scenario.Load, collect)
 	for _, step := range steps {
 		collect(step.Path)
 		for _, value := range step.Headers {
@@ -110,7 +121,24 @@ func testHTTPDataFields(scenario testScenario) []string {
 	return result
 }
 
+func collectTestHTTPDeadlineData(load *testLoadSpec, collect func(any)) {
+	if load == nil {
+		return
+	}
+	for _, phase := range load.ChaosSchedule {
+		for _, deadline := range phase.RequestDeadlines {
+			if deadline.Expect != nil {
+				collect(deadline.Expect.JSON)
+			}
+		}
+	}
+}
+
 func validateTestHTTPRequestsWithData(scenario testScenario, dataFields []string) error {
+	return validateTestHTTPRequestsWithCaptures(scenario, dataFields, nil)
+}
+
+func validateTestHTTPRequestsWithCaptures(scenario testScenario, dataFields []string, captures map[string]string) error {
 	if len(scenario.Requests)+len(scenario.Checks) > 100 {
 		return fmt.Errorf("at most 100 HTTP steps may be declared")
 	}
@@ -119,14 +147,24 @@ func validateTestHTTPRequestsWithData(scenario testScenario, dataFields []string
 		consumers[consumer.Name] = true
 	}
 	known := map[string]string{"run.id": "example-run-id"}
+	for reference := range captures {
+		known[reference] = "example-value"
+	}
 	for _, field := range dataFields {
 		known["data."+field] = "example-value"
 		known["data."+field+".string"] = "example-value"
+	}
+	streamValues, err := testHTTPStreamValues(scenario, known)
+	if err != nil {
+		return err
 	}
 	names := make(map[string]bool)
 	captureNames := make(map[string]bool)
 	beforeWaitCaptures := make(map[string]bool)
 	for _, step := range append(append([]testHTTPRequest{}, scenario.Requests...), scenario.Checks...) {
+		if values, ok := streamValues[step.Name]; ok {
+			known = values
+		}
 		beforeWait := false
 		for _, request := range scenario.Requests {
 			if request.Name == step.Name {
@@ -144,19 +182,28 @@ func validateTestHTTPRequestsWithData(scenario testScenario, dataFields []string
 		if step.Method != http.MethodGet && step.Method != http.MethodHead && step.Method != http.MethodPost && step.Method != http.MethodPut && step.Method != http.MethodPatch && step.Method != http.MethodDelete {
 			return fmt.Errorf("HTTP step %q has unsupported method %q", step.Name, step.Method)
 		}
-		if step.Expect.Status < 100 || step.Expect.Status > 599 {
-			return fmt.Errorf("HTTP step %q needs expect.status between 100 and 599", step.Name)
-		}
-		if step.JSON != nil && (step.Method == http.MethodGet || step.Method == http.MethodHead) {
+		if step.hasJSONBody() && (step.Method == http.MethodGet || step.Method == http.MethodHead) {
 			return fmt.Errorf("HTTP step %q cannot send JSON with %s", step.Name, step.Method)
 		}
-		if step.Expect.ContentType != "" {
-			if _, _, err := mime.ParseMediaType(step.Expect.ContentType); err != nil {
-				return fmt.Errorf("HTTP step %q has invalid expected content type: %w", step.Name, err)
+		if err := validateTestHTTPExpectation(step, known); err != nil {
+			return fmt.Errorf("HTTP step %q: %w", step.Name, err)
+		}
+		if scenario.Load != nil {
+			for _, phase := range scenario.Load.ChaosSchedule {
+				if budget, ok := phase.RequestDeadlines[step.Name]; ok && budget.Expect != nil {
+					phaseStep := step
+					phaseStep.Expect = *budget.Expect
+					if err := validateTestHTTPExpectation(phaseStep, known); err != nil {
+						return fmt.Errorf("phase %q request_deadlines.%s expect: %w", phase.Name, step.Name, err)
+					}
+				}
 			}
 		}
 		if _, err := expandTestHTTPPath(step.Path, known); err != nil {
 			return fmt.Errorf("HTTP step %q path: %w", step.Name, err)
+		}
+		if err := validateTestHTTPHeaderUniqueness(step.Headers); err != nil {
+			return fmt.Errorf("HTTP step %q: %w", step.Name, err)
 		}
 		for key, value := range step.Headers {
 			if !testHTTPHeaderPattern.MatchString(key) || strings.EqualFold(key, "Host") || strings.EqualFold(key, "Content-Length") || strings.EqualFold(key, "Transfer-Encoding") || strings.EqualFold(key, "Proxy-Authorization") {
@@ -165,20 +212,16 @@ func validateTestHTTPRequestsWithData(scenario testScenario, dataFields []string
 			if step.As != "" && strings.EqualFold(key, "Authorization") {
 				return fmt.Errorf("HTTP step %q cannot set Authorization with as", step.Name)
 			}
-			if _, err := expandTestHTTPTemplate(value, known, nil); err != nil {
+			expanded, err := expandTestHTTPTemplate(value, known, nil)
+			if err != nil {
 				return fmt.Errorf("HTTP step %q header %q: %w", step.Name, key, err)
 			}
+			if !httpguts.ValidHeaderFieldValue(expanded) {
+				return fmt.Errorf("HTTP step %q header %q has an invalid value", step.Name, key)
+			}
 		}
-		if _, err := expandTestHTTPJSON(step.JSON, known); err != nil {
+		if err := validateTestHTTPJSON(step.JSON, known); err != nil {
 			return fmt.Errorf("HTTP step %q JSON: %w", step.Name, err)
-		}
-		for pointer, expected := range step.Expect.JSON {
-			if _, err := testJSONPointerParts(pointer); err != nil {
-				return fmt.Errorf("HTTP step %q expectation: %w", step.Name, err)
-			}
-			if _, err := expandTestHTTPJSON(expected, known); err != nil {
-				return fmt.Errorf("HTTP step %q expectation %q: %w", step.Name, pointer, err)
-			}
 		}
 		for capture, pointer := range step.Capture {
 			if !testTriggerKeyPattern.MatchString(capture) || captureNames[capture] {
@@ -202,6 +245,106 @@ func validateTestHTTPRequestsWithData(scenario testScenario, dataFields []string
 		}
 	}
 	return nil
+}
+
+func validateTestHTTPResponseContract(step testHTTPRequest) error {
+	if len(step.Expect.JSON) > 0 || len(step.Capture) > 0 {
+		if step.Method == http.MethodHead {
+			return errors.New("HEAD responses cannot have JSON assertions or captures")
+		}
+		if step.Expect.Status == http.StatusNoContent || step.Expect.Status == http.StatusNotModified {
+			return fmt.Errorf("status %d responses cannot have JSON assertions or captures", step.Expect.Status)
+		}
+	}
+	return nil
+}
+
+func validateTestHTTPExpectation(step testHTTPRequest, known map[string]string) error {
+	if step.Expect.Status < 100 || step.Expect.Status > 599 {
+		return errors.New("needs expect.status between 100 and 599")
+	}
+	if err := validateTestHTTPResponseContract(step); err != nil {
+		return err
+	}
+	if step.Expect.ContentType != "" {
+		if _, _, err := mime.ParseMediaType(step.Expect.ContentType); err != nil {
+			return fmt.Errorf("has invalid expected content type: %w", err)
+		}
+	}
+	for pointer, expected := range step.Expect.JSON {
+		if _, err := testJSONPointerParts(pointer); err != nil {
+			return fmt.Errorf("expectation: %w", err)
+		}
+		if err := validateTestHTTPJSON(expected, known); err != nil {
+			return fmt.Errorf("expectation %q: %w", pointer, err)
+		}
+	}
+	return nil
+}
+
+func validateTestHTTPHeaderUniqueness(headers map[string]string) error {
+	seen := make(map[string]bool, len(headers))
+	for name := range headers {
+		name = strings.ToLower(name)
+		if seen[name] {
+			return errors.New("duplicate HTTP header names (case-insensitive)")
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+func validateTestHTTPJSON(value any, values map[string]string) error {
+	expanded, err := expandTestHTTPJSON(value, values)
+	if err != nil {
+		return err
+	}
+	if _, err := json.Marshal(expanded); err != nil {
+		return errors.New("value must be JSON-encodable with finite numbers")
+	}
+	return nil
+}
+
+// Compare numbers exactly without changing their spelling in captured values.
+func equalTestHTTPJSON(actual, expected any) bool {
+	switch actual := actual.(type) {
+	case json.Number:
+		expected, ok := expected.(json.Number)
+		if !ok {
+			return false
+		}
+		if actual == expected {
+			return true
+		}
+		a, actualErr := behaviorcompare.CanonicalJSON([]byte(actual))
+		b, expectedErr := behaviorcompare.CanonicalJSON([]byte(expected))
+		return actualErr == nil && expectedErr == nil && bytes.Equal(a, b)
+	case map[string]any:
+		expected, ok := expected.(map[string]any)
+		if !ok || len(actual) != len(expected) {
+			return false
+		}
+		for key, value := range actual {
+			other, ok := expected[key]
+			if !ok || !equalTestHTTPJSON(value, other) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		expected, ok := expected.([]any)
+		if !ok || len(actual) != len(expected) {
+			return false
+		}
+		for i, value := range actual {
+			if !equalTestHTTPJSON(value, expected[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return reflect.DeepEqual(actual, expected)
+	}
 }
 
 func expandTestHTTPTemplate(input string, values map[string]string, escape func(string) string) (string, error) {
@@ -236,6 +379,14 @@ func expandTestHTTPPath(path string, values map[string]string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Preserve dot segments as data even when adjacent template fragments form one.
+	parts := strings.Split(pathPart, "/")
+	for i, part := range parts {
+		if part == "." || part == ".." {
+			parts[i] = strings.Repeat("%2E", len(part))
+		}
+	}
+	pathPart = strings.Join(parts, "/")
 	if hasQuery {
 		queryPart, err = expandTestHTTPTemplate(queryPart, values, url.QueryEscape)
 		if err != nil {
@@ -303,7 +454,7 @@ func runTestHTTPRequestsWithData(ctx context.Context, baseURL, runID string, con
 	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	evidence := make([]testHTTPRequestEvidence, 0, len(steps))
 	for _, step := range steps {
-		result := testHTTPRequestEvidence{Name: step.Name, Method: step.Method, Path: strings.SplitN(step.Path, "?", 2)[0]}
+		result := testHTTPRequestEvidence{Name: step.Name, Method: step.Method, Path: strings.SplitN(step.Path, "?", 2)[0], PathTemplateSHA256: testHTTPPathTemplateDigest(step.Path)}
 		started := time.Now()
 		err := runOneTestHTTPRequest(ctx, client, baseURL, step, values, consumerKeys, captures, data, &result)
 		result.DurationMS = time.Since(started).Milliseconds()
@@ -317,6 +468,11 @@ func runTestHTTPRequestsWithData(ctx context.Context, baseURL, runID string, con
 		}
 	}
 	return evidence, nil
+}
+
+func testHTTPPathTemplateDigest(path string) string {
+	digest := sha256.Sum256([]byte(path))
+	return fmt.Sprintf("%x", digest)
 }
 
 func testHTTPValues(runID string, captures map[string]string, data map[string]any) map[string]string {
@@ -345,6 +501,10 @@ func testHTTPConsumerKeys(consumerEnv []string) map[string]string {
 	return consumerKeys
 }
 
+func testHTTPConsumerKey(keys map[string]string, name string) string {
+	return keys[strings.ToUpper(strings.ReplaceAll(name, "-", "_"))]
+}
+
 func runOneTestHTTPRequest(ctx context.Context, client *http.Client, baseURL string, step testHTTPRequest, values, consumerKeys, captures map[string]string, data map[string]any, evidence *testHTTPRequestEvidence) error {
 	return runOneTestHTTPRequestWithBody(ctx, client, baseURL, step, values, consumerKeys, captures, data, evidence, false)
 }
@@ -352,12 +512,15 @@ func runOneTestHTTPRequest(ctx context.Context, client *http.Client, baseURL str
 // Load timings include bounded response consumption, even for status-only steps.
 // This also allows the load transport to reuse connections between journeys.
 func runOneTestHTTPRequestWithBody(ctx context.Context, client *http.Client, baseURL string, step testHTTPRequest, values, consumerKeys, captures map[string]string, data map[string]any, evidence *testHTTPRequestEvidence, fullBody bool) error {
+	if err := validateTestHTTPResponseContract(step); err != nil {
+		return err
+	}
 	path, err := expandTestHTTPPath(step.Path, values)
 	if err != nil {
 		return err
 	}
 	var body io.Reader
-	if step.JSON != nil {
+	if step.hasJSONBody() {
 		expanded, err := expandTestHTTPJSONWithData(step.JSON, values, data)
 		if err != nil {
 			return err
@@ -371,11 +534,14 @@ func runOneTestHTTPRequestWithBody(ctx context.Context, client *http.Client, bas
 		}
 		body = bytes.NewReader(encoded)
 	}
+	if err := validateTestHTTPHeaderUniqueness(step.Headers); err != nil {
+		return err
+	}
 	request, err := http.NewRequestWithContext(ctx, step.Method, baseURL+path, body)
 	if err != nil {
 		return fmt.Errorf("build request: invalid path or body")
 	}
-	if step.JSON != nil {
+	if step.hasJSONBody() {
 		request.Header.Set("Content-Type", "application/json")
 	}
 	for key, value := range step.Headers {
@@ -383,13 +549,18 @@ func runOneTestHTTPRequestWithBody(ctx context.Context, client *http.Client, bas
 		if err != nil {
 			return fmt.Errorf("header %s: %w", key, err)
 		}
+		if !httpguts.ValidHeaderFieldValue(expanded) {
+			return fmt.Errorf("header %s has an invalid value", key)
+		}
 		request.Header.Set(key, expanded)
 	}
 	if step.As != "" {
-		key := strings.ToUpper(strings.ReplaceAll(step.As, "-", "_"))
-		token := consumerKeys[key]
+		token := testHTTPConsumerKey(consumerKeys, step.As)
 		if token == "" {
 			return fmt.Errorf("consumer %q has no test key", step.As)
+		}
+		if !httpguts.ValidHeaderFieldValue(token) {
+			return fmt.Errorf("consumer %q has an invalid test key", step.As)
 		}
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -420,10 +591,16 @@ func runOneTestHTTPRequestWithBody(ctx context.Context, client *http.Client, bas
 		return fmt.Errorf("expected status %d, received %d", step.Expect.Status, response.StatusCode)
 	}
 	if step.Expect.ContentType != "" {
-		actual, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-		expected, _, _ := mime.ParseMediaType(step.Expect.ContentType)
-		if err != nil || actual != expected {
+		actual, actualParams, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+		expected, expectedParams, expectedErr := mime.ParseMediaType(step.Expect.ContentType)
+		if err != nil || expectedErr != nil || actual != expected {
 			return fmt.Errorf("expected content type %s", step.Expect.ContentType)
+		}
+		for name, value := range expectedParams {
+			actualValue, exists := actualParams[name]
+			if !exists || (actualValue != value && (name != "charset" || !strings.EqualFold(actualValue, value))) {
+				return fmt.Errorf("expected content type %s", step.Expect.ContentType)
+			}
 		}
 	}
 	if len(step.Expect.JSON) == 0 && len(step.Capture) == 0 {
@@ -441,6 +618,9 @@ func runOneTestHTTPRequestWithBody(ctx context.Context, client *http.Client, bas
 	if err := decoder.Decode(&document); err != nil {
 		return fmt.Errorf("decode response JSON: %w", err)
 	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return errors.New("response body must contain one JSON value")
+	}
 	for pointer, expected := range step.Expect.JSON {
 		actual, ok := testJSONPointer(document, pointer)
 		if !ok {
@@ -457,7 +637,7 @@ func runOneTestHTTPRequestWithBody(ctx context.Context, client *http.Client, bas
 		comparator := json.NewDecoder(bytes.NewReader(encoded))
 		comparator.UseNumber()
 		var normalized any
-		if err := comparator.Decode(&normalized); err != nil || !reflect.DeepEqual(actual, normalized) {
+		if err := comparator.Decode(&normalized); err != nil || !equalTestHTTPJSON(actual, normalized) {
 			return fmt.Errorf("JSON pointer %q did not match", pointer)
 		}
 	}
@@ -532,7 +712,7 @@ func testJSONPointer(document any, pointer string) (any, bool) {
 			document = value
 		case []any:
 			index, err := strconv.Atoi(part)
-			if err != nil || index < 0 || index >= len(current) {
+			if err != nil || index < 0 || index >= len(current) || strconv.Itoa(index) != part {
 				return nil, false
 			}
 			document = current[index]

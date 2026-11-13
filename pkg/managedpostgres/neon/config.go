@@ -4,9 +4,12 @@
 package neon
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"time"
@@ -15,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/dependencytrace"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/neond"
 )
 
 const (
@@ -61,6 +65,7 @@ type Provider struct {
 	maxRestoreWindow       int64
 	dataAPIEnabled         bool
 	authEnabled            bool
+	sessionEnabled         bool
 	credentialPollInterval time.Duration
 	roles                  credentialRoleManager
 	liveLogins             liveLoginManager
@@ -69,6 +74,9 @@ type Provider struct {
 	cooldown               requestCooldown
 	pacer                  requestPacer
 	backgroundInterval     time.Duration
+	// broker, when set, forwards every Neon call to neond, which holds the
+	// key (ADR-20261112160000); apiKey is then empty.
+	broker brokerForwarder
 }
 
 // New constructs the production Neon driver from a provider-neutral backend
@@ -78,12 +86,22 @@ func New(config managedpostgres.BackendConfig, getenv func(string) string) (mana
 	if getenv == nil || !validOrganizationID.MatchString(config.Namespace) {
 		return nil, errors.New("neon: invalid organization configuration")
 	}
-	if len(config.SecretEnv) != 1 || config.SecretEnv[apiKeySecret] == "" {
-		return nil, errors.New("neon: api-key secret mapping is required")
+	// With neond configured the backend holds no Neon key: neond does
+	// (ADR-20261112160000). A key left beside the broker is refused, so a
+	// cut-over that forgot to remove it fails loudly instead of leaving the
+	// key in apid's environment.
+	brokerTarget := os.Getenv(neond.BrokerEnv)
+	apiKey := ""
+	if name := config.SecretEnv[apiKeySecret]; brokerTarget != "" && name != "" && getenv(name) != "" {
+		return nil, fmt.Errorf("neon: %s holds a Neon key while %s sends Neon calls through neond; remove the key from apid's environment (docs/runbooks/FaasNeond.md)", name, neond.BrokerEnv)
 	}
-	apiKey := getenv(config.SecretEnv[apiKeySecret])
-	if apiKey == "" {
-		return nil, errors.New("neon: configured API credential is unavailable")
+	if brokerTarget == "" {
+		if len(config.SecretEnv) != 1 || config.SecretEnv[apiKeySecret] == "" {
+			return nil, errors.New("neon: api-key secret mapping is required")
+		}
+		if apiKey = getenv(config.SecretEnv[apiKeySecret]); apiKey == "" {
+			return nil, errors.New("neon: configured API credential is unavailable")
+		}
 	}
 	parsed, err := parseSettings(config.Settings)
 	if err != nil {
@@ -100,8 +118,16 @@ func New(config managedpostgres.BackendConfig, getenv func(string) string) (mana
 		},
 	}
 	p := newProvider(config.Region, config.Namespace, apiKey, baseURL, client, parsed)
+	if brokerTarget != "" {
+		broker, err := neond.Dial(context.Background(), brokerTarget)
+		if err != nil {
+			return nil, fmt.Errorf("neon: %w", err)
+		}
+		p.broker = broker
+	}
 	p.dataAPIEnabled = config.DataAPIEnabled
 	p.authEnabled = config.AuthEnabled
+	p.sessionEnabled = config.SessionEnabled
 	return p, nil
 }
 

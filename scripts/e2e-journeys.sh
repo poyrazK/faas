@@ -35,7 +35,7 @@ usage: scripts/e2e-journeys.sh [flags]
                          builder drive, so lower this when sources change)
   --max-apps N           test apps held at once (default: the account's free app slots)
   --sweep-hours N        first delete e2ej- apps from runs older than N hours (default 3, 0 = off)
-  --github-repo O/N      fixture repository for TestGitHubDeploys (needs gh logged in and
+  --github-repo O/N      fixture repository for TestGitHubDeploys and TestPreviewDatabases (needs gh logged in and
                          the account's Gregale GitHub App able to see it)
   --mcp-tool-lifecycle   enable the preview published-tool journey (full tier, explicit
                          --api/$GREGALE_E2E_API and owner API token required)
@@ -43,6 +43,9 @@ usage: scripts/e2e-journeys.sh [flags]
   --mcp-private-tool-lifecycle  enable private invocation acceptance (full tier,
                          explicit API and owner token; separate from open journeys)
   --mcp-url URL          hosted bridge for that journey (default: API origin + /mcp)
+  --github-functions-repo O/N
+                         dedicated fixture repository for TestFunctionsProjectFromGitHub;
+                         the journey rewrites its gregale.yaml and functions/ on main
   --list                 list journeys and exit
 EOF
 }
@@ -65,6 +68,7 @@ keep=0
 max_deploys=4
 max_apps=''
 github_repo="${GREGALE_E2E_GITHUB_REPO:-}"
+github_functions_repo="${GREGALE_E2E_GITHUB_FUNCTIONS_REPO:-}"
 sweep_hours=3
 list=0
 
@@ -86,6 +90,7 @@ while (($#)); do
 	--mcp-hosted-tool-lifecycle) mcp_hosted_tool_lifecycle=1; shift ;;
 	--mcp-private-tool-lifecycle) mcp_private_tool_lifecycle=1; shift ;;
 	--mcp-url) mcp_url="$2"; shift 2 ;;
+	--github-functions-repo) github_functions_repo="$2"; shift 2 ;;
 	--sweep-hours) sweep_hours="$2"; shift 2 ;;
 	--list) list=1; shift ;;
 	-h|--help) usage; exit 0 ;;
@@ -187,6 +192,7 @@ GREGALE_E2E_API="$api" \
 	GREGALE_E2E_MCP_HOSTED_TOOL_LIFECYCLE="$mcp_hosted_tool_lifecycle" \
 	GREGALE_E2E_MCP_PRIVATE_TOOL_LIFECYCLE="$mcp_private_tool_lifecycle" \
 	GREGALE_E2E_MCP_URL="$mcp_url" \
+	GREGALE_E2E_GITHUB_FUNCTIONS_REPO="$github_functions_repo" \
 	GREGALE_E2E_SWEEP_HOURS="$( [[ "$sweep_hours" == 0 ]] || echo "$sweep_hours")" \
 	go test ./tests/journeys -count=1 -json -timeout 150m -parallel 32 -skip '^TestHarness' ${run_re:+-run "$run_re"} 2>&1 |
 	tee "$out/go-test.json" |

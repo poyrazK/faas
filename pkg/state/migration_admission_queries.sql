@@ -54,7 +54,7 @@ SELECT usage.node_id::text AS node_id,sum(usage.ram_mb)::bigint AS ram_mb,sum(us
  SELECT n.id,u.ram,u.cpu FROM compute_nodes n CROSS JOIN LATERAL migration_source_node_usage(n.id,true) u WHERE n.id=ANY(sqlc.arg(node_ids)::uuid[])
  UNION ALL
  SELECT i.node_id,greatest(0,i.capacity_ram_mb-i.ram_mb-p.overhead_mb)::bigint,
-  greatest(0,i.capacity_cpu_millicores-greatest(coalesce(nullif(a.cpu_millicores,0),p.startup_cpu),CASE WHEN i.startup_cpu_boost_until>now() THEN p.startup_cpu ELSE 0 END))::bigint
+  greatest(0,i.capacity_cpu_millicores-greatest(coalesce(i.booked_cpu_millicores,nullif(a.cpu_millicores,0),p.startup_cpu),CASE WHEN i.startup_cpu_boost_until>now() THEN p.startup_cpu ELSE 0 END))::bigint
  FROM instances i
  LEFT JOIN apps a ON a.id=i.app_id CROSS JOIN service_capacity_policy p
  WHERE p.singleton AND (EXISTS(SELECT 1 FROM migration_admissions r WHERE r.phase='committed' AND r.instance_id=i.id AND r.destination_node_id=i.node_id AND r.destination_wake_id=i.wake_id) OR EXISTS(SELECT 1 FROM migration_sources s WHERE s.phase='resumed' AND s.instance_id=i.id AND s.source_node_id=i.node_id AND s.source_wake_id=i.wake_id)) AND i.node_id=ANY(sqlc.arg(node_ids)::uuid[]) AND i.state IN ('waking','cold_booting','running','draining','warm')

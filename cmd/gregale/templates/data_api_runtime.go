@@ -41,7 +41,7 @@ func DataAPIRuntimeFiles() (map[string][]byte, error) {
 		if p == "." {
 			return nil
 		}
-		if strings.HasPrefix(path.Base(p), ".") || p == "test" {
+		if strings.HasPrefix(path.Base(p), ".") || p == "test" || path.Base(p) == "node_modules" {
 			if d.IsDir() {
 				return fs.SkipDir
 			}

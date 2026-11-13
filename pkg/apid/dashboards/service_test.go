@@ -6,6 +6,7 @@ package dashboards
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -24,13 +25,21 @@ type fakeHost struct {
 	apps    map[string]state.App // slug → app
 	sources *fakeSources
 	hidden  map[string]bool // app slugs the request's credential may not see
+	audits  *[]string       // kinds recorded, in order
 }
 
 func (h fakeHost) Sources() Sources { return h.sources }
 
+// AppForAccount lets the caller read its own apps and every organization app
+// (a member's view; the real host checks the membership).
 func (h fakeHost) AppForAccount(_ context.Context, acct state.Account, slug string) (state.App, bool) {
 	app, ok := h.apps[slug]
-	return app, ok && app.AccountID == acct.ID
+	return app, ok && (app.AccountID == acct.ID || app.OrgID != "")
+}
+
+// AppOwner is the app's creator account on the Pro plan.
+func (h fakeHost) AppOwner(_ context.Context, app state.App) (state.Account, bool) {
+	return state.Account{ID: app.AccountID, Plan: api.PlanPro}, true
 }
 func (h fakeHost) ShowsDashboard(_ context.Context, _ state.Account, widgets []api.DashboardWidget) bool {
 	for _, w := range widgets {
@@ -42,6 +51,9 @@ func (h fakeHost) ShowsDashboard(_ context.Context, _ state.Account, widgets []a
 }
 func (h fakeHost) Dashboards() state.DashboardStore { return h.store }
 func (h fakeHost) Logger() *slog.Logger             { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+func (h fakeHost) Audit(_ context.Context, kind string, _ string, data map[string]any) {
+	*h.audits = append(*h.audits, fmt.Sprintf("%s %v", kind, data["name"]))
+}
 
 func newService(enabled bool) (*Service, state.Account) {
 	acct := state.Account{ID: uuid.NewString()}
@@ -51,7 +63,7 @@ func newService(enabled bool) (*Service, state.Account) {
 		"shop":    {ID: uuid.NewString(), AccountID: acct.ID, Slug: "shop"},
 		"ops":     {ID: uuid.NewString(), AccountID: acct.ID, Slug: "ops"},
 		"foreign": {ID: uuid.NewString(), AccountID: other, Slug: "foreign"},
-	}, sources: &fakeSources{ledger: store}, hidden: map[string]bool{}}
+	}, sources: &fakeSources{ledger: store}, hidden: map[string]bool{}, audits: &[]string{}}
 	return &Service{Host: host, Enabled: enabled}, acct
 }
 
@@ -102,6 +114,11 @@ func TestDashboardLifecycle(t *testing.T) {
 	if w := call(t, svc.Delete, acct, http.MethodDelete, created.ID, ""); w.Code != http.StatusNotFound {
 		t.Fatalf("second delete = %d, want 404", w.Code)
 	}
+	// adr: 20261031144636 — every change is audited; refused ones are not.
+	want := "dashboard.created checkout,dashboard.replaced checkout-v2,dashboard.deleted checkout-v2"
+	if got := strings.Join(*svc.Host.(fakeHost).audits, ","); got != want {
+		t.Fatalf("audits = %s, want %s", got, want)
+	}
 }
 
 func TestDashboardWidgetValidation(t *testing.T) {
@@ -128,8 +145,8 @@ func TestDashboardWidgetValidation(t *testing.T) {
 		t.Fatalf("bad name = %d, want 400", w.Code)
 	}
 	off, acct := newService(false)
-	if w := call(t, off.List, acct, http.MethodGet, "", ""); w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("gate off = %d, want 503", w.Code)
+	if w := call(t, off.List, acct, http.MethodGet, "", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("gate off = %d, want 403", w.Code)
 	}
 }
 

@@ -130,6 +130,11 @@ func cmdDeploysRetry(args []string) int {
 	// surface it so the customer can pipe to status/show.
 	resp, err := client.RetryDeploymentFromStage(ctx, depID, fromStage)
 	if err != nil {
+		if isTransportError(err) {
+			// The request may have reached the API before the connection
+			// failed, and a retry is not idempotent: look before retrying.
+			PrintWarn(osStderr, "The retry may already be queued. Check `%s` for a new deployment before retrying again.", cliTreeSpellPath("deployments"))
+		}
 		return printErr("retry deployment failed", err)
 	}
 	if jsonOutput {

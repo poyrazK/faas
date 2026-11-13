@@ -119,8 +119,8 @@ func TestNoteValidationAndScope(t *testing.T) {
 		}
 	}
 	f.svc.Enabled = false
-	if code, _ := post(t, f.svc.Acknowledge, f.acct, id, "ops@example.com", "", nil); code != http.StatusServiceUnavailable {
-		t.Errorf("acknowledge with the gate off = %d; want 503", code)
+	if code, _ := post(t, f.svc.Acknowledge, f.acct, id, "ops@example.com", "", nil); code != http.StatusForbidden {
+		t.Errorf("acknowledge with the gate off = %d; want 403", code)
 	}
 }
 

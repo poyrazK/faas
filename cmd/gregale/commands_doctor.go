@@ -133,6 +133,45 @@ func (r doctorReport) HasProfileWarnings() bool {
 	return r.Profile != nil && len(r.Profile.Warnings) > 0
 }
 
+// actionableProfileWarnings are the profile warnings doctor reports as
+// findings: the source is broken as written. A malformed package.json
+// (package_json_invalid, missing_start_command) passed --strict and read "No
+// local findings" while its profile already named the problem (CLI journey
+// 2026-11-05, #6640). The other codes stay advisory, in the JSON profile
+// only: container_command_deferred is every Dockerfile app,
+// loopback_bind_possible matches any "localhost" (the loopback-bind check is
+// the precise one), and an undetected framework may still build.
+var actionableProfileWarnings = map[string]bool{
+	"package_json_invalid":  true,
+	"missing_start_command": true,
+	// A raw TCP server built from source fails readiness every time.
+	"non_http_service": true,
+}
+
+// ActionableProfileWarnings lists the profile warnings doctor reports.
+func (r doctorReport) ActionableProfileWarnings() []frameworkprofile.Warning {
+	if r.Profile == nil {
+		return nil
+	}
+	return filterActionableProfileWarnings(r.Profile.Warnings)
+}
+
+func filterActionableProfileWarnings(warnings []frameworkprofile.Warning) []frameworkprofile.Warning {
+	var out []frameworkprofile.Warning
+	for _, warning := range warnings {
+		if actionableProfileWarnings[warning.Code] {
+			out = append(out, warning)
+		}
+	}
+	return out
+}
+
+// HasStrictWarnings is what `doctor --strict` and `deploy check --strict`
+// fail on: warn checks and actionable profile warnings.
+func (r doctorReport) HasStrictWarnings() bool {
+	return r.HasWarnings() || len(r.ActionableProfileWarnings()) > 0
+}
+
 func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 	if jsonMode {
 		_ = json.NewEncoder(osStderr).Encode(struct {
@@ -141,12 +180,20 @@ func renderDoctorDeployPreflight(rep doctorReport, jsonMode bool) {
 		}{Doctor: rep, Exit: 0})
 		return
 	}
-	if rep.HasErrors() || rep.HasWarnings() {
+	if rep.HasErrors() || rep.HasStrictWarnings() {
 		renderDoctorHuman(osStderr, rep)
 	}
 	if rep.HasProfileWarnings() {
-		_, _ = fmt.Fprintln(osStderr, "gregale deploy — profile warnings")
+		var advisory []frameworkprofile.Warning
 		for _, warning := range rep.Profile.Warnings {
+			if !actionableProfileWarnings[warning.Code] { // the report above shows those
+				advisory = append(advisory, warning)
+			}
+		}
+		if len(advisory) > 0 {
+			_, _ = fmt.Fprintln(osStderr, "gregale deploy — profile warnings")
+		}
+		for _, warning := range advisory {
 			_, _ = fmt.Fprintf(osStderr, "  ! %s — %s\n", warning.Code, warning.Message)
 			if len(warning.Sources) > 0 {
 				_, _ = fmt.Fprintf(osStderr, "    sources: %s\n", strings.Join(warning.Sources, ", "))
@@ -212,8 +259,17 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	if _, err := os.ReadDir(abs); err != nil {
 		return printErr("Could not read source directory", err)
 	}
-	appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
-	report := withSourceCheck(runDoctorChecksForApp(abs, detectShape(abs), &appEnv), abs)
+	var report doctorReport
+	if hasDeployableSource(abs) {
+		appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
+		report = runDoctorChecksForApp(abs, detectShape(abs), &appEnv)
+		replaceDoctorCheck(&report, doctorRuntimeOOMForApp(context.Background(), appEnv.App))
+	} else {
+		report = noSourceDoctorReport(abs)
+	}
+	if check, found := doctorCheckCapabilities(context.Background(), abs); found {
+		report.Checks = append([]doctorCheck{check}, report.Checks...)
+	}
 	// Honour --strict: a warn under strict promotes to exit 1.
 	// Use the doctorReport helpers so the standalone cmdDoctor
 	// exit semantics stay in sync with `gregale deploy --doctor-strict`
@@ -221,7 +277,7 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	// value (e.g. "skipped") only needs to extend the helpers,
 	// not three parallel iteration sites.
 	exit := 0
-	if report.HasErrors() || (*strict && report.HasWarnings()) {
+	if report.HasErrors() || (*strict && report.HasStrictWarnings()) {
 		exit = 1
 	}
 	if *jsonOut || jsonOutput {
@@ -276,15 +332,25 @@ func runDoctorChecksForApp(path string, deploymentShape shape, appEnv *doctorApp
 	return rep
 }
 
-// withSourceCheck adds the source finding to standalone doctor. Deploy
-// refuses a directory with no app marker or function handler; a Compose root
-// deploys with --project instead, and deploy preflights check their own shape.
-func withSourceCheck(report doctorReport, dir string) doctorReport {
-	if detectShape(dir) != shapeUnknown || composeFileIn(dir) != "" {
-		return report
+// hasDeployableSource reports whether deploy would accept dir: an app marker,
+// a function handler, or a Compose root (which deploys with --project).
+// Deploy preflights check their own shape.
+func hasDeployableSource(dir string) bool {
+	return detectShape(dir) != shapeUnknown || composeFileIn(dir) != ""
+}
+
+// noSourceDoctorReport is standalone doctor on a directory deploy would
+// refuse. The source scans are skipped rather than run: they walk the whole
+// tree, and doctor run from a home directory walked every file under it and
+// stalled on macOS-protected folders in ~/Library.
+func noSourceDoctorReport(dir string) doctorReport {
+	const reason = "no deployable source to scan"
+	rep := doctorReport{Path: dir, Checks: []doctorCheck{doctorCheckNoSource()}}
+	for _, name := range []string{"port-bind", "loopback-bind", "arch", "env-required", "stateless-only"} {
+		rep.Checks = append(rep.Checks, doctorCheck{Name: name, Status: "skipped", Reason: reason})
 	}
-	report.Checks = append([]doctorCheck{doctorCheckNoSource()}, report.Checks...)
-	return report
+	rep.Checks = append(rep.Checks, doctorCheckRuntimeOOM(), doctorCheckDepInstall(), doctorCheckStartupTimeout())
+	return rep
 }
 
 // doctorCheckNoSource reports a directory deploy would refuse: no app marker
@@ -1086,6 +1152,20 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 			if c.Reason != "" {
 				_, _ = fmt.Fprintf(w, "    reason: %s\n", c.Reason)
 			}
+		}
+	}
+	// Actionable profile warnings are findings too: a malformed package.json
+	// read "No local findings" (#6640).
+	for _, warning := range rep.ActionableProfileWarnings() {
+		hasFinding = true
+		if Enabled() {
+			_, _ = fmt.Fprintf(w, "  ! profile %s — warn\n", warning.Code)
+		} else {
+			_, _ = fmt.Fprintf(w, "  profile %s — warn\n", warning.Code)
+		}
+		RenderHintRow(w, warning.Message)
+		if len(warning.Sources) > 0 {
+			_, _ = fmt.Fprintf(w, "    sources: %s\n", strings.Join(warning.Sources, ", "))
 		}
 	}
 	if !hasFinding {

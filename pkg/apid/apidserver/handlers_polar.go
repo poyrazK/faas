@@ -76,6 +76,14 @@ func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
 	}
+	// An order carrying a credit discount draws it from the credits once,
+	// paid or not; like the projection, a failure stays retryable
+	// (ADR-20261104212028).
+	if err := s.drawCreditDiscount(r.Context(), acct, ev.Invoice); err != nil {
+		s.log.Error("polar webhook credit discount draw failed", "event_id", logsanitize.Field(ev.EventID), "err", err)
+		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
+		return
+	}
 	ev, stale := s.freshBillingEvent(r.Context(), ev)
 	if stale {
 		acctID := acct.ID

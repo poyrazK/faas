@@ -13,7 +13,21 @@ func operationIsActive(op Operation) bool {
 }
 
 func operationRetained(op Operation, now time.Time) bool {
-	return operationIsActive(op) || op.ExpiresAt.After(now) || op.DataRepair != nil && (op.DataRepair.Phase == api.DataRepairReplacing || op.DataRepair.Phase == api.DataRepairResolving)
+	return operationIsActive(op) || op.ExpiresAt.After(now) || repairRetainsHistory(op)
+}
+
+// An unresolved source outcome or reserved lifecycle transition has no time
+// limit. Keep its exact identity and events until a durable result settles it.
+func repairRetainsHistory(op Operation) bool {
+	if op.DataRepair == nil {
+		return false
+	}
+	switch op.DataRepair.Phase {
+	case api.DataRepairApplying, api.DataRepairUnknown, api.DataRepairReplacing, api.DataRepairResolving:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *MemStore) operationRetainIdentityLocked(op Operation) {

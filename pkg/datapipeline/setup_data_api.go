@@ -2,9 +2,15 @@ package datapipeline
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 )
+
+// ErrDataAPISourceChanged requests a new build intent only when no deployment
+// was accepted. Accepted source/deployment identities remain immutable.
+var ErrDataAPISourceChanged = fmt.Errorf("%w: saved Data API source changed", ErrConflict)
 
 func (s *Service) advanceDataAPI(ctx context.Context, job *Setup) error {
 	p, err := s.Store.Get(ctx, job.AccountID, job.PipelineID)
@@ -38,6 +44,10 @@ func (s *Service) advanceDataAPI(ctx context.Context, job *Setup) error {
 	case "deploying_api":
 		deployment, build, err := s.DeployDataAPI(ctx, *job)
 		if err != nil {
+			if errors.Is(err, ErrDataAPISourceChanged) {
+				job.Phase = "api_failed"
+				return &blocked{code: "data_api_source_changed"}
+			}
 			return err
 		}
 		job.DataAPIPlan.DeploymentID, job.DataAPIPlan.BuildID = deployment, build
@@ -55,10 +65,12 @@ func (s *Service) advanceDataAPI(ctx context.Context, job *Setup) error {
 			return &blocked{code: "data_api_deployment_failed"}
 		}
 	case "api_failed":
-		// Reached only after an explicit retry. A terminal build needs a new
-		// attempt; persist that identity before submission on the next tick.
-		job.DataAPIPlan.PreviousDeploymentID = job.DataAPIPlan.DeploymentID
-		job.DataAPIPlan.PreviousBuildID = job.DataAPIPlan.BuildID
+		// Reached only after an explicit retry. A failed build or changed,
+		// unaccepted source needs a new intent persisted before submission.
+		if job.DataAPIPlan.DeploymentID != "" {
+			job.DataAPIPlan.PreviousDeploymentID = job.DataAPIPlan.DeploymentID
+			job.DataAPIPlan.PreviousBuildID = job.DataAPIPlan.BuildID
+		}
 		job.DataAPIPlan.DeploymentID, job.DataAPIPlan.BuildID = "", ""
 		job.DataAPIPlan.IntentID = uuid.NewString()
 		job.Phase = "deploying_api"

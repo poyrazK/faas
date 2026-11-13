@@ -322,7 +322,7 @@ func renderTraceResult(traceID string, result api.AccountTraceLookupResponse) in
 			_, _ = fmt.Fprintln(osStdout, "HTTP ACCESS LOGS")
 			for _, event := range result.Logs {
 				_, _ = fmt.Fprintf(osStdout, "  %s · %s · %s %s · status=%d · latency=%dms · event %s\n",
-					event.Timestamp, event.App, event.Method, event.Route, event.Status, event.LatencyMS, event.ID)
+					event.Timestamp, event.App, event.Method, event.Route, event.Status, logQueryLatencyMS(event), event.ID)
 			}
 			if result.LogsTruncated {
 				_, _ = fmt.Fprintln(osStdout, "HTTP access logs truncated to the newest retained events")
@@ -367,6 +367,14 @@ type traceWaterfallEntry struct {
 	end     time.Time
 	label   string
 	pending bool
+}
+
+// logQueryLatencyMS is an access log's latency, 0 when the row carries none.
+func logQueryLatencyMS(event api.LogQueryEvent) int {
+	if event.LatencyMS == nil {
+		return 0
+	}
+	return *event.LatencyMS
 }
 
 // renderTraceWaterfall renders a bounded, relative timeline from the safe
@@ -436,11 +444,14 @@ func renderTraceWaterfall(w io.Writer, result api.AccountTraceLookupResponse) {
 		})
 	}
 	for _, event := range result.Logs {
-		start, err := time.Parse(time.RFC3339Nano, event.Timestamp)
+		// An access log is stamped when the response completed, so the
+		// request began its latency earlier. Plotting the stamp as the start
+		// drew a parent request after the calls it made (ADR-20261110090000).
+		end, err := time.Parse(time.RFC3339Nano, event.Timestamp)
 		if err != nil {
 			continue
 		}
-		end := start.Add(time.Duration(event.LatencyMS) * time.Millisecond)
+		start := end.Add(-time.Duration(logQueryLatencyMS(event)) * time.Millisecond)
 		entries = append(entries, traceWaterfallEntry{
 			start: start,
 			end:   end,

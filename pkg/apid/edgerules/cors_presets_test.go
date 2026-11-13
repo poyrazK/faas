@@ -27,6 +27,14 @@ func TestSharedDomainCORSOriginProblem(t *testing.T) {
 		{name: "without credentials", origins: []string{"https://*.apps.example"}},
 		{name: "the customer's own domain", origins: []string{"https://*.shop.example.com"}, creds: true},
 		{name: "one app's origin", origins: []string{"https://shop.apps.example"}, creds: true},
+		// Round 11: anyone can register a name under a public suffix.
+		{name: "a top-level domain", origins: []string{"https://*.com"}, creds: true, refused: true},
+		{name: "a multi-label ICANN suffix", origins: []string{"https://*.co.uk"}, creds: true, refused: true},
+		{name: "a private suffix", origins: []string{"https://*.github.io"}, creds: true, refused: true},
+		{name: "a hosting platform suffix with a port", origins: []string{"https://*.vercel.app:443"}, creds: true, refused: true},
+		{name: "an unlisted top-level label", origins: []string{"https://*.internal"}, creds: true, refused: true},
+		{name: "a registered domain under a public suffix", origins: []string{"https://*.example.co.uk"}, creds: true},
+		{name: "a public suffix without credentials", origins: []string{"https://*.github.io"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := SharedDomainCORSOriginProblem(tc.origins, tc.creds) != nil; got != tc.refused {

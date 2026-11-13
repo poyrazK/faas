@@ -378,7 +378,11 @@ func (m *MemStore) ExecutionQueueStats(_ context.Context, at time.Time) (Executi
 	return stats, nil
 }
 
-func (m *MemStore) ListExecutionQueueAccounts(_ context.Context, at time.Time, limit int) ([]ExecutionQueueAccount, error) {
+func (m *MemStore) ListExecutionQueueAccounts(ctx context.Context, at time.Time, limit int) ([]ExecutionQueueAccount, error) {
+	return m.ListExecutionQueueAccountsAfter(ctx, at, "", limit)
+}
+
+func (m *MemStore) ListExecutionQueueAccountsAfter(_ context.Context, at time.Time, afterAccountID string, limit int) ([]ExecutionQueueAccount, error) {
 	if at.IsZero() {
 		return nil, ErrExecutionInvalid
 	}
@@ -394,7 +398,7 @@ func (m *MemStore) ListExecutionQueueAccounts(_ context.Context, at time.Time, l
 	byAccount := make(map[string]ExecutionQueueAccount)
 	for _, row := range m.executions {
 		if row.Status != api.ExecutionStatusQueued || row.CancelRequested != nil ||
-			row.CreatedAt.After(at) || !row.DeadlineAt.After(at) {
+			row.CreatedAt.After(at) || !row.DeadlineAt.After(at) || row.AccountID <= afterAccountID {
 			continue
 		}
 		entry := byAccount[row.AccountID]

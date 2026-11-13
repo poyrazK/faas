@@ -14,15 +14,15 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// importComposeEnv writes an opted-in project's plain Compose environment
-// values into each selected app before any build is admitted
-// (ADR-20261023085230). Keys already configured in the scope, as variables
-// or secrets, keep their values. Every app's quota is checked before the
-// first write; no value reaches a log, audit event or problem.
+// importComposeEnv writes a project's importable Compose environment values
+// into each selected app before any build is admitted (ADR-20261023085230):
+// every plain value when the project opted in, and sibling service addresses
+// without the opt-in (ADR-20261104221217). Returning early without the opt-in
+// skipped those addresses although the plan listed them as imported
+// (ADR-20261105104500). Keys already configured in the scope, as variables or
+// secrets, keep their values. Every app's quota is checked before the first
+// write; no value reaches a log, audit event or problem.
 func (s *server) importComposeEnv(r *http.Request, acct state.Account, projectID, scope string, env reposcan.ComposeEnv, workloads []reposcan.Workload, limits api.Limits) *api.Problem {
-	if !env.ImportsAny() {
-		return nil
-	}
 	apps, err := s.store.AppsForProject(r.Context(), acct.ID, projectID)
 	if err != nil {
 		return api.ErrCapacity("could not load project configuration targets")

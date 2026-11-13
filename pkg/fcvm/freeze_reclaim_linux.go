@@ -21,6 +21,13 @@ import (
 // which the raw write returns instead of retrying; any other signal that
 // lands on the thread ends it the same way.
 func writeMemoryReclaim(path string, n int64, timeout time.Duration) error {
+	return writeWithDeadline(path, strconv.FormatInt(n, 10), timeout)
+}
+
+// writeWithDeadline writes payload to a kernel file whose write may run
+// long (memory.reclaim, the MGLRU lru_gen debugfs file) and interrupts it
+// at timeout the same way.
+func writeWithDeadline(path, payload string, timeout time.Duration) error {
 	fd, err := unix.Open(path, unix.O_WRONLY|unix.O_TRUNC|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
@@ -38,7 +45,7 @@ func writeMemoryReclaim(path string, n int64, timeout time.Duration) error {
 			_ = unix.Tgkill(pid, tid, unix.SIGURG)
 		}
 	})
-	_, err = unix.Write(fd, []byte(strconv.FormatInt(n, 10)))
+	_, err = unix.Write(fd, []byte(payload))
 	mu.Lock()
 	writing = false
 	mu.Unlock()

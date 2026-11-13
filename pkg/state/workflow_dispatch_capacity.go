@@ -43,10 +43,10 @@ func (counts workflowDispatchOccupancy) capacityReason(run WorkflowRun) string {
 func (counts workflowDispatchOccupancy) capacityReasonFor(run WorkflowRun, operation bool) string {
 	if !operation {
 		if counts.apps[run.AppID] >= api.WorkflowDispatchMaxPerApp {
-			return api.AutomationQueueAppCapacity
+			return api.StoredWorkflowQueueAppCapacity
 		}
 		if run.PlatformTenantID != "" && counts.tenants[workflowDispatchScope{run.AppID, run.PlatformTenantID}] >= api.WorkflowDispatchMaxPerTenant {
-			return api.AutomationQueueTenantCapacity
+			return api.StoredWorkflowQueueTenantCapacity
 		}
 	}
 	active := counts.definitions[workflowDefinitionScope{run.AppID, run.WorkflowName}]
@@ -54,7 +54,7 @@ func (counts workflowDispatchOccupancy) capacityReasonFor(run WorkflowRun, opera
 		active--
 	}
 	if limit := workflowRunMaxConcurrentRuns(run.DefinitionSnapshot); limit > 0 && active >= limit {
-		return api.AutomationQueueWorkflowCapacity
+		return api.StoredWorkflowQueueWorkflowCapacity
 	}
 	return ""
 }

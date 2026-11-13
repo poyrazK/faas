@@ -94,7 +94,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
-	"github.com/onebox-faas/faas/pkg/triggerconfig"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -370,6 +369,13 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 	for i := range triggers {
 		t := triggers[i]
 		if queuePushLaneEligible(t) {
+			// Only the scheduler that owns the app polls its queue, as for
+			// broker triggers: every node used to poll every queue trigger
+			// each second and race the owner for the same claims
+			// (ADR-20261112200000).
+			if !l.triggerAppOwned(ctx, t) {
+				continue
+			}
 			polled = append(polled, t)
 			l.scheduleQueuePushLanes(ctx, t, store)
 			continue
@@ -440,6 +446,14 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	if !l.engine.appIDCapabilityAllowed(ctx, t.AppID.String(), triggerCapability(t.Kind)) {
 		return nil
 	}
+	// A Gregale queue's push consumer holds its messages while the app's
+	// billing subject is at its spend cap or a compute budget holds it, as
+	// the drain holds async work (ADR-1162): delivering them only met a
+	// refused wake, which spent their attempts until they dead-lettered
+	// (ADR-20261112200000).
+	if t.Kind == string(api.TriggerKindQueue) && l.queueTriggerAppHeld(ctx, t.AppID.String()) {
+		return nil
+	}
 	// An agent-target trigger is not polled on a scheduler that cannot
 	// admit agent runs, or while the agents capability is off for the
 	// account, so its records stay with the broker (ADR-20261027090010 §9).
@@ -464,7 +478,20 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// 1. Poller lookup. Cached on the Loop. A poller that cannot be built
 	// (unreachable broker, credentials that do not open) is the trigger's
 	// health error too, so the customer sees it, not only the scheduler log.
-	poller, _, err := l.pollerForTrigger(t)
+	var poller triggerSource
+	var err error
+	if replays, ok := store.(state.ExternalTriggerReplayStore); ok {
+		records, replayErr := replays.ListDueExternalTriggerReplays(ctx, t.ID.String(), min(100, max(1, int(t.BatchSizeMax))))
+		if replayErr != nil {
+			return fmt.Errorf("load stored trigger replays: %w", replayErr)
+		}
+		if len(records) > 0 {
+			poller = &storedTriggerReplaySource{records: records, kind: t.Kind}
+		}
+	}
+	if poller == nil {
+		poller, _, err = l.pollerForTrigger(ctx, t)
+	}
 	if err != nil {
 		l.recordTriggerConsumerHealth(ctx, store, t, PollResult{Error: err})
 		return err
@@ -494,7 +521,10 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		attribute.String("gregale.trigger.kind", t.Kind))
 	res := poller.Poll(pollCtx, t)
 	settleRate(len(res.Records))
-	l.recordTriggerConsumerHealth(ctx, store, t, res)
+	_, storedReplay := poller.(*storedTriggerReplaySource)
+	if !storedReplay {
+		l.recordTriggerConsumerHealth(ctx, store, t, res)
+	}
 	pollSpan.SetAttributes(attribute.Int("gregale.trigger.records", len(res.Records)))
 	if res.Error != nil {
 		pollSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "error"))
@@ -535,8 +565,10 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	}
 	// ADR-1322 amendment: a realtime trigger's group claims are renewed while
 	// the batch is delivered, so its invocations run for the app's timeout.
-	if realtime, ok := poller.(*realtimePoller); ok {
-		defer realtime.keepLeases(ctx, batchItemIDs(res.Records))()
+	if keeper, ok := poller.(interface {
+		keepLeases(context.Context, []string) func()
+	}); ok {
+		defer keeper.keepLeases(ctx, batchItemIDs(res.Records))()
 	}
 
 	// 3. Batch close: batch_size_max / payload_max_bytes. A broker record
@@ -584,7 +616,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// explicitly excluded via filter should NOT consume a wake
 	// slot from the rate-limit bucket. The gate sees only the
 	// filtered subset.
-	if len(t.FilterCriteria) > 0 {
+	// Stored replays resume work already admitted by the original filter.
+	// Reapplying a changed intake filter would strand the pending replay.
+	if len(t.FilterCriteria) > 0 && !storedReplay {
 		filtered, filterErrCount, filterErr := l.filterBatch(ctx, t, batch)
 		if filterErr != nil {
 			// Catastrophic filter decode error (the JSONB on
@@ -896,11 +930,21 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		l.log.Warn("sched trigger tick: gateway post",
 			"trigger_id", t.ID.String(),
 			"err", postErr)
+		// A schedd shutting down cancels ctx mid-dispatch. Settling with it
+		// failed, so every claim stayed leased until the claim lease lapsed
+		// and a binding at its concurrency stalled for minutes after each
+		// restart (ADR-20261112200000). Settle with a detached context.
+		settleCtx := ctx
+		if ctx.Err() != nil {
+			var cancelSettle context.CancelFunc
+			settleCtx, cancelSettle = context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancelSettle()
+		}
 		if rt, ok := poller.(*realtimePoller); ok {
-			l.returnRealtimeBatch(ctx, t, rt, claimed, "dispatch_"+triggerReasonBrokerError)
+			l.returnRealtimeBatch(settleCtx, t, rt, claimed, "dispatch_"+triggerReasonBrokerError)
 			return fmt.Errorf("%w: %w", errTriggerGatewayDispatch, postErr)
 		}
-		retryItems, retryDue, exhaustedItems := l.markRetryAll(ctx, t, claimed, postErr.Error(), store)
+		retryItems, retryDue, exhaustedItems := l.markRetryAll(settleCtx, t, claimed, postErr.Error(), store)
 		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeRetry, len(retryItems))
 		l.observeESMRecordOutcome(t.Kind, wire.ESMRecordOutcomeDeadLetter, len(exhaustedItems))
 		l.observeESMRecordProcessingBatch(t.Kind, claimed)
@@ -913,23 +957,23 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		// dropped those entries on the floor.
 		if _, isQueue := poller.(*queuePoller); isQueue {
 			if len(retryItems) > 0 {
-				_ = poller.Nack(ctx, t, retryItems, triggerReasonBrokerError)
+				_ = poller.Nack(settleCtx, t, retryItems, triggerReasonBrokerError)
 			}
 		} else {
-			l.releaseTriggerItems(ctx, t, poller, retryItems, retryDue)
+			l.releaseTriggerItems(settleCtx, t, poller, retryItems, retryDue)
 		}
 		if len(exhaustedItems) > 0 {
 			items := claimedItemIDs(exhaustedItems)
 			if _, isQueue := poller.(*queuePoller); isQueue {
-				if err := poller.Nack(ctx, t, items, triggerReasonMaxAttempts); err != nil {
+				if err := poller.Nack(settleCtx, t, items, triggerReasonMaxAttempts); err != nil {
 					l.log.Warn("sched trigger tick: finalize exhausted queue batch", "trigger_id", t.ID.String(), "err", err)
 				} else {
-					l.deadLetterAllWithMark(ctx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonMaxAttempts, postErr.Error(), store, false)
+					l.deadLetterAllWithMark(settleCtx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonMaxAttempts, postErr.Error(), store, false)
 				}
 			} else {
-				finalized := l.deadLetterAllForApp(ctx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonMaxAttempts, postErr.Error(), store, exhaustedItems...)
+				finalized := l.deadLetterAllForApp(settleCtx, t.AppID.String(), t.AccountID.String(), t.ID.String(), items, triggerReasonMaxAttempts, postErr.Error(), store, exhaustedItems...)
 				if len(finalized) > 0 {
-					_ = poller.Nack(ctx, t, finalized, triggerReasonMaxAttempts)
+					_ = poller.Nack(settleCtx, t, finalized, triggerReasonMaxAttempts)
 				}
 			}
 		}
@@ -1504,6 +1548,19 @@ const triggerBatchDefaultWait = 60 * time.Second
 
 // appAsyncInvocationTimeout is how long one invocation of appID may run
 // (ADR-1180). A failed lookup keeps the 30 s floor.
+// queueTriggerAppHeld reports a queue trigger's app held by its spend cap or
+// a compute budget. A read error holds nothing; delivery decides as before.
+func (l *Loop) queueTriggerAppHeld(ctx context.Context, appID string) bool {
+	if l.engine == nil {
+		return false
+	}
+	app, err := l.engine.Store().AppByID(ctx, appID)
+	if err != nil {
+		return false
+	}
+	return l.cronAppBudgetHeld(ctx, app)
+}
+
 func appAsyncInvocationTimeout(ctx context.Context, store interface {
 	state.AccountReader
 	AppByID(context.Context, string) (state.App, error)
@@ -2179,7 +2236,7 @@ func (l *Loop) recordTriggerConsumerHealth(ctx context.Context, store storeLike,
 		Error:      errText,
 	}
 	if res.Error == nil {
-		if poller, _, err := l.pollerForTrigger(t); err == nil && poller != nil {
+		if poller, _, err := l.pollerForTrigger(ctx, t); err == nil && poller != nil {
 			if ss, ok := poller.(triggerStatsSource); ok {
 				stats := ss.BrokerStats(ctx, t)
 				if stats.Available {
@@ -2515,6 +2572,9 @@ func (l *Loop) filterBatch(
 // the Loop and a per-tick snapshot would race the cache
 // invalidation on enable/disable transitions.
 func ackSingle(ctx context.Context, t sqlc.Trigger, rec SourceRecord, l *Loop) error {
+	if rec.StoredReplay {
+		return nil
+	}
 	if l == nil {
 		return nil
 	}
@@ -2542,7 +2602,7 @@ func ackSingle(ctx context.Context, t sqlc.Trigger, rec SourceRecord, l *Loop) e
 
 // pollerForTrigger returns the cached triggerSource for t, constructing
 // and caching it if not yet present.
-func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
+func (l *Loop) pollerForTrigger(ctx context.Context, t sqlc.Trigger) (triggerSource, bool, error) {
 	if l == nil {
 		return nil, false, nil
 	}
@@ -2567,7 +2627,7 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	// ADR-20261101104512): a broker connect, or a Kafka reader leaving its
 	// group, can take seconds while other lanes look up their pollers.
 	l.closeTriggerPoller(id, stale)
-	src, registered, err := l.buildTriggerPoller(t)
+	src, registered, err := l.buildTriggerPoller(ctx, t)
 	if err != nil || !registered {
 		return nil, registered, err
 	}
@@ -2614,9 +2674,9 @@ func (l *Loop) cachedTriggerPoller(t sqlc.Trigger) triggerSource {
 }
 
 // buildTriggerPoller opens a trigger's credentials and builds its poller.
-func (l *Loop) buildTriggerPoller(t sqlc.Trigger) (triggerSource, bool, error) {
+func (l *Loop) buildTriggerPoller(ctx context.Context, t sqlc.Trigger) (triggerSource, bool, error) {
 	pollerTrigger := t
-	openedConfig, err := triggerconfig.Open(api.TriggerKind(t.Kind), t.Config, l.triggerSecretIdentities)
+	openedConfig, err := l.openTriggerConfig(ctx, t)
 	if err != nil {
 		return nil, false, fmt.Errorf("open %s trigger credentials: %w", t.Kind, err)
 	}
@@ -2669,6 +2729,7 @@ func (l *Loop) closeTriggerPoller(id string, p triggerSource) {
 // consumer group instead of holding partitions for the process lifetime.
 // Only pollers this loop built are evicted.
 func (l *Loop) evictTriggerPollers(enabled []sqlc.Trigger) {
+	l.queuePushLanes.prune(enabled)
 	l.triggerPollersMu.Lock()
 	if len(l.triggerPollerConfigs) == 0 {
 		l.triggerPollersMu.Unlock()

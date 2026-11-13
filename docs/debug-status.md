@@ -50,14 +50,33 @@ and what to change:
 Out of memory     11:50:02  peak 600 MB, plan 512 MB  deployment 3f2a9c41  (instance replaced)
 
 Memory:
-  • upgrade from a 512 MB plan to a plan with at least 608 MB of RAM
+  • raise the app's memory from 512 MB to at least 608 MB, e.g. `gregale app <app> --ram 1024` (your account plan sets the per-app maximum)
   • trim in-memory state (caches, buffers, large request bodies held in memory)
 ```
+
+`gregale inspect <app>` and `gregale doctor --app <app>` report the same
+kills from the last 24 hours on every plan, as the `app_runtime_oom`
+recommendation of `GET /v1/apps/{slug}/operational-summary`.
 
 A live release keeps serving after an out-of-memory kill: the instance is
 replaced and the next request starts a new one. A deployment that is still
 starting or rolling out fails instead (`app_runtime_oom`), and your previous
 release keeps serving.
+
+Where Gregale has released memory warnings to your account, the status also
+shows when your app ran short of memory in the last day, before any kill, and
+the RAM that would have kept 30% of it free, rounded up to 64 MB:
+
+```
+Memory pressure   available fell to 40 of 480 MB (8%), 3 episodes in the last day, newest 2026-11-05 10:00 UTC
+
+Memory:
+  Raise ram_mb from 512 MB: about 704 MB would have kept 30% free, and the pro plan allows up to 1024 MB.
+```
+
+When the suggestion is more than your plan allows, the line names the
+smallest plan that allows it. `gregale app health` gives the same suggestion
+in its `memory` check, and `--json` returns it as `memory_pressure`.
 
 ## Why was my release rolled back, or why is it waiting?
 

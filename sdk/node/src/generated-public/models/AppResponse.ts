@@ -67,6 +67,14 @@ export type AppResponse = {
    * Requests one Node or Python function worker serves at once. 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy.
    */
   function_concurrency?: number;
+  /**
+   * Names this function's typed client may call and their app slugs, set by functions-project deploys. Stamped into the guest as GREGALE_FUNCTIONS on the next deploy.
+   */
+  function_callables?: Record<string, string>;
+  /**
+   * JSON Schema an SDK functions client's calls to this function are checked against; a call whose body does not match is refused with 422 function_input_invalid. Set from the function's input in gregale.yaml by CLI deploys.
+   */
+  function_input_schema?: Record<string, any>;
   min_instances: number;
   /**
    * Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted lifecycle remains active until the first deploy.
@@ -221,7 +229,7 @@ export type AppResponse = {
    */
   require_signed?: boolean;
   /**
-   * Per-app two-tier snapshot flag. True on Pro/Scale by default; Free/Hobby always false.
+   * Per-app two-tier snapshot flag. False by default; Pro/Scale may opt in, Free/Hobby always false.
    */
   warm_snapshot_enabled?: boolean;
   /**

@@ -1,0 +1,21 @@
+const http2 = require('node:http2');
+const [host, ip, method = 'Say'] = process.argv.slice(2);
+if (!host || !['Say', 'Stream', 'Fail'].includes(method)) throw new Error('usage: node h2-client.cjs HOST [IP|-] [Say|Stream|Fail]');
+const options = {servername: host};
+if (ip && ip !== '-') options.lookup = (_host, _opts, cb) => cb(null, [{address: ip, family: 4}]);
+const session = http2.connect(`https://${host}`, options);
+session.setTimeout(30000, () => session.destroy(new Error('timeout')));
+session.on('error', err => { console.error(err.message); process.exitCode = 1; });
+const req = session.request({':method': 'POST', ':path': `/zone.Echo/${method}`, 'content-type': 'application/grpc', te: 'trailers'});
+let headers, trailers, bytes = 0;
+req.on('response', h => { headers = h; });
+req.on('trailers', t => { trailers = t; });
+req.on('data', b => { bytes += b.length; });
+req.on('error', err => { console.error(err.message); session.close(); process.exitCode = 1; });
+req.on('end', () => {
+  const status = trailers?.['grpc-status'] ?? headers?.['grpc-status'];
+  console.log(JSON.stringify({method, http: headers?.[':status'], headers, trailers: trailers || null, bytes}));
+  if (status !== (method === 'Fail' ? '9' : '0')) process.exitCode = 1;
+  session.close();
+});
+req.end(Buffer.from([0, 0, 0, 0, 2, 104, 105]));

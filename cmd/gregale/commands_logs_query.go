@@ -313,6 +313,7 @@ func httpLogQueryEvent(row api.DebugTelemetryRequestItem) api.LogQueryEvent {
 	if row.TraceID != nil {
 		traceID = *row.TraceID
 	}
+	latencyMS := row.LatencyMS
 	return api.LogQueryEvent{
 		ID:           row.ID,
 		Timestamp:    row.ReceivedAt,
@@ -325,7 +326,7 @@ func httpLogQueryEvent(row api.DebugTelemetryRequestItem) api.LogQueryEvent {
 		Method:       row.Method,
 		Status:       row.Status,
 		Message:      fmt.Sprintf("%s returned %d in %dms", requestLine(row.Method, row.Route), row.Status, row.LatencyMS),
-		LatencyMS:    row.LatencyMS,
+		LatencyMS:    &latencyMS,
 		Count:        row.Count,
 		ColdBoot:     row.ColdBoot,
 	}
@@ -337,17 +338,31 @@ func renderHTTPLogQueryEvent(w io.Writer, event api.LogQueryEvent) {
 		requestID = event.ID
 	}
 	_, _ = fmt.Fprintf(w, "%s http status=%d method=%s route=%q latency=%dms request=%s deployment=%s",
-		event.Timestamp, event.Status, event.Method, event.Route, event.LatencyMS, requestID, event.DeploymentID)
+		event.Timestamp, event.Status, event.Method, event.Route, logQueryLatencyMS(event), requestID, event.DeploymentID)
 	if event.TraceID != "" {
 		_, _ = fmt.Fprintf(w, " trace=%s", event.TraceID)
 	}
 	if event.Count > 1 {
 		_, _ = fmt.Fprintf(w, " count=%d", event.Count)
 	}
+	if minuteWindowTimestamp(event.Timestamp) {
+		_, _ = fmt.Fprint(w, " window=1m")
+	}
 	if event.ColdBoot {
 		_, _ = fmt.Fprint(w, " cold_boot=true")
 	}
 	_, _ = fmt.Fprintln(w)
+}
+
+// minuteWindowTimestamp reports whether a request row's time is the start of
+// the minute it was counted in. The gateway folds request telemetry into
+// per-minute rows, so a stored row's received_at is its minute, not the
+// request's own time; a row read from the request journal keeps
+// milliseconds. Marking it keeps 07:43:00Z from reading as an exact time
+// (Hunt 32 H32-64).
+func minuteWindowTimestamp(raw string) bool {
+	at, err := time.Parse(time.RFC3339Nano, raw)
+	return err == nil && at.Second() == 0 && at.Nanosecond() == 0
 }
 
 // validateHTTPLogRoute rejects a bare path for --route. Request telemetry

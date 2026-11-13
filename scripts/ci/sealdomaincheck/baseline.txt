@@ -4,7 +4,6 @@
 # each needs review. Regenerate with: go run ./scripts/ci/sealdomaincheck -write
 credential file:deploy/ansible/node_join.yml /etc/faas/secrets/fleet.age
 credential file:deploy/ansible/node_join.yml /etc/faas/secrets/host.age
-credential file:deploy/ansible/roles/livequeryd_service/templates/50-faas-livequeryd.conf.j2 /etc/faas/secrets/livequeryd/keys.age
 credential unit:faas-apid /etc/faas/secrets/fleet.age
 credential unit:faas-apid /etc/faas/secrets/host.age
 credential unit:faas-apid-clone-worker /etc/faas/secrets/fleet.age
@@ -37,19 +36,24 @@ loader cmd/schedd/cluster_key_loader.go 1
 loader cmd/schedd/internal_svc_minter.go 1
 loader cmd/schedd/main.go 2
 loader cmd/vmmd/main.go 4
+loader cmd/vmmd/runtime_secret_opener.go 1
 loader pkg/apid/apidserver/main.go 3
 loader pkg/apid/apidserver/project_environment_clone_worker.go 2
 loader pkg/apid/mailoutbox/verification_config.go 1
 loader pkg/datapipeline/config.go 2
 loader pkg/internalmail/keyring_config.go 2
+plain account_email_changes.token_hash
 plain accounts.mfa_recovery_codes_hash
+plain agent_approval_requests.body_sha256
 plain api_consumer_signups.claim_hash
 plain api_keys.key_sha256
+plain app_basic_auth_verifiers.sealed_sha256
 plain app_env_batch_receipts.request_sha256
 plain app_fork_execs.stderr
 plain app_fork_execs.stdout
 plain app_forks.access_token_hash
 plain app_openapi_docs.doc_sha256
+plain app_scaling_receipts.request_hash
 plain app_task_attach_sessions.attach_token_sha256
 plain app_trusted_signers.cosign_public_key
 plain application_standard_publishers.public_key_der
@@ -118,6 +122,7 @@ plain managed_realtime_worker_credentials.token_hash
 plain mcp_bridge_state.sealed
 plain mfa_disable_requests.token_hash
 plain mfa_disable_tokens.token_hash
+plain mfa_trusted_browsers.token_hash
 plain migration_admissions.adoption_receipt
 plain mirror_invocation_results.body_hash
 plain mirror_invocation_results.schema_hash
@@ -147,8 +152,12 @@ plain runtime_upgrade_external_fence_authorities.public_key
 plain runtime_upgrade_external_fence_receipts.envelope
 plain runtime_upgrade_native_public_startups.envelope
 plain runtime_upgrade_native_public_startups.review
+plain stored_workflow_live_verifications.request_fingerprint
+# SHA-256 request digest only; no reversible secret or encryption key (ADR-20261111130000).
+plain support_receipts.request_hash
+# ADR-20261112134100: SHA-256 destination binding for stable mail retries, not a credential.
+plain support_notifications.destination_hash
 plain trigger_records.work_fairness_digest
 plain trigger_records.work_key_digest
-plain workflow_automation_live_verifications.request_fingerprint
 plain workflow_runs.create_request_fingerprint
 plain workflow_webhook_receipts.body_hash

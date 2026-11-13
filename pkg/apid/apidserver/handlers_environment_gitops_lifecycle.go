@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -63,6 +64,10 @@ func (s *server) rebindEnvironmentGitSource(w http.ResponseWriter, r *http.Reque
 	}
 	spec := source.Spec
 	spec.Ref, spec.ManifestPath, spec.ApprovalPolicy, spec.Mode, spec.Prune = request.Ref, request.ManifestPath, request.ApprovalPolicy, "report", false
+	if _, shared := projectaccess.From(r.Context()); shared && spec.Provider == "gitlab" {
+		api.WriteProblem(w, companyProjectGitLabUnavailable())
+		return
+	}
 	if spec.Provider == "gitlab" {
 		token, tokenErr := s.gitLabTokenForAccount(r.Context(), acct.ID)
 		if tokenErr != nil {

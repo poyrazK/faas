@@ -79,7 +79,8 @@ func TestManagedPostgresDatabaseNodeMetal(t *testing.T) {
 	if err := os.Mkdir(run, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(run) })
+	// Runs last: after the node's processes stop and its cgroup is killed.
+	t.Cleanup(func() { removeDbNodeRun(t, run) })
 	node := startDatabaseNode(t, run, filepath.Join(workdir, "bases"), guestInit, bins)
 
 	// schedd reaches the node's vmmd; apid reaches schedd through a link

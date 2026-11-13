@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -42,6 +43,15 @@ func (m *MemStore) SetOutboundAIPolicy(_ context.Context, accountID, integration
 			return ErrInvalidArgument
 		}
 	}
+	semantic := policy.semanticCache()
+	if semantic != nil {
+		embedding, ok := m.outboundIntegrationOffers[semantic.EmbeddingIntegrationID]
+		if offer.RequestPolicy.ResponseCacheTTLSeconds <= 0 || !ok || embedding.AccountID != accountID || !embedding.Enabled ||
+			embedding.OwnerKind != "customer" || !slices.Contains(api.OutboundAISemanticCacheEmbeddingProviders, embedding.AIProvider) {
+			return ErrInvalidArgument
+		}
+	}
+	offer.AISemanticCache = semantic
 	offer.AIProvider = policy.Provider
 	offer.AIDailyTokenLimit = copyInt64Ptr(policy.DailyTokenLimit)
 	offer.AIDailyCostLimit = copyInt64Ptr(policy.DailyCostLimit)

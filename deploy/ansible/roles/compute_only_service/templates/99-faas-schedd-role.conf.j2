@@ -3,3 +3,24 @@
 # so a stale single-box default cannot make a node-local schedd claim the
 # wrong topology.
 Environment=FAAS_SCHEDD_ROLE={{ faas_box_role }}
+{% if (faas_app_owner_authority | default('any')) != 'any' %}
+# ADR-20261110210000 §4: app owners are assigned by the control plane.
+Environment=FAAS_APP_OWNER_AUTHORITY={{ faas_app_owner_authority }}
+{% endif %}
+{% if (faas_schedd_frozen_tier | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+
+# Wake-path switches (manifest hot_path).
+Environment=FAAS_FROZEN_TIER=true
+{% endif %}
+{% if (faas_schedd_frozen_fast_path | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+Environment=FAAS_FROZEN_FAST_PATH=true
+{% endif %}
+{% if (faas_schedd_owner_cache | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
+Environment=FAAS_OWNER_CACHE=true
+{% endif %}
+{% if (faas_schedd_invocation_dispatch_concurrency | default(0) | int) > 0 %}
+
+# Drain slots shared by every tenant on this node (manifest
+# hot_path.invocation_dispatch_concurrency; binary default 8).
+Environment=FAAS_SCHEDD_INVOCATION_DISPATCH_CONCURRENCY={{ faas_schedd_invocation_dispatch_concurrency | int }}
+{% endif %}

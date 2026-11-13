@@ -76,7 +76,7 @@ tests:
               public_status: "internal"
             exp_annotations:
               summary: "More than 5% of cacheable lookups bypass the cache as authenticated"
-              description: "A cache rule is matching credentialed traffic, so more than 5% of response-cache decisions over 10m bypassed the cache as bypass_authed."
+              description: "A cache rule is matching credentialed traffic, so more than 5% of response-cache decisions over 10m bypassed the cache as bypass_authed, at more than 0.1 lookups per second."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResponseCache.md"
 
   - interval: 1m

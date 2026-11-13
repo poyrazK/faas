@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -63,6 +64,22 @@ func (s *PgStore) environmentCandidateInputsTx(ctx context.Context, tx pgx.Tx, l
 		return nil, gitOpsIntentSnapshot{}, revision, fmt.Errorf("environment workload candidate inputs: %w", err)
 	}
 	return inputs, snapshot, revision, nil
+}
+
+// storedCandidateInputsMatch reads a candidate's frozen inputs and compares
+// them with the reviewed intent. Once activation makes the candidate live and
+// unheld, its inherited baseline is carried over (activatedCandidateInputsMatch).
+func storedCandidateInputsMatch(ctx context.Context, tx pgx.Tx, id pgtype.UUID, frozen EnvironmentWorkloadRuntime) (bool, error) {
+	var stored []byte
+	var held bool
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT environment_workload_runtime, environment_workload_held, status FROM deployments WHERE id=$1`, id).Scan(&stored, &held, &status); err != nil {
+		return false, mapErr(err)
+	}
+	if frozenCandidateInputsMatch(stored, frozen) {
+		return true, nil
+	}
+	return !held && DeploymentStatus(status) == DeployLive && activatedCandidateInputsMatch(stored, frozen), nil
 }
 
 func (s *PgStore) PrepareEnvironmentGitOpsImageCandidates(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan) ([]EnvironmentWorkloadCandidate, error) {
@@ -132,11 +149,11 @@ func (s *PgStore) prepareEnvironmentGitOpsCandidatesOnce(ctx context.Context, le
 		if err != nil {
 			return nil, err
 		}
-		var storedRuntime []byte
-		if err := tx.QueryRow(ctx, `SELECT environment_workload_runtime FROM deployments WHERE id=$1`, id).Scan(&storedRuntime); err != nil {
-			return nil, mapErr(err)
+		matches, err := storedCandidateInputsMatch(ctx, tx, id, frozen)
+		if err != nil {
+			return nil, err
 		}
-		if !frozenCandidateInputsMatch(storedRuntime, frozen) {
+		if !matches {
 			return nil, fmt.Errorf("%w: stored candidate inputs differ from the reviewed intent", ErrConflict)
 		}
 		out = append(out, EnvironmentWorkloadCandidate{DeploymentID: pgUUIDString(dep.ID), BuildID: dep.BuildID, AppID: pgUUIDString(dep.AppID), Resource: frozen.Resource,
@@ -180,11 +197,11 @@ func (s *PgStore) EnvironmentGitOpsSourceRequests(ctx context.Context, lease Env
 		id, err := sqlc.New().EnvironmentGitOpsCandidateByInput(ctx, tx, sqlc.EnvironmentGitOpsCandidateByInputParams{
 			SourceID: lease.Source.ID, Generation: strconv.FormatInt(lease.Source.Generation, 10), Resource: frozen.Resource, PlanHash: reviewed.Hash})
 		if err == nil {
-			var storedRuntime []byte
-			if err := tx.QueryRow(ctx, `SELECT environment_workload_runtime FROM deployments WHERE id=$1`, id).Scan(&storedRuntime); err != nil {
-				return nil, mapErr(err)
+			matches, err := storedCandidateInputsMatch(ctx, tx, id, frozen)
+			if err != nil {
+				return nil, err
 			}
-			if !frozenCandidateInputsMatch(storedRuntime, frozen) {
+			if !matches {
 				return nil, ErrConflict
 			}
 			continue

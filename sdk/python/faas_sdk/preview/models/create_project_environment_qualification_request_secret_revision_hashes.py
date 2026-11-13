@@ -11,6 +11,12 @@ T = TypeVar("T", bound="CreateProjectEnvironmentQualificationRequestSecretRevisi
 
 @_attrs_define
 class CreateProjectEnvironmentQualificationRequestSecretRevisionHashes:
+    """Per-workload secret fingerprints plus the reserved project:secrets identity from the pre-probe environment state.
+    The shared identity is required once the environment has held shared secrets, including after the final key is
+    deleted.
+
+    """
+
     additional_properties: dict[str, str] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

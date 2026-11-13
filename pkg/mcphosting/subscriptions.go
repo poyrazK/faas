@@ -69,12 +69,16 @@ func (c *Client) ListenCatalogChange(ctx context.Context, filter CatalogNotifica
 
 	c.nextID++
 	id := c.nextID
+	resourceSubscriptions := filter.ResourceSubscriptions
+	if resourceSubscriptions == nil {
+		resourceSubscriptions = []string{}
+	}
 	params := map[string]any{
 		"notifications": map[string]any{
 			"toolsListChanged":      filter.ToolsListChanged,
 			"resourcesListChanged":  filter.ResourcesListChanged,
 			"promptsListChanged":    filter.PromptsListChanged,
-			"resourceSubscriptions": filter.ResourceSubscriptions,
+			"resourceSubscriptions": resourceSubscriptions,
 			"taskIds":               []string{},
 		},
 		"_meta": map[string]any{

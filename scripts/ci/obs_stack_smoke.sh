@@ -96,6 +96,19 @@ sudo install -d -m 0755 /etc/faas/secrets/loki
 printf 'AWS_ACCESS_KEY_ID=obs-smoke\nAWS_SECRET_ACCESS_KEY=obs-smoke\n' | sudo tee /etc/faas/secrets/loki/s3.env >/dev/null
 sudo chmod 0400 /etc/faas/secrets/loki/s3.env
 
+# ADR-20261107203000: Alloy ships the audit log off the host. auditd set up
+# as host_hardening sets it (log_group adm, /var/log/audit root:adm 0750,
+# the SIGHUP reload) with its unit-write rule.
+log "auditd with the faas_units watch"
+sudo apt-get update -qq >/dev/null
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq auditd >/dev/null
+sudo sed -i 's/^[[:space:]]*log_group[[:space:]]*=.*/log_group = adm/' /etc/audit/auditd.conf
+sudo chgrp adm /var/log/audit
+sudo chmod 0750 /var/log/audit
+sudo systemctl kill --signal=SIGHUP auditd
+sudo auditctl -w /etc/systemd/system/ -p wa -k faas_units >/dev/null
+sudo auditctl -l
+
 log "webhook sink on 127.0.0.1:18099"
 : >"$S/sink.log"
 python3 "$ROOT/scripts/ci/obs_stack_smoke_helpers.py" sink 18099 "$S/sink.log" &
@@ -160,6 +173,35 @@ dropped=$(prom query 'query=sum(loki_write_dropped_entries_total{job="promtail"}
 	python3 -c 'import json, sys; print(json.load(sys.stdin)["data"]["result"][0]["value"][1])')
 [[ "$dropped" == 0 ]] || fail "Alloy dropped $dropped entries"
 echo "ok: Alloy dropped no entries"
+
+# Host security evidence (ADR-20261107203000): a refused sudo in the journal
+# and a unit written outside any login session (systemd-run starts it from
+# PID 1, so its audit auid is unset) each reach Loki with their event label,
+# count in faas_security_events_total and fire FaasHostSecurityEvent. The
+# audit source reads from the end of the log, so the events are repeated
+# until Alloy has picked the file up.
+security_events() {
+	logger -t sudo "obs-smoke : user NOT in sudoers ; TTY=pts/0 ; PWD=/ ; USER=root ; COMMAND=/usr/bin/true"
+	sudo systemd-run --quiet --wait --collect cp /dev/null /etc/systemd/system/obs-smoke-audit.service
+	sudo gregalectl obs logs --query '{job="faas-security", event="sudo_denied"}' --since 15m --limit 5 | grep -q 'NOT in sudoers' &&
+		sudo gregalectl obs logs --query '{job="faas-security", source="auditd", event="host_config_write_unattended"}' --since 15m --limit 5 | grep -q 'key="faas_units"'
+}
+wait_for 120 "security events reach Loki with their event label" security_events
+security_counted() {
+	prom query 'query=sum by (event) (faas_security_events_total{event=~"sudo_denied|host_config_write_unattended"})' | python3 -c '
+import json, sys
+got = {r["metric"]["event"] for r in json.load(sys.stdin)["data"]["result"]}
+sys.exit(0 if got == {"sudo_denied", "host_config_write_unattended"} else 1)'
+}
+wait_for 90 "Alloy counts both events in faas_security_events_total" security_counted
+security_alerted() {
+	prom query 'query=ALERTS{alertname="FaasHostSecurityEvent",alertstate="firing"}' | python3 -c '
+import json, sys
+got = {r["metric"]["event"] for r in json.load(sys.stdin)["data"]["result"]}
+sys.exit(0 if {"sudo_denied", "host_config_write_unattended"} <= got else 1)'
+}
+wait_for 90 "FaasHostSecurityEvent fires for both events" security_alerted
+sudo rm -f /etc/systemd/system/obs-smoke-audit.service
 
 GRAFANA_AUTH="admin:$(sudo cat /etc/grafana/secrets/admin_password)"
 grafana() { curl -fsS -u "$GRAFANA_AUTH" "http://127.0.0.1:3000/api/$1"; }

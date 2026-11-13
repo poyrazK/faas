@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -142,14 +143,16 @@ func (s *PgStore) UpdateManagedRealtimeEndpoint(ctx context.Context, id string, 
 	if p.DisconnectPath != nil {
 		current.DisconnectPath = *p.DisconnectPath
 	}
+	// bytes.Clone keeps an empty patch non-nil: the sealed columns are
+	// NOT NULL, and finalizing a rotation clears the previous token to ''.
 	if p.CallbackAuthTokenSealed != nil {
-		current.CallbackAuthTokenSealed = append([]byte(nil), (*p.CallbackAuthTokenSealed)...)
+		current.CallbackAuthTokenSealed = bytes.Clone(*p.CallbackAuthTokenSealed)
 	}
 	if p.AuthTokenSealed != nil {
-		current.AuthTokenSealed = append([]byte(nil), (*p.AuthTokenSealed)...)
+		current.AuthTokenSealed = bytes.Clone(*p.AuthTokenSealed)
 	}
 	if p.AuthTokenPreviousSealed != nil {
-		current.AuthTokenPreviousSealed = append([]byte(nil), (*p.AuthTokenPreviousSealed)...)
+		current.AuthTokenPreviousSealed = bytes.Clone(*p.AuthTokenPreviousSealed)
 	}
 	if p.AuthTokenPreviousExpiresAt != nil {
 		current.AuthTokenPreviousExpiresAt = cloneManagedRealtimeTime(p.AuthTokenPreviousExpiresAt)

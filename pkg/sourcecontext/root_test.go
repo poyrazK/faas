@@ -75,3 +75,25 @@ func TestStorageAndEffectiveRoot(t *testing.T) {
 		t.Fatalf("EffectiveRoot(%q) = %q, %v; want %q", stored, got, err, stored)
 	}
 }
+
+func TestDeploymentRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name, requested, configured, want string
+		invalid                           bool
+	}{
+		{"standalone default", "", "", "", false},
+		{"configured default", "", "apps/api", "apps/api", false},
+		{"blank default", "  ", "apps/api", "apps/api", false},
+		{"explicit archive root", ".", "apps/api", "", false},
+		{"explicit nested root", "apps/worker", "apps/api", "apps/worker", false},
+		{"unsafe request", "../outside", "apps/api", "", true},
+		{"unsafe configured root", "", "../outside", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := DeploymentRoot(tc.requested, tc.configured)
+			if (err != nil) != tc.invalid || got != tc.want {
+				t.Fatalf("DeploymentRoot(%q, %q) = %q, %v; want %q invalid=%v", tc.requested, tc.configured, got, err, tc.want, tc.invalid)
+			}
+		})
+	}
+}

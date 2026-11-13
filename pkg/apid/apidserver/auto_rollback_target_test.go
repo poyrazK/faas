@@ -79,7 +79,7 @@ func TestRollbackOn5xxSkipsAnAbortedCanary(t *testing.T) {
 	(*(*e.S()).Store()) = store
 	for _, errors := range []int64{2, 38} { // healthy first wake, then failing
 		store.serverErrors = errors
-		if err := (*e.S()).RollbackOn5xxSweep(ctx, time.Now().UTC()); err != nil {
+		if err := (*e.S()).RollbackOn5xxSweep(ctx, rollbackOn5xxSweepAt()); err != nil {
 			t.Fatal(err)
 		}
 	}

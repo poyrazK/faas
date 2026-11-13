@@ -161,7 +161,11 @@ func executionCall(t *testing.T, ctx context.Context, cs *mcp.ClientSession, nam
 	if err != nil {
 		t.Fatal(err)
 	}
-	validateWorkflowSchema(t, toolOutputSchema(name), data)
+	schema := toolOutputSchema(name)
+	if wantError {
+		schema = map[string]any{"$defs": map[string]any{"recovery": recoverySchema()}, "anyOf": []any{toolErrorSchema()}}
+	}
+	validateWorkflowSchema(t, schema, data)
 	for _, private := range []string{"private-command", "private-secret", "private-input", "private-instance", "private-layer", "private-app", "private-bucket", "private-key", "private-external"} {
 		if strings.Contains(string(data), private) {
 			t.Fatalf("%s exposed private job fields", name)

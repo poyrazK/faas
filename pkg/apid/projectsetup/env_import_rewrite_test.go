@@ -46,12 +46,12 @@ func TestPlanEnvImportRewritesServiceAddresses(t *testing.T) {
 		t.Fatalf("notes = %q", notes)
 	}
 
-	// Without the opt-in a rewritable value is reported for import, not as a
-	// Docker address the developer must replace by hand.
+	// Without the opt-in a sibling's address still imports
+	// (ADR-20261104221217); the developer never has to replace it by hand.
 	env.Import = false
 	got = PlanEnvImport(env, "web", callable, api.MustLimitsFor(api.PlanPro), true)
-	if got.Skipped["BILLING_URL"] != EnvSkipNotOptedIn || len(got.Rewritten) != 0 {
-		t.Fatalf("without the opt-in: skipped %v, rewritten %v", got.Skipped, got.Rewritten)
+	if got.Values["BILLING_URL"] == "" || got.Rewritten["BILLING_URL"] != "billing" {
+		t.Fatalf("without the opt-in: values %v, skipped %v, rewritten %v", got.Values, got.Skipped, got.Rewritten)
 	}
 }
 

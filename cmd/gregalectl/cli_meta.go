@@ -228,6 +228,18 @@ var cliCommands = []cliCommand{
 					{Name: "refresh", Short: "fetch from shared storage and replace the local cache"},
 				},
 			},
+			{
+				Name:  "resign",
+				Short: "Convert stored layers' v1 signatures to key-bound v2 ones (ADR-20261109170000)",
+				Flags: []cliFlag{
+					{Name: "env-file", Short: "storage.env path (required)"},
+					{Name: "pg-dsn", Short: "PostgreSQL DSN"},
+					{Name: "db-env", Short: "database environment file"},
+					{Name: "sign-key", Short: "the fleet signing key signd holds"},
+					{Name: "dry-run", Short: "verify and count, write nothing"},
+					{Name: "json", Short: "emit a machine-readable report"},
+				},
+			},
 		},
 	},
 	{
@@ -712,6 +724,20 @@ var cliCommands = []cliCommand{
 				},
 			},
 			{
+				Name:  "find",
+				Short: "Find the account behind an email, app slug, hostname, URL, id, request id or trace id",
+			},
+			{
+				Name:  "attention",
+				Short: "List customers who are probably stuck (failed deploys, refused bursts, stuck domains)",
+				Flags: []cliFlag{
+					{Name: "kind", Short: "signal kind", ClosedSet: []string{"deploy_failing", "app_oom", "boot_failing", "jobs_failing", "domain_stuck", "refused_burst", "limit_pressure", "payment_failing"}},
+					{Name: "state", Short: "signal state", ClosedSet: []string{"active", "open", "dismissed", "resolved"}},
+					{Name: "account-id", Short: "only this account (uuid)"},
+					{Name: "limit", Short: "maximum signals (1..200)"},
+				},
+			},
+			{
 				Name:  "show",
 				Short: "Show one account's apps, orgs, API keys, and sessions",
 				Flags: []cliFlag{
@@ -721,7 +747,7 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name:  "360",
-				Short: "Show one account's usage and billing support view",
+				Short: "Show one account's usage, billing and diagnosis support view",
 				Flags: []cliFlag{
 					{Name: "account-id", Short: "account id (uuid)", Req: true},
 					{Name: "month", Short: "usage month (YYYY-MM)"},
@@ -750,6 +776,28 @@ var cliCommands = []cliCommand{
 				Name:  "revoke-sessions",
 				Short: "Revoke every active session for an account",
 				Flags: accountMutationCLIFlags(),
+			},
+			{
+				Name:  "reset-mfa",
+				Short: "Clear a customer's two-factor authentication after verified recovery",
+				Flags: accountMutationCLIFlags(),
+			},
+			{
+				Name:  "revert-email",
+				Short: "Move a customer back to the email address their last confirmed change replaced",
+				Flags: accountMutationCLIFlags(),
+			},
+			{
+				Name:  "complimentary",
+				Short: "Give an account a paid plan without a subscription, or end it",
+				Flags: []cliFlag{
+					{Name: "account-id", Short: "account id (uuid)", Req: true},
+					{Name: "plan", Short: "the complimentary plan; none returns the account to Free", Req: true, ClosedSet: []string{"hobby", "pro", "scale", "none"}},
+					{Name: "until", Short: "RFC 3339 time the account returns to Free"},
+					{Name: "reason", Short: "audit reason slug ([a-z0-9_]{1,64})", Req: true},
+					{Name: "trace-id", Short: "OTel 32-char-hex trace id"},
+					{Name: "yes", Short: "acknowledge the plan change", Req: true},
+				},
 			},
 		},
 	},
@@ -1325,6 +1373,12 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name: subObsNotificationHealth, Short: "Inspect alert notification pipeline evidence", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsServingHealth, Short: "Inspect expected fleet serving-probe coverage", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},
+			},
+			{
+				Name: subObsVerifyDeployment, Short: "Wait for post-deployment monitoring evidence and save a report", Flags: []cliFlag{{Name: "release", Short: "requested full release SHA (40 lowercase hex characters)"}, {Name: "after", Short: "RFC3339 rollout evidence boundary"}, {Name: "wait-timeout", Short: "wait budget (default derives from probe policy; maximum 1h)"}, {Name: "poll-interval", Short: "poll interval (default 10s; maximum 1m)"}, {Name: "report", Short: "private JSON report path, updated atomically"}, {Name: "admin-token", Short: "admin bearer (default: operator session, then $FAAS_ADMIN_TOKEN)"}, {Name: "token-stdin", Short: "read the admin bearer from one stdin line"}, {Name: "json", Short: "emit the final report as JSON"}},
 			},
 			{
 				Name: subObsRuleHealth, Short: "Inspect current alert-rule evaluation diagnostics", Flags: []cliFlag{{Name: "admin-token", Short: "admin bearer (default: $FAAS_ADMIN_TOKEN)"}, {Name: "timeout", Short: "HTTP timeout (default 10s)"}, {Name: "json", Short: "emit structured JSON"}},

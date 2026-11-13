@@ -43,6 +43,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -71,6 +72,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/activity"
+	"github.com/onebox-faas/faas/pkg/gateway/backlog"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
@@ -79,6 +81,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/knownhosts"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -86,6 +89,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
+	"github.com/onebox-faas/faas/pkg/sandboxtoken"
 	schedpkg "github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
@@ -113,6 +117,24 @@ var scheddSocket = envOrGateway("FAAS_SCHEDD_SOCKET", "/run/faas/schedd.sock")
 // via FAAS_GATEWAY_SYNTH_SOCKET so the e2e harness can place it on a
 // per-test path without needing /run/faas on the host (PR #203).
 var gatewaydInternalSocket = envOrGateway("FAAS_GATEWAY_SYNTH_SOCKET", "/run/faas/gatewayd-internal.sock")
+
+// gatewaydInternalHopSocket serves the same handler in binary HTTP to this
+// node's compute edge (ADR-20261110081523); "off" serves none. It listens
+// whether or not the edge uses it, so an edge may switch to it in any
+// release order. Unset, it sits beside the HTTP/1.1 socket:
+// /run/faas/gatewayd-internal-hop.sock in production.
+var gatewaydInternalHopSocket = os.Getenv("FAAS_INTERNAL_HOP_SOCKET")
+
+// binaryHopSocket is the hop's socket path, or "" for none.
+func binaryHopSocket() string {
+	switch gatewaydInternalHopSocket {
+	case "off":
+		return ""
+	case "":
+		return strings.TrimSuffix(gatewaydInternalSocket, ".sock") + "-hop.sock"
+	}
+	return gatewaydInternalHopSocket
+}
 
 const internalGatewayHealthHost = "gatewayd-internal.faas"
 
@@ -567,6 +589,14 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	if !ok {
 		return inv, 0, fmt.Errorf("gateway synth: debug replay mirror rule is unavailable")
 	}
+	// apid's sanitized corpus endpoint gates unsafe methods on the caller's
+	// explicit flag; a telemetry replay carries no body and needs the rule's
+	// own opt-in, exactly as live mirroring does. Re-checked here because the
+	// rule may have changed since the replay was queued.
+	sanitizedPayload := metadata[api.DebugReplaySanitizedPayloadHeader] == "true"
+	if !sanitizedPayload && !rule.AllowUnsafeMethods && !api.MirrorSafeMethod(strings.ToUpper(inv.Method)) {
+		return inv, 0, fmt.Errorf("%w: debug replay of %s needs a mirror rule with allow_unsafe_methods", schedpkg.ErrPermanentInvoke, inv.Method)
+	}
 	target, err := a.scheduleReplayTarget(ctx, appID, rule)
 	if err != nil {
 		return inv, 0, err
@@ -576,7 +606,6 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	// Platform metadata is consumed at this boundary. A legacy telemetry
 	// replay is bodyless; only apid's sanitized batch endpoint stamps the
 	// marker that permits its bounded JSON body and filtered headers through.
-	sanitizedPayload := metadata[api.DebugReplaySanitizedPayloadHeader] == "true"
 	if !sanitizedPayload {
 		mirrorInv.Payload = nil
 	}
@@ -619,7 +648,13 @@ func (a *synthAdapter) replayMirror(ctx context.Context, appID string, inv state
 	hasExpectedBody := len(sourceBodyHash) == sha256.Size
 	bodyDiff := hasExpectedBody && statusCode != 0 && !bytes.Equal(sourceBodyHash, mirrorBodyHash)
 	crashed := statusCode == 0 || statusCode >= http.StatusInternalServerError
-	comparisonIncomplete := statusCode == 0 || (sourceStatus == 0 && !hasExpectedBody)
+	// A bodyless replay of a method that usually carries a body is not the
+	// original request, so its status is no evidence of a difference.
+	bodylessBodyMethod := !sanitizedPayload && !api.MirrorSafeMethod(strings.ToUpper(inv.Method)) && !strings.EqualFold(inv.Method, http.MethodDelete)
+	if bodylessBodyMethod {
+		statusDiff = false
+	}
+	comparisonIncomplete := statusCode == 0 || (sourceStatus == 0 && !hasExpectedBody) || bodylessBodyMethod
 	result := api.DebugReplayComparison{
 		SourceDeploymentID:   metadata[api.DebugReplayDeploymentIDHeader],
 		MirrorDeploymentID:   rule.MirrorDeploymentID,
@@ -1030,6 +1065,12 @@ func (a *synthAdapter) forwardInvocationWithStatusAndBody(ctx context.Context, t
 	// context so the internal bridge can preserve platform-owned headers.
 	//nolint:contextcheck // gateway.WithSyntheticInvocation inherits req.Context.
 	req = req.WithContext(gateway.WithSyntheticInvocation(req.Context()))
+	// An async route's caller, as a kind=jwt rule verified it at admission,
+	// read from the stored row by prepareInvocation (ADR-091 amendment
+	// 2026-11-04, round 11). The forwarder renders it as X-Faas-Edge-Jwt-*;
+	// copies in the persisted headers are x-faas-* and never cross.
+	//nolint:contextcheck // gateway.WithEdgeJWTIdentity inherits req.Context.
+	req = req.WithContext(gateway.WithEdgeJWTIdentity(req.Context(), gateway.EdgeJWTIdentity{Issuer: inv.EdgeJWTIssuer, Subject: inv.EdgeJWTSubject}))
 
 	rec := httptest.NewRecorder()
 	if err := serveSyntheticForward(ctx, a.forward(target), rec, req); err != nil {
@@ -1156,6 +1197,10 @@ type runDeps struct {
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
 	apiMonetization func() bool
+	// awaitingResponseMax is the app-request backlog limit
+	// (pkg/gateway/backlog), kept current by the runtime-config watcher from
+	// gateway_awaiting_response_max. Nil holds api.GatewayAwaitingResponseMax.
+	awaitingResponseMax *atomic.Int64
 	// platformFlags is every platform flag gatewayd-internal decides (the
 	// api_monetization flag, ADR-20261020170649, the edge feature flags,
 	// ADR-20261023113721, and the product capability flags,
@@ -1312,7 +1357,13 @@ type runDeps struct {
 	edgeChallengeSecret    []byte
 	edgeChallengeKeySource string
 	trafficDeadlines       *trafficdeadline.Signer
-	trafficRevocations     *trafficrevocation.Registry
+	// sandboxTokens verifies sandbox session tokens with apid's public keys
+	// (ADR-20261027090013); nil keeps the sandbox data plane off.
+	sandboxTokens *sandboxtoken.Verifier
+	// sandboxPreviewDomain is FAAS_SANDBOX_PREVIEW_DOMAIN (ADR-20261027090013
+	// §11); "" keeps sandbox previews off.
+	sandboxPreviewDomain string
+	trafficRevocations   *trafficrevocation.Registry
 	// publicRoutingView admits ordinary public requests (ADR-20261027085556);
 	// runWithDeps builds it when nil.
 	publicRoutingView *publicrouting.Registry
@@ -1636,6 +1687,13 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	defer func() { _ = credentialAuth.Close() }()
 	credentialMatcher := apidgrpc.NewCredentialMatcher(credentialAuth)
 	deps.credentialMatcher = credentialMatcher
+	// ADR-20261027090013: sandbox session tokens verify with apid's public
+	// key, fetched over the same channel; the gateway can mint none.
+	deps.sandboxTokens = sandboxtoken.NewVerifier()
+	go apidgrpc.RefreshSandboxKeys(ctx, credentialAuth, deps.sandboxTokens, log)
+	if deps.sandboxPreviewDomain, err = api.NormalizeSandboxPreviewDomain(osGetenv("FAAS_SANDBOX_PREVIEW_DOMAIN")); err != nil {
+		return fmt.Errorf("gatewayd-internal: %w", err)
+	}
 	// Operation capabilities and dev-bridge tokens are keyed under rings this
 	// node never holds; apid matches them (amendment 1, decision 2).
 	credhash.SetRemote(credhash.FamilyScheduler, credentialMatcher.Remote())
@@ -1857,6 +1915,12 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// gateway_tenant_surface_cert_total counter ticks
 		// from boot.
 		WithCertIssuer(gateCertIssuer(tenantSurfacesFlag.Load, certIssuerFor(pgStore, nil, true, dnsTokenLookupFromEnv, log)))
+	// Every app slug and verified custom domain skips the new-host lookup
+	// budget, so after a restart random names cannot starve real apps this
+	// gateway has not yet served (ADR-20261103163954 §4).
+	knownHosts := knownhosts.New(appsDomain)
+	backend.PreloadKnownHosts(knownHosts)
+	go knownhosts.Run(ctx, knownHosts, pgStore, log)
 
 	// Phase 2 / Gate A: gate the resolveSched legacy fallback on the
 	// active fleet. Single-box posture (only default-local active)
@@ -2071,6 +2135,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// of the synthAdapter struct literal, which broke the compile.
 	// Restoring the off-the-brace call keeps both sides readable.
 	deps.synth = gateway.NewSynthServer(gatewaydInternalSocket, synth, log)
+	if hop := binaryHopSocket(); hop != "" {
+		deps.synth.WithBinaryHop(hop)
+	}
 	deps.syntheticDispatcher = synth
 	deps.synth.WithWorkerJobEvidence(pgStore.FinishProjectWorkerJobEvidence)
 	// ADR-119 — wire synth-side metrics and audit. The verifier is loaded
@@ -2178,6 +2245,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// gatewayd-internal.
 	renewer := gateway.NewSurfaceCertRenewer(pgStore, log).SetEnabled(tenantSurfacesFlag.Load)
 	go renewer.Run(handoffCtx)
+	// Custom wildcard claims have a separate lifecycle and keep recovering
+	// while tenant surfaces are disabled. Caddy mode skips legacy work.
+	go gateway.NewCustomDomainCertRenewer(pgStore, backend, log).Run(handoffCtx)
 
 	// ADR-132: routing and certificate lifecycle consume the same durable
 	// runtime flag as apid. The watcher applies only acknowledged values and
@@ -2185,9 +2255,19 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	if pool != nil {
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
+		// ADR-20261101215228: per-instance request limits.
+		requestConcurrency := &runtimeconfig.RequestConcurrency{}
+		deps.awaitingResponseMax = new(atomic.Int64)
+		deps.awaitingResponseMax.Store(api.GatewayAwaitingResponseMax)
 		keys, apply := runtimeconfig.WithPlatformFlags(
-			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones},
+			append([]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones, runtimeconfig.KeyGatewayAwaitingResponseMax}, runtimeconfig.RequestConcurrencyKeys...),
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
+				if handled, err := requestConcurrency.Apply(key, value); handled {
+					return err
+				}
+				if handled, err := runtimeconfig.ApplyGatewayAwaitingResponseMax(deps.awaitingResponseMax, key, value); handled {
+					return err
+				}
 				enabled, err := runtimeconfig.Bool(value)
 				if err != nil {
 					return err
@@ -2355,6 +2435,11 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// either. nil ⇒ the cross-check is a no-op.
 		nil,
 	)
+	// ADR-20261111150000: an agent key's gated request here (the developer
+	// debugger tunnel) is decided, and its activity recorded, by apid, the
+	// only writer of approval requests and the activity log.
+	agentGate := apidgrpc.AgentGate{Auth: credentialAuth}
+	deps.authMw.RemoteAgentGate, deps.authMw.ActivityRecorder = agentGate, agentGate
 	// Issue #560: per-deployment require_authn (pro/Scale opt-in).
 	// Build the narrow gateway.RequireAuthnAuthenticator
 	// adapter around the production middleware and the
@@ -2364,7 +2449,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// without code changes — for now production always wires
 	// them when deps.authMw is non-nil (which it always is
 	// outside unit tests).
-	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw)
+	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw, pgStore)
 	if deps.requireAuthnAdapter != nil {
 		deps.keyAuthCache = gateway.NewKeyAuthCache(deps.requireAuthnAdapter)
 		go watchKeyChanges(ctx, pool, deps.keyAuthCache, log)
@@ -2492,6 +2577,20 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	if len(deps.edgeIdentities) > 0 {
 		identities := deps.edgeIdentities
 		deps.publicAuthUnsealer = newPublicAuthUnsealer(func() []*age.X25519Identity { return identities })
+		if deps.edgeRulesMatcher != nil {
+			deps.edgeRulesMatcher.headerSecretOpener = newEdgeRuleHeaderSecretOpener(identities)
+		}
+	}
+	injectEdgeHeaderSecrets, err := edgeHeaderSecretsInjectFromEnv(osGetenv)
+	if err != nil {
+		return err
+	}
+	if injectEdgeHeaderSecrets && deps.edgeRulesMatcher != nil {
+		// ADR-20261110210000 slice 3i: this gateway never opens a sealed
+		// request header value; the instance's vmmd does.
+		deps.edgeRulesMatcher.headerSecretsInject = true
+		deps.edgeRulesMatcher.headerSecretOpener = nil
+		log.Info("edge rule header values are added by the instance's vmmd")
 	}
 	log.Info("edge seal domain", "domain_identity", len(edgeDomainIdentities) > 0, "identities", len(deps.edgeIdentities))
 	// PR-3 / ADR-125 fleet-wide signing key: try the
@@ -3194,6 +3293,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// cmd/apid uses). nil-safe: tests + dev boxes that don't
 	// wire either pass through the per-request unseal path.
 	handler.WithPublicAuth(deps.publicAuthCache, deps.publicAuthUnsealer)
+	// ADR-20261110210000 slice 3h: verify-only basic auth.
+	basicVerifiers, basicErr := basicAuthVerifiersFromEnv(osGetenv, deps.pgStore, metricsRegisterer)
+	if basicErr != nil {
+		return basicErr
+	}
+	if basicVerifiers != nil {
+		handler.WithBasicAuthVerifiers(basicVerifiers)
+	}
 	// ADR-119 — wire the per-service public-key allowlist into
 	// the Handler so applyIngressInternalSvc (handler.go:~4586
 	// area) can validate Authorization: Bearer JWTs on apps
@@ -3450,13 +3557,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				appGaps := make([]*apidpb.TelemetryAppGap, 0, len(report.AppGaps))
 				for _, gap := range report.AppGaps {
-					appGaps = append(appGaps, &apidpb.TelemetryAppGap{AppId: gap.AppID.String(), DroppedCount: gap.DroppedCount, PendingCount: int32(gap.PendingCount)})
+					appGaps = append(appGaps, &apidpb.TelemetryAppGap{AppId: gap.AppID.String(), DroppedCount: gap.DroppedCount, PendingCount: int32(gap.PendingCount),
+						AnalyticsDroppedCount: gap.AnalyticsDroppedCount, AnalyticsPendingCount: int32(gap.AnalyticsPendingCount)})
+				}
+				var analytics *apidpb.AnalyticsCoverage
+				if report.Analytics != nil {
+					analytics = &apidpb.AnalyticsCoverage{Counting: report.Analytics.Counting, UnattributedDroppedTotal: report.Analytics.UnattributedDroppedTotal}
 				}
 				receipt, err := rtCli.RecordTelemetryCoverage(heartbeatCtx, &apidpb.TelemetryCoverage{
 					NodeName: coverageNode, BootId: coverageBootID, Sequence: coverageSequence, Enabled: report.Enabled,
 					SamplingBasisPoints: int32(report.SamplingBasisPoints), DroppedTotal: report.DroppedTotal,
 					PendingCount: int32(report.PendingCount), SourceAtUnixMs: report.SourceAt.UnixMilli(),
 					AppScoped: report.AppScoped, UnattributedDroppedTotal: report.UnattributedDroppedTotal, AppGaps: appGaps,
+					Analytics: analytics,
 				})
 				if err != nil {
 					return err
@@ -3530,6 +3643,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					DeploymentTag:                        row.DeploymentTag,
 					DeploymentCreatedAt:                  row.DeploymentCreatedAt,
 					ImageDigest:                          row.ImageDigest,
+					AnalyticsCounted:                     row.AnalyticsCounted,
 				}
 				if row.Count < 1 {
 					req.Count = 1
@@ -3582,6 +3696,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}
 		}()
+		if requestTelemetryEnabled && osGetenv("FAAS_REQUEST_ANALYTICS_GATEWAY_ROLLUPS") == "1" {
+			// The gateway counts requests into per-minute rollups itself
+			// (ADR-20261103113952 amendment 5). The publisher actor runs
+			// the shipping, so it shares rtCli with the other RPCs.
+			recorder.EnableAnalyticsRollups(gateway.RequestAnalyticsRollupsConfig{
+				Ship: func(ctx context.Context, batchID uuid.UUID, rows []state.RequestAnalyticsRollup) error {
+					if rtTLSErr != nil {
+						return rtTLSErr
+					}
+					ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+					defer cancel()
+					if rtCli == nil {
+						var err error
+						rtCli, err = apidgrpc.DialRequestTelemetry(ctx, apidRTTarget, rtTLS)
+						if err != nil {
+							return fmt.Errorf("open request_telemetry client: %w", err)
+						}
+					}
+					return shipAnalyticsRollups(ctx, rtCli, batchID, coverageNode, rows)
+				},
+				OnShipped: deps.metrics.AddRequestAnalyticsRollupShipped,
+				OnLost:    deps.metrics.AddRequestAnalyticsRollupLost,
+			}, log)
+		}
 		// Wake the publisher as the recorder approaches capacity so the
 		// normal five-second ticker is only the idle fallback.
 		recorder.SetWakeHook(publisher.Wake)
@@ -3729,8 +3867,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			deps.metrics,
 			log,
 		)
+		// ADR-20261110210000 slice 3f: with FAAS_GATEWAY_LOG_DRAIN_OPENER=secretd
+		// drain headers open on the control plane, for the owner node only.
+		openHeader, closeOpener, openerErr := logDrainHeaderOpenerFromEnv(ctx, osGetenv, cfg.NodeName, log)
+		if openerErr != nil {
+			return openerErr
+		}
+		defer closeOpener()
+		manager.openHeader = openHeader
 		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
 		manager.capabilityAllowed = deps.capabilityAllowed
+		manager.edgeEgress = egressSink.RecordEdgeBytes
 		if cfg.NodeName != "" {
 			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
 		}
@@ -3793,7 +3940,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-741: the `gregale dev --debug` tunnel is compute-owned like the
 	// log stream. Its waker is the service proxy, wired below once built.
 	debugTunnel := newDevDebugTunnel(deps, log)
-	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, gateway.TrustedTrafficIngress(handler), logsHandler, writeGate, deps.domains.Platform, log))
+	// App traffic past gateway_awaiting_response_max requests awaiting their
+	// response head is answered 503 at once, so a CPU-saturated node sheds
+	// load instead of growing past its MemoryMax (pkg/gateway/backlog).
+	appTraffic := backlog.New(gateway.TrustedTrafficIngress(handler), deps.awaitingResponseMax, gatewayRegistry(deps.metrics))
+	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, appTraffic, logsHandler, writeGate, deps.domains.Platform, log))
 	// ADR-1037: interactive app-task attach is compute-owned too. The
 	// handler dials the task node's vmmd, which apid must never do.
 	if deps.authMw != nil && deps.pgStore != nil && deps.nodeCache != nil {
@@ -3809,6 +3960,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		logsMux.Handle("GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream",
 			&JobTaskLogsHandler{Auth: deps.authMw, Targets: deps.pgStore, Nodes: deps.nodeCache.cache, Log: log, Traffic: deps.trafficRevocations})
 		apidHandler = jobTaskLogsCarveOut{logs: logsMux, next: apidHandler}
+	}
+	// ADR-20261027090013: sandbox session commands and files run in the
+	// session's VM, so they are compute-owned like attach.
+	if sandbox := newSandboxDataHandler(deps, deps.sandboxTokens, log); sandbox != nil {
+		apidHandler = sandboxDataCarveOut{sandbox: sandbox, next: apidHandler}
+	}
+	if preview := newSandboxPreviewHandler(deps, log); preview != nil {
+		apidHandler = sandboxPreviewCarveOut{preview: preview, next: apidHandler}
 	}
 
 	// Slice 7: githubd webhook HMAC-verify at the edge, then proxy
@@ -4174,6 +4333,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var guestServices *gateway.ServiceProxy
 	var guestServiceCallerResolver gateway.ServiceProxyCallerResolver
 	var guestServiceAliasAllowed gateway.ServiceAliasAllowed
+	// guestServiceCallerIdentity maps a bridge source address to its app and
+	// deployment; the bridge object relay (ADR-20261031193635 slice 6c)
+	// checks the deployment's branch before it forwards anything.
+	var guestServiceCallerIdentity func(context.Context, string) (string, string, error)
 	managedCircuitWired := false
 	if deps.pgStore != nil && serviceEndpointProvider != nil && deps.nodeCache != nil {
 		pgStore := deps.pgStore
@@ -4209,7 +4372,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			AdmitRuntime:              financialBudgetServiceAdmission(pgStore),
 			APIMonetization:           deps.apiMonetization,
 			APIMonetizationFor:        handler.APIMonetizationEnabledFor,
-			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
+			AdmitManagedAsync:         gateway.ChainServiceProxyAsyncAdmitters(gateway.NewRehearsalAsyncAdmitter(pgStore), gateway.NewFunctionSendAdmitter(pgStore)),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
 			Authorize:                 newBudgetedServiceProxyAuthorizer(pgStore),
@@ -4287,6 +4450,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 				return identityResolver.ResolveIdentity(ctx, remote)
 			}
+			guestServiceCallerIdentity = identityResolver.ResolveIdentity
 			guestServiceCallerResolver = func(ctx context.Context, remote string) (string, error) {
 				// DNS only publishes an alias address. Let the separate
 				// qualification alias check consider frozen graph bindings;
@@ -4304,6 +4468,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// delayed tasks at api.svc.gregale become run evidence. Every other
 			// caller and request reaches the service proxy unchanged.
 			guestServiceProxy = gateway.WithRehearsalPlatformAPI(guestServiceProxy, func(ctx context.Context, remote string) (string, error) {
+				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
+				return appID, err
+			}, pgStore)
+			// ADR-20261112160000: a function reads the invocations it sent at
+			// api.svc.gregale/v1/invocations/{id}, authorized by its own VM.
+			guestServiceProxy = gateway.WithFunctionInvocationAPI(guestServiceProxy, func(ctx context.Context, remote string) (string, error) {
 				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
 				return appID, err
 			}, pgStore)
@@ -4562,13 +4732,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if upstreams == nil {
 				upstreams = serviceDiscoveryUpstreams
 			}
-			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort} {
+			for _, dnsPort := range []int{gateway.ServiceDiscoveryDNSPort, gateway.RehearsalServiceDiscoveryDNSPort, gateway.SandboxRegistriesDNSPort} {
 				dnsHandler, dnsErr := gateway.NewServiceDiscoveryDNSHandler(bridgeIP, upstreams(), log, guestServiceCallerResolver, guestServiceAliasAllowed)
 				if dnsErr != nil {
 					return fmt.Errorf("gatewayd: service discovery DNS: %w", dnsErr)
 				}
 				if dnsPort == gateway.RehearsalServiceDiscoveryDNSPort {
 					dnsHandler.WithPrivateServiceNamesOnly()
+				}
+				// ADR-20261027090013 §6: registries-mode sandbox sessions
+				// resolve package registries and git hosts only.
+				if dnsPort == gateway.SandboxRegistriesDNSPort {
+					dnsHandler.WithAllowedNamesOnly(api.SandboxRegistryHost)
 				}
 				if chaosMatchRecorder != nil {
 					dnsHandler.WithScenarioDNSChaos(newServiceDNSChaosResolver(deps.pgStore, cfg.NodeName), chaosMatchRecorder.Observe)
@@ -4597,8 +4772,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// ADR-20261026150000: a bound managed database's answer also
 				// opens its port for the calling app.
 				if deps.nodeCache != nil && deps.pgStore != nil && cfg.NodeName != "" {
-					dnsHandler.WithResolvedEgressHook(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName),
-						newDatabaseEgressIndex(deps.pgStore), guestServiceCallerResolver))
+					dnsHandler.WithResolvedEgressPreparation(newResolvedEgressHook(deps.nodeCache.cache, newLocalNodeID(deps.pgStore, cfg.NodeName),
+						newDatabaseEgressIndex(deps.pgStore)))
 				}
 				// ADR-576: answer service names with service addresses only once
 				// the TCP proxy behind them is configured.
@@ -4614,6 +4789,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				if dnsPort == gateway.ServiceDiscoveryDNSPort {
 					if err := withDatabaseRouteDNS(dnsHandler, cfg, log); err != nil {
 						return err
+					}
+					if guestServiceCallerIdentity != nil {
+						dnsHandler.WithObjectRelayName(api.EnvironmentBranchObjectRelayHost)
 					}
 				}
 				dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(dnsPort))
@@ -4645,6 +4823,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						errc <- err
 					}
 				}()
+			}
+			if guestServiceCallerIdentity != nil && deps.pgStore != nil {
+				if err := startEnvironmentBranchObjectRelay(deps, bridgeIP, guestServiceCallerIdentity, addSrv, errc, log); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -4706,6 +4889,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			DeadlineSigning: deps.trafficDeadlines != nil, PolicySnapshot: deps.pool != nil,
 			SecurityRevocation: deps.trafficRevocations != nil,
 			ManagedHTTP:        managedHTTP, ManagedCircuit: managedHTTP && managedCircuitWired,
+			// apid seals edge-rule header values only while every serving
+			// gateway reports that it opens them (ADR-20261108110000).
+			EdgeHeaderSecrets: deps.edgeRulesMatcher != nil &&
+				(deps.edgeRulesMatcher.headerSecretOpener != nil || deps.edgeRulesMatcher.headerSecretsInject),
 		}, readyProbe.ReadyFunc(), log)
 		defer stopTrafficObserver()
 	}
@@ -5215,4 +5402,13 @@ func applyWorkflowOperationHeaders(h http.Header, step *state.WorkflowOperationS
 	h.Set(api.OperationGenerationHeader, strconv.Itoa(step.Generation))
 	h.Set(api.OperationAttemptHeader, strconv.Itoa(step.Attempt))
 	h.Set(api.OperationWorkflowCapabilityHeader, step.Capability)
+}
+
+// gatewayRegistry is the registry gatewayd-internal's /metrics serves, or nil
+// when the daemon runs without gateway metrics (some tests).
+func gatewayRegistry(m *gateway.Metrics) prometheus.Registerer {
+	if m == nil {
+		return nil
+	}
+	return m.Registry()
 }

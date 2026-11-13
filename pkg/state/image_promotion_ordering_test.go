@@ -55,6 +55,9 @@ func imagePromotionDeployment(t *testing.T, store state.Store, appID, scope stri
 func TestImagePromotionNewerIntentBlocksOlderCandidate(t *testing.T) {
 	imagePromotionBackends(t, func(t *testing.T, store state.Store) {
 		for _, status := range []state.DeploymentStatus{state.DeployPending, state.DeployFailed, state.DeployCancelled} {
+			// A newer revision that failed or was cancelled ships nothing, so it
+			// does not outpace the older release (ADR-20261020085706 amendment 14).
+			outpaced := status == state.DeployPending
 			t.Run(string(status), func(t *testing.T) {
 				app := imagePromotionApp(t, store, "image-order-"+string(status))
 				stable := imagePromotionDeployment(t, store, app.ID, "default")
@@ -71,7 +74,18 @@ func TestImagePromotionNewerIntentBlocksOlderCandidate(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if err := store.MarkDeploymentLiveIfLatest(t.Context(), older.ID); !errors.Is(err, state.ErrDeploymentSuperseded) {
+				err := store.MarkDeploymentLiveIfLatest(t.Context(), older.ID)
+				if !outpaced {
+					if err != nil {
+						t.Fatalf("older promotion after newer %s = %v, want it to go live", status, err)
+					}
+					serving, err := store.LiveDeploymentForScope(t.Context(), app.ID, "default")
+					if err != nil || serving.ID != older.ID {
+						t.Fatalf("older release did not replace the stable one after newer %s: %+v, %v", status, serving, err)
+					}
+					return
+				}
+				if !errors.Is(err, state.ErrDeploymentSuperseded) {
 					t.Fatalf("older promotion after newer %s = %v", status, err)
 				}
 				old, err := store.DeploymentByID(t.Context(), older.ID)

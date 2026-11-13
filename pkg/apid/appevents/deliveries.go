@@ -439,7 +439,7 @@ func writeEventRoutingReplayError(w http.ResponseWriter, r *http.Request, err er
 		api.WriteProblem(w, api.ErrValidation("invalid recovery expectation or incompatible age override"))
 		return true
 	case errors.Is(err, state.ErrEventRecoveryChanged):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeEventRecoveryChanged, "Recovery plan changed", "routing state or automation revision no longer matches the reviewed plan"))
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeEventRecoveryChanged, "Recovery plan changed", "routing state or stored workflow revision no longer matches the reviewed plan"))
 		return true
 	case errors.Is(err, state.ErrEventDeliveryExpired):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Delivery expired", "set allow_expired to explicitly override the captured age limit"))

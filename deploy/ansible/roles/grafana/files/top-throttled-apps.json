@@ -11,7 +11,7 @@
       "type": "timeseries",
       "title": "Top-10 throttled apps (5m)",
       "id": 1,
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
       "description": "Per-app cumulative throttle-seconds, top-10 by 5m rate. Label key is `account_id` for parity with apid's top-tenants panel; the legend value is the resolved app_id (vmmd's throttle rollup is keyed (account_id, app_id)). Issue #301 / ADR-043 — see pkg/wire/topn_app.go::topAppSet (cap=100 hottest apps).",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
@@ -29,39 +29,6 @@
             "steps": [
               {"color": "green", "value": null},
               {"color": "yellow", "value": 0.5}
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {"displayMode": "table", "placement": "right", "showLegend": true},
-        "tooltip": {"mode": "multi", "sort": "desc"}
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "Per-slice throttle ratio (5m, vmmd)",
-      "id": 2,
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
-      "description": "FaasCpuStarvation alert source. Each line is one per-plan cgroup sub-slice (tenant-free|tenant-hobby|tenant-pro|tenant-scale). The 0.8 horizontal threshold is the alert's `> 0.8` comparator — issue #301 / ADR-043 §Decision 4.",
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [
-        {
-          "expr": "vmmd_cpu_throttle_ratio{slice=~\"tenant-.*\"}",
-          "legendFormat": "{{slice}}",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"color": "green", "value": null},
-              {"color": "yellow", "value": 0.5},
-              {"color": "red", "value": 0.8}
             ]
           }
         },

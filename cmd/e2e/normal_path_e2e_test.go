@@ -646,7 +646,7 @@ func TestE2E_NormalPath_AsyncInvokeUsesRealGatewayBridge(t *testing.T) {
 
 // TestE2E_NormalPath_AsyncInvokeGuestFailureIsTerminal proves that a guest
 // response in the client-error range is an application outcome, not a
-// scheduler retry signal. The real synth bridge must persist failed state and
+// scheduler retry signal. The real synth bridge must persist a dead_letter state and
 // retain the guest failure detail for diagnosis.
 func TestE2E_NormalPath_AsyncInvokeGuestFailureIsTerminal(t *testing.T) {
 	f := newNormalPathFixture(t, "normal-async-failure")
@@ -674,9 +674,11 @@ func TestE2E_NormalPath_AsyncInvokeGuestFailureIsTerminal(t *testing.T) {
 		t.Fatalf("decode async response: %v body=%s", err, body)
 	}
 
+	// A permanent guest failure on a durable async source ends in the dead
+	// letters (ADR-20261031100001 amendment 2026-11-07), not plain failed.
 	inv := pollUntilCompleted(t, f.h, f.key, accepted.ID, 10*time.Second)
-	if inv.State != string(state.InvocationFailed) {
-		t.Fatalf("guest failure state=%q last_error=%q, want failed", inv.State, inv.LastError)
+	if inv.State != string(state.InvocationDeadLetter) {
+		t.Fatalf("guest failure state=%q last_error=%q, want dead_letter", inv.State, inv.LastError)
 	}
 	if !strings.Contains(inv.LastError, "application returned HTTP 422") ||
 		!strings.Contains(inv.LastError, `{"error":"invalid input"}`) {

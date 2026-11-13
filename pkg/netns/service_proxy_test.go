@@ -157,7 +157,7 @@ func TestQualificationOnlyNetworkAdmitsOnlyCanonicalProxyAndDNS(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"tcp dport " + strconv.Itoa(LegacyServiceProxyPort) + " accept",
-		"ip daddr { 8.8.8.0/24 } tcp dport != 25 accept",
+		"ip daddr { 8.8.8.0/24 } tcp dport != { " + AllowlistBlockedPortsSet() + " } accept",
 		"ip daddr 198.19.0.0/16 meta l4proto tcp accept",
 		"ip daddr 192.168.201.0/24",
 		"ip saddr 10.66.0.0/16 accept",

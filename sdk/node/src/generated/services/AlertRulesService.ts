@@ -15,10 +15,12 @@ import type { RotateAlertRuleSecretResponse } from '../models/RotateAlertRuleSec
 import type { TestAlertPresetResponse } from '../models/TestAlertPresetResponse.js';
 import type { TestNotificationChannelResponse } from '../models/TestNotificationChannelResponse.js';
 import type { UpdateAlertRuleRequest } from '../models/UpdateAlertRuleRequest.js';
+import type { UpdateNotificationChannelRequest } from '../models/UpdateNotificationChannelRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AlertRulesService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List the account's alert notification channels
    * Returns Slack, PagerDuty and email channels with their last delivery outcome. Destinations are shown as non-secret hints only.
@@ -26,7 +28,7 @@ export class AlertRulesService {
    * @throws ApiError
    */
   public static listNotificationChannels(): CancelablePromise<Array<NotificationChannelResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/notification-channels',
       errors: {
@@ -45,7 +47,7 @@ export class AlertRulesService {
   }: {
     requestBody: CreateNotificationChannelRequest,
   }): CancelablePromise<NotificationChannelResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/notification-channels',
       body: requestBody,
@@ -72,7 +74,7 @@ export class AlertRulesService {
      */
     id: string,
   }): CancelablePromise<NotificationChannelResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/notification-channels/{id}',
       path: {
@@ -81,6 +83,38 @@ export class AlertRulesService {
       errors: {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
+      },
+    });
+  }
+  /**
+   * Rename a notification channel or replace its destination
+   * Renames the channel or replaces its Slack webhook URL or PagerDuty routing key in place, so a leaked destination is rotated without unbinding the channel from its rules. The kind never changes; an email channel can only be renamed. A PagerDuty region changes only together with a new routing key. A new destination clears the channel's last error.
+   * @returns NotificationChannelResponse The updated channel.
+   * @throws ApiError
+   */
+  public static updateNotificationChannel({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Notification channel identifier returned when the channel was created.
+     */
+    id: string,
+    requestBody: UpdateNotificationChannelRequest,
+  }): CancelablePromise<NotificationChannelResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/notification-channels/{id}',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
@@ -98,7 +132,7 @@ export class AlertRulesService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/notification-channels/{id}',
       path: {
@@ -125,7 +159,7 @@ export class AlertRulesService {
      */
     id: string,
   }): CancelablePromise<TestNotificationChannelResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/notification-channels/{id}/test',
       path: {
@@ -151,7 +185,7 @@ export class AlertRulesService {
      */
     slug: string,
   }): CancelablePromise<Array<AlertRollback>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alert-rollbacks',
       path: {
@@ -192,7 +226,7 @@ export class AlertRulesService {
      */
     fire: string,
   }): CancelablePromise<AlertRollback> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alert-rollbacks/{fire}',
       path: {
@@ -233,7 +267,7 @@ export class AlertRulesService {
      */
     slug: string,
   }): CancelablePromise<Array<AlertRuleResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alerts',
       path: {
@@ -281,7 +315,7 @@ export class AlertRulesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AlertRuleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/alerts',
       path: {
@@ -325,7 +359,7 @@ export class AlertRulesService {
      */
     id: string,
   }): CancelablePromise<AlertRuleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alerts/{id}',
       path: {
@@ -367,7 +401,7 @@ export class AlertRulesService {
     id: string,
     requestBody: UpdateAlertRuleRequest,
   }): CancelablePromise<AlertRuleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/alerts/{id}',
       path: {
@@ -407,7 +441,7 @@ export class AlertRulesService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/alerts/{id}',
       path: {
@@ -450,7 +484,7 @@ export class AlertRulesService {
     id: string,
     requestBody: RotateAlertRuleSecretRequest,
   }): CancelablePromise<RotateAlertRuleSecretResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/alerts/{id}/rotate-secret',
       path: {
@@ -512,7 +546,7 @@ export class AlertRulesService {
      */
     limit?: number,
   }): CancelablePromise<Array<AlertDeliveryResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alerts/{id}/deliveries',
       path: {
@@ -548,7 +582,7 @@ export class AlertRulesService {
    * @throws ApiError
    */
   public static listAlertPresets(): CancelablePromise<Array<AlertPresetResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/alert-presets',
       errors: {
@@ -604,7 +638,7 @@ export class AlertRulesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AlertRuleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/alert-presets/{name}/enable',
       path: {
@@ -658,7 +692,7 @@ export class AlertRulesService {
     name: string,
     formData: EnableAlertPresetRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/dashboard/apps/{slug}/alert-presets/{name}/enable',
       path: {
@@ -723,7 +757,7 @@ export class AlertRulesService {
     name: string,
     requestBody?: any,
   }): CancelablePromise<TestAlertPresetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/alert-presets/{name}/test',
       path: {
@@ -789,7 +823,7 @@ export class AlertRulesService {
     name: string,
     requestBody?: any,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/dashboard/apps/{slug}/alert-presets/{name}/test',
       path: {

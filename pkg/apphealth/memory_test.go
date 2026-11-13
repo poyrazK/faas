@@ -118,3 +118,32 @@ func TestMemoryHealthRightSizing(t *testing.T) {
 		})
 	}
 }
+
+// ADR-20261102124306 step 3: debug status carries the same suggestion as the
+// memory check, and only while the rollup is recent.
+func TestDebugMemory(t *testing.T) {
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	pressure := state.AppMemoryPressure{Episodes: 3, LowestAvailableMB: 40, TotalMB: 480, PeakAnonMB: 410, LastAt: now.Add(-2 * time.Hour)}
+	got := DebugMemory(pressure, true, api.PlanPro, 512, now)
+	if got == nil {
+		t.Fatal("no summary for recent pressure")
+	}
+	size, _ := api.RightSizeMemory(api.PlanPro, 512, 480, 40)
+	if got.SuggestedMB != size.SuggestedMB || got.CurrentMB != 512 || !got.FitsPlan || got.Advice != size.Advice() ||
+		got.Episodes != 3 || got.LowestAvailableMB != 40 || got.TotalMB != 480 || got.PeakAnonMB != 410 || got.LastAt != "2026-11-05T10:00:00Z" {
+		t.Fatalf("summary = %+v, want the app health suggestion %+v", got, size)
+	}
+	for name, tc := range map[string]struct {
+		pressure state.AppMemoryPressure
+		recorded bool
+		plan     api.Plan
+	}{
+		"never recorded":   {pressure: pressure, recorded: false, plan: api.PlanPro},
+		"older than a day": {pressure: state.AppMemoryPressure{LowestAvailableMB: 40, TotalMB: 480, LastAt: now.Add(-api.AppHealthMemoryPressureWindow - time.Minute)}, recorded: true, plan: api.PlanPro},
+		"unknown plan":     {pressure: pressure, recorded: true, plan: api.Plan("enterprise-x")},
+	} {
+		if got := DebugMemory(tc.pressure, tc.recorded, tc.plan, 512, now); got != nil {
+			t.Errorf("%s: summary = %+v, want none", name, got)
+		}
+	}
+}

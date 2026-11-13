@@ -84,7 +84,7 @@ func accountingDiagnostic(row AccountingCoverage, policy UsagePolicy, now time.T
 				d.RequiredUntil = time.Time{}
 			}
 			if !d.RequiredUntil.IsZero() {
-				d.CorrectionRequiredAt = d.RequiredUntil.Add(recentUsageCorrectionWindows * policy.Window)
+				d.CorrectionRequiredAt = finalCorrectionDeadline(d.RequiredUntil, policy.Window)
 			}
 		}
 	}
@@ -120,6 +120,23 @@ const (
 	usageFinalCorrectionPending
 )
 
+// creationInFlight reports an unresolved obligation whose provider call is
+// still running: the resource is provisioning under a held lease and was
+// reserved inside the current window, so it cannot owe a completed window
+// yet (the H9-P113 rule). A lost reply lets the lease lapse, and the window
+// closing ends the exemption too; either way the obligation blocks again
+// until its identity is recovered (ADR-20261104203253, amending ADR-581).
+func (p UsageProgress) creationInFlight(policy UsagePolicy, now time.Time) bool {
+	return !p.Terminal && p.CreationLeaseUntil.After(now) && !p.CreatedAt.IsZero() &&
+		!p.CreatedAt.Before(now.UTC().Truncate(policy.Window))
+}
+
+// finalCorrectionDeadline is when every window of a deleted resource's final
+// correction tail, which ends at end, has been replayed (ADR-569).
+func finalCorrectionDeadline(end time.Time, window time.Duration) time.Time {
+	return end.Add(recentUsageCorrectionWindows * window)
+}
+
 // blockingIssues is shared with admission. Diagnosing evidence must not relax
 // the fail-closed guardrail or introduce a different notion of freshness.
 func (p UsageProgress) blockingIssues(policy UsagePolicy, now time.Time) usageIssues {
@@ -127,6 +144,9 @@ func (p UsageProgress) blockingIssues(policy UsagePolicy, now time.Time) usageIs
 		return 0
 	}
 	if p.Unresolved {
+		if p.creationInFlight(policy, now) {
+			return 0
+		}
 		return usageIdentityUnknown
 	}
 	if p.Window == 0 || p.ObservedAt.IsZero() {
@@ -151,7 +171,13 @@ func (p UsageProgress) blockingIssues(policy UsagePolicy, now time.Time) usageIs
 		if p.CollectedUntil.Before(end) {
 			issues |= usageCoverageIncomplete
 		}
-		if p.CorrectionObservedAt.Before(end.Add(recentUsageCorrectionWindows * policy.Window)) {
+		// The final correction tail revises windows that already have a
+		// reading, so admission does not wait for it: it blocks only once the
+		// tail is overdue by the same bound an active resource's observation
+		// gets. A provider that keeps failing still fails closed
+		// (ADR-20261104143000).
+		settledBy := finalCorrectionDeadline(end, policy.Window)
+		if p.CorrectionObservedAt.Before(settledBy) && now.Sub(settledBy) > policy.StaleAfter {
 			issues |= usageFinalCorrectionPending
 		}
 		return issues

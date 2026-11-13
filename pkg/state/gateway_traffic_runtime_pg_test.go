@@ -29,7 +29,7 @@ func TestPgGatewayTrafficRuntimeReplacementFencesOldWriters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	features := state.GatewayTrafficFeatures{RetryEnabled: true, RateCounterMode: "central", RetryCounterMode: "shared", RetryBackendID: "0123456789abcdef", DeadlineSigning: true, PolicySnapshot: true, SecurityRevocation: true, ManagedHTTP: true, ManagedCircuit: true}
+	features := state.GatewayTrafficFeatures{RetryEnabled: true, RateCounterMode: "central", RetryCounterMode: "shared", RetryBackendID: "0123456789abcdef", DeadlineSigning: true, PolicySnapshot: true, SecurityRevocation: true, ManagedHTTP: true, ManagedCircuit: true, EdgeHeaderSecrets: true}
 	if err := store.ReportGatewayTrafficRuntime(ctx, a, features); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestPgGatewayTrafficRuntimeReplacementFencesOldWriters(t *testing.T) {
 		t.Fatalf("replacement = %+v, %v", b, err)
 	}
 	row = findTrafficObservation(t, store, node.Name)
-	if !row.ReportedAt.IsZero() || row.RateCounterMode != "unwired" || row.RetryEnabled {
+	if !row.ReportedAt.IsZero() || row.RateCounterMode != "unwired" || row.RetryEnabled || row.EdgeHeaderSecrets {
 		t.Fatalf("replacement retained old report: %+v", row)
 	}
 	// Recover a registration whose successful response was lost. Its original

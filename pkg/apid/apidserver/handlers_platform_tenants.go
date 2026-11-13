@@ -291,7 +291,7 @@ func (s *server) getPlatformTenantUsage(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return
 	}
-	since, until, problem := parseUsageWindow(r, time.Now().UTC())
+	since, until, problem := parseLedgerUsageWindow(r, time.Now().UTC())
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return

@@ -69,13 +69,22 @@ AND i.attempts=1 AND i.replay_generation=0 AND NOT c.cancelled AND c.expires_at>
 -- name: LockQueueCanaryApp :one
 SELECT id FROM apps WHERE id=sqlc.arg(app_id) AND account_id=sqlc.arg(account_id) AND status<>'deleted' FOR UPDATE;
 
+-- name: LockQueueClaimApp :one
+-- A queue claim takes its app's share lock before the binding lock (Hunt 33
+-- H33-27). Capped enqueues lock the app FOR UPDATE and then the binding FOR
+-- SHARE (invocation insert trigger); a claim that locked the binding first
+-- and reached the app through the invocation update triggers deadlocked
+-- against them.
+SELECT id FROM apps WHERE id=sqlc.arg(app_id)::uuid FOR SHARE;
+
 -- name: ActiveQueueCanaryExists :one
 SELECT EXISTS(SELECT 1 FROM queue_binding_canaries c JOIN invocations i ON i.id=c.id WHERE c.app_id=sqlc.arg(app_id) AND c.binding_id=sqlc.arg(binding_id) AND NOT c.cancelled AND c.expires_at>clock_timestamp() AND i.state IN ('pending','dispatching'))::boolean;
 
 -- name: ReadInvocationDispatchAuthority :one
 SELECT coalesce(i.environment_id::text,'')::text AS environment_id, i.app_id, i.account_id,
  coalesce(i.queue_binding_id::text,'')::text AS queue_binding_id,i.queue_name,i.deployment_scope,
- EXISTS(SELECT 1 FROM queue_binding_canaries c WHERE c.id=i.id)::boolean AS queue_canary
+ EXISTS(SELECT 1 FROM queue_binding_canaries c WHERE c.id=i.id)::boolean AS queue_canary,
+ coalesce(i.edge_jwt_issuer,'')::text AS edge_jwt_issuer, coalesce(i.edge_jwt_subject,'')::text AS edge_jwt_subject
 FROM invocations i WHERE i.id=sqlc.arg(invocation_id)::uuid;
 
 -- name: QueueCanaryManagedAuthority :one

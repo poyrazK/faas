@@ -120,7 +120,10 @@ func cloneCoordinatorRetryDelay(attempt int32) time.Duration {
 }
 
 func cloneCoordinatorErrorCode(err error) string {
+	var copySize *objectstorage.SnapshotCopySizeError
 	switch {
+	case errors.As(err, &copySize):
+		return state.CloneFailureObjectCopySize
 	case errors.Is(err, errCloneCheckpointUnavailable):
 		return "data_checkpoint_unavailable"
 	case errors.Is(err, errCloneCompensationUnavailable):
@@ -147,6 +150,8 @@ func cloneCoordinatorErrorCode(err error) string {
 		return "source_changed_during_capture"
 	case errors.Is(err, state.ErrObjectCapacity):
 		return state.CloneFailureObjectCapacity
+	case errors.Is(err, state.ErrCronQuotaExceeded):
+		return state.CloneFailureCronLimit
 	case errors.Is(err, state.ErrObjectUsageStale):
 		return "object_storage_usage_stale"
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):

@@ -42,6 +42,10 @@ func (s *server) createPrewarm(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid prewarm window", err.Error()))
 		return
 	}
+	commitBudget, answered := s.chargePrewarm(w, r, acct, app, req)
+	if answered {
+		return
+	}
 	intent, err := store.CreatePrewarmIntent(r.Context(), app.ID, acct.ID, req.Count, req.WakeAt, req.ExpiresAt, state.PrewarmTriggerCalendar)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -51,6 +55,7 @@ func (s *server) createPrewarm(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.ErrCapacity("could not schedule prewarm"))
 		return
 	}
+	commitBudget()
 	s.prewarmMetrics.ObserveScheduled()
 	if s.audit != nil {
 		s.audit.Emit(r.Context(), "prewarm.scheduled", &acct.ID, map[string]any{

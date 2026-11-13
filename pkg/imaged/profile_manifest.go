@@ -59,6 +59,21 @@ func manifestFromLocalOCIConfig(config oci.Config, dep state.Deployment) (api.Ap
 			config.Cmd = command
 		}
 	}
+	if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
+		// A reviewed command can supply the executable even when the built
+		// image omitted CMD/ENTRYPOINT, as on the registry-image path.
+		frozen, err := dep.ScopedWorkloadRuntime()
+		if err != nil {
+			return api.AppManifest{}, err
+		}
+		if frozen != nil {
+			if raw, explicit := frozen.Runtime["entrypoint"]; explicit {
+				if err := json.Unmarshal(raw, &config.Entrypoint); err != nil {
+					return api.AppManifest{}, state.ErrInvalidArgument
+				}
+			}
+		}
+	}
 	manifest, err := oci.ManifestFromConfig(config)
 	if err != nil {
 		return api.AppManifest{}, err

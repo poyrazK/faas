@@ -78,6 +78,9 @@ func NewS3Remote(cfg S3Config) (*S3Remote, error) {
 }
 
 func (r *S3Remote) Put(ctx context.Context, key string, body io.ReadSeeker, size int64) error {
+	if size > s3PartSize {
+		return r.putMultipart(ctx, key, body, size)
+	}
 	_, err := r.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(r.bucket), Key: aws.String(key), Body: body, ContentLength: aws.Int64(size),
 	})
@@ -261,7 +264,8 @@ func (u *Uploader) files(databaseID string) []archiveFile {
 }
 
 // RunOnce uploads every pending archive file and returns how many it
-// shipped. A failed upload stops the pass; the next pass retries it.
+// shipped. A failed upload stops that database's uploads, preserving data
+// before manifest ordering, while other databases can still ship WAL.
 func (u *Uploader) RunOnce(ctx context.Context) (int, error) {
 	u.Store.maint.Lock()
 	defer u.Store.maint.Unlock()
@@ -280,15 +284,19 @@ func (u *Uploader) RunOnce(ctx context.Context) (int, error) {
 		if !db.IsDir() || !ValidDatabaseID(db.Name()) {
 			continue
 		}
+		var databaseErr error
 		for _, f := range u.files(db.Name()) {
 			if _, err := os.Stat(uploadedMarker(u.Store.dir, db.Name(), f.name)); err == nil {
 				continue
 			}
-			if firstErr == nil {
-				firstErr = u.upload(ctx, db.Name(), f)
-				if firstErr == nil {
+			if databaseErr == nil && ctx.Err() == nil {
+				databaseErr = u.upload(ctx, db.Name(), f)
+				if databaseErr == nil {
 					shipped++
 					continue
+				}
+				if firstErr == nil {
+					firstErr = databaseErr
 				}
 			}
 			pending++
@@ -300,7 +308,7 @@ func (u *Uploader) RunOnce(ctx context.Context) (int, error) {
 	if u.OnPending != nil {
 		u.OnPending(pending, oldest)
 	}
-	return shipped, firstErr
+	return shipped, errors.Join(firstErr, ctx.Err())
 }
 
 func (u *Uploader) upload(ctx context.Context, databaseID string, file archiveFile) error {

@@ -286,9 +286,11 @@ func handleLivenessConn(f *os.File, log *slog.Logger) {
 	if timeoutMs > VsockLivenessHardTimeoutMs {
 		timeoutMs = VsockLivenessHardTimeoutMs
 	}
-	if devDebugActive.Load() {
+	if devDebugActive.Load() && devDebugAttached() {
 		// ADR-741: a debugged process may be paused at a breakpoint. Report
-		// healthy so vmmd does not destroy the developer VM mid-session.
+		// healthy so vmmd does not destroy the developer VM mid-session. With
+		// no debugger attached nothing can pause it, so a hung app still
+		// fails liveness and is replaced.
 		writeLivenessResp(f, livenessResp{Status: http.StatusOK})
 		return
 	}
@@ -360,7 +362,7 @@ func runLivenessProbe(path string, timeoutMs, port int) (int, string, string) {
 		port = 8080
 	}
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + path
-	client := &http.Client{Timeout: time.Duration(timeoutMs) * time.Millisecond}
+	client := &http.Client{Timeout: time.Duration(timeoutMs) * time.Millisecond, CheckRedirect: livenessCheckRedirect}
 	resp, err := client.Get(url)
 	if err != nil {
 		// Classify the error. The http package returns

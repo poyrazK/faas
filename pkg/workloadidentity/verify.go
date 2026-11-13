@@ -21,11 +21,18 @@ const OperationsAudience = "gregale:operations"
 // QueuesAudience fences pull-queue leasing (ADR-1140) from other token uses.
 const QueuesAudience = "gregale:queues"
 
+// EventsAudience fences deferred event acknowledgments (ADR-20261031100001)
+// from other token uses.
+const EventsAudience = "gregale:events"
+
 // DataAPIConnectionsAudience isolates runtime pool reports from other services.
 const DataAPIConnectionsAudience = "gregale:data-api:connections"
 
 // DataAPIUsageAudience isolates runtime usage reports (ADR-20261019102108).
 const DataAPIUsageAudience = "gregale:data-api:usage"
+
+// DataAPIBudgetAudience fences shared request admission from usage reporting.
+const DataAPIBudgetAudience = "gregale:data-api:budget"
 
 // AgentsAudience fences a stateless agent's callback URL issuance
 // (ADR-20261030125501) from other token uses.

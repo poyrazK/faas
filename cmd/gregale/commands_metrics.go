@@ -158,9 +158,11 @@ func renderAppMetrics(w io.Writer, slug string, m api.AppMetricsResponse) {
 	if m.Source != "" {
 		_, _ = fmt.Fprintf(w, "Source:     %s\n", m.Source)
 	}
-	_, _ = fmt.Fprintf(w, "Requests:   %d (in window)\n", m.RequestCount)
+	// Hunt 32 H32-27: this view and `metric requests` disagreed with no
+	// explanation; each line now names what it counts.
+	_, _ = fmt.Fprintf(w, "Requests:   %d (in window, every response the gateway served)\n", m.RequestCount)
 	_, _ = fmt.Fprintf(w, "Latency:    %s\n", requestLatencyLine(m.LatencyP50MS, m.LatencyP95MS, m.LatencyP99MS))
-	_, _ = fmt.Fprintf(w, "Error rate: %.2f%%\n", m.ErrorRatePct)
+	_, _ = fmt.Fprintf(w, "Error rate: %.2f%% (5xx; 4xx are client errors)\n", m.ErrorRatePct)
 	_, _ = fmt.Fprintf(w, "Cold boot:  %.2f%%\n", m.ColdStartPct)
 	if m.WakeP95MS > 0 {
 		if m.WakeSamples != nil && *m.WakeSamples < api.FleetWakeP95MinSamples {
@@ -419,7 +421,10 @@ func renderThrottleSuggestions(w io.Writer, slug string, r api.ThrottleSuggestio
 		return
 	}
 	if r.RoutesCollapsed > 0 {
-		_, _ = fmt.Fprintf(w, "Collapsed:     %d routes beyond RouteMetricsPerAppCap (covered by __route_other__)\n", r.RoutesCollapsed)
+		// The __route_other__ series also holds every request to a path the
+		// app does not declare, so an app without declared routes always
+		// "exceeded" the cap (Hunt 34 H34-8). Say what the bucket holds.
+		_, _ = fmt.Fprintf(w, "Other routes:  requests to undeclared paths, or to routes beyond the %d-route cap, are grouped as __route_other__ and get no suggestion\n", api.RouteMetricsPerAppCap)
 	}
 	if len(r.Suggestions) == 0 {
 		_, _ = fmt.Fprintln(w, "\nSuggestions:   (none)")

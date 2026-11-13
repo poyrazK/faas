@@ -190,3 +190,69 @@ func TestParkedArchivePendingNote(t *testing.T) {
 		})
 	}
 }
+
+// An app with no live deployment has no runtime logs, and waking it cannot
+// help. logs suggested `gregale app wake` while the first release was still
+// building (CLI journey 2026-11-05, #6627); it now names the deployment.
+func TestCmdLogsNoLiveDeploymentNamesTheDeployment(t *testing.T) {
+	const dep = "56f8eea5-087c-4834-ad30-6dba0f374ca2"
+	for _, tc := range []struct {
+		name        string
+		deployments string
+		wantCode    int
+		want        []string
+	}{
+		{"no deployment", `{"items":[]}`, 5, []string{"has no deployment yet", "gregale deploy"}},
+		{"initial build", `{"items":[{"id":"` + dep + `","status":"building"}]}`, 3, []string{"deployment " + dep + " is building", "--deployment " + dep + " --follow", "release wait " + dep}},
+		{"failed build", `{"items":[{"id":"` + dep + `","status":"failed"}]}`, 5, []string{"is failed", "gregale logs myapp --deployment " + dep}},
+	} {
+		for _, jsonMode := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", tc.name, jsonMode), func(t *testing.T) {
+				main.ResetJSONOut(t)
+				(*main.JsonOutput) = jsonMode
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					switch r.URL.Path {
+					case "/v1/apps/myapp/instances":
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = fmt.Fprint(w, `[]`)
+					case "/v1/apps/myapp":
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = fmt.Fprint(w, `{"id":"a1","slug":"myapp","status":"active","deployment_availability":"no_live_deployment"}`)
+					case "/v1/apps/myapp/deployments":
+						w.Header().Set("Content-Type", "application/json")
+						_, _ = fmt.Fprint(w, tc.deployments)
+					default:
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = fmt.Fprint(w, "event: degraded\ndata: {\"code\":\"not_found\"}\n\n")
+					}
+				}))
+				defer srv.Close()
+				t.Setenv("FAAS_API", srv.URL)
+				t.Setenv("FAAS_TOKEN", "test-token")
+				stdout, restoreOut := main.CaptureStdout(t)
+				stderr, restoreErr := main.CaptureStderr(t)
+				code := main.CmdLogs([]string{"myapp"})
+				restoreErr()
+				restoreOut()
+				if code != tc.wantCode {
+					t.Fatalf("exit=%d, want %d; stderr=%q", code, tc.wantCode, stderr.String())
+				}
+				out := stderr.String()
+				if strings.Contains(out, "app wake") {
+					t.Fatalf("suggested waking an app with no live deployment: %q", out)
+				}
+				for _, want := range tc.want {
+					if !strings.Contains(out, want) {
+						t.Errorf("stderr missing %q: %q", want, out)
+					}
+				}
+				if jsonMode && !strings.Contains(out, `"code":"no_live_deployment"`) {
+					t.Errorf("JSON problem code: %q", out)
+				}
+				if stdout.String() != "" {
+					t.Errorf("stdout = %q, want empty", stdout.String())
+				}
+			})
+		}
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +108,34 @@ func validateTestLoadStreamRequests(cfg *testLoadConfig, steps []testHTTPRequest
 		}
 	}
 	return nil
+}
+
+// A stream's reference scope follows its configured journey order, regardless
+// of where the request definitions occur. Each stream starts with only the
+// run/data values and captures supplied by earlier ordinary stages.
+func testHTTPStreamValues(scenario testScenario, initial map[string]string) (map[string]map[string]string, error) {
+	if scenario.Load == nil || len(scenario.Load.Streams) == 0 {
+		return nil, nil
+	}
+	steps := append(append([]testHTTPRequest{}, scenario.Requests...), scenario.Checks...)
+	if err := validateTestLoadStreamRequests(&testLoadConfig{Streams: scenario.Load.Streams}, steps); err != nil {
+		return nil, err
+	}
+	byName := make(map[string]testHTTPRequest, len(steps))
+	for _, step := range steps {
+		byName[step.Name] = step
+	}
+	values := make(map[string]map[string]string, len(steps))
+	for _, stream := range scenario.Load.Streams {
+		known := maps.Clone(initial)
+		for _, name := range stream.Requests {
+			values[name] = maps.Clone(known)
+			for capture := range byName[name].Capture {
+				known["steps."+name+"."+capture] = "example-value"
+			}
+		}
+	}
+	return values, nil
 }
 
 func runTestLoadStreams(ctx context.Context, shared *testLoadCollector, cfg *testLoadConfig, started time.Time, journey testLoadJourney) []testLoadStreamEvidence {

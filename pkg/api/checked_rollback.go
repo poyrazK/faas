@@ -33,11 +33,11 @@ type RollbackOperation struct {
 
 func (c *Client) CheckedRollback(ctx context.Context, slug string, request RollbackRequest) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	err := c.doWithClientAndIdempotencyKey(ctx, c.rollbackHTTP(), http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/rollback", request, &out, "")
+	err := c.doWithClientAndHeadersAndIdempotencyKey(ctx, c.rollbackHTTP(), http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/rollback", request, &out, "", rollbackAttemptHeaders(ctx))
 	return out, err
 }
 func (c *Client) GetRollbackOperation(ctx context.Context, slug, id string) (RollbackOperation, error) {
 	var out RollbackOperation
-	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/rollbacks/"+url.PathEscape(id), nil, &out)
+	err := c.doWithoutIdempotencyKey(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/rollbacks/"+url.PathEscape(id), nil, &out)
 	return out, err
 }

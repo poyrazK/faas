@@ -65,7 +65,7 @@ func TestFinancialVisibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	compute := got.Meters[0]
-	if !compute.Coverage.Complete || got.KnownUsageMillicents != 200_000 || !compute.Forecast.Available || *compute.Forecast.ProjectedNetMillicents != 7_700_000 {
+	if !compute.Coverage.Complete || got.KnownUsageMillicents != 200*api.OverageMillicentsPerGBHour || !compute.Forecast.Available || *compute.Forecast.ProjectedNetMillicents != 7_700*api.OverageMillicentsPerGBHour {
 		t.Fatalf("priced forecast: %+v", got)
 	}
 	if got.Meters[1].Forecast.Available || got.InvoiceReconciliation != "not_reconciled" || len(got.MissingBillComponents) == 0 {

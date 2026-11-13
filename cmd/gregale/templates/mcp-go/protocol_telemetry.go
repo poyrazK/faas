@@ -100,6 +100,16 @@ func (w *protocolFlushingWriter) Flush() {
 	}
 	w.flusher.Flush()
 }
+func (w *protocolFlushingWriter) FlushError() error {
+	if w.status == 0 {
+		w.WriteHeader(200)
+	}
+	err := http.NewResponseController(w.ResponseWriter).Flush()
+	if err != nil {
+		w.writeFailed = true
+	}
+	return err
+}
 func (o *protocolObservation) observeRPC(response rpcResponse) {
 	if o.outcome != "" {
 		return

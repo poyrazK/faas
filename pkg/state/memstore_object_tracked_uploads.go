@@ -99,10 +99,7 @@ func (m *MemStore) beginTrackedUploadLocked(c ObjectUploadCompletion, p api.Obje
 	if credential, ok := m.objectS3Credentials[c.SubjectID]; ok && credential.URL != nil {
 		c.RecoveryRetryAt = credential.URL.ExpiresAt
 	}
-	if m.objectMutations == nil {
-		m.objectMutations = map[string]ObjectBucketMutation{}
-	}
-	m.objectMutations[c.ID] = ObjectBucketMutation{ID: c.ID, UploadID: c.ID, Bucket: m.objectBuckets[c.BucketID], Kind: ObjectBucketMutationRequest, CreatedAt: c.CreatedAt}
+	m.putObjectMutationLocked(ObjectBucketMutation{ID: c.ID, UploadID: c.ID, Bucket: m.objectBuckets[c.BucketID], Kind: ObjectBucketMutationRequest, CreatedAt: c.CreatedAt})
 	m.enrollObjectNodeSettlementLocked(job)
 	m.objectUploadCompletions[c.ID] = cloneObjectUploadCompletion(c)
 	return cloneObjectUploadCompletion(c), true, nil
@@ -178,7 +175,7 @@ func (m *MemStore) finishTrackedObjectUploadLocked(old, c ObjectUploadCompletion
 	m.objectUploadCompletions[old.ID] = old
 	commitSettlement()
 	if receipt, exists := m.objectMutations[old.ID]; exists && receipt.UploadID == old.ID {
-		delete(m.objectMutations, old.ID)
+		m.dropObjectMutationLocked(old.ID)
 	}
 	return cloneObjectUploadCompletion(old), nil
 }

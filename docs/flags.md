@@ -17,6 +17,10 @@ deployment scope reads `production`; other scopes must match the environment
 registry. Standalone apps and PR preview apps do not currently read runtime flags.
 Use existing platform tenant UUIDs, not external customer references.
 
+A protected environment other than production takes flag changes, rollbacks and
+rollout promotions from an approved project plan or promotion, like its other
+configuration; a direct change answers `409`. Production keeps direct edits.
+
 ```bash
 gregale flags get --project exports --environment production
 ```

@@ -3,6 +3,7 @@ package state
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -91,6 +92,74 @@ func (s *PgStore) QueueBindingTelemetry(ctx context.Context, appID, bindingID st
 	return stats, nil
 }
 
+func (s *PgStore) QueueAppTelemetry(ctx context.Context, appID string, limit int) (QueueStats, error) {
+	app, err := uuid.Parse(appID)
+	if err != nil {
+		return QueueStats{}, ErrInvalidArgument
+	}
+	rows, err := queueDepthLimit(limit)
+	if err != nil {
+		return QueueStats{}, err
+	}
+	row, err := sqlc.New().ReadProductionQueueTelemetry(ctx, s.pool, sqlc.ReadProductionQueueTelemetryParams{
+		AppID: pgtype.UUID{Bytes: app, Valid: true}, RowLimit: rows})
+	if err != nil {
+		return QueueStats{}, mapErr(err)
+	}
+	stats := QueueStats{Depth: min(int(row.Depth), limit), InFlight: int(row.InFlight), DeadLetter: int(row.DeadLetter)}
+	if row.OldestPendingAt.Valid {
+		stats.OldestPendingAt = row.OldestPendingAt.Time
+	}
+	return stats, nil
+}
+
+// InvocationBacklogReader reports an app's pending and dispatching work per
+// invocation source (async_invoke, inbound_webhook, queue, ...) from the
+// backlog counters (ADR-20261022105723). Queue state shows queue messages
+// only; this is how a customer sees the async invocations, webhooks and
+// event deliveries waiting for the scheduler.
+type InvocationBacklogReader interface {
+	InvocationBacklogBySource(ctx context.Context, appID string) (map[string]int64, error)
+}
+
+var (
+	_ InvocationBacklogReader = (*PgStore)(nil)
+	_ InvocationBacklogReader = (*MemStore)(nil)
+)
+
+func (s *PgStore) InvocationBacklogBySource(ctx context.Context, appID string) (map[string]int64, error) {
+	app, err := uuid.Parse(appID)
+	if err != nil {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := sqlc.New().ListInvocationBacklogPendingBySource(ctx, s.pool, pgtype.UUID{Bytes: app, Valid: true})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		if row.Pending > 0 {
+			out[row.Source] = row.Pending
+		}
+	}
+	return out, nil
+}
+
+func (m *MemStore) InvocationBacklogBySource(_ context.Context, appID string) (map[string]int64, error) {
+	if _, err := uuid.Parse(appID); err != nil {
+		return nil, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]int64{}
+	for _, inv := range m.invocations {
+		if inv.AppID == appID && (inv.State == InvocationPending || inv.State == InvocationDispatching) {
+			out[string(inv.Source)]++
+		}
+	}
+	return out, nil
+}
+
 func parseQueueBindingScope(appID, bindingID, scope string) (pgtype.UUID, pgtype.UUID, error) {
 	app, err := uuid.Parse(appID)
 	if err != nil {
@@ -107,8 +176,34 @@ func (m *MemStore) QueueDepthInScope(ctx context.Context, appID, scope string, l
 	if _, err := queueDepthLimit(limit); err != nil {
 		return 0, err
 	}
-	stats, err := m.QueueStateInScope(ctx, appID, scope)
-	return min(stats.Depth, limit), err
+	if !validQueueStatsScope(scope) {
+		return 0, ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	consumed := map[string]bool{"": true}
+	canonicalAppID := canonicalMemUUID(appID)
+	for _, t := range m.triggers {
+		if t.AppID.String() == canonicalAppID && t.Kind == "queue" && t.Enabled && t.Source.Valid && t.Source.String == string(InvocationQueue) {
+			consumed[t.Slug] = true
+		}
+	}
+	for _, b := range m.queueBindings {
+		if canonicalMemUUID(b.AppID) == canonicalAppID && b.RetiredAt == nil {
+			consumed[b.QueueName] = true
+		}
+	}
+	now := time.Now()
+	depth := 0
+	for _, inv := range m.invocations {
+		if inv.AppID != appID || inv.DeploymentScope != scope || inv.Source != InvocationQueue || inv.QueueBindingID == "" && !consumed[inv.QueueName] {
+			continue
+		}
+		if inv.State == InvocationDispatching || inv.State == InvocationPending && !inv.DueAt.After(now) {
+			depth++
+		}
+	}
+	return min(depth, limit), nil
 }
 
 func (m *MemStore) QueueDepthForBindingInScope(_ context.Context, appID, bindingID, scope string, limit int) (int, error) {
@@ -128,6 +223,15 @@ func (m *MemStore) QueueBindingHasInFlight(_ context.Context, appID, bindingID, 
 	}
 	stats, err := m.queueStateForBinding(appID, bindingID, scope)
 	return stats.InFlight > 0, err
+}
+
+func (m *MemStore) QueueAppTelemetry(ctx context.Context, appID string, limit int) (QueueStats, error) {
+	if _, err := queueDepthLimit(limit); err != nil {
+		return QueueStats{}, err
+	}
+	stats, err := m.QueueState(ctx, appID)
+	stats.Depth, stats.InFlight, stats.DeadLetter = min(stats.Depth, limit), min(stats.InFlight, limit), min(stats.DeadLetter, limit)
+	return stats, err
 }
 
 func (m *MemStore) QueueBindingTelemetry(_ context.Context, appID, bindingID string, limit int) (QueueStats, error) {

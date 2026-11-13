@@ -93,6 +93,19 @@ faas_seal_domain_runtime_signatures_required: false
 # stays on the node: the join check and other units still load it.
 faas_seal_domain_runtime_contracted: false
 
+# ADR-20261110210000 slice 3e, per compute node, after
+# faas_vmmd_secretd_open has run on it: true takes the runtime identity off
+# the node. The role removes runtime.age (and its .previous twin), stages
+# the public runtime.age.pub instead, skips the domain probe (the node can
+# no longer open it), and tells vmmd it is retired: vmmd then refuses to
+# start while a runtime identity is left on disk, and seals crash-capture
+# keys to the recipient so only secretd opens them. Needs
+# faas_seal_domain_runtime_contracted (the fleet identity also opens runtime
+# secrets), faas_vmmd_secretd_open and faas_seal_domain_runtime_recipient_src.
+# vmmd keeps the identity it loaded until it restarts: drain and restart it
+# (docs/runbooks/secretd.md).
+faas_seal_domain_runtime_retired_on_compute: false
+
 # Operator-local files from `gregalectl seal-domain init --domain source`.
 # Control-plane hosts stage both: githubd reads the identity, apid seals to
 # the recipient.
@@ -176,6 +189,14 @@ faas_seal_domain_edge_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_edge_readers_verified: false
 
+# The contract step: gatewayd-internal drops the fleet and host identities
+# and opens basic-auth credentials, log drain headers and edge rule header
+# secrets with the domain identity alone. Needs writes=domain, and the role
+# refuses it while `gregalectl seal-domain migrate --domain edge --check`
+# finds a credential the fleet or host identity still opens, or a log
+# destination an application standard manages that only they open.
+faas_seal_domain_edge_contracted: false
+
 # Operator-local files from `gregalectl seal-domain init --domain edge-tls`
 # (ADR-20261103163954 §3). Compute hosts stage the identity (gatewayd-public
 # opens the apps domains' certificate key), control-plane hosts the
@@ -183,6 +204,13 @@ faas_seal_domain_edge_readers_verified: false
 faas_seal_domain_edge_tls_identity_src: ""
 faas_seal_domain_edge_tls_previous_identity_src: ""
 faas_seal_domain_edge_tls_recipient_src: ""
+
+# Operator-local files from `gregalectl seal-domain init --domain neon`
+# (ADR-20261112160000 §3). Control-plane hosts stage the identity: neond
+# seals and opens the per-project Neon API keys with it. No recipient (neond
+# is the only writer) and no fleet copy (the domain is new).
+faas_seal_domain_neon_identity_src: ""
+faas_seal_domain_neon_previous_identity_src: ""
 
 # Operator-local files from `gregalectl seal-domain init --domain alerting`.
 # Control-plane hosts stage both: meterd opens alert rule webhook secrets,
@@ -249,6 +277,16 @@ faas_seal_domain_control_identity_src: ""
 # to the new one completes; empty removes it.
 faas_seal_domain_control_previous_identity_src: ""
 
+# The contract step for schedd's two domains: schedd drops the fleet
+# identity and opens the cluster signing key with the control identity
+# alone. schedd reads delivery values with the same credentials, so it
+# contracts only together with faas_seal_domain_delivery_contracted; the
+# role refuses one without the other, and refuses both while `gregalectl
+# seal-domain migrate --domain control --check` (or delivery) finds a value
+# the fleet or host identity still opens. host.age stays: it is per host
+# and opens no fleet-sealed value.
+faas_seal_domain_control_contracted: false
+
 # Operator-local files from `gregalectl seal-domain init --domain delivery`.
 # Every host stages the identity (schedd runs on both node roles and opens
 # app webhook signing secrets, commit-source connections and execution
@@ -271,6 +309,11 @@ faas_seal_domain_delivery_writes: ""
 # faas_seal_domain_loaded{domain="delivery"} 1 and the previous release
 # left the rollback window. Required for writes=domain.
 faas_seal_domain_delivery_readers_verified: false
+
+# The contract step for delivery values (app webhook secrets, commit-source
+# connections, execution payloads, trigger config credentials). Needs
+# writes=domain and faas_seal_domain_control_contracted (see there).
+faas_seal_domain_delivery_contracted: false
 
 # Operator-local file from `gregalectl seal-domain init --domain account`.
 # Control-plane hosts stage it: apid seals and opens account values with it,

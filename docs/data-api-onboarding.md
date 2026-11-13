@@ -8,6 +8,22 @@ described in [Data API packaging](data-api-packaging.md).
 
 ## Create and verify
 
+To keep the verified application running with a same-origin browser example and
+local identity selector, add `--start`. It prints one private browser link; no
+token copying or second server is required:
+
+```sh
+gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json --start
+# Start an existing project:
+gregale data-api serve --directory notes --port 0 --browser
+```
+
+Once the SDK version is published to npm, `--sdk-version 0.1.0` can replace
+`--bundle`. It installs that exact public version with lifecycle scripts disabled
+and records npm integrity in the client lockfile. It does not fall back to an
+unpublished version. Bundle installation and its stronger CLI/SDK pairing remain
+available. Node 22+, npm and a local Docker daemon are still required.
+
 ```sh
 gregale data-api onboard --path notes --bundle /path/to/data-api-bundle.json
 cd notes
@@ -21,8 +37,64 @@ types, an artifact pin and a client lockfile. Review and commit those files.
 
 If a stage fails, the project remains. Fix the underlying prerequisite, artifact
 or client error and use the printed recovery commands. A failed onboarding run
-does not count as activation. Existing nonempty projects are refused; use
-`data-api install` and `data-api dev` directly to continue.
+does not count as activation. Existing nonempty projects are refused by
+`onboard`; use the integration flow below for an existing application.
+
+## Add typed data to an existing TypeScript application
+
+For an existing npm TypeScript project, preview the integration first:
+
+```sh
+gregale --json data-api integrate --directory ./my-app \
+  --bundle /approved/data-api-bundle.json --dry-run
+gregale data-api integrate --directory ./my-app \
+  --bundle /approved/data-api-bundle.json
+```
+
+Use `--client-directory web` when the npm package is in `my-app/web`. The
+first version supports standalone npm packages with TypeScript 5+ declared in
+dependencies or devDependencies; npm workspaces and other package-manager
+lockfiles are refused before any writes. Once the SDK is published, an exact
+`--sdk-version` can replace `--bundle`, as for onboarding.
+
+The preview works offline and shows every new file's content in JSON, the
+types destination and the install/verification commands. Applying creates
+`gregale-data/` with an example migration, two-user authorization scenarios,
+development configuration and instructions. It adds
+`src/gregale-data/client.ts` and a separate typecheck configuration inside the
+selected client. Existing application code, scripts and TypeScript configuration
+are retained. Destination conflicts and symlinked integration paths fail before
+installation. The SDK installer updates the client's dependency and npm lockfile;
+bundle installs also retain their artifact pin and vendored archive.
+
+Integration starts a disposable local database and authenticated API, generates
+`src/gregale-data/database.types.ts` from the database, type-checks the client,
+and verifies that Alice and Bob can access their own notes while cross-user
+reads, writes, deletes, forged inserts and ownership transfers fail. It checks
+that the owner's data stays unchanged and removes the local services on exit.
+Success is reported only after the complete verification passes.
+
+Continue developing from the project root:
+
+```sh
+gregale data-api serve --config gregale-data/data-api.dev.json --port 0 --check
+# Verify and exit; add --check-types in CI once types are committed:
+gregale data-api serve --config gregale-data/data-api.dev.json --port 0 \
+  --once --check --replay gregale-data/requests.json
+```
+
+Supply the generated `createAppData` factory with your Data API URL and existing
+application's token provider. The local private inspector/session supplies test
+identities for development; no authentication provider or existing database is
+changed. Add new numbered migrations to evolve the example. Review and commit
+the generated files, types, SDK pin and dependency lockfile together.
+
+If installation or verification fails, generated files remain and the command
+prints the exact install/serve commands to continue. Fix the cause and use those
+commands; rerunning `integrate` refuses the existing integration. The local
+session-file ignore rule is appended to the root `.gitignore`, preserving its
+existing entries. Local verification does not provision hosted resources or
+change preview availability.
 
 ## Use the application
 

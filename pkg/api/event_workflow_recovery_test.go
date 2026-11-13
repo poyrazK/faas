@@ -27,7 +27,7 @@ func TestWorkflowRecoveryRequestValidation(t *testing.T) {
 		{"negative count", func(r *EventRecoveryRequest) { r.WorkflowRouting.Events[0].ReplayCount = -1 }, false},
 		{"negative generation", func(r *EventRecoveryRequest) { g := int64(-1); r.WorkflowRouting.Events[0].Generation = &g }, false},
 		{"too many", func(r *EventRecoveryRequest) {
-			r.WorkflowRouting.Events = make([]EventWorkflowRecoveryTarget, AutomationRecoveryBatchMaxRuns+1)
+			r.WorkflowRouting.Events = make([]EventWorkflowRecoveryTarget, StoredWorkflowRecoveryBatchMaxRuns+1)
 		}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

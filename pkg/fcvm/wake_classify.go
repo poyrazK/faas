@@ -75,7 +75,7 @@ const RestoreFallbackNodeLocal = "node_local"
 // snapshot.
 func RestoreFailureNodeLocal(err error) bool {
 	switch {
-	case err == nil, errors.Is(err, ErrSnapshotBackingChanged), errors.Is(err, ErrAfterRestoreHook):
+	case err == nil, errors.Is(err, ErrSnapshotBackingChanged), errors.Is(err, ErrAfterRestoreHook), errors.Is(err, ErrSnapshotVCPUMismatch):
 		return false
 	case errors.Is(err, errBackingCheckFailed):
 		return true

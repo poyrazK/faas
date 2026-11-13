@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // withSeams saves and restores the four test seams the
@@ -226,6 +228,7 @@ func TestCheckAAAAConflict_OK(t *testing.T) {
 }
 
 func TestCheckAAAAConflict_StrayAAAA(t *testing.T) {
+	t.Setenv("FAAS_CUSTOM_DOMAIN_ADDRESSES", "2001:db8::2")
 	withSeams(t, nil,
 		func(_ context.Context, _ string) ([]string, error) { return []string{"2001:db8::1"}, nil },
 		nil, "")
@@ -238,6 +241,48 @@ func TestCheckAAAAConflict_StrayAAAA(t *testing.T) {
 	}
 	if !strings.Contains(res.Remediation, "Remove AAAA") {
 		t.Errorf("remediation = %q, want 'Remove AAAA record at ...'", res.Remediation)
+	}
+}
+
+func TestCheckAAAAConflictWithoutConfiguredAddressesIsPending(t *testing.T) {
+	t.Setenv("FAAS_CUSTOM_DOMAIN_ADDRESSES", "")
+	withSeams(t, nil, staticLookup("2001:db8::1"), nil, "gregale.dev")
+	if got := checkAAAAConflict(t.Context(), "api.example.com"); got.Status != probePending || got.Remediation != "" {
+		t.Fatalf("unconfigured edge address: %+v", got)
+	}
+}
+
+func TestWildcardRoutingRetriesFixedProbeOverride(t *testing.T) {
+	t.Setenv("FAAS_CUSTOM_DOMAIN_TARGET", "edge.gregale.dev")
+	t.Setenv("FAAS_CUSTOM_DOMAIN_ADDRESSES", "")
+	fixed := "gregale-wildcard-check.example.com"
+	previous := cnameLookupFunc
+	t.Cleanup(func() { cnameLookupFunc = previous })
+	cnameLookupFunc = func(_ context.Context, name string) (string, error) {
+		if name == fixed {
+			return "elsewhere.example.", nil
+		}
+		return "edge.gregale.dev.", nil
+	}
+	result, host := checkDomainRouting(t.Context(), "*.example.com")
+	if result.Status != probeOK || host == fixed || !strings.HasSuffix(host, ".example.com") {
+		t.Fatalf("wildcard DNS retry: result=%+v host=%q", result, host)
+	}
+	cnameLookupFunc = func(context.Context, string) (string, error) { return "elsewhere.example.", nil }
+	if result, _ := checkDomainRouting(t.Context(), "*.example.com"); result.Status != probeFail {
+		t.Fatalf("actual wildcard mismatch: %+v", result)
+	}
+}
+
+func TestDoctorPendingDNSDoesNotRecommendChanges(t *testing.T) {
+	obs := state.DomainDoctorObservation{ObservedAt: time.Now(), CertState: "issued"}
+	report := doctorReportFromObs(state.CustomDomain{Domain: "example.com"}, obs, false)
+	for _, check := range report.Checks {
+		if check.Name == "dns_record" || check.Name == "points_to_gregale" || check.Name == "ipv6_conflict" {
+			if check.Status != "pending" || check.Remediation != "" {
+				t.Fatalf("inconclusive DNS check: %+v", check)
+			}
+		}
 	}
 }
 
@@ -295,7 +340,7 @@ func TestRunProbesParallel_FanOut(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	dnsFound, pointsToG, caa, aaaa := runProbesParallel(ctx, "api.example.com")
+	dnsFound, pointsToG, caa, aaaa, _ := runProbesParallel(ctx, "api.example.com")
 	if dnsFound.Status != probeOK {
 		t.Errorf("dnsFound.status = %q, want ok", dnsFound.Status)
 	}

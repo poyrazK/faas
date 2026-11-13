@@ -30,6 +30,8 @@ func redisTLSDial(dial func(context.Context, string, string) (net.Conn, error), 
 		return dial
 	}
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
 		raw, err := dial(ctx, network, address)
 		if err != nil {
 			return nil, err
@@ -70,6 +72,13 @@ func redisTriggerOptions(cfg redisConfig) *redis.Options {
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
 		WriteTimeout: 3 * time.Second,
-		PoolSize:     4,
+		// Poll, acknowledgements and lag reads share this per-trigger pool.
+		PoolSize:              4,
+		MaxActiveConns:        4,
+		PoolTimeout:           time.Second,
+		ContextTimeoutEnabled: true,
+		MaxRetries:            2,
+		MinRetryBackoff:       25 * time.Millisecond,
+		MaxRetryBackoff:       500 * time.Millisecond,
 	}
 }

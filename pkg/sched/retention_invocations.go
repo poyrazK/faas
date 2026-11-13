@@ -221,6 +221,18 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 			r.log.Info("invocations retention: stamped plan default", "rows", stamped)
 		}
 	}
+	// ADR-20261018101500 amendment 2026-10-31: a completed queue message
+	// keeps its payload for a day, then only its history row.
+	if trimmer, ok := r.store.(state.QueuePayloadTrimStore); ok {
+		trimmed, err := repeatFullBatches(api.InvocationRetentionBatch, func() (int, error) {
+			return trimmer.TrimCompletedQueuePayloads(ctx, r.now().Add(-api.QueueCompletedPayloadRetention), api.InvocationRetentionBatch)
+		})
+		if err != nil {
+			r.log.Warn("invocations retention: queue payload trim failed", "err", err)
+		} else if trimmed > 0 {
+			r.log.Info("invocations retention: trimmed completed queue payloads", "rows", trimmed)
+		}
+	}
 	if attempts, ok := r.store.(state.InvocationAttemptRetentionStore); ok {
 		if _, err := repeatFullBatches(api.InvocationRetentionBatch, func() (int, error) {
 			return attempts.PruneInvocationAttemptHistory(ctx, r.now(), api.InvocationRetentionBatch)

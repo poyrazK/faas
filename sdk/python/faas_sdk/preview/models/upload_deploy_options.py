@@ -42,6 +42,8 @@ class UploadDeployOptions:
     handler: str | Unset = UNSET
     dockerfile: bool | Unset = UNSET
     source_root: str | Unset = UNSET
+    """Build directory saved for this resumable upload. Empty or omitted inherits the app's configured root; '.'
+    selects the archive root."""
     scope: str | Unset = UNSET
     """Named environment scope applied when the upload is committed; omitted uses default."""
     source_url: str | Unset = UNSET

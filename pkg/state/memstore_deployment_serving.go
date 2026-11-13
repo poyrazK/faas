@@ -16,6 +16,11 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 		}
 	}
 	prev, existed := m.deployments[id]
+	if existed && prev.Status != DeployLive && d.Status == DeployLive && IsServiceRollout(d) {
+		now := time.Now().UTC()
+		d.RolloutStartedAt = &now
+	}
+	d.StageState = preserveDeploymentRetryIntent(prev, d, existed)
 	if !existed {
 		m.capturePublicBuildURLsLocked(id, d)
 	}

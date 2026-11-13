@@ -11,11 +11,14 @@
     that:
       - faas_seal_domain_delivery_writes in ['', 'fleet', 'dual', 'domain']
       - faas_seal_domain_delivery_writes != 'domain' or (faas_seal_domain_delivery_readers_verified | bool)
+      - not (faas_seal_domain_delivery_contracted | bool) or faas_seal_domain_delivery_writes == 'domain'
     fail_msg: >-
       faas_seal_domain_delivery_writes is '', fleet, dual or domain. domain
       needs faas_seal_domain_delivery_readers_verified once every schedd on
       both node roles reports faas_seal_domain_loaded{domain="delivery"} 1
       and the previous release left the rollback window.
+      faas_seal_domain_delivery_contracted needs writes=domain; control.yml,
+      which runs first, checks the pair before schedd drops the fleet key.
 
 # 0400 root:root. systemd hands the identity to schedd alone as a
 # credential; no other unit names it.
@@ -74,6 +77,24 @@
 
 - name: seal_domains — restart schedd before proving the delivery domain
   ansible.builtin.meta: flush_handlers
+
+# A contracted schedd holds its domain identities, host.age and the signing
+# public key, and no fleet identity (control.yml wrote the contract drop-in
+# after checking both domains).
+- name: seal_domains — prove a contracted schedd runs without the fleet identity
+  ansible.builtin.find:
+    paths: /run/credentials/faas-schedd.service
+  register: faas_seal_domain_schedd_credentials
+  failed_when: >-
+    'faas_seal_domain_control' not in (faas_seal_domain_schedd_credentials.files | map(attribute='path') | map('basename') | list) or
+    'faas_seal_domain_delivery' not in (faas_seal_domain_schedd_credentials.files | map(attribute='path') | map('basename') | list) or
+    'faas_sign_pub' not in (faas_seal_domain_schedd_credentials.files | map(attribute='path') | map('basename') | list) or
+    'fleet.age' in (faas_seal_domain_schedd_credentials.files | map(attribute='path') | map('basename') | list)
+  when:
+    - faas_seal_domain_control_contracted | bool
+    - faas_seal_domain_delivery_contracted | bool
+    - not (faas_join_defer_service_handlers | default(false) | bool)
+
 
 - name: seal_domains — prove this node opens the delivery domain probe
   ansible.builtin.command:

@@ -155,7 +155,11 @@ func publicationCall(t *testing.T, ctx context.Context, cs *mcp.ClientSession, n
 	t.Helper()
 	out := callTool(t, ctx, cs, name, args, wantError)
 	data, _ := json.Marshal(out)
-	validateWorkflowSchema(t, toolOutputSchema(name), data)
+	schema := toolOutputSchema(name)
+	if wantError {
+		schema = map[string]any{"$defs": map[string]any{"recovery": recoverySchema()}, "anyOf": []any{toolErrorSchema()}}
+	}
+	validateWorkflowSchema(t, schema, data)
 	if strings.Contains(string(data), "must-not-return") {
 		t.Fatal("publication leaked raw CLI fields")
 	}

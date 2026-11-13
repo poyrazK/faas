@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 )
@@ -92,6 +93,16 @@ func newMultipartWriterWithSourceRoot(dst *bytes.Buffer, slug string, dockerfile
 			_ = w.WriteField("healthcheck", string(raw))
 		}
 	}
+	if a.LivenessProbe != nil {
+		if raw, err := json.Marshal(a.LivenessProbe); err == nil {
+			_ = w.WriteField("liveness_probe", string(raw))
+		}
+	}
+	if a.ReadinessProbe != nil {
+		if raw, err := json.Marshal(a.ReadinessProbe); err == nil {
+			_ = w.WriteField("readiness_probe", string(raw))
+		}
+	}
 	if len(a.OverrideEnv) > 0 {
 		if raw, err := json.Marshal(a.OverrideEnv); err == nil {
 			_ = w.WriteField("override_env", string(raw))
@@ -175,6 +186,12 @@ type DeployAnnotations struct {
 	RollbackOn5xx            *bool
 	DisableStartupCPUBoost   *bool
 	Healthcheck              *DeploymentHealthcheck
+	// LivenessProbe replaces the plan-default /healthz liveness probe. apid
+	// ignores it on a plan without liveness probes (Free).
+	LivenessProbe *DeploymentLivenessProbe
+	// ReadinessProbe takes a failing instance out of routing until it
+	// passes again, without restarting it (multipart field readiness_probe).
+	ReadinessProbe *DeploymentReadinessProbe
 	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
 	OverrideFreeze string
 	// ReleaseAt and ReleaseNotify are CreateDeploymentRequest's.
@@ -189,5 +206,10 @@ type DeployAnnotations struct {
 }
 
 func normalizeMultipartSourceRoot(raw string) (string, error) {
-	return sourcecontext.StorageRoot(raw)
+	if strings.TrimSpace(raw) == "" {
+		return "", nil
+	}
+	// Preserve an explicit archive-root selection instead of omitting it and
+	// accidentally using the app's configured nested root.
+	return sourcecontext.Normalize(raw)
 }

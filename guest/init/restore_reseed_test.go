@@ -17,25 +17,29 @@ import (
 func TestStampRestoreReseedEnv(t *testing.T) {
 	const dir, sock = "/run/guest-init/rng", "/run/guest-init/reseed.sock"
 	require := "--require=/run/guest-init/rng/node-reseed.cjs"
+	agent := "-javaagent:/run/guest-init/rng/java-reseed.jar"
 	cases := []struct {
 		name       string
 		env        []string
 		wantNode   string
 		wantPython string
+		wantJava   string
 		optedOut   bool
 	}{
-		{name: "empty env", wantNode: require, wantPython: dir + "/python"},
+		{name: "empty env", wantNode: require, wantPython: dir + "/python", wantJava: agent},
 		{
 			name:       "customer values are preserved",
-			env:        []string{"NODE_OPTIONS=--max-old-space-size=256", "PYTHONPATH=/app/lib"},
+			env:        []string{"NODE_OPTIONS=--max-old-space-size=256", "PYTHONPATH=/app/lib", "JAVA_TOOL_OPTIONS=-Xmx256m"},
 			wantNode:   "--max-old-space-size=256 " + require,
 			wantPython: dir + "/python" + string(os.PathListSeparator) + "/app/lib",
+			wantJava:   "-Xmx256m " + agent,
 		},
 		{
 			name:       "idempotent",
-			env:        []string{"NODE_OPTIONS=" + require, "PYTHONPATH=" + dir + "/python"},
+			env:        []string{"NODE_OPTIONS=" + require, "PYTHONPATH=" + dir + "/python", "JAVA_TOOL_OPTIONS=" + agent},
 			wantNode:   require,
 			wantPython: dir + "/python",
+			wantJava:   agent,
 		},
 		{name: "opt out", env: []string{"GREGALE_RESTORE_RESEED=off", "NODE_OPTIONS=--x"}, optedOut: true},
 	}
@@ -54,10 +58,13 @@ func TestStampRestoreReseedEnv(t *testing.T) {
 			if v := envValue(got, "PYTHONPATH"); v != tc.wantPython {
 				t.Errorf("PYTHONPATH = %q, want %q", v, tc.wantPython)
 			}
+			if v := envValue(got, "JAVA_TOOL_OPTIONS"); v != tc.wantJava {
+				t.Errorf("JAVA_TOOL_OPTIONS = %q, want %q", v, tc.wantJava)
+			}
 			if v := envValue(got, restoreReseedSocketEnv); v != sock {
 				t.Errorf("%s = %q, want %q", restoreReseedSocketEnv, v, sock)
 			}
-			for _, key := range []string{"NODE_OPTIONS", "PYTHONPATH"} {
+			for _, key := range []string{"NODE_OPTIONS", "PYTHONPATH", "JAVA_TOOL_OPTIONS"} {
 				n := 0
 				for _, kv := range got {
 					if strings.HasPrefix(kv, key+"=") {

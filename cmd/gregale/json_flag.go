@@ -317,8 +317,11 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 // flag" (Hunt 12 H12-27).
 func globalFlagPlacementHint(diagnostic, path string) string {
 	for _, global := range []struct{ name, example string }{
+		{"debug-http", "--debug-http"},
 		{"non-interactive", "--non-interactive"},
+		{"wait-for-approval", "--wait-for-approval"},
 		{"profile", "--profile NAME"},
+		{"http-retries", "--http-retries 3"},
 	} {
 		if diagnostic == "unknown flag --"+global.name || strings.HasPrefix(diagnostic, "unknown flag --"+global.name+"=") {
 			return fmt.Sprintf("--%s is a global flag: put it before the command, as in 'gregale %s %s'", global.name, global.example, path)

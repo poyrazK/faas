@@ -30,5 +30,9 @@ func NewGCSConditionalFixtureForTest(t *testing.T, handler http.Handler) *GCS {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	return testGCS(server.URL, &googleGCSStore{client: client})
+	objects, err := newGCSObjectListingClient(t.Context(), httpClient, server.URL+"/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testGCS(server.URL, &googleGCSStore{client: client, objects: objects})
 }

@@ -117,9 +117,9 @@ def sync_detailed(
         slug (str):
         body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint for Stripe
             or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events
-            become durable app invocations or automation starts when bound. Example: {'name': 'stripe-
-            primary', 'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
-            '/internal/stripe'}.
+            become durable app invocations or stored workflow starts when bound. Example: {'name':
+            'stripe-primary', 'provider': 'stripe', 'signing_secret': 'whsec_example',
+            'delivery_path': '/internal/stripe'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -159,9 +159,9 @@ def sync(
         slug (str):
         body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint for Stripe
             or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events
-            become durable app invocations or automation starts when bound. Example: {'name': 'stripe-
-            primary', 'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
-            '/internal/stripe'}.
+            become durable app invocations or stored workflow starts when bound. Example: {'name':
+            'stripe-primary', 'provider': 'stripe', 'signing_secret': 'whsec_example',
+            'delivery_path': '/internal/stripe'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -196,9 +196,9 @@ async def asyncio_detailed(
         slug (str):
         body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint for Stripe
             or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events
-            become durable app invocations or automation starts when bound. Example: {'name': 'stripe-
-            primary', 'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
-            '/internal/stripe'}.
+            become durable app invocations or stored workflow starts when bound. Example: {'name':
+            'stripe-primary', 'provider': 'stripe', 'signing_secret': 'whsec_example',
+            'delivery_path': '/internal/stripe'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -236,9 +236,9 @@ async def asyncio(
         slug (str):
         body (CreateInboundWebhookEndpointRequest): Create a provider-verified endpoint for Stripe
             or a custom sender using Gregale's timestamped HMAC-SHA256 protocol. Accepted events
-            become durable app invocations or automation starts when bound. Example: {'name': 'stripe-
-            primary', 'provider': 'stripe', 'signing_secret': 'whsec_example', 'delivery_path':
-            '/internal/stripe'}.
+            become durable app invocations or stored workflow starts when bound. Example: {'name':
+            'stripe-primary', 'provider': 'stripe', 'signing_secret': 'whsec_example',
+            'delivery_path': '/internal/stripe'}.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

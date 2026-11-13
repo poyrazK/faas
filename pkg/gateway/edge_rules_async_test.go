@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 )
 
 type recordingAsyncRouteEnqueuer struct {
@@ -70,6 +71,7 @@ func TestAsyncRouteDeadlineAtDefaultsAndClampsToPlan(t *testing.T) {
 }
 
 func TestApplyEdgeRuleAsyncEnqueuesAdmittedRequest(t *testing.T) {
+	t.Cleanup(hostidentity.Configure(hostidentity.Domains{Platform: "gregale.dev", Apps: "gregale.dev", Deploy: "gregale.dev"}))
 	enqueuer := &recordingAsyncRouteEnqueuer{}
 	h := &Handler{asyncRoutes: enqueuer}
 	rule := &EdgeRuleAsyncResolved{
@@ -145,7 +147,7 @@ func TestApplyEdgeRuleAsyncEnqueuesAdmittedRequest(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if response.ID != "inv_async_123" || response.StatusURL != "/v1/invocations/inv_async_123" {
+	if response.ID != "inv_async_123" || response.StatusURL != "https://api.gregale.dev/v1/invocations/inv_async_123" {
 		t.Errorf("response = %+v", response)
 	}
 }
@@ -165,5 +167,16 @@ func TestApplyEdgeRuleAsyncRejectsInvalidJSON(t *testing.T) {
 	}
 	if enqueuer.calls != 0 {
 		t.Fatalf("enqueue calls = %d, want 0", enqueuer.calls)
+	}
+}
+
+// TestAsyncRouteStatusURLIsAbsolute pins Hunt 32 H32-53: the 202 is served on
+// the app's host, where a relative /v1/invocations/{id} reaches the app.
+func TestAsyncRouteStatusURLIsAbsolute(t *testing.T) {
+	if got := asyncRouteStatusURL("example.net", "/v1/invocations/x"); got != "https://api.example.net/v1/invocations/x" {
+		t.Fatalf("status URL = %q", got)
+	}
+	if got := asyncRouteStatusURL("", "/v1/invocations/x"); got != "/v1/invocations/x" {
+		t.Fatalf("status URL without a platform domain = %q, want relative", got)
 	}
 }

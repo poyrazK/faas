@@ -12,9 +12,11 @@ import (
 )
 
 const objectStorageLockLegacyIdentity = `-- name: ObjectStorageLockLegacyIdentity :exec
-SELECT id FROM accounts WHERE id=$1 FOR UPDATE
+SELECT id FROM accounts WHERE id=$1 FOR NO KEY UPDATE
 `
 
+// NO KEY UPDATE for the same reason as ObjectUsageLockAccount: foreign-key
+// inserts naming the account must not wait for an object job.
 func (q *Queries) ObjectStorageLockLegacyIdentity(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, objectStorageLockLegacyIdentity, id)
 	return err

@@ -51,7 +51,7 @@ func (s *Service) QueuePasswordReset(ctx context.Context, accountID, expectedEma
 	if err != nil {
 		return reconciliationError(err)
 	}
-	if account.Status != "active" || !account.EmailVerifiedAt.Valid || !strings.EqualFold(account.Email, address) {
+	if (account.Status != "active" && account.Status != "past_due") || !account.EmailVerifiedAt.Valid || !strings.EqualFold(account.Email, address) {
 		return ErrAccountUnavailable
 	}
 	recovery, err := s.recovery(ctx, tx)

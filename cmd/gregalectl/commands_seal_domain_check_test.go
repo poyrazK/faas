@@ -118,7 +118,7 @@ func TestSealDomainCheckOutboundPostgres(t *testing.T) {
 
 	// The storage, alerting, source, build and runtime checks run their own
 	// walks: with nothing stored nothing is pending.
-	for _, d := range []sealdomain.Domain{sealdomain.Storage, sealdomain.Alerting, sealdomain.Source, sealdomain.Build, sealdomain.Runtime} {
+	for _, d := range []sealdomain.Domain{sealdomain.Storage, sealdomain.Alerting, sealdomain.Source, sealdomain.Build, sealdomain.Runtime, sealdomain.Edge, sealdomain.Delivery, sealdomain.Control} {
 		id := mustCheckIdentity(t)
 		if err := secretbox.WriteHostKeyAtPath(sealdomain.IdentityPath(dir, d), id); err != nil {
 			t.Fatal(err)
@@ -140,7 +140,7 @@ func TestSealDomainCheckOutboundPostgres(t *testing.T) {
 		}
 	}
 
-	if err := runSealDomainMigrate([]string{"--check", "--domain", "edge", "--pg-dsn", dsn}); err == nil || !strings.Contains(err.Error(), "only in this release") {
+	if err := runSealDomainMigrate([]string{"--check", "--domain", "account", "--pg-dsn", dsn}); err == nil || !strings.Contains(err.Error(), "only in this release") {
 		t.Fatalf("check of a domain that cannot contract yet = %v; want it refused", err)
 	}
 }

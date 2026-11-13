@@ -25,10 +25,23 @@ type environmentQualificationSnapshotProducer interface {
 	captureEnvironmentQualificationSnapshot(context.Context, Lease, BackingIdentity) (SnapshotInfo, error)
 }
 
+// WithEnvironmentQualificationCapture opens qualification capture on this host
+// (ADR 20261023093000). It is off by default: vmmd enables it only with native
+// process recovery and both private roots, and only where an operator accepts
+// native qualification capture, restore and retirement on that host.
+func (v *JailerVMM) WithEnvironmentQualificationCapture() *JailerVMM {
+	v.environmentQualificationCapture = true
+	return v
+}
+
 // The internal native producer must pass actual capture/restore acceptance and
 // acquire owner-fenced artifact retirement and qualification/graph restore proof
-// before this gate can open. Writer receipts alone do not enable capture.
+// before this gate can open. Writer receipts alone do not enable capture; the
+// explicit host opt-in and every native prerequisite do.
 func (v *JailerVMM) checkEnvironmentQualificationSnapshotSupport() error {
+	if v.environmentQualificationCapture && v.nativeRecovery != nil && v.nativeSnapshotPublicationRoot != "" && v.nativeImageStagingRoot != "" {
+		return nil
+	}
 	return fmt.Errorf("native qualification: artifact retirement and qualification restore acceptance are unavailable: %w", state.ErrConflict)
 }
 
@@ -132,7 +145,14 @@ func (m *Manager) CaptureEnvironmentQualification(ctx context.Context, frame sta
 
 func (m *Manager) captureQualificationSnapshotCohort(ctx context.Context, inst *Instance, keys state.EnvironmentQualificationSnapshot, backing BackingIdentity) (SnapshotInfo, error) {
 	if producer, ok := m.vmm.(environmentQualificationSnapshotProducer); ok {
-		return producer.captureEnvironmentQualificationSnapshot(ctx, inst.Lease, backing)
+		// The producer keeps the guest paused while it freezes the writable
+		// drive, a full copy where the filesystem cannot reflink. It owns its
+		// one-shot resume, so only a completed capture restarts the probes; a
+		// failed one is retired with its attempt.
+		restartProbes := m.suspendSnapshotProbes(ctx, inst)
+		info, err := producer.captureEnvironmentQualificationSnapshot(ctx, inst.Lease, backing)
+		restartProbes(err == nil)
+		return info, err
 	}
 	// Portable VMM fixtures retain their existing modeled capture contract.
 	// The real native backend always implements the complete producer above.

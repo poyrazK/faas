@@ -96,6 +96,10 @@ func TestPg_ListLatestDeploymentPerApp_IsScopedAndStable(t *testing.T) {
 	appB := createApp(account.ID, "latest-pg-b")
 	wantB := createDeployment(appB.ID, "sha256:b")
 	clearedB := createDeployment(appB.ID, "sha256:cleared")
+	// A pending deployment must be cancelled before it can be hidden (#6968).
+	if _, _, err := s.CancelDeploymentTx(ctx, clearedB.ID, "operator:test", state.CancelReasonUser); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.ClearDeployment(ctx, clearedB.ID, "operator:test"); err != nil {
 		t.Fatal(err)
 	}

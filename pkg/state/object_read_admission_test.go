@@ -13,6 +13,35 @@ import (
 )
 
 func TestObjectReadAdmissionMem(t *testing.T) { objectReadAdmissionSuite(t, state.NewMemStore()) }
+
+func TestObjectReadAdmissionBillingSubjectMem(t *testing.T) {
+	objectReadAdmissionBillingSubject(t, state.NewMemStore())
+}
+
+func TestObjectReadAdmissionBillingSubjectPG(t *testing.T) {
+	st, _ := pgStore(t)
+	objectReadAdmissionBillingSubject(t, st)
+}
+
+func objectReadAdmissionBillingSubject(t *testing.T, base state.Store) {
+	t.Helper()
+	f := setupOffboarding(t, base)
+	bucket := companyObjectBucket(t, base.(companyObjectStore), f.app, "read-owner")
+	st := base.(state.ObjectReadAdmissionStore)
+	check := func(subject string) {
+		t.Helper()
+		d, err := st.ObjectReadAdmission(t.Context(), bucket.AccountID, bucket.ID, time.Now(), gatewaySafetyPolicy())
+		if err != nil || d.Err != nil || d.SubjectID != subject {
+			t.Fatalf("billing subject = %+v, %v; want %s", d, err, subject)
+		}
+	}
+	// OrgID alone does not establish shared billing: before adoption this
+	// company's buckets still spend their creator's account allowance.
+	check(bucket.AccountID)
+	adoptObjectCompany(t, f)
+	check(f.org.ID)
+}
+
 func TestObjectReadAdmissionPG(t *testing.T) {
 	st, _ := pgStore(t)
 	b := objectReadAdmissionSuite(t, st)
@@ -61,7 +90,7 @@ func objectReadAdmissionSuite(t *testing.T, st contractTestStore) state.ObjectBu
 		t.Fatal(err)
 	}
 	d := decide()
-	if d.Err != nil || d.Requests != 0 || d.EgressBytes != 0 || d.Authorizations != 0 || d.MaxRequests != p.MaxMonthlyRequests || d.MaxEgressBytes != p.MaxMonthlyEgressBytes || d.MaxAuthorizations != p.MaxMonthlyAuthorizations || !d.Period.Equal(state.ObjectStoragePeriod(now)) {
+	if d.Err != nil || d.SubjectID != b.AccountID || d.Requests != 0 || d.EgressBytes != 0 || d.Authorizations != 0 || d.MaxRequests != p.MaxMonthlyRequests || d.MaxEgressBytes != p.MaxMonthlyEgressBytes || d.MaxAuthorizations != p.MaxMonthlyAuthorizations || !d.Period.Equal(state.ObjectStoragePeriod(now)) {
 		t.Fatalf("admitting decision = %+v", d)
 	}
 	if other, err := st.ObjectReadAdmission(ctx, uuid.NewString(), b.ID, time.Now(), p); err != nil || !errors.Is(other.Err, state.ErrNotFound) {

@@ -9,7 +9,9 @@ import {
   GREGALE_REVISION_HEADER,
   GREGALE_REQUEST_DEADLINE_HEADER,
   GREGALE_FLAG_PROPAGATION_HEADER,
+  GREGALE_DEADLINE_MS_HEADER,
   gregaleReleaseMetaTag,
+  gregaleRequestTimeRemainingMs,
   withGregaleReleaseContext,
   withGregaleRequestContext,
 } from '../src/preview.js';
@@ -218,4 +220,67 @@ test('flag propagation preserves the parent deadline and stops automatic redirec
     assert.equal(calls[2]?.headers.has(GREGALE_FLAG_PROPAGATION_HEADER), false);
     assert.equal(calls[2]?.headers.get('X-Customer'), 'preserved');
   });
+});
+
+// ADR-20261102082606 step 3: a managed service call carries the time the
+// inbound request has left, so the service proxy ends the call with it.
+test('time left follows managed calls only and only shortens', async () => {
+  const seen = new Map<string, string | null>();
+  const fetcher = createGregaleFetch(async (input, init) => {
+    const url = input instanceof Request ? input.url : String(input);
+    seen.set(new URL(url).hostname, new Headers(init?.headers).get(GREGALE_DEADLINE_MS_HEADER));
+    return new Response(null, { status: 204 });
+  });
+  await withGregaleRequestContext({ [GREGALE_DEADLINE_MS_HEADER]: '5000' }, async () => {
+    const left = gregaleRequestTimeRemainingMs();
+    assert.ok(left !== undefined && left > 4000 && left <= 5000, `remaining ${left}`);
+    await fetcher('http://billing.svc.gregale/charge');
+    await fetcher('https://example.com/x');
+    await fetcher('http://audit.svc.gregale/log', { headers: { [GREGALE_DEADLINE_MS_HEADER]: '1200' } });
+    await fetcher('http://search.svc.gregale/q', { headers: { [GREGALE_DEADLINE_MS_HEADER]: '9000' } });
+  });
+  const billing = Number(seen.get('billing.svc.gregale'));
+  assert.ok(billing > 4000 && billing <= 5000, `billing deadline ${billing}`);
+  assert.equal(seen.get('example.com'), null);
+  assert.equal(seen.get('audit.svc.gregale'), '1200');
+  assert.ok(Number(seen.get('search.svc.gregale')) <= 5000);
+});
+
+test('a request with no time left still sends 1 ms; invalid inbound values are ignored', async () => {
+  let sent: string | null = null;
+  const fetcher = createGregaleFetch(async (_input, init) => {
+    sent = new Headers(init?.headers).get(GREGALE_DEADLINE_MS_HEADER);
+    return new Response(null, { status: 204 });
+  });
+  await withGregaleRequestContext({ [GREGALE_DEADLINE_MS_HEADER]: '1' }, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(gregaleRequestTimeRemainingMs(), 0);
+    await fetcher('http://billing.svc.gregale/charge');
+  });
+  assert.equal(sent, '1');
+  for (const value of ['0', '-5', 'soon', '100, 200', '99999999999']) {
+    sent = 'unset';
+    await withGregaleRequestContext({ [GREGALE_DEADLINE_MS_HEADER]: value }, async () => {
+      assert.equal(gregaleRequestTimeRemainingMs(), undefined, value);
+      await fetcher('http://billing.svc.gregale/charge');
+    });
+    assert.equal(sent, null, value);
+  }
+  assert.equal(gregaleRequestTimeRemainingMs(), undefined);
+});
+
+// ADR-20261102082606 amendment 2: function adapters find the request context
+// through a well-known global, so a function needs no wrapper of its own.
+test('the request context is registered for function adapters', async () => {
+  const enter = (globalThis as unknown as Record<symbol, unknown>)[Symbol.for('gregale.sdk.requestContext.v1')];
+  assert.equal(enter, withGregaleRequestContext);
+  let sent: string | null = null;
+  const fetcher = createGregaleFetch(async (_input, init) => {
+    sent = new Headers(init?.headers).get(GREGALE_DEADLINE_MS_HEADER);
+    return new Response(null, { status: 204 });
+  });
+  await (enter as typeof withGregaleRequestContext)({ 'X-Faas-Deadline-Ms': '4000' }, async () => {
+    await fetcher('http://billing.svc.gregale/charge');
+  });
+  assert.ok(Number(sent) > 3000 && Number(sent) <= 4000, `sent ${sent}`);
 });

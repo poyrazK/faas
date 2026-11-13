@@ -6,7 +6,8 @@
 //	postmark → NewPostmarkSender (FAAS_MAIL_POSTMARK_TOKEN required)
 //	internal → private maild socket (explicit master flag + service token)
 //	internal-producer → private producer route (master + producer gates and scoped token)
-//	noop     → NoopSender (silent drop, for tests)
+//	noop     → NoopSender (silent drop, for tests and FAAS_DEV boxes);
+//	           DroppingSender on any other box (drops, but ERROR log + metric)
 //
 // The transport name comes from FAAS_MAIL_TRANSPORT. Selecting a live
 // transport (resend or postmark) without its credential is fail-closed:
@@ -106,8 +107,18 @@ func SenderFromEnv(getenv func(string) string, log *slog.Logger) (Sender, error)
 	}
 	switch strings.ToLower(getenv("FAAS_MAIL_TRANSPORT")) {
 	case TransportNoop:
-		log.Info("mail.transport", "transport", TransportNoop)
-		return NoopSender{}, nil
+		if IsDevMode(getenv) {
+			log.Info("mail.transport", "transport", TransportNoop)
+			return NoopSender{}, nil
+		}
+		// A production box that drops mail looks healthy: signup mints a
+		// verification token, the send succeeds, and nobody can ever verify
+		// (prod ran like this from bootstrap). Keep it bootable, but loud.
+		log.Error("mail.transport", "transport", TransportNoop,
+			"delivers_mail", false,
+			"impact", "no email leaves this box: address verification, password reset, magic links and billing notices are all dropped",
+			"fix", "set FAAS_MAIL_TRANSPORT=resend (or postmark) plus FAAS_MAIL_FROM and the provider key in /etc/faas/sealed.env")
+		return NewDroppingSender(log), nil
 	case TransportInternal:
 		socket := getenv("FAAS_INTERNAL_MAIL_SOCKET")
 		if socket == "" {

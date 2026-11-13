@@ -54,6 +54,7 @@ type testScenario struct {
 	Resilience       *testResilienceSpec       `yaml:"resilience,omitempty"`
 	Project          string                    `yaml:"project"`
 	Source           string                    `yaml:"source"`
+	FromBranch       *testBranchSource         `yaml:"from_branch,omitempty" json:"from_branch,omitempty"`
 	Secrets          map[string]string         `yaml:"secrets"`
 	Consumers        []testConsumer            `yaml:"consumers"`
 	ConsumerAuthMode string                    `yaml:"consumer_auth_mode"`
@@ -92,6 +93,7 @@ type testService struct {
 	Upstream        string            `yaml:"upstream,omitempty"`
 	EgressAllowlist []string          `yaml:"egress_allowlist,omitempty"`
 	Source          string            `yaml:"source"`
+	FromBranch      *testBranchSource `yaml:"from_branch,omitempty"`
 	Fixture         string            `yaml:"fixture"`
 	FailFirst       int               `yaml:"fail_first"`
 	Postgres        bool              `yaml:"postgres"`
@@ -422,7 +424,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	if err := validateDistinctTestReportPaths(*reportPath, *junitPath, *htmlPath); err != nil {
+	if err := validateTestReportInputs([]string{*manifestPath, *dataPath, *baselinePath, *recoveryBaselinePath, *sweepBaselinePath}, *reportPath, *junitPath, *htmlPath); err != nil {
 		return printErr("Invalid test report paths", err)
 	}
 	loadOverrides := testLoadOverrides{VUs: *vus, Iterations: *iterations, Rate: *rate, Duration: *duration, Pacing: *pacing}
@@ -536,14 +538,18 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 		if *scenarioName != "" && name != *scenarioName {
 			continue
 		}
-		selected := profiles
-		if *engine != "real-vm" {
-			selected = []string{*engine}
+		if err := validateTestReportInputs(testScenarioInputPaths(scenario, sourceDir), *reportPath, *junitPath, *htmlPath); err != nil {
+			return printErr("Invalid test report paths", err)
 		}
-		for _, p := range selected {
-			if err := validateTestCommandExecution(scenario, *engine, p); err != nil {
-				return printErr("Invalid contained command recipe", err)
+		if !*load {
+			httpScenario := scenario
+			httpScenario.Load = nil
+			if err := validateTestHTTPRequestsWithData(httpScenario, dataFields); err != nil {
+				return printErr("Invalid scenario execution", fmt.Errorf("scenario %q: %w", name, err))
 			}
+		}
+		if err := validateTestScenarioExecution(scenario, *engine, profiles...); err != nil {
+			return printErr("Invalid scenario execution", err)
 		}
 		if scenario.CommandExecution != nil && *load {
 			return printErr("Invalid contained command recipe", errors.New("contained commands do not support load overrides"))
@@ -566,7 +572,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 		}
 	}
 	if *validateOnly {
-		return validateTestManifestForEngine(scenarios, sourceDir, *scenarioName, *engine)
+		return validateTestManifestForEngine(scenarios, sourceDir, *scenarioName, *engine, profiles...)
 	}
 	if *preflightOnly {
 		if *engine != "real-vm" {
@@ -1094,12 +1100,8 @@ func runSimulatedTest(parent context.Context, name string, scenario testScenario
 		receipt.FinishedAt = time.Now().UTC()
 		receipt.DurationMS = receipt.FinishedAt.Sub(receipt.StartedAt).Milliseconds()
 	}()
-	if err := validateTestCommandExecution(scenario, "simulated", "simulated"); err != nil {
+	if err := validateTestScenarioExecution(scenario, "simulated"); err != nil {
 		receipt.Error = err.Error()
-		return receipt
-	}
-	if scenario.Actions != nil {
-		receipt.Error = "webhook action capture requires the real-vm engine"
 		return receipt
 	}
 	if len(scenario.Simulation) == 0 || scenario.Simulation[0] == "" {
@@ -1246,8 +1248,11 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		name, project, sourceDir string
 		config                   devSourceConfig
 		session                  api.DevSessionResponse
+		// branch seeds the workload from a simulated environment branch
+		// instead of deploying sourceDir (ADR-20261031193635 slice 6b).
+		branch *testBranchSource
 	}
-	workloads := []deployedTestService{{name: scenario.Project, project: scenario.Project, sourceDir: sourceDir, config: config, session: session}}
+	workloads := []deployedTestService{{name: scenario.Project, project: scenario.Project, sourceDir: sourceDir, config: config, session: session, branch: scenario.FromBranch}}
 	registered := false
 	destroyed := false
 	destroyWorkloads := func() {
@@ -1308,6 +1313,18 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	for _, serviceName := range serviceNames {
 		spec := scenario.Services[serviceName]
 		serviceDir := ""
+		if spec.FromBranch != nil {
+			projectName := scenario.Project + "-" + serviceName
+			serviceSession, err := client.UpsertDevSession(ctx, projectName, devSourceConfig{shape: shapeApp}.sessionRequest(receipt.RunID, false, "", 0, nil))
+			if err != nil {
+				receipt.Error = fmt.Sprintf("create test workload %s: %v", serviceName, err)
+				releaseUnconfirmedTestSession(ctx, client, projectName, receipt.RunID, err)
+				return
+			}
+			workloads = append(workloads, deployedTestService{name: serviceName, project: projectName, config: devSourceConfig{shape: shapeApp}, session: serviceSession, branch: spec.FromBranch})
+			receipt.WorkloadAppIDs[serviceName] = serviceSession.App.ID
+			continue
+		}
 		if spec.Fixture != "" {
 			var cleanup func()
 			serviceDir, cleanup, err = materializeScenarioFixture(spec.Fixture)
@@ -1382,6 +1399,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		captureActions = newTestActionCollector(ctx, client, &receipt, names)
 		defer captureActions()
 	}
+	internalServices := scenarioInternalServices(manifestDir, scenario)
 	for _, workload := range workloads {
 		tcpSpec := scenario.Services[workload.name]
 		if workload.name == scenario.Project {
@@ -1397,6 +1415,10 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 		}
 		if err := configureTestWorkloadAccess(ctx, client, workload.session.App.Slug, mode); err != nil {
 			receipt.Error = fmt.Sprintf("configure test workload %s access: %v", workload.name, err)
+			return
+		}
+		if err := configureTestWorkloadVisibility(ctx, client, workload.session.App.Slug, workload.name != scenario.Project && internalServices[workload.name]); err != nil {
+			receipt.Error = fmt.Sprintf("configure test workload %s visibility: %v", workload.name, err)
 			return
 		}
 	}
@@ -1542,9 +1564,20 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	for _, workload := range workloads {
 		var deploymentID string
 		var sourceSHA256 string
-		deployResult := cmdDeployTarballToExisting(ctx, workload.config.deployArgs(workload.session.App.Slug, workload.sourceDir), true, deployExecution{
-			onQueued: func(dep api.DeploymentResponse) { deploymentID, sourceSHA256 = dep.ID, dep.SourceSHA256 },
-		})
+		deployResult := 0
+		if workload.branch != nil {
+			var seedErr error
+			deploymentID, seedErr = seedTestWorkloadFromBranch(ctx, client, workload.project, receipt.RunID, *workload.branch)
+			if seedErr != nil {
+				osStdout = previousStdout
+				receipt.Error = fmt.Sprintf("branch deployment for %s: %v", workload.name, seedErr)
+				return
+			}
+		} else {
+			deployResult = cmdDeployTarballToExisting(ctx, workload.config.deployArgs(workload.session.App.Slug, workload.sourceDir), true, deployExecution{
+				onQueued: func(dep api.DeploymentResponse) { deploymentID, sourceSHA256 = dep.ID, dep.SourceSHA256 },
+			})
+		}
 		if deployResult != 0 || deploymentID == "" {
 			osStdout = previousStdout
 			receipt.Error = fmt.Sprintf("source deployment for %s failed (exit %d)", workload.name, deployResult)
@@ -2314,7 +2347,7 @@ func prepareTestProfile(ctx context.Context, client *Client, slug, profile strin
 		if response.WakeID == "" {
 			return errors.New("wake response omitted wake_id")
 		}
-		_, err = waitForAppWake(ctx, client, slug, response.WakeID, 2*time.Minute, 250*time.Millisecond)
+		_, err = waitForAppWakeOrInstance(ctx, client, slug, response.WakeID, response.InstanceID, 2*time.Minute, 250*time.Millisecond)
 		return err
 	case "cold":
 		return client.ParkPreviewFresh(ctx, slug)

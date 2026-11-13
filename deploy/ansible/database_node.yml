@@ -135,6 +135,12 @@
     - role: cgroups_v2
     - role: grub
     - role: host_hardening
+    # ADR-20261109120000: with disk encryption, /srv/db (customer database
+    # volumes and their archive), /var/lib/faas and /etc/faas/secrets live on
+    # an encrypted /srv/fc that unlocks from the fleet's Tang servers. Before
+    # anything writes there, and before firecracker puts the kernel in /srv/fc.
+    - role: storage
+      when: faas_disk_encryption | default(false) | bool
     - role: database_node
     # The node's first mTLS bundle from the control-plane issuer, unless
     # one is installed or database_node_pki_source names one.

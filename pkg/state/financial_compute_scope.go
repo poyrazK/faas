@@ -13,8 +13,12 @@ import (
 
 // computeScopes are the shared books an app attempt belongs to: its current
 // project, and the environment its deployment runs in. Jobs have none.
+// OrgPaid marks an app an organization that owns its resources pays for:
+// strict budgets follow the billing subject, so its creator's budgets never
+// cover it, and organizations hold no strict budgets (ADR-20261107160000).
 type computeScopes struct {
 	Project, Environment, Deployment string
+	OrgPaid                          bool
 }
 
 // computeSharedScope selects one shared book.
@@ -121,6 +125,9 @@ func computeWorkloadPolicies(tx financialComputeTxn, key string) ([]FinancialBud
 // computeWorkloadPoliciesIn is computeWorkloadPolicies over policies and
 // scopes already read.
 func computeWorkloadPoliciesIn(tx financialComputeTxn, key string, all []FinancialBudget, scopes computeScopes) ([]FinancialBudget, error) {
+	if scopes.OrgPaid {
+		return []FinancialBudget{}, nil
+	}
 	environments, err := computeProjectEnvironmentSet(tx, scopes.Project, all)
 	if err != nil {
 		return nil, err
@@ -156,15 +163,15 @@ func computeProjectEnvironmentSet(tx financialComputeTxn, project string, all []
 // floor: its own, the account's and its current project's. A floor has no
 // environment, so environment caps do not waive it.
 func computeFloorPolicies(tx financialComputeTxn, key string) ([]FinancialBudget, error) {
+	scopes, err := tx.workloadScopes(key, "", "")
+	if err != nil || scopes.OrgPaid {
+		return []FinancialBudget{}, err
+	}
 	rows, err := tx.policies(key)
 	if err != nil {
 		return nil, err
 	}
 	policies := strictComputePolicies(rows, key)
-	scopes, err := tx.workloadScopes(key, "", "")
-	if err != nil {
-		return nil, err
-	}
 	project, err := computeScopePolicies(tx, computeSharedScope{"project", scopes.Project})
 	return append(policies, project...), err
 }
@@ -174,15 +181,19 @@ func computeFloorPolicies(tx financialComputeTxn, key string) ([]FinancialBudget
 // environment's. An app in a project whose attempt names no deployment
 // fails closed while any environment of the project is capped.
 func computeAttemptPolicies(tx financialComputeTxn, key, instance, deployment string) (computeScopes, []FinancialBudget, error) {
+	scopes, err := tx.workloadScopes(key, instance, deployment)
+	if err != nil {
+		return computeScopes{}, nil, err
+	}
+	if scopes.OrgPaid {
+		// Registered like any unbudgeted boot; no creator's book funds it.
+		return scopes, []FinancialBudget{}, nil
+	}
 	rows, err := tx.policies(key)
 	if err != nil {
 		return computeScopes{}, nil, err
 	}
 	policies := strictComputePolicies(rows, key)
-	scopes, err := tx.workloadScopes(key, instance, deployment)
-	if err != nil {
-		return computeScopes{}, nil, err
-	}
 	for _, s := range scopes.shared() {
 		shared, err := computeScopePolicies(tx, s)
 		if err != nil {
@@ -311,7 +322,7 @@ func computeBookPolicy(b financial.ComputeBook, p financial.BudgetSpec) bool {
 // and an unfunded VM bills nothing, as for an app cap.
 func computeEnvironmentCovered(tx financialComputeTxn, app, instance string, at time.Time) (bool, error) {
 	scopes, err := tx.workloadScopes(app, instance, "")
-	if err != nil || scopes.Environment == "" {
+	if err != nil || scopes.Environment == "" || scopes.OrgPaid {
 		return false, err
 	}
 	s := computeSharedScope{"environment", scopes.Environment}

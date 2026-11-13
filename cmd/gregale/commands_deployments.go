@@ -42,6 +42,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 )
 
 // deploymentIDPattern enforces the 32-hex deployment id shape the API
@@ -256,7 +257,11 @@ func cmdDeployments(args []string) int {
 		}
 		return 0
 	}
+	parked := parkedAppsForDeployments(ctx, client, *app, page.Items)
 	for _, d := range page.Items {
+		if parkedApp, ok := parked[d.ID]; ok && parkedApp.ID == d.AppID {
+			d.Status = parkedReleaseStatus(d.Status)
+		}
 		if *wide {
 			renderDeploymentRowWide(osStdout, d)
 		} else {
@@ -266,7 +271,63 @@ func cmdDeployments(args []string) int {
 	if page.NextBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", page.NextBefore)
 	}
+	for _, parkedApp := range orderedParkedApps(page.Items, parked) {
+		writeParkedNotice(osStdout, parkedApp)
+	}
 	return 0
+}
+
+// parkedAppsForDeployments maps the live deployments in items that their app
+// is parked on to that app. A live release of a parked app was listed as
+// plain "live" while callers got timeouts (2026-11-12 agent feedback). The
+// lookup is best effort: on error the list renders as before.
+func parkedAppsForDeployments(ctx context.Context, client *Client, appSlug string, items []api.DeploymentResponse) map[string]api.AppResponse {
+	hasLive := false
+	for _, d := range items {
+		if d.Status == "live" {
+			hasLive = true
+			break
+		}
+	}
+	if !hasLive {
+		return nil
+	}
+	var apps []api.AppResponse
+	if appSlug != "" {
+		app, err := client.GetApp(ctx, appSlug)
+		if err != nil {
+			return nil
+		}
+		apps = []api.AppResponse{app}
+	} else {
+		listed, err := client.ListApps(ctx)
+		if err != nil {
+			return nil
+		}
+		apps = listed
+	}
+	out := make(map[string]api.AppResponse)
+	for _, app := range apps {
+		if id := parkedDeploymentID(app); id != "" {
+			out[id] = app
+		}
+	}
+	return out
+}
+
+// orderedParkedApps lists each parked app once, in row order.
+func orderedParkedApps(items []api.DeploymentResponse, parked map[string]api.AppResponse) []api.AppResponse {
+	var out []api.AppResponse
+	seen := make(map[string]bool)
+	for _, d := range items {
+		app, ok := parked[d.ID]
+		if !ok || app.ID != d.AppID || d.Status != "live" || seen[app.ID] {
+			continue
+		}
+		seen[app.ID] = true
+		out = append(out, app)
+	}
+	return out
 }
 
 // cmdDeploymentsExclude dispatches the `exclude` verb family.
@@ -369,6 +430,8 @@ func cmdDeployment(args []string) int {
 		return cmdDeploymentDiff(args[1:])
 	case "timeline":
 		return cmdDeploymentTimeline(args[1:])
+	case "resolve":
+		return cmdDeploymentResolve(args[1:])
 	case "wait":
 		return cmdDeploymentWait(args[1:])
 	case subStatus:
@@ -466,7 +529,7 @@ func cmdDeploymentWait(args []string) int {
 				}
 				return printErr("Deployment did not become live", fmt.Errorf("deployment %s reached terminal status %s: %s", d.ID, d.Status, d.Error))
 			}
-			if *rollout && d.CanaryTotalSteps > 0 && d.RolloutState == rolloutStateAborted {
+			if *rollout && d.RolloutState == rolloutStateAborted {
 				if jsonOutput {
 					_ = writeJSON(d)
 				}
@@ -763,6 +826,14 @@ func cmdDeploymentGet(args []string) int {
 // when the server has one. Legacy and in-flight deployments have an empty or
 // default receipt, which intentionally produces no extra output.
 func renderDeploymentHostingReceipt(w io.Writer, raw json.RawMessage) {
+	renderDeploymentHostingReceiptFor(w, raw, false)
+}
+
+// renderDeploymentHostingReceiptFor leaves out the container profile (port,
+// package manager, start command) for a function app: the function runner
+// serves it, so `profile: node (port 3000)` and `start_command: node
+// handler.js` described something that does not run (Hunt 33 H33-51).
+func renderDeploymentHostingReceiptFor(w io.Writer, raw json.RawMessage, function bool) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("{}")) {
 		return
@@ -799,6 +870,9 @@ func renderDeploymentHostingReceipt(w io.Writer, raw json.RawMessage) {
 	}
 	if !receipt.Smoke.VerifiedAt.IsZero() {
 		_, _ = fmt.Fprintf(w, "%-14s %s\n", "verified_at:", receipt.Smoke.VerifiedAt.UTC().Format(time.RFC3339))
+	}
+	if function {
+		receipt.Profile = frameworkprofile.Profile{}
 	}
 	if receipt.Profile.Framework != "" {
 		profile := receipt.Profile.Framework

@@ -176,6 +176,9 @@ func testRuntimeAppEnvStageLifetimeAndLegacy(t *testing.T, store runtimeAppEnvTe
 	if err != nil || len(got.Values) != 1 || got.Values[0].Value != "legacy-only" {
 		t.Fatalf("legacy scoped read: %+v %v", got, err)
 	}
+	if err := store.UpdateDeploymentStatus(ctx, legacy.ID, state.DeployCancelled, "stopped before environment deletion"); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.DeleteProjectEnvironment(ctx, f.account.ID, f.project.ID, "legacy"); err != nil {
 		t.Fatal(err)
 	}
@@ -184,5 +187,34 @@ func testRuntimeAppEnvStageLifetimeAndLegacy(t *testing.T, store runtimeAppEnvTe
 	}
 	if got, err := store.RuntimeAppEnvForDeployment(ctx, f.account.ID, f.app.ID, legacy.ID); !errors.Is(err, state.ErrNotFound) || len(got.Values) != 0 {
 		t.Fatalf("legacy VM adopted replacement stage: %+v %v", got, err)
+	}
+}
+
+// Hunt 33 H33-37: a project's staging environment stayed undeletable after
+// every app of the project was deleted, because its deployments stayed live.
+// A deleted app's deployments never serve again, so they do not hold it.
+func TestMemProjectEnvironmentDeleteIgnoresDeletedApps(t *testing.T) {
+	testProjectEnvironmentDeleteIgnoresDeletedApps(t, state.NewMemStore())
+}
+
+func TestPgProjectEnvironmentDeleteIgnoresDeletedApps(t *testing.T) {
+	store, _, _ := pgStoreWithPool(t)
+	testProjectEnvironmentDeleteIgnoresDeletedApps(t, store)
+}
+
+func testProjectEnvironmentDeleteIgnoresDeletedApps(t *testing.T, store runtimeAppEnvTestStore) {
+	f := seedRuntimeAppEnv(t, store)
+	ctx := t.Context()
+	if err := store.MarkDeploymentLive(ctx, f.deployments["stage"].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteProjectEnvironment(ctx, f.account.ID, f.project.ID, "stage"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("a live app's live deployment must hold its environment: %v", err)
+	}
+	if err := store.DeleteApp(ctx, f.app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteProjectEnvironment(ctx, f.account.ID, f.project.ID, "stage"); err != nil {
+		t.Fatalf("a deleted app's deployment still held its environment: %v", err)
 	}
 }

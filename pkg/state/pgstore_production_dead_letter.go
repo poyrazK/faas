@@ -139,7 +139,7 @@ func (s *PgStore) productionDeadLetterReplayMany(ctx context.Context, accountID,
 	for _, row := range rows {
 		ev := deadLetterEventFromSQLC(row)
 		if _, err := replayDeadLetterEventTx(ctx, tx, accountID, ev.AppID, ev); err != nil {
-			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
+			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) || errors.Is(err, ErrDeadLetterNotReplayable) || errors.Is(err, ErrConflict) {
 				continue
 			}
 			// A queue message its app or account has no room for stays

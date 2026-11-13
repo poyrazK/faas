@@ -40,6 +40,24 @@ func TestDevPhaseTrackerRendersMappedTimings(t *testing.T) {
 	}
 }
 
+// Time no phase reported (build queue, upload acceptance) is shown as
+// waiting, so edit-to-live adds up: on prod a 2m23s edit-to-live sat over
+// phases summing to 54s with nothing to explain the rest.
+func TestDevPhaseTrackerRendersWaitingTime(t *testing.T) {
+	tracker := main.NewDevPhaseTracker()
+	tracker.SetDeploymentID("dep-123")
+	tracker.Mu().Lock()
+	*tracker.StartedAt() = time.Now().Add(-2 * time.Minute)
+	tracker.Mu().Unlock()
+	tracker.ObserveStage("image_build", main.StageStatusCompleted, 30_000, "")
+	tracker.ObserveStage("snapshot_prepare", main.StageStatusCompleted, 20_000, "")
+	var out bytes.Buffer
+	tracker.Render(&out)
+	if got := out.String(); !strings.Contains(got, "waiting=1m10s") && !strings.Contains(got, "waiting=1m9s") {
+		t.Fatalf("rendered phases = %q, want waiting≈1m10s (2m minus 50s of phases)", got)
+	}
+}
+
 func TestDevPhaseTrackerPreservesFailureReason(t *testing.T) {
 	tracker := main.NewDevPhaseTracker()
 	tracker.ObserveStage("image_build", main.StageStatusFailed, 42, "missing lockfile")

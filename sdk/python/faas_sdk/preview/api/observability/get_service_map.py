@@ -93,7 +93,7 @@ def sync_detailed(
     r"""Account service map of caller → target app edges.
 
      Internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
-    otherwise 503 `service_map_unavailable`.
+    otherwise 403 `service_map_unavailable`.
 
     Built from the unsampled service-proxy edge series. Both the
     caller and the target are constrained to the account's apps.
@@ -132,7 +132,7 @@ def sync(
     r"""Account service map of caller → target app edges.
 
      Internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
-    otherwise 503 `service_map_unavailable`.
+    otherwise 403 `service_map_unavailable`.
 
     Built from the unsampled service-proxy edge series. Both the
     caller and the target are constrained to the account's apps.
@@ -166,7 +166,7 @@ async def asyncio_detailed(
     r"""Account service map of caller → target app edges.
 
      Internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
-    otherwise 503 `service_map_unavailable`.
+    otherwise 403 `service_map_unavailable`.
 
     Built from the unsampled service-proxy edge series. Both the
     caller and the target are constrained to the account's apps.
@@ -203,7 +203,7 @@ async def asyncio(
     r"""Account service map of caller → target app edges.
 
      Internal preview, enabled by `FAAS_SERVICE_MAP_ENABLED=1`;
-    otherwise 503 `service_map_unavailable`.
+    otherwise 403 `service_map_unavailable`.
 
     Built from the unsampled service-proxy edge series. Both the
     caller and the target are constrained to the account's apps.

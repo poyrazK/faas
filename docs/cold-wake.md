@@ -41,6 +41,10 @@ marker. The hook's work adds to wake latency, so keep it short. Redeploy after
 changing the lifecycle configuration; existing snapshots retain the manifest
 from their deployment.
 
+A Node or Python function can declare these hooks as methods in its handler
+file instead; the deploy wires them for you
+([snapshot hooks](functions.md#snapshot-hooks)).
+
 ## Prepare application state before a snapshot
 
 If your app must flush or release in-memory state before Gregale captures a
@@ -79,6 +83,45 @@ created during boot, such as cached credentials or IDs, is copied into every
 instance restored from that snapshot. Refresh values that must be unique or
 current after restore. Gregale repairs the guest clock and kernel entropy
 before running `after_restore`, but cannot refresh application-held values.
+
+### SDK helpers for the hooks
+
+The Go, Node and Python SDKs serve both hooks for you. They answer only
+loopback `POST`s with the marker header, run your callbacks in order within
+1.5 s (under the 2-second limit), and run overlapping deliveries once.
+Each has a helper that closes a pool's idle connections on both hooks. Those
+sockets point at connections the database closed while the instance was
+parked or frozen; closing them is local and fast, and the pool opens fresh
+ones on demand. Gregale itself resets an app's outbound connections before it
+takes a snapshot and again on a restore, so a restored instance's inherited
+sockets fail at once instead of hanging, and the database frees the
+snapshot's sessions immediately. A full reconnect inside `after_restore` can take longer than
+the limit.
+
+```go
+hooks := faas.NewLifecycleHooks()
+hooks.RecycleIdleConnections(db, 10) // *sql.DB and its usual idle size
+http.ListenAndServe(":"+os.Getenv("PORT"), hooks.Middleware(mux))
+```
+
+```js
+import {LifecycleHooks} from '@gregale/sdk-node/lifecycle/runtime';
+const hooks = new LifecycleHooks();
+hooks.onAfterRestore(() => cache.clear());
+app.use(hooks.middleware()); // or: hooks.handle(req, res) in a plain http server
+```
+
+```python
+from faas_sdk.lifecycle_runtime import LifecycleHooks
+hooks = LifecycleHooks()
+hooks.recycle_sqlalchemy(engine)  # or hooks.expire_asyncpg(pool)
+app = hooks.asgi(app)             # hooks.wsgi(app) for Flask or Django
+```
+
+The helpers use `/internal/before-checkpoint` and `/internal/after-restore`;
+pass other paths if your `gregale.yaml` names others. Secret rotation keeps its
+own path through `SecretReloadCoordinator`
+([pool runtime guide](postgres-pool-runtime.md)); do not reload secrets in a hook.
 
 You can detect the wake tier on every routed response:
 
@@ -155,6 +198,28 @@ Choose `never` when your app must keep running timers or heartbeats for the
 whole idle timeout and must not resume with them delayed, or `between_requests`
 for a request-driven app that does no work between requests. Worker, service
 and job execution modes accept only `never`, because they never idle out.
+
+## Warm snapshots (opt-in, Pro and Scale)
+
+By default every wake restores the snapshot Gregale takes right after your app
+becomes ready, before it has served a request. Pro and Scale apps can opt in to
+a second, warm snapshot, taken when an instance parks after it has served a few
+requests (5 by default, `--warm-snapshot-min-requests`) and been ready for a
+while (2 s, `--warm-snapshot-min-ms`). Wakes then skip your framework's warm-up
+work (JIT compilation, caches filled on first use).
+
+```sh
+gregale app update shop-api --warm-snapshot
+```
+
+A warm snapshot is taken once and reused by every later wake and every instance
+until the next deploy. It carries whatever those first requests left in
+memory: in-memory sessions, caches, rate-limit counters and per-user data, and
+files under `/tmp`, which lives in memory. Every woken instance starts from
+that same state, and anything written after the capture is lost at each park.
+Opt in only when your app keeps no per-user or per-request state in memory or
+`/tmp`. Apps created before 2026-11-10 on Pro or Scale were opted in by
+default and keep that setting; `--no-warm-snapshot` turns it off.
 
 ## Opting out: keep N instances warm (Pro, Scale)
 

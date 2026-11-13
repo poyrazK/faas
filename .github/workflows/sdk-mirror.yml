@@ -1,0 +1,132 @@
+name: sdk-mirror
+
+# Publishes the Go, Node and Python SDKs to their public repositories in the
+# gregale-dev org (docs/adr/20261112110000-sdk-public-repositories.md). This
+# repository stays the source of truth; scripts/sdk_mirror.py builds each
+# public tree from sdk/mirror.json. Pull requests build and check the trees;
+# a merge to main (or a dispatch) also pushes them with a short-lived token
+# from the gregale-dev "SDK mirror" GitHub App, scoped to that one
+# repository's contents. Until the SDK_MIRROR_APP_CLIENT_ID variable is set,
+# the trees are built and the push is skipped.
+
+on:
+  pull_request:
+    paths:
+      - "sdk/go/**"
+      - "sdk/node/**"
+      - "sdk/python/**"
+      - "sdk/mirror/**"
+      - "sdk/mirror.json"
+      - "sdk/install-tests/**"
+      - "sdk/fakeapid/**"
+      - "docs/customer-pages.json"
+      - "scripts/sdk_mirror.py"
+      - "scripts/sdk_mirror_test.py"
+      - "scripts/sdk_install_check.py"
+      - "scripts/sdk_install_check_test.py"
+      - ".github/workflows/sdk-mirror.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/go/**"
+      - "sdk/node/**"
+      - "sdk/python/**"
+      - "sdk/mirror/**"
+      - "sdk/mirror.json"
+      - "sdk/install-tests/**"
+      - "sdk/fakeapid/**"
+      - "docs/customer-pages.json"
+      - "scripts/sdk_mirror.py"
+      - "scripts/sdk_install_check.py"
+      - "scripts/sdk_install_check_test.py"
+      - ".github/workflows/sdk-mirror.yml"
+  workflow_dispatch:
+
+concurrency:
+  # One push at a time per ref; a newer main commit waits instead of racing.
+  group: sdk-mirror-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    name: mirror ${{ matrix.repo }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo: gregale-go
+          - repo: gregale-js
+          - repo: gregale-python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Unit tests
+        if: matrix.repo == 'gregale-go'
+        run: |
+          python3 scripts/sdk_mirror_test.py
+          python3 scripts/sdk_install_check_test.py
+      - name: Build the public tree
+        run: python3 scripts/sdk_mirror.py build --repo "${{ matrix.repo }}" --out "$RUNNER_TEMP/tree"
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          # Install checks also build the platform's API fixture, whose Go
+          # requirement is newer than the public Go SDK's minimum version.
+          go-version-file: go.mod
+          cache: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        if: matrix.repo == 'gregale-js'
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        if: matrix.repo == 'gregale-python'
+        with:
+          python-version: "3.12"
+      - name: Install and exercise the SDK from an independent consumer
+        run: >-
+          python3 scripts/sdk_install_check.py
+          --repo "${{ matrix.repo }}"
+          --tree "$RUNNER_TEMP/tree"
+          --out "$RUNNER_TEMP/sdk-install"
+      - name: Retain verified packages and install report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sdk-install-${{ matrix.repo }}
+          path: ${{ runner.temp }}/sdk-install/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Skip the push (no GitHub App configured)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.SDK_MIRROR_APP_CLIENT_ID == ''
+        run: echo "::notice::SDK_MIRROR_APP_CLIENT_ID is not set; skipping the push to gregale-dev/${{ matrix.repo }}"
+      - name: Mint a token for gregale-dev/${{ matrix.repo }}
+        id: app-token
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.SDK_MIRROR_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.SDK_MIRROR_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SDK_MIRROR_APP_PRIVATE_KEY }}
+          owner: gregale-dev
+          repositories: ${{ matrix.repo }}
+          permission-contents: write
+      - name: Push to gregale-dev/${{ matrix.repo }}
+        if: steps.app-token.outcome == 'success'
+        env:
+          TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ matrix.repo }}
+        run: |
+          # The token goes in an HTTP header from the environment, never in a
+          # remote URL or argument that git or the script could print.
+          basic=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          echo "::add-mask::$basic"
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          python3 scripts/sdk_mirror.py push --repo "$REPO" --remote "https://github.com/gregale-dev/$REPO.git"

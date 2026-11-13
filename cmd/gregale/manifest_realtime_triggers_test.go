@@ -197,15 +197,15 @@ func TestFunctionRealtimeTriggersSelectsOneFunction(t *testing.T) {
 		{Kind: gregalemanifest.TriggerKindCron, App: "notify", Schedule: "* * * * *", Path: "/"},
 	}}
 	fn := plannedFunction{spec: gregalemanifest.FunctionSpec{Name: "notify"}, slug: "shop-notify"}
-	got := functionRealtimeTriggers(m, fn)
+	got := m.FunctionRealtimeTriggers(fn.shared())
 	if len(got.Triggers) != 1 || got.Triggers[0].App != "shop-notify" || got.Triggers[0].Slug != "orders" {
 		t.Fatalf("selected = %+v, want the notify realtime trigger under its app slug", got.Triggers)
 	}
-	none := functionRealtimeTriggers(m, plannedFunction{spec: gregalemanifest.FunctionSpec{Name: "other"}, slug: "shop-other"})
+	none := m.FunctionRealtimeTriggers(plannedFunction{spec: gregalemanifest.FunctionSpec{Name: "other"}, slug: "shop-other"}.shared())
 	if none.Triggers != nil {
 		t.Fatalf("a function without realtime triggers must not be managed: %+v", none.Triggers)
 	}
-	cleared := functionRealtimeTriggers(&gregalemanifest.Manifest{Triggers: []gregalemanifest.Trigger{}}, fn)
+	cleared := (&gregalemanifest.Manifest{Triggers: []gregalemanifest.Trigger{}}).FunctionRealtimeTriggers(fn.shared())
 	if cleared.Triggers == nil || len(cleared.Triggers) != 0 {
 		t.Fatalf("explicit empty triggers must clear: %+v", cleared.Triggers)
 	}

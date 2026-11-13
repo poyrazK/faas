@@ -19,6 +19,7 @@ type TableRecovery struct {
 	ID, Table, State, Stage                   string
 	TableOID, SubscriptionOID, PublicationOID uint32
 	Attempt                                   int
+	CopyRetry                                 bool `json:",omitempty"`
 }
 
 func CanRecoverTable(p Pipeline) bool {
@@ -40,7 +41,9 @@ func RecoverableTables(p Pipeline) []string {
 		if (p.Reason == "live_table_mismatch" || p.Reason == "replica_mismatch") && v != nil && v.State == "mismatch" && v.Table == p.SchemaChange.Recovery.Table {
 			return []string{v.Table}
 		}
-		return nil
+		if p.SchemaChange.Recovery.State != "blocked" || p.SchemaChange.Recovery.Stage != "copying" {
+			return nil
+		}
 	}
 	if p.Reason == "replica_mismatch" && v != nil && v.State == "mismatch" && containsTable(p.SchemaChange.AddedTables, v.Table) {
 		return []string{v.Table}
@@ -50,7 +53,7 @@ func RecoverableTables(p Pipeline) []string {
 	}
 	result := []string{}
 	for _, c := range p.SchemaChange.Copies {
-		if containsTable(p.SchemaChange.AddedTables, c.Table) && c.NativeState != "r" && (c.Stalled || c.Phase == "missing") {
+		if containsTable(CopiedTables(p.SchemaChange), c.Table) && c.NativeState != "r" && (c.Stalled || c.Phase == "missing") {
 			if slices.ContainsFunc(p.SchemaChange.Copies, func(other TableCopyProgress) bool { return other.Table != c.Table && other.NativeState == "" }) {
 				continue
 			}

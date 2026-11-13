@@ -448,6 +448,7 @@ func buildCapacityReport(
 				QuietLastPauseStartedAt:          in.GetQuietLastPauseStartedAt(),
 				QuietLastPauseEndedAt:            in.GetQuietLastPauseEndedAt(),
 				QuietPausedNsTotal:               in.GetQuietPausedNsTotal(),
+				IdleLadderLevel:                  in.GetIdleLadderLevel(),
 			}
 			report.Instances = append(report.Instances, row)
 		}

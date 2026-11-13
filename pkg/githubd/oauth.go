@@ -446,8 +446,10 @@ type Installation struct {
 	AccountLogin string `json:"account_login"` // nested in account.login; we keep a flat copy for the proto
 	Account      struct {
 		Login string `json:"login"`
+		Type  string `json:"type"`
 	} `json:"account"`
-	RepositorySelection string `json:"repository_selection"` // "all" | "selected"
+	Permissions         map[string]string `json:"permissions"`
+	RepositorySelection string            `json:"repository_selection"` // "all" | "selected"
 }
 
 // VerifyInstallation confirms an installation_id returned by a GitHub

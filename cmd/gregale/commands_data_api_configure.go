@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -52,7 +53,10 @@ func validDataAPIAllowlist(value string, pattern *regexp.Regexp, limit int) bool
 func unsetDataAPISetting(ctx context.Context, client *api.Client, app, key, scope string) error {
 	err := client.UnsetSecretWithScope(ctx, app, key, scope)
 	var ae *APIError
-	if err != nil && errors.As(err, &ae) && ae.Problem.Status == http.StatusNotFound {
+	// A missing secret answers 400 secret_not_found, not 404: turning usage
+	// reporting off when caps were never set failed on it (ChronoLake
+	// finding 21).
+	if err != nil && errors.As(err, &ae) && (ae.Problem.Status == http.StatusNotFound || ae.Problem.Code == api.CodeSecretNotFound) {
 		return nil
 	}
 	return err
@@ -158,7 +162,9 @@ type dataAPIConfigureReceipt struct {
 	ServerKeyRateLimit   string   `json:"server_key_rate_limit,omitempty"`
 	Changed              []string `json:"changed"`
 	Restarted            bool     `json:"restarted"`
-	WakeID               string   `json:"wake_id,omitempty"`
+	// Parked: nothing ran to restart; the next wake boots with the settings.
+	Parked bool   `json:"parked,omitempty"`
+	WakeID string `json:"wake_id,omitempty"`
 }
 
 func cmdDataAPIConfigure(args []string) int {
@@ -174,6 +180,7 @@ func cmdDataAPIConfigure(args []string) int {
 	publicReadCache := fs.String("public-read-cache", "", "edge freshness for public reads and RPC calls such as 30s, or off")
 	usageReporting := fs.String("usage-reporting", "", "on or off: report usage to the platform")
 	monthlyCaps := fs.String("monthly-caps", "", "requests=N[,anonymous=N] or off: monthly owner caps (turns usage reporting on)")
+	sharedBudget := fs.String("shared-budget", "", "shared requests=N,window=DURATION[,claim=JWT_CLAIM], or off")
 	noRestart := fs.Bool("no-restart", false, "store settings without requesting a fresh restart")
 	var scale dataAPIScaleSettings
 	fs.StringVar(&scale.Pool, "pool", "", "engine connections per instance, 1 to 8, or default")
@@ -185,7 +192,7 @@ func cmdDataAPIConfigure(args []string) int {
 	anonymousOff := *noPublicRead && *noPublicRPC
 	rowSecurityUnchanged := *allowWithoutRLS == "" && !*noAllowWithoutRLS
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil || (*publicRead != "" && *noPublicRead) || (*publicRPC != "" && *noPublicRPC) || (*allowWithoutRLS != "" && *noAllowWithoutRLS) ||
-		(*publicRead == "" && !*noPublicRead && *publicRPC == "" && !*noPublicRPC && rowSecurityUnchanged && *aggregates == "" && *publicReadCache == "" && *usageReporting == "" && *monthlyCaps == "" && scale.empty()) || !dataAPIDiagnosticAllowed(*aggregates, "", "on", "off") ||
+		(*publicRead == "" && !*noPublicRead && *publicRPC == "" && !*noPublicRPC && rowSecurityUnchanged && *aggregates == "" && *publicReadCache == "" && *usageReporting == "" && *monthlyCaps == "" && *sharedBudget == "" && scale.empty()) || !dataAPIDiagnosticAllowed(*aggregates, "", "on", "off") ||
 		(anonymousOff && *publicReadCache != "") || !dataAPIDiagnosticAllowed(*usageReporting, "", "on", "off") || (*usageReporting == "off" && *monthlyCaps != "" && *monthlyCaps != "off") {
 		PrintUsage(os.Stderr, "usage: gregale data-api configure NAME [--public-read SCHEMA.RELATION[,...] | --no-public-read] [--public-rpc SCHEMA.FUNCTION[,...] | --no-public-rpc] [--allow-without-rls SCHEMA.RELATION[,...] | --no-allow-without-rls] [--public-read-cache DURATION|off] [--aggregates on|off] [--usage-reporting on|off] [--monthly-caps requests=N[,anonymous=N]|off] [--pool N|default] [--server-key-concurrency N|default] [--server-key-rate-limit N[,burst=M]|off] [--scope SCOPE] [--no-restart]", "data-api")
 		return 1
@@ -193,6 +200,17 @@ func cmdDataAPIConfigure(args []string) int {
 	capacity, err := parseDataAPIScale(scale)
 	if err != nil {
 		return printErr("Invalid capacity setting", err)
+	}
+	sharedPolicy := ""
+	if *sharedBudget != "" && *sharedBudget != "off" {
+		if *usageReporting == "off" {
+			return printErr("Invalid shared budget", errors.New("shared budgets require usage reporting"))
+		}
+		sharedPolicy, err = parseDataAPISharedBudget(*sharedBudget)
+		if err != nil {
+			return printErr("Invalid shared budget", err)
+		}
+		*usageReporting = "on"
 	}
 	cacheSeconds := 0
 	if *publicReadCache != "" && *publicReadCache != "off" {
@@ -225,6 +243,28 @@ func cmdDataAPIConfigure(args []string) int {
 	}
 	ctx := context.Background()
 	app, receipt := fs.Arg(0), dataAPIConfigureReceipt{App: fs.Arg(0), Scope: *scope, Changed: []string{}}
+	if err = checkDataAPIReportSettings(ctx, client, app, *monthlyCaps, *usageReporting); err != nil {
+		return printErr("Monthly caps unavailable", err)
+	}
+	if *usageReporting == "off" && *sharedBudget != "off" {
+		stored, readErr := client.ListSecretsWithScope(ctx, app, *scope)
+		if readErr != nil {
+			return printErr("Could not verify shared-budget dependency", readErr)
+		}
+		for _, secret := range stored.Secrets {
+			if secret.Key == "DATA_API_SHARED_BUDGET" {
+				return printErr("Shared request budget is still enabled", errors.New("use --shared-budget off before disabling usage reporting"))
+			}
+		}
+	}
+	// Remove the dependent policy before its reporting origin, including if a
+	// later settings write fails and the app restarts independently.
+	if *sharedBudget == "off" {
+		if err = unsetDataAPISetting(ctx, client, app, "DATA_API_SHARED_BUDGET", *scope); err != nil {
+			return printErr("Could not remove shared request budget", err)
+		}
+		receipt.Changed = append(receipt.Changed, "shared_budget")
+	}
 	if err = configureDataAPIAnonymous(ctx, client, app, *scope, []dataAPIAnonymousSetting{
 		{key: "DATA_API_PUBLIC_READ", value: *publicRead, remove: *noPublicRead},
 		{key: "DATA_API_PUBLIC_RPC", value: *publicRPC, remove: *noPublicRPC},
@@ -262,27 +302,37 @@ func cmdDataAPIConfigure(args []string) int {
 	if err = configureDataAPIUsage(ctx, client, app, *scope, *usageReporting, *monthlyCaps, &receipt); err != nil {
 		return printErr("Could not configure usage reporting", err)
 	}
+	if *sharedBudget != "" && *sharedBudget != "off" {
+		err = client.SetSecretWithScope(ctx, app, "DATA_API_SHARED_BUDGET", sharedPolicy, *scope)
+		if err != nil {
+			return printErr("Could not store shared request budget", err)
+		}
+		receipt.Changed = append(receipt.Changed, "shared_budget")
+	}
 	if err = configureDataAPIScale(ctx, client, app, *scope, capacity, &receipt); err != nil {
 		return printErr("Could not configure capacity", err)
 	}
 	if !*noRestart {
-		restart, restartErr := client.RestartAppFresh(ctx, app)
+		restart, parked, restartErr := restartDataAPISettings(ctx, client, app)
 		if restartErr != nil {
 			return printErr("Settings stored; fresh restart failed", restartErr)
 		}
-		receipt.Restarted, receipt.WakeID = true, restart.WakeID
+		receipt.Restarted, receipt.Parked, receipt.WakeID = !parked, parked, restart.WakeID
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(receipt))
 	}
 	PrintOK(osStdout, "Data API settings updated for %s (%s)", app, strings.Join(receipt.Changed, ", "))
+	if receipt.Parked {
+		_, _ = fmt.Fprintln(osStdout, dataAPIParkedSettingsNote)
+	}
 	if *publicRPC != "" {
 		_, _ = fmt.Fprintln(osStdout, "Public RPCs answer GET and HEAD only. Each function must be approved (@gregale:rpc) and STABLE or IMMUTABLE, or the runtime refuses to start.")
 	}
 	if *aggregates == "on" {
 		_, _ = fmt.Fprintln(osStdout, "Aggregates require the SQL deadline functions; install them first (docs: https://gregale.dev/docs/data-api#sql-deadlines-across-transaction-retries).")
 	}
-	if !receipt.Restarted {
+	if !receipt.Restarted && !receipt.Parked {
 		_, _ = fmt.Fprintf(osStdout, "Run gregale data-api refresh %s to apply the settings.\n", app)
 	}
 	return 0
@@ -491,6 +541,7 @@ type dataAPIServerKeyReceipt struct {
 	Permissions *dataAPIServerKeyPermissions `json:"permissions,omitempty"`
 	Slots       []dataAPIServerKeySlot       `json:"slots,omitempty"`
 	Restarted   bool                         `json:"restarted"`
+	Parked      bool                         `json:"parked,omitempty"`
 	WakeID      string                       `json:"wake_id,omitempty"`
 }
 
@@ -558,6 +609,13 @@ func cmdDataAPIServerKey(args []string) int {
 		if receipt.Key, hash, err = newDataAPIServerKey(); err != nil {
 			return printErr("Could not generate a server key", err)
 		}
+		// A replaced key goes first: were the new permissions stored and the
+		// new hash then refused, the old key would serve with them.
+		if slices.ContainsFunc(slots, func(s dataAPIServerKeySlot) bool { return s.Slot == receipt.Slot && s.Present }) {
+			if err = unsetDataAPISetting(ctx, client, app, dataAPIServerKeySlots[receipt.Slot], *scope); err != nil {
+				return printErr("Could not revoke the server key being replaced", err)
+			}
+		}
 		// Store the slot's permissions before its hash, so the key never exists
 		// with a previous key's permissions or none at all.
 		if permissions != nil {
@@ -587,15 +645,20 @@ func cmdDataAPIServerKey(args []string) int {
 		}
 		receipt.Slot = *slot
 	}
+	var restartErr error
 	if !*noRestart {
-		restart, restartErr := client.RestartAppFresh(ctx, app)
-		if restartErr != nil {
-			return printErr("Server key change stored; fresh restart failed", restartErr)
-		}
-		receipt.Restarted, receipt.WakeID = true, restart.WakeID
+		var restart api.AppRestartResponse
+		var parked bool
+		restart, parked, restartErr = restartDataAPISettings(ctx, client, app)
+		receipt.Restarted, receipt.Parked, receipt.WakeID = restartErr == nil && !parked, parked, restart.WakeID
 	}
+	// A created key is shown once, so it is printed even when the restart
+	// that applies it failed.
 	if jsonOutput {
-		return jsonOut(writeJSON(receipt))
+		if code := jsonOut(writeJSON(receipt)); code != 0 || restartErr == nil {
+			return code
+		}
+		return printErr("Server key change stored; fresh restart failed", restartErr)
 	}
 	if action == "create" {
 		PrintOK(osStdout, "Server key stored in slot %s for %s. It is shown once; keep it in your backend's secret store:", receipt.Slot, app)
@@ -607,7 +670,13 @@ func cmdDataAPIServerKey(args []string) int {
 	} else {
 		PrintOK(osStdout, "Server key slot %s revoked for %s", receipt.Slot, app)
 	}
-	if !receipt.Restarted {
+	if receipt.Parked {
+		_, _ = fmt.Fprintln(osStdout, dataAPIParkedSettingsNote)
+	}
+	if restartErr != nil {
+		return printErr("Server key change stored; fresh restart failed", restartErr)
+	}
+	if !receipt.Restarted && !receipt.Parked {
 		_, _ = fmt.Fprintf(osStdout, "Run gregale data-api refresh %s to apply the change.\n", app)
 	}
 	return 0

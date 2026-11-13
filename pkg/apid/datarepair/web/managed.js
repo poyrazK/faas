@@ -14,6 +14,7 @@ let historyBrowser = null;
 let doctor = null;
 let retainedPath = '';
 let repairID = query.get('operation') || '';
+let preparingSource = null;
 const buttons = ['rehearse', 'cancel-rehearsal', 'approve', 'reject', 'apply', 'reconcile', 'resolve'];
 const reasonLabels = new Map([
   ['matches_recorded_write', 'Matches the recorded write'],
@@ -52,6 +53,7 @@ function controls() {
 }
 function render(data, historicalPath = '') {
   current = data;
+  preparingSource = null;
   retainedPath = historicalPath;
   validation = null;
   verification = null;
@@ -111,10 +113,20 @@ async function run(fn) {
 }
 el('prepare').addEventListener('submit', event => {
   event.preventDefault();
+  if (busy) return;
+  const source = el('source').value.trim();
   // Keep the UUID visible in the URL before the first network submission.
-  if (current || !repairID) repairID = crypto.randomUUID();
+  // A failed submission retains its identity until recovered or the source changes.
+  if (current || !repairID || (preparingSource !== null && preparingSource !== source)) repairID = crypto.randomUUID();
+  preparingSource = source;
+  current = null;
+  retainedPath = '';
+  validation = null;
+  verification = null;
+  el('review').hidden = true;
+  const id = repairID;
   history.replaceState(null, '', `?operation=${encodeURIComponent(repairID)}`);
-  run(async () => render(await request(base, {source_operation_id: el('source').value.trim()}, {'Idempotency-Key': repairID})));
+  run(async () => render(await request(base, {source_operation_id: source}, {'Idempotency-Key': id})));
 });
 el('refresh').onclick = () => run(async () => {
   const path = retainedPath;

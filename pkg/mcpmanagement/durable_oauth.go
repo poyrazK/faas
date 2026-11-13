@@ -186,7 +186,7 @@ func (r *remoteServer) restoreOAuth() error {
 
 // OAuth replies are withheld until the resulting state is fsync'd. A failed
 // commit disables all further access; no token/consent success can escape.
-// MCP replies are bounded JSON. Logs remain bounded tool output, not streaming.
+// Streaming chunks use the same commit-before-release rule as OAuth replies.
 func (r *remoteServer) durableHandler(next http.Handler) http.Handler {
 	if r.opts.StateStore == nil {
 		return next
@@ -196,45 +196,90 @@ func (r *remoteServer) durableHandler(next http.Handler) http.Handler {
 			oauthError(w, 503, "temporarily_unavailable", "Authorization storage unavailable")
 			return
 		}
-		reply := &bufferedResponse{header: make(http.Header)}
+		reply := &bufferedResponse{header: make(http.Header), writer: w, commit: r.commitOAuthSnapshot}
 		next.ServeHTTP(reply, req)
 		// Snapshot under the lock, commit outside it: holding r.mu across
 		// the CP write serialized every hosted request behind its latency
 		// (bug hunt 2026-10-28 B16). The sequence keeps a snapshot that
 		// commits late from replacing a newer one.
-		r.mu.Lock()
-		r.snapshotSeq++
-		snapshot, seq := r.snapshotLocked(), r.snapshotSeq
-		r.mu.Unlock()
-		err := r.opts.StateStore.updateSnapshot("oauth", snapshot, seq)
+		err := r.commitOAuthSnapshot()
 		if err != nil {
+			if reply.streaming {
+				return
+			}
 			setPrivateHeaders(w)
 			oauthError(w, 503, "temporarily_unavailable", "Authorization storage could not be committed")
 			return
 		}
 		if reply.failed {
+			if reply.streaming {
+				return
+			}
 			setPrivateHeaders(w)
 			oauthError(w, 503, "temporarily_unavailable", "Management response exceeded its bound; retry writes with the same plan")
 			return
 		}
-		for key, values := range reply.header {
-			w.Header()[key] = values
-		}
-		status := reply.status
-		if status == 0 {
-			status = 200
-		}
-		w.WriteHeader(status)
-		_, _ = w.Write(reply.body.Bytes())
+		_ = reply.release()
 	})
 }
 
-type bufferedResponse struct {
-	header http.Header
-	body   bytes.Buffer
-	status int
-	failed bool
+func (r *remoteServer) commitOAuthSnapshot() error {
+	r.mu.Lock()
+	r.snapshotSeq++
+	snapshot, seq := r.snapshotLocked(), r.snapshotSeq
+	r.mu.Unlock()
+	return r.opts.StateStore.updateSnapshot("oauth", snapshot, seq)
 }
+
+type bufferedResponse struct {
+	header    http.Header
+	body      bytes.Buffer
+	status    int
+	failed    bool
+	writer    http.ResponseWriter
+	commit    func() error
+	streaming bool
+}
+
+// ResponseController deadline changes reach the socket without releasing bytes.
+func (b *bufferedResponse) Unwrap() http.ResponseWriter { return b.writer }
+
+func (b *bufferedResponse) release() error {
+	if !b.streaming {
+		for key, values := range b.header {
+			b.writer.Header()[key] = values
+		}
+		status := b.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		b.writer.WriteHeader(status)
+	}
+	_, err := b.writer.Write(b.body.Bytes())
+	b.body.Reset()
+	return err
+}
+
+func (b *bufferedResponse) FlushError() error {
+	if !strings.HasPrefix(b.header.Get("Content-Type"), "text/event-stream") {
+		return http.ErrNotSupported
+	}
+	if b.failed {
+		return errors.New("MCP HTTP response unavailable")
+	}
+	if err := b.commit(); err != nil {
+		b.failed = true
+		return err
+	}
+	if err := b.release(); err != nil {
+		b.failed = true
+		return err
+	}
+	b.streaming = true
+	return http.NewResponseController(b.writer).Flush()
+}
+
+func (b *bufferedResponse) Flush() { _ = b.FlushError() }
 
 func (b *bufferedResponse) Header() http.Header { return b.header }
 func (b *bufferedResponse) WriteHeader(status int) {
@@ -243,6 +288,9 @@ func (b *bufferedResponse) WriteHeader(status int) {
 	}
 }
 func (b *bufferedResponse) Write(data []byte) (int, error) {
+	if b.failed {
+		return 0, errors.New("MCP HTTP response unavailable")
+	}
 	if b.status == 0 {
 		b.status = 200
 	}

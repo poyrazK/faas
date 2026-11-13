@@ -65,6 +65,9 @@ type HTTPOptions struct {
 	// AgentKeys lets a headless agent authenticate with an API key carrying
 	// the agent scope instead of OAuth (ADR-20261029085359).
 	AgentKeys bool
+	// AgentKeyToolsetSelection lets agent-key requests select a subset of the
+	// operator maximum with Gregale-MCP-Toolsets; omitted selects the default.
+	AgentKeyToolsetSelection bool
 }
 
 type remoteServer struct {
@@ -93,6 +96,8 @@ type remoteServer struct {
 	usedRefresh map[string]*oauthGrant
 	// keyConns are agent-key connections by key hash; nothing durable.
 	keyConns map[string]*keyConnection
+	// cliAccounts bounds each account's share of the hosted CLI slots.
+	cliAccounts accountSlots
 	// metadataClient fetches client metadata documents; nil disables them.
 	metadataClient *http.Client
 }
@@ -265,7 +270,7 @@ func (r *remoteServer) handler() http.Handler {
 		server, _ := req.Context().Value(grantServerKey{}).(*mcp.Server)
 		return server
 	}
-	mux.Handle("/mcp", r.authenticate(newWatchHTTPHandler(getServer)))
+	mux.Handle("/mcp", r.authenticate(newWatchHTTPHandler(getServer, r.opts.Timeout)))
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		setPrivateHeaders(w)
 		if req.Host != r.host {

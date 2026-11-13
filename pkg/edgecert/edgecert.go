@@ -147,6 +147,13 @@ func checkLeaf(chainPEM []byte, key *ecdsa.PrivateKey, names []string) (*x509.Ce
 	if !leaf.NotAfter.After(leaf.NotBefore) {
 		return nil, errors.New("edgecert: the leaf's validity is empty")
 	}
+	// Every compute edge holds this key, so its certificate must expire
+	// soon after a compromised node copies it (ADR-20261108100000). A CA
+	// that ignored the profile gets the order counted as failed rather than
+	// a long-lived key handed to the fleet.
+	if lifetime := leaf.NotAfter.Sub(leaf.NotBefore); lifetime > api.EdgeCertificateLifetimeMax {
+		return nil, fmt.Errorf("edgecert: the leaf lives %s, longer than %s; the CA did not apply the %q profile", lifetime, api.EdgeCertificateLifetimeMax, api.EdgeCertificateProfile)
+	}
 	return leaf, nil
 }
 
@@ -199,6 +206,10 @@ func Due(newest *Terms, kid string, now time.Time) (bool, string) {
 		return true, "no certificate"
 	case newest.KeyKID != kid:
 		return true, "the edge-tls recipient changed"
+	case newest.NotAfter.After(now.Add(api.EdgeCertificateLifetimeMax)):
+		// A certificate from before short-lived ones (ADR-20261108100000):
+		// its key is on every edge for months, so replace it now.
+		return true, "longer-lived than the short-lived limit"
 	case !now.Before(newest.NotAfter.Add(-api.EdgeCertificateRenewBefore)):
 		return true, "expiring"
 	}

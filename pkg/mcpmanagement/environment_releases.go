@@ -208,8 +208,13 @@ func (m *management) applyEnvironmentPromotion(ctx context.Context, args applyEn
 		if args.ApprovalToken != "" {
 			p.approval = args.ApprovalToken
 		}
-		p.attempted = true
+
 	}
+	ctx, err = m.prepareEnvironmentPromotionOutcome(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	p.attempted = true
 	if err := m.persistEnvironmentPlans(); err != nil {
 		return nil, err
 	}
@@ -252,6 +257,10 @@ func (m *management) applyEnvironmentRollback(ctx context.Context, args applyArg
 	if p.result != nil {
 		return p.result, nil
 	}
+	ctx, err = m.prepareEnvironmentRollbackOutcome(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.attempted = true
 	if err := m.persistEnvironmentPlans(); err != nil {
 		return nil, err
@@ -280,9 +289,10 @@ type storedEnvironmentPlan struct {
 }
 
 func (m *management) persistEnvironmentPlans() error {
-	if m.opts.planStore == nil {
-		return nil
-	}
+	return m.persistPlans()
+}
+
+func (m *management) storedEnvironmentPlans() (map[string]storedEnvironmentPlan, error) {
 	records := map[string]storedEnvironmentPlan{}
 	for id, p := range m.environmentPlans {
 		if time.Now().After(p.ExpiresAt) {
@@ -290,11 +300,11 @@ func (m *management) persistEnvironmentPlans() error {
 		}
 		result, err := json.Marshal(p.result)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		records[id] = storedEnvironmentPlan{Plan: *p, Token: p.token, Approval: p.approval, Attempted: p.attempted, Result: result, ApprovalRequest: p.approvalRequest}
 	}
-	return m.opts.planStore.update("environment-plans/"+m.opts.planNamespace, records)
+	return records, nil
 }
 
 func (m *management) restoreEnvironmentPlans() error {

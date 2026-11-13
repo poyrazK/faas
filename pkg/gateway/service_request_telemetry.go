@@ -110,8 +110,43 @@ func (h *Handler) RecordServiceRequest(r *http.Request, observation ServiceReque
 	}
 	row, ok := serviceRequestTelemetryRow(r, observation)
 	if ok {
+		row.Route = h.serviceRequestRoute(r, observation)
 		h.requestTelemetry.RecordFromObserve(row)
 	}
+}
+
+// serviceRequestRoute labels a service call with the target app's route, as
+// a public request to the same path would be labeled: its declared template
+// or the inferred path, admitted into the app's bounded label set once the
+// app answered with a status that establishes the route. Internal callers are
+// customer reach, so route health, monitoring and route removal must see them
+// (ADR-20261028110044 amendment 7).
+func (h *Handler) serviceRequestRoute(r *http.Request, o ServiceRequestObservation) string {
+	if !routeLabelMethodAllowed(r.Method) || r.URL == nil {
+		return otherRouteLabel
+	}
+	set := h.routeSetFor(o.Target.AppID, true)
+	if set == nil {
+		return otherRouteLabel
+	}
+	path, declared := inferredObservedPath(r.URL.Path), false
+	if resolver, ok := h.declaredRoutes.(ObservedRouteResolver); ok {
+		app := App{ID: o.Target.AppID, AccountID: o.AccountID}
+		if template, matched, err := resolver.ResolveObservedRoute(r.Context(), app, r.URL.Path, r.Method); err == nil && matched {
+			path, declared = template, true
+		}
+	}
+	route := observedRouteLabel(r.Method, path)
+	if route == otherRouteLabel {
+		return route
+	}
+	if label := set.labelBeforeResponse(route, declared); label != "" {
+		return label
+	}
+	if statusEstablishesRoute(o.Status) {
+		return set.admit(route)
+	}
+	return otherRouteLabel
 }
 
 func serviceRequestTelemetryRow(r *http.Request, o ServiceRequestObservation) (RequestTelemetryRow, bool) {

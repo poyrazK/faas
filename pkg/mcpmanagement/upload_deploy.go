@@ -76,7 +76,7 @@ func (m *management) planUploadDeploy(ctx context.Context, args planUploadDeploy
 	if err != nil {
 		return nil, err
 	}
-	plan, err := m.planDirDeploy(ctx, dir, planLocalDeployArgs{Path: dir, App: args.App, Reason: args.Reason, CreateOnly: args.CreateOnly})
+	plan, err := m.planDirDeploy(ctx, dir, planLocalDeployArgs{uploaded: true, Path: dir, App: args.App, Reason: args.Reason, CreateOnly: args.CreateOnly})
 	if err != nil {
 		m.opts.uploads.removeDir(dir)
 		return nil, err
@@ -87,30 +87,42 @@ func (m *management) planUploadDeploy(ctx context.Context, args planUploadDeploy
 // Both hosted deployment workflows consume the same connection-bound upload
 // or bounded inline source. Neither accepts a management-host path.
 func (m *management) uploadedProject(app, uploadID string, files []inlineFile) (string, error) {
-	dir, err := m.opts.uploads.newDir()
-	if err != nil {
-		return "", err
-	}
+	var dir string
 	if uploadID != "" {
 		up, archive, err := m.opts.uploads.take(m.opts.grantID, uploadID)
 		if err != nil {
-			m.opts.uploads.removeDir(dir)
 			return "", err
 		}
 		if up.app != app || up.accountID != m.opts.accountID && m.opts.accountID != "" {
-			m.opts.uploads.removeDir(dir)
 			_ = os.Remove(archive)
 			return "", invalid("invalid_argument", "this upload belongs to another app or account")
 		}
-		err = extractUpload(archive, dir, up.maxBytes*4)
+		// The reviewed source takes over the consumed upload's reservation.
+		dir, err = m.opts.uploads.newDir(up.accountID, up.maxBytes*unpackFactor)
+		if err != nil {
+			_ = os.Remove(archive)
+			return "", err
+		}
+		err = extractUpload(archive, dir, up.maxBytes*unpackFactor)
 		_ = os.Remove(archive)
 		if err != nil {
 			m.opts.uploads.removeDir(dir)
 			return "", invalid("invalid_upload", err.Error())
 		}
-	} else if err := writeInlineFiles(dir, files); err != nil {
-		m.opts.uploads.removeDir(dir)
-		return "", invalid("invalid_argument", err.Error())
+	} else {
+		accountID := m.opts.accountID
+		if accountID == "" {
+			accountID = "grant:" + m.opts.grantID
+		}
+		var err error
+		dir, err = m.opts.uploads.newDir(accountID, maxInlineBytes)
+		if err != nil {
+			return "", err
+		}
+		if err := writeInlineFiles(dir, files); err != nil {
+			m.opts.uploads.removeDir(dir)
+			return "", invalid("invalid_argument", err.Error())
+		}
 	}
 	return dir, nil
 }

@@ -5,6 +5,8 @@ import { createHash, createHmac, randomBytes } from 'node:crypto'
 import pg from 'pg'
 import { limits, UnsafeConfiguration } from './config.mjs'
 import { addResponseBytes } from './usage.mjs'
+import { handleUploadSession, uploadSessionRoute } from './storage-sessions.mjs'
+export { storageActor } from './storage-sessions.mjs'
 
 // File storage (ADR-20261021101510). Rows in <schema>.storage_objects record
 // files; the owner's RLS policies on that table decide every upload, download
@@ -44,7 +46,11 @@ export function storedKey(row) {
 }
 
 // Rows answer clients without their object key, which is storage-internal.
-const publicRow = ({ object_key: _key, ...row }) => row
+const publicRow = ({ object_key: key, ...row }) => ({ ...row, version: key?.slice('_gregale/objects/'.length) ?? null })
+
+function validateName(name) {
+  return typeof name === 'string' && Buffer.byteLength(name) <= 1024 && !/[\x00-\x1f\x7f\\]/.test(name) && name.split('/').every(s => s && s !== '.' && s !== '..')
+}
 
 const actions = { object: { PUT: 'upload', GET: 'download', HEAD: 'head', DELETE: 'remove' }, sign: { POST: 'sign' } }
 
@@ -52,6 +58,7 @@ const actions = { object: { PUT: 'upload', GET: 'download', HEAD: 'head', DELETE
 // percent-encoded path segments: 1–1024 bytes, no control characters,
 // backslashes, or empty, "." or ".." segments.
 export function storageRoute(req, storage) {
+  if (req.url.startsWith('/storage/v1/upload/')) return uploadSessionRoute(req, storage)
   const match = /^\/storage\/v1\/(object|sign)\/([^/?#]+)\/([^?#]+)$/.exec(req.url)
   if (!match) return { status: 404, code: 'not_found' }
   const action = actions[match[1]][req.method]
@@ -160,18 +167,23 @@ export async function checkStorageTable(connection, schema) {
     const { rows } = await client.query(storageTableQuery, [schema, storageTable])
     const unsafe = unsafeStorageTable(rows[0])
     if (unsafe) throw new UnsafeConfiguration(`File storage is not installed: ${unsafe}`)
+    const registration = (await client.query('SELECT to_regprocedure($1)::oid AS oid', [`${schema}.gregale_storage_register_key(text,text)`])).rows[0].oid
+    if (!registration) return false
+    const allowed = (await client.query("SELECT has_function_privilege(current_user,$1::oid,'EXECUTE') AS allowed",[registration])).rows[0].allowed
+    if (!allowed) throw new UnsafeConfiguration('Storage maintenance requires EXECUTE on gregale_storage_register_key(text,text)')
+    return true
   } finally { await client.end() }
 }
 
 
 // rows asks PostgREST about storage_objects as the caller.
-function rows(ctx, { method, query, body, prefer, token, signal }) {
+function rows(ctx, { resource = storageTable, method, query = '', body, prefer, token, signal }) {
   const payload = body === undefined ? null : Buffer.from(JSON.stringify(body))
   const headers = { authorization: `Bearer ${token}`, accept: 'application/json', [method === 'GET' ? 'accept-profile' : 'content-profile']: ctx.config.storage.schema }
   if (prefer) headers.prefer = prefer
   if (payload) { headers['content-type'] = 'application/json'; headers['content-length'] = String(payload.length) }
   return new Promise(resolve => {
-    const request = http.request({ hostname: '127.0.0.1', port: ctx.upstreamPort, path: `/${storageTable}?${query}`, method, headers, signal }, response => {
+    const request = http.request({ hostname: '127.0.0.1', port: ctx.upstreamPort, path: `/${resource}?${query}`, method, headers, signal }, response => {
       const chunks = []
       let bytes = 0
       response.on('data', chunk => {
@@ -191,6 +203,13 @@ function rows(ctx, { method, query, body, prefer, token, signal }) {
   })
 }
 
+// Persist ownership before bytes leave the process, including orphaned PUTs.
+async function registerObject(ctx, key, signal) {
+  if (!ctx.config.storage.maintenance) return true
+  const result = await rows(ctx, { resource: 'rpc/gregale_storage_register_key', method: 'POST', body: { p_bucket: ctx.route.bucket, p_key: key }, token: await ctx.token(true), signal })
+  return result.status >= 200 && result.status < 300
+}
+
 // An eq filter takes the rest of the parameter as its value, so a percent-
 // encoded name needs no quoting (PostgREST would compare the quotes too).
 const rowFilter = route => `bucket=eq.${encodeURIComponent(route.bucket)}&name=eq.${encodeURIComponent(route.name)}`
@@ -206,12 +225,24 @@ function refused(ctx, result) {
 // transfer runs an object request after the caller is authorized: it releases
 // the SQL admission slot and the request deadline, and takes one of the
 // instance's transfer slots for at most storageTransferMs.
+//
+// One client (a signed-in subject or an anonymous visitor, ctx.client) holds
+// at most storageTransfersPerClient of them, so a slow client cannot keep the
+// instance's storage busy for everyone; server keys (ctx.client null) are
+// bounded by the instance total only.
 async function transfer(ctx, work) {
+  const clients = ctx.transfers.clients ??= new Map()
+  const key = ctx.client == null ? null : JSON.stringify(ctx.client)
+  if (key !== null && (clients.get(key) ?? 0) >= limits.storageTransfersPerClient) {
+    ctx.res.setHeader('Retry-After', '1')
+    return ctx.problem(ctx.res, 429, 'storage_client_busy', { limit: limits.storageTransfersPerClient, observed: clients.get(key) })
+  }
   if (ctx.transfers.active >= limits.storageTransfers) {
     ctx.res.setHeader('Retry-After', '1')
     return ctx.problem(ctx.res, 503, 'storage_busy')
   }
   ctx.transfers.active++
+  if (key !== null) clients.set(key, (clients.get(key) ?? 0) + 1)
   ctx.release()
   ctx.deadline.stop()
   const controller = new AbortController()
@@ -223,6 +254,11 @@ async function transfer(ctx, work) {
     clearTimeout(timer)
     ctx.res.removeListener('close', abort)
     ctx.transfers.active--
+    if (key !== null) {
+      const held = clients.get(key) - 1
+      if (held > 0) clients.set(key, held)
+      else clients.delete(key)
+    }
   }
 }
 
@@ -239,7 +275,11 @@ function objectRequest(binding, method, key, { headers = {}, signal, body } = {}
   return new Promise((resolve, reject) => {
     const request = client.request(url, { method, headers: signed, signal }, resolve)
     request.on('error', reject)
-    if (body) body.pipe(request)
+    if (body?.pipe) {
+      body.once('error', error => request.destroy(error))
+      request.once('error', () => body.destroy())
+      body.pipe(request)
+    } else if (body) request.end(body)
     else request.end()
   })
 }
@@ -271,6 +311,7 @@ async function upload(ctx) {
   const previous = current.status === 200 && Array.isArray(current.json) && current.json.length === 1 ? storedKey(current.json[0]) : null
   const binding = config.storage.buckets.get(route.bucket)
   return transfer(ctx, async signal => {
+    if (!await registerObject(ctx,key,signal)) return ctx.problem(res,503,'storage_maintenance_unavailable')
     let sent = 0
     req.on('data', chunk => { sent += chunk.length })
     let stored
@@ -279,14 +320,26 @@ async function upload(ctx) {
     } catch { await discard(binding, key); return ctx.problem(res, 502, 'storage_backend_unavailable') }
     await drain(stored)
     if (stored.statusCode < 200 || stored.statusCode > 299 || sent !== size) { await discard(binding, key); return ctx.problem(res, 502, 'storage_backend_unavailable') }
-    const committed = await rows(ctx, { ...upsert, prefer: 'resolution=merge-duplicates,return=representation', token: await ctx.token(true), signal })
+    // An upload that committed while these bytes streamed replaced the version
+    // read above; read it again just before committing, so its bytes go too
+    // and are not left unreferenced (amendment 2). Only the moment between
+    // this read and the commit remains a race.
+    const latest = await rows(ctx, { method: 'GET', query: `${rowFilter(route)}&${columns}`, token: await ctx.token(false), signal })
+    const replaced = latest.status === 200 && Array.isArray(latest.json) && latest.json.length === 1 ? storedKey(latest.json[0]) : null
+    let committed = await rows(ctx, { ...upsert, prefer: 'resolution=merge-duplicates,return=representation', token: await ctx.token(true), signal })
     if (committed.status < 200 || committed.status > 299 || !Array.isArray(committed.json) || committed.json.length !== 1) {
-      // A refused commit, such as a racing upload the policies reject, loses
-      // only its own bytes.
-      await discard(binding, key)
-      return committed.status === 401 || committed.status === 403 ? refused(ctx, committed) : ctx.problem(res, 503, 'storage_commit_failed')
+      // A connection failure can happen after COMMIT. Only a definitive SQL
+      // refusal proves these bytes are unreferenced. Even an empty read-back
+      // is inconclusive (RLS or a concurrent replacement may hide the row).
+      if (committed.status >= 400 && committed.status < 500) {
+        await discard(binding, key)
+        return refused(ctx, committed)
+      }
+      const recovered = await rows(ctx, { method: 'GET', query: `${rowFilter(route)}&${columns}`, token: await ctx.token(false), signal: AbortSignal.timeout(limits.queryMs) })
+      if (recovered.status !== 200 || !Array.isArray(recovered.json) || recovered.json.length !== 1 || recovered.json[0].object_key !== key) return ctx.problem(res, 503, 'storage_commit_unknown')
+      committed = recovered
     }
-    if (previous !== null && previous !== key) await discard(binding, previous)
+    for (const old of new Set([previous, replaced])) if (old !== null && old !== key) await discard(binding, old)
     sendJSON(res, 200, publicRow(committed.json[0]))
   })
 }
@@ -308,8 +361,9 @@ async function download(ctx) {
   const row = await readRow(ctx)
   if (!row) return
   const { req, res, route, config } = ctx
+  const versionHeaders = objectKeyPattern.test(row.object_key ?? '') ? { 'X-Gregale-Storage-Version': row.object_key.slice(17) } : {}
   if (route.action === 'head') {
-    res.writeHead(200, { ...servedHeaders, 'Content-Type': row.content_type, 'Content-Length': String(row.size), 'Accept-Ranges': 'bytes' })
+    res.writeHead(200, { ...servedHeaders, ...versionHeaders, 'Content-Type': row.content_type, 'Content-Length': String(row.size), 'Accept-Ranges': 'bytes' })
     return res.end()
   }
   const range = typeof req.headers.range === 'string' && /^bytes=\d*-\d*$/.test(req.headers.range) ? req.headers.range : null
@@ -320,7 +374,7 @@ async function download(ctx) {
     if (object.statusCode === 404) { await drain(object); return ctx.problem(res, 404, 'storage_not_found') }
     if (object.statusCode === 416) { await drain(object); return ctx.problem(res, 416, 'storage_range_not_satisfiable') }
     if (object.statusCode !== 200 && object.statusCode !== 206) { await drain(object); return ctx.problem(res, 502, 'storage_backend_unavailable') }
-    const headers = { ...servedHeaders, 'Content-Type': row.content_type, 'Accept-Ranges': 'bytes' }
+    const headers = { ...servedHeaders, ...versionHeaders, 'Content-Type': row.content_type, 'Accept-Ranges': 'bytes' }
     for (const [name, header] of [['content-length', 'Content-Length'], ['content-range', 'Content-Range'], ['etag', 'ETag'], ['last-modified', 'Last-Modified']]) {
       if (object.headers[name]) headers[header] = object.headers[name]
     }
@@ -351,16 +405,17 @@ async function remove(ctx) {
   if (dry.status !== 200 || !Array.isArray(dry.json)) return refused(ctx, dry)
   if (dry.json.length !== 1) return ctx.problem(res, 404, 'storage_not_found')
   const binding = config.storage.buckets.get(route.bucket)
-  const key = storedKey(dry.json[0])
+  // The row goes first: a removal whose commit fails or is refused leaves the
+  // file whole, never a row without its bytes. The bytes the committed
+  // removal stopped referencing, including a newer version an upload committed
+  // after the dry run, are then deleted best effort; a failed deletion leaves
+  // them unreferenced, like a replaced upload's.
   return transfer(ctx, async signal => {
-    let deleted
-    try { deleted = await objectRequest(binding, 'DELETE', key, { signal }) } catch { return ctx.problem(res, 502, 'storage_backend_unavailable') }
-    await drain(deleted)
-    if (deleted.statusCode !== 204 && deleted.statusCode !== 200 && deleted.statusCode !== 404) return ctx.problem(res, 502, 'storage_backend_unavailable')
     const committed = await rows(ctx, { method: 'DELETE', query, prefer: 'return=representation', token: await ctx.token(true), signal })
-    if (committed.status !== 200) return ctx.problem(res, 503, 'storage_commit_failed')
-    // An upload that committed after the dry run left a newer version.
-    for (const removed of Array.isArray(committed.json) ? committed.json : []) if (storedKey(removed) !== key) await discard(binding, storedKey(removed))
+    if (committed.status === 401 || committed.status === 403) return refused(ctx, committed)
+    if (committed.status !== 200 || !Array.isArray(committed.json)) return ctx.problem(res, 503, 'storage_commit_unknown')
+    if (!committed.json.length) return ctx.problem(res, 404, 'storage_not_found')
+    for (const removed of new Set(committed.json.map(storedKey))) await discard(binding, removed)
     res.writeHead(204, { 'Cache-Control': 'no-store' })
     res.end()
   })
@@ -371,6 +426,7 @@ async function remove(ctx) {
 // token, the deadline, release() for the admission slot and the server's
 // transfer counter.
 export function handleStorage(ctx) {
+  if (ctx.route.action.startsWith('session')) return handleUploadSession(ctx, { rows, transfer, objectRequest, registerObject, discard, drain, sendJSON, publicRow, newObjectKey, validateName, storageContentType })
   switch (ctx.route.action) {
     case 'upload': return upload(ctx)
     case 'download':
@@ -385,7 +441,8 @@ export function handleStorage(ctx) {
 export function storageAnonymousTarget(route, config) {
   if (route.write) return { code: 'token_required' }
   const listed = config.publicRead?.some(r => r.schema === config.storage.schema && r.relation === storageTable)
-  return listed ? {} : { code: 'public_read_not_allowed' }
+  if (!listed) return { code: 'public_read_not_allowed' }
+  return config.unsafePublicRead?.has(`${config.storage.schema}.${storageTable}`) ? { code: 'data_api_public_read_unsafe' } : {}
 }
 
 // storageServerKeyAllows applies a restricted key: its relations must list

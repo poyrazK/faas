@@ -292,6 +292,36 @@ demand.
 - **TLS on the control plane's Caddy, forwarding to the nodes.** That puts
   the control plane back on the request path.
 
+## Amendment 2026-11-05: DNS-only names need a handshake on the public address
+
+ADR-20261103163954 (proposed) adds DNS-only names, whose clients connect to
+the nodes' public addresses themselves. `/readyz` on the control port says a
+node's edge is up, not that its public address serves those names. On
+2026-11-05 a node rolled back to a release without direct entry (rc.324 to
+rc.322 on fsn-2) answered `/readyz` with nothing on 443, and stayed in the
+pilot name's records.
+
+- For a DNS-only name, a node is ready when its edge answers `/readyz` and its
+  public address completes a TLS handshake on port 443 for every DNS-only
+  name, with the name as SNI and the certificate verified against the system
+  roots, as a client would. While the certificate's CA is Let's Encrypt
+  staging, which no client trusts, only the certificate's names and validity
+  are checked.
+- edgednsd keeps two probe histories per node, one for the proxied names
+  (`/readyz` alone, unchanged) and one for the DNS-only names, with the same
+  thresholds: out after 3 misses, back after 5 passes. A node that fails only
+  the handshake leaves the DNS-only names and stays behind the proxied ones.
+  The last record of a name is still never removed.
+- The handshake goes from the control plane to each node's public address
+  every 2 s per DNS-only name; the direct-entry firewall rule admits it, and
+  from the control plane it took about 60 ms. Proxied names are not probed
+  this way: their nodes admit 443 only from Cloudflare.
+- A failed handshake counts in `edge_dns_probe_failures_total{node}`;
+  `edge_dns_node_in{node}` is 1 while the node is behind any managed name.
+- Rejected: a separate edge endpoint that reports direct entry. edgednsd
+  upgrades before the compute edges, so edges on the previous release would
+  lack it and leave the DNS-only names for every rollout.
+
 ## Open questions
 
 - Answered 2026-11-02: `gregale.dev` is on the Free plan, with SSL on

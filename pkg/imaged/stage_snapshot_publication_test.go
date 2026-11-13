@@ -70,6 +70,10 @@ func TestSnapshotPublicationRejectsRecreatedStageAndPreservesProductionArtifacts
 	if err := store.DeleteProjectEnvironment(ctx, account.ID, project.ID, "stage"); err != nil {
 		t.Fatal(err)
 	}
+	retired, err := store.DeploymentByID(ctx, stage.ID)
+	if err != nil || retired.DeletedAt == nil {
+		t.Fatalf("deleted stage did not retain a deployment tombstone: %+v %v", retired, err)
+	}
 	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "stage"}); err != nil {
 		t.Fatal(err)
 	}

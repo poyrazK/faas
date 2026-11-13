@@ -53,10 +53,11 @@ func cmdMan(args []string) int {
 	// `--markdown` renders the customer command surface as one Markdown
 	// document for the public site. Operator and compatibility commands remain
 	// available through explicit man pages and `help --all`. The reference
-	// documents every released command, whatever this account can see, in
-	// the command tree's names (ADR-20261026145832 step 5).
+	// documents every GA or beta command, whatever this account can see, in
+	// the command tree's names (ADR-20261026145832 step 5); preview and
+	// internal commands are left out (publicReferenceCommands).
 	if len(args) == 1 && args[0] == "--markdown" {
-		renderMarkdownReference(osStdout, cliTreeManifest(visibleCliCommands()))
+		renderMarkdownReference(osStdout, cliTreeManifest(publicReferenceCommands()))
 		return 0
 	}
 	switch len(args) {
@@ -134,6 +135,14 @@ func renderManTop(w io.Writer) {
 		_, _ = fmt.Fprintln(w, `.BR \-\-profile " NAME"`)
 		_, _ = fmt.Fprintln(w, "Select a named connection. Place before the command;")
 		_, _ = fmt.Fprintln(w, "command-local profile flags retain their meaning.")
+		_, _ = fmt.Fprintln(w, ".TP")
+		_, _ = fmt.Fprintln(w, `.BR \-\-http-retries " N"`)
+		_, _ = fmt.Fprintln(w, "Add up to N retries for selected read-only API requests (0 to 5, default 0).")
+		_, _ = fmt.Fprintln(w, "Place before the command. Caller cancellation stops backoff and further attempts.")
+		_, _ = fmt.Fprintln(w, ".TP")
+		_, _ = fmt.Fprintln(w, `.BR \-\-debug-http`)
+		_, _ = fmt.Fprintln(w, "Write redacted HTTP metadata diagnostics to stderr. Place before the command;")
+		_, _ = fmt.Fprintln(w, "stdout retains its existing format. Timing ends at response headers.")
 		_, _ = fmt.Fprintln(w, ".TP")
 		_, _ = fmt.Fprintln(w, ".BR \\-\\-json")
 		_, _ = fmt.Fprintln(w, `Machine-readable output. Equivalent to`)

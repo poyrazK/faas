@@ -269,9 +269,10 @@ func (s *PgStore) CreateScheduledCronAppTask(ctx context.Context, cronID string,
 		   and d.status = 'live'
 		   and d.rootfs_key is not null and d.rootfs_key <> ''
 		   and d.image_digest <> ''
+		   and `+cronScopeDeploymentSQL("$2")+`
 		 order by (d.traffic_percent > 0) desc, d.created_at desc, d.id desc
 		 limit 1
-		 for update of d`, appID).
+		 for update of d`, appID, cronID).
 		Scan(&accountID, &deploymentID, &scope, &artifactKey, &imageDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppTask{}, false, ErrAppTaskDeploymentUnavailable
@@ -433,8 +434,9 @@ func (s *PgStore) CreateScheduledCronAppTaskOccurrence(ctx context.Context, cron
 			  from deployments d
 			 where d.app_id = $1::uuid and d.status = 'live'
 			   and d.rootfs_key is not null and d.rootfs_key <> '' and d.image_digest <> ''
+			   and `+cronScopeDeploymentSQL("$2")+`
 			 order by (d.traffic_percent > 0) desc, d.created_at desc, d.id desc
-			 limit 1 for update`, cron.AppID).Scan(&deploymentID, &scope, &artifactKey, &imageDigest)
+			 limit 1 for update`, cron.AppID, cron.ID).Scan(&deploymentID, &scope, &artifactKey, &imageDigest)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return AppTask{}, ScheduleOccurrence{}, false, ErrAppTaskDeploymentUnavailable
 		}
@@ -609,8 +611,9 @@ func (s *PgStore) CreateManualCronAppTaskForFireNow(ctx context.Context, request
 		 where d.app_id = $1::uuid and d.status = 'live'
 		   and d.rootfs_key is not null and d.rootfs_key <> ''
 		   and d.image_digest <> ''
+		   and `+cronScopeDeploymentSQL("$2")+`
 		 order by (d.traffic_percent > 0) desc, d.created_at desc, d.id desc
-		 limit 1 for update`, appID).
+		 limit 1 for update`, appID, cronID).
 		Scan(&deploymentID, &scope, &artifactKey, &imageDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
@@ -742,8 +745,21 @@ func (s *PgStore) ListAppTasks(ctx context.Context, accountID, appID string, lim
 }
 
 func (s *PgStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error) {
+	return s.ClaimNextAppTaskForNode(ctx, owner, "", claimedAt, leaseDuration)
+}
+
+// ClaimNextAppTaskForNode is ClaimNextAppTask restricted to apps a schedd on
+// nodeID may place: apps it owns and unowned apps. An empty nodeID claims
+// any app.
+func (s *PgStore) ClaimNextAppTaskForNode(ctx context.Context, owner, nodeID string, claimedAt time.Time, leaseDuration time.Duration) (AppTask, error) {
 	if owner == "" || leaseDuration <= 0 || claimedAt.IsZero() {
 		return AppTask{}, ErrAppTaskInvalid
+	}
+	var node pgtype.UUID
+	if nodeID != "" {
+		if err := node.Scan(nodeID); err != nil {
+			return AppTask{}, fmt.Errorf("%w: node id: %w", ErrAppTaskInvalid, err)
+		}
 	}
 	claimedAt = claimedAt.UTC()
 	expiresAt := claimedAt.Add(leaseDuration)
@@ -754,6 +770,7 @@ func (s *PgStore) ClaimNextAppTask(ctx context.Context, owner string, claimedAt 
 	row, err := q.ClaimNextUnfencedAppTask(ctx, s.pool, sqlc.ClaimNextUnfencedAppTaskParams{
 		Owner: owner, ClaimedAt: pgtype.Timestamptz{Time: claimedAt, Valid: true},
 		ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		NodeID:    node,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AppTask{}, ErrNotFound
@@ -774,9 +791,32 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 		return AppTask{}, mapErr(err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
+	// Take lifecycle parent locks before the task row, matching traffic writes
+	// and app cancellation. Release starts serialize with rollback cutover.
+	parentID, err := sqlc.New().ReadStartingReleaseApp(ctx, tx, taskID)
+	if err == nil {
+		if err = pgLockProductionLifecycleApp(ctx, tx, uuidString(parentID)); err != nil {
+			return AppTask{}, mapErr(err)
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return AppTask{}, mapErr(err)
+	}
 	current, err := scanAppTask(tx.QueryRow(ctx, `select `+appTaskSelectColumns+` from app_tasks where id = $1 for update`, taskID))
+	if err == nil && current.Kind == AppTaskKindRelease {
+		admitted, clockErr := sqlc.New().ReleaseAdmissionTime(ctx, tx)
+		if clockErr != nil {
+			return AppTask{}, clockErr
+		}
+		if admitted.Time.After(startedAt) {
+			startedAt = admitted.Time
+		}
+	}
+
 	if err != nil || current.Status != AppTaskRestoring || current.LeaseToken == nil || *current.LeaseToken != leaseToken ||
 		current.CancelRequested != nil || current.LeaseExpiresAt == nil || !current.LeaseExpiresAt.After(startedAt) {
+		return AppTask{}, ErrAppTaskLeaseLost
+	}
+	if current.Kind == AppTaskKindRelease && (!parentID.Valid || current.AppID != uuidString(parentID)) {
 		return AppTask{}, ErrAppTaskLeaseLost
 	}
 	if err := lockAppTaskExclusiveOwner(ctx, tx, current); err != nil {
@@ -817,10 +857,50 @@ func (s *PgStore) MarkAppTaskRunning(ctx context.Context, taskID, leaseToken str
 	if err != nil {
 		return AppTask{}, err
 	}
+	if current.Kind == AppTaskKindRelease {
+		if err := sqlc.New().BumpReleaseHistoryAdmission(ctx, tx, mustPgUUID(current.AppID)); err != nil {
+			return AppTask{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return AppTask{}, mapErr(err)
 	}
 	return task, nil
+}
+
+var _ AppTaskCapacityDeferrer = (*PgStore)(nil)
+
+func (s *PgStore) DeferAppTaskForCapacity(ctx context.Context, taskID, leaseToken string, at, retryAt time.Time, maxWait time.Duration) (time.Time, bool, error) {
+	if taskID == "" || leaseToken == "" || at.IsZero() || retryAt.Before(at) || maxWait <= 0 {
+		return time.Time{}, false, ErrAppTaskInvalid
+	}
+	at, retryAt = at.UTC(), retryAt.UTC()
+	q := sqlc.New()
+	started, err := q.DeferAppTaskForCapacity(ctx, s.pool, sqlc.DeferAppTaskForCapacityParams{
+		ID: taskID, Token: leaseToken,
+		At:      pgtype.Timestamptz{Time: at, Valid: true},
+		RetryAt: pgtype.Timestamptz{Time: retryAt, Valid: true},
+		MaxWait: pgtype.Interval{Microseconds: maxWait.Microseconds(), Valid: true},
+	})
+	if err == nil {
+		return started.Time.UTC(), true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, mapErr(err)
+	}
+	// Not deferred: tell a lost lease apart from a wait that is over.
+	current, err := scanAppTask(s.pool.QueryRow(ctx, `select `+appTaskSelectColumns+` from app_tasks where id = $1`, taskID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false, ErrAppTaskLeaseLost
+	}
+	if err != nil {
+		return time.Time{}, false, mapErr(err)
+	}
+	if current.Status != AppTaskRestoring || current.LeaseToken == nil || *current.LeaseToken != leaseToken ||
+		current.CancelRequested != nil || current.LeaseExpiresAt == nil || !current.LeaseExpiresAt.After(at) {
+		return time.Time{}, false, ErrAppTaskLeaseLost
+	}
+	return time.Time{}, false, nil
 }
 
 func (s *PgStore) RenewAppTaskLease(ctx context.Context, taskID, leaseToken string, renewedAt time.Time, leaseDuration time.Duration) error {

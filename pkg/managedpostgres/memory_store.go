@@ -23,6 +23,7 @@ type MemoryStore struct {
 	databases                 map[string]Database
 	names                     map[string]string
 	bindings                  map[string]Binding
+	rotationRefreshes         map[string]BindingRotationRefresh
 	targets                   map[string]string
 	usage                     map[usageKey]UsageRecord
 	restoreProofs             map[string]RestoreProof
@@ -32,8 +33,10 @@ type MemoryStore struct {
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
 	overage                   map[string]bool
+	egressElected             map[string]bool
 	capEvents                 map[memoryCapEventKey]CapEvent
 	capEventsMailed           map[memoryCapEventKey]bool
+	egressHolds               map[memoryEgressHoldKey]CapEvent
 	restoreSlotNotices        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice
 	restoreSlotNoticesMailed  map[memoryRestoreSlotNoticeKey]bool
 	planExcessNotices         map[string]memoryPlanExcessNotice
@@ -53,6 +56,7 @@ func NewMemoryStore() *MemoryStore {
 		billingSubjects:           map[string]string{},
 		names:                     map[string]string{},
 		bindings:                  map[string]Binding{},
+		rotationRefreshes:         map[string]BindingRotationRefresh{},
 		targets:                   map[string]string{},
 		usage:                     map[usageKey]UsageRecord{},
 		restoreProofs:             map[string]RestoreProof{},
@@ -62,8 +66,10 @@ func NewMemoryStore() *MemoryStore {
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},
 		overage:                   map[string]bool{},
+		egressElected:             map[string]bool{},
 		capEvents:                 map[memoryCapEventKey]CapEvent{},
 		capEventsMailed:           map[memoryCapEventKey]bool{},
+		egressHolds:               map[memoryEgressHoldKey]CapEvent{},
 		restoreSlotNotices:        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice{},
 		restoreSlotNoticesMailed:  map[memoryRestoreSlotNoticeKey]bool{},
 		planExcessNotices:         map[string]memoryPlanExcessNotice{},
@@ -84,17 +90,21 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 	if limit < 1 || limit > 100 {
 		return Database{}, false, ErrInvalid
 	}
-	if database.EnvironmentCloneOperationID != "" || database.DataResourceID != "" {
+	if database.EnvironmentCloneOperationID != "" || database.DataResourceID != "" || !database.Preview.IsZero() {
 		return Database{}, false, ErrInvalid
 	}
 	key := databaseNameKey(database)
 	if id, ok := s.names[key]; ok {
-		if s.databases[id].EnvironmentCloneOperationID != "" {
+		if s.databases[id].EnvironmentCloneOperationID != "" || !s.databases[id].Preview.IsZero() {
 			return Database{}, false, ErrConflict
+		}
+		if !restoreSlotAllowed(ctx) && !s.databases[id].RestoreSlotUntil.IsZero() {
+			return Database{}, false, ErrQuotaExceeded
 		}
 		return cloneDatabase(s.databases[id]), false, nil
 	}
-	if database.ID == "" || database.AccountID == "" || !ValidName(database.Name) || database.State != StateProvisioning || database.BackendID == "" || database.BackendFingerprint == "" {
+	if database.ID == "" || database.AccountID == "" || !ValidName(database.Name) || database.State != StateProvisioning || database.BackendID == "" || database.BackendFingerprint == "" ||
+		!validReservationExpiry(database) {
 		return Database{}, false, ErrInvalid
 	}
 	if database.RetryAt.IsZero() {
@@ -113,9 +123,26 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 			return Database{}, false, ErrConflict
 		}
 	}
+	if database.InBranchAllowance() {
+		// A short-lived branch takes a place in the branch allowance, never
+		// the database limit or the restore slot (ADR-20261106103654
+		// amendment 1).
+		held := 0
+		for _, existing := range s.databases {
+			if s.sameQuotaOwner(ctx, existing, database) && existing.CountsTowardLimit() && existing.InBranchAllowance() {
+				held++
+			}
+		}
+		if allowance := branchLimit(ctx); allowance < 1 || held >= allowance {
+			return Database{}, false, ErrBranchLimit
+		}
+		return s.insertReservationLocked(ctx, database), true, nil
+	}
 	active := 0
 	for _, existing := range s.databases {
-		if s.sameQuotaOwner(ctx, existing, database) && existing.CountsTowardLimit() {
+		// A PR preview environment's database and a short-lived branch are
+		// outside the plan's limit (ADR-20261102123523, ADR-20261106103654).
+		if s.sameQuotaOwner(ctx, existing, database) && existing.countsTowardDatabaseLimit() {
 			active++
 		}
 	}
@@ -136,10 +163,15 @@ func (s *MemoryStore) Reserve(ctx context.Context, database Database, limit int)
 		}
 		database.RestoreSlotUntil = database.CreatedAt.Add(api.ManagedPostgresRestoreSlotWindow)
 	}
+	return s.insertReservationLocked(ctx, database), true, nil
+}
+
+// insertReservationLocked stores a new reservation; s.mu is held.
+func (s *MemoryStore) insertReservationLocked(ctx context.Context, database Database) Database {
 	s.databases[database.ID] = cloneDatabase(database)
 	s.billingSubjects[database.ID] = PolicySubject(ctx, database.AccountID)
-	s.names[key] = database.ID
-	return cloneDatabase(database), true, nil
+	s.names[databaseNameKey(database)] = database.ID
+	return cloneDatabase(database)
 }
 
 func (s *MemoryStore) FindByName(ctx context.Context, accountID, name string) (Database, error) {
@@ -203,16 +235,25 @@ func (s *MemoryStore) Due(_ context.Context, includeProvisioning bool, limit int
 		if database.State != StateDeleting && database.State != StateUpdating && (!includeProvisioning || !provisioning) {
 			continue
 		}
-		if database.RetryAt.After(now) || database.LeaseUntil.After(now) {
+		pendingHold := database.Restorable(now) && database.LastErrorCode == deletionHoldPendingCode &&
+			!database.UpdatedAt.After(now.Add(-defaultPollInterval))
+		if (database.RetryAt.After(now) && !pendingHold) || database.LeaseUntil.After(now) {
 			continue
 		}
 		items = append(items, cloneDatabase(database))
 	}
+	dueAt := func(database Database) time.Time {
+		if database.Restorable(now) && database.LastErrorCode == deletionHoldPendingCode {
+			return database.UpdatedAt
+		}
+		return database.RetryAt
+	}
 	sort.Slice(items, func(i, j int) bool {
-		if items[i].RetryAt.Equal(items[j].RetryAt) {
+		a, b := dueAt(items[i]), dueAt(items[j])
+		if a.Equal(b) {
 			return items[i].ID < items[j].ID
 		}
-		return items[i].RetryAt.Before(items[j].RetryAt)
+		return a.Before(b)
 	})
 	if len(items) > limit {
 		items = items[:limit]

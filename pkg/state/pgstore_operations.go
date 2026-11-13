@@ -315,7 +315,7 @@ func (s *PgStore) admitOperationTx(ctx context.Context, tx pgx.Tx, account, defi
 	if err != nil {
 		return Operation{}, false, fmt.Errorf("%w: %w", ErrInvalidArgument, err)
 	}
-	pending, err := q.CountPendingCustomerOperations(ctx, tx, account)
+	pending, err := q.CountPendingCustomerOperations(ctx, tx, sqlc.CountPendingCustomerOperationsParams{AccountID: account, ObservedAt: operationPGTime(&now)})
 	if err != nil {
 		return Operation{}, false, err
 	}
@@ -440,7 +440,7 @@ func (s *PgStore) OperationEvents(ctx context.Context, accountID, tenantID, id s
 		return api.OperationEventsResponse{}, err
 	}
 	page := api.OperationEventsResponse{Events: []api.OperationEvent{}, LatestSequence: op.LatestSequence}
-	if after > op.LatestSequence || !op.EventExpiresAt.After(time.Now().UTC()) {
+	if after > op.LatestSequence || !op.EventExpiresAt.After(time.Now().UTC()) && !repairRetainsHistory(op) {
 		page.ResyncRequired = true
 		return page, nil
 	}

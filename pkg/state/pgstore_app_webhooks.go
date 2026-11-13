@@ -269,11 +269,26 @@ func (s *PgStore) PreviousAppWebhookSecret(ctx context.Context, webhookID string
 }
 
 func (s *PgStore) DeleteAppWebhook(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `delete from app_webhooks where id = $1`, id)
+	// The deliveries cascade with the webhook, but their unified dead-letter
+	// projections have no foreign key: they stayed listed and answered 404 on
+	// replay (ChronoLake finding 28). Both go in one statement; the CTE sees
+	// the deliveries before the cascade removes them.
+	var deleted int
+	err := s.pool.QueryRow(ctx, `
+		with projections as (
+			delete from dead_letter_events e
+			 using app_webhook_deliveries d
+			 where d.webhook_id = $1 and e.source = 'webhook_delivery' and e.source_id = d.id
+			returning e.id
+		), doomed as (
+			delete from app_webhooks where id = $1 returning id
+		)
+		select count(*) from doomed
+	`, id).Scan(&deleted)
 	if err != nil {
 		return fmt.Errorf("state: delete app_webhook: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if deleted == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -780,21 +795,37 @@ func (s *PgStore) ResetAppWebhookDeliveryFromDead(ctx context.Context, id, webho
 	// below only distinguishes "wrong status" (ErrConflict,
 	// since the caller must be the owner — they had to look
 	// it up to find the id) from "no such row" (ErrNotFound).
-	tag, err := s.pool.Exec(ctx, `
-		update app_webhook_deliveries set
-			status = 'pending',
-			attempt = 0,
-			replay_generation = replay_generation + 1,
-			last_error = '',
-			last_response_code = 0,
-			next_attempt_at = $4,
-			updated_at = now()
-		where id = $1 and webhook_id = $2 and account_id = $3 and status = 'dead'
-	`, id, webhookID, accountID, now)
+	//
+	// The unified dead-letter projection is stamped replayed in the same
+	// statement, exactly as `dlq replay` stamps it: a delivery retried
+	// through `webhook retry` otherwise stayed an active failed event after
+	// it succeeded (ChronoLake finding 28). A later death re-projects it
+	// (the capture trigger clears replayed_at).
+	var reset int
+	err := s.pool.QueryRow(ctx, `
+		with reset as (
+			update app_webhook_deliveries set
+				status = 'pending',
+				attempt = 0,
+				replay_generation = replay_generation + 1,
+				last_error = '',
+				last_response_code = 0,
+				next_attempt_at = $4,
+				updated_at = now()
+			where id = $1 and webhook_id = $2 and account_id = $3 and status = 'dead'
+			returning id
+		), stamped as (
+			update dead_letter_events e set replayed_at = now()
+			  from reset
+			 where e.source = 'webhook_delivery' and e.source_id = reset.id and e.replayed_at is null
+			returning e.id
+		)
+		select count(*) from reset
+	`, id, webhookID, accountID, now).Scan(&reset)
 	if err != nil {
 		return fmt.Errorf("state: reset from dead: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if reset == 0 {
 		// Probe ownership first. If the row exists AND its
 		// (webhook_id, account_id) match the caller but status
 		// is not 'dead' → ErrConflict (caller owns it; wrong

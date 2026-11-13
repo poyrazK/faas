@@ -1,0 +1,48 @@
+# ADR 20261110120000: sign-up fleet cap and dropped security mail.
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 30s
+tests:
+  - name: fleet cap refusals fire, network refusals do not
+    interval: 1m
+    input_series:
+      - series: apid_signups_capped_total{job="apid",instance="cp",scope="fleet"}
+        values: 0x30 1+1x30
+      - series: apid_signups_capped_total{job="apid",instance="cp",scope="network"}
+        values: 0+5x60
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasSignupFleetCapReached
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: FaasSignupFleetCapReached
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: account_flow
+            exp_annotations:
+              summary: "The platform's daily sign-up cap is refusing new accounts"
+              description: "10 sign-ups were refused in 15 minutes because the platform created api.SignupAccountsPerDay accounts in the last 24 hours. Either a sign-up farm is running or real demand outgrew the cap; check auth.signup and auth.signup_fleet_cap audit events before raising it."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSignupFleetCapReached.md"
+
+  - name: dropped security mail fires
+    interval: 1m
+    input_series:
+      - series: apid_background_mail_dropped_total{job="apid",instance="cp"}
+        values: 0x20 3x20
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasSecurityMailDropped
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: FaasSecurityMailDropped
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: account_flow
+            exp_annotations:
+              summary: "apid dropped security mail because its mail pool was full"
+              description: "3 password reset, sign-in link, verification or account notice mails were not sent in 15 minutes: every slot of apid's background mail pool was busy. Customers asked for mail and got none."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSecurityMailDropped.md"

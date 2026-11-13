@@ -41,7 +41,7 @@ func From(ctx context.Context) (Grant, bool) {
 func Wrap(store Store, audit authz.AuditEmitter, next authmw.AccountHandler) authmw.AccountHandler {
 	return func(w http.ResponseWriter, r *http.Request, actor state.Account) {
 		projectRequest := strings.HasPrefix(r.URL.Path, "/v1/projects") || strings.HasPrefix(r.URL.Path, "/dashboard/projects/") ||
-			r.PathValue("organization") != "" && strings.Contains(r.URL.Path, "/projects")
+			authmw.OrganizationSlug(r) != "" && strings.Contains(r.URL.Path, "/projects")
 		if !projectRequest {
 			next(w, r, actor)
 			return
@@ -115,7 +115,7 @@ func personalCollection(r *http.Request, store Store, actor state.Account) *api.
 }
 
 func resource(r *http.Request, store Store, actor state.Account) (state.Project, state.Org, bool, error) {
-	if organization := r.PathValue("organization"); organization != "" {
+	if organization := authmw.OrganizationSlug(r); organization != "" {
 		org, err := store.OrgBySlug(r.Context(), organization)
 		if err != nil {
 			return state.Project{}, org, true, err
@@ -183,6 +183,9 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	if !supported {
 		return zero, member, fence, api.ErrOrgRoleForbidden("use a project operation without a reviewed organization permission")
 	}
+	if action, err = environmentDeleteAction(r, store, project, action); err != nil {
+		return zero, member, fence, lookupProblem(err)
+	}
 	// Past due loses only deploys (spec §4.7); the owner account carries it.
 	if org.Status != state.OrgStatusActive && org.Status != state.OrgStatusPastDue && action != authz.OrgActionReadProject && action != authz.OrgActionReadQueues {
 		return zero, member, fence, api.ErrOrgRoleForbidden("change a project in an inactive organization")
@@ -205,6 +208,102 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 		fence.CredentialID, fence.CredentialOrgID = key.ID, key.OrgID
 	}
 	return owner, member, fence, nil
+}
+
+// branchReader is the optional store capability that tells a branch from
+// any other environment.
+type branchReader interface {
+	ProjectEnvironmentBranchBySlug(ctx context.Context, accountID, projectID, slug string) (state.ProjectEnvironmentBranch, error)
+}
+
+// environmentDeleteAction lets whoever may create an environment branch
+// delete one before it expires (ADR-20261031193635, company projects):
+// deleting a branch needs the configure action, deleting any other
+// environment still needs the delete action. A store without branches keeps
+// the delete action.
+func environmentDeleteAction(r *http.Request, store Store, project state.Project, action authz.OrgAction) (authz.OrgAction, error) {
+	pattern := strings.Replace(r.Pattern, "/v1/orgs/{organization}/projects", "/v1/projects", 1)
+	if pattern != environmentDeletePattern {
+		return action, nil
+	}
+	branches, ok := store.(branchReader)
+	if !ok {
+		return action, nil
+	}
+	owner, err := state.ProjectResourceAccount(r.Context(), store, project)
+	if err != nil {
+		return action, err
+	}
+	_, err = branches.ProjectEnvironmentBranchBySlug(r.Context(), owner.ID, project.ID, r.PathValue("environment"))
+	switch {
+	case err == nil:
+		return authz.OrgActionConfigureProject, nil
+	case errors.Is(err, state.ErrNotFound):
+		return action, nil
+	default:
+		return action, err
+	}
+}
+
+// BranchParent refuses a member who may not branch parent: a branch copies
+// the parent's configuration and secrets into an unprotected environment a
+// developer may deploy to, so branching a protected environment needs the
+// action that approves it. Production is the exception, as it is for
+// releases (ADR-20261019071733 amendment 9): a developer already deploys to
+// it directly, so its branch hands them nothing new. Personal projects pass.
+func BranchParent(r *http.Request, parent state.ProjectEnvironment) *api.Problem {
+	return ProtectedEnvironmentChange(r, parent, "branch a protected project environment")
+}
+
+// ProtectedEnvironmentChange refuses a company-project member without the
+// approve action a change that env's protection reserves for approvers:
+// copying it (a branch or a clone), approving a GitOps revision into it, or
+// overriding its GitOps state. Production is exempt as in BranchParent;
+// personal projects pass.
+func ProtectedEnvironmentChange(r *http.Request, env state.ProjectEnvironment, what string) *api.Problem {
+	if _, shared := From(r.Context()); !shared || !env.Protected || state.IsProductionScope(env.Slug) {
+		return nil
+	}
+	_, _, member, ok := authmw.PrincipalFrom(r)
+	if !ok || member == nil || !authz.Can(member.Role, authz.OrgActionApproveProjectEnvironment) {
+		return api.ErrOrgRoleForbidden(what)
+	}
+	return nil
+}
+
+// MayApprove reports whether accountID is a current member of the active
+// organization orgID whose role may approve a protected project environment.
+// The browser review of a company project's promotion asks it of the
+// signed-in member, on the review page and again at the exchange.
+func MayApprove(ctx context.Context, store Store, orgID, accountID string) (bool, error) {
+	org, err := store.OrgByID(ctx, orgID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if org.Personal || org.DeletedPending || org.Status != state.OrgStatusActive && org.Status != state.OrgStatusPastDue {
+		return false, nil
+	}
+	member, err := store.OrgMemberByAccount(ctx, orgID, accountID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if member.RemovedAt != nil {
+		return false, nil
+	}
+	snapshot, err := store.OrgAccessSnapshot(ctx, orgID, accountID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return authz.Can(snapshot.Role, authz.OrgActionApproveProjectEnvironment), nil
 }
 
 func lookupProblem(err error) *api.Problem {

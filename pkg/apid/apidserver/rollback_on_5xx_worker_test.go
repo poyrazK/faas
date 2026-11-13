@@ -15,13 +15,24 @@ import (
 type rollbackOn5xxTestStore struct {
 	*state.MemStore
 	requests, serverErrors int64
+	known                  int64
 	reads                  int
+	lastUntil              time.Time
 }
 
-func (s *rollbackOn5xxTestStore) RequestTelemetryCircuitBreakerSummary(_ context.Context, _, _ string, _, _ time.Time) (int64, int64, float64, int64, float64, int64, int64, error) {
+func (s *rollbackOn5xxTestStore) RequestTelemetryKnownServerErrors(context.Context, string, string, time.Time, time.Time, string, time.Time, time.Time) (int64, error) {
+	return s.known, nil
+}
+
+func (s *rollbackOn5xxTestStore) RequestTelemetryCircuitBreakerSummary(_ context.Context, _, _ string, _, until time.Time) (int64, int64, float64, int64, float64, int64, int64, error) {
 	s.reads++
+	s.lastUntil = until
 	return s.requests, s.serverErrors, 0, 0, 0, 0, 0, nil
 }
+
+// rollbackOn5xxSweepAt is past the release's first closed telemetry minute:
+// the guard reads only minutes whose gateway buckets have shipped.
+func rollbackOn5xxSweepAt() time.Time { return time.Now().UTC().Add(3 * time.Minute) }
 
 func TestRollbackOn5xxBreached(t *testing.T) {
 	for _, tc := range []struct {
@@ -77,7 +88,7 @@ func TestRollbackOn5xxSweepRollsBackAFailingRelease(t *testing.T) {
 	}
 	sweep := func() {
 		t.Helper()
-		if err := (*e.S()).RollbackOn5xxSweep(ctx, time.Now().UTC()); err != nil {
+		if err := (*e.S()).RollbackOn5xxSweep(ctx, rollbackOn5xxSweepAt()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -103,6 +114,12 @@ func TestRollbackOn5xxSweepRollsBackAFailingRelease(t *testing.T) {
 	}
 	if got := read(previous.ID); got.Status != state.DeploySnapshotting {
 		t.Fatalf("predecessor status = %s, want the readiness-gated %s", got.Status, state.DeploySnapshotting)
+	}
+	// Hunt 34 H34-17: the release records why it stopped serving.
+	var decision api.RolloutDecision
+	if err := json.Unmarshal(read(release.ID).RolloutDecision, &decision); err != nil || decision.Rule != api.RolloutRuleAbortPostRelease5xx ||
+		decision.StableDeploymentID != previous.ID || decision.RollbackSkipped != "" || decision.Candidate == nil || decision.Candidate.ServerErrors != 38 {
+		t.Fatalf("rolled-back release decision = %+v (%v), want abort_post_release_5xx to %s with 38/40", decision, err, previous.ID)
 	}
 
 	reads := store.reads
@@ -146,7 +163,7 @@ func TestRollbackOn5xxRecordsABreachItCannotRollBack(t *testing.T) {
 	(*(*e.S()).Store()) = store
 	sweep := func() {
 		t.Helper()
-		if err := (*e.S()).RollbackOn5xxSweep(ctx, time.Now().UTC()); err != nil {
+		if err := (*e.S()).RollbackOn5xxSweep(ctx, rollbackOn5xxSweepAt()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -174,5 +191,102 @@ func TestRollbackOn5xxRecordsABreachItCannotRollBack(t *testing.T) {
 	sweep()
 	if store.reads != reads {
 		t.Fatal("a breach whose rollback was skipped was judged again")
+	}
+}
+
+// adr: 625 amendment 2026-11-10 — gateways ship a 5xx at once and a 2xx with
+// its minute's bucket, so the open minute read 6 requests / 6 errors for a
+// release failing 3% of them (prod 2026-11-09). The guard reads only closed
+// minutes and does not judge a release before its first one.
+func TestRollbackOn5xxSweepReadsOnlyClosedMinutes(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	ctx := context.Background()
+	previous := apidserver.MustSeedDeployment(t, e, "r5-closed")
+	if err := (*e.Store()).MarkDeploymentLive(ctx, previous.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, _ := (*e.Store()).AppBySlug(ctx, "r5-closed")
+	release, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + apidserver.Repeat("f", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployBuilding, CreatedAt: time.Now().UTC(), RollbackOn5xx: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (*e.Store()).MarkDeploymentLive(ctx, release.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := (*e.Store()).MarkDeploymentSuperseded(ctx, previous.ID); err != nil {
+		t.Fatal(err)
+	}
+	created, err := (*e.Store()).DeploymentByID(ctx, release.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &rollbackOn5xxTestStore{MemStore: (*e.Store()), requests: 6, serverErrors: 6}
+	(*(*e.S()).Store()) = store
+
+	if err := (*e.S()).RollbackOn5xxSweep(ctx, created.CreatedAt.Add(10*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if store.reads != 0 {
+		t.Fatalf("judged the release from its open first minute (%d reads)", store.reads)
+	}
+	if got, _ := (*e.Store()).DeploymentByID(ctx, release.ID); got.LastAutoRollbackReason != "" || got.FirstWakeAt != nil {
+		t.Fatalf("release = %+v, want untouched before its first closed minute", got)
+	}
+
+	now := created.CreatedAt.Add(150 * time.Second)
+	if err := (*e.S()).RollbackOn5xxSweep(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if store.reads != 1 {
+		t.Fatalf("telemetry reads = %d, want 1", store.reads)
+	}
+	if want := now.UTC().Add(-api.RouteHealthIngestionLag).Truncate(time.Minute); !store.lastUntil.Equal(want) {
+		t.Fatalf("read until %s, want the last closed minute %s", store.lastUntil, want)
+	}
+}
+
+// Hunt 34 H34-17: five requests to a route that answers 500 in every release
+// rolled a healthy release back. 5xx the release it would return to also
+// returned on the same method, route and status do not count.
+func TestRollbackOn5xxLeavesOut5xxThePredecessorAlsoReturned(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	ctx := context.Background()
+	previous := apidserver.MustSeedDeployment(t, e, "r5-known")
+	if err := (*e.Store()).MarkDeploymentLive(ctx, previous.ID); err != nil {
+		t.Fatal(err)
+	}
+	app, _ := (*e.Store()).AppBySlug(ctx, "r5-known")
+	release, err := (*e.Store()).CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:" + apidserver.Repeat("a", 64), Kind: state.DeploymentKindImage,
+		Status: state.DeployBuilding, CreatedAt: time.Now().UTC().Add(time.Second), RollbackOn5xx: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (*e.Store()).MarkDeploymentLive(ctx, release.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := (*e.Store()).MarkDeploymentSuperseded(ctx, previous.ID); err != nil {
+		t.Fatal(err)
+	}
+	store := &rollbackOn5xxTestStore{MemStore: (*e.Store()), requests: 6, serverErrors: 5, known: 5}
+	(*(*e.S()).Store()) = store
+	sweep := func() {
+		t.Helper()
+		if err := (*e.S()).RollbackOn5xxSweep(ctx, rollbackOn5xxSweepAt()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sweep()
+	if got, _ := (*e.Store()).DeploymentByID(ctx, release.ID); got.Status != state.DeployLive || got.LastAutoRollbackReason != "" {
+		t.Fatalf("release failing only where its predecessor failed = %s %q, want it kept serving", got.Status, got.LastAutoRollbackReason)
+	}
+	store.known = 0
+	sweep()
+	if got, _ := (*e.Store()).DeploymentByID(ctx, release.ID); got.LastAutoRollbackReason != string(state.AutoRollbackReasonThresholdExceeded) {
+		t.Fatalf("release with new 5xx reason = %q, want %q", got.LastAutoRollbackReason, state.AutoRollbackReasonThresholdExceeded)
 	}
 }

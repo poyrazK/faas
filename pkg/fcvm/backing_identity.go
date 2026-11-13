@@ -30,6 +30,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -74,10 +75,55 @@ func (b BackingIdentity) complete() bool {
 // fileIdentityKey identifies one immutable file version. Cache refreshes
 // and re-stages always write a temp file and rename it, so a replaced image
 // gets a new inode; mtime is deliberately excluded because the cache's LRU
-// touch rewrites it on every read.
+// touch rewrites it on every read. The birth time, where the filesystem
+// records one, keeps a recycled inode number of the same size (bases are
+// sized in whole megabytes, so equal sizes are common) from inheriting the
+// digest of the evicted file it replaced.
 type fileIdentityKey struct {
-	dev, ino uint64
-	size     int64
+	dev, ino  uint64
+	size      int64
+	btimeSec  int64
+	btimeNsec uint32
+}
+
+// backingDigestRecorder keeps a file version's digest with the file itself,
+// so a vmmd restart reuses it instead of hashing every base again on the wake
+// path (ADR-510 amendment 2). recorded must only return a digest that was
+// recorded for this very file version and size.
+type backingDigestRecorder interface {
+	recorded(f *os.File, size int64) (string, bool)
+	record(f *os.File, size int64, digest string) error
+}
+
+// recordedBackingDigestVersion versions the recorded value.
+const recordedBackingDigestVersion = "v1"
+
+func formatRecordedBackingDigest(size int64, digest string) string {
+	return fmt.Sprintf("%s %d %s", recordedBackingDigestVersion, size, digest)
+}
+
+// parseRecordedBackingDigest accepts only a well-formed record for size.
+func parseRecordedBackingDigest(value string, size int64) (string, bool) {
+	fields := strings.Fields(value)
+	if len(fields) != 3 || fields[0] != recordedBackingDigestVersion || fields[1] != strconv.FormatInt(size, 10) {
+		return "", false
+	}
+	digest := fields[2]
+	sum, ok := strings.CutPrefix(digest, "sha256:")
+	if !ok || len(sum) != sha256.Size*2 {
+		return "", false
+	}
+	if _, err := hex.DecodeString(sum); err != nil || strings.ToLower(sum) != sum {
+		return "", false
+	}
+	return digest, true
+}
+
+func (m *Manager) digestRecorder() backingDigestRecorder {
+	if m.backingRecorder != nil {
+		return m.backingRecorder
+	}
+	return defaultBackingDigestRecorder()
 }
 
 // backingEnabled reports whether this Manager enforces ADR-510. Production
@@ -174,6 +220,9 @@ func (m *Manager) fileDigestOf(f *os.File, path string) (string, error) {
 		return "", fmt.Errorf("%w: no inode for %s", ErrSnapshotBackingUnverified, path)
 	}
 	key := fileIdentityKey{dev: uint64(st.Dev), ino: st.Ino, size: info.Size()} //nolint:unconvert // Dev is int32 on darwin
+	if sec, nsec, ok := fileBirthTime(f); ok {
+		key.btimeSec, key.btimeNsec = sec, nsec
+	}
 	m.backingMu.Lock()
 	if digest, ok := m.backingDigests[key]; ok {
 		m.backingMu.Unlock()
@@ -191,14 +240,24 @@ func (m *Manager) fileDigestOf(f *os.File, path string) (string, error) {
 	m.backingHashing[key] = call
 	m.backingMu.Unlock()
 
-	if m.beforeBackingHash != nil {
-		m.beforeBackingHash(path)
-	}
-	h := sha256.New()
-	if _, err := io.Copy(h, io.NewSectionReader(f, 0, info.Size())); err != nil {
-		call.err = fmt.Errorf("%w: hash %s: %w", ErrSnapshotBackingUnverified, path, err)
+	recorder := m.digestRecorder()
+	if digest, ok := recorder.recorded(f, info.Size()); ok {
+		// Hashed by an earlier vmmd process: a restart no longer makes the
+		// first wake of every base pay for reading all of it.
+		call.digest = digest
 	} else {
-		call.digest = "sha256:" + hex.EncodeToString(h.Sum(nil))
+		if m.beforeBackingHash != nil {
+			m.beforeBackingHash(path)
+		}
+		h := sha256.New()
+		if _, err := io.Copy(h, io.NewSectionReader(f, 0, info.Size())); err != nil {
+			call.err = fmt.Errorf("%w: hash %s: %w", ErrSnapshotBackingUnverified, path, err)
+		} else {
+			call.digest = "sha256:" + hex.EncodeToString(h.Sum(nil))
+			if err := recorder.record(f, info.Size(), call.digest); err != nil && m.log != nil {
+				m.log.Warn("record snapshot backing digest", "path", path, "err", err)
+			}
+		}
 	}
 	m.backingMu.Lock()
 	delete(m.backingHashing, key)
@@ -213,28 +272,54 @@ func (m *Manager) fileDigestOf(f *os.File, path string) (string, error) {
 	return call.digest, call.err
 }
 
-// PrimeBackingDigests hashes the kernel and every configured runtime base
-// that is already cached locally, so the first restore after a vmmd start
-// does not pay for hashing a ~250 MiB base in its wake path. Best-effort and
-// safe to run concurrently with wakes (a race only duplicates the hash).
+// BackingDigestPrimeInterval is how often RunBackingDigestPrimer looks for
+// kernel and base versions this vmmd has not identified yet. A release
+// pre-stage replaces bases while the previous vmmd still serves wakes.
+const BackingDigestPrimeInterval = 30 * time.Second
+
+// maxPrimedBackingKeys bounds the base keys the primer follows beyond the
+// configured generations. A node attaches a few dozen bases at most.
+const maxPrimedBackingKeys = 256
+
+// RunBackingDigestPrimer primes digests now and then every interval until ctx
+// ends, so a base that changed under this vmmd (a release pre-stage, another
+// writer's refresh) is identified before a wake needs it.
+func (m *Manager) RunBackingDigestPrimer(ctx context.Context, interval time.Duration) {
+	m.PrimeBackingDigests(ctx)
+	if interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.PrimeBackingDigests(ctx)
+		}
+	}
+}
+
+// PrimeBackingDigests identifies the kernel, every configured runtime base
+// and every base this vmmd has attached that is cached locally, so a restore
+// does not hash a ~250 MiB base in its wake path. A version already known
+// costs an open and a stat; one recorded by an earlier process costs an
+// xattr read. It never advances a cached base's LRU position, so priming
+// cannot keep an unused base resident. Best-effort and safe to run
+// concurrently with wakes (a concurrent identification waits for this one).
 func (m *Manager) PrimeBackingDigests(ctx context.Context) {
 	if !m.backingEnabled() {
 		return
 	}
-	// baseGenerations is fixed at startup (WithBaseGenerations) and read
-	// without a lock elsewhere; baseGenerationMu would only queue this behind
-	// a refresh download.
-	keys := []string{m.paths.Kernel}
-	for baseKey := range m.baseGenerations {
-		keys = append(keys, baseKey)
-	}
-	for _, key := range keys {
+	for _, key := range m.primedBackingKeys() {
 		if ctx.Err() != nil {
 			return
 		}
-		path, err := m.resolveBackingFile(key)
-		if err != nil {
-			continue // not cached yet; the first wake or refresh identifies it
+		path, ok := m.inspectBackingFile(key)
+		if !ok {
+			m.forgetBackingKey(key) // evicted; its next attach notes it again
+			continue
 		}
 		if _, err := m.fileDigest(path); err != nil {
 			m.log.Warn("prime snapshot backing digest", "key", key, "err", err)
@@ -242,15 +327,63 @@ func (m *Manager) PrimeBackingDigests(ctx context.Context) {
 	}
 }
 
-// identifyBacking identifies the kernel and base, resolving each key with
-// resolve.
-func (m *Manager) identifyBacking(baseKey string, resolve func(string) (string, error)) (BackingIdentity, error) {
-	files, err := m.openBacking(baseKey, resolve)
-	if err != nil {
-		return BackingIdentity{}, err
+// primedBackingKeys is the kernel, the configured bases and the noted ones.
+func (m *Manager) primedBackingKeys() []string {
+	// baseGenerations is fixed at startup (WithBaseGenerations) and read
+	// without a lock elsewhere; baseGenerationMu would only queue this behind
+	// a refresh download.
+	keys := []string{m.paths.Kernel}
+	seen := map[string]struct{}{m.paths.Kernel: {}}
+	for baseKey := range m.baseGenerations {
+		if _, dup := seen[baseKey]; !dup {
+			seen[baseKey] = struct{}{}
+			keys = append(keys, baseKey)
+		}
 	}
-	defer files.close()
-	return m.identifyBackingFiles(files)
+	m.backingMu.Lock()
+	for baseKey := range m.backingKeys {
+		if _, dup := seen[baseKey]; !dup {
+			seen[baseKey] = struct{}{}
+			keys = append(keys, baseKey)
+		}
+	}
+	m.backingMu.Unlock()
+	return keys
+}
+
+// noteBackingKey remembers a base key a wake on this node attached or
+// verified, so the primer follows its file version from now on.
+func (m *Manager) noteBackingKey(key string) {
+	if key == "" {
+		return
+	}
+	m.backingMu.Lock()
+	defer m.backingMu.Unlock()
+	if m.backingKeys == nil {
+		m.backingKeys = make(map[string]struct{})
+	}
+	if len(m.backingKeys) < maxPrimedBackingKeys {
+		m.backingKeys[key] = struct{}{}
+	}
+}
+
+func (m *Manager) forgetBackingKey(key string) {
+	m.backingMu.Lock()
+	delete(m.backingKeys, key)
+	m.backingMu.Unlock()
+}
+
+// inspectBackingFile is resolveBackingFile for the primer: it never touches
+// the cache entry's LRU position and never fetches.
+func (m *Manager) inspectBackingFile(key string) (string, bool) {
+	if key == "" {
+		return "", false
+	}
+	if filepath.IsAbs(key) {
+		return key, true
+	}
+	path, local, err := storage.LocalPathWithoutTouch(m.storage, key)
+	return path, err == nil && local
 }
 
 // backingFiles are the kernel and base a wake attaches, held open so their
@@ -313,6 +446,7 @@ func (m *Manager) rememberInstanceBacking(instance, baseKey string) {
 	if !m.backingEnabled() {
 		return
 	}
+	m.noteBackingKey(baseKey)
 	files, err := m.openBacking(baseKey, m.resolveBackingFile)
 	if err != nil {
 		m.recordInstanceBacking(instance, nil, BackingIdentity{}, err)
@@ -419,16 +553,50 @@ func (m *Manager) writeSnapshotBackingTo(ctx context.Context, store storage.Stor
 	}
 }
 
+// BackingCheckTimings attribute the ADR-510 pre-restore backing check, which
+// runs after the network is up and before the VMM restore window (ADR-192
+// prepare timings). TotalMs is the whole check; the parts are disjoint.
+type BackingCheckTimings struct {
+	TotalMs int64
+	// SidecarMs reads the capture's …/backing identity: a node-local cache
+	// hit, or a read from shared storage.
+	SidecarMs int64
+	// FetchMs resolves the kernel and base this wake would attach, fetching
+	// an evicted base into the node cache.
+	FetchMs int64
+	// HashMs identifies them: a memoized or recorded digest, a wait for a
+	// concurrent identification, or a full SHA-256 read of the file.
+	HashMs int64
+}
+
+// attrs are the wake ok log fields; empty when no check ran.
+func (t BackingCheckTimings) attrs() []any {
+	if t == (BackingCheckTimings{}) {
+		return nil
+	}
+	return []any{"backing_check_ms", t.TotalMs, "backing_sidecar_ms", t.SidecarMs,
+		"backing_fetch_ms", t.FetchMs, "backing_hash_ms", t.HashMs}
+}
+
 // verifySnapshotBacking returns nil when the capture's recorded identity
 // matches the images this wake would attach, ErrSnapshotBackingUnverified
 // when either side is unknown, and ErrSnapshotBackingChanged on a mismatch.
 func (m *Manager) verifySnapshotBacking(ctx context.Context, snap *Snapshot, baseKey string) error {
+	_, err := m.checkSnapshotBacking(ctx, snap, baseKey)
+	return err
+}
+
+// checkSnapshotBacking is verifySnapshotBacking with the time each part took.
+func (m *Manager) checkSnapshotBacking(ctx context.Context, snap *Snapshot, baseKey string) (timings BackingCheckTimings, err error) {
 	if !m.backingEnabled() || snap == nil {
-		return nil
+		return BackingCheckTimings{}, nil
 	}
+	started := time.Now()
+	defer func() { timings.TotalMs = time.Since(started).Milliseconds() }()
+	m.noteBackingKey(baseKey)
 	key := state.SnapshotBackingKey(state.Snapshot{StorageKey: snap.StorageKey})
 	if key == "" {
-		return fmt.Errorf("%w: no backing identity location for %q", ErrSnapshotBackingUnverified, snap.StorageKey)
+		return timings, fmt.Errorf("%w: no backing identity location for %q", ErrSnapshotBackingUnverified, snap.StorageKey)
 	}
 	store := m.storage
 	if snap.Storage != nil {
@@ -441,30 +609,50 @@ func (m *Manager) verifySnapshotBacking(ctx context.Context, snap *Snapshot, bas
 			store = b
 		}
 	}
+	phase := time.Now()
+	recorded, err := readSnapshotBacking(ctx, store, key)
+	timings.SidecarMs = time.Since(phase).Milliseconds()
+	if err != nil {
+		return timings, err
+	}
+	phase = time.Now()
+	files, err := m.openBacking(baseKey, func(key string) (string, error) { return m.fetchBackingFile(ctx, key) })
+	timings.FetchMs = time.Since(phase).Milliseconds()
+	if err != nil {
+		// This node's images, not the capture, could not be identified.
+		return timings, fmt.Errorf("%w: %w", errBackingCheckFailed, err)
+	}
+	phase = time.Now()
+	current, err := m.identifyBackingFiles(files)
+	files.close()
+	timings.HashMs = time.Since(phase).Milliseconds()
+	if err != nil {
+		return timings, fmt.Errorf("%w: %w", errBackingCheckFailed, err)
+	}
+	if current.Kernel != recorded.Kernel || current.Base != recorded.Base {
+		return timings, fmt.Errorf("%w: captured kernel=%s base=%s, now kernel=%s base=%s", ErrSnapshotBackingChanged,
+			recorded.Kernel, recorded.Base, current.Kernel, current.Base)
+	}
+	if current.Timer != recorded.Timer {
+		return timings, fmt.Errorf("%w: captured guest timer %q, now %q", ErrSnapshotBackingChanged, recorded.Timer, current.Timer)
+	}
+	return timings, nil
+}
+
+// readSnapshotBacking reads and validates a capture's recorded identity.
+func readSnapshotBacking(ctx context.Context, store storage.StorageBackend, key string) (BackingIdentity, error) {
 	rc, err := store.Get(ctx, key)
 	if errors.Is(err, storage.ErrNotFound) {
-		return fmt.Errorf("%w: read %s: %w", ErrSnapshotBackingUnverified, key, err)
+		return BackingIdentity{}, fmt.Errorf("%w: read %s: %w", ErrSnapshotBackingUnverified, key, err)
 	}
 	if err != nil {
-		return fmt.Errorf("%w: read %s: %w: %w", ErrSnapshotBackingUnverified, key, errBackingCheckFailed, err)
+		return BackingIdentity{}, fmt.Errorf("%w: read %s: %w: %w", ErrSnapshotBackingUnverified, key, errBackingCheckFailed, err)
 	}
 	var recorded BackingIdentity
 	decodeErr := json.NewDecoder(io.LimitReader(rc, 4096)).Decode(&recorded)
 	_ = rc.Close()
 	if decodeErr != nil || !recorded.complete() {
-		return fmt.Errorf("%w: invalid identity at %s", ErrSnapshotBackingUnverified, key)
+		return BackingIdentity{}, fmt.Errorf("%w: invalid identity at %s", ErrSnapshotBackingUnverified, key)
 	}
-	current, err := m.identifyBacking(baseKey, func(key string) (string, error) { return m.fetchBackingFile(ctx, key) })
-	if err != nil {
-		// This node's images, not the capture, could not be identified.
-		return fmt.Errorf("%w: %w", errBackingCheckFailed, err)
-	}
-	if current.Kernel != recorded.Kernel || current.Base != recorded.Base {
-		return fmt.Errorf("%w: captured kernel=%s base=%s, now kernel=%s base=%s", ErrSnapshotBackingChanged,
-			recorded.Kernel, recorded.Base, current.Kernel, current.Base)
-	}
-	if current.Timer != recorded.Timer {
-		return fmt.Errorf("%w: captured guest timer %q, now %q", ErrSnapshotBackingChanged, recorded.Timer, current.Timer)
-	}
-	return nil
+	return recorded, nil
 }

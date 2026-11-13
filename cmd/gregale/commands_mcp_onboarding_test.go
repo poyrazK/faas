@@ -203,12 +203,17 @@ func TestMCPTaskStackMaterializesValidRoles(t *testing.T) {
 				if err != nil || !found {
 					t.Fatalf("%s manifest: %v", role, err)
 				}
+				// Hunt 32 H32-75: a Go role runs its compiled binary; `go run .`
+				// crashed on a runtime without a Go toolchain.
+				if runtime == "go" && manifest.Hosting != nil && manifest.Hosting.Start != "" {
+					t.Fatalf("Go %s role declares start %q", role, manifest.Hosting.Start)
+				}
 				if role == "web" {
-					if manifest.Worker != nil || manifest.Hosting.Health != "/healthz" {
+					if manifest.Worker != nil || manifest.Hosting == nil || manifest.Hosting.Health != "/healthz" {
 						t.Fatal("web configured as worker")
 					}
 				} else {
-					if manifest.Worker == nil || manifest.Worker.Scale.Min != 1 || manifest.Hosting.Port != 0 {
+					if manifest.Worker == nil || manifest.Worker.Scale.Min != 1 || (manifest.Hosting != nil && manifest.Hosting.Port != 0) {
 						t.Fatalf("invalid %s worker", role)
 					}
 					if role == "observer" && manifest.Worker.Scale.Max != 1 {

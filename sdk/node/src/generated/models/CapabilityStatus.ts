@@ -26,7 +26,7 @@ export type CapabilityStatus = {
    */
   unavailable_reason?: 'plan_not_entitled' | 'runtime_unavailable';
   /**
-   * Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for automation. Omitted when enabled; older servers may omit it.
+   * Customer-safe explanation and next action when enabled is false. Display text only; use unavailable_reason for stored workflow. Omitted when enabled; older servers may omit it.
    */
   unavailable_detail?: string;
 };

@@ -20,6 +20,11 @@ type CapMetrics struct {
 
 	planExcessDatabases prometheus.Gauge
 	planExcessScopes    *prometheus.GaugeVec
+
+	heldDatabases prometheus.Gauge
+	holdDecisions *prometheus.CounterVec
+
+	egressQuotas *prometheus.CounterVec
 }
 
 var (
@@ -30,6 +35,10 @@ var (
 	storageCapMetricAccountStates = []string{"enforced", "blocked", "uncapped", "unsupported", "failed"}
 
 	planExcessMetricScopeStates = []string{"suspended", "shadowed", "shared"}
+
+	capHoldMetricOutcomes = []string{"held", "released", "shadowed"}
+
+	egressQuotaMetricOutcomes = []string{"applied", "shadowed", "unchanged", "failed"}
 )
 
 // NewCapMetrics registers the families on reg under the daemon prefix. A nil
@@ -67,6 +76,10 @@ func NewCapMetrics(reg prometheus.Registerer, prefix string, mode, storageMode C
 			Name: prefix + "_managed_postgres_storage_cap_accounts",
 			Help: "Usage subjects with a running managed PostgreSQL database in the latest storage pool pass, by state; blocked subjects are also enforced.",
 		}, []string{"state"}),
+		egressQuotas: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_managed_postgres_egress_quota_decisions_total",
+			Help: "Managed PostgreSQL provider egress quota backstop decisions by outcome (ADR-20261110160000 slice 4); shadowed decisions were computed but not sent.",
+		}, []string{"outcome"}),
 		storageScopes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: prefix + "_managed_postgres_storage_cap_limit_decisions_total",
 			Help: "Managed PostgreSQL storage limit decisions by outcome; shadowed decisions were computed but not sent.",
@@ -79,8 +92,16 @@ func NewCapMetrics(reg prometheus.Registerer, prefix string, mode, storageMode C
 			Name: prefix + "_managed_postgres_plan_excess_scopes",
 			Help: "Managed PostgreSQL quota scopes past their subject's plan in the latest compute cap sweep: suspended, shadowed (only logged), or shared with a database inside the plan and left running.",
 		}, []string{"state"}),
+		heldDatabases: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_managed_postgres_cap_held_databases",
+			Help: "Managed PostgreSQL databases whose compute the latest compute cap sweep found or left held (ADR-20261025094915 amendment 2026-11-05).",
+		}),
+		holdDecisions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_managed_postgres_cap_hold_decisions_total",
+			Help: "Managed PostgreSQL compute hold changes by outcome: held, released, or shadowed (computed but not sent).",
+		}, []string{"outcome"}),
 	}
-	for _, collector := range []prometheus.Collector{m.mode, m.accounts, m.scopesTotal, m.lastSweep, m.storageMode, m.storageAccounts, m.storageScopes, m.planExcessDatabases, m.planExcessScopes} {
+	for _, collector := range []prometheus.Collector{m.mode, m.accounts, m.scopesTotal, m.lastSweep, m.storageMode, m.storageAccounts, m.storageScopes, m.planExcessDatabases, m.planExcessScopes, m.heldDatabases, m.holdDecisions, m.egressQuotas} {
 		if err := reg.Register(collector); err != nil {
 			return nil, err
 		}
@@ -95,6 +116,9 @@ func NewCapMetrics(reg prometheus.Registerer, prefix string, mode, storageMode C
 		m.scopesTotal.WithLabelValues(outcome).Add(0)
 		m.storageScopes.WithLabelValues(outcome).Add(0)
 	}
+	for _, outcome := range egressQuotaMetricOutcomes {
+		m.egressQuotas.WithLabelValues(outcome).Add(0)
+	}
 	for _, candidate := range capMetricModes {
 		m.storageMode.WithLabelValues(string(candidate)).Set(boolGauge(candidate == storageMode))
 	}
@@ -103,6 +127,9 @@ func NewCapMetrics(reg prometheus.Registerer, prefix string, mode, storageMode C
 	}
 	for _, state := range planExcessMetricScopeStates {
 		m.planExcessScopes.WithLabelValues(state).Set(0)
+	}
+	for _, outcome := range capHoldMetricOutcomes {
+		m.holdDecisions.WithLabelValues(outcome).Add(0)
 	}
 	m.lastSweep.Set(0)
 	return m, nil
@@ -130,6 +157,14 @@ func (m *CapMetrics) Observe(summary CapSweepSummary) {
 	m.planExcessScopes.WithLabelValues("suspended").Set(float64(summary.PlanExcessScopesSuspended))
 	m.planExcessScopes.WithLabelValues("shadowed").Set(float64(summary.PlanExcessScopesShadowed))
 	m.planExcessScopes.WithLabelValues("shared").Set(float64(summary.PlanExcessScopesShared))
+	m.heldDatabases.Set(float64(summary.HeldDatabases))
+	m.holdDecisions.WithLabelValues("held").Add(float64(summary.HoldsApplied))
+	m.holdDecisions.WithLabelValues("released").Add(float64(summary.HoldsReleased))
+	m.holdDecisions.WithLabelValues("shadowed").Add(float64(summary.HoldsShadowed))
+	m.egressQuotas.WithLabelValues("applied").Add(float64(summary.EgressQuotasApplied))
+	m.egressQuotas.WithLabelValues("shadowed").Add(float64(summary.EgressQuotasShadowed))
+	m.egressQuotas.WithLabelValues("unchanged").Add(float64(summary.EgressQuotasUnchanged))
+	m.egressQuotas.WithLabelValues("failed").Add(float64(summary.EgressQuotasFailed))
 	if summary.Failed == 0 && !summary.CompletedAt.IsZero() {
 		m.lastSweep.Set(float64(summary.CompletedAt.UTC().Unix()))
 	}

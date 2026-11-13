@@ -149,6 +149,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		_, _ = w.Write(entry.body)
 		rec.status = entry.statusCode
 		rec.Bytes = int64(len(entry.body))
+		h.recordEdgeEgress(r, app, len(entry.body))
 		// Cache hit is a saved wake. Count the metric so the
 		// dashboard reflects "wake-elision". The wakes_avoided
 		// counter is gated on HealthyCount == 0 — only a hit
@@ -195,6 +196,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		_, _ = w.Write(entry.body)
 		rec.status = entry.statusCode
 		rec.Bytes = int64(len(entry.body))
+		h.recordEdgeEgress(r, app, len(entry.body))
 		h.startCacheRefresh(r, app, rule, key)
 		h.observe(r, entry.statusCode, app.ID, string(app.Plan), false, Target{})
 		return true, rule
@@ -253,7 +255,10 @@ func hasCacheCredentials(r *http.Request) bool {
 			return true
 		}
 	}
-	return hasSessionCookie(r) || authenticatedFrom(r.Context()).CredentialWithheld
+	// A sealed edge-rule header is a credential the instance's vmmd adds
+	// (ADR-20261110210000 slice 3i): the request carries it upstream.
+	return hasSessionCookie(r) || authenticatedFrom(r.Context()).CredentialWithheld ||
+		len(edgeSecretHeadersFrom(r.Context())) != 0
 }
 
 // hasSessionCookie treats any remaining Cookie field as session state. The

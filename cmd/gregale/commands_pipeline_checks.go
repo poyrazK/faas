@@ -5,8 +5,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -16,7 +18,18 @@ type connectionCheckClient interface {
 	GetDataConnectionCheck(context.Context, string) (api.DataConnectionCheck, error)
 }
 
-func requestConnectionCheck(ctx context.Context, client connectionCheckClient, id, database string) (api.DataConnectionCheck, error) {
+func requestConnectionCheck(ctx context.Context, client connectionCheckClient, id, database string, selections ...api.RequestDataConnectionCheck) (api.DataConnectionCheck, error) {
+	var err error
+	id, err = canonicalPipelineID(id)
+	if err != nil {
+		return api.DataConnectionCheck{}, err
+	}
+	if database != "" {
+		database, err = canonicalPipelineID(database)
+		if err != nil {
+			return api.DataConnectionCheck{}, err
+		}
+	}
 	connections, err := client.ListDataConnections(ctx)
 	if err != nil {
 		return api.DataConnectionCheck{}, err
@@ -26,10 +39,21 @@ func requestConnectionCheck(ctx context.Context, client connectionCheckClient, i
 			continue
 		}
 		request := api.RequestDataConnectionCheck{ExpectedRevision: c.Revision, DatabaseID: database}
-		ctx = api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("pipeline-check", id, fmt.Sprint(c.Revision), database))
+		if len(selections) > 0 {
+			request.Tables, request.Search = selections[0].Tables, selections[0].Search
+		}
+		ctx = api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("pipeline-check", id, fmt.Sprint(c.Revision), database, strings.Join(request.Tables, ","), request.Search))
 		return client.RequestDataConnectionCheck(ctx, id, request)
 	}
 	return api.DataConnectionCheck{}, errors.New("source connection not found; use pipeline connection list")
+}
+
+func canonicalPipelineID(value string) (string, error) {
+	id, err := uuid.Parse(value)
+	if err != nil {
+		return "", errors.New("supply a valid UUID")
+	}
+	return id.String(), nil
 }
 
 func waitConnectionCheck(ctx context.Context, client connectionCheckClient, check api.DataConnectionCheck, interval time.Duration) (api.DataConnectionCheck, error) {
@@ -53,17 +77,17 @@ func waitConnectionCheck(ctx context.Context, client connectionCheckClient, chec
 		case <-ctx.Done():
 			return check, ctx.Err()
 		case <-ticker.C:
-			var err error
-			check, err = client.GetDataConnectionCheck(ctx, check.ConnectionID)
+			current, err := client.GetDataConnectionCheck(ctx, check.ConnectionID)
 			if err != nil {
 				return check, err
 			}
+			check = current
 		}
 	}
 }
 
 func checkConnectionForCreate(ctx context.Context, client connectionCheckClient, id, database string, tables []string) error {
-	check, err := requestConnectionCheck(ctx, client, id, database)
+	check, err := requestConnectionCheck(ctx, client, id, database, api.RequestDataConnectionCheck{Tables: tables})
 	if err == nil {
 		check, err = waitConnectionCheck(ctx, client, check, time.Second)
 	}
@@ -84,7 +108,7 @@ func checkConnectionForCreate(ctx context.Context, client connectionCheckClient,
 		}
 		if !found {
 			_ = writeJSON(check)
-			return errors.New("a selected table is unsupported or outside discovery limits; inspect connection tables")
+			return errors.New("a selected table is unsupported or unavailable; inspect connection tables --tables with the exact selection")
 		}
 	}
 	return nil
@@ -110,6 +134,8 @@ func freshCapacity(r *api.DataEndpointCapacity) bool {
 func cmdPipelineConnectionCheck(action string, args []string) int {
 	fs := newFlagSet("pipeline connection "+action, flag.ContinueOnError)
 	var database string
+	tables := fs.String("tables", "", "inspect these comma-separated table names, including tables beyond the default discovery page")
+	search := fs.String("search", "", "discover table names containing this lowercase text")
 	if action == "check" {
 		fs.StringVar(&database, "database", "", "also check an existing managed mirror ID")
 	}
@@ -118,8 +144,12 @@ func cmdPipelineConnectionCheck(action string, args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || *timeout <= 0 || *timeout > time.Hour {
+	if fs.NArg() != 1 || *timeout <= 0 || *timeout > time.Hour || (*tables != "" && *search != "") {
 		return printErr("Invalid arguments", errors.New("supply a connection ID and a timeout up to 1h"))
+	}
+	id, err := canonicalPipelineID(fs.Arg(0))
+	if err != nil {
+		return printErr("Invalid connection ID", err)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -128,10 +158,17 @@ func cmdPipelineConnectionCheck(action string, args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	var check api.DataConnectionCheck
-	if action == "tables" {
-		check, err = client.GetDataConnectionCheck(ctx, fs.Arg(0))
+	selection := api.RequestDataConnectionCheck{Search: *search}
+	if *tables != "" {
+		selection.Tables = strings.Split(*tables, ",")
+		for i := range selection.Tables {
+			selection.Tables[i] = strings.TrimSpace(selection.Tables[i])
+		}
+	}
+	if action == "tables" && *tables == "" && *search == "" {
+		check, err = client.GetDataConnectionCheck(ctx, id)
 	} else {
-		check, err = requestConnectionCheck(ctx, client, fs.Arg(0), database)
+		check, err = requestConnectionCheck(ctx, client, id, database, selection)
 	}
 	if err == nil && *wait {
 		check, err = waitConnectionCheck(ctx, client, check, time.Second)

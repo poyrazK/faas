@@ -49,7 +49,7 @@ func TestOpenAIToAnthropicRequest(t *testing.T) {
 	}
 	body := decodeJSONMap(t, translation.body)
 	if translation.path != "/v1/messages" || body["model"] != "claude-sonnet-4" || body["system"] != "Be brief.\n\nUse tools." ||
-		body["max_tokens"] != float64(api.OutboundAIDefaultOutputReserveTokens) || body["temperature"] != 0.5 {
+		body["max_tokens"] != float64(64_000) || body["temperature"] != 0.5 {
 		t.Fatalf("anthropic request = %s", translation.body)
 	}
 	messages := body["messages"].([]any)

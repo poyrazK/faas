@@ -35,7 +35,7 @@ func TestCustomMetricWindow(t *testing.T) {
 	until := since.Add(5 * time.Minute)
 
 	f := &windowFetcher{count: 20, average: 41.5}
-	samples, average, err := appmetrics.NewCustomMetricHistory(f).CustomMetricWindow(context.Background(), "app-1", "queue_depth", since, until)
+	samples, average, err := appmetrics.NewCustomMetricHistory(f).CustomMetricWindow(context.Background(), "app-1", "queue_depth", "", since, until)
 	if err != nil || samples != 20 || average != 41.5 {
 		t.Fatalf("window = %d, %v, %v; want 20 samples averaging 41.5", samples, average, err)
 	}
@@ -45,16 +45,16 @@ func TestCustomMetricWindow(t *testing.T) {
 	}
 
 	empty := &windowFetcher{count: 0}
-	if samples, _, err := appmetrics.NewCustomMetricHistory(empty).CustomMetricWindow(context.Background(), "app-1", "queue_depth", since, until); err != nil || samples != 0 || len(empty.queries) != 1 {
+	if samples, _, err := appmetrics.NewCustomMetricHistory(empty).CustomMetricWindow(context.Background(), "app-1", "queue_depth", "", since, until); err != nil || samples != 0 || len(empty.queries) != 1 {
 		t.Fatalf("empty window = %d samples, %v, %d queries; want 0 samples after one query", samples, err, len(empty.queries))
 	}
 
 	failing := &windowFetcher{err: errors.New("prometheus down")}
-	if _, _, err := appmetrics.NewCustomMetricHistory(failing).CustomMetricWindow(context.Background(), "app-1", "queue_depth", since, until); err == nil {
+	if _, _, err := appmetrics.NewCustomMetricHistory(failing).CustomMetricWindow(context.Background(), "app-1", "queue_depth", "", since, until); err == nil {
 		t.Fatal("a failed query must make the evidence unavailable")
 	}
 
-	if _, _, err := appmetrics.NewCustomMetricHistory(f).CustomMetricWindow(context.Background(), `app"1`, "queue_depth", since, until); err == nil {
+	if _, _, err := appmetrics.NewCustomMetricHistory(f).CustomMetricWindow(context.Background(), `app"1`, "queue_depth", "", since, until); err == nil {
 		t.Fatal("a selector with a quote must be refused")
 	}
 

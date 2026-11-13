@@ -119,14 +119,29 @@ test('metrics failure does not change SQL readiness and coordinated refresh uses
     if (req.url === '/metrics' && supported) return res.end(metrics(1))
     res.end(req.url === '/metrics' ? 'private-error-body' : '{}')
   })
-  const health = createHealth({ coordinatedRefresh: true, refreshStatus: async () => ({ paused: false }) }, server.address().port, server.address().port)
+  let clock = 0
+  const health = createHealth({ coordinatedRefresh: true, refreshStatus: async () => ({ paused: false }) }, server.address().port, server.address().port, { monotonic: () => clock })
   const admission = () => ({ active: 0, queued: 0, capacity: 1, queue_capacity: 8 })
   const failed = await health.snapshot(admission)
   assert.equal(failed.ready, true)
   assert.equal(failed.pool.state, 'unknown')
   supported = true
+  clock += limits.healthCacheMs
   const recovered = await health.snapshot(admission)
   assert.equal(recovered.ready, true)
   assert.equal(recovered.pool.capacity, 1)
   assert.equal(recovered.pool.state, 'observed')
+})
+
+test('DAPI026 invalidation cancels old pool work before observing the replacement engine',async t=>{
+ let calls=0,seen
+ const arrived=new Promise(resolve=>{seen=resolve})
+ const server=await fixture(t,(_req,res)=>{if(++calls===1){seen();return}res.end(metrics(2,0))})
+ const observe=createPoolObservation(server.address().port,2)
+ const old=observe();await arrived
+ observe.invalidate()
+ const fresh=await observe()
+ assert.equal((await old).state,'unknown')
+ assert.equal(fresh.state,'observed');assert.equal(fresh.available,0)
+ assert.equal(calls,2)
 })

@@ -65,12 +65,57 @@ func TestQueueBindingHTTPRetirementRetainsEvidenceAndRejectsNewWork(t *testing.T
 	}
 	rec = e.Do(t, http.MethodPost, "/v1/apps/queue-http-retire/queues/send", map[string]any{"queue_name": "orders", "payload": map[string]any{"new": "work"}}, nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, "queue_binding_retired")
-	rec = e.Do(t, http.MethodPost, base, request, nil)
+	// ADR-20261112200000: another binding still cannot take the retired
+	// queue name, but re-creating the same binding revives it.
+	other := request
+	other.Name = "orders-2"
+	rec = e.Do(t, http.MethodPost, base, other, nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeValidation)
+	rec = e.Do(t, http.MethodPost, base, request, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("re-create retired binding: %d %s", rec.Code, rec.Body.String())
+	}
+	var revived api.QueueBindingResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &revived); err != nil {
+		t.Fatal(err)
+	}
+	if revived.ID != binding.ID || !revived.Enabled {
+		t.Fatalf("revived binding = %+v; want %s enabled", revived, binding.ID)
+	}
+	if row, err := (*e.Store()).InvocationByID(ctx, inv.ID); err != nil || row.State != state.InvocationPending {
+		t.Fatalf("revive lost held backlog: %+v %v", row, err)
+	}
 }
 
 // adr: 231 — an HTTP function can consume push deliveries, but an HTTP app
 // or pull binding cannot borrow the function-only trigger contract.
+// A binding that omits mode and workload class takes the app's: push/http
+// for an HTTP function app. It used to default to pull/worker for every app,
+// so the command the CLI and the queue setup error suggest for a function
+// failed with `workload_class "worker" does not match app workload class
+// "http"` (production-us 2026-11-07).
+func TestQueueBindingDefaultsFollowTheFunctionApp(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	if _, err := (*e.Store()).CreateApp(context.Background(), state.App{
+		AccountID: (*e.Acct()).ID, Slug: "queue-function-defaults", Type: state.AppTypeFunction,
+		Runtime: "node22", WorkloadClass: state.WorkloadClassHTTP,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.Do(t, http.MethodPost, "/v1/apps/queue-function-defaults/queue-bindings",
+		api.CreateQueueBindingRequest{Name: "labq", QueueName: "labq", MaxConcurrency: 1}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create without mode or class = %d: %s", rec.Code, rec.Body.String())
+	}
+	var binding api.QueueBindingResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &binding); err != nil {
+		t.Fatal(err)
+	}
+	if binding.Mode != "push" || binding.WorkloadClass != "http" {
+		t.Fatalf("function binding defaults = %s/%s, want push/http", binding.Mode, binding.WorkloadClass)
+	}
+}
+
 func TestHTTPFunctionPushQueueBinding(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	app, err := (*e.Store()).CreateApp(context.Background(), state.App{

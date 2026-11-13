@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { CustomMetricSeriesValue } from './CustomMetricSeriesValue.js';
 /**
  * One stored gauge.
  */
@@ -17,5 +18,9 @@ export type CustomMetricResponse = {
    * gauge for pushed values (a scaling signal); counter for OTLP cumulative sums, which never drive scaling.
    */
   kind?: 'gauge' | 'counter';
+  /**
+   * A labelled metric's series. value is then their aggregate: the sum for counters, the maximum of fresh series for gauges. Absent for an unlabelled metric.
+   */
+  series?: Array<CustomMetricSeriesValue>;
 };
 

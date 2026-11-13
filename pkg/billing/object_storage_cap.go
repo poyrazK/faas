@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -57,8 +56,10 @@ func objectStorageChargeWithinCap(ctx context.Context, store state.ObjectStorage
 }
 
 // monthBillableLiveEgress is the period's egress above the plan's included
-// quantity when egress is billed live, with the policy that prices it.
-// Shadow or unconfigured egress never consumes the live cap.
+// quantity when egress is billed live, with the policy that prices it. Only
+// egress sent in hours the subject's egress overage election covers is
+// billed, so only that consumes the cap (ADR-20261104204500). Shadow or
+// unconfigured egress never consumes the live cap.
 func monthBillableLiveEgress(ctx context.Context, caps objectStorageCapStore, policies MeterUsagePolicyProvider, account state.Account, start, end time.Time) (int64, *MeterUsagePolicy, error) {
 	if policies == nil {
 		return 0, nil, nil
@@ -67,30 +68,27 @@ func monthBillableLiveEgress(ctx context.Context, caps objectStorageCapStore, po
 	if !configured || policy.Mode != MeterDeliveryLive {
 		return 0, nil, nil
 	}
+	election, err := EgressOverageElectionFor(ctx, caps, account.ID)
+	if err != nil {
+		return 0, nil, fmt.Errorf("load egress overage election: %w", err)
+	}
+	if election.EnabledAt == nil {
+		return 0, &policy, nil
+	}
 	if policy.EffectiveFrom.After(start) {
 		start = policy.EffectiveFrom
 	}
-	raw, err := sumEgressBytes(ctx, caps, account.ID, start, end)
-	if err != nil {
-		return 0, nil, err
-	}
-	return max(raw-max(policy.IncludedQuantity, 0), 0), &policy, nil
-}
-
-func sumEgressBytes(ctx context.Context, store UsageRangeStore, accountID string, start, end time.Time) (int64, error) {
 	if !start.Before(end) {
-		return 0, nil
+		return 0, &policy, nil
 	}
-	rows, err := store.UsageByHour(ctx, accountID, start, end)
+	rows, err := caps.UsageByHour(ctx, account.ID, start, end)
 	if err != nil {
-		return 0, fmt.Errorf("load egress usage: %w", err)
+		return 0, nil, fmt.Errorf("load egress usage: %w", err)
 	}
-	var total int64
 	for _, row := range rows {
-		if row.NetTxBytes < 0 || row.NetTxBytes > math.MaxInt64-total {
-			return 0, errors.New("billing: egress usage out of range")
+		if row.NetTxBytes < 0 {
+			return 0, nil, errors.New("billing: egress usage out of range")
 		}
-		total += row.NetTxBytes
 	}
-	return total, nil
+	return ElectedEgressOverage(rows, policy.IncludedQuantity, election), &policy, nil
 }

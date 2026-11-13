@@ -12,10 +12,10 @@ func TestPageOnHidesCapabilitiesTheDeciderTurnsOff(t *testing.T) {
 	if !page.On("realtime") {
 		t.Fatal("with no decider installed every capability must count as released")
 	}
-	dashboard.SetCapabilityDecider(func(accountID, plan, capability string) bool {
+	restore := dashboard.SetCapabilityDecider(func(accountID, plan, capability string) bool {
 		return accountID == "acct-1" && plan == "pro" && capability != "realtime"
 	})
-	t.Cleanup(func() { dashboard.SetCapabilityDecider(func(string, string, string) bool { return true }) })
+	t.Cleanup(restore)
 	if page.On("realtime") {
 		t.Fatal("a capability the decider turns off must be hidden")
 	}
@@ -24,5 +24,20 @@ func TestPageOnHidesCapabilitiesTheDeciderTurnsOff(t *testing.T) {
 	}
 	if !(dashboard.Page{}).On("realtime") {
 		t.Fatal("a page with no signed-in account must not hide links")
+	}
+}
+
+func TestCapabilityDeciderRestoresPreviousWiring(t *testing.T) {
+	page := dashboard.Page{Account: &dashboard.AccountView{ID: "acct-1", Plan: "pro"}}
+	restoreOriginal := dashboard.SetCapabilityDecider(func(string, string, string) bool { return false })
+	t.Cleanup(restoreOriginal)
+	restoreReplacement := dashboard.SetCapabilityDecider(func(string, string, string) bool { return true })
+	t.Cleanup(restoreReplacement)
+	if !page.On("production-debugger") {
+		t.Fatal("replacement decider was not installed")
+	}
+	restoreReplacement()
+	if page.On("production-debugger") {
+		t.Fatal("previous capability decision was not restored")
 	}
 }

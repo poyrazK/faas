@@ -1,0 +1,21 @@
+[Unit]
+Description=Trim Go build caches when the root filesystem is nearly full
+After=local-fs.target
+ConditionPathExists=/etc/faas/go-cache-trim.json
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0022
+ExecStart=/usr/local/sbin/faas-go-cache-trim sweep
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+# The caches live under /root and /home, so those stay visible; writes are
+# limited to the cache roots, the lock and the metrics directory.
+ProtectHome=no
+ProtectSystem=strict
+ReadWritePaths=-/var/cache -/root/.cache -/home -/var/lock -/run/lock /var/lib/node_exporter/textfile_collector

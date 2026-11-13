@@ -17,6 +17,8 @@
      - **Amended 2026-11-02 (owner):** neither does the copy a rollback restores ([ADR-20261023181931](20261023181931-rollbacks-that-restore-the-database.md)). That copy becomes the app's database, and the source cannot be deleted while it exists, so on a full plan the slot would end with the app's bindings revoked.
        - The switch must fit inside the limit. apid refuses it with `403 managed_postgres_quota_exceeded` (limit and observed count) before recording it.
        - The switch's restore marks its reservation (`RestoreDatabaseRequest.WithinLimit`), and both stores refuse it instead of granting the slot. A limit reached after apid's check fails the switch with `database_limit` while the app keeps serving.
+       - The same rule applies when an identical restore already exists: a copy still holding a slot cannot be adopted. Reservation replay, the rollback worker, cutover reservation and activation all check it. A catalog trigger also rejects temporary targets created or activated by N-1 workers. Copies become adoptable after room is freed and their slot is cleared.
+       - The repair migration clears the deadline on still-live copies that an older worker already activated. This preserves an app's live database after the irreversible switch; ordinary database-count and usage limits still apply. Pending switches receive no exemption.
      - The rule is the same on every plan, and for organization databases it applies per organization.
      - A restore admitted inside the limit does not take the slot.
   2. **The slot lasts 7 days.**
@@ -27,9 +29,11 @@
      - If another of the owner's databases is purged, or a plan upgrade raises the limit, the count without the slot database fits the limit. The database then becomes an ordinary one and `restore_slot_until` is cleared.
      - The slot is checked at every reservation, purge and plan change, and by the lifecycle reconciler.
      - A scheduled delete does not free room: a database in its undo window still counts (ADR-20261029174950).
+     - **Amendment 2026-11-10 (owner: "Scheduled delete frees room"):** one exception. When the slot copy's own source has its delete scheduled, the sweep leaves that source out of the count, so the copy becomes an ordinary database. Restoring, pointing the app at the copy and deleting the original is how a one-database plan recovers from a bad migration. Before this, the original's 7-day undo made the copy lose its bindings (the app's `DATABASE_URL`) and have its delete scheduled at `restore_slot_until`. Recovering the source from its undo window then needs room under the limit (`undeleteNeedsRoom` checks the count for every recovered database), so the account never ends up with two ordinary databases on a one-database plan. Another database's scheduled delete still counts.
   4. **When the slot ends with no room, the copy's delete is scheduled.**
      - At `restore_slot_until`, the reconciler schedules the database's delete exactly as a customer delete. The state becomes `deleting`, `restorable_until` is 7 days later, and the provider hold stops its compute.
      - The account gets a `managed_postgres.database.restore_slot_expired` audit event, and an email (Delivery 2). The account that ran the restore is also emailed 48 hours before the slot ends while it still has no room (`api.ManagedPostgresRestoreSlotNoticeLead`).
+     - A ready copy's deletion schedule and expiry notice commit in one catalog transaction, before the provider hold. A failed notice write rolls back the schedule; mail delivery retries from the notice. The sweeper repairs a missing notice left by an older worker before clearing its slot, using the persisted purge deadline. Customer deletes scheduled before the slot ends do not become automatic-expiry notices.
      - The source is never touched, so the only data the delete can lose is what was written to the copy after the restore.
   5. **Undo and a second restore.**
      - Recovering a copy whose slot expired needs room under the plan's limit, like any undelete. The slot is not granted again, so it cannot extend itself.

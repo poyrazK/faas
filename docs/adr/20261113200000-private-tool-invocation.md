@@ -1,7 +1,7 @@
 # ADR-20261113200000: Private delegated invocation with sealed credential bindings
 
 Status: Accepted
-Amends: ADR-20261113130000
+Amends: ADR-20261113130001
 
 ## Decision
 

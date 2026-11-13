@@ -50,6 +50,7 @@ type DataPipeline struct {
 	Reason               string
 	TablesReady          int32
 	RetainedWalBytes     pgtype.Int8
+	WalRetention         []byte
 	AppliedThroughAt     pgtype.Timestamptz
 	VerificationProgress []byte
 	ReaderChange         []byte
@@ -115,6 +116,7 @@ type DataPipelineSchemaRefresh struct {
 	ChangeID   string
 	AppID      pgtype.UUID
 	Attempt    int32
+	ReadGate   bool
 	WakeID     pgtype.UUID
 	CreatedAt  pgtype.Timestamptz
 }
@@ -156,6 +158,18 @@ type ManagedPostgresBinding struct {
 	Scope      string
 	Access     string
 	State      string
+}
+
+type NotificationOutbox struct {
+	ID          int64
+	Channel     string
+	Payload     string
+	AvailableAt pgtype.Timestamptz
+	State       string
+	Attempts    int32
+	LastError   pgtype.Text
+	CreatedAt   pgtype.Timestamptz
+	DeliveredAt pgtype.Timestamptz
 }
 
 type Snapshot struct {

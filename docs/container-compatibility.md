@@ -39,7 +39,7 @@ application state in object storage or an external database. Snapshot reuse is a
 startup optimization and does not guarantee filesystem persistence across
 instances, cold fallback, redeployment, or node failure. The ephemeral disk
 allowance includes application content and filesystem overhead, rather than
-guaranteeing that amount of free scratch space; see [ADR-158](adr/158-ephemeral-disk-boundary.md).
+guaranteeing that amount of free scratch space.
 
 While an image is assembled, its layers may write at most twice the plan's
 ephemeral disk allowance in file content (`LayerExtractionBudgetMultiple`).
@@ -66,8 +66,7 @@ or `route_connectivity`, alongside the actual response status.
 `authentication: platform_challenge` means the platform probe bypassed Gregale
 customer access gates; it does not prove anonymous access or bypass
 application-owned authentication. Connectivity probes record redirects without
-following them. Roll out the gateway response-proof support before the new
-imaged verifier; older gateways cannot satisfy the connectivity check.
+following them.
 
 Both candidate verification contracts require an authenticated candidate
 response, including explicit HTTP health checks. A deployment header alone,
@@ -84,7 +83,7 @@ available in `stage_state.hosting_verification`: `attempts`, `deadline_at`,
 `last_error_code`, and `retry_not_before` (the earliest eligible retry, not a
 promised delivery time). `last_error_code` distinguishes publication, gateway,
 transport, missing-proof and wrong-deployment failures. The five-minute
-recovery window survives imaged restarts and changes of outage reason. If it
+recovery window survives platform restarts and changes of outage reason. If it
 expires, the deployment fails with `deployment_verification_unavailable`;
 inspect deployment and gateway diagnostics before retrying. A proven candidate
 response with an unhealthy status retains `deployment_smoke_failed`.
@@ -97,8 +96,7 @@ logs and metrics, snapshots, autoscaling, and scale-to-zero.
 
 ## Runtime environment
 
-The process starts in the environment a container runtime provides
-([ADR-20261025111339](adr/20261025111339-guest-container-runtime-parity.md)):
+The process starts in the environment a container runtime provides:
 
 | | Gregale | Docker |
 |---|---|---|
@@ -126,27 +124,62 @@ call is always safe: `/dev/urandom`, `getrandom(2)`, Go `crypto/rand`, Python
 `secrets`, `os.urandom` and `uuid.uuid4`, and Node `crypto.webcrypto`.
 
 For Node and Python, Gregale also reseeds the process itself before a woken
-instance serves traffic (ADR-680). It covers Node `crypto` (and the OpenSSL
+instance serves traffic. It covers Node `crypto` (and the OpenSSL
 state behind TLS), `crypto.randomUUID`, `crypto.randomInt` and `Math.random`,
 and Python `random`, `ssl`, and numpy's global `numpy.random` functions. If a
 process cannot confirm the reseed, the instance cold-boots instead of waking
 from the snapshot.
 
+Java on Java 16 or newer is reseeded the same way:
+Gregale adds a small agent to `JAVA_TOOL_OPTIONS`, which resets `Math.random`,
+`ThreadLocalRandom`, `SplittableRandom` and the seed that a `new Random()`
+draws from. Every JVM then prints `Picked up JAVA_TOOL_OPTIONS: …` on stderr
+when it starts. Java's default `SecureRandom` reads the kernel and needs
+nothing.
+
+Go cannot be reseeded from outside the program. Use `crypto/rand` for anything
+that must be unique. To reseed generators your program owns, import
+`github.com/gregale-dev/gregale-go/reseed` and register a callback with
+`reseed.OnRestore`; Gregale runs it after each restore, before the instance
+serves traffic.
+
 Reseed these yourself, or avoid keeping them across a snapshot:
 
-- generators in other runtimes, such as Go `math/rand`, Java `Random` and
-  `SecureRandom`, Ruby `Random`, and PHP `mt_rand`;
+- Go `math/rand` and `math/rand/v2` global functions, Ruby `Random`, and PHP
+  `mt_rand`. Two restores of one snapshot return the same Go values
+  (measured);
+- a Java `Random` object, or a `SecureRandom` you seed yourself or create as
+  `SHA1PRNG`, that your code created before the snapshot, and any JVM older
+  than Java 16;
 - generator objects your code created before the snapshot, such as Python
   `random.Random()` or `numpy.random.default_rng()`;
 - values your code generated before the snapshot, such as a secret, nonce or
   instance ID drawn once at startup: every instance restored from that snapshot
   holds the same value. Draw them per request or per use, and take the serving
-  instance from the `X-Faas-Instance-Id` request header;
+  instance from the `X-Faas-Instance-Id` request header or, outside a request,
+  from the file named by `FAAS_INSTANCE_IDENTITY_FILE`, which Gregale rewrites
+  on every wake ([trace propagation](runtimes/trace-propagation.md#deployment-identity));
 - `Math.random` inside Node worker threads;
-- sidecars that run from their own root filesystem.
+- sidecars that run from their own root filesystem;
+- Bun and Deno, which do not load the Node reseed; Python started with `-S`,
+  `-E` or `-I`, which skips the Python reseed; and any Node, Python or Java
+  process started with a cleared environment. Gregale logs a warning on each
+  wake when it finds such a process running, or a Go program that does not
+  import the `reseed` package;
+- OpenSSL copies bundled inside Python packages, such as `psycopg2-binary` and
+  `cryptography` wheels: the reseed reaches only the standard library's `ssl`;
+- ID libraries that keep a random pool or per-process state, other than the
+  ones Gregale resets: instances restored from one snapshot can generate the
+  same IDs. Gregale resets npm `uuid` (its random pool and its v1, v6 and v7
+  state), `nanoid` and `bson` `ObjectId` in Node, and `bson` `ObjectId` in
+  Python, on every restore.
+  Copies bundled into one file by esbuild or webpack, ES modules on Node older
+  than 22.15, and Go libraries are not reset: Go `rs/xid`, the MongoDB Go
+  driver's `ObjectID` and the OpenTelemetry Go SDK's trace IDs repeat, and
+  Gregale logs a warning on each wake of a Go app that uses them.
 
 Setting `GREGALE_RESTORE_RESEED=off` in the app's environment disables the
-Node and Python reseed. Only do that for an app that never generates tokens,
+Node, Python and Java reseed. Only do that for an app that never generates tokens,
 keys, nonces or identifiers.
 
 ## Support boundaries
@@ -162,15 +195,14 @@ workloads currently require an atomic image admission path and are rejected.
 After CI pushes an image, the [image-published trigger](image-published-deployments.md)
 deploys its exact digest with durable per-workload and scope deduplication.
 New project image deployments also capture their accepted Compose CMD contract;
-queued images and retries retain it after app configuration changes. See
-[ADR-686](adr/686-frozen-project-image-commands.md). Historical deployments without
+queued images and retries retain it after app configuration changes. Historical deployments without
 that record keep their existing command behavior.
 
 Compose `depends_on: {backend: {condition: service_healthy}}` now holds the
 dependent workload's initial release until the captured backend deployment is
 live with traffic in the same environment. A failed dependency or a fixed
 15-minute wait deadline fails the candidate while the previous release keeps
-serving. `gregale deploys status` and the dashboard stage summary show the
+serving. `gregale release get` and the dashboard stage summary show the
 blocker. This gates release activation; candidate processes can boot while
 waiting. Declarations allow at most 100 dependency conditions per workload.
 Optional healthy dependencies and healthy job targets are rejected. A healthy
@@ -178,8 +210,6 @@ gate on a Compose datastore such as `postgres` is accepted as a plain
 dependency, and a `service_completed_successfully` dependency runs as the
 release command of the waiting service that shares its build
 ([multi-service apps](multi-service-apps.md#start-order-and-migrations)).
-See [ADR-685](adr/685-compose-dependency-release-gates.md) and
-[ADR-20261102192943](adr/20261102192943-compose-files-deploy-as-written.md).
 
 Compose `healthcheck:` overrides are also retained for prebuilt image workloads:
 
@@ -210,22 +240,17 @@ before serving readiness, alongside the existing network or worker readiness
 and public-route verification. Startup grace, retries, and command timeouts
 apply within the startup deadline. A failed or missing result blocks promotion;
 boot, restore, and warm-pool resume cannot reuse a previous pass. `NONE` and
-absent checks retain ordinary readiness. Previously assembled deployments need
-reassembly or redeployment to gain this gate. Native boot/restore qualification
-remains pending. Compose dependency release gates are described above. A Compose
+absent checks retain ordinary readiness. Redeploy to add this gate to an
+existing deployment. Compose dependency release gates are described above. A Compose
 healthcheck on a source-built service is merged onto the built image's
-HEALTHCHECK and enforced the same way
-([ADR-20261019195000](adr/20261019195000-compose-healthcheck-on-built-services.md)).
-A Dockerfile `HEALTHCHECK` on its own is enforced too
-([ADR-20261024100000](adr/20261024100000-dockerfile-healthcheck-enforced.md)):
+HEALTHCHECK and enforced the same way.
+A Dockerfile `HEALTHCHECK` on its own is enforced too:
 a source build's next deployment waits for its command check to pass, and
 recovers from repeated failures, like a pushed image. The check runs inside the
 built image, so the tools it calls (`curl`, `wget`) must be installed there. To
 keep ordinary readiness, use `HEALTHCHECK NONE`, drop the instruction, or set
 `healthcheck: {disable: true}` on the Compose service. Deployments built before
 this change keep their readiness until they are redeployed.
-See [ADR-682](adr/682-compose-image-healthchecks.md) and
-[ADR-683](adr/683-image-healthcheck-readiness.md).
 
 Required primary image checks also drive runtime recovery. Each serving
 instance executes fresh command attempts using the effective interval, timeout,
@@ -238,18 +263,14 @@ resume start fresh monitoring. Missing or invalid transport proof requests
 infrastructure recovery without consuming the app's permanent restart budget.
 The existing restart circuit limits repeated confirmed failures. Failure
 diagnostics use image_healthcheck_unhealthy without publishing command output.
-Matching guest and vmmd support is required; older image rootfs releases need
-reassembly. Native lifecycle qualification remains pending. See
-[ADR-684](adr/684-image-healthcheck-runtime-recovery.md).
+Image health checks are not enabled for every account yet.
 
 Automatic image promotion also checks for newer accepted releases in the same
 app and environment scope. Older in-flight candidates become superseded, and
 GitHub-triggered images recheck their recorded source branch before cutover.
-Explicit rollback retains its existing behavior. See
-[ADR-681](adr/681-image-deployment-promotion-ordering.md).
+Explicit rollback retains its existing behavior.
 
-Prebuilt image services can also override the image's process
-([ADR-1337](adr/1337-compose-process-overrides-and-key-reporting.md)):
+Prebuilt image services can also override the image's process:
 
 ```yaml
 services:
@@ -273,8 +294,7 @@ optional `:group`, resolved against the image's `/etc/passwd` and `/etc/group`.
 guest-init delivers (SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2), and
 `stop_grace_period` is capped by the plan. Like commands, these overrides are
 captured per deployment, so queued deployments and rollbacks keep them.
-Source-built services take the same overrides
-([ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)):
+Source-built services take the same overrides:
 an `entrypoint` is folded into the service's start command (the entrypoint,
 then the command), and `user`, `working_dir` and the stop contract are applied
 to the built image as a Dockerfile's USER, WORKDIR and STOPSIGNAL would be.
@@ -286,8 +306,7 @@ service, each name that will have no value in the target environment under
 **Needs a value**: names already configured on the app, supplied by
 `--secrets-file`, or set by Gregale itself (`PORT`, `GREGALE_*`) are left out.
 
-A Compose file can opt in to importing the plain values of `environment:`
-([ADR-20261023085230](adr/20261023085230-compose-env-import.md)):
+A Compose file can opt in to importing the plain values of `environment:`:
 
 ```yaml
 x-gregale-env-import: true
@@ -303,7 +322,7 @@ services:
 A reviewed project apply (`gregale deploy`, the dashboard, or
 `gregale deploy --repo … --project`) writes each imported value into the
 service's app, in the deploy's environment, before any build starts; a GitHub
-push deploy imports nothing. Values are written only where the key is still unset: a
+push imports only the addresses of sibling services. Values are written only where the key is still unset: a
 value configured on the app, as a variable or a secret, is never replaced. The
 plan lists imported names under **Imported from Compose** and gives the reason
 for each value it skips: a secret-looking key or value, an address of another
@@ -319,8 +338,7 @@ single-quoted ones, are read to their closing quote; a malformed line is
 reported with its file and line number and skipped.
 
 Source-built services pass `build.args` and `build.target` to their Dockerfile
-build, as `docker compose build` does
-([ADR-20261019142544](adr/20261019142544-compose-build-args-and-target.md)):
+build, as `docker compose build` does:
 
 ```yaml
 services:
@@ -348,11 +366,10 @@ builds with Railpack, so its `args` and `target` are warned and ignored. Up to
 Each deployment keeps the arguments and target it was planned with, and changing
 either rebuilds instead of reusing a cached image. A public build URL with the
 same name as an argument wins. Build arguments end up in the image history, so
-keep secrets out of them and set those with `gregale secrets set`. Plans show the
+keep secrets out of them and set those with `gregale env set`. Plans show the
 target and the argument names, not their values.
 
-Build-time secrets use `build.secrets`
-([ADR-20261022185329](adr/20261022185329-compose-build-secrets.md)):
+Build-time secrets use `build.secrets`:
 
 ```yaml
 services:
@@ -362,15 +379,14 @@ services:
       secrets: [npm_token]          # RUN --mount=type=secret,id=npm_token ...
 secrets:
   npm_token:
-    environment: NPM_TOKEN          # gregale secrets set NPM_TOKEN
+    environment: NPM_TOKEN          # gregale env set NPM_TOKEN
 ```
 
 Each entry names a top-level secret declared with `environment: NAME`; the
 build mounts the secret the app receives as `NAME` at runtime, under the id the
 entry gives (`{source, target}` sets the id to `target`). That is the app's own
 secret in the deployment's scope, an environment reference that points `NAME`
-at another secret, or a project environment secret the app inherits
-([ADR-20261024140000](adr/20261024140000-build-secrets-resolve-like-the-runtime.md)).
+at another secret, or a project environment secret the app inherits.
 A deployment with an explicit secret selection inherits no project secrets, at
 build or at runtime. `file:` and
 external secrets are not uploaded and are left out with a warning. The value is
@@ -379,8 +395,7 @@ never stored in the image, its cache or Gregale's records; a build whose
 secret is not set fails with its name. Builds with secrets run on a fresh
 builder. At most 16 secrets per build (`DockerfileBuildSecretsMax`).
 
-A service's own `secrets` become files in `/run/secrets`
-([ADR-20261023090000](adr/20261023090000-compose-runtime-secret-files.md)):
+A service's own `secrets` become files in `/run/secrets`:
 
 ```yaml
 services:
@@ -395,7 +410,7 @@ services:
         mode: 0400
 secrets:
   db_password:
-    environment: DB_PASSWORD        # gregale secrets set DB_PASSWORD
+    environment: DB_PASSWORD        # gregale env set DB_PASSWORD
   api_key:
     environment: API_KEY
 ```
@@ -412,8 +427,7 @@ value; otherwise they change on the next start. A secret that is not set has
 no file. Only the service's main process gets the files, not sidecars, jobs or
 app tasks. At most 16 files per service (`SecretFilesMax`).
 
-A service's size and count set its app's settings
-([ADR-20261023120000](adr/20261023120000-compose-deploy-resources.md)):
+A service's size and count set its app's settings:
 
 ```yaml
 services:
@@ -445,8 +459,7 @@ project plan marks such services `memory=128MB (default)` and lists them under
 "Starts with the default 128 MB". Node and Python services often need more, so
 declare `memory`, or raise it with `gregale app <slug> --ram` after the deploy.
 
-`extends` and top-level `include` are resolved as Compose resolves them
-([ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)):
+`extends` and top-level `include` are resolved as Compose resolves them:
 
 ```yaml
 include:
@@ -463,16 +476,14 @@ other values are replaced. Build contexts and `env_file` paths in another
 directory stay relative to their own file. Included services join the project;
 a service defined in two files, an unknown base, a cycle or a missing file fails
 the scan, as in Compose. Remote includes are not loaded and warn. An included
-file is interpolated with its own values
-([ADR-20261025090000](adr/20261025090000-compose-include-env-files.md)): the
+file is interpolated with its own values: the
 including project's, overlaid by the files its `env_file` option names (from
 the including file's directory; a missing one fails the scan), or else by the
 `.env` beside the included file. `COMPOSE_PROFILES` is read from the root `.env`
 only. An include's `project_directory` is not applied and warns; paths resolve
 from the included file's directory. At most 32 files are linked in one scan.
 
-A service with `profiles:` is deployed only when one of its profiles is active
-([ADR-20261022190000](adr/20261022190000-compose-profiles-from-dotenv.md)).
+A service with `profiles:` is deployed only when one of its profiles is active.
 Activate profiles with `COMPOSE_PROFILES` in the source's `.env`, as Compose
 reads it there: comma-separated names, or `*` for every profile. Other services
 are skipped with a warning naming their profiles.
@@ -501,15 +512,15 @@ their keys: the managed resource replaces the container.
 | Concern | Current contract | Qualification boundary |
 |---|---|---|
 | Image platform | Linux/amd64; compatible child selected from an OCI or Docker index. A lone child without a platform annotation is selected and its config's platform checked. | Other architectures and operating systems are rejected. |
-| Process | Image ENTRYPOINT + CMD, environment, working directory, and user. As under Docker, an image without `USER` runs as root, and a numeric UID absent from the image's passwd runs with GID 0 ([ADR-1239](adr/1239-docker-compatible-image-process-identity.md)). Root-owned image files stay root-owned in the guest. | Metadata inspection cannot prove executables or users exist in the layers. Numeric or named `USER user:group` is preserved; explicit missing identities fail launch. Supplementary memberships are not imported. Redeploy to pick up root ownership for artifacts built before ADR-1239. |
+| Process | Image ENTRYPOINT + CMD, environment, working directory, and user. As under Docker, an image without `USER` runs as root, and a numeric UID absent from the image's passwd runs with GID 0. Root-owned image files stay root-owned in the guest. | Metadata inspection cannot prove executables or users exist in the layers. Numeric or named `USER user:group` is preserved; explicit missing identities fail launch. Supplementary memberships are not imported. Redeploy older deployments to pick up root ownership. |
 | Main listener | Explicit deployment port, otherwise one exposed TCP port, otherwise 8080. Port 80 is supported: when a workload in the VM declares it, the in-guest metadata endpoint moves from `169.254.169.254:80` to `169.254.169.254:8775`. | Multiple TCP declarations do not select the main port. Bind to `0.0.0.0`. Read the metadata URLs from `FAAS_EVENT_PUBLISH_ENDPOINT`, `FAAS_METADATA_ENV_ENDPOINT` and `FAAS_SECRETS_RELOAD_ACK_ENDPOINT` instead of hardcoding the address. |
 | Additional listeners | Declared TCP listeners use `<slug>--port-<name>.<apps-domain>` selectors through the gateway | These are HTTP gateway selectors. Raw TCP uses separately configured app-owned listeners; UDP uses the separate opt-in listener service below. |
-| Raw TCP ingress | Opt-in public edge binds stable app-owned TCP listener ports and forwards bytes through admission and vmmd; optional per-listener TLS termination | Disabled by default; requires gateway/firewall rollout. TLS defaults to passthrough; termination requires verified app-owned hostname and provisioned edge bundle. Native TLS acceptance remains pending. See [rollout](ops/tcp-ingress.md). |
-| Private TCP between services | Same-account services dial `<name>.svc.gregale:<port>` on any declared TCP listener or the serving port; compose `expose:` declares internal-only listeners (ADR-576) | Node-level rollout; until enabled, service names answer HTTP only. Internal listeners never get public selectors or raw TCP listeners. Ports 10080, 10081 and 443 stay on the HTTP mesh. See [networking](networking.md#private-tcp-between-services). |
-| Raw UDP ingress | Opt-in public edge reserves app-owned UDP endpoints and forwards framed datagrams through schedd and VMMD | Disabled by default; requires IPv4 source CIDRs and matching firewall rollout. Local API/storage/socket tests pass; native cold/restore acceptance is pending. See [ADR-389](adr/389-public-udp-ingress.md). |
+| Raw TCP ingress | Opt-in public edge binds stable app-owned TCP listener ports and forwards bytes to the app; optional per-listener TLS termination | Not enabled for every account yet. TLS defaults to passthrough; termination requires a verified app-owned hostname. |
+| Private TCP between services | Same-account services dial `<name>.svc.gregale:<port>` on any declared TCP listener or the serving port; compose `expose:` declares internal-only listeners | Not enabled for every account yet; until it is, service names answer HTTP only. Internal listeners never get public selectors or raw TCP listeners. Ports 10080, 10081 and 443 stay on the HTTP mesh. See [networking](networking.md#private-tcp-between-services). |
+| Raw UDP ingress | Opt-in public edge reserves app-owned UDP endpoints and forwards framed datagrams to the app | Not enabled for every account yet; requires IPv4 source CIDRs. |
 | Host ports | Durable per-node TCP/UDP lease allocation | A lease does not bind a socket or enable direct ingress. |
 | Readiness | TCP by default for direct images; explicit health path selects HTTP | Image HEALTHCHECK metadata is separate from verifying public-route readiness. |
-| Image healthchecks | CMD/CMD-SHELL polling with image identity, environment, working directory, and exact nanosecond timing; StartInterval is retained | CMD-SHELL requires the image to contain its shell. Qualification must prove execution and reporting, including companion deployments and restore. |
+| Image healthchecks | CMD/CMD-SHELL polling with image identity, environment, working directory, and exact nanosecond timing; StartInterval is retained | CMD-SHELL requires the image to contain its shell. Not enabled for every account yet. |
 | Filesystem | Compatible shared-base layering or full-rootfs fallback; ephemeral writable state | VOLUME does not provision persistent storage; no host mounts or Docker socket. |
 | Lifecycle | Request, service, worker, and job modes with validated restart policies | Free is request-only; quotas and availability remain plan-controlled. |
 | Companions | Separate image roots and resource controls, shared guest kernel and loopback | Use separate deployments for mutually untrusted workloads. |
@@ -554,11 +565,10 @@ fail the preflight; normal mode reports them without rejecting the image.
 An image exceeding the workload listener cap fails runtime-contract validation.
 Declared volume paths appear in `image.volume_paths` and human output, with an
 explicit warning that they remain ephemeral and do not provision durable storage.
-UDP-only images receive guidance for configuring app-owned UDP endpoints and the
-operator source-CIDR rollout; a declaration alone does not enable ingress or
+UDP-only images receive guidance for configuring app-owned UDP endpoints and
+source CIDRs; a declaration alone does not enable ingress or
 provide the main HTTP readiness listener.
 
 Preflight does not download layers, execute image commands, prove that the
 server binds its port, or validate account policy. A successful metadata check
-is not runtime qualification. See the [container qualification procedure](container-qualification.md)
-for the separate offline and native acceptance gates.
+does not prove the image runs.

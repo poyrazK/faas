@@ -5,11 +5,14 @@
 import type { AppBindingInventory } from '../models/AppBindingInventory.js';
 import type { AppHealthHistoryPage } from '../models/AppHealthHistoryPage.js';
 import type { AppHealthResponse } from '../models/AppHealthResponse.js';
+import type { ApplyAppScalingRequest } from '../models/ApplyAppScalingRequest.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
 import type { AppOperationPreview } from '../models/AppOperationPreview.js';
 import type { AppResourceInventoryResponse } from '../models/AppResourceInventoryResponse.js';
 import type { AppResponse } from '../models/AppResponse.js';
 import type { AppRestartResponse } from '../models/AppRestartResponse.js';
+import type { AppScalingReceipt } from '../models/AppScalingReceipt.js';
+import type { AppScalingSnapshot } from '../models/AppScalingSnapshot.js';
 import type { AppsMetricsResponse } from '../models/AppsMetricsResponse.js';
 import type { AppStreamingStatus } from '../models/AppStreamingStatus.js';
 import type { AppUsageSummaryResponse } from '../models/AppUsageSummaryResponse.js';
@@ -65,6 +68,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class AppsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read a scope's stored binding release policy.
    * Requires apps:read or admin and completed MFA. Defaults to off with revision 0. No probes or provider calls occur.
@@ -84,7 +88,7 @@ export class AppsService {
      */
     scope?: string,
   }): CancelablePromise<BindingReleasePolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings/release-policy',
       path: {
@@ -140,7 +144,7 @@ export class AppsService {
      */
     scope?: string,
   }): CancelablePromise<BindingReleasePolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/bindings/release-policy',
       path: {
@@ -216,7 +220,7 @@ export class AppsService {
      */
     path?: string,
   }): CancelablePromise<ServiceBindingExplanation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings/services/{service}/explanation',
       path: {
@@ -298,7 +302,7 @@ export class AppsService {
      */
     scope?: string,
   }): CancelablePromise<AppBindingInventory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings',
       path: {
@@ -330,7 +334,7 @@ export class AppsService {
    * @throws ApiError
    */
   public static listApps(): CancelablePromise<Array<AppResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps',
       errors: {
@@ -363,7 +367,7 @@ export class AppsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps',
       headers: {
@@ -403,7 +407,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}',
       path: {
@@ -452,7 +456,7 @@ export class AppsService {
      */
     ifWorkloadRevision?: number,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}',
       path: {
@@ -494,7 +498,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}',
       path: {
@@ -557,7 +561,7 @@ export class AppsService {
      */
     edgeRulesScope?: 'app' | 'account' | 'fleet',
   }): CancelablePromise<RuntimePolicyStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/policy/status',
       path: {
@@ -601,7 +605,7 @@ export class AppsService {
      */
     cursor?: string,
   }): CancelablePromise<DeletedAppListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deleted-apps',
       query: {
@@ -638,7 +642,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<DeletedAppSummary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deleted-apps/{id}',
       path: {
@@ -685,7 +689,7 @@ export class AppsService {
      */
     requestBody?: Record<string, any>,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deleted-apps/{id}/restore',
       path: {
@@ -736,7 +740,7 @@ export class AppsService {
       expected_app_id?: string;
     },
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/restore',
       path: {
@@ -770,7 +774,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ListDeployTokensResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deploy-tokens',
       path: {
@@ -802,7 +806,7 @@ export class AppsService {
     slug: string,
     requestBody?: CreateDeployTokenRequest,
   }): CancelablePromise<DeployTokenResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deploy-tokens',
       path: {
@@ -840,7 +844,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/deploy-tokens/{id}',
       path: {
@@ -878,7 +882,7 @@ export class AppsService {
     id: string,
     requestBody?: RotateDeployTokenRequest,
   }): CancelablePromise<RotateDeployTokenResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deploy-tokens/{id}/rotate',
       path: {
@@ -913,7 +917,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<CustomMetricListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/custom-metrics',
       path: {
@@ -945,7 +949,7 @@ export class AppsService {
     name: string,
     requestBody: CustomMetricRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/custom-metrics/{name}',
       path: {
@@ -980,7 +984,7 @@ export class AppsService {
      */
     name: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/custom-metrics/{name}',
       path: {
@@ -1021,7 +1025,7 @@ export class AppsService {
      */
     range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
   }): CancelablePromise<PreAuthObservationsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/pre-auth-observations',
       path: {
@@ -1062,7 +1066,7 @@ export class AppsService {
      */
     range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
   }): CancelablePromise<EdgeProtectionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/edge-protection',
       path: {
@@ -1107,7 +1111,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<AppHealthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/health',
       path: {
@@ -1158,7 +1162,7 @@ export class AppsService {
      */
     before?: string,
   }): CancelablePromise<AppHealthHistoryPage | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/health/history',
       path: {
@@ -1200,7 +1204,7 @@ export class AppsService {
      */
     range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
   }): CancelablePromise<AppMetricsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/metrics',
       path: {
@@ -1304,7 +1308,7 @@ export class AppsService {
      */
     cursor?: string,
   }): CancelablePromise<AppWakeTimelineResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/wake-timeline',
       path: {
@@ -1356,7 +1360,7 @@ export class AppsService {
    * Overage computation: `overage_gb_hours = max(0, gb_hours -
    * plan_included_gb_hours)`. The included band is echoed from
    * `acct.Plan.PlanIncludedGBHours`; the overage figure is the
-   * integer-rounded float the Stripe pusher bills at $0.01/GB-h.
+   * integer-rounded float the Stripe pusher bills at $0.05/GB-h.
    *
    * Source: `usage_minutes` today (after the 30d retention cap).
    * `usage_daily` / `mixed` land with the trail-period reader
@@ -1383,7 +1387,7 @@ export class AppsService {
      */
     until?: string,
   }): CancelablePromise<AppUsageSummaryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/usage',
       path: {
@@ -1471,7 +1475,7 @@ export class AppsService {
      */
     groupBy?: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status' | 'consumer_id',
   }): CancelablePromise<RequestAnalyticsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/analytics',
       path: {
@@ -1543,7 +1547,7 @@ export class AppsService {
      */
     until?: string,
   }): CancelablePromise<RouteCustomerUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/analytics/route-customers',
       path: {
@@ -1615,13 +1619,13 @@ export class AppsService {
     /**
      * Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods.
      */
-    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS',
+    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER',
     /**
      * Return grouped series for the selected dimension. Omitted preserves the app-wide points shape; route/method filters require group_by=route or omission.
      */
     groupBy?: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status' | 'consumer_id',
   }): CancelablePromise<RequestAnalyticsTimeseriesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/analytics/timeseries',
       path: {
@@ -1686,7 +1690,7 @@ export class AppsService {
      */
     limit?: number,
   }): CancelablePromise<RequestAuditListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/audit/requests',
       path: {
@@ -1762,7 +1766,7 @@ export class AppsService {
      */
     method?: string,
   }): CancelablePromise<AppStreamingStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/streaming-cap',
       path: {
@@ -1811,7 +1815,7 @@ export class AppsService {
      */
     since?: string | null,
   }): CancelablePromise<DebugCoverageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/coverage',
       path: {
@@ -1864,7 +1868,7 @@ export class AppsService {
      */
     since?: string | null,
   }): CancelablePromise<DebugDependencyLatencyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/dependencies',
       path: {
@@ -1917,7 +1921,7 @@ export class AppsService {
      */
     limit?: number | null,
   }): CancelablePromise<DebugRunningResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/running',
       path: {
@@ -1965,7 +1969,7 @@ export class AppsService {
      */
     since?: string | null,
   }): CancelablePromise<DebugRegressionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/regressions',
       path: {
@@ -2010,7 +2014,7 @@ export class AppsService {
     slug: string,
     requestBody: DebugRegressionActionRequest,
   }): CancelablePromise<DebugRegressionActionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/debug/regressions',
       path: {
@@ -2061,7 +2065,7 @@ export class AppsService {
     slug: string,
     requestBody: GuardedDebugRegressionActionRequest,
   }): CancelablePromise<DebugRegressionActionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/debug/regressions/actions',
       path: {
@@ -2115,7 +2119,7 @@ export class AppsService {
      */
     route: string,
   }): CancelablePromise<DebugRegressionReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/regressions/review',
       path: {
@@ -2155,7 +2159,7 @@ export class AppsService {
     slug: string,
     requestBody: SourceReviewRequest,
   }): CancelablePromise<SourceReviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/source-review',
       path: {
@@ -2202,7 +2206,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ServiceWakeAheadResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/service-wake-ahead',
       path: {
@@ -2245,7 +2249,7 @@ export class AppsService {
     slug: string,
     requestBody: SetServiceWakeAheadRequest,
   }): CancelablePromise<ServiceWakeAheadResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/service-wake-ahead',
       path: {
@@ -2295,7 +2299,7 @@ export class AppsService {
       expected_deployment_id?: string;
     },
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/park',
       path: {
@@ -2350,7 +2354,7 @@ export class AppsService {
      */
     fresh?: boolean,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/park/conditional',
       path: {
@@ -2392,7 +2396,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<AppWakeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/wake',
       path: {
@@ -2446,7 +2450,7 @@ export class AppsService {
      */
     fresh?: boolean,
   }): CancelablePromise<AppRestartResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/restart',
       path: {
@@ -2500,7 +2504,7 @@ export class AppsService {
      */
     wakeId: string,
   }): CancelablePromise<RuntimeConfigRestartStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/runtime-config-restarts/{wake_id}',
       path: {
@@ -2545,7 +2549,7 @@ export class AppsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<PrewarmIntentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/prewarm',
       path: {
@@ -2583,7 +2587,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<Array<PrewarmIntentResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/prewarms',
       path: {
@@ -2619,7 +2623,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/prewarms/{id}',
       path: {
@@ -2669,7 +2673,7 @@ export class AppsService {
      */
     tag?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/cache',
       path: {
@@ -2718,7 +2722,7 @@ export class AppsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/rename',
       path: {
@@ -2822,7 +2826,7 @@ export class AppsService {
      */
     date?: string,
   }): CancelablePromise<any> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/logs',
       path: {
@@ -2841,6 +2845,152 @@ export class AppsService {
         401: `code: unauthorized`,
         402: `Plan does not include log archive read-back. This response is reserved for plans without archive entitlement.`,
         403: `Log archive retention cap exceeded; \`?date=\` is outside the per-plan window.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read scaling settings and their revision.
+   * Requires read access. Named environments must have a materialized workload revision.
+   * @returns AppScalingSnapshot Current desired configuration; does not imply running instance convergence.
+   * @throws ApiError
+   */
+  public static getAppScaling({
+    slug,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Named project environment; omit for the default app.
+     */
+    environment?: string,
+  }): CancelablePromise<AppScalingSnapshot> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/scaling',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Commit reviewed scaling settings with a recoverable request ID.
+   * Requires deploy:write and the same MFA, plan and capacity admission as app settings updates.
+   * The expected app UUID and revision are checked under the write lock. Default revisions advance for
+   * every accepted request and for legacy changes to RAM, CPU, concurrency or min instances.
+   * Named environments use their workload revision, including no-op revision semantics.
+   * Settings and the receipt commit atomically. Reuse request_id with the exact original
+   * body after an interruption to recover the original receipt even after later writes.
+   * Changing the body under an accepted ID returns scaling_request_conflict; a stale
+   * revision returns scaling_revision_conflict. Receipts survive until the app is purged.
+   * Named production and protected environments require their existing approved workflow.
+   * A receipt confirms desired configuration only; named settings require a subsequent
+   * deployment, and default settings do not prove guest readiness or replica convergence.
+   *
+   * @returns AppScalingReceipt Original durable configuration receipt, including on replay.
+   * @throws ApiError
+   */
+  public static applyAppScaling({
+    slug,
+    requestBody,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Reviewed scaling fields and the revision and request identity to preserve on retry.
+     */
+    requestBody: ApplyAppScalingRequest,
+    /**
+     * Named project environment; omit for the default app.
+     */
+    environment?: string,
+  }): CancelablePromise<AppScalingReceipt> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/scaling',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `Write permission, MFA, capability or plan admission denied.`,
+        404: `code: not_found`,
+        409: `Scaling revision changed, request ID reused, or environment protected.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Commit outcome uncertain; recover or retry the original request ID and body.`,
+      },
+    });
+  }
+  /**
+   * Recover a scaling configuration receipt without performing a write.
+   * Requires current read access to the app and selected environment. Receipt settings may have been superseded; read the current revision separately.
+   * @returns AppScalingReceipt Original durable configuration receipt.
+   * @throws ApiError
+   */
+  public static getAppScalingReceipt({
+    slug,
+    requestId,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Original scaling request UUID.
+     */
+    requestId: string,
+    /**
+     * Environment of the original scaling request; omit to recover a default-app request.
+     */
+    environment?: string,
+  }): CancelablePromise<AppScalingReceipt> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/scaling/requests/{request_id}',
+      path: {
+        'slug': slug,
+        'request_id': requestId,
+      },
+      query: {
+        'environment': environment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -2880,7 +3030,7 @@ export class AppsService {
      */
     range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
   }): CancelablePromise<AppsMetricsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/metrics',
       query: {
@@ -2975,7 +3125,7 @@ export class AppsService {
      */
     cursor?: string,
   }): CancelablePromise<WakeTimelineResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/wakes/{wake_id}/timeline',
       path: {
@@ -3044,7 +3194,7 @@ export class AppsService {
      */
     offset?: number,
   }): CancelablePromise<AppResourceInventoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/resource-inventory',
       path: {
@@ -3097,7 +3247,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<AppOperationPreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/operation-preview',
       path: {
@@ -3137,7 +3287,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<BindingVerificationRunDiagnostics> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}/diagnostics',
       path: {
@@ -3167,7 +3317,7 @@ export class AppsService {
     slug: string,
     requestBody: ReviewBindingVerificationRequest,
   }): CancelablePromise<BindingVerificationReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/bindings/verification-runs/review',
       path: {
@@ -3205,7 +3355,7 @@ export class AppsService {
      */
     step: number,
   }): CancelablePromise<BindingVerificationRunStep> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}/steps/{step}/admit',
       path: {
@@ -3245,7 +3395,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}/complete',
       path: {
@@ -3284,7 +3434,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}/resume',
       path: {
@@ -3323,7 +3473,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}',
       path: {
@@ -3362,7 +3512,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}',
       path: {
@@ -3427,7 +3577,7 @@ export class AppsService {
      */
     includeMembers?: boolean,
   }): CancelablePromise<BindingVerificationRunList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings/verification-runs',
       path: {
@@ -3469,7 +3619,7 @@ export class AppsService {
     slug: string,
     requestBody: CreateBindingVerificationRunRequest,
   }): CancelablePromise<BindingVerificationRun> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/bindings/verification-runs',
       path: {

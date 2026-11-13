@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -190,10 +191,12 @@ func TestMain_AttachesInstanceStats(t *testing.T) {
 }
 
 // TestRun_DrainsOnCancel exercises the happy early-lifecycle path end to end:
-// config, migrated pool, injected FC + vmm, a real unix listener + LISTEN loop,
+// config, migrated pool, injected FC + vmm, and a serving unix listener,
 // then cancel → clean nil return.
+// adr: 018 — the scheduler serves its gRPC listener before a serving drain.
 func TestRun_DrainsOnCancel(t *testing.T) {
 	pool := migratedPool(t)
+	serving := make(chan struct{})
 	dir := shortDir(t)
 	cfgPath := filepath.Join(dir, "schedd.toml")
 	cfg := "socket_path = \"" + filepath.Join(dir, "schedd.sock") + "\"\nowner_user = \"root\"\n"
@@ -213,19 +216,28 @@ func TestRun_DrainsOnCancel(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			return net.Listen("unix", t2.Address)
+			listener, err := net.Listen("unix", t2.Address)
+			if err != nil {
+				return nil, err
+			}
+			return &servingListener{Listener: listener, serving: serving}, nil
 		},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- runWithDeps(ctx, discardLog(), deps) }()
-	// Give run() enough time to reach the DB subscribe loop before
-	// cancel. 50 ms was too tight on busy CI runners: the listener
-	// acquisition raced the cancel and surfaced as
-	// "SubscribeWithReconnect ... context canceled" instead of a clean
-	// nil drain. 200 ms is still far under the 3 s watchdog below.
-	time.Sleep(200 * time.Millisecond)
+	// Wait for gRPC to enter Accept, after startup's identity and admission
+	// checks. A fixed sleep could cancel those checks on a busy runner and
+	// exercise a failed boot instead of the serving drain this test promises.
+	select {
+	case <-serving:
+	case err := <-done:
+		t.Fatalf("run stopped before serving: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("run did not start serving within 10s")
+	}
 	cancel()
 
 	select {
@@ -236,6 +248,17 @@ func TestRun_DrainsOnCancel(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("run did not return within 3s of cancel")
 	}
+}
+
+type servingListener struct {
+	net.Listener
+	serving chan struct{}
+	once    sync.Once
+}
+
+func (l *servingListener) Accept() (net.Conn, error) {
+	l.once.Do(func() { close(l.serving) })
+	return l.Listener.Accept()
 }
 
 // writeTestSignPub generates a fresh ECDSA P-256 cosign keypair and

@@ -17,8 +17,9 @@ T = TypeVar("T", bound="WorkflowRecoveryReviewFinishedWebhookPayload")
 
 @_attrs_define
 class WorkflowRecoveryReviewFinishedWebhookPayload:
-    """Payload of automation.recovery_review_finished. All actions have proven final outcomes for their frozen generations.
-    This historical result remains valid after review decisions or later retries; receivers deduplicate by event_id.
+    """Payload of stored_workflow.recovery_review_finished. All actions have proven final outcomes for their frozen
+    generations. This historical result remains valid after review decisions or later retries; receivers deduplicate by
+    event_id.
 
     """
 

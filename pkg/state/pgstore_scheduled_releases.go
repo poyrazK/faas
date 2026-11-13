@@ -21,7 +21,9 @@ func scheduledReleaseFromRow(r sqlc.ScheduledRelease, revision int32) ScheduledR
 		DeploymentID: pgUUIDString(r.DeploymentID), ReleaseAt: r.ReleaseAt.Time.UTC(),
 		NotifyChannelIDs: pgUUIDStrings(r.NotifyChannelIds), OverrideFreeze: r.OverrideFreeze,
 		OverrideFreezeIDs: pgUUIDStrings(r.OverrideFreezeIds), State: r.State, OutcomeCode: r.OutcomeCode,
-		OutcomeDetail: r.OutcomeDetail, ScheduledBy: r.ScheduledBy, CreatedAt: r.CreatedAt.Time.UTC(),
+		OutcomeDetail: r.OutcomeDetail, ScheduledBy: r.ScheduledBy,
+		ScheduledByAccountID: pgUUIDString(r.ScheduledByAccountID), ScheduledByKeyID: pgUUIDString(r.ScheduledByKeyID),
+		CreatedAt: r.CreatedAt.Time.UTC(),
 		UpdatedAt: r.UpdatedAt.Time.UTC(), Revision: int(revision),
 	}
 	if len(r.Canary) > 0 {
@@ -59,7 +61,9 @@ func (s *PgStore) ScheduleRelease(ctx context.Context, sr ScheduledRelease, repl
 		ID: mustPgUUID(sr.ID), AccountID: mustPgUUID(sr.AccountID), AppID: mustPgUUID(sr.AppID),
 		DeploymentID: mustPgUUID(sr.DeploymentID), ReleaseAt: pgTimestamptzUTC(sr.ReleaseAt), Canary: canary,
 		NotifyChannelIds: pgUUIDList(sr.NotifyChannelIDs), OverrideFreeze: sr.OverrideFreeze,
-		OverrideFreezeIds: pgUUIDList(sr.OverrideFreezeIDs), ScheduledBy: sr.ScheduledBy, Now: pgTimestamptzUTC(now),
+		OverrideFreezeIds: pgUUIDList(sr.OverrideFreezeIDs), ScheduledBy: sr.ScheduledBy,
+		ScheduledByAccountID: dbSwitchNullUUID(sr.ScheduledByAccountID), ScheduledByKeyID: dbSwitchNullUUID(sr.ScheduledByKeyID),
+		Now: pgTimestamptzUTC(now),
 	})
 	if err != nil {
 		return ScheduledRelease{}, nil, fmt.Errorf("state: insert scheduled release: %w", err)
@@ -117,8 +121,20 @@ func (s *PgStore) ListScheduledReleases(ctx context.Context, accountID, appID st
 }
 
 func (s *PgStore) DueScheduledReleases(ctx context.Context, now time.Time, limit int) ([]ScheduledRelease, error) {
+	return s.DueScheduledReleasesPage(ctx, now, limit, ReleaseScanCursor{})
+}
+
+func (s *PgStore) DueScheduledReleasesPage(ctx context.Context, now time.Time, limit int, cursor ReleaseScanCursor) ([]ScheduledRelease, error) {
+	afterAt, afterID, err := cursor.parameters()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
 	rows, err := sqlc.New().ListDueScheduledReleases(ctx, s.pool, sqlc.ListDueScheduledReleasesParams{
 		Now: pgTimestamptzUTC(now), MaxRows: int32(limit),
+		AfterReleaseAt: afterAt, AfterID: afterID,
 	})
 	if err != nil {
 		return nil, mapErr(err)

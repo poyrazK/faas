@@ -22,18 +22,18 @@ func TestWorkflowJoinAuthoringAndInspection(t *testing.T) {
 		{Name: "a", Run: "a"}, {Name: "b", Run: "b"},
 		{Name: "merge", DependsOn: []string{"a", "b"}, Join: &api.WorkflowJoinSpec{OutputFrom: []string{"b", "a"}}},
 	}}
-	base := "/v1/apps/" + app.Slug + "/automations"
-	response := e.Do(t, "POST", base+":validate", api.ValidateAutomationRequest{Definition: spec}, nil)
+	base := "/v1/apps/" + app.Slug + "/workflows/stored"
+	response := e.Do(t, "POST", base+":validate", api.ValidateStoredWorkflowRequest{Definition: spec}, nil)
 	if response.Code != http.StatusOK {
 		t.Fatalf("validate=%d %s", response.Code, response.Body.String())
 	}
-	response = e.Do(t, "PUT", base+"/joined", api.SaveAutomationDraftRequest{Definition: spec}, nil)
-	var draft api.AutomationResponse
+	response = e.Do(t, "PUT", base+"/joined", api.SaveStoredWorkflowDraftRequest{Definition: spec}, nil)
+	var draft api.StoredWorkflowResponse
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &draft) != nil {
 		t.Fatalf("save=%d %s", response.Code, response.Body.String())
 	}
-	response = e.Do(t, "POST", base+"/joined/publish", api.PublishAutomationRequest{ExpectedVersion: draft.Version}, nil)
-	var published api.AutomationResponse
+	response = e.Do(t, "POST", base+"/joined/publish", api.PublishStoredWorkflowRequest{ExpectedVersion: draft.Version}, nil)
+	var published api.StoredWorkflowResponse
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &published) != nil || published.Published == nil || published.Published.Steps[2].Join == nil || published.Published.Steps[2].Join.OutputFrom[0] != "b" {
 		t.Fatalf("publication lost ordered join=%d %s", response.Code, response.Body.String())
 	}

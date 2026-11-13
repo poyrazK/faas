@@ -1,3 +1,4 @@
+// adr: 20261111172803 — failed native operations cannot advance retirement checkpoints.
 package datapipeline
 
 import (
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -116,7 +118,7 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 	checkCustomer := func(readable bool) {
 		t.Helper()
 		status, body := oldAPI.requestTable("GET", "alice", "customers", "id=eq.1&select=id,name", "")
-		if status != 200 || (strings.TrimSpace(body) != "[]") != readable {
+		if readable && (status != 200 || strings.TrimSpace(body) == "[]") || !readable && (status != 503 || !strings.Contains(body, "mirror_unavailable")) {
 			t.Fatal("selected table gate changed incorrectly", readable, status, body)
 		}
 	}
@@ -176,6 +178,8 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 	}
 	checkCustomer(true)
 	checkHealthy()
+	assertLiveRemovalLockFailureKeepsCheckpoint(t, ctx, engine, targetURL, tick, get)
+	checkCustomer(true)
 	restart()
 	wait(func(v Pipeline) bool { return v.SchemaChange.Cancellation.Stage == "retiring" })
 	checkCustomer(false)
@@ -245,6 +249,13 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 	if result := stopWrites(); result.err != nil || result.value < 1001 {
 		t.Fatal("updates failed during removal", result)
 	}
+	// Cancellation can lose the final COMMIT acknowledgement. Lock the source
+	// row so any in-flight writer transaction settles before capturing the exact
+	// committed value that the healthy mirror must eventually expose.
+	var committedTotal string
+	if err = source.QueryRow(ctx, `SELECT total::text FROM public.orders WHERE id=1 FOR UPDATE`).Scan(&committedTotal); err != nil {
+		t.Fatal("read committed live-removal source value", err)
+	}
 	refreshReady = true
 	old := get()
 	ob := Observation{State: "blocked", Verification: old.Verification}
@@ -256,7 +267,7 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 	wait(func(v Pipeline) bool {
 		return v.State == "live" && slices.Equal(v.Tables, []string{"orders"}) && v.SchemaChange.Cancellation.State == "complete"
 	})
-	expected := fmt.Sprintf("%d.00", written.value)
+	expected := committedTotal
 	wait(func(Pipeline) bool {
 		status, body := oldAPI.request("GET", "alice", "id=eq.1&select=id,total", "")
 		return status == 200 && strings.Contains(body, expected)
@@ -295,4 +306,38 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 		return target.QueryRow(ctx, `SELECT count(*)=1001 AND bool_or(id=1 AND total::text=$1) FROM public.orders`, originalTotal).Scan(&valid) == nil && valid
 	})
 	return p
+}
+
+func assertLiveRemovalLockFailureKeepsCheckpoint(t *testing.T, ctx context.Context, engine *Engine, targetURL string, tick func() api.DataPipeline, get func() Pipeline) {
+	t.Helper()
+	locker, err := pgx.Connect(ctx, targetURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = locker.Close(context.WithoutCancel(ctx)) }()
+	tx, err := locker.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err = tx.Exec(ctx, "LOCK TABLE public.customers IN ACCESS SHARE MODE"); err != nil {
+		t.Fatal(err)
+	}
+	original := engine.Target
+	defer func() { engine.Target = original }()
+	var observed error
+	engine.Target = func(ctx context.Context, account, database string, run func(*pgx.Conn, string) error) error {
+		return original(ctx, account, database, func(conn *pgx.Conn, owner string) error {
+			observed = run(conn, owner)
+			return observed
+		})
+	}
+	tick()
+	var pg *pgconn.PgError
+	if !errors.As(observed, &pg) || pg.Code != "55P03" {
+		t.Fatalf("removal did not exercise the held table lock: %v", observed)
+	}
+	if stage := get().SchemaChange.Cancellation.Stage; stage != "" {
+		t.Fatalf("failed removal reported an uncommitted checkpoint: %q", stage)
+	}
 }

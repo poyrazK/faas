@@ -175,8 +175,17 @@ type dataAPIHealthRuntime struct {
 }
 
 // currentDataAPIRuntimeVersion returns the version the control plane serves,
-// or "" when it cannot say (an older apid, or a failed read).
+// or "" when it cannot say (an older apid, or a failed read). The status
+// route answers without the runtime archive; a control plane without it is
+// asked for the archive.
 func currentDataAPIRuntimeVersion(ctx context.Context, client *api.Client, slug string) string {
+	status, err := client.GetDataAPIStatus(ctx, slug)
+	if err == nil {
+		return status.RuntimeVersion
+	}
+	if !routeNotOffered(err) {
+		return ""
+	}
 	served, err := client.GetDataAPIRuntime(ctx, slug)
 	if err != nil {
 		return ""

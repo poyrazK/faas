@@ -249,6 +249,10 @@ func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.next.ServeHTTP(w, r)
 		return
 	}
+	if r.URL.Path == "/" && hostWithoutPort(r.Host) == "sales."+p.platformDomain {
+		p.proxy.ServeHTTP(w, r)
+		return
+	}
 	if apid.IsApidPath(r.URL.Path) && !isComputeOwnedGatewayPath(r.URL.Path) {
 		// ADR-480 (amends spec §4.1.1): platform paths are reserved on
 		// platform hosts only. App subdomains, previews and customer
@@ -309,6 +313,7 @@ func isComputeOwnedGatewayPath(path string) bool {
 		api.IsAppTaskAttachPath(path) ||
 		api.IsJobTaskLogStreamPath(path) ||
 		api.IsJobTaskAttachPath(path) ||
+		api.IsSandboxDataPath(path) ||
 		path == "/v1/synthesize" ||
 		path == "/v1/invocations:dispatch" ||
 		path == "/v1/invocations:dispatch_batch"

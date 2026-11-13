@@ -8,6 +8,12 @@
 // deliberately does not serve it: the page documents only preview or internal
 // capabilities (#5709). The page of a GA or beta capability may not be.
 //
+// A published page may not carry operator or engineering material
+// (ADR-20261028200304): decision-record references, installation flags,
+// daemon names, repository paths or spec sections. That material lives in
+// docs/ops/<page>-operator-notes.md. Every GA or beta capability's docs page
+// must also be a registered route.
+//
 // Go links built from the docsBase constant and a path are static, so they must name a
 // registered route exactly: the live site serves only registered routes, and
 // production-us answered 404 for /docs/errors/app-startup-timeout and 40 more
@@ -81,6 +87,12 @@ func run() error {
 		return err
 	}
 	if err := checkUnpublished(cat, capabilities.Capabilities); err != nil {
+		return err
+	}
+	if err := checkCapabilityRoutes(cat, capabilities.Capabilities); err != nil {
+		return err
+	}
+	if err := checkPublishedContent(cat, os.ReadFile); err != nil {
 		return err
 	}
 	links, err := collectLinks()
@@ -253,4 +265,74 @@ func isProductionSurface(path string) bool {
 		return false
 	}
 	return true
+}
+
+// checkCapabilityRoutes requires the docs page of every GA or beta capability
+// to be a registered route: the CLI and API errors link customers there.
+func checkCapabilityRoutes(cat catalog, capabilities []productcap.Capability) error {
+	for _, capability := range capabilities {
+		if capability.Maturity != productcap.MaturityGA && capability.Maturity != productcap.MaturityBeta {
+			continue
+		}
+		path, ok := strings.CutPrefix(strings.TrimPrefix(capability.DocsURL, "https://gregale.dev"), "/docs")
+		if !ok {
+			continue
+		}
+		path, _, _ = strings.Cut(path, "#")
+		path = strings.Trim(path, "/")
+		if _, ok := matchRoute(cat.Routes, path); !ok {
+			return fmt.Errorf("%s capability %s documents %s, which is no route in %s; add the route",
+				capability.Maturity, capability.ID, capability.DocsURL, catalogPath)
+		}
+	}
+	return nil
+}
+
+// internalMarkerRE finds operator and engineering material on a customer
+// page. Each alternative names something a customer cannot act on.
+var internalMarkerRE = regexp.MustCompile(strings.Join([]string{
+	`\bADRs?[- ]?\d`,
+	`\]\((?:\.\./)*(?:adr|ops|runbooks|drills)/`,
+	`\b(?:apid|schedd|vmmd|builderd|imaged|meterd|githubd|outboundd|pgproxyd|gatewayd(?:-public|-internal)?)\b`,
+	`\bpkg/(?:api|apid|state|sched|fcvm|netns|oci|rootfs|meter|billing|wire|imaged|builderd|githubd|legal|secretbox|servicecaller)\b`,
+	`\bmigrations/\d`,
+	`faas_implementation_spec|\bspec ?§|spec-§`,
+	`\bFAAS_[A-Z0-9_]+`,
+	`/etc/faas/(?:secrets|[a-z-]+\.env)|journalctl|systemctl`,
+	`native (?:qualification|acceptance|KVM)|qualified (?:server|installation)|qualification harness`,
+	`operators? (?:can|must|may) (?:set|enable|configure)|ask (?:your|the) operator|Gregale operator`,
+}, "|"))
+
+// customerEnvRE matches the FAAS_ names customers do use: the CLI's settings
+// and the variables Gregale sets inside an app.
+var customerEnvRE = regexp.MustCompile(`^FAAS_(?:TOKEN|API|JSON|COMPLETION_CACHE_PATH|DEVELOPER_ID|DEVELOPER_ENVIRONMENT|RUNTIME|APP_ID|APP_SLUG|TENANT_ID|DEPLOYMENT_ID|DEPLOYMENT_TAG|DEPLOYMENT_CREATED_AT|INSTANCE_ID|INSTANCE_IDENTITY_FILE|NODE_ID|REGION|COMMIT_SHA|IMAGE_DIGEST|EVENT_PUBLISH_ENDPOINT|METADATA_ENV_ENDPOINT|SECRETS_[A-Z_]+|WORKLOAD_[A-Z0-9_]*)$`)
+
+// checkPublishedContent refuses internal material on every page the docs
+// site serves.
+func checkPublishedContent(cat catalog, read func(string) ([]byte, error)) error {
+	var findings []string
+	seen := map[string]bool{}
+	for _, r := range cat.Routes {
+		if r.Source == "" || r.Unpublished != "" || seen[r.Source] {
+			continue
+		}
+		seen[r.Source] = true
+		b, err := read(r.Source)
+		if err != nil {
+			return fmt.Errorf("route %q source %q: %w", r.Path, r.Source, err)
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			for _, m := range internalMarkerRE.FindAllString(line, -1) {
+				if customerEnvRE.MatchString(m) {
+					continue
+				}
+				findings = append(findings, fmt.Sprintf("%s:%d: published page %q mentions internal %q", r.Source, i+1, r.Path, m))
+			}
+		}
+	}
+	if len(findings) > 0 {
+		return fmt.Errorf("move operator material to docs/ops/<page>-operator-notes.md (ADR-20261028200304):\n  %s",
+			strings.Join(findings, "\n  "))
+	}
+	return nil
 }

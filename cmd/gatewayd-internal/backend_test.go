@@ -1069,14 +1069,14 @@ func TestHandleInvalidation_TerminalStatesEvict(t *testing.T) {
 }
 
 // TestAccountRateLimit_ThreeOhOneReturns429 — ADR-040 / issue #1680:
-// 301 requests from the same Free account without refill, the 301st
+// burst+1 requests from the same Free account without refill, the last
 // returns 429. Wires the production gateway handler against a real
 // pgRouter + MemStore + PGBackend so the AccountID plumbing is exercised
 // end-to-end (issue #292 threat model: botnet rotating across one
 // customer's apps). The per-app limiter is bypassed so the test isolates
 // the per-account scope; the per-account limiter uses a frozen clock so
-// sequential requests don't refill mid-loop (Free plan: 300/min RPM
-// burst = 300 tokens).
+// sequential requests don't refill mid-loop (Free plan: the burst is
+// RateLimitPerAccountRPM tokens).
 func TestAccountRateLimit_ThreeOhOneReturns429(t *testing.T) {
 	store := state.NewMemStore()
 	app := seedApp(t, store, "ratelimited", api.PlanFree) // Free: per-account burst 300
@@ -1117,14 +1117,16 @@ func TestAccountRateLimit_ThreeOhOneReturns429(t *testing.T) {
 	h.WithLimiter(unlimitedLimiterForTest()) // bypass per-app scope
 	h.WithAccountLimiter(acctLim)            // frozen-clock per-account
 
-	// Drive 301 requests sequentially. The first 300 succeed (Free burst),
-	// and request 301 is a 429 with x-faas-rate-limit-scope: account.
+	// Drive burst+1 requests sequentially. The first burst succeed, and
+	// the last is a 429 with x-faas-rate-limit-scope: account. (The test
+	// name dates from the 300 RPM Free burst.)
+	burst := api.PlanFree.RateLimitPerAccountRPM()
 	var (
 		ok200   int
 		ok429   int
 		last429 *httptest.ResponseRecorder
 	)
-	for i := 0; i < 301; i++ {
+	for i := 0; i <= burst; i++ {
 		req := httptest.NewRequest("GET", "http://ratelimited.apps.gregale.dev/", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -1138,9 +1140,9 @@ func TestAccountRateLimit_ThreeOhOneReturns429(t *testing.T) {
 			t.Fatalf("request %d: status = %d, want 200 or 429", i, rec.Code)
 		}
 	}
-	// 300 successful (Free burst), then one 429.
-	if ok200 != 300 {
-		t.Errorf("ok200 = %d, want 300 (Free per-account burst)", ok200)
+	// burst successful, then one 429.
+	if ok200 != burst {
+		t.Errorf("ok200 = %d, want %d (Free per-account burst)", ok200, burst)
 	}
 	if ok429 != 1 {
 		t.Errorf("ok429 = %d, want 1", ok429)
@@ -1274,5 +1276,70 @@ func TestHandleInvalidationWithdrawsFrozenInstance(t *testing.T) {
 	defer inv.mu.Unlock()
 	if len(inv.evicted) != 0 {
 		t.Fatalf("frozen instance was evicted (quarantined): %v", inv.evicted)
+	}
+}
+
+// ADR-20261031193635 stable branch URLs: a branch's slot host routes to the
+// environment of the branch holding the slot, so the URL survives a reset.
+func TestPgRouter_EnvironmentBranchSlotHostSurvivesReset(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "branch-slot-host@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "shop", ScanSource: state.ProjectScanSourceCompose})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-api", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	branchOf := func(t *testing.T) state.ProjectEnvironmentBranch {
+		t.Helper()
+		_, branch, _, err := store.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
+			AccountID: account.ID, ProjectID: project.ID, ParentSlug: "production", Slug: "pr-1",
+			ExpiresAt: time.Now().Add(time.Hour), EgressMode: state.EnvironmentBranchEgressLive, MaxDepth: api.EnvironmentBranchMaxDepth,
+		}, api.MustLimitsFor(account.Plan))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return branch
+	}
+	router := pgRouter{store: store, appsSuffix: ".gregale.dev", deploySuffix: ".gregale.dev"}
+	branch := branchOf(t)
+	host := gateway.BuildEnvironmentHost(".gregale.dev", branch.SlotID, app.ID)
+	if !router.IsDynamicRouteHost(host) {
+		t.Fatal("slot URL was not marked dynamic")
+	}
+	first, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "pr-1", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err := router.ResolveHost(ctx, host)
+	if err != nil || !ok || resolved.PinnedDeploymentID != first.ID || resolved.PinnedDeploymentScope != "pr-1" {
+		t.Fatalf("slot route = %+v ok=%v err=%v; want %s", resolved, ok, err, first.ID)
+	}
+	if err := store.MarkDeploymentSuperseded(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteProjectEnvironmentBranch(ctx, account.ID, project.ID, "pr-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := router.ResolveHost(ctx, host); err != nil || ok {
+		t.Fatalf("slot route of a deleted branch = ok %v err %v; want 404", ok, err)
+	}
+	again := branchOf(t)
+	if again.SlotID != branch.SlotID {
+		t.Fatalf("slot after reset = %s; want %s", again.SlotID, branch.SlotID)
+	}
+	second, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "pr-1", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, ok, err = router.ResolveHost(ctx, host)
+	if err != nil || !ok || resolved.PinnedDeploymentID != second.ID {
+		t.Fatalf("slot route after reset = %+v ok=%v err=%v; want %s", resolved, ok, err, second.ID)
 	}
 }

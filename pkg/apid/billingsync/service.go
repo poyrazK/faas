@@ -39,6 +39,9 @@ type Service struct {
 	// RequestSpacing is the pause before each provider read. Start defaults
 	// it to api.BillingReconcileRequestSpacing.
 	RequestSpacing time.Duration
+	// AfterPass runs at the end of each pass this replica holds, under the
+	// pass lock: apid syncs credit discounts there (ADR-20261104212028).
+	AfterPass func(ctx context.Context, log *slog.Logger)
 
 	mu sync.Mutex
 	// pending holds each difference the last pass saw but did not correct,
@@ -146,6 +149,9 @@ func (s *Service) RunOnce(ctx context.Context, log *slog.Logger) (Result, error)
 	}
 	s.pending, s.pendingAt = seen, started
 	s.Metrics.observePass(passCompleted)
+	if s.AfterPass != nil {
+		s.AfterPass(ctx, log)
+	}
 	return res, nil
 }
 

@@ -428,6 +428,14 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 	}
 	applyProjectImage(&app.Manifest, w)
 	applyComposeResources(&app, w)
+	if w.Function != nil {
+		// A functions-project entry deploys as a function app, sized as
+		// `gregale deploy` creates one (ADR-20261108160000).
+		app.Type, app.Runtime = state.AppTypeFunction, w.Function.Runtime
+		if limits, ok := api.LimitsFor(plan); ok && app.RAMMB == 0 {
+			app.RAMMB = api.StandaloneAppDefaultRAMMB(limits)
+		}
+	}
 	if app.RAMMB == 0 {
 		app.RAMMB = api.ProjectWorkloadDefaultRAMMB
 	}

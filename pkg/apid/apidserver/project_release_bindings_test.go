@@ -57,6 +57,22 @@ func TestCheckedProjectReleaseQualifiesExactServiceGraph(t *testing.T) {
 		}
 		deployments[name] = deployment.ID
 	}
+	// A service owned only by another stage must not enter preparation or
+	// activation of the production graph and its binding qualifications.
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	extra, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "checked-experiment", WorkloadName: "experiment", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := state.WorkloadSettingsFromApp(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutProjectEnvironmentWorkloadSpec(ctx, account.ID, project.ID, "staging", extra.ID, 0, settings); err != nil {
+		t.Fatal(err)
+	}
 	base := "/v1/projects/" + project.Slug + "/environments/production/release-sets"
 	prepared := e.Do(t, http.MethodPost, base+"/prepare", api.PublishProjectReleaseSetRequest{TTLSeconds: 1800, Deployments: deployments}, nil)
 	if prepared.Code != 200 {

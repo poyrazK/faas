@@ -38,3 +38,30 @@ func TestPgStore_RealtimePatchEmptyCollections(t *testing.T) {
 		}
 	}
 }
+
+// Finalizing a token rotation clears the previous token to an empty value.
+// The sealed columns are NOT NULL, so an empty patch must be stored as ”.
+func TestPgStore_RealtimePatchEmptySealedTokens(t *testing.T) {
+	s, ctx := pgStore(t)
+	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-realtime-empty-sealed")
+	endpoint, err := s.CreateManagedRealtimeEndpointIfUnderQuota(ctx, pgManagedRealtimeEndpoint(accountID, appID), 10, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := []byte("sealed-previous")
+	if _, err := s.UpdateManagedRealtimeEndpoint(ctx, endpoint.ID, state.UpdateManagedRealtimeEndpointParams{
+		AuthTokenPreviousSealed: &previous,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	empty := []byte{}
+	updated, err := s.UpdateManagedRealtimeEndpoint(ctx, endpoint.ID, state.UpdateManagedRealtimeEndpointParams{
+		AuthTokenPreviousSealed: &empty, AuthTokenSealed: &empty, ClearAuthTokenPreviousExpiresAt: true,
+	})
+	if err != nil {
+		t.Fatalf("clear sealed tokens: %v", err)
+	}
+	if len(updated.AuthTokenPreviousSealed) != 0 || len(updated.AuthTokenSealed) != 0 {
+		t.Fatalf("empty patch retained tokens: %+v", updated)
+	}
+}

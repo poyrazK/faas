@@ -21,6 +21,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+func (s *server) defaultDomainContext(ctx context.Context) context.Context {
+	return state.WithCustomDomainRouting(ctx, s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()))
+}
+
 // customDomainTarget returns the CNAME target customers publish.
 func customDomainTarget() string {
 	if target := api.CustomDomainTarget(); target != "" {

@@ -1,7 +1,9 @@
+import type { ExactNumber } from './exact-numeric.js'
 import type { PostgrestQueryBuilder, PostgrestFilterBuilder, UnstableGetResult } from '@supabase/postgrest-js'
 
 /** JSON columns have no inferred key schema. JSON null is a valid value. */
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
+export type ExactJson = string | ExactNumber | boolean | null | { [key: string]: ExactJson | undefined } | ExactJson[]
 export type JsonPath = readonly [string | number, ...(string | number)[]]
 export type JsonProjection<Column extends string = string, Text extends boolean = boolean> = Readonly<{
   column: Column
@@ -52,13 +54,14 @@ type CheckedFields<Source, Base extends string, Fields extends Record<string, Js
       ? `${Key}` extends keyof BaseResult<Source, Base> ? never : Fields[Key]
       : never : never
 }
-type Result<Base, Fields extends Record<string, JsonProjection>> = Base extends { error: true } ? Base
-  : Base & { -readonly [Key in keyof Fields as Key extends string | number ? Key : never]: Fields[Key]['text'] extends true ? string | null : Json }
+type ColumnJson<Source, Column> = Column extends keyof SourceRow<Source> ? Extract<SourceRow<Source>[Column], ExactNumber> extends never ? Json : ExactJson : Json
+type Result<Source, Base, Fields extends Record<string, JsonProjection>> = Base extends { error: true } ? Base
+  : Base & { -readonly [Key in keyof Fields as Key extends string | number ? Key : never]: Fields[Key]['text'] extends true ? string | null : ColumnJson<Source, Fields[Key]['column']> }
 type Selection<Source, Base extends string, Fields extends Record<string, JsonProjection>> =
   Source extends PostgrestQueryBuilder<infer C, infer S, infer R, infer N, infer F>
-    ? PostgrestFilterBuilder<C, S, R['Row'], Result<BaseResult<Source, Base>, Fields>[], N, F, 'GET'>
+    ? PostgrestFilterBuilder<C, S, R['Row'], Result<Source, BaseResult<Source, Base>, Fields>[], N, F, 'GET'>
     : Source extends PostgrestFilterBuilder<infer C, infer S, infer R, infer D, infer N, infer F, infer M, infer T>
-      ? PostgrestFilterBuilder<C, S, R, M extends 'RPC' ? D extends unknown[] ? Result<BaseResult<Source, Base>, Fields>[] : Result<BaseResult<Source, Base>, Fields> : Result<BaseResult<Source, Base>, Fields>[], N, F, M, T>
+      ? PostgrestFilterBuilder<C, S, R, M extends 'RPC' ? D extends unknown[] ? Result<Source, BaseResult<Source, Base>, Fields>[] : Result<Source, BaseResult<Source, Base>, Fields> : Result<Source, BaseResult<Source, Base>, Fields>[], N, F, M, T>
       : never
 
 /** Add nullable JSON aliases to a table/view, write or relation-set RPC projection.

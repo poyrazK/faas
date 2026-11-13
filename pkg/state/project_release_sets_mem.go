@@ -176,6 +176,9 @@ func (m *MemStore) publishProjectReleaseWithIDLocked(ctx context.Context, accoun
 			return ProjectReleaseSet{}, err
 		}
 	}
+	if err := m.checkProjectRollbackReleasesLocked(projectID, environment, previousID, members, false); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	if previousID != "" {
 		previous := m.projectReleaseSets[previousID]
 		previous.Active = false
@@ -200,6 +203,10 @@ func (m *MemStore) publishProjectReleaseWithIDLocked(ctx context.Context, accoun
 	}
 	if recovering {
 		release.RollbackSourceReleaseID, release.RollbackPreviousReleaseID = rollback.source, rollback.previous
+	}
+	release.fallbackSince = now
+	if previousID != "" {
+		release.fallbackSince = m.projectReleaseSets[previousID].fallbackSince
 	}
 	m.projectReleaseSets[release.ID] = release
 	m.activeProjectReleaseSets[key] = release.ID
@@ -245,6 +252,9 @@ func (m *MemStore) deactivateProjectReleaseSet(ctx context.Context, accountID, p
 		return ProjectReleaseSet{}, ErrConflict
 	}
 	if err := m.validateProjectReleaseFallbackLocked(projectID, environment, expectedFallback); err != nil {
+		return ProjectReleaseSet{}, err
+	}
+	if err := m.checkProjectRollbackReleasesLocked(projectID, environment, activeID, expectedFallback, true); err != nil {
 		return ProjectReleaseSet{}, err
 	}
 	checked, _ := ctx.Value(checkedReleaseDeactivationKey{}).(bool)
@@ -409,6 +419,12 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 			return ProjectReleaseSet{}, err
 		}
 	}
+	if !allowGitOpsReplacement {
+		if err := m.checkProjectRollbackReleasesLocked(projectID, environment, previousID, members, false); err != nil {
+			return ProjectReleaseSet{}, err
+		}
+	}
+
 	if previousID != "" {
 		previous := m.projectReleaseSets[previousID]
 		previous.Active = false
@@ -427,6 +443,10 @@ func (m *MemStore) publishProjectReleaseSetLocked(accountID, projectID, environm
 	now := time.Now().UTC()
 	release := ProjectReleaseSet{ID: uuid.NewString(), AccountID: accountID, ProjectID: projectID, EnvironmentSlug: environment, Active: true,
 		TTLSeconds: ttlSeconds, CreatedAt: now, Members: append([]ProjectReleaseMember(nil), members...)}
+	release.fallbackSince = now
+	if previousID != "" {
+		release.fallbackSince = m.projectReleaseSets[previousID].fallbackSince
+	}
 	m.projectReleaseSets[release.ID] = release
 	m.activeProjectReleaseSets[key] = release.ID
 	return release, nil

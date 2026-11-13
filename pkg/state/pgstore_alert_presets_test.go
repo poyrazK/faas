@@ -67,9 +67,9 @@ func TestPGLoginTargetAlertPresetIsNotificationOnly(t *testing.T) {
 	}
 }
 
-func TestPGAutomationBacklogAlertPresetDefaults(t *testing.T) {
+func TestPGStoredWorkflowBacklogAlertPresetDefaults(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
-	preset, err := store.AlertPresetByName(ctx, "automation_backlog")
+	preset, err := store.AlertPresetByName(ctx, "stored_workflow_backlog")
 	if err != nil || preset.Metric != string(state.AlertMetricWorkflowDueAge) || preset.Category != "reliability" || preset.Comparison != "gte" ||
 		preset.Threshold != api.WorkflowBacklogAlertThresholdSeconds || preset.DefaultCooldownMinutes != api.WorkflowBacklogAlertCooldownMinutes ||
 		preset.WindowSpec != "5m" || !preset.EnabledInCatalog || preset.MinimumPlan != "hobby" {
@@ -110,8 +110,8 @@ func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
 	// security and edge WAF seeds plus MCP readiness, route insight
 	// (ADR-20261020161310) and route alert (ADR-20261028110044) seeds ship 35
 	// rows. This test pins the count and (category, name) ordering shape.
-	if len(got) != 35 {
-		t.Errorf("catalog row count = %d; want 35 (base + safe-releases + B3 + O2 + login-abuse + automation + edge security + edge WAF + MCP readiness + route insight + route alert seeds)", len(got))
+	if len(got) != 36 {
+		t.Errorf("catalog row count = %d; want 36 (base + safe-releases + B3 + O2 + login-abuse + automation + edge security + edge WAF + MCP readiness + route insight + route alert + AI budget alert seeds)", len(got))
 	}
 	// Verify (category, name) order is sorted.
 	for i := 1; i < len(got); i++ {
@@ -313,6 +313,7 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 		"route_insights_detected":            true,
 		"route_monitor_incidents":            true,
 		"route_health_holds":                 true,
+		"ai_budget_alerts":                   true,
 		"mcp_readiness_unhealthy":            true,
 		"mcp_oauth_issuance_unknown":         true,
 		"mcp_oauth_reauthorization_required": true,
@@ -338,8 +339,8 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 		"new_error":                     true,
 		"daily_spend_eur_1":             true,
 		"slo_burn_rate":                 true,
-		"automation_backlog":            true,
-		"automation_failures":           true,
+		"stored_workflow_backlog":       true,
+		"stored_workflow_failures":      true,
 		"login_target_pressure":         true,
 		"login_target_signal_health":    true,
 		"pre_auth_pressure":             true,
@@ -392,9 +393,9 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 	}
 }
 
-func TestPGAutomationFailureAlertPresetDefaults(t *testing.T) {
+func TestPGStoredWorkflowFailureAlertPresetDefaults(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
-	preset, err := store.AlertPresetByName(ctx, "automation_failures")
+	preset, err := store.AlertPresetByName(ctx, "stored_workflow_failures")
 	if err != nil || preset.Metric != string(state.AlertMetricWorkflowFailures) || preset.Category != "reliability" || preset.Comparison != "gte" ||
 		preset.Threshold != api.WorkflowFailureAlertThreshold || preset.DefaultCooldownMinutes != api.WorkflowFailureAlertCooldownMinutes ||
 		preset.WindowSpec != "5m" || !preset.EnabledInCatalog || preset.MinimumPlan != "hobby" {

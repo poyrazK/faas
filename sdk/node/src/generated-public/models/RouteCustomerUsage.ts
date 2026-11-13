@@ -14,7 +14,7 @@ export type RouteCustomerUsage = {
   /**
    * HTTP method for this route observation.
    */
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER';
   /**
    * All weighted retained requests for this route and deployment.
    */

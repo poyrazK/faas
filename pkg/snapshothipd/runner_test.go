@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -769,5 +770,81 @@ func TestRunnerNextTick(t *testing.T) {
 	}
 	if got := r.nextTick(false); got != time.Minute {
 		t.Fatalf("caught up: next tick %s, want the idle interval", got)
+	}
+}
+
+// A replica carries its v2 capture's ADR-510 backing identity, so vmmd's
+// pre-restore check reads it locally. It never decides the replica's state.
+func TestRunnerReplicatesBackingIdentity(t *testing.T) {
+	const (
+		mem     = "snap/dep-b/captures/c1/v2/mem"
+		vmstate = "snap/dep-b/captures/c1/v2/vmstate"
+		drive   = "snap/dep-b/captures/c1/v2/drive"
+		backing = "snap/dep-b/captures/c1/v2/backing"
+	)
+	for _, tc := range []struct {
+		name         string
+		storageKey   string
+		withBacking  bool
+		failBacking  bool
+		revalidation bool
+		resident     []string
+		wantCached   bool
+		wantGet      bool
+	}{
+		{name: "v2 capture caches its identity", storageKey: mem, withBacking: true, wantCached: true, wantGet: true},
+		{name: "capture from before ADR-510 is still ready", storageKey: mem, wantGet: true},
+		{name: "unreadable identity leaves the replica ready", storageKey: mem, withBacking: true, failBacking: true, wantGet: true},
+		{
+			name: "revalidation adds the identity to an existing replica", storageKey: mem, withBacking: true,
+			revalidation: true, resident: []string{mem, vmstate, drive}, wantCached: true, wantGet: true,
+		},
+		{
+			name: "resident identity is not read again", storageKey: mem, withBacking: true,
+			revalidation: true, resident: []string{mem, vmstate, drive, backing}, wantCached: true,
+		},
+		{name: "legacy capture has no identity", storageKey: "snap/dep-b/mem"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := &fakeBackend{objects: map[string][]byte{
+				tc.storageKey: []byte("memory"), vmstate: []byte("vmstate"), drive: []byte("drive"),
+				"snap/dep-b/vmstate": []byte("vmstate"),
+			}}
+			if tc.withBacking {
+				parent.objects[backing] = []byte(`{"version":2}`)
+			}
+			if tc.failBacking {
+				parent.failKey = backing
+			}
+			cache, err := storage.NewLocalCacheBackend(parent, t.TempDir(), 1<<20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range tc.resident {
+				if err := cache.Put(context.Background(), key, bytes.NewReader(parent.objects[key])); err != nil {
+					t.Fatal(err)
+				}
+			}
+			vmstateKey := vmstate
+			if tc.storageKey != mem {
+				vmstateKey = "snap/dep-b/vmstate"
+			}
+			store := &fakeReplicaStore{job: state.SnapshotReplicaJob{
+				SnapshotID: "snap-b", DeploymentID: "dep-b", NodeID: "node-2",
+				StorageKey: tc.storageKey, VMStateStorageKey: vmstateKey, Attempts: 1, Revalidation: tc.revalidation,
+			}}
+			New(store, cache, "node-2", slog.Default()).runWorkTick(context.Background())
+			if !store.ready {
+				t.Fatalf("replica not ready (failed=%v)", store.failed)
+			}
+			cached, _, err := storage.CachedLocally(cache, backing)
+			if err != nil || cached != tc.wantCached {
+				t.Fatalf("identity cached = %v (%v), want %v", cached, err, tc.wantCached)
+			}
+			got := slices.Contains(parent.gets, backing)
+			if got != tc.wantGet {
+				t.Fatalf("read identity from the parent = %v, want %v (gets %v)", got, tc.wantGet, parent.gets)
+			}
+		})
 	}
 }

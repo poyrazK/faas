@@ -155,6 +155,10 @@ type Config struct {
 	// DeferCacheExport, from DeferCacheExportEnv, exports a build's
 	// dependency cache after the image handoff (ADR-20261029171525).
 	DeferCacheExport bool `toml:"-"`
+	// BuildKitSeed, from BuildKitSeedEnv, keeps a per-node BuildKit seed
+	// that Railpack builds start from (ADR-20261030122204). The VM driver
+	// must have it on too (VMMDriver.WithBuildKitSeed).
+	BuildKitSeed bool `toml:"-"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
 	// #197 B3.1). Defaulted to "default-local" on the one-box by
@@ -1377,6 +1381,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if line := guestTimingsLog(out.Timings); line != "" {
 		b.emitBuildLog(ctx, build.ID, line)
 	}
+	if out.BuildKitSeeded {
+		b.emitBuildLog(ctx, build.ID, "[build] BuildKit started from this node's seed of platform images\n")
+	}
 	if out.WarmSnapshotError != "" {
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
@@ -1473,18 +1480,28 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// emitted) — that's the path the `failure_class` UX copy
 		// already covers; markFailedEx is the typed-code addition.
 		failureCode, failurePkg := out.FailureCode, out.FailurePkg
+		failureMsg := fmt.Sprintf("build exited %d", out.ExitCode)
 		if fc == state.FailureUserError && failureCode == "" && platformBaseFetchFailed(out.LogTail, runtimeBaseRef) {
 			// The builder could not fetch Gregale's own runtime base: the
 			// customer's source never ran, so this is not their failure.
 			fc = state.FailureInfra
 		}
+		if fc == state.FailureUserError && failureCode == "" {
+			// A toolchain, build-tool or default-registry download the build
+			// tooling chose failed upstream: deploying again is the fix, not
+			// editing source (#6666).
+			if host := upstreamFetchFailed(out.LogTail, fw == FrameworkDocker); host != "" {
+				fc = state.FailureInfra
+				failureMsg += ": a download from " + host + " failed upstream"
+			}
+		}
 		if failureCode == "" && fc == state.FailureUserError {
 			failureCode, failurePkg = classifyBuildOutput(out.LogTail)
 		}
 		if failureCode != "" {
-			b.markFailedEx(ctx, build, fc, failureCode, failurePkg, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
+			b.markFailedEx(ctx, build, fc, failureCode, failurePkg, failureMsg, buildStart)
 		} else {
-			b.markFailed(ctx, build, fc, fmt.Sprintf("build exited %d", out.ExitCode), buildStart)
+			b.markFailed(ctx, build, fc, failureMsg, buildStart)
 		}
 		return BuildResult{}, fmt.Errorf("builderd: vm exit %d", out.ExitCode)
 	}
@@ -1537,7 +1554,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return result, err
 	}
 	phases.completed = time.Now()
-	b.log.Info("builderd: build phases", append(append([]any{"build", build.ID, "deployment", build.DeploymentID}, phases.attrs()...), guestTimingAttrs(out.Timings)...)...)
+	b.log.Info("builderd: build phases", append(append([]any{"build", build.ID, "deployment", build.DeploymentID, "buildkit_seeded", out.BuildKitSeeded}, phases.attrs()...), guestTimingAttrs(out.Timings)...)...)
 	// Only cache a successfully committed build produced by the same builder
 	// environment observed before VM launch. A concurrent base restage leaves
 	// the successful deployment intact but deliberately skips cache publication.

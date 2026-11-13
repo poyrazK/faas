@@ -57,16 +57,23 @@ func PlanAllowsClass(limits api.ManagedPostgresPlanLimits, class ServiceClass) b
 // PlanExcess maps each of a subject's databases that its plan no longer
 // includes to the reason. Databases rank oldest first; one ranked past the
 // plan's database limit, or in a service class the plan does not include, is
-// past the plan. A restore holding the restore slot, a deleting database and
-// one without a provider resource are not ranked. An unknown plan (no
-// database limit) has nothing past it.
+// past the plan. A restore holding the restore slot, a PR preview database, a
+// deleting database and one without a provider resource are not ranked. A
+// preview database has its own limit and goes with its PR. A plan that includes no
+// managed PostgreSQL (NotIncluded) has every ranked database past it; an
+// unknown plan (no database limit) has nothing past it.
 func PlanExcess(databases []Database, limits api.ManagedPostgresPlanLimits) map[string]string {
-	if limits.DatabasesMax <= 0 {
+	if limits.DatabasesMax <= 0 && !limits.NotIncluded {
 		return nil
 	}
 	ranked := make([]Database, 0, len(databases))
 	for _, database := range databases {
-		if !database.RestoreSlotUntil.IsZero() || !capEnforceable(database) {
+		// A PR preview database is outside the plan's database limit
+		// (ADR-20261102123523), as CountManagedPostgresLifecycleDatabases
+		// counts it at creation; ranking it would push production databases
+		// created after it past the plan. A short-lived branch is outside it
+		// too and ends on its own (ADR-20261106103654 amendment 1).
+		if !database.RestoreSlotUntil.IsZero() || !database.Preview.IsZero() || !capEnforceable(database) || database.InBranchAllowance() {
 			continue
 		}
 		ranked = append(ranked, database)
@@ -179,9 +186,39 @@ func (e *CapEnforcer) mailPlanExcessNotices(ctx context.Context, summary *CapSwe
 		return
 	}
 	for _, notice := range notices {
+		if e.planExcessDelete == CapEnforcementOn && e.planDelete != nil {
+			notice.DeleteAt = PlanExcessDeleteAt(notice.RecordedAt)
+		}
 		if err := e.planNotify(ctx, notice); err != nil {
 			summary.PlanExcessNotifyFailed++
 			e.logger.Warn("managed postgres plan excess email not queued", "database", notice.DatabaseID, "error", err)
 		}
+	}
+	e.remindPlanExcessDeletes(ctx, summary)
+}
+
+// remindPlanExcessDeletes queues the one reminder for each database whose
+// mailed deletion date is a week away or less (ADR-20261110184700 amendment
+// 2026-11-12). It runs only while deletion is on: a date nobody will act on
+// is not worth a reminder. A failed email does not fail the sweep; the next
+// sweep tries again until the date passes.
+func (e *CapEnforcer) remindPlanExcessDeletes(ctx context.Context, summary *CapSweepSummary) {
+	store, ok := e.store.(PlanExcessReminderStore)
+	if !ok || e.planExcessDelete != CapEnforcementOn || e.planDelete == nil {
+		return
+	}
+	notices, err := store.PlanExcessRemindersDue(ctx, e.now().UTC(), e.batchSize)
+	if err != nil {
+		summary.PlanExcessNotifyFailed++
+		e.logger.Warn("managed postgres plan excess reminders not listed", "error", err)
+		return
+	}
+	for _, notice := range notices {
+		if err := e.planNotify(ctx, notice); err != nil {
+			summary.PlanExcessNotifyFailed++
+			e.logger.Warn("managed postgres plan excess reminder not queued", "database", notice.DatabaseID, "error", err)
+			continue
+		}
+		summary.PlanExcessReminded++
 	}
 }

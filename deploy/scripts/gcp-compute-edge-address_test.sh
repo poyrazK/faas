@@ -24,6 +24,7 @@ echo "${args[*]}" >>"$MOCK_DIR/log"
 case "${args[*]}" in
   "compute instances list --filter=name=(cn-1) "*) echo us-east1-c ;;
   "compute instances list "*) ;;
+  "compute instances describe cn-1 --zone us-east1-c --format=value(networkInterfaces"*) echo node-vpc ;;
   "compute instances describe cn-1 "*) paste -sd';' "$MOCK_DIR/tags" 2>/dev/null || true ;;
   "compute addresses list "*) [[ -f "$MOCK_DIR/address" ]] && cat "$MOCK_DIR/address" || true ;;
   "compute target-instances list "*) [[ -f "$MOCK_DIR/target" ]] && echo cn-1-edge || true ;;
@@ -68,11 +69,14 @@ APPLY=1 bash "$ADDR" apply cn-1 >/dev/null
 [[ "$(writes)" == 0 ]] || fail "a second apply wrote $(writes) times"
 
 out=$(bash "$ADDR" entry cn-1)
-grep -q "would: firewall gregale-direct-entry-v4: tcp/443 from 0.0.0.0/0 to tag gregale-entry" <<<"$out" || fail "dry entry printed: $out"
+grep -q "would: firewall gregale-direct-entry-v4 in node-vpc: tcp/443 from 0.0.0.0/0 to tag gregale-entry" <<<"$out" || fail "dry entry printed: $out"
+out=$(NETWORK=ops-vpc bash "$ADDR" entry cn-1)
+grep -q "would: firewall gregale-direct-entry-v4 in ops-vpc:" <<<"$out" || fail "NETWORK did not override the node's network: $out"
 : >"$MOCK_DIR/log"
 out=$(APPLY=1 bash "$ADDR" entry cn-1)
 [[ "$(writes)" == 2 ]] || fail "entry made $(writes) writes, want the rule and the tag"
 grep -q -- "--rules tcp:443 --source-ranges 0.0.0.0/0 --target-tags gregale-entry" "$MOCK_DIR/log" || fail "direct-entry rule is not 443-only to the entry tag"
+grep -q -- "firewall-rules create gregale-direct-entry-v4 --network node-vpc " "$MOCK_DIR/log" || fail "direct-entry rule not created in the node's network"
 grep -q "cn-1 entry_ipv4=203.0.113.7" <<<"$out" || fail "entry did not print the address: $out"
 : >"$MOCK_DIR/log"
 APPLY=1 bash "$ADDR" entry cn-1 >/dev/null

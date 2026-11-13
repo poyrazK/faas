@@ -31,6 +31,11 @@ func testProductionDeploymentSelection(t *testing.T, store state.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, scope := range []string{"staging", "pr-42"} {
+		if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: scope}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	create := func(scope string, dark bool) state.Deployment {
 		t.Helper()
 		status := state.DeployPending

@@ -41,7 +41,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/apid/domaincert"
@@ -122,22 +121,16 @@ var dialCertFunc = func(ctx context.Context, domain string) (*x509.Certificate, 
 	}
 	// Fail closed on mixed answers, then try the validated numeric addresses
 	// within the probe budget. No connection performs a second DNS lookup.
-	rawConn, err := domaincert.Dial(ctx, addresses, dialCertTimeout, certDialContextFunc)
-	if err != nil {
-		return nil, fmt.Errorf("dial certificate endpoint: %w", joinErr(errCertFailure, err))
-	}
-	conn := tls.Client(rawConn, &tls.Config{
+	conn, err := domaincert.DialTLS(ctx, addresses, dialCertTimeout, certDialContextFunc, &tls.Config{
 		ServerName: domain,
 		MinVersion: tls.VersionTLS12, // gosec G402 — refuse TLS 1.0/1.1 handshakes.
 	})
-	// Bound the handshake too — a peer that accepts TCP but never
-	// completes the TLS handshake would otherwise hold the
-	// goroutine until the request budget kicks in elsewhere.
-	hsCtx, hsCancel := context.WithTimeout(ctx, dialCertTimeout)
-	defer hsCancel()
-	if err := conn.HandshakeContext(hsCtx); err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("tls handshake %s: %w", domain, joinErr(errCertFailure, err))
+	if err != nil {
+		var hostnameErr x509.HostnameError
+		if errors.As(err, &hostnameErr) {
+			return nil, fmt.Errorf("%w: certificate does not cover hostname", errCDNCert)
+		}
+		return nil, fmt.Errorf("dial certificate endpoint: %w", joinErr(errCertFailure, err))
 	}
 	defer func() { _ = conn.Close() }()
 	state := conn.ConnectionState()
@@ -224,30 +217,7 @@ func sanContains(sans []string, domain string) bool {
 	if domain == "" {
 		return false
 	}
-	for _, s := range sans {
-		if s == domain {
-			return true
-		}
-		if strings.HasPrefix(s, "*.") {
-			base := s[2:]
-			if base == "" || strings.Contains(base, "*") {
-				// Malformed wildcard SAN — never matches.
-				continue
-			}
-			if !strings.HasSuffix(domain, "."+base) {
-				continue
-			}
-			// The queried host must have exactly one more label
-			// than the wildcard base (rule 3: match a single
-			// label; rule 4: partial-label wildcards are invalid).
-			qLabels := strings.Count(domain, ".")
-			bLabels := strings.Count(base, ".")
-			if qLabels == bLabels+1 {
-				return true
-			}
-		}
-	}
-	return false
+	return (&x509.Certificate{DNSNames: sans}).VerifyHostname(domain) == nil
 }
 
 // joinErr composes two errors into a single wrapped error that

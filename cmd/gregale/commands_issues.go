@@ -175,7 +175,11 @@ func cmdIssues(args []string) int {
 		if err != nil {
 			return printErr("Could not read issue", err)
 		}
-		return jsonOut(writeJSON(out))
+		if jsonOutput {
+			return jsonOut(writeJSON(out))
+		}
+		renderIssueDetail(osStdout, out)
+		return 0
 	case "impact-alert":
 		if len(positionals) != 0 {
 			return issueCLIUsage()

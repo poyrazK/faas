@@ -9,8 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/redis/go-redis/v9"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 const (
@@ -222,6 +223,13 @@ func NewRedisRetryBudget(parent context.Context, rawURL string, window time.Dura
 	opts.DialTimeout = 2 * time.Second
 	opts.ReadTimeout = 100 * time.Millisecond
 	opts.WriteTimeout = 100 * time.Millisecond
+	opts.PoolSize = 8
+	opts.MaxActiveConns = opts.PoolSize
+	opts.PoolTimeout = api.TrafficCounterOperationTimeout
+	opts.ContextTimeoutEnabled = true
+	// These scripts increment counters. A lost reply must not transparently
+	// replay an increment and consume the same request's allowance twice.
+	opts.MaxRetries = -1
 	client := redis.NewClient(opts)
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()

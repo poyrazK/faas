@@ -82,7 +82,7 @@ export const getQueryString = (params: Record<string, any>): string => {
 };
 
 const getUrl = (config: OpenAPIConfig, options: ApiRequestOptions): string => {
-  const encoder = config.ENCODE_PATH || (options.url.startsWith('/v1/apps/{slug}/automations/') ? encodeURIComponent : encodeURI);
+  const encoder = config.ENCODE_PATH || (options.url.startsWith('/v1/apps/{slug}/workflows/stored/') ? encodeURIComponent : encodeURI);
 
   const path = options.url
     .replace('{api-version}', config.VERSION)
@@ -216,7 +216,7 @@ export const sendRequest = async (
 
   onCancel(() => controller.abort());
 
-  return await fetch(url, request);
+  return await (config.FETCH ?? fetch)(url, request);
 };
 
 export const getResponseHeader = (response: Response, responseHeader?: string): string | undefined => {

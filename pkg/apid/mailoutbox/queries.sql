@@ -308,8 +308,13 @@ UPDATE sessions SET revoked_at=clock_timestamp() WHERE account_id=$1 AND revoked
 -- name: DeleteMagicLinkAPIKeys :execrows
 DELETE FROM api_keys WHERE account_id=$1;
 
+-- A pre-verification authenticator is the squatter's too: clearing it keeps
+-- the real owner from facing a second factor they never had (ADR
+-- 20261109120000). An explicit mfa_required policy stays.
 -- name: ClaimMagicLinkOwnership :exec
-UPDATE accounts SET email_verified_at=clock_timestamp(),password_reset_revision=password_reset_revision+1 WHERE id=$1;
+UPDATE accounts SET email_verified_at=clock_timestamp(),password_reset_revision=password_reset_revision+1,
+    mfa_secret_encrypted=NULL,mfa_recovery_codes_hash=NULL,mfa_enrolled_at=NULL
+WHERE id=$1;
 
 -- name: ConsumeMagicLinkToken :execrows
 UPDATE magic_link_tokens SET consumed_at=clock_timestamp()
@@ -1140,6 +1145,13 @@ UPDATE managed_postgres_cap_events SET mail_intent_id=sqlc.arg(intent_id)::uuid
 WHERE subject_id=sqlc.arg(subject_id)::uuid AND period_start=sqlc.arg(period_start)::timestamptz
   AND threshold=sqlc.arg(threshold)::text AND mail_intent_id IS NULL;
 
+-- name: LinkManagedPostgresEgressHoldNotice :execrows
+-- ADR-20261110160000 amendment 2026-11-13: the egress hold email is per
+-- database; its intent claims that database's row for the month.
+UPDATE managed_postgres_egress_hold_notices SET mail_intent_id=sqlc.arg(intent_id)::uuid
+WHERE database_id=sqlc.arg(database_id)::uuid AND period_start=sqlc.arg(period_start)::timestamptz
+  AND subject_id=sqlc.arg(subject_id)::uuid AND mail_intent_id IS NULL;
+
 -- name: ShareManagedPostgresCapSubmissionAccount :one
 SELECT a.email,a.status,a.deletion_requested_at,o.from_address,m.sender_address
 FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
@@ -1213,7 +1225,7 @@ SELECT EXISTS(SELECT 1 FROM own_constraint c
     WHERE position('managed_postgres_plan_excess' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
 
 -- name: ManagedPostgresPlanExcessSchemaReady :exec
-SELECT n.database_id,n.reason,n.mail_intent_id FROM managed_postgres_plan_excess_notices n LIMIT 0;
+SELECT n.database_id,n.reason,n.mail_intent_id,n.reminder_mail_intent_id FROM managed_postgres_plan_excess_notices n LIMIT 0;
 
 -- name: ManagedPostgresPlanExcessKeyReferences :many
 SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
@@ -1225,8 +1237,17 @@ INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,fr
 VALUES($1,$2,$3,$4,$5,$6,'managed_postgres_plan_excess',1,$7,$8,$9,$10);
 
 -- name: LinkManagedPostgresPlanExcessNotice :execrows
-UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=sqlc.arg(intent_id)::uuid
+-- delete_at is the deletion date the email names (ADR-20261110184700): the
+-- database is deleted only on a date its owner was mailed.
+UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=sqlc.arg(intent_id)::uuid,delete_at=sqlc.narg(delete_at)::timestamptz
 WHERE database_id=sqlc.arg(database_id)::uuid AND mail_intent_id IS NULL;
+
+-- name: LinkManagedPostgresPlanExcessReminder :execrows
+-- ADR-20261110184700 amendment 2026-11-12: the reminder names the deletion
+-- date the first email named, and is queued once per notice.
+UPDATE managed_postgres_plan_excess_notices SET reminder_mail_intent_id=sqlc.arg(intent_id)::uuid
+WHERE database_id=sqlc.arg(database_id)::uuid AND reminder_mail_intent_id IS NULL
+    AND mail_intent_id IS NOT NULL AND delete_at=sqlc.arg(delete_at)::timestamptz;
 
 -- name: ShareManagedPostgresPlanExcessSubmissionAccount :one
 SELECT a.email,a.status,a.deletion_requested_at,o.from_address,m.sender_address

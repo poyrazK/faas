@@ -15,6 +15,14 @@ func (t *gcsRequestTransport) RoundTrip(r *http.Request) (*http.Response, error)
 	client := *t.client
 	if streaming, _ := r.Context().Value(gcsObjectStreamContextKey{}).(bool); streaming {
 		client.Timeout = objectStreamTimeout(r.Context())
+		if r.Method == http.MethodGet {
+			// Verification reads need stored bytes. An explicit gzip header
+			// prevents GCS transcoding and Go's automatic decompression. Set
+			// it here because the JSON SDK rejects ReadCompressed(true)'s
+			// header before dispatching to the transport.
+			r = r.Clone(r.Context())
+			r.Header.Set("Accept-Encoding", "gzip")
+		}
 	}
 	return client.Do(r)
 }

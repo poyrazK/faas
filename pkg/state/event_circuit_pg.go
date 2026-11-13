@@ -44,7 +44,22 @@ func readCircuit(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, account, ap
 	if err != nil {
 		return nil, err
 	}
-	return decodeCircuit(row)
+	r, err := decodeCircuit(row)
+	if err != nil || r.Runtime.State != "half_open" || r.Runtime.ProbeToken == "" {
+		return r, err
+	}
+	// The lease keeper extends the claim independently of circuit state.
+	// Consult that fenced claim before declaring a live probe lost.
+	lease, err := q.EventCircuitProbeLease(ctx, db, sqlc.EventCircuitProbeLeaseParams{
+		OutboxID: r.Runtime.ProbeOutboxID, SubscriptionID: canonicalMemUUID(sub), ClaimToken: mustPgUUID(r.Runtime.ProbeToken),
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil {
+		r.Runtime.ProbeUntil = timeFromPgtype(lease)
+	}
+	return r, nil
 }
 func saveCircuit(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, r *eventCircuitRecord, now time.Time) error {
 	policy, err := json.Marshal(r.Policy)

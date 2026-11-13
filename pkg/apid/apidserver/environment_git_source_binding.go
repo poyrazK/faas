@@ -5,9 +5,20 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// companyProjectGitLabUnavailable refuses a GitLab source for a company
+// project: a GitLab connection belongs to one member, and a company project
+// never acts through a member's own credentials, as for GitHub
+// (ADR-20261110200000). A company project's GitOps uses the project's GitHub
+// repository (ADR-20261112230000).
+func companyProjectGitLabUnavailable() *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeGitLabCompanyProjectUnavailable, "GitLab unavailable for company projects",
+		"a GitLab connection belongs to one member; use the company project's GitHub repository instead")
+}
 
 func (s *server) environmentGitSourceSpecForRequest(ctx context.Context, account state.Account, project state.Project, request api.CreateEnvironmentGitSourceRequest) (state.EnvironmentGitSourceSpec, *api.Problem) {
 	spec := state.EnvironmentGitSourceSpec{Provider: request.Provider, Ref: request.Ref,
@@ -26,6 +37,9 @@ func (s *server) environmentGitSourceSpecForRequest(ctx context.Context, account
 		}
 		spec.RepositoryID, spec.InstallationID, spec.Repository = repositoryID, project.InstallID, project.RepoFullName
 	case "gitlab":
+		if _, shared := projectaccess.From(ctx); shared {
+			return spec, companyProjectGitLabUnavailable()
+		}
 		if request.Ref == "" || !gitlabsource.ValidRepositoryPath(request.Repository) {
 			return spec, api.ErrValidation("GitLab.com GitOps requires a repository path and explicit ref.")
 		}

@@ -71,7 +71,9 @@ func TestProbeDSNPrefersDirectEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.Host != "direct.example:5432" || parsed.Query().Get("sslmode") != "require" {
+	// The platform's own connections verify Neon's certificate even when the
+	// material, like Neon's connection URI, says only sslmode=require.
+	if parsed.Host != "direct.example:5432" || parsed.Query().Get("sslmode") != "verify-full" {
 		t.Fatalf("dsn = %q", dsn)
 	}
 	if parsed.User.Username() != "gregale" {
@@ -81,7 +83,7 @@ func TestProbeDSNPrefersDirectEndpoint(t *testing.T) {
 
 func testProvider(t *testing.T, handler http.Handler) *Provider {
 	t.Helper()
-	server := httptest.NewTLSServer(handler)
+	server := httptest.NewTLSServer(recordRequests(handler))
 	t.Cleanup(server.Close)
 	baseURL, err := url.Parse(server.URL + "/api/v2")
 	if err != nil {
@@ -570,7 +572,9 @@ func TestUsageNormalizesComputeAndNetworkMeters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Usage: %v", err)
 	}
-	if len(usage.Readings) != 4 || usage.Readings[0].Quantity != 15 || usage.Readings[1].Quantity != 5*744*int64(time.Hour/time.Second) || usage.Readings[2].Quantity != 9*744*int64(time.Hour/time.Second) || usage.Readings[3].Quantity != 10 {
+	if len(usage.Readings) != 4 || usage.Readings[0].Quantity != 15 || usage.Readings[1].Quantity != 5*744*int64(time.Hour/time.Second) || usage.Readings[2].Quantity != 9*744*int64(time.Hour/time.Second) || usage.Readings[3].Quantity != 4 {
+		// Egress is public transfer only: private network transfer never
+		// leaves for the internet (ADR-20261110160000).
 		t.Fatalf("usage = %+v", usage)
 	}
 	window.From = window.From.Add(time.Minute)
@@ -594,6 +598,32 @@ func TestByteMonthsToSecondsRejectsOverflow(t *testing.T) {
 	}
 }
 
+// Hunt 34 H34-7: a branch copy's first DELETE started Neon's operation and
+// reported the deletion unfinished; every retry met "422 branch is already
+// deleted" and the copy stayed deleting for days. The retry completes it.
+func TestDeleteBranchCompletesWhenTheRetryFindsItAlreadyDeleted(t *testing.T) {
+	deletes := 0
+	provider := testProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("method = %s", r.Method)
+		}
+		deletes++
+		if deletes == 1 {
+			_, _ = w.Write([]byte(`{"operations":[{"id":"op-delete","status":"running"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"request_id":"9faa6aea-89d3-4e23-b9a2-e0cbd83ccd78","message":"branch is already deleted"}`))
+	}))
+	request := managedpostgres.DeleteRequest{ProviderResourceID: "project-123/br-copy", IdempotencyKey: "delete"}
+	if result, err := provider.Delete(context.Background(), request); err != nil || result.Done {
+		t.Fatalf("first delete = %+v, %v; want an unfinished deletion", result, err)
+	}
+	if result, err := provider.Delete(context.Background(), request); err != nil || !result.Done {
+		t.Fatalf("retry = %+v, %v; want the deletion complete", result, err)
+	}
+}
+
 func TestDeleteBranchRequiresCompletedOperationsOrConfirmedAbsence(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -611,6 +641,8 @@ func TestDeleteBranchRequiresCompletedOperationsOrConfirmedAbsence(t *testing.T)
 		{name: "cancelled", status: http.StatusOK, body: `{"operations":[{"id":"op-delete","status":"cancelled"}]}`, wantErr: managedpostgres.ErrUnavailable},
 		{name: "unidentified", status: http.StatusOK, body: `{"operations":[{"status":"finished"}]}`},
 		{name: "already missing", status: http.StatusNotFound, wantDone: true},
+		{name: "already deleted", status: http.StatusUnprocessableEntity, body: `{"message":"branch is already deleted"}`, wantDone: true},
+		{name: "refused otherwise", status: http.StatusUnprocessableEntity, body: `{"message":"cannot delete the project's default branch"}`, wantErr: managedpostgres.ErrInvalid},
 		{name: "empty operations still exists", status: http.StatusOK, body: `{}`, branchStatus: http.StatusOK},
 		{name: "empty operations absent", status: http.StatusOK, body: `{}`, branchStatus: http.StatusNotFound, wantDone: true},
 		{name: "no content still exists", status: http.StatusNoContent, branchStatus: http.StatusOK},

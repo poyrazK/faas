@@ -193,6 +193,21 @@ func ShareMemoryWithImages(ctx context.Context, memPath string, imagePaths []str
 	return shareMemoryPages(ctx, memPath, idx)
 }
 
+// ShareMemoryWithPeers shares memPath's runs with the given memory files
+// directly, as the peer pass does after the image pass: the peers are indexed
+// as a restarted daemon indexes them (anchor pages only), without cache
+// resolution or the processed-once marker. Metal tests use it to restore from
+// a memory file that shares blocks with another memory file.
+func ShareMemoryWithPeers(ctx context.Context, memPath string, peerPaths []string) (int64, error) {
+	p := newPeerIndex()
+	for _, path := range peerPaths {
+		if err := p.addFile(ctx, path); err != nil {
+			return 0, err
+		}
+	}
+	return p.share(ctx, memPath)
+}
+
 // baseIndexLocked returns the index of every runtime base cached on this
 // node, rebuilding it when the set of cached base files changed.
 func (x *MemoryShareIndex) baseIndexLocked(ctx context.Context, backend StorageBackend) (*blockIndex, error) {

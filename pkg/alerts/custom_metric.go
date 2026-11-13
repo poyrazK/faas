@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -16,7 +17,9 @@ type customMetricLister interface {
 // observeCustomMetric evaluates an ADR-745 custom_metric rule. The metric's
 // kind decides whether the window is averaged (gauge) or turned into a rate
 // (counter). A metric that no longer exists — deleted, or never pushed — has
-// no value to compare, so the rule goes unknown instead of firing.
+// no value to compare, so the rule goes unknown instead of firing. A rule
+// with labels reads that one series (ADR-20261108160000 slice C2); a series
+// that stopped being exported is insufficient like a silent metric.
 func (e *Evaluator) observeCustomMetric(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
 	lister, ok := e.store.(customMetricLister)
 	if !ok {
@@ -37,7 +40,7 @@ func (e *Evaluator) observeCustomMetric(ctx context.Context, rule state.AlertRul
 	if kind == "" {
 		return 0, false, skipInsufficient
 	}
-	observed, source := appmetrics.FetchCustomMetricAlert(ctx, e.promQL, e.log, rule.AppID, rule.CustomMetricName, kind, string(rule.WindowSpec))
+	observed, source := appmetrics.FetchCustomMetricAlert(ctx, e.promQL, e.log, rule.AppID, rule.CustomMetricName, api.CustomMetricSeriesKey(rule.CustomMetricLabels), kind, string(rule.WindowSpec))
 	switch {
 	case appmetrics.IsInsufficientSource(source):
 		return 0, false, skipInsufficient

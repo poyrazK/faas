@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 // MCPRequestContext contains verified caller details safe for application
@@ -22,23 +24,30 @@ type MCPRequestContext struct {
 	Scopes   []string
 }
 
-// MCPToolHandler runs a registered tool. The handler must validate arguments
-// against its advertised inputSchema and return a normal MCP tool result.
+// MCPToolHandler runs a registered tool after inputSchema validation. The
+// handler must enforce its business rules and return a normal MCP tool result.
 type MCPToolHandler func(context.Context, map[string]any, *MCPRequestContext) (map[string]any, error)
 
 // MCPResourceHandler reads a registered resource and returns MCP resource
 // contents. Variables contains URI-template values for template resources.
 type MCPResourceHandler func(context.Context, string, map[string]string, *MCPRequestContext) ([]map[string]any, error)
 
+// An authorizer must be free of read-handler side effects. Subscriptions to
+// application resources require one, and reads share it when provided.
+type MCPResourceAuthorizer func(context.Context, string, *MCPRequestContext) bool
+
 // MCPPromptHandler builds a registered prompt result.
 type MCPPromptHandler func(context.Context, map[string]any, *MCPRequestContext) (map[string]any, error)
 
 type mcpCatalogEntry struct {
-	definition map[string]any
-	version    uint64
-	tool       MCPToolHandler
-	resource   MCPResourceHandler
-	prompt     MCPPromptHandler
+	definition   map[string]any
+	version      uint64
+	tool         MCPToolHandler
+	resource     MCPResourceHandler
+	prompt       MCPPromptHandler
+	authorize    MCPResourceAuthorizer
+	inputSchema  *jsonschema.Resolved
+	outputSchema *jsonschema.Resolved
 }
 
 type mcpCatalog struct {
@@ -107,19 +116,19 @@ func RemoveMCPTool(name string) bool { return mcpRuntimeCatalog.remove("tool", n
 
 // RegisterMCPResource adds either a concrete resource (uri) or a resource
 // template (uriTemplate). Handlers receive the requested URI and parsed values.
-func RegisterMCPResource(definition map[string]any, handler MCPResourceHandler) error {
+func RegisterMCPResource(definition map[string]any, handler MCPResourceHandler, authorize ...MCPResourceAuthorizer) error {
 	if handler == nil {
 		return errors.New("MCP resource handler is required")
 	}
-	return mcpRuntimeCatalog.register("resource", "", definition, nil, handler, nil, false, true)
+	return mcpRuntimeCatalog.register("resource", "", definition, nil, handler, nil, false, true, authorize...)
 }
 
 // ReplaceMCPResource updates a resource by its catalog name.
-func ReplaceMCPResource(name string, definition map[string]any, handler MCPResourceHandler) error {
+func ReplaceMCPResource(name string, definition map[string]any, handler MCPResourceHandler, authorize ...MCPResourceAuthorizer) error {
 	if handler == nil {
 		return errors.New("MCP resource handler is required")
 	}
-	return mcpRuntimeCatalog.register("resource", name, definition, nil, handler, nil, true, true)
+	return mcpRuntimeCatalog.register("resource", name, definition, nil, handler, nil, true, true, authorize...)
 }
 
 // RemoveMCPResource removes a concrete resource or template by catalog name.
@@ -149,7 +158,10 @@ func (catalog *mcpCatalog) seed(kind string, definition map[string]any) error {
 	return catalog.register(kind, "", definition, nil, nil, nil, false, false)
 }
 
-func (catalog *mcpCatalog) register(kind, previousName string, definition map[string]any, tool MCPToolHandler, resource MCPResourceHandler, prompt MCPPromptHandler, replace, notify bool) error {
+func (catalog *mcpCatalog) register(kind, previousName string, definition map[string]any, tool MCPToolHandler, resource MCPResourceHandler, prompt MCPPromptHandler, replace, notify bool, authorize ...MCPResourceAuthorizer) error {
+	if len(authorize) > 1 || len(authorize) == 1 && authorize[0] == nil {
+		return errors.New("provide one non-nil resource authorizer")
+	}
 	clone, err := cloneCatalogDefinition(definition)
 	if err != nil {
 		return err
@@ -157,6 +169,17 @@ func (catalog *mcpCatalog) register(kind, previousName string, definition map[st
 	name, _ := clone["name"].(string)
 	if !validCatalogName(name) {
 		return errors.New("MCP catalog name must be 1 to 128 visible ASCII characters without whitespace")
+	}
+	var inputSchema, outputSchema *jsonschema.Resolved
+	if kind == "tool" && tool != nil {
+		inputSchema, err = compileMCPToolSchema(clone, "inputSchema")
+		if err != nil {
+			return err
+		}
+		outputSchema, err = compileMCPToolSchema(clone, "outputSchema")
+		if err != nil {
+			return err
+		}
 	}
 	key := name
 	if previousName != "" {
@@ -221,7 +244,14 @@ func (catalog *mcpCatalog) register(kind, previousName string, definition map[st
 		delete(entries, previousName)
 	}
 	catalog.version++
-	entries[name] = catalogEntryFor(kind, clone, tool, resource, prompt, catalog.version)
+	entry := catalogEntryFor(kind, clone, tool, resource, prompt, catalog.version)
+	if len(authorize) == 1 {
+		entry.authorize = authorize[0]
+	}
+
+	entry.inputSchema = inputSchema
+	entry.outputSchema = outputSchema
+	entries[name] = entry
 	catalog.mu.Unlock()
 	if notify {
 		catalog.publishChange()
@@ -499,4 +529,26 @@ func requestContext(identity *authContext) *MCPRequestContext {
 	}
 	sort.Strings(caller.Scopes)
 	return caller
+}
+
+func resourceAccessAllowed(ctx context.Context, uri string, auth *authenticator, identity *authContext, subscription bool) bool {
+	if auth.resourceAllowed(uri, identity) != nil {
+		return false
+	}
+	entry, _, ok := mcpRuntimeCatalog.resource(uri)
+	if !ok {
+		return false
+	}
+	if entry.authorize != nil {
+		return entry.authorize(ctx, uri, requestContext(identity))
+	}
+	if entry.resource != nil {
+		return !subscription
+	}
+	if uri == "greeting://welcome" {
+		return true
+	}
+	id, ok := customerRecordID(uri)
+	owner, exists := sampleRecordOwners[id]
+	return ok && exists && (auth.mode == "open" || identity != nil && identity.subject == owner)
 }

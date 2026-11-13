@@ -283,7 +283,8 @@ func TestNativePipelineEndToEnd(t *testing.T) {
 			if item.State == state {
 				return item
 			}
-			if item.State == "blocked" || item.State == "resync_required" {
+			qualifying := item.Verification == "pending" && (item.Reason == "source_storage_verification" || item.Reason == "replication_continuity_verification")
+			if item.State == "blocked" && !qualifying || item.State == "resync_required" {
 				t.Fatalf("unexpected pipeline block: %+v", item)
 			}
 			time.Sleep(150 * time.Millisecond)
@@ -340,8 +341,14 @@ func TestNativePipelineEndToEnd(t *testing.T) {
 		for until := time.Now().Add(10 * time.Second); ; {
 			p = tick()
 			if p.AppliedThroughAt != "" {
-				if p.Health == nil || p.Health.Code != "applied_progress_confirmed" {
-					t.Fatalf("untrusted freshness: %+v", p)
+				// WAL is shared across this native fixture's databases. Retention
+				// pressure can take priority over a confirmed applied checkpoint.
+				wantHealth := "applied_progress_confirmed"
+				if retentionPressure(p) {
+					wantHealth = "retention_pressure"
+				}
+				if p.Health == nil || p.Health.Code != wantHealth {
+					t.Fatalf("untrusted freshness: health=%+v retention=%+v pipeline=%+v", p.Health, p.WALRetention, p)
 				}
 				break
 			}

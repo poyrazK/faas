@@ -1,0 +1,20 @@
+---
+# ADR-20261109170000: signd's tcp://<control plane private address>:<port>
+# (signd_service's faas_signd_listen). Empty keeps imaged signing app layers
+# with this node's own sign.key.
+faas_imaged_signd_target: ""
+# The control-plane host that holds the fleet CA and issues imaged's signd
+# client leaf.
+faas_imaged_signd_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
+
+# ADR-20261110210000 slice 3g, per compute node after faas_secretd_target:
+# true makes schedd open broker trigger credentials through secretd (owner
+# or grant only) and leave webhook delivery to the control plane's schedd.
+# Execution dispatch and the commit relay refuse to run with it.
+faas_schedd_secretd_delivery: false
+
+# ADR-20261110210000 slice 3j-2, per compute node after faas_secretd_target
+# and the control plane's SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE: true makes
+# imaged pull apps' private images through secretd instead of opening their
+# registry passwords here.
+faas_imaged_secretd_registry_pulls: false

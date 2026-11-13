@@ -55,9 +55,16 @@ func cmdRealtimeDrain(args []string) int {
 	if len(connectionIDs) > realtimeDrainConnectionIDsMax {
 		return printErr("Too many connection IDs", fmt.Errorf("provide at most %d --connection-id values", realtimeDrainConnectionIDsMax))
 	}
-	drainLimit := *limit
-	if *all {
-		drainLimit = 0
+	// The server refuses a drain that names no connections (#6838), but a
+	// CLI that always sent its default --limit made a reason-only drain
+	// close every open connection (Hunt 32 H32-71). Send a limit only when
+	// one was given; a filter alone keeps the server's default bound.
+	if !*all && !limitSpecified && *channel == "" && *principal == "" && len(connectionIDs) == 0 {
+		return printErr("Invalid drain selection", fmt.Errorf("say which connections to drain: --channel, --principal, --connection-id, --limit N, or --all for every connection"))
+	}
+	drainLimit := 0
+	if limitSpecified {
+		drainLimit = *limit
 	}
 	client, err := authedClient()
 	if err != nil {

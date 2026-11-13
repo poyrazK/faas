@@ -20,19 +20,19 @@ func (e *Engine) reconcileTableRecovery(ctx context.Context, p Pipeline, raw str
 	if err != nil {
 		return err
 	}
-	if err = ensureSubscription(ctx, p, source, target, conninfo); err != nil {
+	if err = ensureSubscription(ctx, p, source, target, conninfo, current); err != nil {
 		return err
 	}
 	actual, err := tableRecoveryIdentities(ctx, p, source, target)
 	if err != nil {
 		return err
 	}
-	readyCount, err := observeTableCopies(ctx, p, target, current)
-	if err != nil {
-		return err
-	}
-	ob.TablesReady = readyCount
 	if r.State == "requested" || r.State == "pending" {
+		readyCount, err := observeTableCopies(ctx, p, target, current)
+		if err != nil {
+			return err
+		}
+		ob.TablesReady = readyCount
 		if r.Kind == "copy" && !copyRecoveryNeeded(plan, r.Table) {
 			return e.withdrawCopyRecovery(ctx, p, source, target, plan, readyCount, ob, current)
 		}
@@ -48,6 +48,17 @@ func (e *Engine) reconcileTableRecovery(ctx context.Context, p Pipeline, raw str
 	if err != nil {
 		return err
 	}
+	if stage != "" {
+		// A lost copy acknowledgement can leave the catalog at published even
+		// after the private receipt advanced. Observe missing tracking using
+		// the durable stage, so this failure can request another scoped retry.
+		r.Stage = stage
+	}
+	readyCount, err := observeTableCopies(ctx, p, target, current)
+	if err != nil {
+		return err
+	}
+	ob.TablesReady = readyCount
 	ob.Reason = "table_recovery_copying"
 	if stage == "" {
 		if r.Kind == "copy" && !copyRecoveryNeeded(plan, r.Table) {
@@ -60,7 +71,7 @@ func (e *Engine) reconcileTableRecovery(ctx context.Context, p Pipeline, raw str
 		if stateErr != nil {
 			return stateErr
 		}
-		if r.Kind != "copy" && (!present || !ready) || r.Kind == "copy" && ready {
+		if r.Kind != "copy" && !r.CopyRetry && (!present || !ready) || r.Kind == "copy" && ready {
 			return &blocked{"table_recovery_conflict", false}
 		}
 		err = beginTableRecovery(ctx, p, target, current)
@@ -139,14 +150,14 @@ func previewTableRecovery(ctx context.Context, p Pipeline, source *pgxpool.Pool,
 	if err != nil {
 		return err
 	}
-	if actual.Kind != "copy" && (!present || !ready) || actual.Kind == "copy" && ready {
+	if actual.Kind != "copy" && !actual.CopyRetry && (!present || !ready) || actual.Kind == "copy" && ready {
 		return &blocked{"table_recovery_conflict", false}
 	}
 	if actual.Kind == "copy" {
 		if !copyRecoveryNeeded(*p.SchemaChange, actual.Table) {
 			return ErrConflict
 		}
-	} else {
+	} else if !actual.CopyRetry {
 		c, err := loadVerification(ctx, target, p)
 		if err != nil {
 			return err

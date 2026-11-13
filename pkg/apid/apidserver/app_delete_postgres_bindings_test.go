@@ -34,12 +34,20 @@ func TestDeletingAnAppWithLiveDatabaseBindingsIsRefused(t *testing.T) {
 	if created.Code != http.StatusCreated || json.Unmarshal(created.Body.Bytes(), &binding) != nil {
 		t.Fatalf("create binding = %d %s", created.Code, created.Body)
 	}
-	deleteApp := func() *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodDelete, "/v1/apps/bound-app", nil)
+	call := func(method, path string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, nil)
 		r.Header.Set("Authorization", "Bearer "+*env.Key())
 		w := httptest.NewRecorder()
 		(*env.H()).ServeHTTP(w, r)
 		return w
+	}
+	deleteApp := func() *httptest.ResponseRecorder { return call(http.MethodDelete, "/v1/apps/bound-app") }
+	// data-api delete finds what to revoke by app, on any database.
+	listed := call(http.MethodGet, "/v1/apps/bound-app/postgres-bindings")
+	var bindings api.AppPostgresBindingList
+	if listed.Code != http.StatusOK || json.Unmarshal(listed.Body.Bytes(), &bindings) != nil || len(bindings.Items) != 1 ||
+		bindings.Items[0].ID != binding.ID || bindings.Items[0].EnvironmentKey != "DATABASE_URL" || bindings.Items[0].Database == "" {
+		t.Fatalf("app bindings = %d %s", listed.Code, listed.Body)
 	}
 	refused := deleteApp()
 	var problem api.Problem
@@ -49,6 +57,16 @@ func TestDeletingAnAppWithLiveDatabaseBindingsIsRefused(t *testing.T) {
 	}
 	if _, err := (*srv.ManagedPostgresBindings()).Delete(context.Background(), acct.ID, binding.ID); err != nil {
 		t.Fatalf("delete binding: %v", err)
+	}
+	listed = call(http.MethodGet, "/v1/apps/bound-app/postgres-bindings")
+	bindings = api.AppPostgresBindingList{}
+	if listed.Code != http.StatusOK || json.Unmarshal(listed.Body.Bytes(), &bindings) != nil {
+		t.Fatalf("app bindings after revoking = %d %s", listed.Code, listed.Body)
+	}
+	for _, item := range bindings.Items {
+		if item.State != "deleting" {
+			t.Fatalf("a revoked binding is listed as %q: %s", item.State, listed.Body)
+		}
 	}
 	if w := deleteApp(); w.Code >= 300 {
 		t.Fatalf("delete after revoking the binding = %d %s", w.Code, w.Body)

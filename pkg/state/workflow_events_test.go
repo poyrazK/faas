@@ -265,7 +265,7 @@ func TestEventWorkflowAdmission(t *testing.T) {
 // An event automation is a recipient even when the app's live deployment
 // declares no workflows, and an app with neither adds none: acceptance reads
 // workflow definitions only for apps that have some.
-func TestEventWorkflowRecipientsFromPublishedAutomation(t *testing.T) {
+func TestEventWorkflowRecipientsFromPublishedStoredWorkflow(t *testing.T) {
 	workflowScheduleStores(t, func(t *testing.T, store Store) {
 		ctx := context.Background()
 		account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanHobby)
@@ -290,9 +290,9 @@ func TestEventWorkflowRecipientsFromPublishedAutomation(t *testing.T) {
 		}
 		automated := live("automated")
 		live("plain")
-		author := store.(AutomationStore)
+		author := store.(StoredWorkflowStore)
 		saved := mutateForTest(t, author, automated.ID, "paid", "save", 0,
-			automationDraft("paid", "/paid", `{"type":"event","source":"billing.*","event_type":"invoice.paid"}`), false)
+			storedWorkflowDraft("paid", "/paid", `{"type":"event","source":"billing.*","event_type":"invoice.paid"}`), false)
 		mutateForTest(t, author, automated.ID, "paid", "publish", saved.Version, nil, false)
 		work := publishWorkflowEvent(t, store, automated, uuid.NewString())
 		if len(work.RecipientSnapshot) != 1 || work.RecipientSnapshot[0].AppID != automated.ID || len(work.RecipientSnapshot[0].Workflow) == 0 {

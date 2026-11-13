@@ -30,6 +30,12 @@ func wakeGated(t *testing.T, m *Manager, instance, app string) netip.Addr {
 	return m.live[instance].Net.HostIP
 }
 
+func resolvedOwner(t *testing.T, m *Manager, source netip.Addr) ServiceCallerIdentity {
+	t.Helper()
+	owner, _ := m.ResolveServiceCaller(source)
+	return owner
+}
+
 func TestAllowResolvedEgressAddsOncePerTTL(t *testing.T) {
 	run := &fakeInputRunner{}
 	m := newTestManager(run, &fakeVMM{})
@@ -37,7 +43,7 @@ func TestAllowResolvedEgressAddsOncePerTTL(t *testing.T) {
 	addrs := []netip.Addr{netip.MustParseAddr("198.51.100.10"), netip.MustParseAddr("2001:db8::7")}
 
 	before := run.inputRuns
-	if err := m.AllowResolvedEgress(t.Context(), source, addrs, 30*time.Second, 0); err != nil {
+	if err := m.AllowResolvedEgress(t.Context(), source, resolvedOwner(t, m, source), addrs, 30*time.Second, 0); err != nil {
 		t.Fatalf("AllowResolvedEgress: %v", err)
 	}
 	if run.inputRuns != before+1 {
@@ -45,22 +51,22 @@ func TestAllowResolvedEgressAddsOncePerTTL(t *testing.T) {
 	}
 	got := string(run.input)
 	for _, want := range []string{
-		"add element ip faas egress_resolved { 198.51.100.10 timeout 600s }", // 30s clamped up to the floor
-		"add element ip6 faas egress_resolved { 2001:db8::7 timeout 600s }",
+		"add element ip faas egress_resolved { 198.51.100.10 timeout 599s }", // clamped to 600s, less elapsed time before rendering
+		"add element ip6 faas egress_resolved { 2001:db8::7 timeout 599s }",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("transaction:\n%s\nmissing %q", got, want)
 		}
 	}
-	if err := m.AllowResolvedEgress(t.Context(), source, addrs[:1], 30*time.Second, 0); err != nil || run.inputRuns != before+1 {
+	if err := m.AllowResolvedEgress(t.Context(), source, resolvedOwner(t, m, source), addrs[:1], 30*time.Second, 0); err != nil || run.inputRuns != before+1 {
 		t.Fatalf("a repeat within half the TTL re-ran nft (runs %d, err %v)", run.inputRuns-before, err)
 	}
 	// A longer TTL extends the element.
-	if err := m.AllowResolvedEgress(t.Context(), source, addrs[:1], time.Hour, 0); err != nil || run.inputRuns != before+2 ||
-		!strings.Contains(string(run.input), "198.51.100.10 timeout 3600s") {
+	if err := m.AllowResolvedEgress(t.Context(), source, resolvedOwner(t, m, source), addrs[:1], time.Hour, 0); err != nil || run.inputRuns != before+2 ||
+		!strings.Contains(string(run.input), "198.51.100.10 timeout 3599s") {
 		t.Fatalf("a longer TTL did not extend the element (runs %d, err %v):\n%s", run.inputRuns-before, err, run.input)
 	}
-	if err := m.AllowResolvedEgress(t.Context(), netip.MustParseAddr("10.100.99.99"), addrs, time.Minute, 0); !errors.Is(err, ErrResolvedEgressNoInstance) {
+	if err := m.AllowResolvedEgress(t.Context(), netip.MustParseAddr("10.100.99.99"), resolvedOwner(t, m, netip.MustParseAddr("10.100.99.99")), addrs, time.Minute, 0); !errors.Is(err, ErrResolvedEgressNoInstance) {
 		t.Fatalf("unknown source = %v, want ErrResolvedEgressNoInstance", err)
 	}
 }
@@ -86,18 +92,18 @@ func TestAllowResolvedEgressOpensTheBoundDatabasePort(t *testing.T) {
 	}
 	addr := netip.MustParseAddr("198.51.100.20")
 	before := run.inputRuns
-	if err := m.AllowResolvedEgress(t.Context(), nc.HostIP, []netip.Addr{addr}, time.Minute, 5432); err != nil {
+	if err := m.AllowResolvedEgress(t.Context(), nc.HostIP, resolvedOwner(t, m, nc.HostIP), []netip.Addr{addr}, time.Minute, 5432); err != nil {
 		t.Fatalf("AllowResolvedEgress: %v", err)
 	}
 	got := string(run.input)
-	if run.inputRuns != before+1 || !strings.Contains(got, "add element ip faas egress_resolved { 198.51.100.20 timeout 600s }") ||
-		!strings.Contains(got, "add element ip faas egress_db { 198.51.100.20 . 5432 timeout 600s }") {
+	if run.inputRuns != before+1 || !strings.Contains(got, "add element ip faas egress_resolved { 198.51.100.20 timeout 599s }") ||
+		!strings.Contains(got, "add element ip faas egress_db { 198.51.100.20 . 5432 timeout 599s }") {
 		t.Fatalf("one transaction with both sets wanted (runs %d):\n%s", run.inputRuns-before, got)
 	}
-	if err := m.AllowResolvedEgress(t.Context(), nc.HostIP, []netip.Addr{addr}, time.Minute, 5432); err != nil || run.inputRuns != before+1 {
+	if err := m.AllowResolvedEgress(t.Context(), nc.HostIP, resolvedOwner(t, m, nc.HostIP), []netip.Addr{addr}, time.Minute, 5432); err != nil || run.inputRuns != before+1 {
 		t.Fatalf("a fresh pair re-ran nft (runs %d, err %v)", run.inputRuns-before, err)
 	}
-	if err := m.AllowResolvedEgress(t.Context(), nc.HostIP, []netip.Addr{addr}, time.Minute, 6543); err != nil || run.inputRuns != before+2 ||
+	if err := m.AllowResolvedEgress(t.Context(), nc.HostIP, resolvedOwner(t, m, nc.HostIP), []netip.Addr{addr}, time.Minute, 6543); err != nil || run.inputRuns != before+2 ||
 		strings.Contains(string(run.input), "egress_resolved") || !strings.Contains(string(run.input), "egress_db { 198.51.100.20 . 6543") {
 		t.Fatalf("a second database port must add only its pair (runs %d, err %v):\n%s", run.inputRuns-before, err, run.input)
 	}
@@ -108,7 +114,7 @@ func TestAllowResolvedEgressOpensTheBoundDatabasePort(t *testing.T) {
 		t.Fatalf("Wake: %v", err)
 	}
 	t.Cleanup(func() { _ = m.Destroy(context.Background(), "db-b") })
-	if seed := string(run.input); !strings.Contains(seed, "egress_db { 198.51.100.20 . 5432 timeout 600s }") && !strings.Contains(seed, "egress_db { 198.51.100.20 . 6543 timeout 600s }") {
+	if seed := string(run.input); !strings.Contains(seed, "egress_db { 198.51.100.20 . 5432 timeout ") && !strings.Contains(seed, "egress_db { 198.51.100.20 . 6543 timeout ") {
 		t.Fatalf("the next instance was not seeded with the database pairs:\n%s", seed)
 	}
 	m.mu.Lock()
@@ -133,7 +139,7 @@ func TestDatabaseEgressWithoutDNSGating(t *testing.T) {
 	m.mu.Lock()
 	source := m.live["db-off"].Net.HostIP
 	m.mu.Unlock()
-	if err := m.AllowResolvedEgress(t.Context(), source, []netip.Addr{netip.MustParseAddr("198.51.100.30")}, time.Minute, 5432); err != nil {
+	if err := m.AllowResolvedEgress(t.Context(), source, resolvedOwner(t, m, source), []netip.Addr{netip.MustParseAddr("198.51.100.30")}, time.Minute, 5432); err != nil {
 		t.Fatalf("AllowResolvedEgress: %v", err)
 	}
 	if got := string(run.input); strings.Contains(got, "egress_resolved") || !strings.Contains(got, "egress_db { 198.51.100.30 . 5432") {
@@ -146,11 +152,11 @@ func TestResolvedEgressSeedsNextInstance(t *testing.T) {
 	run := &fakeInputRunner{}
 	m := newTestManager(run, &fakeVMM{})
 	source := wakeGated(t, m, "dns-first", "app-seed")
-	if err := m.AllowResolvedEgress(t.Context(), source, []netip.Addr{netip.MustParseAddr("203.0.113.9")}, time.Minute, 0); err != nil {
+	if err := m.AllowResolvedEgress(t.Context(), source, resolvedOwner(t, m, source), []netip.Addr{netip.MustParseAddr("203.0.113.9")}, time.Minute, 0); err != nil {
 		t.Fatalf("AllowResolvedEgress: %v", err)
 	}
 	wakeGated(t, m, "dns-second", "app-seed")
-	if !strings.Contains(string(run.input), "add element ip faas egress_resolved { 203.0.113.9 timeout 600s }") {
+	if !strings.Contains(string(run.input), "add element ip faas egress_resolved { 203.0.113.9 timeout ") {
 		t.Fatalf("second instance was not seeded; last transaction:\n%s", run.input)
 	}
 	m.mu.Lock()

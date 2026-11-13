@@ -5,7 +5,7 @@ import { mcpTaskHandlers } from './tasks.js';
 import { createMcpTaskAdmissionController } from './task-admission.js';
 import { checkMcpTaskCompatibility } from './task-compatibility.js';
 import { resolveMcpTaskSettings } from './task-runtime.js';
-import { createMcpTaskPayloadCipher } from './task-crypto.js';
+import { authenticateRetainedMcpTaskPayloads, createMcpTaskPayloadCipher } from './task-crypto.js';
 import { createMcpTaskQueueObserver } from './task-store.js';
 
 // Read-only preflight: no schema initialization, claims, or payload output.
@@ -50,14 +50,7 @@ try {
     for (const [id, fingerprint] of cipher.fingerprints) {
       if (!known.has(id) || !known.get(id).equals(fingerprint)) throw new Error('keys');
     }
-    const required = await client.query(`SELECT DISTINCT ON (key_id) key_id, task_id::text, field, payload FROM (
-      SELECT task_id, encrypted.field, encrypted.payload,
-        CASE WHEN get_byte(encrypted.payload, 0) = 1 THEN 'legacy'
-        WHEN get_byte(encrypted.payload, 0) = 2 THEN convert_from(substring(encrypted.payload FROM 3 FOR get_byte(encrypted.payload, 1)), 'UTF8') ELSE '@invalid' END AS key_id
-      FROM gregale_mcp_tasks CROSS JOIN LATERAL (VALUES ('arguments', arguments_encrypted), ('result', result_encrypted), ('error', error_encrypted), ('input-state', input_state_encrypted)) AS encrypted(field, payload)
-      WHERE namespace = $1 AND expires_at > clock_timestamp() AND encrypted.payload IS NOT NULL
-    ) AS encrypted ORDER BY key_id, task_id, field`, [settings.namespace]);
-    for (const row of required.rows) cipher.decrypt(row.payload, `gregale-mcp-task:v1:${settings.namespace}:${row.task_id}:${row.field}`);
+    await authenticateRetainedMcpTaskPayloads(client, settings.namespace, cipher);
     add('encryption_keys', 'passed', 'Configured fingerprints match and retained payload key versions are readable');
     }
     await client.query('ROLLBACK');
