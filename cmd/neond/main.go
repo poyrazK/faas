@@ -44,6 +44,11 @@ const neonAPIBase = "https://console.neon.tech/api/v2"
 // unset.
 const defaultDestructivePerHour = 300
 
+// defaultDestructivePerSubjectPerHour bounds the destructive calls on the
+// projects of one account's databases per hour when
+// FAAS_NEOND_DESTRUCTIVE_PER_SUBJECT_PER_HOUR is unset.
+const defaultDestructivePerSubjectPerHour = 60
+
 func main() {
 	wire.Daemon("neond", run)
 }
@@ -57,18 +62,18 @@ type config struct {
 	org, sealIdentityFile             string
 	keyMaxAge                         time.Duration
 	callers                           []string
-	destructivePerHour                int
+	limits                            neond.Limits
 }
 
 func configFromEnv(getenv func(string) string) (config, error) {
 	cfg := config{
-		listen:             getenv("FAAS_NEOND_LISTEN"),
-		adminKeyFile:       getenv("FAAS_NEOND_ADMIN_KEY_FILE"),
-		metricsAddr:        getenv("FAAS_NEOND_METRICS_ADDR"),
-		org:                strings.TrimSpace(getenv("FAAS_NEOND_ORG_ID")),
-		sealIdentityFile:   getenv(sealIdentityEnv),
-		destructivePerHour: defaultDestructivePerHour,
-		keyMaxAge:          neond.DefaultSweepConfig.MaxAge,
+		listen:           getenv("FAAS_NEOND_LISTEN"),
+		adminKeyFile:     getenv("FAAS_NEOND_ADMIN_KEY_FILE"),
+		metricsAddr:      getenv("FAAS_NEOND_METRICS_ADDR"),
+		org:              strings.TrimSpace(getenv("FAAS_NEOND_ORG_ID")),
+		sealIdentityFile: getenv(sealIdentityEnv),
+		limits:           neond.Limits{PerHour: defaultDestructivePerHour, PerSubjectPerHour: defaultDestructivePerSubjectPerHour},
+		keyMaxAge:        neond.DefaultSweepConfig.MaxAge,
 	}
 	if raw := getenv("FAAS_NEOND_PROJECT_KEY_MAX_AGE"); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -95,12 +100,20 @@ func configFromEnv(getenv func(string) string) (config, error) {
 	if len(cfg.callers) == 0 {
 		return config{}, errors.New("neond: FAAS_NEOND_CALLERS is required: the OS users allowed to connect (apid's)")
 	}
-	if raw := getenv("FAAS_NEOND_DESTRUCTIVE_PER_HOUR"); raw != "" {
-		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 {
-			return config{}, fmt.Errorf("neond: FAAS_NEOND_DESTRUCTIVE_PER_HOUR=%q: want a positive integer", raw)
+	for _, limit := range []struct {
+		name  string
+		value *int
+	}{
+		{"FAAS_NEOND_DESTRUCTIVE_PER_HOUR", &cfg.limits.PerHour},
+		{"FAAS_NEOND_DESTRUCTIVE_PER_SUBJECT_PER_HOUR", &cfg.limits.PerSubjectPerHour},
+	} {
+		if raw := getenv(limit.name); raw != "" {
+			n, err := strconv.Atoi(raw)
+			if err != nil || n < 1 {
+				return config{}, fmt.Errorf("neond: %s=%q: want a positive integer", limit.name, raw)
+			}
+			*limit.value = n
 		}
-		cfg.destructivePerHour = n
 	}
 	return cfg, nil
 }
@@ -135,7 +148,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	client := &http.Client{Timeout: 20 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	reg := prometheus.NewRegistry()
-	server, err := neond.NewServer(base, client, adminKey, pgLive{pool}, cfg.destructivePerHour, reg, log)
+	server, err := neond.NewServer(base, client, adminKey, pgLive{pool}, cfg.limits, reg, log)
 	if err != nil {
 		return err
 	}
@@ -166,7 +179,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		<-ctx.Done()
 		srv.GracefulStop()
 	}()
-	log.Info("neond: serving", "listen", cfg.listen, "callers", cfg.callers, "destructive_per_hour", cfg.destructivePerHour, "project_keys", cfg.org != "")
+	log.Info("neond: serving", "listen", cfg.listen, "callers", cfg.callers, "destructive_per_hour", cfg.limits.PerHour, "destructive_per_subject_per_hour", cfg.limits.PerSubjectPerHour, "project_keys", cfg.org != "")
 	if err := srv.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 		return fmt.Errorf("neond: serve: %w", err)
 	}
@@ -226,11 +239,15 @@ func (l peerCheckedListener) Accept() (net.Conn, error) {
 	}
 }
 
-// pgLive reads the live databases in a Neon project.
+// pgLive reads apid's managed PostgreSQL rows for a Neon project.
 type pgLive struct{ pool *pgxpool.Pool }
 
 func (p pgLive) LiveResourcesInProject(ctx context.Context, project string) ([]string, error) {
 	return sqlc.New().ManagedPostgresLiveResourcesInProject(ctx, p.pool, project)
+}
+
+func (p pgLive) AccountsInProject(ctx context.Context, project string) ([]string, error) {
+	return sqlc.New().ManagedPostgresAccountsInProject(ctx, p.pool, project)
 }
 
 func serveMetrics(ctx context.Context, addr string, reg *prometheus.Registry, log *slog.Logger) error {
