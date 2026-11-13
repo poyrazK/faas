@@ -2162,6 +2162,7 @@ export type { OutboundAIRouteList } from './OutboundAIRouteList.js';
 export type { OutboundAIRouteStats } from './OutboundAIRouteStats.js';
 export type { OutboundAIRouteTarget } from './OutboundAIRouteTarget.js';
 export type { OutboundAIRouteTargetStats } from './OutboundAIRouteTargetStats.js';
+export type { OutboundAISemanticCache } from './OutboundAISemanticCache.js';
 export type { OutboundAITagLimit } from './OutboundAITagLimit.js';
 export type { OutboundAITagLimits } from './OutboundAITagLimits.js';
 export type { OutboundAITagUsageExportRow } from './OutboundAITagUsageExportRow.js';

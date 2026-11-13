@@ -4179,6 +4179,7 @@ from .outbound_ai_route_stats_strategy import OutboundAIRouteStatsStrategy
 from .outbound_ai_route_strategy import OutboundAIRouteStrategy
 from .outbound_ai_route_target import OutboundAIRouteTarget
 from .outbound_ai_route_target_stats import OutboundAIRouteTargetStats
+from .outbound_ai_semantic_cache import OutboundAISemanticCache
 from .outbound_ai_tag_limit import OutboundAITagLimit
 from .outbound_ai_tag_limits import OutboundAITagLimits
 from .outbound_ai_tag_usage_export_row import OutboundAITagUsageExportRow
@@ -10400,6 +10401,7 @@ __all__ = (
     "OutboundAIRouteStrategy",
     "OutboundAIRouteTarget",
     "OutboundAIRouteTargetStats",
+    "OutboundAISemanticCache",
     "OutboundAITagLimit",
     "OutboundAITagLimits",
     "OutboundAITagUsageExportRow",
