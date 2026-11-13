@@ -45,7 +45,7 @@ func recoverPipelineCreate(ctx context.Context, client *api.Client, request api.
 		if err != nil {
 			return api.DataPipeline{}, false, err
 		}
-		if p.Name != request.Name || p.DesiredState == "deleted" || p.State == "deleted" || pipelineID(p.SourceConnectionID) != pipelineID(request.SourceConnectionID) || !samePipelineSelection(p.Tables, request.Tables) || !samePipelineSelection(p.ReadSubjects, request.ReadSubjects) || !samePipelineServing(p.Serving, request.Serving) {
+		if p.FreshnessTargetSeconds != request.FreshnessTargetSeconds || p.Name != request.Name || p.DesiredState == "deleted" || p.State == "deleted" || pipelineID(p.SourceConnectionID) != pipelineID(request.SourceConnectionID) || !samePipelineSelection(p.Tables, request.Tables) || !samePipelineSelection(p.ReadSubjects, request.ReadSubjects) || !samePipelineServing(p.Serving, request.Serving) {
 			return api.DataPipeline{}, false, errors.New("the pipeline name already belongs to a different or deleted intent; inspect pipeline status or use a new name")
 		}
 		if database != "" {

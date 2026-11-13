@@ -23522,22 +23522,41 @@ $$;
 
 
 --
+-- Name: pipeline_freshness_alert_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pipeline_freshness_alert_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.enabled AND NEW.revision=OLD.revision AND current_setting('gregale.pipeline_worker_protocol',true) IS DISTINCT FROM 'pipeline-operability-v1'
+ AND EXISTS(SELECT 1 FROM data_pipelines WHERE id=NEW.pipeline_id AND freshness_target_seconds>0) THEN
+  RAISE EXCEPTION 'freshness-aware monitor required' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: pipeline_serving_worker_claim(); Type: FUNCTION; Schema: public; Owner: -
 --
 
 CREATE FUNCTION public.pipeline_serving_worker_claim() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE serving boolean;
+DECLARE serving boolean; operability boolean; protocol text;
 BEGIN
+ protocol := current_setting('gregale.pipeline_worker_protocol',true);
  IF TG_TABLE_NAME='data_pipelines' THEN
   serving := NEW.serving_config<>'{}'::jsonb;
+  operability := NEW.index_change->>'state'='approved';
  ELSE
   serving := coalesce(NEW.request->'Serving','null'::jsonb)<>'null'::jsonb;
+  operability := coalesce((NEW.request->>'FreshnessTargetSeconds')::bigint,0)>0;
  END IF;
- IF serving AND NEW.lease_token<>'' AND NEW.lease_token IS DISTINCT FROM OLD.lease_token
- AND current_setting('gregale.pipeline_worker_protocol',true) IS DISTINCT FROM 'customer-serving-v1' THEN
-  RETURN NULL;
+ IF NEW.lease_token<>'' AND NEW.lease_token IS DISTINCT FROM OLD.lease_token THEN
+  IF operability AND protocol IS DISTINCT FROM 'pipeline-operability-v1' THEN RETURN NULL; END IF;
+  IF serving AND (protocol IS NULL OR protocol NOT IN ('customer-serving-v1','pipeline-operability-v1')) THEN RETURN NULL; END IF;
  END IF;
  RETURN NEW;
 END $$;
@@ -37256,7 +37275,7 @@ CREATE TABLE public.data_pipeline_alert_deliveries (
     lease_until timestamp with time zone,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT data_pipeline_alert_deliveries_attempts_check CHECK (((attempts >= 0) AND (attempts <= 7))),
-    CONSTRAINT data_pipeline_alert_deliveries_code_check CHECK ((code = ANY (ARRAY['monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text]))),
+    CONSTRAINT data_pipeline_alert_deliveries_code_v2_check CHECK ((code = ANY (ARRAY['monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text, 'freshness_unconfirmed'::text]))),
     CONSTRAINT data_pipeline_alert_deliveries_config_revision_check CHECK ((config_revision > 0)),
     CONSTRAINT data_pipeline_alert_deliveries_kind_check CHECK ((kind = ANY (ARRAY['incident'::text, 'recovery'::text]))),
     CONSTRAINT data_pipeline_alert_deliveries_response_code_check CHECK (((response_code >= 0) AND (response_code <= 599))),
@@ -37295,10 +37314,10 @@ CREATE TABLE public.data_pipeline_alerts (
     incident_code text DEFAULT ''::text NOT NULL,
     check_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT data_pipeline_alerts_candidate_code_check CHECK ((candidate_code = ANY (ARRAY[''::text, 'monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text, 'recovered'::text]))),
+    CONSTRAINT data_pipeline_alerts_candidate_code_v2_check CHECK ((candidate_code = ANY (ARRAY[''::text, 'monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text, 'freshness_unconfirmed'::text, 'recovered'::text]))),
     CONSTRAINT data_pipeline_alerts_check CHECK (((NOT enabled) OR (octet_length(ciphertext) > 0))),
     CONSTRAINT data_pipeline_alerts_ciphertext_check CHECK ((octet_length(ciphertext) <= 16384)),
-    CONSTRAINT data_pipeline_alerts_incident_code_check CHECK ((incident_code = ANY (ARRAY[''::text, 'monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text]))),
+    CONSTRAINT data_pipeline_alerts_incident_code_v2_check CHECK ((incident_code = ANY (ARRAY[''::text, 'monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text, 'freshness_unconfirmed'::text]))),
     CONSTRAINT data_pipeline_alerts_incident_id_check CHECK (((incident_id = ''::text) OR (incident_id ~ '^[0-9a-f-]{36}$'::text))),
     CONSTRAINT data_pipeline_alerts_revision_check CHECK ((revision > 0))
 );
@@ -37411,9 +37430,13 @@ CREATE TABLE public.data_pipelines (
     reader_change jsonb DEFAULT '{}'::jsonb NOT NULL,
     wal_retention jsonb DEFAULT '{}'::jsonb NOT NULL,
     serving_config jsonb DEFAULT '{}'::jsonb NOT NULL,
+    freshness_target_seconds bigint DEFAULT 0 NOT NULL,
+    index_change jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT data_pipelines_check CHECK (((observed_revision >= 0) AND (observed_revision <= revision))),
     CONSTRAINT data_pipelines_desired_state_check CHECK ((desired_state = ANY (ARRAY['running'::text, 'paused'::text, 'deleted'::text]))),
+    CONSTRAINT data_pipelines_freshness_target_check CHECK (((freshness_target_seconds = 0) OR ((freshness_target_seconds >= 15) AND (freshness_target_seconds <= 86400)))),
     CONSTRAINT data_pipelines_generation_check CHECK ((generation > 0)),
+    CONSTRAINT data_pipelines_index_change_check CHECK (((jsonb_typeof(index_change) = 'object'::text) AND (octet_length((index_change)::text) <= 65536) AND ((index_change = '{}'::jsonb) OR (COALESCE((index_change ->> 'state'::text), ''::text) = ANY (ARRAY['requested'::text, 'preview'::text, 'approved'::text, 'applied'::text, 'blocked'::text, 'cancelled'::text]))))),
     CONSTRAINT data_pipelines_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'::text)),
     CONSTRAINT data_pipelines_read_subjects_v3_check CHECK (((jsonb_typeof(read_subjects) = 'array'::text) AND ((jsonb_array_length(read_subjects) >= 0) AND (jsonb_array_length(read_subjects) <= 128)))),
     CONSTRAINT data_pipelines_reader_change_v2_check CHECK (((jsonb_typeof(reader_change) = 'object'::text) AND (octet_length((reader_change)::text) <= 2097152) AND ((reader_change = '{}'::jsonb) OR ((reader_change ->> 'State'::text) = ANY (ARRAY['preview'::text, 'approved'::text, 'applied'::text]))))),
@@ -92630,6 +92653,13 @@ CREATE TRIGGER outbound_integration_app_owner_guard BEFORE INSERT OR UPDATE OF i
 --
 
 CREATE TRIGGER outbound_integration_owner_kind_guard BEFORE UPDATE OF owner_kind ON public.outbound_integrations FOR EACH ROW EXECUTE FUNCTION public.guard_outbound_integration_owner_kind();
+
+
+--
+-- Name: data_pipeline_alerts pipeline_freshness_alert_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER pipeline_freshness_alert_fence BEFORE UPDATE ON public.data_pipeline_alerts FOR EACH ROW EXECUTE FUNCTION public.pipeline_freshness_alert_fence();
 
 
 --

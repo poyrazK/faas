@@ -27,8 +27,8 @@ DELETE FROM data_pipeline_connections c WHERE c.account_id=sqlc.arg(account_id):
 SELECT count(*) FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid AND state<>'deleted';
 
 -- name: PipelineInsert :one
-INSERT INTO data_pipelines(id,account_id,name,source_connection_id,database_id,tables,read_subjects,serving_config)
-VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(name),sqlc.arg(source_connection_id)::text::uuid,sqlc.arg(database_id)::text::uuid,sqlc.arg(tables),sqlc.arg(read_subjects),sqlc.arg(serving_config)) RETURNING *;
+INSERT INTO data_pipelines(id,account_id,name,source_connection_id,database_id,tables,read_subjects,serving_config,freshness_target_seconds)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(name),sqlc.arg(source_connection_id)::text::uuid,sqlc.arg(database_id)::text::uuid,sqlc.arg(tables),sqlc.arg(read_subjects),sqlc.arg(serving_config),sqlc.arg(freshness_target_seconds)) RETURNING *;
 
 -- name: PipelinesList :many
 SELECT * FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid ORDER BY (state='deleted'),created_at DESC,id LIMIT sqlc.arg(page_limit);
@@ -57,7 +57,7 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uui
 RETURNING *;
 
 -- name: PipelineWorkerProtocol :exec
-SELECT set_config('gregale.pipeline_worker_protocol','customer-serving-v1',true);
+SELECT set_config('gregale.pipeline_worker_protocol','pipeline-operability-v1',true);
 
 -- name: PipelineClaim :one
 WITH candidate AS (
@@ -426,7 +426,7 @@ RETURNING *;
 
 -- name: PipelineAlertLock :one
 SELECT a.* FROM data_pipeline_alerts a JOIN data_pipelines p ON p.id=a.pipeline_id AND p.account_id=a.account_id
-WHERE a.enabled AND a.check_at<=sqlc.arg(now_at) AND a.account_id=ANY(sqlc.arg(accounts)::uuid[])
+WHERE (p.freshness_target_seconds=0 OR current_setting('gregale.pipeline_worker_protocol',true)='pipeline-operability-v1') AND a.enabled AND a.check_at<=sqlc.arg(now_at) AND a.account_id=ANY(sqlc.arg(accounts)::uuid[])
 ORDER BY a.check_at,a.pipeline_id FOR UPDATE OF a SKIP LOCKED LIMIT 1;
 
 -- name: PipelineAlertObserve :exec
@@ -469,3 +469,19 @@ FROM candidate c WHERE d.id=c.id RETURNING d.*;
 UPDATE data_pipeline_alert_deliveries SET status=sqlc.arg(status),attempts=attempts+1,response_code=sqlc.arg(response_code),result=sqlc.arg(result),next_attempt_at=sqlc.arg(next_attempt_at),lease_token='',lease_until=NULL
 WHERE id=sqlc.arg(id)::text::uuid AND status='pending' AND lease_token=sqlc.arg(lease_token) AND lease_until>sqlc.arg(now_at)
 AND EXISTS(SELECT 1 FROM data_pipeline_alerts a WHERE a.pipeline_id=data_pipeline_alert_deliveries.pipeline_id AND a.enabled AND a.revision=data_pipeline_alert_deliveries.config_revision);
+
+-- name: PipelineSetFreshness :execrows
+UPDATE data_pipelines SET freshness_target_seconds=sqlc.arg(target_seconds),revision=revision+1,retry_at=clock_timestamp()
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
+ AND state<>'deleted' AND desired_state<>'deleted';
+
+-- name: PipelineIndexIntent :execrows
+UPDATE data_pipelines SET index_change=sqlc.arg(index_change)::jsonb,revision=revision+1,retry_at=clock_timestamp()
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
+ AND state<>'deleted' AND desired_state<>'deleted' AND coalesce(index_change->>'state','')<>'approved';
+
+-- name: PipelineFinishIndex :execrows
+UPDATE data_pipelines SET index_change=sqlc.arg(index_change)::jsonb,lease_token='',lease_until=NULL,retry_at=clock_timestamp()
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
+ AND lease_token=sqlc.arg(lease_token) AND lease_until>clock_timestamp()
+ AND index_change->>'RequestID'=sqlc.arg(request_id)::text AND index_change->>'state' IN ('requested','approved');

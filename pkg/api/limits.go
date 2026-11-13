@@ -18763,6 +18763,16 @@ const (
 	DataPipelineQualificationMaxAge       = 24 * time.Hour
 	DataPipelineQualificationsMax         = 200
 	DataPipelineDashboardRefresh          = 2 * time.Second
+	DataPipelineFreshnessTargetMinSeconds = int64(15)
+	DataPipelineFreshnessTargetMaxSeconds = int64(24 * 60 * 60)
+	DataPipelineIndexColumnsMax           = 4
+	DataPipelineIndexesMax                = 8
+	DataPipelineIndexChangeMaxBytes       = 64 << 10
+	DataPipelineIndexTableMaxBytes        = int64(64 << 20)
+	DataPipelineIndexBuildMaxBytes        = int64(32 << 20)
+	DataPipelineIndexMemoryKB             = 16 << 10
+	DataPipelineIndexBuildTimeout         = 2 * time.Second
+	DataPipelineIndexLockTimeout          = 250 * time.Millisecond
 )
 
 // Pipeline health webhooks have one encrypted destination per pipeline. The

@@ -71621,6 +71621,203 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/data/pipeline-setups/plan:
+    post:
+      operationId: planDataPipelineSetup
+      summary: Preview durable setup resources and billing
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: Preview durable setup resources and billing response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineSetupPlan'
+        default:
+          description: Validation or availability problem for planDataPipelineSetup.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineSetupRequest'
+  /v1/data/pipeline-setups:
+    post:
+      operationId: createDataPipelineSetup
+      summary: Save a resumable mirror and Data API setup
+      tags:
+      - data_pipelines
+      responses:
+        '202':
+          description: Save a resumable mirror and Data API setup response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineSetup'
+        default:
+          description: Validation or availability problem for createDataPipelineSetup.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineSetupRequest'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+    get:
+      operationId: listDataPipelineSetups
+      summary: List saved pipeline setup jobs
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: List saved pipeline setup jobs response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineSetupList'
+        default:
+          description: Validation or availability problem for listDataPipelineSetups.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/pipeline-setups/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Owned resource receiving getDataPipelineSetup requests.
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getDataPipelineSetup
+      summary: Inspect durable pipeline setup progress
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: Inspect durable pipeline setup progress response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineSetup'
+        default:
+          description: Validation or availability problem for getDataPipelineSetup.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/pipeline-setups/{id}/control:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Owned resource receiving controlDataPipelineSetup requests.
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: controlDataPipelineSetup
+      summary: Retry or cancel a saved pipeline setup
+      tags:
+      - data_pipelines
+      responses:
+        '202':
+          description: Retry or cancel a saved pipeline setup response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineSetup'
+        default:
+          description: Validation or availability problem for controlDataPipelineSetup.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineSetupControlRequest'
+  /v1/data/pipelines/{id}/freshness:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Owned resource receiving configureDataPipelineFreshness requests.
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: configureDataPipelineFreshness
+      summary: Configure checkpoint freshness confirmation
+      tags:
+      - data_pipelines
+      responses:
+        '202':
+          description: Configure checkpoint freshness confirmation response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Validation or availability problem for configureDataPipelineFreshness.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineFreshnessRequest'
+  /v1/data/pipelines/{id}/indexes:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Owned resource receiving changeDataPipelineIndexes requests.
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: changeDataPipelineIndexes
+      summary: Preview and approve bounded mirror indexes
+      tags:
+      - data_pipelines
+      responses:
+        '202':
+          description: Preview and approve bounded mirror indexes response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Validation or availability problem for changeDataPipelineIndexes.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineIndexRequest'
+
 components:
 
   securitySchemes:
@@ -72484,6 +72681,334 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    DataPipelineFreshness:
+      type: object
+      additionalProperties: false
+      description: Read-time confirmation of an applied checkpoint against the owner freshness target. Old confirmation is not measured replication lag; an idle source may already be caught
+        up.
+      required:
+      - target_seconds
+      - state
+      - message
+      properties:
+        target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: DataPipelineFreshness uses zero to disable confirmation alerts; enabled targets must be at least 15 seconds.
+        state:
+          type: string
+        confirmed_through_at:
+          type: string
+          format: date-time
+        confirmation_age_seconds:
+          type: integer
+          format: int64
+        message:
+          type: string
+    DataPipelineFreshnessRequest:
+      type: object
+      additionalProperties: false
+      description: Revision-fenced freshness configuration. Zero disables the target; enabled targets range from 15 to 86400 whole seconds. Existing health webhook destinations receive debounced
+        freshness_unconfirmed incidents.
+      required:
+      - expected_revision
+      - target_seconds
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: DataPipelineFreshnessRequest uses zero to disable confirmation alerts; enabled targets must be at least 15 seconds.
+    DataPipelineSetupRequest:
+      type: object
+      additionalProperties: false
+      description: Immutable durable setup intent. Repeating exactly the same normalized name and selections recovers the saved job and resource IDs. Source discovery must already include
+        the selected tables; the worker refreshes credentials and capacity before allocating resources.
+      required:
+      - name
+      - source_connection_id
+      - tables
+      properties:
+        name:
+          type: string
+        source_connection_id:
+          type: string
+          format: uuid
+        database_id:
+          type: string
+          format: uuid
+        region:
+          type: string
+        tables:
+          type: array
+          items:
+            type: string
+        read_subjects:
+          type: array
+          items:
+            type: string
+        serving:
+          $ref: '#/components/schemas/DataPipelineServing'
+        freshness_target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: DataPipelineSetupRequest uses zero to disable confirmation alerts; enabled targets must be at least 15 seconds.
+        data_api_name:
+          type: string
+        auth_app_id:
+          type: string
+          format: uuid
+    DataPipelineSetupPlan:
+      type: object
+      additionalProperties: false
+      description: Read-only resource and billing preview. No mirror or app is allocated and no capacity is reserved. Limits and billing implications are not a fixed-price invoice; source-provider
+        compute charges are separate.
+      required:
+      - name
+      - creates_mirror
+      - creates_data_api
+      - billing_notes
+      properties:
+        name:
+          type: string
+        creates_mirror:
+          type: boolean
+        creates_data_api:
+          type: boolean
+        existing_setup_id:
+          type: string
+          format: uuid
+        database_id:
+          type: string
+          format: uuid
+        region:
+          type: string
+        storage_limit_bytes:
+          type: integer
+          format: int64
+        restore_window_seconds:
+          type: integer
+          format: int64
+        freshness_target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: DataPipelineSetupPlan uses zero to disable confirmation alerts; enabled targets must be at least 15 seconds.
+        connection_check:
+          $ref: '#/components/schemas/DataConnectionCheck'
+        billing_notes:
+          type: array
+          items:
+            type: string
+    DataPipelineSetup:
+      type: object
+      additionalProperties: false
+      description: Account-owned durable setup progress with public recovery IDs. Cancellation retains allocated resources for separate management. Private provider plans and credentials
+        are never returned.
+      required:
+      - id
+      - request
+      - database_id
+      - state
+      - phase
+      - revision
+      - progress
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        request:
+          $ref: '#/components/schemas/DataPipelineSetupRequest'
+        database_id:
+          type: string
+          format: uuid
+        pipeline_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+        phase:
+          type: string
+        reason:
+          type: string
+        revision:
+          type: integer
+          format: int64
+        data_api_app_id:
+          type: string
+          format: uuid
+        deployment_id:
+          type: string
+          format: uuid
+        endpoint:
+          type: string
+        region:
+          type: string
+        storage_limit_bytes:
+          type: integer
+          format: int64
+        progress:
+          type: string
+        recovery:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    DataPipelineSetupList:
+      type: object
+      additionalProperties: false
+      description: DataPipelineSetupList wire representation for pipeline operation.
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineSetup'
+    DataPipelineSetupControlRequest:
+      type: object
+      additionalProperties: false
+      description: DataPipelineSetupControlRequest wire representation for pipeline operation.
+      required:
+      - expected_revision
+      - action
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        action:
+          type: string
+          enum:
+          - retry
+          - cancel
+    DataPipelineIndexOrder:
+      type: object
+      additionalProperties: false
+      description: DataPipelineIndexOrder wire representation for pipeline operation.
+      required:
+      - column
+      properties:
+        column:
+          type: string
+        descending:
+          type: boolean
+    DataPipelineIndexRequest:
+      type: object
+      additionalProperties: false
+      description: Structured mirror query shape with no SQL or filter values. preview queues metadata inspection; approve accepts only a frozen advice_id; discard clears unapproved advice.
+        At most four keys including the tenant policy expression.
+      required:
+      - expected_revision
+      - action
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        action:
+          type: string
+          enum:
+          - preview
+          - approve
+          - discard
+        advice_id:
+          type: string
+        table:
+          type: string
+        filters:
+          type: array
+          items:
+            type: string
+          maxItems: 4
+        order_by:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineIndexOrder'
+          maxItems: 4
+        max_index_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 33554432
+    DataPipelineIndexKey:
+      type: object
+      additionalProperties: false
+      description: DataPipelineIndexKey wire representation for pipeline operation.
+      required:
+      - column
+      properties:
+        column:
+          type: string
+        descending:
+          type: boolean
+        tenant_expression:
+          type: boolean
+    DataPipelineIndexAdvice:
+      type: object
+      additionalProperties: false
+      description: Frozen metadata-based mirror index advice. Size is a conservative estimate, not measured query performance. Explicit approval permits a transactional build for tables
+        up to 64 MiB, indexes up to 32 MiB, at most eight owned indexes per pipeline, with a two-second deadline and 250 ms lock timeout. Failures roll back and require a fresh preview.
+      required:
+      - id
+      - state
+      - preview_revision
+      - table
+      - keys
+      - can_apply
+      - message
+      properties:
+        id:
+          type: string
+        state:
+          type: string
+        preview_revision:
+          type: integer
+          format: int64
+        table:
+          type: string
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineIndexKey'
+          maxItems: 4
+        index_name:
+          type: string
+        statement:
+          type: string
+        table_bytes:
+          type: integer
+          format: int64
+        estimated_index_bytes:
+          type: integer
+          format: int64
+        storage_budget_bytes:
+          type: integer
+          format: int64
+        applied_bytes:
+          type: integer
+          format: int64
+        can_apply:
+          type: boolean
+        reason:
+          type: string
+        message:
+          type: string
     SupportContext:
       type: object
       additionalProperties: false
@@ -139152,6 +139677,12 @@ components:
       - database_id
       - tables
       properties:
+        freshness_target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: Initial checkpoint confirmation target for the new pipeline; use zero to disable it, or 15 to 86400 seconds.
         serving:
           $ref: '#/components/schemas/DataPipelineServing'
         name:
@@ -139296,6 +139827,16 @@ components:
       - verification
       - created_at
       properties:
+        freshness_target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: Current owner-configured checkpoint confirmation target; zero means disabled and enabled targets range from 15 to 86400 seconds.
+        freshness:
+          $ref: '#/components/schemas/DataPipelineFreshness'
+        index_advice:
+          $ref: '#/components/schemas/DataPipelineIndexAdvice'
         serving:
           $ref: '#/components/schemas/DataPipelineServing'
         tenant_change:

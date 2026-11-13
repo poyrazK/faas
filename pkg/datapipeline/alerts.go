@@ -198,5 +198,8 @@ func alertCondition(p Pipeline, now time.Time) (code string, recovered bool) {
 			return "apply_unconfirmed", false
 		}
 	}
+	if f := FreshnessStatus(p.DataPipeline, now); f != nil && f.State == "unconfirmed" {
+		return "freshness_unconfirmed", false
+	}
 	return "", p.State == "live"
 }

@@ -10,6 +10,8 @@ CREATE TABLE data_pipeline_connections (
  UNIQUE(account_id,name), UNIQUE(account_id,id)
 );
 CREATE TABLE data_pipelines (
+	freshness_target_seconds bigint NOT NULL DEFAULT 0 CHECK(freshness_target_seconds=0 OR freshness_target_seconds BETWEEN 15 AND 86400),
+	index_change jsonb NOT NULL DEFAULT '{}' CHECK(jsonb_typeof(index_change)='object' AND octet_length(index_change::text)<=65536 AND (index_change='{}' OR coalesce(index_change->>'state','') IN ('requested','preview','approved','applied','blocked','cancelled'))),
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL,
  name text NOT NULL CHECK (name ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'),
@@ -107,10 +109,10 @@ CREATE TABLE data_pipeline_alerts (
  revision bigint NOT NULL DEFAULT 1 CHECK (revision>0),
  enabled boolean NOT NULL DEFAULT false,
  ciphertext bytea NOT NULL DEFAULT '' CHECK (octet_length(ciphertext)<=16384),
- candidate_code text NOT NULL DEFAULT '' CHECK(candidate_code IN ('','monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed','recovered')),
+ candidate_code text NOT NULL DEFAULT '' CHECK(candidate_code IN ('','monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed','freshness_unconfirmed','recovered')),
  candidate_since timestamptz,
  incident_id text NOT NULL DEFAULT '' CHECK(incident_id='' OR incident_id ~ '^[0-9a-f-]{36}$'),
- incident_code text NOT NULL DEFAULT '' CHECK(incident_code IN ('','monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed')),
+ incident_code text NOT NULL DEFAULT '' CHECK(incident_code IN ('','monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed','freshness_unconfirmed')),
  check_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  CHECK (NOT enabled OR octet_length(ciphertext)>0)
@@ -124,7 +126,7 @@ CREATE TABLE data_pipeline_alert_deliveries (
  config_revision bigint NOT NULL CHECK(config_revision>0),
  incident_id uuid NOT NULL,
  kind text NOT NULL CHECK(kind IN ('incident','recovery')),
- code text NOT NULL CHECK(code IN ('monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed')),
+ code text NOT NULL CHECK(code IN ('monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed','freshness_unconfirmed')),
  occurred_at timestamptz NOT NULL,
  status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','dead','cancelled')),
  attempts integer NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 7),
@@ -139,16 +141,19 @@ CREATE TABLE data_pipeline_alert_deliveries (
 CREATE INDEX data_pipeline_alert_deliveries_due ON data_pipeline_alert_deliveries(next_attempt_at,sequence) WHERE status='pending';
 
 CREATE FUNCTION pipeline_serving_worker_claim() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE serving boolean;
+DECLARE serving boolean; operability boolean; protocol text;
 BEGIN
+ protocol := current_setting('gregale.pipeline_worker_protocol',true);
  IF TG_TABLE_NAME='data_pipelines' THEN
   serving := NEW.serving_config<>'{}'::jsonb;
+  operability := NEW.index_change->>'state'='approved';
  ELSE
   serving := coalesce(NEW.request->'Serving','null'::jsonb)<>'null'::jsonb;
+  operability := coalesce((NEW.request->>'FreshnessTargetSeconds')::bigint,0)>0;
  END IF;
- IF serving AND NEW.lease_token<>'' AND NEW.lease_token IS DISTINCT FROM OLD.lease_token
- AND current_setting('gregale.pipeline_worker_protocol',true) IS DISTINCT FROM 'customer-serving-v1' THEN
-  RETURN NULL;
+ IF NEW.lease_token<>'' AND NEW.lease_token IS DISTINCT FROM OLD.lease_token THEN
+  IF operability AND protocol IS DISTINCT FROM 'pipeline-operability-v1' THEN RETURN NULL; END IF;
+  IF serving AND (protocol IS NULL OR protocol NOT IN ('customer-serving-v1','pipeline-operability-v1')) THEN RETURN NULL; END IF;
  END IF;
  RETURN NEW;
 END $$;
@@ -157,3 +162,13 @@ CREATE TRIGGER data_pipelines_serving_claim BEFORE UPDATE OF lease_token ON data
  FOR EACH ROW EXECUTE FUNCTION pipeline_serving_worker_claim();
 CREATE TRIGGER data_pipeline_setups_serving_claim BEFORE UPDATE OF lease_token ON data_pipeline_setups
  FOR EACH ROW EXECUTE FUNCTION pipeline_serving_worker_claim();
+
+CREATE OR REPLACE FUNCTION pipeline_freshness_alert_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.enabled AND NEW.revision=OLD.revision AND current_setting('gregale.pipeline_worker_protocol',true) IS DISTINCT FROM 'pipeline-operability-v1'
+ AND EXISTS(SELECT 1 FROM data_pipelines WHERE id=NEW.pipeline_id AND freshness_target_seconds>0) THEN
+  RAISE EXCEPTION 'freshness-aware monitor required' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER pipeline_freshness_alert_fence BEFORE UPDATE ON data_pipeline_alerts FOR EACH ROW EXECUTE FUNCTION pipeline_freshness_alert_fence();

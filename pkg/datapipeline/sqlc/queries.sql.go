@@ -301,7 +301,7 @@ func (q *Queries) PipelineAlertHistory(ctx context.Context, db DBTX, arg Pipelin
 
 const pipelineAlertLock = `-- name: PipelineAlertLock :one
 SELECT a.pipeline_id, a.account_id, a.revision, a.enabled, a.ciphertext, a.candidate_code, a.candidate_since, a.incident_id, a.incident_code, a.check_at, a.updated_at FROM data_pipeline_alerts a JOIN data_pipelines p ON p.id=a.pipeline_id AND p.account_id=a.account_id
-WHERE a.enabled AND a.check_at<=$1 AND a.account_id=ANY($2::uuid[])
+WHERE (p.freshness_target_seconds=0 OR current_setting('gregale.pipeline_worker_protocol',true)='pipeline-operability-v1') AND a.enabled AND a.check_at<=$1 AND a.account_id=ANY($2::uuid[])
 ORDER BY a.check_at,a.pipeline_id FOR UPDATE OF a SKIP LOCKED LIMIT 1
 `
 
@@ -811,13 +811,15 @@ WITH candidate AS (
  AND (lease_until IS NULL OR lease_until<=clock_timestamp())
  ORDER BY retry_at,id FOR UPDATE SKIP LOCKED LIMIT 1
 ) UPDATE data_pipelines p SET lease_token=$1,lease_until=clock_timestamp()+interval '60 seconds'
- FROM candidate c WHERE p.id=c.id RETURNING p.id, p.account_id, p.name, p.source_connection_id, p.database_id, p.tables, p.read_subjects, p.serving_config, p.desired_state, p.state, p.revision, p.observed_revision, p.generation, p.reason, p.tables_ready, p.retained_wal_bytes, p.wal_retention, p.applied_through_at, p.verification_progress, p.reader_change, p.schema_approval, p.schema_change, p.observed_at, p.verification, p.verified_at, p.initialized, p.verify_requested, p.lease_token, p.lease_until, p.retry_at, p.created_at
+ FROM candidate c WHERE p.id=c.id RETURNING p.freshness_target_seconds, p.index_change, p.id, p.account_id, p.name, p.source_connection_id, p.database_id, p.tables, p.read_subjects, p.serving_config, p.desired_state, p.state, p.revision, p.observed_revision, p.generation, p.reason, p.tables_ready, p.retained_wal_bytes, p.wal_retention, p.applied_through_at, p.verification_progress, p.reader_change, p.schema_approval, p.schema_change, p.observed_at, p.verification, p.verified_at, p.initialized, p.verify_requested, p.lease_token, p.lease_until, p.retry_at, p.created_at
 `
 
 func (q *Queries) PipelineClaim(ctx context.Context, db DBTX, leaseToken string) (DataPipeline, error) {
 	row := db.QueryRow(ctx, pipelineClaim, leaseToken)
 	var i DataPipeline
 	err := row.Scan(
+		&i.FreshnessTargetSeconds,
+		&i.IndexChange,
 		&i.ID,
 		&i.AccountID,
 		&i.Name,
@@ -940,7 +942,7 @@ UPDATE data_pipelines SET
  retry_at=clock_timestamp()
 WHERE account_id=$7::text::uuid AND id=$8::text::uuid AND revision=$9 AND state<>'deleted'
  AND (coalesce(reader_change->>'State','')<>'approved' OR $1::bigint=0)
-RETURNING id, account_id, name, source_connection_id, database_id, tables, read_subjects, serving_config, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at
+RETURNING freshness_target_seconds, index_change, id, account_id, name, source_connection_id, database_id, tables, read_subjects, serving_config, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at
 `
 
 type PipelineControlParams struct {
@@ -969,6 +971,8 @@ func (q *Queries) PipelineControl(ctx context.Context, db DBTX, arg PipelineCont
 	)
 	var i DataPipeline
 	err := row.Scan(
+		&i.FreshnessTargetSeconds,
+		&i.IndexChange,
 		&i.ID,
 		&i.AccountID,
 		&i.Name,
@@ -1129,6 +1133,37 @@ func (q *Queries) PipelineFinish(ctx context.Context, db DBTX, arg PipelineFinis
 	return result.RowsAffected(), nil
 }
 
+const pipelineFinishIndex = `-- name: PipelineFinishIndex :execrows
+UPDATE data_pipelines SET index_change=$1::jsonb,lease_token='',lease_until=NULL,retry_at=clock_timestamp()
+WHERE account_id=$2::text::uuid AND id=$3::text::uuid AND revision=$4
+ AND lease_token=$5 AND lease_until>clock_timestamp()
+ AND index_change->>'RequestID'=$6::text AND index_change->>'state' IN ('requested','approved')
+`
+
+type PipelineFinishIndexParams struct {
+	IndexChange []byte
+	AccountID   string
+	ID          string
+	Revision    int64
+	LeaseToken  string
+	RequestID   string
+}
+
+func (q *Queries) PipelineFinishIndex(ctx context.Context, db DBTX, arg PipelineFinishIndexParams) (int64, error) {
+	result, err := db.Exec(ctx, pipelineFinishIndex,
+		arg.IndexChange,
+		arg.AccountID,
+		arg.ID,
+		arg.Revision,
+		arg.LeaseToken,
+		arg.RequestID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pipelineFinishReaders = `-- name: PipelineFinishReaders :execrows
 UPDATE data_pipelines SET serving_config=CASE WHEN reader_change->>'Tenant'='true' THEN jsonb_set(serving_config,'{tenant_access,memberships}',reader_change->'AfterMemberships') ELSE serving_config END,read_subjects=reader_change->'After',reader_change=jsonb_set(reader_change,'{State}','"applied"'),
  lease_token='',lease_until=NULL,retry_at=clock_timestamp()
@@ -1160,7 +1195,7 @@ func (q *Queries) PipelineFinishReaders(ctx context.Context, db DBTX, arg Pipeli
 }
 
 const pipelineGet = `-- name: PipelineGet :one
-SELECT id, account_id, name, source_connection_id, database_id, tables, read_subjects, serving_config, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid AND id=$2::text::uuid
+SELECT freshness_target_seconds, index_change, id, account_id, name, source_connection_id, database_id, tables, read_subjects, serving_config, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid AND id=$2::text::uuid
 `
 
 type PipelineGetParams struct {
@@ -1172,6 +1207,8 @@ func (q *Queries) PipelineGet(ctx context.Context, db DBTX, arg PipelineGetParam
 	row := db.QueryRow(ctx, pipelineGet, arg.AccountID, arg.ID)
 	var i DataPipeline
 	err := row.Scan(
+		&i.FreshnessTargetSeconds,
+		&i.IndexChange,
 		&i.ID,
 		&i.AccountID,
 		&i.Name,
@@ -1208,7 +1245,7 @@ func (q *Queries) PipelineGet(ctx context.Context, db DBTX, arg PipelineGetParam
 }
 
 const pipelineGetByName = `-- name: PipelineGetByName :one
-SELECT id, account_id, name, source_connection_id, database_id, tables, read_subjects, serving_config, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid AND name=$2
+SELECT freshness_target_seconds, index_change, id, account_id, name, source_connection_id, database_id, tables, read_subjects, serving_config, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid AND name=$2
 `
 
 type PipelineGetByNameParams struct {
@@ -1220,6 +1257,8 @@ func (q *Queries) PipelineGetByName(ctx context.Context, db DBTX, arg PipelineGe
 	row := db.QueryRow(ctx, pipelineGetByName, arg.AccountID, arg.Name)
 	var i DataPipeline
 	err := row.Scan(
+		&i.FreshnessTargetSeconds,
+		&i.IndexChange,
 		&i.ID,
 		&i.AccountID,
 		&i.Name,
@@ -1255,20 +1294,47 @@ func (q *Queries) PipelineGetByName(ctx context.Context, db DBTX, arg PipelineGe
 	return i, err
 }
 
+const pipelineIndexIntent = `-- name: PipelineIndexIntent :execrows
+UPDATE data_pipelines SET index_change=$1::jsonb,revision=revision+1,retry_at=clock_timestamp()
+WHERE account_id=$2::text::uuid AND id=$3::text::uuid AND revision=$4
+ AND state<>'deleted' AND desired_state<>'deleted' AND coalesce(index_change->>'state','')<>'approved'
+`
+
+type PipelineIndexIntentParams struct {
+	IndexChange []byte
+	AccountID   string
+	ID          string
+	Revision    int64
+}
+
+func (q *Queries) PipelineIndexIntent(ctx context.Context, db DBTX, arg PipelineIndexIntentParams) (int64, error) {
+	result, err := db.Exec(ctx, pipelineIndexIntent,
+		arg.IndexChange,
+		arg.AccountID,
+		arg.ID,
+		arg.Revision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pipelineInsert = `-- name: PipelineInsert :one
-INSERT INTO data_pipelines(id,account_id,name,source_connection_id,database_id,tables,read_subjects,serving_config)
-VALUES($1::text::uuid,$2::text::uuid,$3,$4::text::uuid,$5::text::uuid,$6,$7,$8) RETURNING id, account_id, name, source_connection_id, database_id, tables, read_subjects, serving_config, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at
+INSERT INTO data_pipelines(id,account_id,name,source_connection_id,database_id,tables,read_subjects,serving_config,freshness_target_seconds)
+VALUES($1::text::uuid,$2::text::uuid,$3,$4::text::uuid,$5::text::uuid,$6,$7,$8,$9) RETURNING freshness_target_seconds, index_change, id, account_id, name, source_connection_id, database_id, tables, read_subjects, serving_config, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at
 `
 
 type PipelineInsertParams struct {
-	ID                 string
-	AccountID          string
-	Name               string
-	SourceConnectionID string
-	DatabaseID         string
-	Tables             []byte
-	ReadSubjects       []byte
-	ServingConfig      []byte
+	ID                     string
+	AccountID              string
+	Name                   string
+	SourceConnectionID     string
+	DatabaseID             string
+	Tables                 []byte
+	ReadSubjects           []byte
+	ServingConfig          []byte
+	FreshnessTargetSeconds int64
 }
 
 func (q *Queries) PipelineInsert(ctx context.Context, db DBTX, arg PipelineInsertParams) (DataPipeline, error) {
@@ -1281,9 +1347,12 @@ func (q *Queries) PipelineInsert(ctx context.Context, db DBTX, arg PipelineInser
 		arg.Tables,
 		arg.ReadSubjects,
 		arg.ServingConfig,
+		arg.FreshnessTargetSeconds,
 	)
 	var i DataPipeline
 	err := row.Scan(
+		&i.FreshnessTargetSeconds,
+		&i.IndexChange,
 		&i.ID,
 		&i.AccountID,
 		&i.Name,
@@ -1819,6 +1888,32 @@ func (q *Queries) PipelineSchemaRefreshStamp(ctx context.Context, db DBTX, appID
 	return err
 }
 
+const pipelineSetFreshness = `-- name: PipelineSetFreshness :execrows
+UPDATE data_pipelines SET freshness_target_seconds=$1,revision=revision+1,retry_at=clock_timestamp()
+WHERE account_id=$2::text::uuid AND id=$3::text::uuid AND revision=$4
+ AND state<>'deleted' AND desired_state<>'deleted'
+`
+
+type PipelineSetFreshnessParams struct {
+	TargetSeconds int64
+	AccountID     string
+	ID            string
+	Revision      int64
+}
+
+func (q *Queries) PipelineSetFreshness(ctx context.Context, db DBTX, arg PipelineSetFreshnessParams) (int64, error) {
+	result, err := db.Exec(ctx, pipelineSetFreshness,
+		arg.TargetSeconds,
+		arg.AccountID,
+		arg.ID,
+		arg.Revision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pipelineSetupByName = `-- name: PipelineSetupByName :one
 SELECT id, account_id, source_connection_id, name, request, mirror_plan, data_api_plan, database_id, mirror_name, pipeline_id, state, phase, reason, revision, lease_token, lease_until, retry_at, updated_at, created_at FROM data_pipeline_setups WHERE account_id=$1::text::uuid AND name=$2
 `
@@ -2300,7 +2395,7 @@ func (q *Queries) PipelineTargetInUse(ctx context.Context, db DBTX, arg Pipeline
 }
 
 const pipelineWorkerProtocol = `-- name: PipelineWorkerProtocol :exec
-SELECT set_config('gregale.pipeline_worker_protocol','customer-serving-v1',true)
+SELECT set_config('gregale.pipeline_worker_protocol','pipeline-operability-v1',true)
 `
 
 func (q *Queries) PipelineWorkerProtocol(ctx context.Context, db DBTX) error {
@@ -2309,7 +2404,7 @@ func (q *Queries) PipelineWorkerProtocol(ctx context.Context, db DBTX) error {
 }
 
 const pipelinesList = `-- name: PipelinesList :many
-SELECT id, account_id, name, source_connection_id, database_id, tables, read_subjects, serving_config, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid ORDER BY (state='deleted'),created_at DESC,id LIMIT $2
+SELECT freshness_target_seconds, index_change, id, account_id, name, source_connection_id, database_id, tables, read_subjects, serving_config, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid ORDER BY (state='deleted'),created_at DESC,id LIMIT $2
 `
 
 type PipelinesListParams struct {
@@ -2327,6 +2422,8 @@ func (q *Queries) PipelinesList(ctx context.Context, db DBTX, arg PipelinesListP
 	for rows.Next() {
 		var i DataPipeline
 		if err := rows.Scan(
+			&i.FreshnessTargetSeconds,
+			&i.IndexChange,
 			&i.ID,
 			&i.AccountID,
 			&i.Name,
