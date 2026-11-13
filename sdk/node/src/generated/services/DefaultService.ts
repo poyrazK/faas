@@ -53,6 +53,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DefaultService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List readiness incident events and notification status
    * Newest logical events first, independently of notification success. Retries update delivery status without adding timeline rows. Omitting scope lists every environment.
@@ -82,7 +83,7 @@ export class DefaultService {
      */
     limit?: number,
   }): CancelablePromise<MCPReadinessIncidentTimeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mcp-readiness-incidents',
       path: {
@@ -129,7 +130,7 @@ export class DefaultService {
      */
     limit?: number,
   }): CancelablePromise<MCPReadinessPolicyHistory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mcp-readiness-policy/history',
       path: {
@@ -170,7 +171,7 @@ export class DefaultService {
      */
     scope?: string,
   }): CancelablePromise<MCPReadinessPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mcp-readiness-policy/history/{revision}',
       path: {
@@ -215,7 +216,7 @@ export class DefaultService {
      */
     toRevision?: string,
   }): CancelablePromise<MCPReadinessPolicyDiff> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mcp-readiness-policy/diff',
       path: {
@@ -259,7 +260,7 @@ export class DefaultService {
      */
     scope?: string,
   }): CancelablePromise<MCPReadinessPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/mcp-readiness-policy/history/{revision}/restore',
       path: {
@@ -296,7 +297,7 @@ export class DefaultService {
      */
     scope?: string,
   }): CancelablePromise<MCPReadinessPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mcp-readiness-policy',
       path: {
@@ -331,7 +332,7 @@ export class DefaultService {
      */
     scope?: string,
   }): CancelablePromise<MCPReadinessPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/mcp-readiness-policy',
       path: {
@@ -361,7 +362,7 @@ export class DefaultService {
      */
     id: string,
   }): CancelablePromise<MCPReadinessSnapshot> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/mcp-readiness',
       path: {
@@ -393,7 +394,7 @@ export class DefaultService {
      */
     mcpProbeAuthorization?: string,
   }): CancelablePromise<MCPReadinessEvidence> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deployments/{id}/mcp-readiness',
       path: {
@@ -428,7 +429,7 @@ export class DefaultService {
     id: string,
     requestBody: MCPReadinessOverrideRequest,
   }): CancelablePromise<MCPReadinessOverride> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deployments/{id}/mcp-readiness-overrides',
       path: {
@@ -455,7 +456,7 @@ export class DefaultService {
      */
     id: string,
   }): CancelablePromise<MCPAdmissionEvidence> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/mcp/admissions/{id}',
       path: {
@@ -494,7 +495,7 @@ export class DefaultService {
      */
     evidence?: string,
   }): CancelablePromise<(MCPCatalogMonitorSnapshot | MCPCatalogReceipt | MCPCatalogMonitorSummary)> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mcp-catalog-monitor',
       path: {
@@ -525,7 +526,7 @@ export class DefaultService {
     slug: string,
     requestBody: MCPCatalogMonitorConfigRequest,
   }): CancelablePromise<MCPCatalogMonitorSnapshot> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/mcp-catalog-monitor',
       path: {
@@ -567,7 +568,7 @@ export class DefaultService {
      */
     outcome?: 'accepted' | 'rejected',
   }): CancelablePromise<MCPAdmissionHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/mcp-admissions',
       path: {
@@ -597,7 +598,7 @@ export class DefaultService {
      */
     offset?: number,
   }): CancelablePromise<MCPOAuthRetirementsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/mcp-oauth-retirements',
       query: {
@@ -624,7 +625,7 @@ export class DefaultService {
     slug: string,
     requestBody: MCPCatalogOAuthRequest,
   }): CancelablePromise<MCPCatalogOAuthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/mcp-catalog-monitor/oauth',
       path: {
@@ -655,7 +656,7 @@ export class DefaultService {
     id: string,
     requestBody: MCPOAuthRetirementAction,
   }): CancelablePromise<MCPOAuthRetirement> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/mcp-oauth-retirements/{id}',
       path: {
@@ -689,7 +690,7 @@ export class DefaultService {
      */
     offset?: number,
   }): CancelablePromise<MCPConnectionHealthSnapshot> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/mcp-connection-health',
       query: {
@@ -718,7 +719,7 @@ export class DefaultService {
     slug: string,
     requestBody: MCPCatalogObservationRequest,
   }): CancelablePromise<MCPCatalogReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/mcp-catalog-monitor/observations',
       path: {
@@ -749,7 +750,7 @@ export class DefaultService {
      */
     requestId: string,
   }): CancelablePromise<FireCronRequestResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/cron-fire-now-requests/{request_id}',
       path: {
@@ -797,7 +798,7 @@ export class DefaultService {
     activityScope: string,
     requestBody: ManagedRealtimeSignalRequest,
   }): CancelablePromise<ManagedRealtimeSignalResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/activity-scopes/{activity_scope}/signals',
       path: {
@@ -851,7 +852,7 @@ export class DefaultService {
     channel: string,
     requestBody: ManagedRealtimeSignalRequest,
   }): CancelablePromise<ManagedRealtimeSignalResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/signals',
       path: {
@@ -911,7 +912,7 @@ export class DefaultService {
      */
     status?: 'pending' | 'paused' | 'published' | 'failed' | 'skipped' | 'canceled',
   }): CancelablePromise<ManagedRealtimeSchedulesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules',
       path: {
@@ -968,7 +969,7 @@ export class DefaultService {
     schedules: Array<ManagedRealtimeScheduleResponse>;
     totals: ManagedRealtimeScheduleTotals;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/groups/{group}/{group_action}',
       path: {
@@ -1029,7 +1030,7 @@ export class DefaultService {
     scheduleId: string,
     requestBody: ManagedRealtimeScheduleRequest,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}',
       path: {
@@ -1077,7 +1078,7 @@ export class DefaultService {
     scheduleId: string,
     requestBody: ManagedRealtimeScheduleUpdate,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}',
       path: {
@@ -1128,7 +1129,7 @@ export class DefaultService {
      */
     expectedVersion: number,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}',
       path: {
@@ -1177,7 +1178,7 @@ export class DefaultService {
     scheduleId: string,
     requestBody: ManagedRealtimeSchedulePauseRequest,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/pause',
       path: {
@@ -1225,7 +1226,7 @@ export class DefaultService {
     scheduleId: string,
     requestBody: ManagedRealtimeSchedulePauseRequest,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/resume',
       path: {
@@ -1286,7 +1287,7 @@ export class DefaultService {
      */
     limit?: number,
   }): CancelablePromise<ManagedRealtimeScheduleHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/history',
       path: {
@@ -1336,7 +1337,7 @@ export class DefaultService {
     scheduleId: string,
     requestBody: ManagedRealtimeScheduleRetryRequest,
   }): CancelablePromise<ManagedRealtimeScheduleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schedules/{schedule_id}/retry',
       path: {
@@ -1398,7 +1399,7 @@ export class DefaultService {
     channel: string,
     requestBody: ManagedRealtimeReducerRequest,
   }): CancelablePromise<ManagedRealtimeReducerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer',
       path: {
@@ -1437,7 +1438,7 @@ export class DefaultService {
      */
     channel: string,
   }): CancelablePromise<ManagedRealtimeReducerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer',
       path: {
@@ -1473,7 +1474,7 @@ export class DefaultService {
      */
     channel: string,
   }): CancelablePromise<any> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/reducer',
       path: {
@@ -1518,7 +1519,7 @@ export class DefaultService {
     version: number,
     requestBody: ManagedRealtimeEventSchemaRequest,
   }): CancelablePromise<ManagedRealtimeEventSchemaResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schemas/{event_type}/{version}',
       path: {
@@ -1570,7 +1571,7 @@ export class DefaultService {
      */
     version: number,
   }): CancelablePromise<ManagedRealtimeEventSchemaResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/schemas/{event_type}/{version}',
       path: {
@@ -1610,7 +1611,7 @@ export class DefaultService {
     channel: string,
     requestBody: ManagedRealtimeChannelBatchRequest,
   }): CancelablePromise<ManagedRealtimeChannelBatchResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish-batch',
       path: {
@@ -1650,7 +1651,7 @@ export class DefaultService {
      */
     channel: string,
   }): CancelablePromise<ManagedRealtimeChannelSnapshotResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot',
       path: {
@@ -1689,7 +1690,7 @@ export class DefaultService {
     channel: string,
     requestBody: ManagedRealtimeChannelSnapshotRequest,
   }): CancelablePromise<ManagedRealtimeChannelSnapshotResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot',
       path: {
@@ -1729,7 +1730,7 @@ export class DefaultService {
      */
     channel: string,
   }): CancelablePromise<any> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/snapshot',
       path: {
@@ -1772,7 +1773,7 @@ export class DefaultService {
      */
     before?: number,
   }): CancelablePromise<Array<ManagedRealtimeNotificationTimelineEvent>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}/timeline',
       path: {
@@ -1818,7 +1819,7 @@ export class DefaultService {
      */
     principal: string,
   }): CancelablePromise<ManagedRealtimeNotificationControlResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}',
       path: {
@@ -1865,7 +1866,7 @@ export class DefaultService {
     principal: string,
     requestBody: ManagedRealtimeNotificationRescheduleRequest,
   }): CancelablePromise<ManagedRealtimeNotificationControlResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/notifications/{message_id}',
       path: {

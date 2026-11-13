@@ -10,6 +10,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class UploadsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Open a resumable upload session.
    * @returns UploadStartResponse Session opened.
@@ -20,7 +21,7 @@ export class UploadsService {
   }: {
     requestBody: UploadStartRequest,
   }): CancelablePromise<UploadStartResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/uploads',
       body: requestBody,
@@ -51,7 +52,7 @@ export class UploadsService {
      */
     id: string,
   }): CancelablePromise<UploadSessionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/uploads/{id}',
       path: {
@@ -82,7 +83,7 @@ export class UploadsService {
     uploadOffset: number,
     requestBody: Blob,
   }): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/uploads/{id}',
       path: {
@@ -116,7 +117,7 @@ export class UploadsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/uploads/{id}',
       path: {
@@ -153,7 +154,7 @@ export class UploadsService {
      */
     deploymentAttemptId?: string,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/uploads/{id}/commit',
       path: {

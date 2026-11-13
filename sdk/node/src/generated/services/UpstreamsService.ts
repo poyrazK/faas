@@ -11,6 +11,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class UpstreamsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List data upstreams on an app.
    * Returns every captured (host_redacted_hash, kind, port) tuple
@@ -47,7 +48,7 @@ export class UpstreamsService {
      */
     deploymentScope?: string,
   }): CancelablePromise<DataUpstreamListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/upstreams',
       path: {
@@ -105,7 +106,7 @@ export class UpstreamsService {
      */
     deploymentScope?: string,
   }): CancelablePromise<DataUpstreamResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/upstreams',
       path: {
@@ -174,7 +175,7 @@ export class UpstreamsService {
      */
     deploymentScope?: string,
   }): CancelablePromise<Array<DataUpstreamHistoryResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/upstreams/history',
       path: {
@@ -220,7 +221,7 @@ export class UpstreamsService {
      */
     id: string,
   }): CancelablePromise<DataUpstreamResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/upstreams/{id}',
       path: {
@@ -254,7 +255,7 @@ export class UpstreamsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/upstreams/{id}',
       path: {
@@ -299,7 +300,7 @@ export class UpstreamsService {
     id: string,
     requestBody: UpdateUpstreamCircuitBreakerRequest,
   }): CancelablePromise<DataUpstreamResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/upstreams/{id}/circuit-breaker',
       path: {
