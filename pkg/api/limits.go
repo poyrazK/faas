@@ -321,6 +321,11 @@ const (
 	SignupAccountsPerDay           = 2_000
 )
 
+// SignupFactsPersonalRetention is how long an account's sign-up address and
+// user agent are kept (ADR-20261113160000). Afterwards meterd clears them;
+// the method, country, network owner and email domain stay with the account.
+const SignupFactsPersonalRetention = 90 * 24 * time.Hour
+
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
 // extends it to MCPLoginKeyIdle from now, never past MCPLoginKeyMaxAge after
 // it was created. A connection unused for a week ends; every one ends within

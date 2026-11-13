@@ -518,6 +518,9 @@ type server struct {
 	// signups caps self-service accounts per address and network a day
 	// (signup_network_limit.go).
 	signups *signupNetworkLimiter
+	// signupGeo resolves a sign-up address to its country and network owner
+	// for the sign-up record (signup_facts.go). nil leaves both empty.
+	signupGeo *signupGeo
 	// loginFailures caps failed password sign-ins per email address across
 	// client addresses (login_failure_limit.go).
 	loginFailures *loginFailureLimiter
