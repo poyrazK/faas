@@ -91,6 +91,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class RealtimeService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read publisher grant and usage metadata
    * Account/app-scoped publisher credential administration. Issuance/rotation/revocation require admin scope and MFA. Plaintext returned once; generic response caching is excluded. Revocation remains available when the endpoint or history preview is disabled.
@@ -110,7 +111,7 @@ export class RealtimeService {
      */
     id: string,
   }): CancelablePromise<Array<RealtimePublisherCredential>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials',
       path: {
@@ -148,7 +149,7 @@ export class RealtimeService {
     id: string,
     requestBody: RealtimePublisherCredentialRequest,
   }): CancelablePromise<RealtimePublisherCredentialIssued> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials',
       path: {
@@ -193,7 +194,7 @@ export class RealtimeService {
     credentialId: string,
     requestBody: RealtimeWorkerCredentialRotationRequest,
   }): CancelablePromise<RealtimePublisherCredentialIssued> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials/{credential_id}/rotate',
       path: {
@@ -237,7 +238,7 @@ export class RealtimeService {
      */
     credentialId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/publish-credentials/{credential_id}/revoke',
       path: {
@@ -281,7 +282,7 @@ export class RealtimeService {
     idempotencyKey: string,
     requestBody: RealtimePublisherMessageRequest,
   }): CancelablePromise<RealtimePublisherPublishResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/realtime/publishers/endpoints/{endpoint_id}/channels/{channel}/publish',
       path: {
@@ -332,7 +333,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<Array<RealtimeWorkerCredential>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials',
       path: {
@@ -381,7 +382,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeWorkerCredentialRequest,
   }): CancelablePromise<RealtimeWorkerCredentialIssued> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials',
       path: {
@@ -437,7 +438,7 @@ export class RealtimeService {
     credentialId: string,
     requestBody: RealtimeWorkerCredentialRotationRequest,
   }): CancelablePromise<RealtimeWorkerCredentialIssued> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/rotate',
       path: {
@@ -492,7 +493,7 @@ export class RealtimeService {
      */
     credentialId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/revoke',
       path: {
@@ -525,7 +526,7 @@ export class RealtimeService {
      */
     groupId: string,
   }): CancelablePromise<RealtimeConsumerGroup> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/realtime/workers/groups/{group_id}',
       path: {
@@ -554,7 +555,7 @@ export class RealtimeService {
      */
     groupId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/realtime/workers/groups/{group_id}',
       path: {
@@ -600,7 +601,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeConsumerGroupBatchRequest,
   }): CancelablePromise<RealtimeConsumerGroupBatch> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/batch',
       path: {
@@ -635,7 +636,7 @@ export class RealtimeService {
     groupId: string,
     requestBody: RealtimeWorkerBatchClaimRequest,
   }): CancelablePromise<RealtimeConsumerGroupBatch> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/realtime/workers/groups/{group_id}/claims/batch',
       path: {
@@ -682,7 +683,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupPauseState> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/pause',
       path: {
@@ -727,7 +728,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupPauseState> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/resume',
       path: {
@@ -757,7 +758,7 @@ export class RealtimeService {
      */
     groupId: string,
   }): CancelablePromise<RealtimeConsumerGroupPauseState> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/realtime/workers/groups/{group_id}/pause',
       path: {
@@ -786,7 +787,7 @@ export class RealtimeService {
      */
     groupId: string,
   }): CancelablePromise<RealtimeConsumerGroupPauseState> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/realtime/workers/groups/{group_id}/resume',
       path: {
@@ -830,7 +831,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupDrainState> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/drain',
       path: {
@@ -860,7 +861,7 @@ export class RealtimeService {
      */
     groupId: string,
   }): CancelablePromise<RealtimeConsumerGroupDrainState> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/realtime/workers/groups/{group_id}/drain',
       path: {
@@ -906,7 +907,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeConsumerGroupBatchSettlementRequest,
   }): CancelablePromise<RealtimeConsumerGroupBatchSettlementResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/settle/batch',
       path: {
@@ -943,7 +944,7 @@ export class RealtimeService {
     groupId: string,
     requestBody: RealtimeConsumerGroupBatchSettlementRequest,
   }): CancelablePromise<RealtimeConsumerGroupBatchSettlementResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/realtime/workers/groups/{group_id}/claims/settle/batch',
       path: {
@@ -1005,7 +1006,7 @@ export class RealtimeService {
      */
     limit?: number,
   }): CancelablePromise<RealtimeConsumerGroupDeliveryHistory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/messages/{sequence}/history',
       path: {
@@ -1056,7 +1057,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupCircuitStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/circuit',
       path: {
@@ -1104,7 +1105,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeConsumerGroupCircuitPolicy,
   }): CancelablePromise<RealtimeConsumerGroupCircuitStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/circuit',
       path: {
@@ -1152,7 +1153,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupPriorityStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/priority',
       path: {
@@ -1198,7 +1199,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupMetrics> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/metrics',
       path: {
@@ -1245,7 +1246,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeWorkerHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/heartbeats',
       path: {
@@ -1294,7 +1295,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeWorkerHeartbeatRequest,
   }): CancelablePromise<RealtimeWorkerHeartbeat> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/heartbeats',
       path: {
@@ -1330,7 +1331,7 @@ export class RealtimeService {
     groupId: string,
     requestBody: RealtimeWorkerHeartbeatRequest,
   }): CancelablePromise<RealtimeWorkerHeartbeat> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/realtime/workers/groups/{group_id}/heartbeats',
       path: {
@@ -1376,7 +1377,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupClaimRateStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claim-rate',
       path: {
@@ -1424,7 +1425,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeConsumerGroupClaimRatePolicy,
   }): CancelablePromise<RealtimeConsumerGroupClaimRateStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claim-rate',
       path: {
@@ -1472,7 +1473,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupRetryStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/retry-policy',
       path: {
@@ -1520,7 +1521,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeConsumerGroupRetryPolicyRequest,
   }): CancelablePromise<RealtimeConsumerGroupRetryStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/retry-policy',
       path: {
@@ -1568,7 +1569,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupRetentionPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letter-retention',
       path: {
@@ -1616,7 +1617,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeConsumerGroupRetentionRequest,
   }): CancelablePromise<RealtimeConsumerGroupRetentionPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letter-retention',
       path: {
@@ -1664,7 +1665,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroupLagAlert> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/lag-alert',
       path: {
@@ -1712,7 +1713,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeConsumerGroupLagAlertConfig,
   }): CancelablePromise<RealtimeConsumerGroupLagAlert> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/lag-alert',
       path: {
@@ -1747,7 +1748,7 @@ export class RealtimeService {
     groupId: string,
     requestBody: RealtimeWorkerClaimRequest,
   }): CancelablePromise<RealtimeConsumerGroupClaim> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/realtime/workers/groups/{group_id}/claims',
       path: {
@@ -1780,7 +1781,7 @@ export class RealtimeService {
     groupId: string,
     requestBody: RealtimeConsumerGroupSettlement,
   }): CancelablePromise<RealtimeConsumerGroupSettlementResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/realtime/workers/groups/{group_id}/claims/settle',
       path: {
@@ -1811,7 +1812,7 @@ export class RealtimeService {
      */
     groupId: string,
   }): CancelablePromise<Array<RealtimeConsumerGroupDeadLetter>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/realtime/workers/groups/{group_id}/dead-letters',
       path: {
@@ -1845,7 +1846,7 @@ export class RealtimeService {
      */
     sequence: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/realtime/workers/groups/{group_id}/dead-letters/{sequence}/replay',
       path: {
@@ -1877,7 +1878,7 @@ export class RealtimeService {
     groupId: string,
     requestBody: RealtimeConsumerGroupResyncRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/realtime/workers/groups/{group_id}/resync',
       path: {
@@ -1918,7 +1919,7 @@ export class RealtimeService {
      */
     channel: string,
   }): CancelablePromise<Array<RealtimeConsumerGroup>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups',
       path: {
@@ -1959,7 +1960,7 @@ export class RealtimeService {
     channel: string,
     requestBody: RealtimeConsumerGroupCreateRequest,
   }): CancelablePromise<RealtimeConsumerGroup> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups',
       path: {
@@ -2005,7 +2006,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<RealtimeConsumerGroup> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}',
       path: {
@@ -2050,7 +2051,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}',
       path: {
@@ -2097,7 +2098,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeConsumerGroupClaimRequest,
   }): CancelablePromise<RealtimeConsumerGroupClaim> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims',
       path: {
@@ -2146,7 +2147,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeConsumerGroupSettlement,
   }): CancelablePromise<RealtimeConsumerGroupSettlementResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/claims/settle',
       path: {
@@ -2193,7 +2194,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<Array<RealtimeConsumerGroupDeadLetter>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters',
       path: {
@@ -2268,7 +2269,7 @@ export class RealtimeService {
      */
     limit?: number,
   }): CancelablePromise<Blob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       responseType: 'blob',
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/export',
@@ -2327,7 +2328,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeDeadLetterPreviewRequest,
   }): CancelablePromise<RealtimeDeadLetterPreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/preview',
       path: {
@@ -2375,7 +2376,7 @@ export class RealtimeService {
      */
     group: string,
   }): CancelablePromise<Array<RealtimeReplayJob>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs',
       path: {
@@ -2422,7 +2423,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeReplayJobRequest,
   }): CancelablePromise<RealtimeReplayJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs',
       path: {
@@ -2471,7 +2472,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeReplayJobRequest,
   }): CancelablePromise<RealtimeReplayJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs/dry-run',
       path: {
@@ -2528,7 +2529,7 @@ export class RealtimeService {
      */
     action: 'pause' | 'resume' | 'cancel' | 'start',
   }): CancelablePromise<RealtimeReplayJob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/replay-jobs/{job}/{action}',
       path: {
@@ -2577,7 +2578,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeDeadLetterBulkReplayRequest,
   }): CancelablePromise<RealtimeDeadLetterBulkReplayResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/replay',
       path: {
@@ -2630,7 +2631,7 @@ export class RealtimeService {
      */
     sequence: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/dead-letters/{sequence}/replay',
       path: {
@@ -2678,7 +2679,7 @@ export class RealtimeService {
     group: string,
     requestBody: RealtimeConsumerGroupResyncRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/resync',
       path: {
@@ -2733,7 +2734,7 @@ export class RealtimeService {
      */
     subscription: string,
   }): CancelablePromise<RealtimeAcknowledgement> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/acknowledgement',
       path: {
@@ -2763,7 +2764,7 @@ export class RealtimeService {
    * @throws ApiError
    */
   public static getManagedRealtimeHistoryUsage(): CancelablePromise<ManagedRealtimeHistoryUsageResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/realtime-history-usage',
     });
@@ -2781,7 +2782,7 @@ export class RealtimeService {
      */
     slug: string,
   }): CancelablePromise<Array<ManagedRealtimeEndpointResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints',
       path: {
@@ -2818,7 +2819,7 @@ export class RealtimeService {
     slug: string,
     requestBody: CreateManagedRealtimeEndpointRequest,
   }): CancelablePromise<ManagedRealtimeEndpointResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints',
       path: {
@@ -2858,7 +2859,7 @@ export class RealtimeService {
      */
     id: string,
   }): CancelablePromise<ManagedRealtimeEndpointResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}',
       path: {
@@ -2897,7 +2898,7 @@ export class RealtimeService {
     id: string,
     requestBody: UpdateManagedRealtimeEndpointRequest,
   }): CancelablePromise<ManagedRealtimeEndpointResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}',
       path: {
@@ -2937,7 +2938,7 @@ export class RealtimeService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}',
       path: {
@@ -3000,7 +3001,7 @@ export class RealtimeService {
      */
     cursor?: string,
   }): CancelablePromise<ManagedRealtimeConnectionListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/connections',
       path: {
@@ -3061,7 +3062,7 @@ export class RealtimeService {
      */
     channel: Array<string>,
   }): CancelablePromise<ManagedRealtimeOccupancyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/occupancy',
       path: {
@@ -3123,7 +3124,7 @@ export class RealtimeService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedRealtimeDrainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/connections/drain',
       path: {
@@ -3177,7 +3178,7 @@ export class RealtimeService {
      */
     drainId: string,
   }): CancelablePromise<ManagedRealtimeDrainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}',
       path: {
@@ -3225,7 +3226,7 @@ export class RealtimeService {
     id: string,
     requestBody: RotateManagedRealtimeAuthRequest,
   }): CancelablePromise<RotateManagedRealtimeAuthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate',
       path: {
@@ -3268,7 +3269,7 @@ export class RealtimeService {
     id: string,
     requestBody: RealtimeTicketRequest,
   }): CancelablePromise<RealtimeTicketResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/tickets',
       path: {
@@ -3303,7 +3304,7 @@ export class RealtimeService {
      */
     principal: string,
   }): CancelablePromise<RealtimeTicketsRevokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/tickets',
       path: {
@@ -3345,7 +3346,7 @@ export class RealtimeService {
      */
     ticket: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/tickets/{ticket}',
       path: {
@@ -3385,7 +3386,7 @@ export class RealtimeService {
      */
     principal: string,
   }): CancelablePromise<ManagedRealtimeAccessResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access',
       path: {
@@ -3436,7 +3437,7 @@ export class RealtimeService {
     principal: string,
     requestBody: ManagedRealtimeAccessRequest,
   }): CancelablePromise<ManagedRealtimeAccessResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/{principal}/access',
       path: {
@@ -3481,7 +3482,7 @@ export class RealtimeService {
      */
     id: string,
   }): CancelablePromise<FinalizeManagedRealtimeAuthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize',
       path: {
@@ -3526,7 +3527,7 @@ export class RealtimeService {
     connectionId: string,
     requestBody: ManagedRealtimeMessageRequest,
   }): CancelablePromise<any> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send',
       path: {
@@ -3579,7 +3580,7 @@ export class RealtimeService {
     connectionId: string,
     requestBody?: ManagedRealtimeCloseRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close',
       path: {
@@ -3630,7 +3631,7 @@ export class RealtimeService {
      */
     channel: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}',
       path: {
@@ -3680,7 +3681,7 @@ export class RealtimeService {
      */
     channel: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}',
       path: {
@@ -3739,7 +3740,7 @@ export class RealtimeService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedRealtimePublishResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish',
       path: {
@@ -3799,7 +3800,7 @@ export class RealtimeService {
     channel: string,
     requestBody: ManagedRealtimeRetainedMessageRequest,
   }): CancelablePromise<ManagedRealtimeRetainedMessageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages',
       path: {
@@ -3861,7 +3862,7 @@ export class RealtimeService {
      */
     limit?: number,
   }): CancelablePromise<ManagedRealtimeRetainedHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages',
       path: {
@@ -3912,7 +3913,7 @@ export class RealtimeService {
     id: string,
     requestBody: ManagedRealtimePrincipalMessageRequest,
   }): CancelablePromise<ManagedRealtimePrincipalSendResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals:send',
       path: {
@@ -3963,7 +3964,7 @@ export class RealtimeService {
      */
     principal: string,
   }): CancelablePromise<RealtimeNotificationPreferences> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/preferences',
       path: {
@@ -4016,7 +4017,7 @@ export class RealtimeService {
     principal: string,
     requestBody: RealtimeNotificationPreferences,
   }): CancelablePromise<RealtimeNotificationPreferences> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/preferences',
       path: {
@@ -4064,7 +4065,7 @@ export class RealtimeService {
      */
     id: string,
   }): CancelablePromise<Array<ManagedRealtimePushProvider>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/providers',
       path: {
@@ -4112,7 +4113,7 @@ export class RealtimeService {
      */
     principal: string,
   }): CancelablePromise<Array<ManagedRealtimePushDevice>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/devices',
       path: {
@@ -4163,7 +4164,7 @@ export class RealtimeService {
      */
     principal: string,
   }): CancelablePromise<Array<ManagedRealtimePushDelivery>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/deliveries',
       path: {
@@ -4219,7 +4220,7 @@ export class RealtimeService {
     provider: 'fcm' | 'apns' | 'webpush';
     enabled: boolean;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/providers/{provider}',
       path: {
@@ -4279,7 +4280,7 @@ export class RealtimeService {
   }): CancelablePromise<{
     ok: boolean;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/devices/{device}',
       path: {
@@ -4340,7 +4341,7 @@ export class RealtimeService {
   }): CancelablePromise<{
     ok: boolean;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/push/devices/{device}',
       path: {
@@ -4398,7 +4399,7 @@ export class RealtimeService {
     messageId: string,
     requestBody: ManagedRealtimeMessageMutationRequest,
   }): CancelablePromise<ManagedRealtimeMessageMutationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}',
       path: {
@@ -4452,7 +4453,7 @@ export class RealtimeService {
     messageId: string,
     requestBody: ManagedRealtimeMessageMutationRequest,
   }): CancelablePromise<ManagedRealtimeMessageMutationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages/{message_id}',
       path: {
@@ -4504,7 +4505,7 @@ export class RealtimeService {
      */
     principal: string,
   }): CancelablePromise<ManagedRealtimeReadProgressResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/read-progress',
       path: {
@@ -4558,7 +4559,7 @@ export class RealtimeService {
     principal: string,
     requestBody: ManagedRealtimeReadProgressRequest,
   }): CancelablePromise<ManagedRealtimeReadProgressResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/read-progress',
       path: {
@@ -4614,7 +4615,7 @@ export class RealtimeService {
     messageId: string,
     requestBody: ManagedRealtimeMessageMutationRequest,
   }): CancelablePromise<ManagedRealtimeMessageMutationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/{message_id}',
       path: {
@@ -4670,7 +4671,7 @@ export class RealtimeService {
     messageId: string,
     requestBody: ManagedRealtimeMessageMutationRequest,
   }): CancelablePromise<ManagedRealtimeMessageMutationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/{message_id}',
       path: {
@@ -4719,7 +4720,7 @@ export class RealtimeService {
      */
     principal: string,
   }): CancelablePromise<ManagedRealtimeReadProgressResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/read-progress',
       path: {
@@ -4767,7 +4768,7 @@ export class RealtimeService {
     principal: string,
     requestBody: ManagedRealtimeReadProgressRequest,
   }): CancelablePromise<ManagedRealtimeReadProgressResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox/read-progress',
       path: {
@@ -4830,7 +4831,7 @@ export class RealtimeService {
      */
     consumer?: string,
   }): CancelablePromise<ManagedRealtimeInboxResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/inbox',
       path: {
@@ -4879,7 +4880,7 @@ export class RealtimeService {
      */
     messageId: string,
   }): CancelablePromise<ManagedRealtimePrincipalReceiptResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/realtime/endpoints/{id}/principals/messages/{message_id}/receipt',
       path: {

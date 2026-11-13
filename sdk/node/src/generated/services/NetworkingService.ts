@@ -17,6 +17,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class NetworkingService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read the public keys used to verify service-caller assertions.
    * Unauthenticated, rate-limited JWKS containing only public Ed25519 keys.
@@ -28,7 +29,7 @@ export class NetworkingService {
    * @throws ApiError
    */
   public static getServiceCallerKeys(): CancelablePromise<ServiceCallerJWKSet> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/service-caller-keys',
       errors: {
@@ -47,7 +48,7 @@ export class NetworkingService {
    * @throws ApiError
    */
   public static listPrivateNetworks(): CancelablePromise<PrivateNetworkListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/networks',
       errors: {
@@ -71,7 +72,7 @@ export class NetworkingService {
   }: {
     requestBody: CreatePrivateNetworkRequest,
   }): CancelablePromise<PrivateNetwork> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/networks',
       body: requestBody,
@@ -98,7 +99,7 @@ export class NetworkingService {
      */
     id: string,
   }): CancelablePromise<PrivateNetwork> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/networks/{id}',
       path: {
@@ -124,7 +125,7 @@ export class NetworkingService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/networks/{id}',
       path: {
@@ -156,7 +157,7 @@ export class NetworkingService {
      */
     id: string,
   }): CancelablePromise<PrivateNetworkMembersResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/networks/{id}/members',
       path: {
@@ -186,7 +187,7 @@ export class NetworkingService {
      */
     id: string,
   }): CancelablePromise<PrivateNetworkPeeringListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/networks/{id}/peerings',
       path: {
@@ -219,7 +220,7 @@ export class NetworkingService {
     id: string,
     requestBody: CreatePrivateNetworkPeeringRequest,
   }): CancelablePromise<PrivateNetworkPeering> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/networks/{id}/peerings',
       path: {
@@ -255,7 +256,7 @@ export class NetworkingService {
      */
     peerId: string,
   }): CancelablePromise<PrivateNetworkPeering> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/networks/{id}/peerings/{peer_id}',
       path: {
@@ -287,7 +288,7 @@ export class NetworkingService {
      */
     peerId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/networks/{id}/peerings/{peer_id}',
       path: {
@@ -322,7 +323,7 @@ export class NetworkingService {
     id: string,
     requestBody: UpdatePrivateNetworkPolicyRequest,
   }): CancelablePromise<PrivateNetwork> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/networks/{id}/policy',
       path: {
@@ -356,7 +357,7 @@ export class NetworkingService {
      */
     slug: string,
   }): CancelablePromise<AppPrivateNetworkAttachmentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/network/private',
       path: {
@@ -392,7 +393,7 @@ export class NetworkingService {
     slug: string,
     requestBody: AppPrivateNetworkAttachmentRequest,
   }): CancelablePromise<AppPrivateNetworkAttachmentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/network/private',
       path: {
@@ -422,7 +423,7 @@ export class NetworkingService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/network/private',
       path: {

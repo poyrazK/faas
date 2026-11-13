@@ -7,6 +7,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class NetworkingService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read the public keys used to verify service-caller assertions.
    * Unauthenticated, rate-limited JWKS containing only public Ed25519 keys.
@@ -18,7 +19,7 @@ export class NetworkingService {
    * @throws ApiError
    */
   public static getServiceCallerKeys(): CancelablePromise<ServiceCallerJWKSet> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/service-caller-keys',
       errors: {

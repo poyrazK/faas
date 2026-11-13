@@ -23,6 +23,7 @@ import type { ExecutionArtifactGrantResponse } from './generated/models/Executio
 import type { RevokeExecutionArtifactGrantResponse } from './generated/models/RevokeExecutionArtifactGrantResponse.js';
 import { FaaSClient as BaseFaaSClient } from './client.js';
 
+/** @deprecated Use createClient from '@gregale/sdk-node/preview' and its service namespaces. */
 export class FaaSClient extends BaseFaaSClient {
   /** Read this account's Runs admission contract and plan limits. The result
    *  does not indicate scheduler or runtime image readiness. */
