@@ -244,9 +244,11 @@ can ask what the change would cost: `gregale_plan_scale` and
 `gregale app <slug> scale --plan` show the added cost, the budget left and
 whether a person would be asked first. Sending a request with the header
 `Gregale-Agent-Preview: budget` does the same for any client; Gregale prices
-it as the real request and changes nothing. Previews work on app settings
-(`PATCH /v1/apps/{slug}`), scaling and prewarm; other routes refuse the
-header. An organization can cap every agent acting in it; the lower
+it as the real request and changes nothing. Previews work on every change
+the budget prices: app settings, scaling, prewarm, creating an app, a
+deployment's `min_instances`, managed Postgres create, compute policy,
+resize and restore, and creating, cloning or branching a project
+environment. Other routes refuse the header. An organization can cap every agent acting in it; the lower
 of the agent's budget and the ceiling applies:
 
 ```sh
