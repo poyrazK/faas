@@ -593,7 +593,7 @@ func liveIncompleteReason(live jobTaskLogFollow, err error) string {
 	case live.Reason != "":
 		return live.Reason
 	case err != nil:
-		return err.Error()
+		return redactErrorText(err.Error())
 	default:
 		return "the stream closed early"
 	}

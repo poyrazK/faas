@@ -34,6 +34,8 @@ cannot prevent duplicates. If metadata disappears on a resumed stream, stop
 before printing unidentifiable output. Output-write failures are final and do
 not advance the cursor. Close and drain each decoder before reconnecting so a
 buffered parser cannot be left blocked after cancellation or a write failure.
+Reconnect failures use the CLI's credential redactor before appearing in an
+incomplete-output warning.
 
 ## Scope and verification
 

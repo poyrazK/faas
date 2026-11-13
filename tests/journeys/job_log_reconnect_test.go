@@ -33,12 +33,14 @@ func TestJobLogReconnectIsolatedAPI(t *testing.T) {
 	end := "event: end\ndata: {\"reason\":\"task_finished\"}\n\n"
 	for _, tc := range []struct {
 		name, replay, output, warning string
+		status                        int
 	}{
-		{"recovered", first + jobReconnectFrame("vm-a", 4, "stdout", "four") + end, "one\nthree\nfour\n", ""},
-		{"expired printed prefix", "event: gap\ndata: {\"reason\":\"seq_below_retained\"}\n\n" + jobReconnectFrame("vm-a", 3, "stdout", "three") + jobReconnectFrame("vm-a", 4, "stdout", "four") + end, "one\nthree\nfour\n", ""},
-		{"gateway reconnect during replay", jobReconnectFrame("vm-a", 2, "stderr", "two") + "event: gap\ndata: {\"reason\":\"seq_below_retained\"}\n\n" + jobReconnectFrame("vm-a", 3, "stdout", "three") + jobReconnectFrame("vm-a", 4, "stdout", "four") + end, "one\nthree\nfour\n", ""},
-		{"attempt changed", jobReconnectFrame("vm-b", 1, "stdout", "new attempt") + end, "one\nthree\nnew attempt\n", "attempt changed while reconnecting"},
-		{"empty resumed attempt", end, "one\nthree\n", "did not identify its attempt"},
+		{name: "recovered", replay: first + jobReconnectFrame("vm-a", 4, "stdout", "four") + end, output: "one\nthree\nfour\n"},
+		{name: "expired printed prefix", replay: "event: gap\ndata: {\"reason\":\"seq_below_retained\"}\n\n" + jobReconnectFrame("vm-a", 3, "stdout", "three") + jobReconnectFrame("vm-a", 4, "stdout", "four") + end, output: "one\nthree\nfour\n"},
+		{name: "gateway reconnect during replay", replay: jobReconnectFrame("vm-a", 2, "stderr", "two") + "event: gap\ndata: {\"reason\":\"seq_below_retained\"}\n\n" + jobReconnectFrame("vm-a", 3, "stdout", "three") + jobReconnectFrame("vm-a", 4, "stdout", "four") + end, output: "one\nthree\nfour\n"},
+		{name: "attempt changed", replay: jobReconnectFrame("vm-b", 1, "stdout", "new attempt") + end, output: "one\nthree\nnew attempt\n", warning: "attempt changed while reconnecting"},
+		{name: "empty resumed attempt", replay: end, output: "one\nthree\n", warning: "did not identify its attempt"},
+		{name: "refused reconnect is redacted", replay: `{"status":401,"code":"unauthorized","title":"Unauthorized","detail":"reconnect refused token=fp_job-log-private"}`, output: "one\nthree\n", warning: "reconnect refused", status: http.StatusUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls atomic.Int32
@@ -48,10 +50,16 @@ func TestJobLogReconnectIsolatedAPI(t *testing.T) {
 					w.WriteHeader(http.StatusBadRequest)
 					return
 				}
-				w.Header().Set("Content-Type", "text/event-stream")
 				if calls.Add(1) == 1 {
+					w.Header().Set("Content-Type", "text/event-stream")
 					_, _ = io.WriteString(w, first)
 				} else {
+					if tc.status != 0 {
+						w.Header().Set("Content-Type", "application/problem+json")
+						w.WriteHeader(tc.status)
+					} else {
+						w.Header().Set("Content-Type", "text/event-stream")
+					}
 					_, _ = io.WriteString(w, tc.replay)
 				}
 			}))
@@ -63,6 +71,9 @@ func TestJobLogReconnectIsolatedAPI(t *testing.T) {
 			}
 			if tc.warning == "" && bytes.Contains(res.stderr, []byte("incomplete")) || tc.warning != "" && !bytes.Contains(res.stderr, []byte(tc.warning)) {
 				t.Fatalf("incorrect completeness warning: %s", res.stderr)
+			}
+			if bytes.Contains(res.stderr, []byte("fp_job-log-private")) {
+				t.Fatal("reconnect warning exposed a credential")
 			}
 		})
 	}
