@@ -34,3 +34,27 @@ Prefer additive changes and expand/contract deployments. Intentional breaking
 changes require the existing fingerprint-bound approval. Keep SQL, generated
 types, authorization scenarios and reviewed approvals together in version control.
 See the [complete coordinated workflow](../data-api.md#coordinated-hosted-schema-updates).
+
+## Migration and local-output boundaries
+
+The runner owns the schema/ledger transaction and advisory lock. Migration SQL
+must not contain top-level BEGIN, COMMIT, ROLLBACK, savepoint commands or other
+transaction control. Preflight checks all files before running migration SQL;
+comments, quoted values and function bodies remain valid. A later SQL failure
+rolls schema and ledger changes back together. Standard-conforming strings are
+restored before each file is parsed.
+
+Migration inputs must be regular files, with no symlinks or named pipes, within
+the existing 4,096-file / 16 MiB aggregate limits. Loading observes cancellation,
+rejects files changed during reading, and computes checksums from original UTF-8
+bytes. Types and behavior output must remain outside the migration tree and
+cannot alias a migration through a symlink or hardlink. Add a new migration
+instead of replacing applied SQL with generated output.
+
+After changing a hooked table's key names, schema/table identity or excluded
+columns, re-enable its hook with the current relation and intended payload and
+exclusions. Capture fails with SQLSTATE 55000 until metadata agrees. Apply
+`hooks sql --upgrade` to update both enable and capture functions; INCLUDE
+columns are never primary-key attributes. Historical queued events retain their
+captured schema meaning; review/discard malformed events from an affected old
+installation before resuming publication.

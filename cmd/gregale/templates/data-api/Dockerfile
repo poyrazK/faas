@@ -6,6 +6,6 @@ WORKDIR /app
 COPY --from=postgrest /bin/postgrest /usr/local/bin/postgrest
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
-COPY config.mjs access.mjs server.mjs openapi31.mjs types.mjs type-render.mjs logging.mjs timing.mjs database-timing.mjs refresh.mjs refresh-rotation.mjs admission.mjs health.mjs pool.mjs deadline.mjs sql-deadline.mjs response-limit.mjs shared-budget.mjs rate-limit.mjs user-concurrency.mjs connection-observations.mjs usage.mjs storage.mjs storage-sessions.mjs engine.mjs changes.mjs hooks-worker.mjs runtime-version.json ./
+COPY config.mjs access.mjs server.mjs openapi31.mjs types.mjs type-render.mjs logging.mjs timing.mjs database-timing.mjs refresh.mjs refresh-rotation.mjs admission.mjs health.mjs pool.mjs deadline.mjs sql-deadline.mjs response-limit.mjs shared-budget.mjs rate-limit.mjs user-concurrency.mjs connection-observations.mjs usage.mjs storage.mjs storage-sessions.mjs data-maintenance.mjs engine.mjs changes.mjs hooks-worker.mjs runtime-version.json ./
 EXPOSE 8080
 CMD ["node", "server.mjs"]

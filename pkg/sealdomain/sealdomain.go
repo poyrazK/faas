@@ -37,6 +37,10 @@ const (
 	Delivery Domain = "delivery"
 	Control  Domain = "control"
 	Account  Domain = "account"
+	// Neon holds the per-project Neon API keys (ADR-20261112160000 §3).
+	// neond seals and opens them on the control plane; apid, which asks
+	// neond to call Neon, never holds the identity.
+	Neon Domain = "neon"
 
 	// Dedicated identities that predate the registry (ADR-1737, ADR
 	// 20261016151947, ADR-1591). They are listed so every sealed column has
@@ -162,6 +166,12 @@ var registry = []Spec{
 		cols("notification_channels", "target_sealed"),
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),
+	)},
+	// Per-project Neon API keys (ADR-20261112160000 §3). neond seals each
+	// key to this domain alone and is its only reader: the table is new, so
+	// there is no fleet copy.
+	{Domain: Neon, Readers: []string{"neond"}, Roles: cpOnly, Wired: true, Columns: join(
+		cols("neon_project_keys", "sealed_key"),
 	)},
 	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("object_storage_s3_credentials", "secret_sealed"),

@@ -2278,6 +2278,16 @@ func CapabilitiesWithReleasePhase(enabled bool) *httptest.ResponseRecorder {
 
 // CapabilitiesWithWorkloadVerifier answers GET /v1/capabilities for a Scale
 // account with the cluster workload-identity verifier set or nil.
+// CapabilitiesWithInstallationGates runs GET /v1/capabilities for a Scale
+// account with the given installation gates.
+func CapabilitiesWithInstallationGates(crashSnapshots, forks, profiling bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	s := &server{crashSnapshotsEnabled: crashSnapshots, appForksEnabled: forks}
+	s.profileCaptures.Enabled = profiling
+	s.getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
+	return recorder
+}
+
 func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	(&server{workloadVerifier: verifier}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
@@ -2489,5 +2499,11 @@ func ProjectEnvironmentPlanURLs(t *testing.T) (string, map[string]string, api.Pl
 
 // ProjectEnvironmentWorkloadURL exposes the environment URL builder.
 var ProjectEnvironmentWorkloadURL = projectEnvironmentWorkloadURL
+
+// PlatformOwnedDomain reports the apps/platform namespace check for a server
+// with the given domains.
+func PlatformOwnedDomain(apps, platform, domain string) bool {
+	return (&server{domain: apps, platformDomain: platform}).platformOwnedDomain(domain)
+}
 
 var FinancialBudgetProblem = financialBudgetProblem

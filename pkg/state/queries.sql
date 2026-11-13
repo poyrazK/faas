@@ -4085,6 +4085,30 @@ SELECT summary.requests,
   FROM summary
  CROSS JOIN cpu_usage;
 
+-- name: RequestTelemetryKnownServerErrors :one
+-- A release's 5xx responses on method+route+status triples its predecessor
+-- also answered in the baseline window (Hunt 34 H34-17). The first-wake 5xx
+-- guard and the post-release watch's quiet-predecessor bar leave them out,
+-- so a route that already failed before the release cannot roll it back.
+-- Both windows use request_telemetry_app_dep_received_idx.
+WITH known AS (
+    SELECT DISTINCT method, route, status
+      FROM request_telemetry
+     WHERE app_id = sqlc.arg('app_id')::uuid
+       AND deployment_id = sqlc.arg('baseline_id')::uuid
+       AND received_at >= sqlc.arg('baseline_since')::timestamptz
+       AND received_at < sqlc.arg('baseline_until')::timestamptz
+       AND status >= 500 AND status < 600
+)
+SELECT COALESCE(SUM(r.count::bigint), 0)::bigint AS known_server_errors
+  FROM request_telemetry AS r
+  JOIN known AS k ON k.method = r.method AND k.route = r.route AND k.status = r.status
+ WHERE r.app_id = sqlc.arg('app_id')::uuid
+   AND r.deployment_id = sqlc.arg('release_id')::uuid
+   AND r.received_at >= sqlc.arg('release_since')::timestamptz
+   AND r.received_at < sqlc.arg('release_until')::timestamptz
+   AND r.status >= 500 AND r.status < 600;
+
 -- name: RequestTelemetrySharedRouteLatency :one
 -- Release and predecessor p95 over only the method+route pairs both served in
 -- their windows (ADR-1445 amendment 2026-11-10, Hunt 32 H32-33). The
@@ -10056,7 +10080,13 @@ SELECT jsonb_build_object(
     'AccountID', account_id,
     'ProjectID', project_id,
     'Slug', slug
-)::jsonb AS data FROM project_environments WHERE id = sqlc.arg(environment_id)::uuid;
+)::jsonb AS data FROM project_environments
+-- A branch's slot names the environment of the branch holding it
+-- (ADR-20261031193635 stable branch URLs).
+WHERE id = sqlc.arg(environment_id)::uuid
+   OR id = (SELECT environment_id FROM project_environment_branches WHERE slot_id = sqlc.arg(environment_id)::uuid)
+ORDER BY (id = sqlc.arg(environment_id)::uuid) DESC
+LIMIT 1;
 
 -- name: ReadPublicHostEnvironmentPolicy :one
 WITH policy AS (SELECT jsonb_build_object(
@@ -30169,3 +30199,13 @@ WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
   AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key;
+
+-- name: InsertInvocationSend :exec
+-- ADR-20261112160000: the app that sent this invocation with send(), and the
+-- app its completion goes to, written with the invocation row.
+INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id)
+VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(on_complete_app_id)::uuid);
+
+-- name: GetInvocationSend :one
+SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
+FROM invocation_sends WHERE invocation_id = sqlc.arg(invocation_id)::uuid;

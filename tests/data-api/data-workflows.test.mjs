@@ -32,7 +32,7 @@ test('background jobs, immutable exports, behavior replays and scheduled hook dr
   await admin.query(`CREATE DATABASE "${database}"`);await admin.query(`CREATE ROLE "${role}" LOGIN NOINHERIT NOBYPASSRLS PASSWORD 'test-only'`)
   const ownerURL=new URL(process.env.DATA_API_TEST_DATABASE_URL);ownerURL.pathname=`/${database}`
   owner=new pg.Client({connectionString:ownerURL.toString()});await owner.connect()
-  for(const migration of ['0001_team_orders.sql','0004_team_order_imports.sql','0013_background_data_jobs.sql'])await owner.query(await readFile(new URL(`../../cmd/gregale/templates/data-api-teams/migrations/sql/${migration}`,import.meta.url),'utf8'))
+  for(const migration of ['0001_team_orders.sql','0004_team_order_imports.sql','0013_background_data_jobs.sql','0014_job_retry_scheduling.sql','0015_job_history_retention.sql'])await owner.query(await readFile(new URL(`../../cmd/gregale/templates/data-api-teams/migrations/sql/${migration}`,import.meta.url),'utf8'))
   for(const file of ['change-hooks.sql','change-hooks-status.sql'])await owner.query((await readFile(new URL(file,runtime),'utf8')).replaceAll('{{schema}}','api').replaceAll('{{backlog_max}}','100000'))
   await owner.query(`INSERT INTO api.team_members VALUES ('a','alice','owner'),('a','amy','admin'),('b','bob','owner');
     CREATE TABLE api.precision_values(id bigint, amount numeric, payload jsonb); ALTER TABLE api.precision_values ENABLE ROW LEVEL SECURITY;
@@ -115,10 +115,36 @@ test('background jobs, immutable exports, behavior replays and scheduled hook dr
   assert.equal(failure.code,'42501');assert.equal(failure.first_row,1)
   const recovered=randomUUID();await call(alice,'start_team_order_job',{operation_id:recovered,team_id:'a',job_kind:'export'})
   const lease=(await call(backend,'claim_team_order_job',{}))[0]
-  await owner.query("UPDATE api.team_order_jobs SET leased_until=clock_timestamp()-interval '1 second' WHERE id=$1",[recovered])
+  await owner.query("UPDATE api.team_order_jobs SET leased_until=clock_timestamp()-interval '1 second',next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=$1",[recovered])
   await runDataJobs({url,key,log:()=>{}})
   const reclaimed=(await owner.query('SELECT * FROM api.team_order_jobs WHERE id=$1',[recovered])).rows[0]
   assert.equal(reclaimed.state,'completed');assert.notEqual(reclaimed.lease_token,lease.lease_token)
+
+  // DAPI003: a committed partial batch with a lost response is deferred;
+  // newer work proceeds, then the old import resumes at its saved offset.
+  const retryImport=randomUUID(),retryJob=randomUUID(),newJob=randomUUID(),retryItems=Array.from({length:25},()=>({id:randomUUID(),total_cents:2,status:'draft'}))
+  await call(alice,'start_team_order_import_once',{operation_id:retryImport,team_id:'a',source_label:'retry.csv',items:retryItems})
+  await call(alice,'start_team_order_job',{operation_id:retryJob,team_id:'a',job_kind:'import',source_import:retryImport})
+  await call(alice,'start_team_order_job',{operation_id:newJob,team_id:'a',job_kind:'export'})
+  let lost=false
+  const retryReport=await runDataJobs({url,key,log:()=>{},fetchImpl:async(target,init)=>{
+    const response=await fetch(target,init)
+    if(String(target).endsWith('advance_team_order_job')&&JSON.parse(init.body).job_id===retryJob&&!lost){lost=true;await response.arrayBuffer();throw new TypeError('response lost after commit')}
+    return response
+  }})
+  assert.deepEqual(retryReport,{completed:1,failed:0})
+  const deferred=(await owner.query('SELECT * FROM api.team_order_jobs WHERE id=$1',[retryJob])).rows[0]
+  assert.equal(deferred.state,'queued');assert.equal(deferred.processed,20);assert.equal(deferred.attempts,1)
+  assert.equal((await owner.query('SELECT state FROM api.team_order_jobs WHERE id=$1',[newJob])).rows[0].state,'completed')
+  await owner.query("UPDATE api.team_order_jobs SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=$1",[retryJob])
+  assert.deepEqual(await runDataJobs({url,key,log:()=>{}}),{completed:1,failed:0})
+  assert.equal((await owner.query('SELECT count(*)::int AS n FROM api.team_orders WHERE id=ANY($1::uuid[])',[retryItems.map(item=>item.id)])).rows[0].n,25)
+  const blocked=randomUUID();await call(alice,'start_team_order_job',{operation_id:blocked,team_id:'a',job_kind:'export'})
+  await owner.query('UPDATE api.team_order_jobs SET attempts=8 WHERE id=$1',[blocked])
+  assert.deepEqual(await runDataJobs({url,key,log:()=>{}}),{completed:0,failed:1})
+  assert.equal((await owner.query('SELECT state FROM api.team_order_jobs WHERE id=$1',[blocked])).rows[0].state,'blocked')
+  await call(alice,'resume_team_order_job',{job_id:blocked})
+  assert.deepEqual(await runDataJobs({url,key,log:()=>{}}),{completed:1,failed:0})
 
   await owner.query("SELECT gregale_hooks.enable('api.team_orders','keys')")
   await owner.query("INSERT INTO api.team_orders(id,tenant_id,created_by,total_cents) VALUES($1,'a','alice',1)",[randomUUID()])

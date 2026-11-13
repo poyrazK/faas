@@ -41,29 +41,33 @@ type beginFunc func(ctx context.Context, p *Pending, r *http.Request)
 // routes are the agent writes Gregale can undo, or knows it cannot, by
 // route pattern. A write on any other route is recorded as not undoable.
 var routes = map[string]beginFunc{
-	"PATCH /v1/apps/{slug}":                       beginAppSettings,
-	"POST /v1/apps/{slug}/scaling":                beginScaling,
-	"POST /v1/apps/{slug}/prewarm":                beginPrewarm,
-	"PUT /v1/apps/{slug}/env/{key}":               beginEnv,
-	"DELETE /v1/apps/{slug}/env/{key}":            beginEnv,
-	"POST /v1/apps/{slug}/env/batch":              beginEnv,
-	"DELETE /v1/apps/{slug}":                      beginRestore,
-	"DELETE /v1/postgres/databases/{id}":          beginRestore,
-	"DELETE /v1/crons/{id}":                       beginRecreate,
-	"DELETE /v1/domains/{domain}":                 beginRecreate,
-	"DELETE /v1/apps/{slug}/buckets/{bucket}":     beginBucketDelete,
-	"POST /v1/apps":                               beginCreate,
-	"POST /v1/apps/{slug}/buckets":                beginCreate,
-	"POST /v1/crons":                              beginCreate,
-	"POST /v1/domains":                            beginCreate,
-	"POST /v1/postgres/databases":                 beginCreate,
-	"POST /v1/apps/{slug}/deployments":            beginDeploy,
-	"POST /v1/apps/{slug}/deployments/source-ref": beginDeploy,
-	"POST /v1/apps/{slug}/deployments/dev-source": beginDeploy,
-	"POST /v1/apps/{slug}/rollback":               beginDeploy,
-	"PUT /v1/apps/{slug}/secrets/{key}":           beginSecret,
-	"DELETE /v1/apps/{slug}/secrets/{key}":        beginSecret,
-	"POST /v1/apps/{slug}/secrets/{key}/rotate":   beginSecret,
+	"PATCH /v1/apps/{slug}":                                  beginAppSettings,
+	"POST /v1/apps/{slug}/scaling":                           beginScaling,
+	"POST /v1/apps/{slug}/prewarm":                           beginPrewarm,
+	"PUT /v1/apps/{slug}/env/{key}":                          beginEnv,
+	"DELETE /v1/apps/{slug}/env/{key}":                       beginEnv,
+	"POST /v1/apps/{slug}/env/batch":                         beginEnv,
+	"DELETE /v1/apps/{slug}":                                 beginRestore,
+	"DELETE /v1/postgres/databases/{id}":                     beginRestore,
+	"DELETE /v1/crons/{id}":                                  beginRecreate,
+	"DELETE /v1/domains/{domain}":                            beginRecreate,
+	"DELETE /v1/apps/{slug}/buckets/{bucket}":                beginBucketDelete,
+	"POST /v1/apps":                                          beginCreate,
+	"POST /v1/apps/{slug}/buckets":                           beginCreate,
+	"POST /v1/crons":                                         beginCreate,
+	"POST /v1/domains":                                       beginCreate,
+	"POST /v1/postgres/databases":                            beginCreate,
+	"POST /v1/apps/{slug}/deployments":                       beginDeploy,
+	"POST /v1/apps/{slug}/deployments/source-ref":            beginDeploy,
+	"POST /v1/apps/{slug}/deployments/dev-source":            beginDeploy,
+	"POST /v1/apps/{slug}/rollback":                          beginDeploy,
+	"PATCH /v1/deployments/{id}/traffic":                     beginTraffic,
+	"POST /v1/deployments/{id}/promote":                      beginTraffic,
+	"POST /v1/deployments/{id}/promote-with-application-ack": beginTraffic,
+	"POST /v1/deployments/{id}/canary/advance":               beginCanaryAdvance,
+	"PUT /v1/apps/{slug}/secrets/{key}":                      beginSecret,
+	"DELETE /v1/apps/{slug}/secrets/{key}":                   beginSecret,
+	"POST /v1/apps/{slug}/secrets/{key}/rotate":              beginSecret,
 }
 
 // uncaptured are an agent's undo requests themselves: planning changes
@@ -416,11 +420,20 @@ func beginEnv(ctx context.Context, p *Pending, r *http.Request) {
 	default:
 		p.summary = "Changed env vars of app " + slug
 	}
-	// A guarded rollback names its target; a named environment's id is not
-	// readable here yet, so only the app's own variables are undone.
+	// A guarded rollback names its target: the app, and for a named
+	// environment its id, which only the lookup can read.
+	envID := ""
 	if scope := r.URL.Query().Get("scope"); scope != "" && scope != "default" {
-		p.reason = "Gregale cannot undo an environment's env vars yet"
-		return
+		if p.e.Lookup == nil {
+			p.reason = "Gregale cannot undo an environment's env vars here"
+			return
+		}
+		id, err := p.e.Lookup.EnvironmentID(ctx, p.acct, slug, scope)
+		if err != nil || id == "" {
+			p.reason = reasonCapture
+			return
+		}
+		envID = id
 	}
 	revisions := revisionsPath(appPath(r), r.URL.Query())
 	before, ok := p.newestRevision(ctx, revisions)
@@ -455,7 +468,11 @@ func beginEnv(ctx context.Context, p *Pending, r *http.Request) {
 		if after == before {
 			return nil, nil, reasonNothing
 		}
-		inv := &Inverse{Method: http.MethodPost, Path: rollback, Body: mustJSON(map[string]any{"revision": before, "expected_app_id": appID})}
+		restore := map[string]any{"revision": before, "expected_app_id": appID}
+		if envID != "" {
+			restore["expected_environment_id"] = envID
+		}
+		inv := &Inverse{Method: http.MethodPost, Path: rollback, Body: mustJSON(restore)}
 		return inv, &Check{Kind: CheckConfig, Path: revisions, AfterRevision: after}, ""
 	}
 }
