@@ -674,6 +674,19 @@
     - faas-schedd
     - faas-apid
 
+# ADR-20261112114642: meterd probes customers' synthetic checks at
+# <slug>.<apps domain> (ADR-748). Without this it fell back to gregale.dev,
+# which after the apps-domain move is an alias that redirect mode answers
+# with a 308 instead of the app.
+- name: control_plane_service — install apps-domain drop-in for meterd
+  notify: restart faas-meterd
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-apps-domain.conf.j2
+    dest: /etc/systemd/system/faas-meterd.service.d/99-faas-apps-domain.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # faas_apid_app_errors_listen (apid, the LISTENER) and
 # faas_gatewayd_app_errors_target (gatewayd-internal, the CLIENT) are a pair.
 # Setting only the client is silent and permanent: gatewayd-internal dials a

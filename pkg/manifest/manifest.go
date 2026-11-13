@@ -1544,6 +1544,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PrivateDNS.validate()...)
 	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
 	errs = append(errs, m.PublicEdge.validate(m.Fleet.Hosts)...)
+	errs = append(errs, m.validateDirectEntryOffPlatformDomain()...)
 	errs = append(errs, m.HotPath.validate(m.PublicEdge)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
@@ -1762,6 +1763,57 @@ func (m *Manifest) validateDynamicCompute() Errors {
 // declare an explicit private resolver adapter. Without this gate a typo in
 // the deployment shape can silently fall through to public DNS, which is
 // especially dangerous when the public zone is managed by Cloudflare.
+// validateDirectEntryOffPlatformDomain keeps the platform domain off direct
+// entry once apps have their own domain (ADR-20261112114642, R8-6). Every
+// compute node holds the direct-entry certificate's key, so a name under the
+// platform domain there would let a compromised node answer for the site,
+// dashboard, API (`api.`), object storage (`s3.`) or operations host with a
+// browser-trusted certificate. Old app hosts under the platform domain stay
+// reachable as an alias through the proxied control-plane path, which serves
+// the Cloudflare-only Origin CA certificate.
+//
+// While the platform domain is the apps domain (one shared domain, the
+// pilot's layout) the split is not possible and nothing is refused.
+func (m *Manifest) validateDirectEntryOffPlatformDomain() Errors {
+	edge := m.PublicEdge
+	if edge.DNS == nil {
+		return nil
+	}
+	// An invalid layout is DNS.validate's error; there is no split to guard.
+	d, layoutErr := hostidentity.NewDomains(m.DNS.PlatformDomain, m.DNS.AppsDomain, m.DNS.DeployDomain, m.DNS.AppsDomainAliases, m.DNS.AppsDomainAliasMode)
+	if layoutErr != nil {
+		return Errors{}
+	}
+	if d.Platform == "" || d.Platform == d.Apps {
+		return nil
+	}
+	under := func(name string) bool {
+		host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), "."))
+		host = strings.TrimPrefix(host, "*.")
+		return host == d.Platform || strings.HasSuffix(host, "."+d.Platform)
+	}
+	var errs Errors
+	if cert := edge.DNS.Certificate; cert != nil {
+		for i, name := range cert.Names {
+			if under(name) {
+				errs = append(errs, Error{fmt.Sprintf("public_edge.dns.certificate.names[%d]", i), fmt.Sprintf(
+					"%q is under the platform domain %s; compute nodes would hold a browser-trusted key for the site, dashboard and API. Name only the apps domain %s", name, d.Platform, d.Apps)})
+			}
+		}
+	}
+	proxied := map[string]bool{}
+	for _, name := range edge.DNS.Proxied {
+		proxied[name] = true
+	}
+	for i, name := range edge.DNS.Names {
+		if under(name) && edge.NoFront() && !proxied[name] {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.names[%d]", i), fmt.Sprintf(
+				"%q is under the platform domain %s and would point straight at the compute nodes; keep it behind Cloudflare (public_edge.dns.proxied) or drop it", name, d.Platform)})
+		}
+	}
+	return errs
+}
+
 func (m *Manifest) validatePrivateResolution() Errors {
 	if len(m.Fleet.Hosts) <= 1 {
 		return nil
