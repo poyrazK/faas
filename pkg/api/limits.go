@@ -211,6 +211,15 @@ const (
 	QueueReceiveWaitersPerAPID    = 4096
 )
 
+// Pull-lease long-polls (wait_seconds > 0) one account and one apid hold at
+// a time; past them a lease does not wait but answers at once (ADR-20261112200000).
+// Each waiter reruns a binding-locking lease transaction on every wake and
+// recheck, so the caps bound idle database work, not just goroutines.
+const (
+	QueueLeaseWaitersPerAccount = 64
+	QueueLeaseWaitersPerAPID    = 4096
+)
+
 // Failed password sign-ins one email address may collect from any client
 // address within LoginFailureEmailWindow. The per-IP auth limit does not stop
 // a botnet guessing one account's password; past this budget every password
