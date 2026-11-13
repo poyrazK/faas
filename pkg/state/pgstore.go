@@ -33242,6 +33242,9 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 			err = sqlc.New().DeleteExternalTriggerDeadLetterAudit(ctx, tx, mustPgUUID(ev.SourceID))
 		}
 	case "webhook_delivery":
+		if err = checkWebhookReplayAdmissionTx(ctx, tx, ev.SourceID); err != nil {
+			return time.Time{}, err
+		}
 		tag, err = tx.Exec(ctx, `
 			update app_webhook_deliveries
 			   set status = 'pending', attempt = 0, last_error = '',

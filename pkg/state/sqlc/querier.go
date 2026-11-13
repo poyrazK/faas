@@ -6814,6 +6814,10 @@ type Querier interface {
 	ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg ReadTrafficSecurityEpochsParams) ([]ReadTrafficSecurityEpochsRow, error)
 	ReadUsableCustomDomainDefaults(ctx context.Context, db DBTX, arg ReadUsableCustomDomainDefaultsParams) ([]ReadUsableCustomDomainDefaultsRow, error)
 	ReadValidRouteLifecycleApprovals(ctx context.Context, db DBTX, arg ReadValidRouteLifecycleApprovalsParams) ([][]byte, error)
+	// A dead webhook delivery replayed from the dead letter re-enters its
+	// account's outbox under the caps an explicit delivery meets (event-driven
+	// hunt #16). The plan resolves as ReadQueueReplayAdmission's does.
+	ReadWebhookReplayAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (ReadWebhookReplayAdmissionRow, error)
 	// Same literal suffix language as ReadPublicHostDomain and WildcardMatchesHost.
 	// Management callers retain the complete row; request snapshots omit secrets.
 	ReadWildcardCustomDomain(ctx context.Context, db DBTX, arg ReadWildcardCustomDomainParams) ([]byte, error)

@@ -8960,6 +8960,16 @@ LEFT JOIN accounts a ON a.id = p.account_id
 LEFT JOIN orgs o ON o.id = p.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
 WHERE p.id = sqlc.arg(id)::uuid AND p.source = 'queue' AND p.state = 'dead_letter';
 
+-- name: ReadWebhookReplayAdmission :one
+-- A dead webhook delivery replayed from the dead letter re-enters its
+-- account's outbox under the caps an explicit delivery meets (event-driven
+-- hunt #16). The plan resolves as ReadQueueReplayAdmission's does.
+SELECT d.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM app_webhook_deliveries d
+LEFT JOIN accounts a ON a.id = d.account_id
+LEFT JOIN orgs o ON o.id = d.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE d.id = sqlc.arg(id)::uuid AND d.status = 'dead';
+
 -- name: RetryProductionQueueDeadLetter :one
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
     instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code=''

@@ -21,6 +21,15 @@ func QueueCapProblem(err error) *api.Problem {
 	if errors.As(err, &backlog) {
 		return api.ErrPlanQueueBacklogBytes(backlog.Limit, backlog.Observed)
 	}
+	// A replayed webhook delivery meets the account's outbox caps.
+	var outbox *state.AppWebhookOutboxFullError
+	if errors.As(err, &outbox) {
+		which := api.WebhookBacklogCapCount
+		if outbox.Bytes {
+			which = api.WebhookBacklogCapBytes
+		}
+		return api.ErrWebhookOutboxFull(which, outbox.Limit, outbox.Observed)
+	}
 	return nil
 }
 

@@ -79,6 +79,67 @@ func TestAppWebhookOutboxRefusesAtTheAccountCap(t *testing.T) {
 	}
 }
 
+// A deleted app's deliveries wait unsent until its purge; they must not hold
+// the account's outbox full for its other apps (event-driven hunt #16).
+func TestAppWebhookOutboxSkipsDeletedAppsDeliveries(t *testing.T) {
+	m, ctx, acct, app := backlogWebhookFixture(t)
+	other, err := m.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "backlog-" + uuid.NewString()[:8], RAMMB: 512, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, kept := backlogWebhook(t, m, ctx, acct, app), backlogWebhook(t, m, ctx, acct, other)
+	for range 3 {
+		if _, err := m.RecordAppWebhookDelivery(ctx, backlogDelivery(gone, `{}`, 3, 0)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var full *state.AppWebhookOutboxFullError
+	if _, err := m.RecordAppWebhookDelivery(ctx, backlogDelivery(kept, `{}`, 3, 0)); !errors.As(err, &full) {
+		t.Fatalf("delivery into a full outbox = %v, want AppWebhookOutboxFullError", err)
+	}
+	if _, err := m.ScheduleAppDeletion(ctx, app.ID, time.Now().Add(7*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := m.AppByID(ctx, app.ID); err != nil || deleted.Status != state.AppDeleted {
+		t.Fatalf("app after deletion = %+v, %v", deleted, err)
+	}
+	if _, err := m.RecordAppWebhookDelivery(ctx, backlogDelivery(kept, `{}`, 3, 0)); err != nil {
+		t.Fatalf("a deleted app's stuck deliveries still fill the outbox: %v", err)
+	}
+}
+
+// A replayed dead delivery re-enters the outbox under its caps: a replay into
+// a full outbox is refused as a cap error and the delivery stays dead.
+func TestAppWebhookReplayMeetsTheOutboxCap(t *testing.T) {
+	m, ctx, acct, app := backlogWebhookFixture(t)
+	hook := backlogWebhook(t, m, ctx, acct, app)
+	dead, err := m.RecordAppWebhookDelivery(ctx, backlogDelivery(hook, `{}`, 0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := m.ClaimDueAppWebhookDeliveries(ctx, 10, time.Now())
+	if err != nil || len(claimed) != 1 || claimed[0].ID != dead.ID {
+		t.Fatalf("claim = %+v, %v", claimed, err)
+	}
+	if err := m.MarkAppWebhookDeliveryDead(ctx, dead.ID, claimed[0].Attempt, claimed[0].NextAttemptAt, "receiver gone"); err != nil {
+		t.Fatal(err)
+	}
+	limit := api.MustLimitsFor(api.PlanPro).WebhookOutboxMaxPending
+	for range limit {
+		if _, err := m.RecordAppWebhookDelivery(ctx, backlogDelivery(hook, `{}`, 0, 0)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := m.ListDeadLetterEvents(ctx, app.ID, 10, "")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("dead letters = %+v, %v", entries, err)
+	}
+	_, err = m.ReplayDeadLetterEvent(ctx, acct.ID, app.ID, entries[0].ID)
+	if !state.IsQueueCapError(err) {
+		t.Fatalf("replay into a full outbox = %v, want a cap error", err)
+	}
+}
+
 // A suspended account's deliveries wait without being claimed and resume
 // when it is active again.
 func TestAppWebhookClaimDefersSuspendedAccounts(t *testing.T) {
