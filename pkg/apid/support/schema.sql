@@ -139,3 +139,8 @@ CREATE INDEX support_notifications_recipient_idx ON support_notifications(recipi
 CREATE INDEX support_notifications_unread_idx ON support_notifications(recipient_id,audience,sequence) WHERE read_at IS NULL;
 CREATE INDEX support_notifications_ready_idx ON support_notifications(available_at,id) WHERE email_state IN ('queued','inflight');
 CREATE INDEX support_notifications_age_idx ON support_notifications(created_at,id);
+CREATE TABLE support_ticket_snapshots (
+ ticket_id uuid PRIMARY KEY REFERENCES support_tickets(id) ON DELETE CASCADE,
+ captured_at timestamptz NOT NULL CHECK(isfinite(captured_at)),
+ snapshot jsonb NOT NULL CHECK(jsonb_typeof(snapshot)='object' AND octet_length(snapshot::text)<=32768)
+);

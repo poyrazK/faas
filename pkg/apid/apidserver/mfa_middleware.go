@@ -53,5 +53,5 @@ func mfaSessionPending(acct state.Account) bool {
 // plus every platform operator (ADR 20261023214253). An operator with no
 // authenticator is confined to enrollment, as if mfa_required were set.
 func (s *server) sessionMFAPending(acct state.Account) bool {
-	return mfaSessionPending(acct) || s.isOperator(acct)
+	return mfaSessionPending(acct) || s.isOperator(acct) || s.isSalesMember(acct)
 }

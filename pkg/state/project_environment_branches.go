@@ -79,6 +79,9 @@ type ProjectEnvironmentBranch struct {
 	PrivateNetworks string
 	Depth           int
 	CreatedAt       time.Time
+	// SlotID names the branch's stable workload URLs
+	// (EnvironmentBranchSlotID); empty on branches made before slots.
+	SlotID string
 	// DataState is ready, pending or failed. DataError explains a failure or
 	// the last retryable error; DataLeaseToken is set on a claimed branch.
 	DataState      string
@@ -317,7 +320,7 @@ func (m *MemStore) prepareProjectEnvironmentBranchLocked(req ProjectEnvironmentB
 	return ProjectEnvironmentBranch{AccountID: req.AccountID, ProjectID: req.ProjectID,
 		ParentEnvironmentID: parent.ID, ParentSlug: parent.Slug, BranchPoint: point.UTC().Truncate(time.Microsecond),
 		ExpiresAt: req.ExpiresAt.UTC(), EgressMode: req.EgressMode, PrivateNetworks: environmentBranchPrivateNetworks(req.PrivateNetworks),
-		Depth: depth, CreatedAt: now,
+		Depth: depth, CreatedAt: now, SlotID: EnvironmentBranchSlotID(req.ProjectID, req.Slug),
 		DataState: dataState, dataNextAttemptAt: now}, nil
 }
 

@@ -7,6 +7,25 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Data API investigation fixes — 2026-11-12 (branch, not released)
+
+All 30 retained findings have implementations and regression coverage in
+[the resolution ledger](data-api/investigation-findings.md#resolutions).
+[ADR-20261112210000](adr/20261112210000-data-api-investigation-hardening.md)
+records the compatibility and owner migration decisions. Changes cover live
+revocation/recovery, upload creation IDs, authorization safety leases, generated
+Go/Python correctness, exact numeric round-trips, migration/catalog safety,
+independent budget counters, delayed/quarantined jobs and owner maintenance.
+
+Runtime/SDK checks, Data API CLI checks and focused real PostgreSQL/PostgREST
+recovery, catalog and owner-maintenance tests pass. The local independent-key
+budget benchmark measured about 1.49 ms per admission; this is not production
+capacity evidence. Hosted journey coverage now checks exact type generation;
+that hosted journey has not been run against an account in this environment.
+Owner maintenance is opt-in, uses separate owner credentials and defaults to
+dry-run. Existing installations require the documented SQL upgrades and runtime
+refresh; no hosted application or customer data was changed here.
+
 ## Management MCP environment promotion outcomes — 2026-11-05 (branch, not released)
 
 Project promotion acceptance now has a separate original-attempt journal and

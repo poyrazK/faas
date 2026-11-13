@@ -132,6 +132,23 @@ func (s *Service) AccountFlags(w http.ResponseWriter, r *http.Request, acct stat
 	httpkit.WriteJSON(w, http.StatusOK, api.OperatorAccountPlatformFlags{AccountID: target.ID, Plan: string(target.Plan), Items: items})
 }
 
+// EnabledFlags returns the catalog keys of the platform flags enabled for
+// target, in catalog order. The tenant 360 diagnosis shows them so an
+// operator can tell which previews the account is in (ADR-20261112170000).
+func (s *Service) EnabledFlags(target state.Account) []string {
+	out := []string{}
+	if s.Host == nil {
+		return out
+	}
+	snapshot := s.Host.PlatformFlags().Snapshot()
+	for _, spec := range platformflags.Catalog() {
+		if decide(snapshot, spec, target, "").Enabled {
+			out = append(out, spec.Key)
+		}
+	}
+	return out
+}
+
 func (s *Service) allowed(w http.ResponseWriter, acct state.Account) bool {
 	if allowed, prob := s.Host.AdminAllows(acct); !allowed {
 		api.WriteProblem(w, prob)

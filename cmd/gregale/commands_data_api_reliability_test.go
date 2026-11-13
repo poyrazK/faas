@@ -43,6 +43,22 @@ func TestDataAPILosslessTypesKeepFingerprintAndEnumLabels(t *testing.T) {
 	if code := main.Run([]string{"data-api", "types", "notes-data", "--numeric-mode", "lossless", "--output", output, "--check"}); code != 0 {
 		t.Fatalf("lossless types check exit %d", code)
 	}
+	if code := main.Run([]string{"data-api", "types", "notes-data", "--numeric-mode", "exact", "--output", output}); code != 0 {
+		t.Fatalf("exact types exit %d", code)
+	}
+	exact, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"import type { ExactNumber }", "numericMode: exact", "id: ExactNumber", `label: "number"`, "ids: (ExactNumber | null)[]", "Schema fingerprint: " + strings.Repeat("a", 64)} {
+		if !strings.Contains(string(exact), want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if code := main.Run([]string{"data-api", "types", "notes-data", "--numeric-mode", "exact", "--output", output, "--check"}); code != 0 {
+		t.Fatalf("exact --check exit %d", code)
+	}
+
 }
 
 func TestDataAPIUploadAndHookSQLExposeOptionalMigrations(t *testing.T) {
@@ -50,10 +66,10 @@ func TestDataAPIUploadAndHookSQLExposeOptionalMigrations(t *testing.T) {
 	defer func() { *main.OsStdout = original }()
 	var output bytes.Buffer
 	*main.OsStdout = &output
-	if code := main.Run([]string{"data-api", "storage", "sql", "--upgrade", "--sessions", "--schema", "files"}); code != 0 {
+	if code := main.Run([]string{"data-api", "storage", "sql", "--upgrade", "--sessions", "--maintenance", "--schema", "files"}); code != 0 {
 		t.Fatalf("storage SQL exit %d", code)
 	}
-	for _, fragment := range []string{"ALTER TABLE files.storage_objects", "CREATE TABLE files.gregale_storage_uploads", "files.gregale_storage_finish", "PT412"} {
+	for _, fragment := range []string{"ALTER TABLE files.storage_objects", "CREATE TABLE files.gregale_storage_uploads", "files.gregale_storage_finish", "PT412", "gregale_storage_maintenance.objects", "gregale_cleanup_reference_guard"} {
 		if !strings.Contains(output.String(), fragment) {
 			t.Fatalf("missing %s", fragment)
 		}
@@ -72,6 +88,8 @@ func TestDataAPIBehaviorAndNumericFlagsRejectInvalidCombinations(t *testing.T) {
 		{"data-api", "dev", "--behavior-baseline", "before.json"},
 		{"data-api", "dev", "--once", "--behavior-replays", "coverage.json"},
 		{"data-api", "dev", "--numeric-mode", "lossless", "--validators"},
+		{"data-api", "dev", "--numeric-mode", "exact", "--validators"},
+		{"data-api", "types", "notes-data", "--numeric-mode", "exact", "--snapshot"},
 		{"data-api", "types", "notes-data", "--numeric-mode", "lossless", "--snapshot"},
 		{"data-api", "types", "notes-data", "--numeric-mode", "lossless", "--validators"},
 		{"data-api", "types", "notes-data", "--numeric-mode", "bigint"},

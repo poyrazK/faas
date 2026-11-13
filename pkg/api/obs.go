@@ -175,6 +175,9 @@ type ObsTenant360Response struct {
 	Sessions ObsTenantCounts  `json:"sessions"`
 	Usage    ObsTenantUsage   `json:"usage"`
 	Billing  ObsTenantBilling `json:"billing"`
+	// Diagnosis explains why the account may not be working
+	// (ADR-20261112170000).
+	Diagnosis ObsTenantDiagnosis `json:"diagnosis"`
 }
 
 type ObsTenantUsage struct {

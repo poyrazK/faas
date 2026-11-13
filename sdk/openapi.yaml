@@ -1371,6 +1371,12 @@ paths:
         pays for another account or organization answers 409
         `billing_email_in_use`.
 
+        The optional `salesperson_code` requires a verified browser session and
+        applies only before the first paid personal-account purchase. Invalid or
+        unavailable codes return 400; an existing different referral or prior
+        paid purchase returns 409. A saved referral survives checkout retries
+        and provider failures. Only a confirmed invoice payment earns credit.
+
         Asking for the plan the account already pays for keeps its
         subscription: a scheduled cancellation or downgrade is undone and the
         200 carries `plan_change_status: scheduled_change_undone`. A
@@ -1433,6 +1439,28 @@ paths:
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/health:
+    get:
+      tags: [account]
+      operationId: getAccountHealth
+      summary: Account health.
+      description: |
+        Returns what may stop the calling account from working: restrictions
+        such as a suspension, failed payment or unverified email with the
+        next step, failed deployments from the last 7 days, custom domains
+        that are not serving, and API requests refused in the last 24 hours
+        with their problem codes and request ids. Internal review details are
+        never included. Available to suspended and past-due accounts.
+      responses:
+        '200':
+          description: The account health checks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountHealth'
+                example: {"generated_at": "2026-11-12T10:00:00Z", "attention": 1, "restrictions": [{"kind": "email_unverified", "title": "Verify your email address", "detail": "Some actions are refused until your email address is verified.", "action": "Resend verification email", "action_url": "/dashboard/account"}], "failed_deployments": [], "domain_issues": [], "refused_requests": {"window_hours": 24, "total": 2, "by_code": [{"code": "email_unverified", "count": 2, "last_at": "2026-11-12T09:58:00Z"}], "recent": [{"occurred_at": "2026-11-12T09:58:00Z", "route": "POST /v1/apps", "code": "email_unverified", "request_id": "req_01"}]}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/account/export:
     get:
@@ -1932,6 +1960,37 @@ paths:
                 $ref: '#/components/schemas/ProgrammaticAuthResponse'
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/InvalidCredentials'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/referrals/selection:
+    post:
+      tags: [auth]
+      x-internal: true
+      operationId: selectReferralCode
+      summary: Preserve an explicitly entered referral code for OAuth signup.
+      description: Rate limited pre-signup request. An empty code clears the pending selection; no customer identity is returned. The host-only selection expires in 15 minutes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [referral_code]
+              properties:
+                referral_code: {type: string, pattern: '^([A-Za-z0-9]{6})?$'}
+      responses:
+        '200':
+          description: Selection accepted; it grants no account access.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted: {type: boolean}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/auth/signup/magic-link:
     post:
@@ -4529,7 +4588,7 @@ paths:
         - name: method
           in: query
           required: false
-          schema: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]}
+          schema: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
           description: "Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods."
         - name: group_by
           in: query
@@ -21219,6 +21278,110 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /v1/sales/inquiries/challenge:
+    get:
+      x-internal: true
+      tags: [auth]
+      operationId: salesInquiryChallenge
+      security: []
+      summary: Prepare an anonymous website sales inquiry
+      description: Requires the default-off sales intake flag. This opaque one-hour form token must be at least two seconds old when submitted. The challenge and submission share a separate ten-requests-per-minute IP budget.
+      responses:
+        '200':
+          description: Form check prepared
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenge, ready_after_ms, expires_in_seconds]
+                properties:
+                  challenge: {type: string}
+                  ready_after_ms: {type: integer}
+                  expires_in_seconds: {type: integer}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/sales/inquiries:
+    post:
+      x-internal: true
+      tags: [auth]
+      operationId: submitSalesInquiry
+      security: []
+      summary: Submit a contact or demo request from the website
+      description: |
+        Enabled only by FAAS_SALES_INTAKE_ENABLED and FAAS_SALES_ENABLED.
+        Browser writes must come from a trusted control-plane origin. A token
+        is consumed atomically with intake; retrying that token is idempotent
+        until expiry, including when a changed body is presented. Active emails
+        are deduplicated without overwriting staff data or ownership. Unknown,
+        paused, customer or unavailable salesperson codes enter manager review;
+        the response never reveals code validity or ownership. These messages
+        are unverified and grant no referral attribution, rewards or account access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, email, intent, message, challenge]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 120}
+                email: {type: string, format: email, maxLength: 254}
+                company: {type: string, maxLength: 200, default: ''}
+                intent: {type: string, enum: [contact, demo]}
+                message: {type: string, minLength: 1, maxLength: 1500, description: UTF-8 byte limit; other text limits are also measured in bytes.}
+                salesperson_code: {type: string, pattern: '^([A-Za-z0-9]{6})?$', default: ''}
+                challenge: {type: string}
+                website: {type: string, default: '', description: Leave blank.}
+      responses:
+        '202':
+          description: Inquiry accepted without disclosing routing details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted: {type: boolean}
+        '400':
+          description: Invalid form input or sales_challenge_invalid; refresh the form check before resubmitting an expired challenge.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/referrals/checkout:
+    get:
+      x-internal: true
+      tags: [auth]
+      operationId: checkoutReferralStatus
+      security: [{cookieAuth: []}]
+      summary: Check whether the signed-in account can add a salesperson code
+      description: |
+        Requires a verified browser session and the sales feature flag. API keys
+        are rejected. Eligibility is a display hint; the plan mutation checks it
+        again atomically with referral selection before starting payment.
+      responses:
+        '200':
+          description: Current first-purchase referral eligibility
+          headers:
+            Cache-Control: {schema: {type: string}, description: Always no-store.}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eligible]
+                properties:
+                  eligible: {type: boolean}
+                  reason: {type: string, enum: [already_attributed, not_first_purchase, unavailable]}
+                  code: {type: string, description: The already saved referral code; no referrer contact details are returned.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
 components:
   securitySchemes:
     consumerKey:
@@ -25532,10 +25695,14 @@ components:
       properties:
         enabled: {type: boolean}
     PasswordSignupRequest:
-      description: "Email + password for signup. Same shape as PasswordLoginRequest so the create-or-claim race detection reuses the verifier."
+      description: "Email + password for signup. Same shape as PasswordLoginRequest with an optional referral code."
       type: object
       required: [email, password]
       properties:
+        referral_code:
+          type: string
+          pattern: '^([A-Za-z0-9]{6})?$'
+          description: Optional six-character customer or salesperson referral code; case-insensitive. Requires the referral program to be enabled.
         email: {type: string, format: email}
         password: {type: string, minLength: 12, maxLength: 256}
     ProgrammaticAuthResponse:
@@ -25587,6 +25754,7 @@ components:
         accounts.
       type: object
       properties:
+        referral_code: {type: string, pattern: '^([A-Za-z0-9]{6})?$'}
         email: {type: string, format: email}
     PasswordResetRequest:
       description: "Email for a password-reset request. Optional — the form-page path submits no body; the SDK sends the email."
@@ -25929,6 +26097,99 @@ components:
           type: array
           items: {type: string}
           description: Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
+    AccountHealth:
+      description: "What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain problems and refused API requests."
+      type: object
+      required: [generated_at, attention, restrictions, failed_deployments, domain_issues, refused_requests]
+      properties:
+        generated_at: {type: string, format: date-time, description: When the checks ran.}
+        attention: {type: integer, description: "Number of restrictions, failed deployments and domain issues; zero means nothing needs action."}
+        restrictions:
+          type: array
+          description: Restrictions currently applied to the account, one per kind.
+          items: {$ref: '#/components/schemas/AccountHealthRestriction'}
+        failed_deployments:
+          type: array
+          description: Failed deployments from the last 7 days, newest first, at most 10.
+          items: {$ref: '#/components/schemas/AccountHealthDeployment'}
+        domain_issues:
+          type: array
+          description: Custom domains that are unverified or whose certificate is not serving.
+          items: {$ref: '#/components/schemas/AccountHealthDomain'}
+        refused_requests: {$ref: '#/components/schemas/AccountHealthRequests'}
+        unavailable:
+          type: array
+          items: {type: string}
+          description: Checks that could not be loaded; their lists are empty and mean unknown, not none.
+    AccountHealthRestriction:
+      description: One account restriction in customer wording, with the next step when there is one.
+      type: object
+      required: [kind, title, detail]
+      properties:
+        kind:
+          type: string
+          enum: [account_suspended, account_past_due, deletion_pending, abuse_hold, email_unverified, overage_cap_reached, platform_release_pause]
+          description: Stable restriction identifier.
+        title: {type: string, description: Short headline for the restriction.}
+        detail: {type: string, description: What the restriction does to the account.}
+        action: {type: string, description: Label of the next step.}
+        action_url: {type: string, description: Dashboard path for the next step.}
+        since: {type: string, format: date-time, description: "When the restriction started, when known."}
+    AccountHealthDeployment:
+      description: A failed deployment with the error and fix hint the build or rollout reported.
+      type: object
+      required: [deployment_id, app_id, created_at]
+      properties:
+        deployment_id: {type: string, description: Failed deployment identifier.}
+        app_id: {type: string, description: Identifier of the deployment's app.}
+        app_slug: {type: string, description: Slug of the deployment's app.}
+        error_code: {type: string, description: Stable failure code.}
+        error: {type: string, description: "Failure message, at most 500 bytes."}
+        hint: {type: string, description: "Suggested fix, at most 500 bytes."}
+        created_at: {type: string, format: date-time, description: When the deployment was created.}
+    AccountHealthDomain:
+      description: A custom domain that is not serving correctly.
+      type: object
+      required: [domain, problem]
+      properties:
+        domain: {type: string, description: The custom hostname.}
+        app_slug: {type: string, description: Slug of the app the hostname routes to.}
+        problem: {type: string, description: What is wrong with the hostname.}
+        cert_error: {type: string, description: "The certificate authority's last error, when issuance failed."}
+    AccountHealthRequests:
+      description: API requests Gregale refused for the account in the recent window.
+      type: object
+      required: [window_hours, total, by_code, recent]
+      properties:
+        window_hours: {type: integer, description: Length of the window in hours.}
+        total: {type: integer, format: int64, description: Refused requests in the window.}
+        by_code:
+          type: array
+          description: Counts by problem code, most frequent first, at most 10.
+          items: {$ref: '#/components/schemas/AccountHealthCode'}
+        recent:
+          type: array
+          description: Most recent refused requests, at most 20.
+          items: {$ref: '#/components/schemas/AccountHealthRequest'}
+    AccountHealthCode:
+      description: How often one problem code was returned in the window.
+      type: object
+      required: [code, count, last_at]
+      properties:
+        code: {type: string, description: Problem code from the response body and X-Faas-Error-Code.}
+        count: {type: integer, format: int64, description: Responses with this code.}
+        last_at: {type: string, format: date-time, description: Most recent response with this code.}
+    AccountHealthRequest:
+      description: "One refused request: the matched route pattern, the problem code and the ids to quote to support."
+      type: object
+      required: [occurred_at, route, code]
+      properties:
+        occurred_at: {type: string, format: date-time, description: When the request was refused.}
+        route: {type: string, description: "Matched route pattern, for example POST /v1/apps/{slug}/deployments; never the raw URL."}
+        code: {type: string, description: Problem code returned.}
+        app_slug: {type: string, description: "App slug from the request path, when the route has one."}
+        request_id: {type: string, description: X-Faas-Request-Id of the request.}
+        trace_id: {type: string, description: X-Gregale-Trace-Id of the request.}
     AccountResponse:
       description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count."
       type: object
@@ -26092,6 +26353,16 @@ components:
       required: [plan]
       properties:
         plan: {type: string, enum: [free, hobby, pro, scale], example: "hobby"}
+        salesperson_code:
+          type: string
+          pattern: '^\s*([A-Za-z0-9]{6})?\s*$'
+          description: |
+            Optional salesperson code for a personal account's first paid purchase.
+            Letters are normalized to uppercase and surrounding spaces are removed.
+            Requires a live verified session. Only active sales codes are accepted;
+            existing referrals and prior payments cannot be reassigned. The choice
+            remains saved if checkout is retried or abandoned. Omit or leave empty
+            to keep ordinary billing behavior. Organization purchases are excluded.
     UpdateAccountBillingInfoRequest:
       description: "Partial legal billing identity update. Empty strings clear fields."
       type: object
@@ -41057,7 +41328,7 @@ components:
       required: [route, method, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
       properties:
         route: {type: string, description: "Route template, not an expanded URL."}
-        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]}
+        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
         requests: {type: integer, format: int64, minimum: 0}
         error_requests: {type: integer, format: int64, minimum: 0}
         error_rate_pct: {type: number, format: double, minimum: 0, maximum: 100}
@@ -41200,7 +41471,7 @@ components:
       required: [value, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
       properties:
         value: {type: string}
-        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]}
+        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
         requests: {type: integer, format: int64, minimum: 0}
         error_requests: {type: integer, format: int64, minimum: 0}
         error_rate_pct: {type: number, format: double, minimum: 0, maximum: 100}
@@ -41230,7 +41501,7 @@ components:
       required: [route, method, requests, identified_requests, anonymous_requests, unresolved_identity_requests, consumer_count, platform_tenant_count, last_observed_at, customers, customers_truncated, other_customer_requests]
       properties:
         route: {type: string, description: "Exact recorded route label; may include its HTTP method prefix."}
-        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "HTTP method for this route observation."}
+        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER], description: "HTTP method for this route observation."}
         requests: {type: integer, format: int64, minimum: 1, description: "All weighted retained requests for this route and deployment."}
         identified_requests: {type: integer, format: int64, minimum: 0, description: "Requests with at least one resolvable account-owned consumer or tenant identity."}
         anonymous_requests: {type: integer, format: int64, minimum: 0, description: "Requests with neither consumer nor tenant identity recorded."}
@@ -41273,6 +41544,10 @@ components:
         `[from, until)`, and the route list is capped at 50 rows.
       required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, group_by, groups, groups_limit, groups_truncated, routes, routes_limit, routes_truncated, dependencies_truncated, as_of]
       properties:
+        omitted:
+          type: array
+          description: "Optional enrichment sections unavailable within their query budgets; traffic totals remain available."
+          items: {type: string}
         slug: {type: string}
         since: {type: string, description: "Effective lookback duration after retention clamping."}
         from: {type: string, format: date-time, description: "Inclusive lower bound of the analytics window."}
@@ -41325,7 +41600,7 @@ components:
         (`telemetry_coverage_missing`, `telemetry_coverage_stale`), telemetry switched off or sampled
         (`telemetry_disabled`, `telemetry_sampled`), requests still waiting to be delivered
         (`telemetry_ingestion_pending`), or requests lost or a gateway restarted during the window (`telemetry_window_incomplete`).
-      enum: [telemetry_coverage_missing, telemetry_coverage_stale, telemetry_disabled, telemetry_sampled, telemetry_ingestion_pending, telemetry_window_incomplete]
+      enum: [telemetry_coverage_unknown, telemetry_coverage_missing, telemetry_coverage_stale, telemetry_disabled, telemetry_sampled, telemetry_ingestion_pending, telemetry_window_incomplete]
     RequestAnalyticsTimeseriesPoint:
       type: object
       description: "One UTC-aligned hourly request analytics bucket."
@@ -41345,7 +41620,7 @@ components:
       required: [value, points]
       properties:
         value: {type: string}
-        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]}
+        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
         points:
           type: array
           items: {$ref: '#/components/schemas/RequestAnalyticsTimeseriesPoint'}
@@ -41359,7 +41634,7 @@ components:
       properties:
         slug: {type: string}
         route: {type: string, maxLength: 256, description: "Exact bounded route-label filter when a route-level series was requested."}
-        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "Exact method filter when a route-level series was requested."}
+        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER], description: "Exact method filter when a route-level series was requested."}
         since: {type: string, description: "Effective series lookback after retention clamping."}
         from: {type: string, format: date-time, description: "First instant represented by the hourly series."}
         until: {type: string, format: date-time, description: "Exclusive end instant represented by the hourly series."}
@@ -43639,6 +43914,10 @@ components:
       description: Bounded hourly, customer-safe delivery analytics for one runtime log destination.
       required: [log_drain_id, window, bucket_interval, from, to, buckets, summary]
       properties:
+        requested_from: {type: string, format: date-time, description: "Original requested lower bound before expanding to the recorded hourly observations."}
+        window_aligned: {type: boolean, description: "True when hourly observations changed the effective bounds; from/to match the counter observation times."}
+        complete: {type: boolean, description: "Whether every reported counter delta has a valid baseline without missing hourly samples."}
+        coverage_gaps: {type: array, items: {type: string}, description: "Missing baseline or hourly sample evidence; unknown deltas are omitted from totals."}
         log_drain_id: {type: string, pattern: '^[0-9a-f]{32}$'}
         window: {type: string, enum: [1h, 24h, 7d, 30d]}
         bucket_interval: {type: string, enum: [1h]}

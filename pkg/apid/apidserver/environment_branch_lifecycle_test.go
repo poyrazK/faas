@@ -13,7 +13,7 @@ import (
 
 // ADR-20261031193635 branch lifecycle (amended 2026-11-12): a branch reports
 // its state, its expiry moves within its longest lifetime, and a reset makes
-// it again from its parent with its settings and new workload URLs.
+// it again from its parent with its settings, keeping its workload URLs.
 func TestEnvironmentBranchStatusExtendAndReset(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	srv, store, acct := *e.S(), *e.Store(), *e.Acct()
@@ -77,8 +77,13 @@ func TestEnvironmentBranchStatusExtendAndReset(t *testing.T) {
 	rec = e.Do(t, http.MethodPost, base+"pr-1/branch/reset", nil, nil)
 	reset := decode(t, rec.Code, rec.Body.Bytes(), http.StatusOK)
 	if reset.Slug != "pr-1" || reset.ID == created.ID || reset.Branch.Parent != "production" || len(reset.Branch.Workloads) != 1 ||
-		reset.Branch.Workloads[0].URL == created.Branch.Workloads[0].URL || reset.Branch.Workloads[0].SourceDeployment != parent.ID {
-		t.Fatalf("reset = %+v; want pr-1 made again from production with a new URL", reset)
+		reset.Branch.Workloads[0].SourceDeployment != parent.ID {
+		t.Fatalf("reset = %+v; want pr-1 made again from production", reset)
+	}
+	// The stable URL survives the reset; the incarnation's URL does not.
+	before, after := created.Branch.Workloads[0], reset.Branch.Workloads[0]
+	if after.URL == "" || after.URL != before.URL || after.EnvironmentURL == "" || after.EnvironmentURL == before.EnvironmentURL || after.URL == after.EnvironmentURL {
+		t.Fatalf("workload URLs before %+v after %+v; want the same stable URL and a new environment URL", before, after)
 	}
 	// The reset keeps the branch's lifetime: the extended 48 hours.
 	resetExpires, err := time.Parse(time.RFC3339Nano, reset.Branch.ExpiresAt)

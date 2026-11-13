@@ -3633,6 +3633,11 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			"Invalid domain", err.Error()))
 		return
 	}
+	if s.platformOwnedDomain(domain) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid domain", domain+" belongs to Gregale; attach a domain you own"))
+		return
+	}
 	// The public CLI documents --app as an app slug. Keep accepting IDs
 	// for existing API clients, but resolve the documented slug form too.
 	app, acct, prob := s.namedAppAs(r, acct, req.AppID, true)
@@ -5603,7 +5608,8 @@ func (s *server) getUsage(w http.ResponseWriter, r *http.Request, acct state.Acc
 // only legitimate path to land on a paid plan locally.
 func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req struct {
-		Plan string `json:"plan"`
+		Plan            string `json:"plan"`
+		SalespersonCode string `json:"salesperson_code"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
@@ -5613,6 +5619,9 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	if !plan.Valid() {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Bad plan", "plan must be free|hobby|pro|scale"))
+		return
+	}
+	if !s.prepareSalesCheckout(w, r, acct, plan, req.SalespersonCode) {
 		return
 	}
 	// Any paid tier increase must be confirmed by the billing provider. A

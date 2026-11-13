@@ -134,6 +134,10 @@ type AppLogDrainHealthResponse struct {
 // history for one runtime log destination. Rates are derived from terminal
 // outcomes (delivered, failed, or dropped); an empty interval has a zero rate.
 type AppLogDrainAnalyticsResponse struct {
+	RequestedFrom  string                       `json:"requested_from,omitempty"`
+	WindowAligned  bool                         `json:"window_aligned,omitempty"`
+	Complete       *bool                        `json:"complete,omitempty"`
+	CoverageGaps   []string                     `json:"coverage_gaps,omitempty"`
 	LogDrainID     string                       `json:"log_drain_id"`
 	Window         string                       `json:"window"`
 	BucketInterval string                       `json:"bucket_interval"`
