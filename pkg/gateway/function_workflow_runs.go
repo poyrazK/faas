@@ -99,8 +99,8 @@ func startFunctionWorkflowRun(w http.ResponseWriter, r *http.Request, store Func
 		api.WriteProblem(w, api.ErrValidation("body must be JSON with function and an optional JSON input"))
 		return
 	}
-	if len(req.Input) > api.WorkflowRunInputMaxBytes {
-		api.WriteProblem(w, api.ErrRequestBodyTooLarge(api.WorkflowRunInputMaxBytes, len(req.Input)))
+	if int64(len(req.Input)) > api.WorkflowRunInputMaxBytes {
+		api.WriteProblem(w, api.ErrRequestBodyTooLarge(api.WorkflowRunInputMaxBytes, int64(len(req.Input))))
 		return
 	}
 	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
@@ -234,7 +234,7 @@ func signalFunctionWorkflowRun(w http.ResponseWriter, r *http.Request, store Fun
 
 func workflowRunDone(status string) bool {
 	switch status {
-	case state.WorkflowRunStatusSucceeded, state.WorkflowRunStatusFailed, state.WorkflowRunStatusDead, state.WorkflowRunStatusCancelled:
+	case state.WorkflowRunStatusSucceeded, state.WorkflowRunStatusFailed, state.WorkflowRunStatusDead:
 		return true
 	}
 	return false
