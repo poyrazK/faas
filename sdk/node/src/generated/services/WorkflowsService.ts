@@ -67,6 +67,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class WorkflowsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List schedules this tenant may customize for a linked app.
    * Requires platform_tenant:stored_workflows:read. Results include only live published schedule triggers that the app owner marked tenant_configurable. Version zero means the tenant still uses the published defaults.
@@ -81,7 +82,7 @@ export class WorkflowsService {
      */
     slug: string,
   }): CancelablePromise<ListTenantWorkflowSchedulesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/apps/{slug}/workflows/schedules',
       path: {
@@ -134,7 +135,7 @@ export class WorkflowsService {
      */
     count?: number,
   }): CancelablePromise<WorkflowSchedulePreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}/preview',
       path: {
@@ -191,7 +192,7 @@ export class WorkflowsService {
      */
     requestBody: UpdateTenantWorkflowScheduleRequest,
   }): CancelablePromise<TenantWorkflowScheduleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}',
       path: {
@@ -229,7 +230,7 @@ export class WorkflowsService {
      */
     slug: string,
   }): CancelablePromise<ListStoredWorkflowsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored',
       path: {
@@ -286,7 +287,7 @@ export class WorkflowsService {
      */
     requestBody: SimulateStoredWorkflowRequest,
   }): CancelablePromise<SimulateStoredWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/stored:simulate',
       path: {
@@ -324,7 +325,7 @@ export class WorkflowsService {
     slug: string,
     requestBody: ValidateStoredWorkflowRequest,
   }): CancelablePromise<ValidateStoredWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/stored:validate',
       path: {
@@ -368,7 +369,7 @@ export class WorkflowsService {
      */
     name: string,
   }): CancelablePromise<StoredWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}',
       path: {
@@ -413,7 +414,7 @@ export class WorkflowsService {
     name: string,
     requestBody: SaveStoredWorkflowDraftRequest,
   }): CancelablePromise<StoredWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/workflows/stored/{name}',
       path: {
@@ -468,7 +469,7 @@ export class WorkflowsService {
      */
     restoreManifest?: boolean,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/workflows/stored/{name}',
       path: {
@@ -516,7 +517,7 @@ export class WorkflowsService {
      */
     name: string,
   }): CancelablePromise<StoredWorkflowFailurePolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/failure-policy',
       path: {
@@ -554,7 +555,7 @@ export class WorkflowsService {
     name: string,
     requestBody: SetStoredWorkflowFailurePolicyRequest,
   }): CancelablePromise<StoredWorkflowFailurePolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/workflows/stored/{name}/failure-policy',
       path: {
@@ -594,7 +595,7 @@ export class WorkflowsService {
     name: string,
     requestBody: ResumeStoredWorkflowFailurePauseRequest,
   }): CancelablePromise<StoredWorkflowFailurePolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/stored/{name}/failure-policy/resume',
       path: {
@@ -649,7 +650,7 @@ export class WorkflowsService {
      */
     createdBefore?: string,
   }): CancelablePromise<StoredWorkflowHealthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/health',
       path: {
@@ -702,7 +703,7 @@ export class WorkflowsService {
      */
     offset?: number,
   }): CancelablePromise<ListStoredWorkflowRevisionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/revisions',
       path: {
@@ -750,7 +751,7 @@ export class WorkflowsService {
      */
     version: number,
   }): CancelablePromise<StoredWorkflowRevisionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/revisions/{version}',
       path: {
@@ -810,7 +811,7 @@ export class WorkflowsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<StoredWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/stored/{name}/revisions/{version}/restore',
       path: {
@@ -854,7 +855,7 @@ export class WorkflowsService {
      */
     slug: string,
   }): CancelablePromise<StoredWorkflowPublishPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored:publish-policy',
       path: {
@@ -892,7 +893,7 @@ export class WorkflowsService {
     slug: string,
     requestBody: SetStoredWorkflowPublishPolicyRequest,
   }): CancelablePromise<StoredWorkflowPublishPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/workflows/stored:publish-policy',
       path: {
@@ -937,7 +938,7 @@ export class WorkflowsService {
     name: string,
     requestBody: SaveStoredWorkflowTestSuiteRequest,
   }): CancelablePromise<StoredWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/workflows/stored/{name}/tests',
       path: {
@@ -983,7 +984,7 @@ export class WorkflowsService {
     name: string,
     requestBody: RunStoredWorkflowTestsRequest,
   }): CancelablePromise<StoredWorkflowTestReport> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/stored/{name}/tests/run',
       path: {
@@ -1029,7 +1030,7 @@ export class WorkflowsService {
     name: string,
     requestBody: CheckStoredWorkflowPublicationRequest,
   }): CancelablePromise<CheckStoredWorkflowPublicationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/stored/{name}/publish-check',
       path: {
@@ -1083,7 +1084,7 @@ export class WorkflowsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<StoredWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/stored/{name}/publish',
       path: {
@@ -1133,7 +1134,7 @@ export class WorkflowsService {
     name: string,
     requestBody: SetStoredWorkflowEnabledRequest,
   }): CancelablePromise<StoredWorkflowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/workflows/stored/{name}/enabled',
       path: {
@@ -1189,7 +1190,7 @@ export class WorkflowsService {
      */
     limit?: number,
   }): CancelablePromise<ListWorkflowScheduleOccurrencesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/schedules/occurrences',
       path: {
@@ -1224,7 +1225,7 @@ export class WorkflowsService {
     slug: string,
     requestBody: WorkflowScheduleReplayRequest,
   }): CancelablePromise<WorkflowScheduleReplayResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/schedules/occurrences:replay-preview',
       path: {
@@ -1256,7 +1257,7 @@ export class WorkflowsService {
     slug: string,
     requestBody: WorkflowScheduleReplayRequest,
   }): CancelablePromise<WorkflowScheduleReplayResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/schedules/occurrences:replay',
       path: {
@@ -1293,7 +1294,7 @@ export class WorkflowsService {
      */
     slug: string,
   }): CancelablePromise<ListWorkflowSchedulesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/schedules',
       path: {
@@ -1346,7 +1347,7 @@ export class WorkflowsService {
      */
     count?: number,
   }): CancelablePromise<WorkflowSchedulePreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/schedules/{name}/preview',
       path: {
@@ -1406,7 +1407,7 @@ export class WorkflowsService {
     idempotencyKey?: string,
     requestBody?: any,
   }): CancelablePromise<WorkflowRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/{name}/runs',
       path: {
@@ -1472,7 +1473,7 @@ export class WorkflowsService {
     name: string,
     requestBody?: any,
   }): CancelablePromise<WorkflowRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{tenant_id}/apps/{slug}/workflows/{name}/runs',
       path: {
@@ -1532,7 +1533,7 @@ export class WorkflowsService {
     name: string,
     requestBody?: any,
   }): CancelablePromise<WorkflowRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/apps/{slug}/workflows/{name}/runs',
       path: {
@@ -1605,7 +1606,7 @@ export class WorkflowsService {
      */
     offset?: number,
   }): CancelablePromise<ListWorkflowRunsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/apps/{slug}/workflows/runs',
       path: {
@@ -1647,7 +1648,7 @@ export class WorkflowsService {
      */
     id: string,
   }): CancelablePromise<WorkflowRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/workflows/runs/{id}',
       path: {
@@ -1680,7 +1681,7 @@ export class WorkflowsService {
      */
     id: string,
   }): CancelablePromise<ListWorkflowCallbacksResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/workflows/runs/{id}/callbacks',
       path: {
@@ -1727,7 +1728,7 @@ export class WorkflowsService {
     callbackId: string,
     requestBody?: any,
   }): CancelablePromise<CompleteWorkflowCallbackResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/workflows/runs/{id}/callbacks/{callback_id}',
       path: {
@@ -1773,7 +1774,7 @@ export class WorkflowsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<InjectWorkflowEventResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/workflows/runs/{id}/events',
       path: {
@@ -1813,7 +1814,7 @@ export class WorkflowsService {
      */
     id: string,
   }): CancelablePromise<WorkflowRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/workflows/runs/{id}/cancel',
       path: {
@@ -1853,7 +1854,7 @@ export class WorkflowsService {
      */
     id: string,
   }): CancelablePromise<WorkflowRunDiagnosticsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/workflows/runs/{id}/diagnostics',
       path: {
@@ -1892,7 +1893,7 @@ export class WorkflowsService {
     id: string,
     requestBody: ResumeWorkflowRunRequest,
   }): CancelablePromise<WorkflowRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/workflows/runs/{id}/resume',
       path: {
@@ -1960,7 +1961,7 @@ export class WorkflowsService {
      */
     offset?: number,
   }): CancelablePromise<ListWorkflowRunsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/runs',
       path: {
@@ -2008,7 +2009,7 @@ export class WorkflowsService {
     slug: string,
     requestBody: WorkflowQueuedRunCancelRequest,
   }): CancelablePromise<WorkflowQueuedRunCancelResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/runs:cancel-preview',
       path: {
@@ -2052,7 +2053,7 @@ export class WorkflowsService {
     slug: string,
     requestBody: WorkflowQueuedRunCancelRequest,
   }): CancelablePromise<WorkflowQueuedRunCancelResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/runs:cancel-queued',
       path: {
@@ -2087,7 +2088,7 @@ export class WorkflowsService {
      */
     id: string,
   }): CancelablePromise<WorkflowRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/workflows/runs/{id}',
       path: {
@@ -2118,7 +2119,7 @@ export class WorkflowsService {
      */
     id: string,
   }): CancelablePromise<ListWorkflowStepsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/workflows/runs/{id}/steps',
       path: {
@@ -2154,7 +2155,7 @@ export class WorkflowsService {
      */
     step: string,
   }): CancelablePromise<ListWorkflowStepAttemptsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/workflows/runs/{id}/steps/{step}/attempts',
       path: {
@@ -2199,7 +2200,7 @@ export class WorkflowsService {
      */
     step: string,
   }): CancelablePromise<WorkflowRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/workflows/runs/{id}/steps/{step}/retry',
       path: {
@@ -2235,7 +2236,7 @@ export class WorkflowsService {
      */
     id: string,
   }): CancelablePromise<ListWorkflowCallbacksResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/workflows/runs/{id}/callbacks',
       path: {
@@ -2278,7 +2279,7 @@ export class WorkflowsService {
     callbackId: string,
     requestBody?: any,
   }): CancelablePromise<CompleteWorkflowCallbackResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/workflows/runs/{id}/callbacks/{callback_id}',
       path: {
@@ -2328,7 +2329,7 @@ export class WorkflowsService {
     callbackId: string,
     requestBody: CreateWorkflowCallbackWebhookBindingRequest,
   }): CancelablePromise<WorkflowCallbackWebhookBindingResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding',
       path: {
@@ -2369,7 +2370,7 @@ export class WorkflowsService {
      */
     callbackId: string,
   }): CancelablePromise<WorkflowCallbackWebhookBindingResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding',
       path: {
@@ -2407,7 +2408,7 @@ export class WorkflowsService {
      */
     callbackId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding',
       path: {
@@ -2447,7 +2448,7 @@ export class WorkflowsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<InjectWorkflowEventResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/workflows/runs/{id}/events',
       path: {
@@ -2492,7 +2493,7 @@ export class WorkflowsService {
      */
     id: string,
   }): CancelablePromise<WorkflowRunDiagnosticsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/workflows/runs/{id}/diagnostics',
       path: {
@@ -2535,7 +2536,7 @@ export class WorkflowsService {
     id: string,
     requestBody: ResumeWorkflowRunRequest,
   }): CancelablePromise<WorkflowRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/workflows/runs/{id}/resume',
       path: {
@@ -2573,7 +2574,7 @@ export class WorkflowsService {
      */
     id: string,
   }): CancelablePromise<ListWorkflowResumesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/workflows/runs/{id}/resumes',
       path: {
@@ -2608,7 +2609,7 @@ export class WorkflowsService {
      */
     id: string,
   }): CancelablePromise<WorkflowRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/workflows/runs/{id}/cancel',
       path: {
@@ -2645,7 +2646,7 @@ export class WorkflowsService {
      */
     name: string,
   }): CancelablePromise<ListStoredWorkflowLiveBaselinesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-baselines',
       path: {
@@ -2692,7 +2693,7 @@ export class WorkflowsService {
      */
     baseline: string,
   }): CancelablePromise<StoredWorkflowLiveBaseline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}',
       path: {
@@ -2741,7 +2742,7 @@ export class WorkflowsService {
      */
     baseline: string,
   }): CancelablePromise<StoredWorkflowLiveBaselineHistory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}/history',
       path: {
@@ -2796,7 +2797,7 @@ export class WorkflowsService {
     promotionId: string,
     requestBody: PromoteStoredWorkflowLiveBaselineRequest,
   }): CancelablePromise<StoredWorkflowLiveBaseline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}/promotions/{promotion_id}',
       path: {
@@ -2855,7 +2856,7 @@ export class WorkflowsService {
     retirementId: string,
     requestBody: RetireStoredWorkflowLiveBaselineRequest,
   }): CancelablePromise<StoredWorkflowLiveBaselineRetirement> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-baselines/{baseline}/retirements/{retirement_id}',
       path: {
@@ -2912,7 +2913,7 @@ export class WorkflowsService {
      */
     requestBody: StartStoredWorkflowLiveSuiteRequest,
   }): CancelablePromise<StoredWorkflowLiveSuite> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/start',
       path: {
@@ -2967,7 +2968,7 @@ export class WorkflowsService {
      */
     requestBody: AdvanceStoredWorkflowLiveSuiteRequest,
   }): CancelablePromise<StoredWorkflowLiveSuite> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/advance',
       path: {
@@ -3011,7 +3012,7 @@ export class WorkflowsService {
      */
     name: string,
   }): CancelablePromise<ListStoredWorkflowLiveSuitesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites',
       path: {
@@ -3063,7 +3064,7 @@ export class WorkflowsService {
      */
     baselineId: string,
   }): CancelablePromise<StoredWorkflowLiveSuiteComparison> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}/compare/{baseline_id}',
       path: {
@@ -3108,7 +3109,7 @@ export class WorkflowsService {
      */
     suiteId: string,
   }): CancelablePromise<StoredWorkflowLiveSuite> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}',
       path: {
@@ -3160,7 +3161,7 @@ export class WorkflowsService {
      */
     requestBody: SaveStoredWorkflowLiveSuiteRequest,
   }): CancelablePromise<StoredWorkflowLiveSuite> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-suites/{suite_id}',
       path: {
@@ -3204,7 +3205,7 @@ export class WorkflowsService {
      */
     name: string,
   }): CancelablePromise<ListStoredWorkflowLiveVerificationsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-verifications',
       path: {
@@ -3253,7 +3254,7 @@ export class WorkflowsService {
     idempotencyKey: string,
     requestBody: StartStoredWorkflowLiveVerificationRequest,
   }): CancelablePromise<StoredWorkflowLiveVerification> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-verifications',
       path: {
@@ -3305,7 +3306,7 @@ export class WorkflowsService {
      */
     runId: string,
   }): CancelablePromise<StoredWorkflowLiveVerification> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-verifications/{run_id}',
       path: {
@@ -3353,7 +3354,7 @@ export class WorkflowsService {
      */
     runId: string,
   }): CancelablePromise<StoredWorkflowLiveVerification> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflows/stored/{name}/live-verifications/{run_id}/check',
       path: {

@@ -10,7 +10,7 @@
 
 `@gregale/sdk-node` exposes generally available and beta capabilities only:
 the client generated from `sdk/openapi.yaml` and the helpers for those
-capabilities (`FaaSClient`, error sentinels, idempotency, SSE, webhook and
+capabilities (`createClient`, legacy `FaaSClient`, error sentinels, idempotency, SSE, webhook and
 service-caller verification, release context). The `./browser`,
 `./secrets/runtime` and `./workflows` subpaths are part of it too.
 
@@ -218,15 +218,15 @@ Native listener qualification remains pending; see the
 ## Quick start
 
 ```ts
-import { FaaSClient, AppsService, ErrNotFound } from '@gregale/sdk-node';
+import { createClient, ErrNotFound } from '@gregale/sdk-node';
 
-const client = new FaaSClient('https://api.example.com', {
+const client = createClient('https://api.example.com', {
   token: process.env.FAAS_TOKEN!,
   retry: { maxAttempts: 3, backoffMs: 100 },
 });
 
 try {
-  const app = await AppsService.getApp({ slug: 'hello' });
+  const app = await client.apps.getApp({ slug: 'hello' });
   console.log(app.url);
 } catch (err) {
   if (err instanceof ErrNotFound) {
@@ -243,6 +243,62 @@ parsed RFC 7807 `Problem` envelope, the HTTP status, and the daemon's
 `tx_id` for support tickets. Any other problem (a 400 `validation_failed`,
 a 409, a 422 or a 500) is thrown as the base `FaasError`: test it with
 `isFaasError(err)` and read `err.problem.code`.
+
+### Independent clients and migration
+
+Use `createClient` for concurrent developers, agents, accounts, or endpoints in
+one Node process. Each client owns its token, base URL, retry policy, timeout,
+logger, transport, and default idempotency key. It never changes `OpenAPI` or
+`globalThis.fetch`. The default transport is the platform fetch captured when
+the SDK loads; pass `fetch` explicitly to use your own instrumentation or proxy.
+
+```ts
+import { createClient } from '@gregale/sdk-node';
+
+const alice = createClient('https://api.example.com', { token: aliceToken });
+const bob = createClient('https://api.example.com', { token: bobToken });
+const [aliceApp, bobApp] = await Promise.all([
+  alice.apps.getApp({ slug: 'alice-app' }),
+  bob.apps.getApp({ slug: 'bob-app' }),
+]);
+
+alice.setToken(rotatedAliceToken);
+alice.setBaseURL('https://other.example.com');
+```
+
+Service namespaces remove `Service` and lowercase the first letter:
+`AppsService` becomes `client.apps`, `ManagedPostgresService` becomes
+`client.managedPostgres`. Method arguments, response types, typed errors,
+binary downloads, and `.cancel()` are unchanged. Detached methods retain their
+client binding. Configuration changes apply to future calls; requests already
+started, including retries, keep their original configuration. Base URLs accept
+HTTP(S) and optional path prefixes, without embedded credentials, query, or fragment.
+
+| Existing caller | Isolated caller |
+| --- | --- |
+| `new FaaSClient(url, options)` | `createClient(url, options)` |
+| `AppsService.getApp({ slug })` | `client.apps.getApp({ slug })` |
+| `client.setToken(token)` | `client.setToken(token)` |
+| Shared `OpenAPI.BASE` | `client.setBaseURL(url)` |
+| `client.install()` / `client.uninstall()` | No installation lifecycle needed |
+
+`FaaSClient` is deprecated but remains available with its existing process-wide
+behavior. Existing static imports continue working. Migrate one caller at a
+time: isolated clients can run alongside the legacy singleton, including while
+it installs or removes its fetch wrapper. Keep at most one legacy singleton.
+
+For the complete generated surface, import `createClient` from
+`@gregale/sdk-node/preview`; the default factory retains the GA/beta boundary.
+Standalone helpers and the legacy preview `FaaSClient` convenience methods are
+not bound by this factory. Helpers that read shared `OpenAPI` still require the
+legacy singleton; use the corresponding generated namespace method for isolated
+requests. Helpers with explicit authentication options keep their own contract.
+
+Mutations receive a fresh key per logical call, reused across retries. Prefer
+the method's `idempotencyKey` option when available. `setIdempotencyKey(key)`
+pins an instance default for resuming one operation, and
+`setIdempotencyKey(undefined)` clears it. Explicit request keys take precedence.
+Use a distinct key for every independent mutation, especially concurrent ones.
 
 ## Supported surface
 
