@@ -10856,6 +10856,21 @@
     }
   },
   {
+    "table": "managed_postgres_egress_hold_notices",
+    "columns": [
+      "allowance_bytes",
+      "ceiling_bytes",
+      "database_id",
+      "mail_intent_id",
+      "overage_billed",
+      "period_start",
+      "reached_at",
+      "subject_id",
+      "used_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_health",
     "columns": [
       "account_id",
