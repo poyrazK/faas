@@ -70,3 +70,8 @@ func (c *Client) PreviewUpdateApp(ctx context.Context, slug string, req UpdateAp
 func (c *Client) PreviewAppScaling(ctx context.Context, app, scope string, req ApplyAppScalingRequest) (AgentBudgetPreview, error) {
 	return c.preview(ctx, http.MethodPost, appScalingPath(app, scope, ""), req)
 }
+
+// PreviewCreateApp prices POST /v1/apps without creating the app.
+func (c *Client) PreviewCreateApp(ctx context.Context, req CreateAppRequest) (AgentBudgetPreview, error) {
+	return c.preview(ctx, http.MethodPost, "/v1/apps", req)
+}

@@ -1,0 +1,323 @@
+{
+  "phase": "after-owner-authorized-browser-application",
+  "captured_at_utc": "2026-11-13T16:13:06Z",
+  "settings_evidence": "Chrome dashboard, saved then reloaded; no Cloudflare API token used",
+  "settings_before": {
+    "search": "Allow",
+    "agents": "Allow",
+    "training": "Disallow",
+    "bot_fight_mode": true,
+    "bot_preference_sync": true,
+    "grpc": "On"
+  },
+  "settings_after": {
+    "search": "Allow",
+    "agents": "Allow",
+    "training": "Allow",
+    "bot_fight_mode": false,
+    "bot_preference_sync": false,
+    "grpc": "On",
+    "managed_waf": "On",
+    "http_ddos_protection": "On"
+  },
+  "enable_js_api_value": "not read",
+  "raw_capture_directory": "/private/tmp/h34-zone-after-browser-20261113",
+  "http_host": "h34-zone-http-1113.gregale.dev",
+  "grpc_host": "h34-zone-grpc-1113.gregale.dev",
+  "direct_ip": "34.148.143.180",
+  "statuses": {
+    "200": {
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "direct_probe": true
+    },
+    "500": {
+      "cloudflare": 500,
+      "direct": 500,
+      "body_equal": true,
+      "direct_probe": true
+    },
+    "502": {
+      "cloudflare": 502,
+      "direct": 502,
+      "body_equal": false,
+      "direct_probe": true
+    },
+    "503": {
+      "cloudflare": 503,
+      "direct": 503,
+      "body_equal": true,
+      "direct_probe": true
+    },
+    "504": {
+      "cloudflare": 504,
+      "direct": 504,
+      "body_equal": false,
+      "direct_probe": true
+    }
+  },
+  "crawlers": {
+    "GPTBot": {
+      "user_agent": "GPTBot",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "ClaudeBot": {
+      "user_agent": "ClaudeBot",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "CCBot": {
+      "user_agent": "CCBot",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "Bytespider": {
+      "user_agent": "Bytespider",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "OAI-SearchBot": {
+      "user_agent": "OAI-SearchBot",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "PerplexityBot": {
+      "user_agent": "PerplexityBot",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "Googlebot": {
+      "user_agent": "Googlebot",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "Claude-User": {
+      "user_agent": "Claude-User",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "GPTBot-versioned": {
+      "user_agent": "GPTBot/1.2",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "ClaudeBot-versioned": {
+      "user_agent": "ClaudeBot/1.0",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "CCBot-versioned": {
+      "user_agent": "CCBot/2.0",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "Bytespider-versioned": {
+      "user_agent": "Bytespider/1.0",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    }
+  },
+  "grpc": {
+    "Say": {
+      "cloudflare": {
+        "curl_grpc_status": [],
+        "h2_grpc_status": null,
+        "bytes": 12,
+        "ok": false
+      },
+      "direct": {
+        "curl_grpc_status": [
+          "0"
+        ],
+        "h2_grpc_status": "0",
+        "bytes": 12,
+        "ok": true
+      }
+    },
+    "Stream": {
+      "cloudflare": {
+        "curl_grpc_status": [],
+        "h2_grpc_status": null,
+        "bytes": 26,
+        "ok": false
+      },
+      "direct": {
+        "curl_grpc_status": [
+          "0"
+        ],
+        "h2_grpc_status": "0",
+        "bytes": 26,
+        "ok": true
+      }
+    },
+    "Fail": {
+      "cloudflare": {
+        "curl_grpc_status": [
+          "9"
+        ],
+        "h2_grpc_status": "9",
+        "bytes": 0,
+        "ok": true
+      },
+      "direct": {
+        "curl_grpc_status": [
+          "9"
+        ],
+        "h2_grpc_status": "9",
+        "bytes": 0,
+        "ok": true
+      }
+    }
+  },
+  "html": {
+    "body_equal": false,
+    "cloudflare": {
+      "status": 200,
+      "bytes": 1220,
+      "sha256": "678f47c5807a0525148d2bc0cc59a94d372970e3215568aec2e549db85804555",
+      "jsd_injected": true,
+      "probe": true,
+      "csp": "default-src 'none'"
+    },
+    "direct": {
+      "status": 200,
+      "bytes": 106,
+      "sha256": "7f6f06490a3fcbb331fef17b3feb56b84c03ac02d944a0eba500a4bf44380f10",
+      "jsd_injected": false,
+      "probe": true,
+      "csp": "default-src 'none'"
+    }
+  },
+  "checks": {
+    "direct_status_bodies": true,
+    "pass_through_200_500_503": true,
+    "crawler_control": true,
+    "html_unchanged": false,
+    "grpc": false
+  },
+  "selected_cloudflare_headers": {
+    "html": {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'none'",
+      "x-gregale-trace-id": "1afdeecb342524b62c7ebc6da8132a57",
+      "server": "cloudflare",
+      "cf-ray": "a59f0ff7dfc7567b-SOF"
+    },
+    "ua-GPTBot-versioned": {
+      "content-type": "application/json",
+      "x-gregale-trace-id": "ac0f8663020e823de37c8f1666692ba1",
+      "server": "cloudflare",
+      "cf-ray": "a59f10123828b8ab-SOF"
+    },
+    "ua-ClaudeBot-versioned": {
+      "content-type": "application/json",
+      "x-gregale-trace-id": "c4c07ef69ce96efab933c51fb2855a53",
+      "server": "cloudflare",
+      "cf-ray": "a59f10152bd3a2bf-SOF"
+    },
+    "ua-CCBot-versioned": {
+      "content-type": "application/json",
+      "x-gregale-trace-id": "c476653c3bd831c41be749833d41ef19",
+      "server": "cloudflare",
+      "cf-ray": "a59f10181a3abc1a-SOF"
+    },
+    "ua-Bytespider-versioned": {
+      "content-type": "application/json",
+      "x-gregale-trace-id": "4d1086a3ecb0bf15c45716edec161690",
+      "server": "cloudflare",
+      "cf-ray": "a59f101b0810d0d2-SOF"
+    }
+  },
+  "apex_robots": {
+    "host": "gregale.dev",
+    "direct_origin": "76.76.21.21",
+    "cloudflare_status": 200,
+    "direct_status": 200,
+    "bytes_equal": true,
+    "cloudflare_bytes": 108,
+    "direct_bytes": 108,
+    "sha256": "404511716356c2cc1ce56c7e32dc386778645a2b5b01b4a805e8760aa2c27010",
+    "body": "User-agent: *\nDisallow: /dashboard\nDisallow: /onboarding\nAllow: /\n\nSitemap: https://gregale.dev/sitemap.xml\n",
+    "cloudflare_headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "content-security-policy": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; frame-src 'none'; form-action 'self' https://github.com; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://s3.gregale.dev; worker-src 'self' blob:; manifest-src 'self'; upgrade-insecure-requests",
+      "server": "cloudflare",
+      "x-vercel-id": "fra1::nfjzd-1794480201947-a4f5976eae25",
+      "cf-ray": "a59f0c059e393dc1-SOF"
+    },
+    "direct_headers": {
+      "content-security-policy": "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; frame-src 'none'; form-action 'self' https://github.com; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://s3.gregale.dev; worker-src 'self' blob:; manifest-src 'self'; upgrade-insecure-requests",
+      "content-type": "text/plain; charset=utf-8",
+      "server": "Vercel",
+      "x-vercel-id": "fra1::54lmr-1794586583320-87f65cac95ad"
+    }
+  },
+  "uncached_html_recheck": {
+    "cf": {
+      "bytes": 1220,
+      "jsd_injected": true,
+      "sha256": "a4a5bcd17abd1a259347b2a0c6a02e6a9e487dc48349c7d3b5d894e08b09c1d0",
+      "headers": {
+        "content-type": "text/html; charset=utf-8",
+        "content-security-policy": "default-src 'none'",
+        "x-gregale-trace-id": "0b35ce31cd02f5ca354ede881aabc19d",
+        "server": "cloudflare",
+        "cf-ray": "a59f17b3786df9bb-SOF"
+      }
+    },
+    "direct": {
+      "bytes": 106,
+      "jsd_injected": false,
+      "sha256": "7f6f06490a3fcbb331fef17b3feb56b84c03ac02d944a0eba500a4bf44380f10",
+      "headers": {
+        "content-security-policy": "default-src 'none'",
+        "content-type": "text/html; charset=utf-8",
+        "x-gregale-trace-id": "230c0444c79cb090e631d9da3e8ba95f"
+      }
+    }
+  },
+  "outcomes": {
+    "H34-24": "fixed and traffic-verified with the combined approved settings",
+    "H34-42": "open: injection persists despite Bot Fight Mode Off",
+    "H34-22": "open: gRPC was already On; Tunnel success trailers still missing",
+    "H34-29": "retained per ADR: customer 502/504 bodies replaced by Free Cloudflare proxy"
+  }
+}

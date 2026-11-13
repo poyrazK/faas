@@ -129,6 +129,7 @@ type Querier interface {
 	// the same request again until the window closes.
 	AgentApprovalUsedWithin(ctx context.Context, db DBTX, arg AgentApprovalUsedWithinParams) (pgtype.UUID, error)
 	AlertRuleEpisodeOpen(ctx context.Context, db DBTX, ruleID pgtype.UUID) (bool, error)
+	AppBasicAuthVerifier(ctx context.Context, db DBTX, sealedSha256 []byte) (string, error)
 	AppBindingRefreshInventory(ctx context.Context, db DBTX, arg AppBindingRefreshInventoryParams) ([]AppBindingRefreshInventoryRow, error)
 	AppBindingRuntimeInventory(ctx context.Context, db DBTX, arg AppBindingRuntimeInventoryParams) ([]AppBindingRuntimeInventoryRow, error)
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)
@@ -4905,6 +4906,11 @@ type Querier interface {
 	MCPOAuthRetirementClientCiphertext(ctx context.Context, db DBTX, arg MCPOAuthRetirementClientCiphertextParams) ([]byte, error)
 	MCPOAuthRetirementFlowCurrent(ctx context.Context, db DBTX, arg MCPOAuthRetirementFlowCurrentParams) (bool, error)
 	ManagedPostgresAccountDeletionIncluded(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
+	// ADR-20261112160000 slice 2c: the accounts whose managed PostgreSQL
+	// databases, in any state, name a Neon project. neond counts a destructive
+	// call against each for the per-subject limit, and refuses quota writes and
+	// role deletes on a project no database names.
+	ManagedPostgresAccountsInProject(ctx context.Context, db DBTX, project string) ([]string, error)
 	ManagedPostgresActivationLiveDeployments(ctx context.Context, db DBTX, arg ManagedPostgresActivationLiveDeploymentsParams) ([]ManagedPostgresActivationLiveDeploymentsRow, error)
 	ManagedPostgresAdmissionFenced(ctx context.Context, db DBTX, appID string) (bool, error)
 	ManagedPostgresBindingDatabaseID(ctx context.Context, db DBTX, arg ManagedPostgresBindingDatabaseIDParams) (ManagedPostgresBindingDatabaseIDRow, error)
@@ -6038,6 +6044,11 @@ type Querier interface {
 	PurgeDeletedRuleEpisodesBefore(ctx context.Context, db DBTX, arg PurgeDeletedRuleEpisodesBeforeParams) (int64, error)
 	PurgeSLOHoursBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PurgeSyntheticCheckRunsBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
+	// ADR-20261110210000 slice 3h: verify-only basic auth, keyed by the SHA-256
+	// of the sealed credential in apps.public_auth_basic.
+	// A key names one sealed blob, so its verifier never changes: a repeat
+	// write is a no-op.
+	PutAppBasicAuthVerifier(ctx context.Context, db DBTX, arg PutAppBasicAuthVerifierParams) error
 	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)
 	PutCustomMetricOfKind(ctx context.Context, db DBTX, arg PutCustomMetricOfKindParams) (bool, error)
 	PutCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PutCustomerOperationIdempotencyParams) error

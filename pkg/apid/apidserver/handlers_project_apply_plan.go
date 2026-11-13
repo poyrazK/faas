@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -21,7 +22,7 @@ func (s *server) applyCachedProjectPlan(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	token, err := decodePlanToken(request.PlanToken)
-	if err != nil || token.AccountID != acct.ID {
+	if err != nil || token.AccountID != acct.ID || token.OrgID != projectaccess.OrganizationID(r.Context()) {
 		api.WriteProblem(w, api.NewProblem(http.StatusGone, "preview_expired", "Review this project again", "The reviewed source is unavailable. Scan the repository again before deploying."))
 		return
 	}

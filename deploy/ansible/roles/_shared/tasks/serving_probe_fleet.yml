@@ -1,0 +1,21 @@
+---
+- name: serving_probe — validate shared fleet inventory
+  ansible.builtin.assert:
+    that:
+      - faas_serving_probe_fleet is none or faas_serving_probe_fleet is mapping
+      - faas_serving_probe_fleet is none or faas_serving_probe_fleet | length <= 1000
+    fail_msg: The serving probe fleet must be null (unconfigured) or a mapping of at most 1000 stable node names.
+
+- name: serving_probe — validate each fleet policy
+  # Supplied by each role so its content hash tracks this shared input too.
+  ansible.builtin.include_tasks: "{{ serving_probe_fleet_policy_tasks }}"
+  loop: "{{ (faas_serving_probe_fleet | default({}, true)) | dict2items }}"
+  loop_control:
+    loop_var: serving_probe_policy
+    label: "{{ serving_probe_policy.key }}"
+
+- name: serving_probe — bound the expected probe inventory
+  ansible.builtin.assert:
+    that:
+      - (faas_serving_probe_fleet | default({}, true)).values() | map(attribute='urls') | flatten | length <= 1000
+    fail_msg: The serving probe fleet may contain at most 1000 node/URL pairs.
