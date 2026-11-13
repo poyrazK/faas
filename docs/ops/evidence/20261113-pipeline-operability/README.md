@@ -10,9 +10,11 @@ Checks use Go 1.26.11 with the current Makefile development flags, disposable Po
 - Focused native index tests passed: exact tenant policy expression and query-plan use, signed HTTP tenant isolation, source-independent inspection/build, N-1 approved-DDL claim fencing, lost acknowledgement replay, lock timeout rollback, provider-role temporary-file guard, UUID tenant expression, resync cleanup and invalidation of old applied advice.
 - Focused operability domain tests passed: confirmation boundaries, idle/unknown status, target validation/revision fencing, persisted debounced incident/recovery, old-monitor exclusion, immutable setup recovery, read-only planning and scoped-replacement advice invalidation.
 - Server pipeline/dashboard wiring and temporary discovery idempotency refusal tests passed.
+- The browser setup preview passed its CSRF regression: it creates no job and preserves the original tab’s form token for the subsequent setup submission.
 - Public durable setup HTTP plan/recovery/cancellation and foreign-account isolation passed; private provider plans and credentials remain absent from responses.
 - Broad incremental `golangci-lint` passed with zero issues; store, seal-domain, problem-detail, trimpath, runbook SQL, text-encoding and ADR-uniqueness policy checks passed.
 - Schema regeneration, SQLC generation, canonical clone registry, migration expand/contract lint, OpenAPI lint/parity, SDK coverage and docs links passed. OpenAPI lint passed with non-fatal warnings and informs.
+- Capability inventory coverage includes all setup routes and maps planning to data pipelines; capability-matrix and stable SDK-spec comparisons passed.
 - Node preview SDK generation/build and Python preview SDK generation/model round trips passed. The public SDK surface is unchanged.
 - All 35 provider-runner, staging-canary and dashboard refresh Python tests passed.
 

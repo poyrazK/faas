@@ -82,7 +82,7 @@ RULES = [
     # --- round-4 triage: specific identifiers seen unmatched
     (r"^/(checkout\\?|generate=\d+\\|orders/\{id\}|users/4f8a|\.\.\.|app\.css|compile)$|^/v1\?api-key|^/v1/users|^/v1/apps/\{slug\}\\$|^$", "TEST"),
     (r"^/compile$|livequery", "Live queries"),
-    (r"^/connections|data/connections|data-connection", "Data pipelines"),
+    (r"^/connections|data/(connections|pipeline-setups)|data-connection", "Data pipelines"),
     (r"/v1/hooks/", "Durable inbound webhooks"),
     (r"/v1/status|status-incident", "Public status page"),
     (r"/v1/synthesize|synth", "INFRA"),
