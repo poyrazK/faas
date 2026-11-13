@@ -109,7 +109,11 @@ When the month's overage reaches the cap:
   policy records the occurrences it missed;
 - object storage, which is billed once the month closes, is billed only up
   to what the cap still allows after the month's compute and egress overage.
-  Object storage keeps serving within its plan limits.
+  Object storage keeps serving within its plan limits;
+- managed PostgreSQL overage (compute, storage and database egress) counts
+  toward the cap too and is billed only up to it. At the cap your databases
+  stop (`hold: compute_ceiling`) like your apps; with a cap of 0 they stop at
+  once. Their data is kept.
 
 When the cap first stops your workloads in a month, Gregale emails the
 account with the cap and the month's overage.
