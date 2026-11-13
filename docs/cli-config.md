@@ -78,17 +78,29 @@ as `--help` and `--json`:
 gregale --json app demo exec --detach -- python --help
 ```
 
-`gregale invocations wait <id> --json` writes the invocation status to stdout
+`gregale invocation wait <id> --json` writes the invocation status to stdout
 and API errors as a single Problem JSON object to stderr. A wait timeout exits
 with `124`, writes the last known status to stdout when available, and writes
 an `invocation_wait_timeout` Problem to stderr. Ctrl-C exits with `130`.
 Stopping the CLI wait leaves the invocation running; inspect it later with
-`gregale invocations get <id>`.
+`gregale invocation get <id>`.
 
-To submit and wait in one command:
+Use one command family to submit and inspect a call:
 
 ```sh
-gregale invoke api --async --wait --timeout 2m --payload @request.json
+gregale invocation run api --payload @request.json
+gregale invocation list
+gregale invocation get INVOCATION_ID
+gregale invocation wait INVOCATION_ID --timeout 2m
+```
+
+`invoke APP` and the earlier plural `invocations` spelling remain compatibility
+aliases. Help, completion and agent examples use `invocation`.
+
+To submit asynchronously and wait in one command:
+
+```sh
+gregale invocation run api --async --wait --timeout 2m --payload @request.json
 ```
 
 `--wait` requires `--async`; `--timeout` and `--interval` require `--wait`.

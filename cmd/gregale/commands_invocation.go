@@ -52,7 +52,7 @@ func cmdInvoke(args []string) int {
 		return printErr("Invalid invocation wait options", err)
 	}
 	if len(positional) > 1 || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale invoke [--async [--wait [--timeout D] [--interval D]]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>]", "invoke")
+		PrintUsage(os.Stderr, "usage: gregale invocation run [--async [--wait [--timeout D] [--interval D]]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>]", "invoke")
 		return 1
 	}
 	slug := ""
@@ -63,7 +63,7 @@ func cmdInvoke(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale invoke [--async [--wait [--timeout D] [--interval D]]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
+				PrintUsage(os.Stderr, "usage: gregale invocation run [--async [--wait [--timeout D] [--interval D]]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)

@@ -95,6 +95,11 @@ custom metric history, SLOs and synthetic checks were hidden for it.
 
 ## Regression journeys
 
+`TestInvocationFamilyIsolatedAPI` exercises submission, list, get and wait through
+the single `invocation` family. The invocation wait journeys also use its
+canonical `run` leaf; unit routing tests cover the earlier `invoke` spelling
+and apps named after lifecycle verbs.
+
 `TestBazaarRegressions` replays the bugs that three rounds of deploying a
 multi-service project (bazaar) by hand found, one subtest per area, each
 check naming the change that fixed it (#5934, #6001, #6060): an

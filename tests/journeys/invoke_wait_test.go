@@ -37,7 +37,7 @@ func TestInvokeAsyncWaitIsolatedAPI(t *testing.T) {
 			}))
 			defer server.Close()
 			tg := &target{api: server.URL, cli: configured.cli, home: t.TempDir(), appsDomain: configured.appsDomain}
-			res := tg.exec(t, "fp_invoke-wait-private", tg.home, 10*time.Second, "--json", "invoke", "api", "--async", "--wait", "--interval", "1h", "--timeout", "250ms")
+			res := tg.exec(t, "fp_invoke-wait-private", tg.home, 10*time.Second, "--json", "invocation", "run", "api", "--async", "--wait", "--interval", "1h", "--timeout", "250ms")
 			want := 0
 			if state == "dead_letter" {
 				want = 1
@@ -79,7 +79,7 @@ func TestInvokeAsyncWaitInterrupt(t *testing.T) {
 	tg := &target{api: server.URL, cli: configured.cli, home: t.TempDir(), appsDomain: configured.appsDomain}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, tg.cli, "--non-interactive", "--json", "invoke", "api", "--async", "--wait")
+	cmd := exec.CommandContext(ctx, tg.cli, "--non-interactive", "--json", "invocation", "run", "api", "--async", "--wait")
 	cmd.Env, cmd.Dir = tg.cliEnv("fp_invoke-wait-private"), tg.home
 	var out, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &stderr
@@ -132,7 +132,7 @@ func TestInvokeAsyncWaitLiveAPI(t *testing.T) {
 	tg := needs(t, tierSmoke, true)
 	t.Parallel()
 	slug, _ := tg.sharedProbe(t)
-	res := tg.run(t, 3*time.Minute, "--json", "invoke", slug, "--async", "--wait", "--timeout", "2m", "--method", "GET", "--path", "/healthz")
+	res := tg.run(t, 3*time.Minute, "--json", "invocation", "run", slug, "--async", "--wait", "--timeout", "2m", "--method", "GET", "--path", "/healthz")
 	if res.exit != 0 {
 		var problem struct{ Status int }
 		if json.Unmarshal(res.stderr, &problem) == nil && problem.Status == http.StatusPaymentRequired {

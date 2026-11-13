@@ -77,12 +77,12 @@ The receipt has the deployment `id`, its `status` and the `app_url`.
 Call the deployed app through the CLI and check the response:
 
 ```sh
-gregale --non-interactive --json invoke <app> --method GET --path /
+gregale --non-interactive --json invocation run <app> --method GET --path /
 ```
 
 Use a path the README names if `/` isn't a real page. On Hobby, Pro and Scale
 a new app is private: requesting `app_url` directly answers 401, while
-`invoke` sends the request with your credential. Never put a key in a URL.
+`invocation run` sends the request with your credential. Never put a key in a URL.
 `/healthz` on `app_url` answers from Gregale's edge, not from the app, so it
 doesn't show your code ran.
 
