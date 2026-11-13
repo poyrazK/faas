@@ -7,7 +7,8 @@
     fail_msg: The serving probe fleet must be null (unconfigured) or a mapping of at most 1000 stable node names.
 
 - name: serving_probe — validate each fleet policy
-  ansible.builtin.include_tasks: serving_probe_fleet_policy.yml
+  # Supplied by each role so its content hash tracks this shared input too.
+  ansible.builtin.include_tasks: "{{ serving_probe_fleet_policy_tasks }}"
   loop: "{{ (faas_serving_probe_fleet | default({}, true)) | dict2items }}"
   loop_control:
     loop_var: serving_probe_policy
