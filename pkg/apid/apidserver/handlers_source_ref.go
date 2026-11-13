@@ -397,6 +397,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		Workflows:                append(json.RawMessage(nil), rollout.Workflows...),
 		Sidecars:                 append(json.RawMessage(nil), rollout.Sidecars...),
 		OverrideHealthcheck:      append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideReadinessProbe:   append(json.RawMessage(nil), rollout.OverrideReadinessProbe...),
 		OverrideMainDependsOn:    append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		ServiceRollout:           state.IsServiceRollout(rollout),
 	})
