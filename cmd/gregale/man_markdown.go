@@ -34,6 +34,8 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "API errors: when the server supplies a valid correlation header, text errors show `Request ID: <id>` and JSON errors include optional `request_id`. Include it when reporting a failure; [CLI configuration](cli-config.md#request-ids-on-api-errors) explains validation and retry behavior.")
 	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Read retries: put `--http-retries 3` before the command for up to three additional attempts on selected app, deployment and billing JSON reads. The default is zero; see [CLI configuration](cli-config.md#read-request-retries) for eligible requests, backoff and cancellation.")
+	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "| Command | What it does |")
 	_, _ = fmt.Fprintln(w, "|---|---|")
 	for _, c := range cmds {

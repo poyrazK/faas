@@ -1,0 +1,18 @@
+---
+- name: Verify invalid shared fleet policy is rejected
+  vars:
+    faas_serving_probe_fleet: "{{ item.fleet }}"
+  block:
+    - name: Validate the invalid fleet case
+      ansible.builtin.include_role:
+        name: "{{ playbook_dir }}/../roles/serving_probe_inventory"
+        tasks_from: validate
+
+    - name: Fail if invalid fleet intent was accepted
+      ansible.builtin.fail:
+        msg: Invalid shared fleet policy was accepted
+  rescue:
+    - name: Confirm policy validation rejected the invalid fleet
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_task.name is match('serving_probe — (validate shared fleet inventory|validate fleet node and policy shape|validate fleet timing policy|bound the expected probe inventory)')

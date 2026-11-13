@@ -41,12 +41,16 @@ type httpDebugRecord struct {
 	Status        int    `json:"status_code,omitempty"`
 	RequestID     string `json:"request_id,omitempty"`
 	ErrorKind     string `json:"error_kind,omitempty"`
+	Attempt       int    `json:"attempt,omitempty"`
+	MaxAttempts   int    `json:"max_attempts,omitempty"`
+	RetryDelayMS  int64  `json:"retry_delay_ms,omitempty"`
 }
 
 type httpDebugTicket struct {
 	id            uint64
 	method, route string
 	started       time.Time
+	readAttempt   api.ReadRetryAttempt
 }
 
 func (r *httpDebugRecorder) start(req *http.Request) httpDebugTicket {
@@ -60,7 +64,9 @@ func (r *httpDebugRecorder) start(req *http.Request) httpDebugTicket {
 	if req.URL != nil {
 		ticket.route = httpDebugRoute(req.URL.Path)
 	}
-	r.emitLocked(httpDebugRecord{Event: "request_start", Request: ticket.id, Method: ticket.method, Route: ticket.route})
+	ticket.readAttempt, _ = api.ReadRetryAttemptFromContext(req.Context())
+	r.emitLocked(httpDebugRecord{Event: "request_start", Request: ticket.id, Method: ticket.method, Route: ticket.route,
+		Attempt: ticket.readAttempt.Attempt, MaxAttempts: ticket.readAttempt.MaxAttempts, RetryDelayMS: ticket.readAttempt.Delay.Milliseconds()})
 	ticket.started = time.Now()
 	return ticket
 }
@@ -71,6 +77,7 @@ func (r *httpDebugRecorder) finish(ticket httpDebugTicket, resp *http.Response, 
 	}
 	elapsed := time.Since(ticket.started).Milliseconds()
 	record := httpDebugRecord{Event: "response_headers", Request: ticket.id, Method: ticket.method, Route: ticket.route, HeadersMS: &elapsed}
+	record.Attempt, record.MaxAttempts, record.RetryDelayMS = ticket.readAttempt.Attempt, ticket.readAttempt.MaxAttempts, ticket.readAttempt.Delay.Milliseconds()
 	if err != nil {
 		record.Event, record.ErrorKind = "request_error", httpDebugErrorKind(ctx, err)
 	} else if resp == nil {
@@ -119,8 +126,10 @@ func httpDebugRoute(path string) string {
 		"/v1/capabilities", "/v1/account", "/v1/me", "/v1/usage", "/v1/usage/summary", "/v1/plan",
 		"/v1/apps", "/v1/apps/{app}", "/v1/apps/{app}/status", "/v1/apps/{app}/logs",
 		"/v1/apps/{app}/deployments", "/v1/apps/{app}/secrets", "/v1/apps/{app}/secrets/{key}",
+		"/v1/apps/{app}/usage", "/v1/apps/{app}/deployments/latest", "/v1/apps/{app}/deployments/{deployment}/summary",
 		"/v1/apps/{app}/env", "/v1/apps/{app}/env/{key}",
 		"/v1/deployments/{deployment}", "/v1/deployments/{deployment}/logs",
+		"/v1/deployments/{deployment}/stages",
 		"/v1/projects", "/v1/projects/{project}", "/v1/projects/{project}/environments",
 		"/v1/projects/{project}/environments/{environment}",
 		"/v1/jobs", "/v1/jobs/{job}", "/v1/invocations/{invocation}",

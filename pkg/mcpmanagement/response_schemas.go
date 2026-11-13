@@ -3,10 +3,13 @@ package mcpmanagement
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 var planStatuses = []string{"planned", "running", "accepted", "completed", "promoted", "awaiting_approval", "refused", "partial", "interrupted", "cancelled", "cancellation_requested", "outcome_unknown"}
@@ -154,4 +157,19 @@ func validateSchemaValue(schema map[string]any, value any, root map[string]any) 
 func stringSchemaList(value any) []string {
 	values, _ := value.([]string)
 	return values
+}
+
+// errorContractURI serves the JSON Schema every tool error (an isError
+// result's structured content) follows, once for the whole catalog
+// (ADR-20261103193000, amendment 2026-11-13).
+const errorContractURI = "gregale://contracts/errors"
+
+func readErrorContract(_ context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+	schema := toolErrorSchema()
+	schema["$defs"] = map[string]any{"recovery": recoverySchema()}
+	data, err := json.Marshal(schema)
+	if err != nil {
+		return nil, err
+	}
+	return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: req.Params.URI, MIMEType: "application/schema+json", Text: string(data)}}}, nil
 }

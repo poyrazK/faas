@@ -16,6 +16,43 @@ import (
 
 const errorCorrelationID = "019a767e7f0070008000000000000001"
 
+func TestErrorRequestIDAfterReadRetries(t *testing.T) {
+	for _, finalID := range []string{"019a767e7f0070008000000000000002", ""} {
+		t.Run("final="+finalID, func(t *testing.T) {
+			main.SetupConnectionProfiles(t)
+			t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				id := finalID
+				if requests.Add(1) == 1 {
+					id = errorCorrelationID
+				}
+				if id != "" {
+					w.Header().Set(api.RequestIDHeader, id)
+				}
+				w.Header().Set("Retry-After", "0")
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(api.Problem{Status: 503, Code: "upstream_busy", Title: "Try later"})
+			}))
+			defer server.Close()
+			t.Setenv("FAAS_API", server.URL)
+			code, stdout, stderr := runHTTPDebugCLI(t, "--http-retries", "1", "--json", "billing", "usage", "summary")
+			var got struct {
+				Code      string `json:"code"`
+				RequestID string `json:"request_id"`
+				ExitCode  int    `json:"exit_code"`
+			}
+			if code != 3 || requests.Load() != 2 || stdout != "" || json.Unmarshal([]byte(stderr), &got) != nil || got.RequestID != finalID || got.Code != "upstream_busy" || got.ExitCode != 3 {
+				t.Fatalf("wrong final-attempt diagnostic: exit=%d requests=%d stdout=%q stderr=%q", code, requests.Load(), stdout, stderr)
+			}
+			if finalID == "" && strings.Contains(stderr, `"request_id"`) {
+				t.Fatalf("reused an earlier attempt's request ID: %s", stderr)
+			}
+		})
+	}
+}
+
 func TestErrorRequestIDInTextAndJSON(t *testing.T) {
 	main.SetupConnectionProfiles(t)
 	t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))

@@ -95,7 +95,7 @@ func (e *Engine) reconcileLiveRepair(ctx context.Context, p Pipeline, raw string
 	if err != nil {
 		return true, err
 	}
-	if !reflect.DeepEqual(actual, base.After) {
+	if !sameRelations(actual, base.After) {
 		return true, &blocked{"source_schema_changed", true}
 	}
 	healthy := slices.DeleteFunc(slices.Clone(base.Before), func(r relation) bool { return r.Name == plan.Recovery.Table })

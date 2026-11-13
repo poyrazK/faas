@@ -518,6 +518,9 @@ jobs:
       - name: cgroup metrics gate
         run: make cgroup-metrics-test
 
+      - name: Notification receiver metrics and receipt validation
+        run: make notification-receiver-metrics-test
+
       - name: observability go/no-go check tests
         run: make obs-gate-test
 
@@ -1846,7 +1849,7 @@ jobs:
     permissions:
       contents: read
     env:
-      GOVULNCHECK_VERSION: "1.7.0"
+      GOVULNCHECK_VERSION: "1.9.0"
       # Several contract gates compile the APID test package.
       GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
       GOMEMLIMIT: 2GiB
@@ -1888,6 +1891,15 @@ jobs:
         run: make environment-preflight-action-check
       - name: synthetic-canary alert payload tests
         run: make canary-alert-test
+
+      - name: synthetic-canary missing-run heartbeat tests
+        run: make canary-heartbeat-test
+
+      - name: post-deployment monitoring transport and workflow tests
+        run: make post-deployment-monitoring-test
+
+      - name: production monitoring qualification tests
+        run: make monitoring-qualification-test
       # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job
@@ -2246,6 +2258,17 @@ jobs:
       # page / warn / FaasWatchdog reach the receivers the role promises.
       - name: Alertmanager config check
         run: make alertmanager-config-check
+
+      - name: Notification delivery drill
+        run: NOTIFICATION_DRILL_REPORT="$RUNNER_TEMP/notification-drill.json" make notification-delivery-check
+
+      - name: Notification drill evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: notification-drill
+          path: ${{ runner.temp }}/notification-drill.json
+          if-no-files-found: error
+          retention-days: 7
 
   # Every promtool rule fixture, not a hand-picked list: an unlisted fixture
   # (slo_low_traffic) broke unnoticed when an alert changed. Each fixture

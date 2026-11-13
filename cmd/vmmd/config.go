@@ -241,6 +241,13 @@ type Config struct {
 	// role sets it once `seal-domain migrate --check` passes for both.
 	// FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED overrides TOML.
 	RuntimeSealDomainContracted bool `toml:"runtime_seal_domain_contracted"`
+	// RuntimeSealDomainRetired (ADR-20261110210000 slice 3e): this node
+	// holds no runtime identity; it opens runtime secrets through secretd
+	// and seals crash-capture keys to the runtime recipient. It needs
+	// RuntimeSealDomainContracted and FAAS_RUNTIME_SECRET_OPENER=secretd,
+	// and refuses to start while a runtime identity is left on disk.
+	// FAAS_SEAL_DOMAIN_RUNTIME_RETIRED overrides TOML.
+	RuntimeSealDomainRetired bool `toml:"runtime_seal_domain_retired"`
 	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
 	// reflinked per-account copy of their base with DAX instead of reading
 	// it over virtio-blk. "auto" (the default) keeps each copy on the mount
@@ -1109,6 +1116,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED must be a boolean (got %q)", v)
 		}
 		c.RuntimeSealDomainContracted = contracted
+	}
+	if v := os.Getenv("FAAS_SEAL_DOMAIN_RUNTIME_RETIRED"); v != "" {
+		retired, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_SEAL_DOMAIN_RUNTIME_RETIRED must be a boolean (got %q)", v)
+		}
+		c.RuntimeSealDomainRetired = retired
 	}
 	if c.RequireRuntimeSecretSignatures && c.RuntimeSecretSignatureKeysFile == "" {
 		return nil, errors.New("vmmd: requiring runtime secret signatures needs runtime_secret_signature_keys_file (FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE)")

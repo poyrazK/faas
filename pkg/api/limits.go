@@ -127,6 +127,33 @@ const (
 	AttentionDismissReasonMax  = 200
 )
 
+// Customer attention signals, round 2 (ADR-20261113180000).
+const (
+	// AttentionOOMKills runtime OOM kills of one app within
+	// AttentionOOMWindow open an app_oom signal.
+	AttentionOOMKills  = 3
+	AttentionOOMWindow = 24 * time.Hour
+	// AttentionBootFailures failed boots of one app within
+	// AttentionBootWindow open a boot_failing signal.
+	AttentionBootFailures = 5
+	AttentionBootWindow   = time.Hour
+	// The last AttentionJobFailures finished scheduled runs of one job, all
+	// failed or dead-lettered within AttentionJobWindow, open a jobs_failing
+	// signal.
+	AttentionJobFailures = 3
+	AttentionJobWindow   = 7 * 24 * time.Hour
+	// A payment failure within AttentionPaymentWindow with no recovery
+	// since opens a payment_failing signal.
+	AttentionPaymentWindow = 14 * 24 * time.Hour
+	// Plan-limit refusals on AttentionLimitDays distinct days within
+	// AttentionLimitWindow open a limit_pressure signal.
+	AttentionLimitDays   = 3
+	AttentionLimitWindow = 7 * 24 * time.Hour
+	// AttentionSummaryWindow is the period the staff page summarises
+	// signal outcomes over.
+	AttentionSummaryWindow = 30 * 24 * time.Hour
+)
+
 // Management MCP history is connection-local metadata, not an account audit log.
 const (
 	ManagementMCPActionHistoryMax       = 256
@@ -13987,6 +14014,23 @@ const (
 	ObsAlertmanagerResponseMaxBytes = 1 << 20
 	ObsAlertmanagerAlertsMax        = 4096
 	ObsNotificationIntegrationsMax  = 32
+	ObsNotificationQueueBusyRatio   = 0.8
+
+	// Serving coverage follows independent deployment intent, bounded to the
+	// same 1000 node/URL pairs as the deployed serving-probe inventory.
+	ObsServingProbeBudget       = 3 * time.Second
+	ObsServingProbePairsMax     = 1000
+	ObsServingProbeNodeMaxBytes = 128
+	ObsServingProbeURLMaxBytes  = 2048
+
+	// Post-deployment verification is a bounded read-only wait, not a rollout
+	// controller. Automatic timing follows probe age policy plus evaluation lag.
+	ObsPostDeployWaitDefault   = 20 * time.Minute
+	ObsPostDeployWaitMax       = time.Hour
+	ObsPostDeployPollDefault   = 10 * time.Second
+	ObsPostDeployPollMax       = time.Minute
+	ObsPostDeployHTTPTimeout   = 10 * time.Second
+	ObsPostDeployTokenMaxBytes = 4096
 
 	// Rule diagnostics assess the full bounded Prometheus rule snapshot and
 	// expose only a bounded, unhealthy-first metadata preview.
@@ -18692,6 +18736,8 @@ const (
 	DataPipelineSetupHistoryMax            = 100
 	DataPipelineObservationMaxAge          = 90 * time.Second
 	DataPipelineRetentionWarningBytes      = DataPipelineRetainedWALMaxBytes * 4 / 5
+	DataPipelineRetentionWarningWindow     = 5 * time.Minute
+	DataPipelineRetentionUrgentWindow      = 2 * time.Minute
 	DataPipelineLiveLagMaxBytes            = int64(16 << 20)
 	DataPipelineTablesMax                  = 16
 	DataPipelineRetainedTablesMax          = 32
@@ -18722,6 +18768,7 @@ const (
 	DataPipelineVerificationKeyBytesMax    = 1 << 20
 	DataPipelineRetainedWALMaxBytes        = int64(1 << 30)
 	DataPipelineDiscoveryTablesMax         = 128
+	DataPipelineIdentifierMaxBytes         = 63
 	DataPipelineCheckMaxBytes              = 4 << 20
 	DataPipelineCheckEnvelopeBytes         = 4096
 	DataPipelineCheckMaxAge                = 90 * time.Second

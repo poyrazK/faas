@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/commit"
@@ -25,20 +26,23 @@ import (
 type TargetSQL func(context.Context, string, string, func(*pgx.Conn, string) error) error
 
 type Engine struct {
-	RefreshSchema func(context.Context, Pipeline, SchemaChange) ([]SchemaRefresh, bool, error)
-	Policy        commit.NetworkPolicy
-	Target        TargetSQL
-	Capacity      *CapacityObserver
-	Admit         func(context.Context, Pipeline) error
+	RefreshSchema   func(context.Context, Pipeline, SchemaChange) ([]SchemaRefresh, bool, error)
+	RefreshReadGate func(context.Context, Pipeline, string) error
+	Policy          commit.NetworkPolicy
+	Target          TargetSQL
+	Capacity        *CapacityObserver
+	Admit           func(context.Context, Pipeline) error
 	// Test-only seam: production always uses Commit's verified/pinned dialer.
 	openSource func(context.Context, string) (*pgxpool.Pool, error)
 	pinSource  func(context.Context, string) (string, error)
 }
 type column struct {
-	Name, Type                 string
-	NotNull, Key               bool
-	Modifier                   int32
-	Ordinal                    int32 `json:",omitempty"`
+	Name, Type   string
+	NotNull, Key bool
+	Modifier     int32
+	Ordinal      int32 `json:",omitempty"`
+	// Planner metadata is refreshed from the source, never part of schema approval.
+	KeyPosition                int32 `json:"-"`
 	Default, Missing, Identity bool  `json:",omitempty"`
 	Unsupported                bool  `json:",omitempty"`
 }
@@ -75,6 +79,11 @@ func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current 
 			}
 		}
 		if applied != nil {
+			if p.DesiredState == "deleted" {
+				if err := pausePipelineSubscriptions(ctx, p, target, current); err != nil {
+					return err
+				}
+			}
 			ob.ReaderChange, ob.ReaderOnly = applied, true
 			// Acknowledge the policy receipt before ordinary reconciliation can
 			// retire this generation and delete it. A lost acknowledgement must
@@ -87,6 +96,12 @@ func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current 
 		}
 		if p.DesiredState == "running" {
 			if err := cleanupCancelledVerification(ctx, p, target, current); err != nil {
+				return err
+			}
+			if err := ensurePipelineReadGate(ctx, p, target); err != nil {
+				return err
+			}
+			if err := e.refreshPipelineReadGate(ctx, p, target, current); err != nil {
 				return err
 			}
 		}
@@ -106,6 +121,9 @@ func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current 
 			}
 
 			if p.DesiredState == "paused" {
+				if err := ensurePipelineReadGate(ctx, p, target); err == nil {
+					_ = e.refreshPipelineReadGate(ctx, p, target, current)
+				}
 				ob.State, ob.Reason = "paused", "source_unavailable"
 				if p.State == "resync_required" {
 					ob.State, ob.Reason = p.State, p.Reason
@@ -208,6 +226,10 @@ func (e *Engine) reconcileUnavailable(ctx context.Context, p Pipeline, current f
 		}
 		if applied != nil {
 			ob.ReaderChange, ob.ReaderOnly = applied, true
+		} else if p.DesiredState != "deleted" {
+			if err := ensurePipelineReadGate(ctx, p, target); err == nil {
+				_ = e.refreshPipelineReadGate(ctx, p, target, current)
+			}
 		}
 		return cleanupCancelledVerification(ctx, p, target, current)
 	})
@@ -295,6 +317,11 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 		if err := setSubscriptionEnabled(ctx, p, target, false); err != nil {
 			return err
 		}
+		// Ownership checks and native suspension precede optional maintenance.
+		// A failed helper installation cannot prevent the pause acknowledgement.
+		if err := ensurePipelineReadGate(ctx, p, target); err == nil {
+			_ = e.refreshPipelineReadGate(ctx, p, target, current)
+		}
 		ob.State, ob.Reason = "paused", ""
 		return checkRetention(ctx, p, source, target, ob)
 	}
@@ -347,6 +374,9 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 	if err := prepareMirror(ctx, p, target, owner, relations, hash); err != nil {
 		return err
 	}
+	if err := e.refreshPipelineReadGate(ctx, p, target, current); err != nil {
+		return err
+	}
 	if previousGeneration == 0 {
 		if err = initializeSourceStorage(ctx, p, source, target, relations, current); err != nil {
 			return err
@@ -376,6 +406,11 @@ func (e *Engine) reconcile(ctx context.Context, p Pipeline, raw string, source *
 	ob.TablesReady = ready
 	if ready != len(p.Tables) {
 		ob.State, ob.Reason = "copying", ""
+		if !activeSchema {
+			if err := observeInitialCopyProgress(ctx, p, target, ob, current); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 	if !initialReady {
@@ -622,7 +657,10 @@ func prepareMirror(ctx context.Context, p Pipeline, target *pgx.Conn, owner stri
 	if _, err = tx.Exec(ctx, `INSERT INTO gregale_pipeline.mirrors(pipeline_id,generation,schema_hash,barrier,tables,schema_spec) VALUES($1,$2,$3,'0/0',$4,$5)`, p.ID, p.Generation, hash, p.Tables, spec); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	return ensurePipelineReadGate(ctx, p, target)
 }
 
 func ensurePublication(ctx context.Context, p Pipeline, source *pgxpool.Pool) error {
@@ -866,7 +904,16 @@ func updateTableReads(ctx context.Context, p Pipeline, tx receiptSQL, allowed bo
 func checkRetention(ctx context.Context, p Pipeline, source *pgxpool.Pool, target *pgx.Conn, ob *Observation) error {
 	var retained int64
 	var lost bool
-	err := source.QueryRow(ctx, `SELECT coalesce(greatest(pg_wal_lsn_diff(pg_current_wal_lsn(),restart_lsn),0),0)::bigint,coalesce(wal_status='lost',false) FROM pg_replication_slots WHERE slot_name=$1`, pipelineName(p)).Scan(&retained, &lost)
+	var safe, generated pgtype.Int8
+	sample := &walRetentionSample{SampledAt: time.Now().UTC(), Generation: p.Generation}
+	previousLSN := ""
+	if p.WALSample != nil {
+		previousLSN = p.WALSample.SourceLSN
+	}
+	err := source.QueryRow(ctx, `SELECT coalesce(greatest(pg_wal_lsn_diff(pg_current_wal_lsn(),restart_lsn),0),0)::bigint,
+ coalesce(wal_status='lost',false),pg_size_bytes(current_setting('max_slot_wal_keep_size')),safe_wal_size,
+ pg_current_wal_lsn()::text,pg_wal_lsn_diff(pg_current_wal_lsn(),nullif($2,'')::pg_lsn)::bigint
+ FROM pg_replication_slots WHERE slot_name=$1`, pipelineName(p), previousLSN).Scan(&retained, &lost, &sample.LimitBytes, &safe, &sample.SourceLSN, &generated)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -874,6 +921,17 @@ func checkRetention(ctx context.Context, p Pipeline, source *pgxpool.Pool, targe
 		return err
 	}
 	ob.RetainedWALBytes = &retained
+	// Honor both the source's current backstop and Gregale's own safety ceiling.
+	// An unlimited/invalid setting must not manufacture additional headroom.
+	if sample.LimitBytes <= 0 || sample.LimitBytes > api.DataPipelineRetainedWALMaxBytes {
+		sample.LimitBytes = api.DataPipelineRetainedWALMaxBytes
+	}
+	sample.RemainingBytes = max(sample.LimitBytes-retained, 0)
+	if safe.Valid {
+		sample.RemainingBytes = min(sample.RemainingBytes, max(safe.Int64, 0))
+	}
+	sample.estimate(p.WALSample, generated)
+	ob.WALSample = sample
 	if lost {
 		return &blocked{"replication_state_lost", true}
 	}

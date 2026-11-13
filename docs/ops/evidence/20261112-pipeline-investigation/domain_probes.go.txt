@@ -1,0 +1,146 @@
+package datapipeline
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
+)
+
+// Investigation probes assert the observed defect, so they intentionally stop
+// passing when that defect is fixed. They are outside ordinary test discovery.
+func TestInvestigationPauseAcknowledgement(t *testing.T) {
+	for _, p := range []api.DataPipeline{
+		{DesiredState: "paused", State: "live", ObservationFresh: false},
+		{DesiredState: "paused", State: "blocked", Reason: "database_unavailable", ObservationFresh: true},
+	} {
+		health := pipelineHealth(p, time.Now())
+		if health.Code != "paused" || health.Message != "Sync is paused." {
+			t.Fatalf("finding changed: %+v", health)
+		}
+		t.Logf("desired=%s observed=%s fresh=%v -> health=%s message=%q", p.DesiredState, p.State, p.ObservationFresh, health.State, health.Message)
+	}
+}
+
+func TestInvestigationPausedMonitoringBlindSpot(t *testing.T) {
+	now := time.Now().UTC()
+	for _, fresh := range []bool{true, false} {
+		observed := now
+		if !fresh {
+			observed = now.Add(-10 * time.Minute)
+		}
+		p := Pipeline{DataPipeline: api.DataPipeline{DesiredState: "paused", State: "paused", Reason: "source_unavailable", Revision: 1, ObservedRevision: 1, ObservedAt: observed.Format(time.RFC3339Nano)}}
+		code, _ := alertCondition(p, now)
+		if code != "" {
+			t.Fatalf("finding changed: %s", code)
+		}
+		t.Logf("paused monitoring fresh=%v, no WAL evidence -> incident=%q", fresh, code)
+	}
+}
+
+func TestInvestigationUnrelatedDiscoveryBlocksSetup(t *testing.T) {
+	service, store, account, c, request := setupFixture(t)
+	setup, err := service.StartSetup(t.Context(), account, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.RequestCheck(t.Context(), account, c.ID, c.Revision, "", api.RequestDataConnectionCheck{Search: "customers"}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := store.ClaimCheck(t.Context(), uuid.NewString())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	capacity := &api.DataEndpointCapacity{State: "ready", UsableConnections: 100, RequiredConnections: 5, ObservedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(api.DataPipelineCapacityMaxAge).Format(time.RFC3339Nano)}
+	if err = store.FinishCheck(t.Context(), job, api.DataConnectionCheck{State: "passed", Tables: []api.DataSourceTable{{Name: "customers", Supported: true}}, Capacity: &api.DataPipelineCapacity{State: "ready", Source: capacity}}); err != nil {
+		t.Fatal(err)
+	}
+	ready, err := service.setupCheck(t.Context(), setup, "")
+	if ready || !errors.Is(err, ErrCheckRequired) {
+		t.Fatalf("finding changed: ready=%v err=%v", ready, err)
+	}
+	saved := setupTick(t, service, store, setup.ID)
+	if saved.State != "blocked" || saved.Reason != "connection_check_required" {
+		t.Fatalf("finding changed: %+v", saved)
+	}
+	latest, err := store.Check(t.Context(), account, c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Search != "customers" || latest.State != "passed" {
+		t.Fatalf("saved setup did refresh its selection: %+v", latest)
+	}
+	t.Logf("saved tables=%v, latest search=%q -> setup=%s/%s; no exact-table refresh queued", request.Tables, latest.Search, saved.State, saved.Reason)
+}
+
+func TestInvestigationNewReadOnlyLoginMissingHookGrants(t *testing.T) {
+	pool := pgtest.OpenDatabase(t)
+	ctx := t.Context()
+	p := Pipeline{AccountID: uuid.NewString(), DataPipeline: api.DataPipeline{ID: uuid.NewString(), Generation: 1, Tables: []string{"orders"}, ReadSubjects: []string{"alice"}}}
+	if _, err := pool.Exec(ctx, `CREATE SCHEMA gregale_pipeline;
+ CREATE TABLE gregale_pipeline.mirrors(pipeline_id uuid PRIMARY KEY,generation bigint NOT NULL,tables text[],readable boolean DEFAULT true,retiring boolean DEFAULT false);
+ CREATE TABLE public.orders(id integer PRIMARY KEY);
+ ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ CREATE POLICY gregale_pipeline_read ON public.orders FOR SELECT USING(true)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "COMMENT ON TABLE public.orders IS "+literal(marker(p))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO gregale_pipeline.mirrors(pipeline_id,generation,tables) VALUES($1,$2,$3)`, p.ID, p.Generation, p.Tables); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Release()
+	if err = ensurePipelineReadGate(ctx, p, connection.Conn()); err != nil {
+		t.Fatal(err)
+	}
+	role := "pipeline_audit_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err = pool.Exec(ctx, "CREATE ROLE "+ident(role)+" LOGIN NOINHERIT;GRANT SELECT ON public.orders TO "+ident(role)+";GRANT USAGE ON SCHEMA gregale_data_api TO "+ident(role)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.WithoutCancel(ctx), "DROP OWNED BY "+ident(role)+";DROP ROLE "+ident(role))
+	})
+	var before, after bool
+	if err = pool.QueryRow(ctx, `SELECT has_function_privilege($1,'gregale_data_api.check_pipeline_request()','EXECUTE')`, role).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if before {
+		t.Fatal("finding changed: newly created login already has hook execution")
+	}
+	if err = ensurePipelineReadGate(ctx, p, connection.Conn()); err != nil {
+		t.Fatal(err)
+	}
+	if err = pool.QueryRow(ctx, `SELECT has_function_privilege($1,'gregale_data_api.check_pipeline_request()','EXECUTE')`, role).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !after {
+		t.Fatal("probe did not reproduce reconciliation granting the missing privilege")
+	}
+	t.Logf("new SELECT-only login: hook execute before running reconciliation=%v, after=%v; paused worker skips that installer", before, after)
+}
+
+func TestInvestigationLastReaderCannotBeRevoked(t *testing.T) {
+	service, _, p, _ := schemaPipelineFixture(t)
+	if len(p.ReadSubjects) != 1 || !CanChangeReaders(p) {
+		t.Fatalf("unexpected fixture: %+v", p)
+	}
+	for _, canCreate := range []bool{true, false} {
+		service.CanCreate = func(context.Context, string) bool { return canCreate }
+		err := service.Readers(t.Context(), p.AccountID, p.ID, p.Revision, "preview", "", []string{})
+		if !errors.Is(err, ErrInvalid) {
+			t.Fatalf("finding changed: canCreate=%v error=%v", canCreate, err)
+		}
+		t.Logf("revoke last reader %q with create entitlement=%v -> %v", p.ReadSubjects[0], canCreate, err)
+	}
+}

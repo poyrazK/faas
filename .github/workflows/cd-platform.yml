@@ -349,7 +349,8 @@ jobs:
     environment: ${{ inputs.deploy_environment }}
     # Initial parallel deploys, bounded serial coverage follow-ups, and the
     # zero-downtime redeploy can exceed 45 minutes without any gate failing.
-    timeout-minutes: 90
+    # Reserve the verifier's capped one-hour observation budget after rollout.
+    timeout-minutes: 155
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
@@ -368,6 +369,22 @@ jobs:
         with:
           ref: ${{ inputs.release_tag }}
           fetch-depth: 1
+
+      # Read the wrapper from this workflow's commit, including when an older
+      # signed release is selected. An old remote CLI produces unknown evidence.
+      - name: Check out monitoring verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .monitoring-verifier
+          persist-credentials: false
+
+      - name: Initialize monitoring evidence
+        env:
+          MONITORING_REPORT: ${{ runner.temp }}/post-deployment-monitoring.json
+        run: |
+          DESIRED_RELEASE="$(git rev-parse HEAD)" \
+            python3 .monitoring-verifier/scripts/ci/post_deployment_monitoring.py --initialize
 
       - name: Resolve desired release and set up control-plane SSH
         run: |
@@ -468,6 +485,7 @@ jobs:
           fi
           active_node_count="$(jq -er '.active_node_count | select(. > 0)' "$status_file")"
           echo "ACTIVE_NODE_COUNT=$active_node_count" >> "$GITHUB_ENV"
+          echo "MONITORING_NOT_BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
       - name: Verify control-plane origin liveness and readiness
         run: |
@@ -622,3 +640,21 @@ jobs:
             echo "::error::release ${DESIRED_RELEASE} failed its post-activation gates AND the rollback did not complete — the control plane needs an operator now"
           fi
           exit 1
+
+      # Keep this AFTER recovery: unknown monitoring evidence or a monitoring
+      # fault must not invoke the rollback path above.
+      - name: Verify post-deployment monitoring
+        timeout-minutes: 65
+        env:
+          MONITORING_OPERATOR_TOKEN: ${{ secrets.MONITORING_OPERATOR_TOKEN }}
+          MONITORING_REPORT: ${{ runner.temp }}/post-deployment-monitoring.json
+        run: python3 .monitoring-verifier/scripts/ci/post_deployment_monitoring.py
+
+      - name: Upload post-deployment monitoring evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: post-deployment-monitoring-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/post-deployment-monitoring.json
+          if-no-files-found: warn
+          retention-days: 14

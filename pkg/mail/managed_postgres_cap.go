@@ -19,12 +19,16 @@ const (
 
 // ManagedPostgresCapNotice is the frozen snapshot one cap email reports.
 type ManagedPostgresCapNotice struct {
-	Threshold   string
-	UsedSeconds int64
-	Allowance   int64
-	Ceiling     int64
-	Overage     bool
-	ReachedAt   time.Time
+	// DatabaseName names the database an egress hold is for; empty on the
+	// compute thresholds, and on egress holds recorded per subject before
+	// ADR-20261110160000's 2026-11-13 amendment.
+	DatabaseName string
+	Threshold    string
+	UsedSeconds  int64
+	Allowance    int64
+	Ceiling      int64
+	Overage      bool
+	ReachedAt    time.Time
 }
 
 // ManagedPostgresCapBodyV1 renders one compute cap email. Amounts are
@@ -65,8 +69,13 @@ func ManagedPostgresCapBodyV1(email string, n ManagedPostgresCapNotice) (subject
 			limit = fmt.Sprintf("Each database has its own %s monthly egress allowance. Egress overage is on, so egress past it is billed and a database is paused at %s.", egressGB(n.Allowance), egressGB(n.Ceiling))
 			next = ""
 		}
-		detail = fmt.Sprintf("%s A database sent %s by %s, so it now refuses connections. Your apps and other databases are not affected; any other database that reaches its own limit is paused the same way.\nIts data, backups and connection settings are kept. It resumes on %s.%s",
-			limit, egressGB(n.UsedSeconds), n.ReachedAt.UTC().Format("2006-01-02 15:04 UTC"), resume, next)
+		which := "A database"
+		if n.DatabaseName != "" {
+			subject = fmt.Sprintf("Managed PostgreSQL database %s is paused until next month", n.DatabaseName)
+			which = "Your database " + n.DatabaseName
+		}
+		detail = fmt.Sprintf("%s %s sent %s by %s, so it now refuses connections. Your apps and other databases are not affected; any other database that reaches its own limit is paused the same way, with its own email.\nIts data, backups and connection settings are kept. It resumes on %s.%s",
+			limit, which, egressGB(n.UsedSeconds), n.ReachedAt.UTC().Format("2006-01-02 15:04 UTC"), resume, next)
 	default:
 		return "", "", false
 	}

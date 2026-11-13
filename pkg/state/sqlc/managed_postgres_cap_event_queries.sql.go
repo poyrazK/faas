@@ -68,6 +68,43 @@ func (q *Queries) ManagedPostgresCapSuspendedAt(ctx context.Context, db DBTX, ar
 	return reached_at, err
 }
 
+const managedPostgresEgressHoldNotice = `-- name: ManagedPostgresEgressHoldNotice :one
+SELECT n.subject_id, n.reached_at, n.used_bytes, n.allowance_bytes, n.ceiling_bytes, n.overage_billed,
+    (n.mail_intent_id IS NOT NULL)::boolean AS mailed
+FROM managed_postgres_egress_hold_notices n
+WHERE n.database_id = $1::uuid AND n.period_start = $2::timestamptz
+`
+
+type ManagedPostgresEgressHoldNoticeParams struct {
+	DatabaseID  pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+type ManagedPostgresEgressHoldNoticeRow struct {
+	SubjectID      pgtype.UUID
+	ReachedAt      pgtype.Timestamptz
+	UsedBytes      int64
+	AllowanceBytes int64
+	CeilingBytes   int64
+	OverageBilled  bool
+	Mailed         bool
+}
+
+func (q *Queries) ManagedPostgresEgressHoldNotice(ctx context.Context, db DBTX, arg ManagedPostgresEgressHoldNoticeParams) (ManagedPostgresEgressHoldNoticeRow, error) {
+	row := db.QueryRow(ctx, managedPostgresEgressHoldNotice, arg.DatabaseID, arg.PeriodStart)
+	var i ManagedPostgresEgressHoldNoticeRow
+	err := row.Scan(
+		&i.SubjectID,
+		&i.ReachedAt,
+		&i.UsedBytes,
+		&i.AllowanceBytes,
+		&i.CeilingBytes,
+		&i.OverageBilled,
+		&i.Mailed,
+	)
+	return i, err
+}
+
 const managedPostgresMostSevereCapEvent = `-- name: ManagedPostgresMostSevereCapEvent :one
 SELECT e.threshold, e.reached_at, e.used_unit_seconds, e.allowance_unit_seconds, e.ceiling_unit_seconds,
     e.overage_enabled, (e.mail_intent_id IS NOT NULL)::boolean AS mailed
@@ -143,6 +180,45 @@ func (q *Queries) RecordManagedPostgresCapEvent(ctx context.Context, db DBTX, ar
 		arg.AllowanceUnitSeconds,
 		arg.CeilingUnitSeconds,
 		arg.OverageEnabled,
+	)
+	var recorded bool
+	err := row.Scan(&recorded)
+	return recorded, err
+}
+
+const recordManagedPostgresEgressHoldNotice = `-- name: RecordManagedPostgresEgressHoldNotice :one
+INSERT INTO managed_postgres_egress_hold_notices (database_id, period_start, subject_id, reached_at,
+    used_bytes, allowance_bytes, ceiling_bytes, overage_billed)
+VALUES ($1::uuid, $2::timestamptz, $3::uuid,
+    $4::timestamptz, $5::bigint, $6::bigint,
+    $7::bigint, $8::boolean)
+ON CONFLICT (database_id, period_start) DO NOTHING
+RETURNING true AS recorded
+`
+
+type RecordManagedPostgresEgressHoldNoticeParams struct {
+	DatabaseID     pgtype.UUID
+	PeriodStart    pgtype.Timestamptz
+	SubjectID      pgtype.UUID
+	ReachedAt      pgtype.Timestamptz
+	UsedBytes      int64
+	AllowanceBytes int64
+	CeilingBytes   int64
+	OverageBilled  bool
+}
+
+// ADR-20261110160000 amendment 2026-11-13: the first sweep to hold a database
+// for its own egress allowance in a month records it; later sweeps leave it.
+func (q *Queries) RecordManagedPostgresEgressHoldNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresEgressHoldNoticeParams) (bool, error) {
+	row := db.QueryRow(ctx, recordManagedPostgresEgressHoldNotice,
+		arg.DatabaseID,
+		arg.PeriodStart,
+		arg.SubjectID,
+		arg.ReachedAt,
+		arg.UsedBytes,
+		arg.AllowanceBytes,
+		arg.CeilingBytes,
+		arg.OverageBilled,
 	)
 	var recorded bool
 	err := row.Scan(&recorded)

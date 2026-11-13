@@ -415,7 +415,7 @@ func loadRuntimeSecretsForWorkloadIfChanged(ctx context.Context, store runtimeSe
 	if knownRevision != "" && knownRevision == selection.Revision {
 		return runtimeConfigResponse{Revision: selection.Revision, Unchanged: true}, nil
 	}
-	secrets, err := mgr.UnsealRuntimeSecrets(ctx, selection.Entries, accountID)
+	secrets, err := mgr.UnsealRuntimeSecrets(ctx, appID, selection.Entries, accountID)
 	if err != nil {
 		return runtimeConfigResponse{}, fmt.Errorf("unseal runtime secrets: %w", err)
 	}
@@ -481,7 +481,7 @@ func selectRuntimeSecretRowsForWorkload(ctx context.Context, store runtimeSecret
 			}
 		}
 		selected = append(selected, row)
-		entries = append(entries, fcvm.SealedEnvEntry{Key: row.Key, Ciphertext: row.Ciphertext})
+		entries = append(entries, fcvm.SealedEnvEntry{Key: row.Key, Ciphertext: row.Ciphertext, Scope: row.Scope})
 		foundKeys[row.Key] = struct{}{}
 	}
 	// A missing grant must remain an error for restart-only workloads, since

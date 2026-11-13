@@ -150,10 +150,19 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// ownerReleaseRequests are app_owner_release_requests by app id
+	// (ADR-20261110210000 §4); allocated on first use under mu.
+	ownerReleaseRequests map[string]AppOwnerReleaseRequest
+	// basicAuthVerifiers are app_basic_auth_verifiers by hex sealed digest
+	// (ADR-20261110210000 slice 3h); allocated on first use under mu.
+	basicAuthVerifiers          map[string]string
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
 	trafficAppsSuffix           string
+	// abuseStrikes is each resource owner's abuse recycle times inside the
+	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
+	abuseStrikes map[string][]time.Time
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
@@ -7533,8 +7542,26 @@ func (m *MemStore) CompareAndSetAppStatus(ctx context.Context, id string, from, 
 	if to != AppActive {
 		m.clearCurrentAppWakeTransitionLocked(id)
 	}
+	if from == AppEvictedCold && to == AppActive {
+		m.clearRecoverableDeploymentParksLocked(id)
+	}
 	m.apps[id] = a
 	return true, nil
+}
+
+// clearRecoverableDeploymentParksLocked mirrors PgStore.wakeAppStatus: a
+// wake clears the app's liveness and lifecycle parks, never a security park.
+func (m *MemStore) clearRecoverableDeploymentParksLocked(appID string) {
+	for id, d := range m.deployments {
+		if d.AppID != appID {
+			continue
+		}
+		switch ParkReason(d.ParkedReason) {
+		case ParkReasonLivenessExhausted, ParkReasonLifecyclePark, ParkReasonAdminPark:
+			d.ParkedReason, d.ParkedAt = "", nil
+			m.deployments[id] = d
+		}
+	}
 }
 
 // RenameApp atomically swaps an app's slug (issue #63). Scans the

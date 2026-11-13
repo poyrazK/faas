@@ -24,6 +24,8 @@ func NotificationHealth(ctx context.Context, client *promql.Client, am *Alertman
 	// A slow local Alertmanager must not consume the metrics read's budget.
 	sourceResult := make(chan api.ObsNotificationAPIStatus, 1)
 	go func() { _, status := am.alerts(ctx, now); sourceResult <- status }()
+	receiverResult := make(chan api.ObsNotificationReceiverHealth, 1)
+	go func() { receiverResult <- notificationReceiverHealth(ctx, client, now) }()
 	out := api.ObsNotificationHealth{GeneratedAt: now.UTC(), WindowSeconds: int(api.ObsNotificationWindow.Seconds()),
 		Signals: map[string]api.ObsNotificationSignal{}, Integrations: []api.ObsNotificationIntegration{},
 		Limitations: []string{"aggregate_integration_counters", "includes_all_receivers_and_watchdog", "integration_presence_does_not_imply_configuration", "receiver_configuration_unobserved", "extrapolated_counter_increases", "no_per_episode_delivery_receipt", "no_human_receipt_confirmation", "external_watchdog_receipt_unobserved"}}
@@ -73,6 +75,8 @@ func NotificationHealth(ctx context.Context, client *promql.Client, am *Alertman
 	sort.Slice(out.Integrations, func(i, j int) bool { return out.Integrations[i].Integration < out.Integrations[j].Integration })
 	out.AlertmanagerAPI = <-sourceResult
 	out.State = notificationOverallState(out)
+	receivers := <-receiverResult
+	out.ReceiverHealth = &receivers
 	return out
 }
 
@@ -165,7 +169,7 @@ func notificationOverallState(out api.ObsNotificationHealth) string {
 	if capacity != nil && *capacity == 0 {
 		return "degraded"
 	}
-	if length != nil && capacity != nil && *length / *capacity > 0.8 {
+	if length != nil && capacity != nil && *length / *capacity > api.ObsNotificationQueueBusyRatio {
 		return "degraded"
 	}
 	return state

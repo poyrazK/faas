@@ -860,6 +860,50 @@ $$;
 
 
 --
+-- Name: app_owner_authority_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_owner_authority_check() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    current_mode text;
+    login text := session_user;
+    is_authorized boolean;
+    previous uuid;
+BEGIN
+    IF NEW.node_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        previous := OLD.node_id;
+        IF NEW.node_id IS NOT DISTINCT FROM previous THEN
+            RETURN NEW;
+        END IF;
+    END IF;
+    EXECUTE format('SELECT mode FROM %I.app_owner_authority WHERE singleton', TG_TABLE_SCHEMA)
+        INTO current_mode;
+    IF current_mode IS NULL OR current_mode = 'any' THEN
+        RETURN NEW;
+    END IF;
+    is_authorized := to_regrole('faas_owner_authority') IS NOT NULL
+        AND pg_has_role(login, 'faas_owner_authority', 'MEMBER');
+    IF NOT is_authorized AND current_mode = 'enforce' THEN
+        RAISE LOG 'faas_app_owner_refused app=% from=% to=% login=%', NEW.id, previous, NEW.node_id, login;
+        RAISE EXCEPTION 'app owner changes are made by the control plane'
+            USING ERRCODE = '42501',
+                  DETAIL = format('app=%s to=%s login=%s', NEW.id, NEW.node_id, login);
+    END IF;
+    EXECUTE format('INSERT INTO %I.app_owner_writes (app_id, from_node_id, to_node_id, login_role, authorized, mode) '
+                   'VALUES ($1, $2, $3, $4, $5, $6)', TG_TABLE_SCHEMA)
+        USING NEW.id, previous, NEW.node_id, login, is_authorized, current_mode;
+    RETURN NEW;
+END;
+$_$;
+
+
+--
 -- Name: app_private_network_attachment_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7206,6 +7250,41 @@ END $$;
 
 
 --
+-- Name: compute_node_identity_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compute_node_identity_check() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+DECLARE
+    current_mode text;
+    login text := session_user;
+    is_authorized boolean;
+BEGIN
+    IF NEW.id IS NOT DISTINCT FROM OLD.id AND NEW.name IS NOT DISTINCT FROM OLD.name THEN
+        RETURN NEW;
+    END IF;
+    EXECUTE format('SELECT mode FROM %I.app_owner_authority WHERE singleton', TG_TABLE_SCHEMA)
+        INTO current_mode;
+    IF current_mode IS NULL OR current_mode = 'any' THEN
+        RETURN NEW;
+    END IF;
+    is_authorized := to_regrole('faas_owner_authority') IS NOT NULL
+        AND pg_has_role(login, 'faas_owner_authority', 'MEMBER');
+    RAISE LOG 'faas_node_identity_change node=% name=%->% authorized=% login=% mode=%',
+        OLD.id, OLD.name, NEW.name, is_authorized, login, current_mode;
+    IF NOT is_authorized AND current_mode = 'enforce' THEN
+        RAISE EXCEPTION 'compute node identities are changed by the control plane'
+            USING ERRCODE = '42501',
+                  DETAIL = format('node=%s login=%s', OLD.id, login);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: compute_node_keys_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7275,6 +7354,101 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: compute_node_report_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compute_node_report_scope() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    node_name text;
+    node uuid;
+BEGIN
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node_name USING session_user::text;
+    IF node_name IS NOT NULL THEN
+        -- A node that has not registered yet has no row, so no report of
+        -- any node can match: NULL is distinct from every node_id.
+        EXECUTE format('SELECT id FROM %I.compute_nodes WHERE name = $1', TG_TABLE_SCHEMA)
+            INTO node USING node_name;
+    END IF;
+    IF node_name IS NOT NULL AND (
+        (TG_OP IN ('UPDATE', 'DELETE') AND OLD.node_id IS DISTINCT FROM node)
+        OR (TG_OP IN ('INSERT', 'UPDATE') AND NEW.node_id IS DISTINCT FROM node)) THEN
+        RAISE EXCEPTION 'a compute node login writes only its own node''s reports'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s table=%s', session_user, node_name, TG_TABLE_NAME);
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$_$;
+
+
+--
+-- Name: compute_node_row_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compute_node_row_scope() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    node text;
+BEGIN
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node USING session_user::text;
+    IF node IS NULL THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'a compute node login cannot delete compute node rows'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s', session_user, node);
+    END IF;
+    IF TG_OP = 'INSERT' THEN
+        -- vmmd registers with INSERT ... ON CONFLICT (name) DO UPDATE: the
+        -- insert is admitted only under the node's own name, where it
+        -- becomes an update of its own row (or its first registration).
+        IF NEW.name IS DISTINCT FROM node THEN
+            RAISE EXCEPTION 'a compute node login writes only its own compute node row'
+                USING ERRCODE = '42501', DETAIL = format('login=%s node=%s name=%s', session_user, node, NEW.name);
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF OLD.name IS DISTINCT FROM node THEN
+        RAISE EXCEPTION 'a compute node login writes only its own compute node row'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s row=%s', session_user, node, OLD.name);
+    END IF;
+    IF NEW.id IS DISTINCT FROM OLD.id OR NEW.name IS DISTINCT FROM OLD.name
+        OR (OLD.region IS NOT NULL AND NEW.region IS DISTINCT FROM OLD.region)
+        OR (OLD.zone IS NOT NULL AND NEW.zone IS DISTINCT FROM OLD.zone)
+        OR (OLD.role IS NOT NULL AND NEW.role IS DISTINCT FROM OLD.role)
+        OR NEW.target_url IS DISTINCT FROM OLD.target_url
+        OR (OLD.schedd_target_url IS NOT NULL AND NEW.schedd_target_url IS DISTINCT FROM OLD.schedd_target_url)
+        OR (OLD.gateway_target_url IS NOT NULL AND NEW.gateway_target_url IS DISTINCT FROM OLD.gateway_target_url)
+        OR (OLD.cert_fingerprint IS NOT NULL AND NEW.cert_fingerprint IS DISTINCT FROM OLD.cert_fingerprint)
+        OR (OLD.host_certificate IS NOT NULL AND NEW.host_certificate IS DISTINCT FROM OLD.host_certificate) THEN
+        RAISE EXCEPTION 'a compute node''s identity, placement labels and addresses are changed by the control plane'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s', session_user, node);
+    END IF;
+    IF NEW.vpcpus > OLD.vpcpus OR NEW.mem_mb > OLD.mem_mb OR NEW.max_concurrency > OLD.max_concurrency
+        OR NEW.admission_ceiling_mb > OLD.admission_ceiling_mb OR NEW.vcpu_budget > OLD.vcpu_budget THEN
+        RAISE LOG 'faas_node_capacity_clamped node=% login=% vpcpus=%->% mem_mb=%->% max_concurrency=%->% admission_ceiling_mb=%->% vcpu_budget=%->%',
+            node, session_user, OLD.vpcpus, NEW.vpcpus, OLD.mem_mb, NEW.mem_mb, OLD.max_concurrency, NEW.max_concurrency,
+            OLD.admission_ceiling_mb, NEW.admission_ceiling_mb, OLD.vcpu_budget, NEW.vcpu_budget;
+        NEW.vpcpus := LEAST(NEW.vpcpus, OLD.vpcpus);
+        NEW.mem_mb := LEAST(NEW.mem_mb, OLD.mem_mb);
+        NEW.max_concurrency := LEAST(NEW.max_concurrency, OLD.max_concurrency);
+        NEW.admission_ceiling_mb := LEAST(NEW.admission_ceiling_mb, OLD.admission_ceiling_mb);
+        NEW.vcpu_budget := LEAST(NEW.vcpu_budget, OLD.vcpu_budget);
+    END IF;
+    RETURN NEW;
+END;
+$_$;
 
 
 --
@@ -29965,6 +30139,35 @@ CREATE AGGREGATE public.request_analytics_hist_sum(bigint[]) (
 
 
 --
+-- Name: account_abuse_strikes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_abuse_strikes (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    reason text NOT NULL,
+    app_id uuid,
+    struck_at timestamp with time zone NOT NULL,
+    CONSTRAINT account_abuse_strikes_reason_check CHECK ((reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'cpu_sustained'::text]))),
+    CONSTRAINT account_abuse_strikes_struck_at_check CHECK (isfinite(struck_at))
+);
+
+
+--
+-- Name: account_abuse_strikes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.account_abuse_strikes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.account_abuse_strikes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: account_async_quota; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -31807,6 +32010,19 @@ CREATE TABLE public.app_api_routes (
 
 
 --
+-- Name: app_basic_auth_verifiers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_basic_auth_verifiers (
+    sealed_sha256 bytea NOT NULL,
+    verifier text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_basic_auth_verifiers_sealed_sha256_check CHECK ((octet_length(sealed_sha256) = 32)),
+    CONSTRAINT app_basic_auth_verifiers_verifier_check CHECK (((verifier ~~ '$argon2id$%'::text) AND (length(verifier) <= 256)))
+);
+
+
+--
 -- Name: app_binding_promotion_revisions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32667,6 +32883,62 @@ CREATE TABLE public.app_openapi_docs (
     CONSTRAINT app_openapi_docs_openapi_version_vocab_chk CHECK ((openapi_version = ANY (ARRAY['3.0.0'::text, '3.0.1'::text, '3.0.2'::text, '3.0.3'::text, '3.0.4'::text, '3.1.0'::text, '3.1.1'::text]))),
     CONSTRAINT app_openapi_docs_sha256_len_chk CHECK ((octet_length(doc_sha256) = 32)),
     CONSTRAINT app_openapi_docs_source_vocab_chk CHECK ((source = 'manual_import'::text))
+);
+
+
+--
+-- Name: app_owner_authority; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_owner_authority (
+    singleton boolean DEFAULT true NOT NULL,
+    mode text DEFAULT 'any'::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_owner_authority_mode_check CHECK ((mode = ANY (ARRAY['any'::text, 'observe'::text, 'enforce'::text]))),
+    CONSTRAINT app_owner_authority_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: app_owner_release_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_owner_release_requests (
+    app_id uuid NOT NULL,
+    from_node_id uuid NOT NULL,
+    reason text DEFAULT 'pressure'::text NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_owner_release_requests_reason_check CHECK ((reason = 'pressure'::text))
+);
+
+
+--
+-- Name: app_owner_writes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_owner_writes (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    from_node_id uuid,
+    to_node_id uuid NOT NULL,
+    login_role text NOT NULL,
+    authorized boolean NOT NULL,
+    mode text NOT NULL,
+    written_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: app_owner_writes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.app_owner_writes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.app_owner_writes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -35331,6 +35603,20 @@ COMMENT ON TABLE public.complimentary_accounts IS 'Accounts given a paid plan wi
 
 
 --
+-- Name: compute_node_db_logins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.compute_node_db_logins (
+    login text NOT NULL,
+    node_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT compute_node_db_logins_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT compute_node_db_logins_login_check CHECK ((login ~ '^faas_[a-z0-9_]{1,58}$'::text)),
+    CONSTRAINT compute_node_db_logins_node_name_check CHECK ((node_name ~ '^[A-Za-z0-9._-]{1,253}$'::text))
+);
+
+
+--
 -- Name: compute_node_heartbeat_hourly; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -35978,15 +36264,19 @@ CREATE TABLE public.customer_attention_signals (
     dismissed_at timestamp with time zone,
     dismissed_by uuid,
     dismiss_reason text DEFAULT ''::text NOT NULL,
+    outcome text,
+    ticket_id uuid,
     CONSTRAINT customer_attention_signals_check CHECK (((state = 'resolved'::text) = (resolved_at IS NOT NULL))),
     CONSTRAINT customer_attention_signals_check1 CHECK (((state <> 'dismissed'::text) OR (dismissed_at IS NOT NULL))),
+    CONSTRAINT customer_attention_signals_contact_ticket_check CHECK (((NOT (outcome IS DISTINCT FROM 'contacted'::text)) = (ticket_id IS NOT NULL))),
     CONSTRAINT customer_attention_signals_detail_check CHECK ((octet_length(detail) <= 500)),
     CONSTRAINT customer_attention_signals_dismiss_reason_check CHECK ((octet_length(dismiss_reason) <= 200)),
     CONSTRAINT customer_attention_signals_dismissed_at_check CHECK (((dismissed_at IS NULL) OR isfinite(dismissed_at))),
     CONSTRAINT customer_attention_signals_first_seen_at_check CHECK (isfinite(first_seen_at)),
-    CONSTRAINT customer_attention_signals_kind_check CHECK ((kind = ANY (ARRAY['deploy_failing'::text, 'refused_burst'::text, 'domain_stuck'::text]))),
+    CONSTRAINT customer_attention_signals_kind_v2_check CHECK ((kind = ANY (ARRAY['deploy_failing'::text, 'refused_burst'::text, 'domain_stuck'::text, 'app_oom'::text, 'boot_failing'::text, 'jobs_failing'::text, 'payment_failing'::text, 'limit_pressure'::text]))),
     CONSTRAINT customer_attention_signals_last_seen_at_check CHECK (isfinite(last_seen_at)),
     CONSTRAINT customer_attention_signals_observed_check CHECK ((observed >= 0)),
+    CONSTRAINT customer_attention_signals_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['contacted'::text, 'platform_issue'::text, 'already_in_touch'::text, 'not_needed'::text, 'false_positive'::text, 'resolved_on_own'::text])))),
     CONSTRAINT customer_attention_signals_resolved_at_check CHECK (((resolved_at IS NULL) OR isfinite(resolved_at))),
     CONSTRAINT customer_attention_signals_state_check CHECK ((state = ANY (ARRAY['open'::text, 'dismissed'::text, 'resolved'::text]))),
     CONSTRAINT customer_attention_signals_subject_check CHECK (((octet_length(subject) >= 1) AND (octet_length(subject) <= 253)))
@@ -37026,6 +37316,7 @@ CREATE TABLE public.data_pipeline_schema_refreshes (
     attempt integer NOT NULL,
     wake_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    read_gate boolean DEFAULT false NOT NULL,
     CONSTRAINT data_pipeline_schema_refreshes_attempt_check CHECK (((attempt >= 0) AND (attempt <= 10))),
     CONSTRAINT data_pipeline_schema_refreshes_change_id_check CHECK ((change_id ~ '^[a-f0-9]{64}$'::text))
 );
@@ -37100,11 +37391,12 @@ CREATE TABLE public.data_pipelines (
     schema_change jsonb DEFAULT '{}'::jsonb NOT NULL,
     verification_progress jsonb DEFAULT '{}'::jsonb NOT NULL,
     reader_change jsonb DEFAULT '{}'::jsonb NOT NULL,
+    wal_retention jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT data_pipelines_check CHECK (((observed_revision >= 0) AND (observed_revision <= revision))),
     CONSTRAINT data_pipelines_desired_state_check CHECK ((desired_state = ANY (ARRAY['running'::text, 'paused'::text, 'deleted'::text]))),
     CONSTRAINT data_pipelines_generation_check CHECK ((generation > 0)),
     CONSTRAINT data_pipelines_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'::text)),
-    CONSTRAINT data_pipelines_read_subjects_check CHECK (((jsonb_typeof(read_subjects) = 'array'::text) AND ((jsonb_array_length(read_subjects) >= 1) AND (jsonb_array_length(read_subjects) <= 32)))),
+    CONSTRAINT data_pipelines_read_subjects_v2_check CHECK (((jsonb_typeof(read_subjects) = 'array'::text) AND ((jsonb_array_length(read_subjects) >= 0) AND (jsonb_array_length(read_subjects) <= 32)))),
     CONSTRAINT data_pipelines_reader_change_check CHECK (((jsonb_typeof(reader_change) = 'object'::text) AND (octet_length((reader_change)::text) <= 131072) AND ((reader_change = '{}'::jsonb) OR ((reader_change ->> 'State'::text) = ANY (ARRAY['preview'::text, 'approved'::text, 'applied'::text]))))),
     CONSTRAINT data_pipelines_reason_check CHECK ((reason ~ '^[a-z0-9_]{0,80}$'::text)),
     CONSTRAINT data_pipelines_retained_wal_bytes_check CHECK ((retained_wal_bytes >= 0)),
@@ -46159,6 +46451,35 @@ CREATE TABLE public.managed_postgres_databases (
     CONSTRAINT managed_postgres_preview_fields_chk CHECK ((((preview_source_database_id IS NULL) AND (preview_environment_id IS NULL) AND (preview_pr_number IS NULL)) OR ((preview_source_database_id IS NOT NULL) AND (preview_source_database_id <> id) AND (preview_environment_id ~ '^[A-Za-z0-9-]{1,64}$'::text) AND (preview_pr_number > 0) AND (previews = 'off'::text)))),
     CONSTRAINT managed_postgres_restore_fields_ck CHECK ((((restore_source_database_id IS NULL) AND (restore_source_resource_id IS NULL) AND (restore_point_in_time IS NULL)) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL))))
 );
+
+
+--
+-- Name: managed_postgres_egress_hold_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_egress_hold_notices (
+    database_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    subject_id uuid NOT NULL,
+    reached_at timestamp with time zone NOT NULL,
+    used_bytes bigint NOT NULL,
+    allowance_bytes bigint NOT NULL,
+    ceiling_bytes bigint NOT NULL,
+    overage_billed boolean NOT NULL,
+    mail_intent_id uuid,
+    CONSTRAINT managed_postgres_egress_hold_notices_allowance_bytes_check CHECK ((allowance_bytes > 0)),
+    CONSTRAINT managed_postgres_egress_hold_notices_check CHECK ((isfinite(reached_at) AND (reached_at >= period_start))),
+    CONSTRAINT managed_postgres_egress_hold_notices_check1 CHECK ((ceiling_bytes >= allowance_bytes)),
+    CONSTRAINT managed_postgres_egress_hold_notices_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT managed_postgres_egress_hold_notices_used_bytes_check CHECK ((used_bytes >= 0))
+);
+
+
+--
+-- Name: TABLE managed_postgres_egress_hold_notices; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_egress_hold_notices IS 'Managed PostgreSQL databases held for sending their own monthly egress allowance, one row per database and UTC month; written only by apid (ADR-20261110160000).';
 
 
 --
@@ -58991,6 +59312,52 @@ COMMENT ON TABLE public.seal_domain_probe IS 'One non-secret secretbox probe per
 
 
 --
+-- Name: secret_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.secret_grants (
+    app_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    granted_by_node_id uuid NOT NULL,
+    granted_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT secret_grants_expiry_check CHECK ((expires_at > granted_at))
+);
+
+
+--
+-- Name: secret_open_audit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.secret_open_audit (
+    id bigint NOT NULL,
+    node_id uuid NOT NULL,
+    app_id uuid,
+    via text NOT NULL,
+    entries integer NOT NULL,
+    opened_at timestamp with time zone DEFAULT now() NOT NULL,
+    job_id uuid,
+    CONSTRAINT secret_open_audit_entries_check CHECK ((entries >= 0)),
+    CONSTRAINT secret_open_audit_subject_check CHECK (((app_id IS NULL) <> (job_id IS NULL))),
+    CONSTRAINT secret_open_audit_via_check CHECK ((via = ANY (ARRAY['owner'::text, 'grant'::text])))
+);
+
+
+--
+-- Name: secret_open_audit_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.secret_open_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.secret_open_audit_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: service_caller_key_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -61274,6 +61641,14 @@ ALTER TABLE ONLY public.status_incidents ALTER COLUMN id SET DEFAULT nextval('pu
 
 
 --
+-- Name: account_abuse_strikes account_abuse_strikes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_abuse_strikes
+    ADD CONSTRAINT account_abuse_strikes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: account_async_quota account_async_quota_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -61962,6 +62337,14 @@ ALTER TABLE ONLY public.app_application_standards
 
 
 --
+-- Name: app_basic_auth_verifiers app_basic_auth_verifiers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_basic_auth_verifiers
+    ADD CONSTRAINT app_basic_auth_verifiers_pkey PRIMARY KEY (sealed_sha256);
+
+
+--
 -- Name: app_binding_promotion_revisions app_binding_promotion_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62319,6 +62702,30 @@ ALTER TABLE ONLY public.app_memory_pressure
 
 ALTER TABLE ONLY public.app_openapi_docs
     ADD CONSTRAINT app_openapi_docs_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_owner_authority app_owner_authority_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_authority
+    ADD CONSTRAINT app_owner_authority_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: app_owner_release_requests app_owner_release_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_release_requests
+    ADD CONSTRAINT app_owner_release_requests_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_owner_writes app_owner_writes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_writes
+    ADD CONSTRAINT app_owner_writes_pkey PRIMARY KEY (id);
 
 
 --
@@ -63818,6 +64225,14 @@ ALTER TABLE ONLY public.complimentary_accounts
 
 
 --
+-- Name: compute_node_db_logins compute_node_db_logins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.compute_node_db_logins
+    ADD CONSTRAINT compute_node_db_logins_pkey PRIMARY KEY (login);
+
+
+--
 -- Name: compute_node_heartbeat_hourly compute_node_heartbeat_hourly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -64543,6 +64958,14 @@ ALTER TABLE ONLY public.data_pipelines
 
 ALTER TABLE ONLY public.data_pipelines
     ADD CONSTRAINT data_pipelines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: data_pipelines data_pipelines_wal_retention_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.data_pipelines
+    ADD CONSTRAINT data_pipelines_wal_retention_check CHECK (((jsonb_typeof(wal_retention) = 'object'::text) AND (octet_length((wal_retention)::text) <= 4096))) NOT VALID;
 
 
 --
@@ -68511,6 +68934,14 @@ ALTER TABLE ONLY public.managed_postgres_database_endpoints
 
 ALTER TABLE ONLY public.managed_postgres_databases
     ADD CONSTRAINT managed_postgres_databases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_egress_hold_notices managed_postgres_egress_hold_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_egress_hold_notices
+    ADD CONSTRAINT managed_postgres_egress_hold_notices_pkey PRIMARY KEY (database_id, period_start);
 
 
 --
@@ -74002,6 +74433,22 @@ ALTER TABLE ONLY public.seal_domain_probe
 
 
 --
+-- Name: secret_grants secret_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_grants
+    ADD CONSTRAINT secret_grants_pkey PRIMARY KEY (app_id, node_id);
+
+
+--
+-- Name: secret_open_audit secret_open_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_open_audit
+    ADD CONSTRAINT secret_open_audit_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: service_caller_key_history service_caller_key_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75034,6 +75481,20 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 
 --
+-- Name: account_abuse_strikes_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_abuse_strikes_account_idx ON public.account_abuse_strikes USING btree (account_id, struck_at);
+
+
+--
+-- Name: account_abuse_strikes_struck_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_abuse_strikes_struck_at_idx ON public.account_abuse_strikes USING btree (struck_at);
+
+
+--
 -- Name: account_credits_account_active_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -75934,6 +76395,20 @@ CREATE INDEX app_mcp_readiness_policy_history_scope ON public.app_mcp_readiness_
 --
 
 CREATE INDEX app_openapi_docs_account_id_idx ON public.app_openapi_docs USING btree (account_id);
+
+
+--
+-- Name: app_owner_release_requests_requested_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_owner_release_requests_requested_idx ON public.app_owner_release_requests USING btree (requested_at);
+
+
+--
+-- Name: app_owner_writes_unauthorized_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_owner_writes_unauthorized_idx ON public.app_owner_writes USING btree (written_at) WHERE (NOT authorized);
 
 
 --
@@ -77100,6 +77575,13 @@ CREATE INDEX commit_receipts_source_history ON public.commit_receipts USING btre
 --
 
 CREATE INDEX complimentary_accounts_expires_at_idx ON public.complimentary_accounts USING btree (expires_at) WHERE (expires_at IS NOT NULL);
+
+
+--
+-- Name: compute_node_db_logins_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX compute_node_db_logins_node_idx ON public.compute_node_db_logins USING btree (node_name);
 
 
 --
@@ -81359,6 +81841,13 @@ CREATE INDEX managed_postgres_databases_restore_source_idx ON public.managed_pos
 
 
 --
+-- Name: managed_postgres_egress_hold_notices_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_egress_hold_notices_subject_idx ON public.managed_postgres_egress_hold_notices USING btree (subject_id);
+
+
+--
 -- Name: managed_postgres_health_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -85258,6 +85747,34 @@ CREATE UNIQUE INDEX scheduled_releases_one_pending ON public.scheduled_releases 
 
 
 --
+-- Name: secret_grants_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_grants_expires_idx ON public.secret_grants USING btree (expires_at);
+
+
+--
+-- Name: secret_open_audit_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_open_audit_app_idx ON public.secret_open_audit USING btree (app_id, opened_at);
+
+
+--
+-- Name: secret_open_audit_job_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_open_audit_job_idx ON public.secret_open_audit USING btree (job_id, opened_at) WHERE (job_id IS NOT NULL);
+
+
+--
+-- Name: secret_open_audit_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_open_audit_node_idx ON public.secret_open_audit USING btree (node_id, opened_at);
+
+
+--
 -- Name: service_caller_key_history_retire_after_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -86876,6 +87393,13 @@ CREATE TRIGGER app_object_buckets_guard BEFORE UPDATE OF status ON public.apps F
 --
 
 CREATE TRIGGER app_openapi_docs_set_updated_at_trg BEFORE UPDATE ON public.app_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.app_openapi_docs_set_updated_at();
+
+
+--
+-- Name: apps app_owner_authority_check; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_owner_authority_check BEFORE INSERT OR UPDATE OF node_id ON public.apps FOR EACH ROW EXECUTE FUNCTION public.app_owner_authority_check();
 
 
 --
@@ -88793,6 +89317,13 @@ CREATE TRIGGER compute_node_changed_trg AFTER INSERT OR UPDATE ON public.compute
 
 
 --
+-- Name: compute_nodes compute_node_identity_check; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_node_identity_check BEFORE UPDATE OF id, name ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.compute_node_identity_check();
+
+
+--
 -- Name: compute_node_keys compute_node_keys_changed_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -88804,6 +89335,27 @@ CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON
 --
 
 CREATE TRIGGER compute_node_lifecycle_generation_guard BEFORE INSERT OR UPDATE OF lifecycle, lifecycle_generation, drain_initiated_at, recovery_initiated_at ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.compute_node_lifecycle_generation_guard();
+
+
+--
+-- Name: compute_node_heartbeats compute_node_report_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_node_report_scope BEFORE INSERT OR DELETE OR UPDATE ON public.compute_node_heartbeats FOR EACH ROW EXECUTE FUNCTION public.compute_node_report_scope();
+
+
+--
+-- Name: node_memory_reports compute_node_report_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_node_report_scope BEFORE INSERT OR DELETE OR UPDATE ON public.node_memory_reports FOR EACH ROW EXECUTE FUNCTION public.compute_node_report_scope();
+
+
+--
+-- Name: compute_nodes compute_node_row_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_node_row_scope BEFORE INSERT OR DELETE OR UPDATE ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.compute_node_row_scope();
 
 
 --
@@ -95489,6 +96041,14 @@ ALTER TABLE ONLY public.app_openapi_docs
 
 ALTER TABLE ONLY public.app_openapi_docs
     ADD CONSTRAINT app_openapi_docs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_owner_release_requests app_owner_release_requests_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_release_requests
+    ADD CONSTRAINT app_owner_release_requests_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -102684,6 +103244,22 @@ ALTER TABLE ONLY public.managed_postgres_databases
 
 
 --
+-- Name: managed_postgres_egress_hold_notices managed_postgres_egress_hold_notices_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_egress_hold_notices
+    ADD CONSTRAINT managed_postgres_egress_hold_notices_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_egress_hold_notices managed_postgres_egress_hold_notices_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_egress_hold_notices
+    ADD CONSTRAINT managed_postgres_egress_hold_notices_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_postgres_health managed_postgres_health_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -109481,6 +110057,22 @@ ALTER TABLE ONLY public.scheduled_releases
 
 ALTER TABLE ONLY public.scheduled_releases
     ADD CONSTRAINT scheduled_releases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: secret_grants secret_grants_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_grants
+    ADD CONSTRAINT secret_grants_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: secret_grants secret_grants_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_grants
+    ADD CONSTRAINT secret_grants_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
 
 
 --

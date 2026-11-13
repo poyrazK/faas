@@ -48,7 +48,9 @@ func (e *Engine) Check(ctx context.Context, job ConnectionCheck, raw string) api
 	result.Capacity = &api.DataPipelineCapacity{State: "needs_qualification", Source: capacityReport(allocation, connectioncapacity.PipelineSourceDemand(), allocationErr)}
 	result.Checks = append(result.Checks, capacityIssue("source", result.Capacity.Source))
 	rows, err := source.Query(ctx, `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') ORDER BY c.relname COLLATE "C" LIMIT $1`, api.DataPipelineDiscoveryTablesMax+1)
+ WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f')
+ AND ($2::text='' OR strpos(c.relname,$2)>0)
+ ORDER BY c.relname COLLATE "C" LIMIT $1`, api.DataPipelineDiscoveryTablesMax+1, job.Search)
 	if err != nil {
 		return blockedCheck("source_metadata_unavailable", "Source tables could not be discovered", "Check source catalog access and run the check again.")
 	}
@@ -70,6 +72,12 @@ func (e *Engine) Check(ctx context.Context, job ConnectionCheck, raw string) api
 	if len(names) > api.DataPipelineDiscoveryTablesMax {
 		result.Truncated = true
 		names = names[:api.DataPipelineDiscoveryTablesMax]
+	}
+	if len(job.RequestedTables) > 0 {
+		// Exact selections bypass the catalog page, while using the same inspector
+		// and evidence limits. Missing tables receive ordinary remediation.
+		names = job.RequestedTables
+		result.Truncated = false
 	}
 	metadataBytes := 0
 	for _, name := range names {
