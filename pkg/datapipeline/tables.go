@@ -52,6 +52,9 @@ func tablePlan(p Pipeline, before, after []relation) SchemaChange {
 		}
 		plan.AddedTables = append(plan.AddedTables, r.Name)
 		plan.Changes = append(plan.Changes, SchemaColumnChange{Table: r.Name, Column: "*", Kind: "table_added", Safe: safe, Reason: "Copy and synchronize this table. Every saved reader can read every row after verification and API refresh."})
+		if tenantAccess(p) != nil {
+			plan.Changes[len(plan.Changes)-1].Reason = "Copy and synchronize this table. Approved tenant memberships control row access after verification and API refresh."
+		}
 		plan.Supported = plan.Supported && safe
 	}
 	plan.Supported = plan.Supported && len(plan.AddedTables) > 0 && len(after) <= api.DataPipelineTablesMax
@@ -118,7 +121,7 @@ func checkExistingSelection(c api.DataConnectionCheck, p Pipeline, tables []stri
 		}
 	}
 	c.State = "passed"
-	return checkSelection(c, tables)
+	return ValidateServingSelection(c, tables, p.Serving)
 }
 func (s *PostgresStore) checkedTables(ctx context.Context, tx pgx.Tx, p Pipeline, tables []string) error {
 	r, err := s.q.PipelineCheckForCreate(ctx, tx, sqlc.PipelineCheckForCreateParams{AccountID: p.AccountID, ConnectionID: p.SourceConnectionID})
@@ -138,6 +141,9 @@ func (s *PostgresStore) RequestTables(ctx context.Context, account, id string, r
 	p, err := s.Get(ctx, account, id)
 	if err != nil {
 		return err
+	}
+	if p.Serving != nil && len(p.Serving.Columns) > 0 {
+		return ErrConflict
 	}
 	if revision < 1 || len(added) == 0 {
 		return ErrInvalid

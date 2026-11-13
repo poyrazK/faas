@@ -13,6 +13,23 @@ missing phases remain `not_run` and cannot yield a passing report. Every report
 keeps `production_ready: false`, `pilot_ready: false` and operator review required.
 A report does not change any feature flag, configuration, PR or deployment.
 
+## Qualify a Neon source
+
+Pass `--source-provider neon` to both the offline configuration check and the live
+runner. Both credential files must use direct `*.neon.tech` endpoints; pooled
+endpoints are rejected locally. The reviewed preflight adapter must additionally
+return `source_provider_kind: "neon"` based on the actual isolated source allocation.
+The existing `provider_kind: "neon"` field identifies the destination provider.
+The report records these separately and never infers qualification from a hostname.
+
+Follow `gregale pipeline connection guide neon` before the drill. In particular,
+review logical-replication activation/restart, subscriber egress, continuous source
+compute usage, restore/slot expiry and the finite native WAL byte cap. Do not run
+retention-pressure faults against a source without that cap. If Neon cannot
+provide it, preserve the blocker and request provider/operator review.
+No live Neon source credentials or reviewed fault controls are available in this
+workspace; qualification remains pending.
+
 ## Prepare an isolated fixture
 
 Use an approved staging account and a disposable PostgreSQL 16 source database.

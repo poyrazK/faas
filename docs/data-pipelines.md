@@ -11,6 +11,89 @@ environment. Its CLI shortcuts (`pipeline create --api/--auth` and
 `FAAS_APPLICATION_AUTH_ENABLED=1` in the local CLI environment. Mirror-only
 synchronization does not require application Auth.
 
+## Neon source onboarding
+
+Run `gregale pipeline connection guide neon` without logging in, or open
+**Connect a Neon source** in the dashboard. Use a direct PostgreSQL 16 endpoint;
+`-pooler` URLs are rejected before connecting. Keep `sslmode=verify-full`.
+Enable logical replication in Neon project settings only after reviewing its
+compute restart and irreversible setting. Verify the dedicated source role's
+replication/publication privileges and permit both worker and subscriber egress
+if IP Allow is enabled. See [Neon's logical replication guide](https://neon.com/docs/guides/logical-replication-neon).
+
+An active subscriber keeps Neon source compute awake and can increase compute
+usage. Inactive-slot expiry and branch restore can remove replication slots.
+Gregale requires a positive native `max_slot_wal_keep_size` no greater than 1 GiB;
+a time-based inactive-slot expiry does not meet that requirement. If the provider
+cannot expose this cap, admission stays blocked pending operator/provider review.
+Provider hints do not establish compatibility or capacity. Actual Neon source
+qualification remains pending the [isolated provider drill](data-pipeline-provider-qualification.md).
+
+## Customer tenant access and selected columns
+
+Use the dashboard's **Tenant-specific customer access** mode, or create a private
+`serving.json` file:
+
+```json
+{
+  "version": 1,
+  "columns": {"orders": ["id", "tenant_id", "status"]},
+  "tenant_access": {
+    "column": "tenant_id",
+    "memberships": [
+      {"subject": "customer-alice", "tenant": "acme"},
+      {"subject": "customer-bob", "tenant": "bravo"}
+    ]
+  }
+}
+```
+
+```sh
+chmod 600 serving.json
+gregale pipeline create portal-orders --connection CONNECTION_ID \
+  --tables orders --serving-file ./serving.json --wait
+```
+
+Alice can read only `tenant_id = 'acme'` rows; Bob can read only `bravo` rows.
+One subject may have several memberships. Null/unmatched tenant values are
+hidden. Memberships match the verified JWT `sub` exactly; a JWT's tenant or role
+claims do not grant membership. The account owner controls this mapping. Omit
+`--read-subjects` in tenant mode; combining the two access modes is rejected.
+A read-only Data API backed by the mirror enforces these row policies and keeps
+the existing availability errors while reads are gated.
+
+Explicit columns cover every selected table and retain all primary-key columns
+and the tenant column. Tenant columns must be text, varchar or UUID on every
+table. Excluded fields are absent from publication, initial copy, CDC, mirror
+schema, verification and resync. This reduces replicated data; PostgreSQL column
+lists are not a security boundary against someone who holds privileged source
+replication credentials. Omit `columns` for the existing schema-approval behavior.
+To change an explicit projection or add another table to it, create a newly
+reviewed pipeline. Scoped repair/removal and resync preserve its saved projection.
+
+To change tenant memberships, save the complete replacement array in a private
+`members.json` file, preview the diff, then approve its returned `tenant_change.id`:
+
+```sh
+gregale pipeline access PIPELINE_ID --members-file ./members.json
+gregale pipeline access PIPELINE_ID --approve SAVED_CHANGE_ID --wait
+# Or discard an unapproved preview:
+gregale pipeline access PIPELINE_ID --discard
+```
+
+The public API is `POST /v1/data/pipelines/{id}/tenant-readers` with
+`expected_revision`, `action` (`preview`, `approve`, `discard`), and either the
+complete `memberships` array or the saved `change_id`. Approvals apply atomically
+at the mirror and survive worker retries. Revocation works while the source is
+unavailable or replication is paused. In past-due grace, only strict reductions
+of existing subject/tenant pairs are allowed. An empty array `[]` revokes all
+memberships. Whole-table reader controls cannot widen a tenant pipeline.
+
+Contracts and request bodies are bounded to 2 MiB. Each tenant/subject value is
+bounded to 256 UTF-8 bytes; each identifier to 63 bytes. A pipeline permits at most
+128 distinct subjects and 256 memberships. These controls remain in the approved
+staging pilot; local acceptance does not enable production or qualify Neon.
+
 ## Connect and read
 
 Start in **Dashboard → Data connections**, or inspect a source with the CLI:
@@ -27,7 +110,7 @@ The private worker checks verified TLS/network access, PostgreSQL version,
 logical replication, retention, publication and replication permissions, and
 available slots/senders. Discovery lists public tables, columns, primary keys,
 and specific compatibility blockers. Unsupported tables remain visible with
-remediation; they cannot be selected. No customer rows are read by discovery.
+remediation. Tables with incompatible non-key columns may use an explicit column selection that omits those columns. Table-level blockers still prevent selection. No customer rows are read by discovery.
 
 Use `connection check CONNECTION_ID --database DATABASE_ID` to also inspect an
 existing empty mirror's native-subscription permission and replication worker
@@ -369,7 +452,7 @@ remain visible. Connection URLs and private worker credentials never appear in
 list/status responses.
 
 Limits per account are 10 source connections and 3 active pipelines, with at most
-32 read subjects per pipeline and 1,000 resync generations. A completed pipeline
+128 distinct read subjects and 256 subject/tenant memberships per pipeline and 1,000 resync generations. A completed pipeline
 check becomes due again after 15 seconds. The worker drains due jobs with eight
 concurrent pipeline reconciliations, two connection checks and two setup steps.
 These queues progress independently and poll once per second when empty. Slow

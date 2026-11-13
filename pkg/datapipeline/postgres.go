@@ -64,6 +64,9 @@ func pipelineRow(r sqlc.DataPipeline) Pipeline {
 	p := Pipeline{AccountID: uid(r.AccountID), LeaseToken: r.LeaseToken, LeaseUntil: r.LeaseUntil.Time, VerifyRequested: r.VerifyRequested, Initialized: r.Initialized, DataPipeline: api.DataPipeline{AppliedThroughAt: stamp(r.AppliedThroughAt), ID: uid(r.ID), Name: r.Name, SourceConnectionID: uid(r.SourceConnectionID), DatabaseID: uid(r.DatabaseID), DesiredState: r.DesiredState, State: r.State, Revision: r.Revision, Generation: r.Generation, ObservedRevision: r.ObservedRevision, ObservationFresh: r.ObservedAt.Valid && r.ObservedRevision == r.Revision && time.Since(r.ObservedAt.Time) >= 0 && time.Since(r.ObservedAt.Time) < api.DataPipelineObservationMaxAge, Reason: r.Reason, TablesReady: int(r.TablesReady), ObservedAt: stamp(r.ObservedAt), Verification: r.Verification, VerifiedAt: stamp(r.VerifiedAt), CreatedAt: stamp(r.CreatedAt)}}
 	_ = json.Unmarshal(r.Tables, &p.Tables)
 	_ = json.Unmarshal(r.ReadSubjects, &p.ReadSubjects)
+	if len(r.ServingConfig) > 2 {
+		p.ServingInvalid = json.Unmarshal(r.ServingConfig, &p.Serving) != nil || !validRuntimeServing(p)
+	}
 	if len(r.VerificationProgress) > 2 {
 		_ = json.Unmarshal(r.VerificationProgress, &p.VerificationProgress)
 	}
@@ -73,6 +76,9 @@ func pipelineRow(r sqlc.DataPipeline) Pipeline {
 	p.SchemaApproval = r.SchemaApproval
 	if len(r.SchemaChange) > 2 {
 		_ = json.Unmarshal(r.SchemaChange, &p.SchemaChange)
+	}
+	if c := p.ReaderChange; c != nil && c.Tenant {
+		p.TenantChange = &api.DataPipelineTenantChange{ID: c.ID, State: c.State, PreviewRevision: c.PreviewRevision, Before: c.BeforeMemberships, After: c.AfterMemberships}
 	}
 	if r.RetainedWalBytes.Valid {
 		v := r.RetainedWalBytes.Int64
@@ -179,7 +185,7 @@ func (s *PostgresStore) Create(ctx context.Context, p Pipeline) (Pipeline, error
 	old, err := s.q.PipelineGetByName(ctx, tx, sqlc.PipelineGetByNameParams{AccountID: p.AccountID, Name: p.Name})
 	if err == nil {
 		existing := pipelineRow(old)
-		if existing.SourceConnectionID != p.SourceConnectionID || existing.DatabaseID != p.DatabaseID || !slices.Equal(existing.Tables, p.Tables) || !slices.Equal(existing.ReadSubjects, p.ReadSubjects) || existing.DesiredState == "deleted" {
+		if existing.SourceConnectionID != p.SourceConnectionID || existing.DatabaseID != p.DatabaseID || !slices.Equal(existing.Tables, p.Tables) || !slices.Equal(existing.ReadSubjects, p.ReadSubjects) || existing.DesiredState == "deleted" || !sameServing(existing.Serving, p.Serving) {
 			return Pipeline{}, ErrConflict
 		}
 		return existing, nil
@@ -193,7 +199,7 @@ func (s *PostgresStore) Create(ctx context.Context, p Pipeline) (Pipeline, error
 		if decodeErr != nil {
 			return Pipeline{}, decodeErr
 		}
-		if saved.DatabaseID != p.DatabaseID || saved.Request.SourceConnectionID != p.SourceConnectionID || !slices.Equal(saved.Request.Tables, p.Tables) || !slices.Equal(saved.Request.ReadSubjects, p.ReadSubjects) {
+		if saved.DatabaseID != p.DatabaseID || saved.Request.SourceConnectionID != p.SourceConnectionID || !slices.Equal(saved.Request.Tables, p.Tables) || !slices.Equal(saved.Request.ReadSubjects, p.ReadSubjects) || !sameServing(saved.Request.Serving, p.Serving) {
 			return Pipeline{}, ErrConflict
 		}
 	} else if setupErr != nil && !errors.Is(setupErr, pgx.ErrNoRows) {
@@ -216,7 +222,7 @@ func (s *PostgresStore) Create(ctx context.Context, p Pipeline) (Pipeline, error
 	if check.DatabaseID != "" && check.DatabaseID != p.DatabaseID {
 		return Pipeline{}, ErrCheckRequired
 	}
-	if err = checkSelection(check.DataConnectionCheck, p.Tables); err != nil {
+	if err = ValidateServingSelection(check.DataConnectionCheck, p.Tables, p.Serving); err != nil {
 		return Pipeline{}, err
 	}
 	if err = s.q.PipelinePruneHistory(ctx, tx, sqlc.PipelinePruneHistoryParams{AccountID: p.AccountID, HistoryOffset: api.DataPipelineHistoryMax - api.DataPipelinesMax - 1, PageLimit: api.DataPipelineHistoryMax}); err != nil {
@@ -237,7 +243,7 @@ func (s *PostgresStore) Create(ctx context.Context, p Pipeline) (Pipeline, error
 	}
 	tables, _ := json.Marshal(p.Tables)
 	subjects, _ := json.Marshal(p.ReadSubjects)
-	r, err := s.q.PipelineInsert(ctx, tx, sqlc.PipelineInsertParams{ID: p.ID, AccountID: p.AccountID, Name: p.Name, SourceConnectionID: p.SourceConnectionID, DatabaseID: p.DatabaseID, Tables: tables, ReadSubjects: subjects})
+	r, err := s.q.PipelineInsert(ctx, tx, sqlc.PipelineInsertParams{ID: p.ID, AccountID: p.AccountID, Name: p.Name, SourceConnectionID: p.SourceConnectionID, DatabaseID: p.DatabaseID, Tables: tables, ReadSubjects: subjects, ServingConfig: servingJSON(p.Serving)})
 	if err != nil {
 		return Pipeline{}, storeError(err)
 	}
@@ -291,7 +297,7 @@ func (s *PostgresStore) Control(ctx context.Context, account, id string, revisio
 		}
 		arg.DesiredState = "running"
 	case "delete":
-		if p.ReaderChange != nil && p.ReaderChange.State == "approved" && !readerSubset(p.ReaderChange.Before, p.ReaderChange.After) {
+		if p.ReaderChange != nil && p.ReaderChange.State == "approved" && !readerReduction(*p.ReaderChange) {
 			return Pipeline{}, ErrConflict
 		}
 		arg.DesiredState = "deleted"
@@ -320,8 +326,19 @@ func (s *PostgresStore) Control(ctx context.Context, account, id string, revisio
 	return pipelineRow(r), storeError(err)
 }
 func (s *PostgresStore) Claim(ctx context.Context, token string) (Pipeline, error) {
-	r, err := s.q.PipelineClaim(ctx, s.pool, token)
-	return pipelineRow(r), storeError(err)
+	tx, err := s.workerClaim(ctx)
+	if err != nil {
+		return Pipeline{}, storeError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	r, err := s.q.PipelineClaim(ctx, tx, token)
+	if err != nil {
+		return Pipeline{}, storeError(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Pipeline{}, storeError(err)
+	}
+	return pipelineRow(r), nil
 }
 func (s *PostgresStore) Finish(ctx context.Context, p Pipeline, ob Observation) error {
 	if ob.ReaderOnly {

@@ -61,6 +61,10 @@ func (e *blocked) Error() string { return e.code }
 
 func (e *Engine) Reconcile(ctx context.Context, p Pipeline, raw string, current func(context.Context) error) Observation {
 	ob := pipelineObservation(p)
+	if p.ServingInvalid || !validRuntimeServing(p) {
+		ob.State, ob.Reason = "blocked", "serving_contract_invalid"
+		return ob
+	}
 	err := e.withTarget(ctx, p, current, func(target *pgx.Conn, owner string) error {
 		if p.DesiredState == "paused" && p.ReaderChange != nil && p.ReaderChange.State == "approved" {
 			if err := pausePipelineSubscriptions(ctx, p, target, current); err != nil {
@@ -502,7 +506,7 @@ func inspectSource(ctx context.Context, p Pipeline, source *pgxpool.Pool) ([]rel
 	}
 	result := make([]relation, 0, len(p.Tables))
 	for _, name := range p.Tables {
-		r, table, err := inspectSourceTable(ctx, source, name)
+		r, table, err := inspectPipelineTable(ctx, p, source, name)
 		if err != nil {
 			return nil, "", err
 		}
@@ -680,14 +684,14 @@ func ensurePublication(ctx context.Context, p Pipeline, source *pgxpool.Pool) er
 		defer func() { _ = tx.Rollback(ctx) }()
 		tables := make([]string, 0, len(p.Tables))
 		for _, table := range p.Tables {
-			_, inspected, err := inspectSourceTable(ctx, tx, table)
+			_, inspected, err := inspectPipelineTable(ctx, p, tx, table)
 			if err != nil {
 				return err
 			}
 			if !inspected.Supported {
 				return &blocked{inspected.Issues[0].Code, false}
 			}
-			tables = append(tables, "ONLY "+tableIdent(table))
+			tables = append(tables, publicationTable(p, inspected))
 		}
 		if _, err = tx.Exec(ctx, "CREATE PUBLICATION "+ident(name)+" FOR TABLE "+strings.Join(tables, ",")); err != nil {
 			return err
@@ -709,6 +713,9 @@ func ensurePublication(ctx context.Context, p Pipeline, source *pgxpool.Pool) er
 	}
 	if !fullChanges {
 		return &blocked{"source_publication_changed", true}
+	}
+	if p.Serving != nil && len(p.Serving.Columns) > 0 {
+		return checkProjectedPublication(ctx, p, source)
 	}
 	var matches bool
 	err = source.QueryRow(ctx, `SELECT count(*)=$2 AND coalesce(bool_and(schemaname='public' AND tablename=ANY($3::text[]) AND rowfilter IS NULL
@@ -891,7 +898,10 @@ func updateTableReads(ctx context.Context, p Pipeline, tx receiptSQL, allowed bo
 		if err != nil {
 			return err
 		}
-		predicate = readerPredicate(readers)
+		predicate, err = authorityPredicate(ctx, p, tx, readers)
+		if err != nil {
+			return err
+		}
 	}
 	for _, table := range owned {
 		if _, err := tx.Exec(ctx, "ALTER POLICY gregale_pipeline_read ON "+tableIdent(table)+" USING ("+predicate+")"); err != nil {

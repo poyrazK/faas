@@ -42,6 +42,7 @@ type DataPipeline struct {
 	DatabaseID           pgtype.UUID
 	Tables               []byte
 	ReadSubjects         []byte
+	ServingConfig        []byte
 	DesiredState         string
 	State                string
 	Revision             int64

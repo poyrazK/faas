@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/datapipeline"
 )
 
 type connectionCheckClient interface {
@@ -86,7 +87,7 @@ func waitConnectionCheck(ctx context.Context, client connectionCheckClient, chec
 	}
 }
 
-func checkConnectionForCreate(ctx context.Context, client connectionCheckClient, id, database string, tables []string) error {
+func checkConnectionForCreate(ctx context.Context, client connectionCheckClient, id, database string, tables []string, serving ...*api.DataPipelineServing) error {
 	check, err := requestConnectionCheck(ctx, client, id, database, api.RequestDataConnectionCheck{Tables: tables})
 	if err == nil {
 		check, err = waitConnectionCheck(ctx, client, check, time.Second)
@@ -97,6 +98,13 @@ func checkConnectionForCreate(ctx context.Context, client connectionCheckClient,
 	if err != nil {
 		_ = writeJSON(check)
 		return err
+	}
+	if len(serving) > 0 && serving[0] != nil {
+		if err := datapipeline.ValidateServingSelection(check, tables, serving[0]); err != nil {
+			_ = writeJSON(check)
+			return fmt.Errorf("select compatible columns for every table, retaining every primary key and a text, varchar or UUID tenant column: %w", err)
+		}
+		return nil
 	}
 	for _, name := range tables {
 		found := false

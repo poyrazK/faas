@@ -7,6 +7,18 @@ reproductions below describe the investigated baseline, not the repaired behavio
 Keep these IDs and their evidence when reviewing or extending the fixes. No
 production deployment or provider qualification is implied.
 
+The next agreed customer batch is tracked separately under
+[ADR-20261113160716](adr/20261113160716-pipeline-tenant-serving-and-projections.md):
+
+| Item | Customer problem | Implementation and remaining qualification |
+| --- | --- | --- |
+| CUST-001 | Customer portals need row access per tenant instead of trusting a subject with every row. | Versioned owner-managed memberships, frozen approval, atomic RLS/receipt, source-independent revocation and N-1 claim fences. Local/native qualification in progress. |
+| CUST-002 | Mirrors copy source columns customers do not want to serve or store. | Immutable per-table publication/mirror projection, required key retention, projected checks/verification/repair/resync. Local/native qualification in progress. |
+| CUST-003 | Generic source setup leaves Neon users with pooled-connection errors and unclear operational costs. | Offline CLI/dashboard guide, direct-endpoint diagnostics and source-aware qualification runner. Actual Neon source qualification remains pending configured staging credentials and reviewed fault controls; the finite WAL byte-cap requirement still applies. |
+
+The other roadmap opportunities below remain future work. This batch does not
+enable production or imply that the source provider has passed the live drill.
+
 The reviewed baseline is commit `46aad2a12e4d1be39d0948b6942cb18d8e71d0b2` **plus
 the existing, uncommitted first batch**: retention-aware alerts, explicit gated-read
 errors, and table discovery. Its design is recorded in

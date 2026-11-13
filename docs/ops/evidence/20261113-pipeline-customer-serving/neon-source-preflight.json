@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "run_id": "32653b33-d2c4-41d5-8902-968373dd8f2c",
+  "started_at": "2026-11-13T17:09:55.700964+00:00",
+  "state": "blocked",
+  "production_ready": false,
+  "pilot_ready": false,
+  "expected_provider_kind": "neon",
+  "operator_review": "required",
+  "capacity_qualification": "operator_review_required",
+  "expected_source_provider_kind": "neon",
+  "blockers": [
+    "gregale_binary_unavailable",
+    "psql_binary_unavailable",
+    "staging_environment_required",
+    "staging_control_api_required",
+    "connection_id_required",
+    "database_id_required",
+    "admission_database_id_required",
+    "unique_canary_name_required",
+    "canary_data_api_required",
+    "source_url_file_unavailable_or_invalid",
+    "rotated_source_url_file_unavailable_or_invalid",
+    "reader_token_file_unavailable_or_invalid",
+    "other_token_file_unavailable_or_invalid",
+    "control_token_file_unavailable_or_invalid",
+    "reviewed_private_adapter_required",
+    "backend_fingerprint_required"
+  ],
+  "phases": [
+    {
+      "phase": "initial_copy",
+      "state": "not_run"
+    },
+    {
+      "phase": "dedicated_fixture",
+      "state": "not_run"
+    },
+    {
+      "phase": "capacity_admission",
+      "state": "not_run"
+    },
+    {
+      "phase": "live_provider_replication",
+      "state": "not_run"
+    },
+    {
+      "phase": "read_only_and_subject_isolation",
+      "state": "not_run"
+    },
+    {
+      "phase": "verification",
+      "state": "not_run"
+    },
+    {
+      "phase": "pause_and_resume",
+      "state": "not_run"
+    },
+    {
+      "phase": "credential_rotation",
+      "state": "not_run"
+    },
+    {
+      "phase": "worker_restart",
+      "state": "not_run"
+    },
+    {
+      "phase": "source_outage",
+      "state": "not_run"
+    },
+    {
+      "phase": "destination_outage",
+      "state": "not_run"
+    },
+    {
+      "phase": "capacity_exhaustion",
+      "state": "not_run"
+    },
+    {
+      "phase": "retention_pressure",
+      "state": "not_run"
+    },
+    {
+      "phase": "replication_cleanup",
+      "state": "not_run"
+    }
+  ],
+  "evidence_sha256": {
+    "provider_qualification.py": "2bda2f3ba289c74700112eb27d2dc8adba5f7eced55cf4638a3fcf55471e70c0",
+    "provider_fault_adapter.py": "bd3859c04f8d7729ace87fce1eff247d09181a8cbded81810e2a57969166d0d8",
+    "staging_canary.py": "dd59e10a174fb93bc4c4bafdaf89ab067a48d2b159078c842775907fe4b0410c"
+  },
+  "finished_at": "2026-11-13T17:09:55.701743+00:00"
+}

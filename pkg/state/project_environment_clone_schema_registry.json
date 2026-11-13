@@ -5053,6 +5053,7 @@
       "revision",
       "schema_approval",
       "schema_change",
+      "serving_config",
       "source_connection_id",
       "state",
       "tables",

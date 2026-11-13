@@ -18698,10 +18698,15 @@ const (
 	DataPipelineTablesMax                  = 16
 	DataPipelineRetainedTablesMax          = 32
 	DataPipelineColumnsMax                 = 128
-	DataPipelineSubjectsMax                = 32
+	DataPipelineSubjectsMax                = 128
+	DataPipelineTenantMembershipsMax       = 256
+	DataPipelineTenantMaxBytes             = 256
 	DataPipelineSubjectMaxBytes            = 256
 	DataPipelineCredentialMaxBytes         = 8192
-	DataPipelineRequestMaxBytes            = 32768
+	DataPipelineRequestMaxBytes            = 2 << 20
+	DataPipelineServingMaxBytes            = 2 << 20
+	DataPipelineReaderChangeMaxBytes       = 2 << 20
+	DataPipelineSetupRequestMaxBytes       = 2 << 20
 	DataPipelineLease                      = 60 * time.Second
 	DataPipelineOperationTimeout           = 20 * time.Second
 	DataPipelineNativeConnectTimeout       = 5 * time.Second

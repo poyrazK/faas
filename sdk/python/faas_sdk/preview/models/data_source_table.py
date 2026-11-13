@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.data_connection_issue import DataConnectionIssue
     from ..models.data_source_column import DataSourceColumn
@@ -21,6 +23,8 @@ class DataSourceTable:
     supported: bool
     columns: list[DataSourceColumn]
     issues: list[DataConnectionIssue]
+    column_selection_supported: bool | Unset = UNSET
+    """A valid explicit column selection may omit incompatible non-key columns; all table-level checks still apply."""
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
@@ -37,6 +41,8 @@ class DataSourceTable:
             issues_item = issues_item_data.to_dict()
             issues.append(issues_item)
 
+        column_selection_supported = self.column_selection_supported
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -47,6 +53,8 @@ class DataSourceTable:
                 "issues": issues,
             }
         )
+        if column_selection_supported is not UNSET:
+            field_dict["column_selection_supported"] = column_selection_supported
 
         return field_dict
 
@@ -74,11 +82,14 @@ class DataSourceTable:
 
             issues.append(issues_item)
 
+        column_selection_supported = d.pop("column_selection_supported", UNSET)
+
         data_source_table = cls(
             name=name,
             supported=supported,
             columns=columns,
             issues=issues,
+            column_selection_supported=column_selection_supported,
         )
 
         return data_source_table
