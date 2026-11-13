@@ -164,3 +164,16 @@ The count now reads only the account's live slots, through
 pending deliveries it would replace, found through the work-lane index.
 Admission costs the account's own live slots, not the platform's backlog.
 The replay guard keeps its join, since it runs only on replays.
+
+## Amendment 2026-11-13: unreceived platform events are not kept
+
+Event-driven hunt #7 found that every `gregale.*` platform event (an object
+PUT or DELETE publishes `gregale.storage`) inserted an outbox row even when no
+subscription, workflow or notification received it. Such rows count towards
+no customer cap and stay for the plan's settled window, so a write loop on one
+small object grew the outbox without bound. `enqueue_event_fanout` now keeps
+no row for a `gregale.*` event with no recipient at publish time (migration
+`20261113192044318`). Bucket notification capture, which adds its recipients
+after the trigger, inserts the row from the event envelope when it is missing.
+Customer events are unchanged. The owner accepted the cost: a subscription
+created later cannot backfill or replay platform events nobody received.

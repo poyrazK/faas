@@ -14825,10 +14825,17 @@ ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED
 -- name: ObjectNotificationsCapture :execrows
 -- Notification recipients meet the same company reach as subscriptions
 -- (ADR-20261025211616): a rule cannot route a company bucket's events past it.
-UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot ||
- event_recipients_in_producer_reach(account_id, payload->>'producer', sqlc.arg(recipients)::jsonb)
-WHERE account_id=sqlc.arg(account_id)::uuid AND source='gregale.storage' AND event_id=sqlc.arg(event_id)::text
-AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification');
+-- enqueue_event_fanout keeps no row for a platform event without subscribers
+-- (ADR-614 amendment 2026-11-13), so the capture inserts it from the event
+-- envelope when it is missing and appends to it otherwise.
+INSERT INTO event_fanout_outbox AS o
+    (account_id, source, event_id, event_type, schema_version, event_data, payload, recipient_snapshot)
+SELECT sqlc.arg(account_id)::uuid, 'gregale.storage', sqlc.arg(event_id)::text,
+    e.p->>'type', e.p->>'schemaversion', e.p->'data', e.p,
+    event_recipients_in_producer_reach(sqlc.arg(account_id)::uuid, e.p->>'producer', sqlc.arg(recipients)::jsonb)
+FROM (SELECT sqlc.arg(payload)::jsonb AS p) e
+ON CONFLICT (account_id, source, event_id) DO UPDATE SET recipient_snapshot = o.recipient_snapshot || EXCLUDED.recipient_snapshot
+WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) r WHERE r ? 'object_notification');
 
 -- name: ObjectNotificationTargetApp :one
 SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted';

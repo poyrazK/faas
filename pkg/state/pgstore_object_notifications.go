@@ -143,7 +143,7 @@ func mapNotificationDestinationError(err error) error {
 	return mapErr(err)
 }
 
-func captureObjectNotifications(ctx context.Context, db sqlc.DBTX, account, identity, typ string, d api.ObjectStorageEvent) error {
+func captureObjectNotifications(ctx context.Context, db sqlc.DBTX, account, identity, typ string, d api.ObjectStorageEvent, payload []byte) error {
 	r, err := sqlc.New().ObjectNotificationsGet(ctx, db, mustPgUUID(d.BucketID))
 	if errors.Is(mapErr(err), ErrNotFound) {
 		return nil
@@ -167,7 +167,7 @@ func captureObjectNotifications(ctx context.Context, db sqlc.DBTX, account, iden
 	if err != nil {
 		return err
 	}
-	rows, err := sqlc.New().ObjectNotificationsCapture(ctx, db, sqlc.ObjectNotificationsCaptureParams{AccountID: mustPgUUID(account), EventID: identity, Recipients: encoded})
+	rows, err := sqlc.New().ObjectNotificationsCapture(ctx, db, sqlc.ObjectNotificationsCaptureParams{AccountID: mustPgUUID(account), EventID: identity, Recipients: encoded, Payload: payload})
 	if err != nil {
 		return mapErr(err)
 	}
