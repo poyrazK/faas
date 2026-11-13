@@ -4,8 +4,9 @@ Installs `neond`, the control plane's Neon key holder (ADR-20261112160000).
 
 `neond` holds the Neon API key and forwards apid's Neon API calls. It forwards
 only the routes Gregale's Neon backend uses (`pkg/neond/routes.go`), refuses
-to delete the Neon project or branch of a live managed database, and caps
-destructive calls per hour. apid connects on `/run/faas/neond.sock`; neond
+to delete the Neon project or branch of a live managed database, writes
+quotas and deletes roles only on projects a managed database names, and caps
+destructive calls per hour, fleet-wide and per account. apid connects on `/run/faas/neond.sock`; neond
 admits only the `faas-apid` OS user.
 
 Off by default. To turn it on (control plane or single box):

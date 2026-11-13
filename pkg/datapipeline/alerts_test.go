@@ -130,6 +130,7 @@ func TestPipelineAlertConditionsAvoidIdleAndIntentFalseAlarms(t *testing.T) {
 	}
 	p.RetainedWALBytes = &pressure
 	p.DesiredState = "paused"
+	p.State = "paused"
 	if code, _ := alertCondition(p, now); code != "retention_pressure" {
 		t.Fatal("pause hid WAL pressure", code)
 	}
@@ -138,6 +139,7 @@ func TestPipelineAlertConditionsAvoidIdleAndIntentFalseAlarms(t *testing.T) {
 		t.Fatal("pause claimed recovery", code, healthy)
 	}
 	p.DesiredState = "running"
+	p.State = "live"
 	p.ObservedAt = now.Add(-api.DataPipelineObservationMaxAge).Format(time.RFC3339Nano)
 	if code, _ := alertCondition(p, now); code != "monitoring_stale" {
 		t.Fatal("stopped worker not detected", code)

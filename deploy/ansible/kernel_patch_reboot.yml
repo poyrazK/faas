@@ -1,0 +1,270 @@
+---
+# Host kernel patch with a drained reboot, one compute node at a time.
+#
+# Written for PwnEscape (CVE-2026-99999, guest-to-host through virtio-net
+# checksum metadata), fixed for noble linux-gcp-7.0 in 7.0.0-1017.19~24.04.1.
+# Unattended upgrades install security kernels but never reboot
+# (host_hardening: faas_hardening_unattended_reboot=false), so a fixed kernel
+# protects nothing until each node boots it. Runbook:
+# docs/runbooks/host-kernel-patch.md.
+#
+# Per node: skip if it already runs the target kernel; install the target
+# kernel while the node still serves; drain it to an empty maintenance hold;
+# reboot; prove the running kernel, cgroup v2, every enabled faas unit and
+# vmmd's runtime base adoption; then return it to service only if it was
+# active before. A drain that never empties re-activates the node and stops
+# the play. A node that does not come back healthy stays drained, and the play
+# stops before touching the next node (serial 1, max_fail_percentage 0).
+#
+# The drain and activation use the node's own gregalectl and database login
+# with --break-glass-db, as node_join.yml does: the node already holds them,
+# and the play has no operator API token.
+#
+# Usage:
+#   ansible-playbook -i <inventory> deploy/ansible/kernel_patch_reboot.yml \
+#     -e faas_kernel_target_release=7.0.0-1017-gcp --limit fsn-2
+- name: Patch the host kernel and reboot each compute node behind a drain
+  hosts: compute_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars:
+    faas_kernel_node: "{{ faas_join_database_node | default(faas_node_name | default(inventory_hostname)) }}"
+    # Ubuntu packages the kernel per ABI: linux-image-<release> and
+    # linux-modules-<release>. Extra packages (e.g. linux-modules-extra-*) can
+    # be added when a host image needs them.
+    faas_kernel_packages:
+      - "linux-image-{{ faas_kernel_target_release }}"
+      - "linux-modules-{{ faas_kernel_target_release }}"
+    # 150 x 4 s = 10 minutes, the same bound node_join.yml gives a graceful
+    # drain: each migration is a snapshot capture plus a remote restore.
+    faas_kernel_drain_retries: 150
+    faas_kernel_drain_delay: 4
+    faas_kernel_reboot_timeout: 900
+  tasks:
+    - name: Require an explicit target kernel release
+      ansible.builtin.assert:
+        that:
+          - faas_kernel_target_release is defined
+          - faas_kernel_target_release is match('^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-[a-z0-9]+$')
+        fail_msg: >-
+          set -e faas_kernel_target_release=<uname -r of the fixed kernel>,
+          e.g. 7.0.0-1017-gcp for CVE-2026-99999 on linux-gcp-7.0
+
+    - name: Read the running kernel
+      ansible.builtin.command: uname -r
+      register: faas_kernel_running_before
+      changed_when: false
+
+    - name: Skip a node already running the target kernel
+      ansible.builtin.meta: end_host
+      when: faas_kernel_running_before.stdout | trim == faas_kernel_target_release
+
+    # Installing a kernel touches only /boot and /lib/modules; the running
+    # kernel and every guest keep going, so do it before the drain to keep the
+    # node out of service as briefly as possible.
+    - name: Install the target kernel while the node still serves
+      ansible.builtin.apt:
+        name: "{{ faas_kernel_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 600
+
+    - name: Require the target kernel image in /boot
+      ansible.builtin.stat:
+        path: "/boot/vmlinuz-{{ faas_kernel_target_release }}"
+      register: faas_kernel_image
+      failed_when: not faas_kernel_image.stat.exists
+
+    # GRUB's default entry is the newest installed kernel. A higher kernel
+    # than the target would boot instead and fail the post-reboot check, after
+    # a drain, so refuse here while the node still serves.
+    - name: Refuse when a newer kernel than the target is installed
+      ansible.builtin.shell: |
+        set -euo pipefail
+        newest=$(ls /boot/vmlinuz-* | sed 's#^/boot/vmlinuz-##' | sort -V | tail -n1)
+        test "$newest" = "{{ faas_kernel_target_release }}" || {
+          echo "newest installed kernel is $newest, not {{ faas_kernel_target_release }}" >&2
+          exit 1
+        }
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Read the node's lifecycle before draining
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - show
+          - --node
+          - "{{ faas_kernel_node }}"
+          - --break-glass-db
+      register: faas_kernel_node_before
+      changed_when: false
+
+    - name: Remember whether the node was serving
+      ansible.builtin.set_fact:
+        faas_kernel_was_active: "{{ 'lifecycle=active' in faas_kernel_node_before.stdout_lines }}"
+
+    - name: Drain the node to an empty maintenance hold
+      block:
+        - name: Begin graceful drain before the reboot
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - compute-nodes
+              - drain
+              - --node
+              - "{{ faas_kernel_node }}"
+              - --reason
+              - kernel_patch_reboot
+              - --break-glass-db
+              - --yes
+          changed_when: true
+
+        - name: Wait for the node to reach an empty maintenance hold
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - compute-nodes
+              - drain-status
+              - --node
+              - "{{ faas_kernel_node }}"
+              - --break-glass-db
+          register: faas_kernel_drain_status
+          changed_when: false
+          retries: "{{ faas_kernel_drain_retries }}"
+          delay: "{{ faas_kernel_drain_delay }}"
+          until: faas_kernel_drain_status.rc == 0
+      rescue:
+        # Nothing has rebooted yet: the node still runs its old kernel and
+        # serves exactly as before, so returning it to service is safe.
+        - name: Return the node to service after a failed drain
+          ansible.builtin.command:
+            argv:
+              - /usr/local/bin/gregalectl
+              - compute-nodes
+              - activate
+              - --node
+              - "{{ faas_kernel_node }}"
+              - --reason
+              - kernel_patch_drain_rollback
+              - --break-glass-db
+              - --yes
+          when: faas_kernel_was_active | bool
+          changed_when: true
+
+        - name: Stop the rollout after a failed drain
+          ansible.builtin.fail:
+            msg: >-
+              {{ faas_kernel_node }} did not reach an empty maintenance hold
+              within {{ (faas_kernel_drain_retries | int) * (faas_kernel_drain_delay | int) }} s
+              and was {{ 'returned to service' if (faas_kernel_was_active | bool) else 'left in its prior lifecycle' }}
+              on its old kernel. Last drain status:
+              {{ faas_kernel_drain_status.stdout | default('unknown', true) }}
+
+    - name: Reboot into the target kernel
+      ansible.builtin.reboot:
+        msg: "kernel patch {{ faas_kernel_target_release }}"
+        reboot_timeout: "{{ faas_kernel_reboot_timeout }}"
+        test_command: uname -r
+
+    # From here a failure leaves the node drained on purpose: a host that
+    # booted the wrong kernel or whose daemons are not healthy must not take
+    # wakes. Re-run the play for this node once it is fixed.
+    - name: Prove the rebooted node before returning it to service
+      block:
+        - name: Require the target kernel to be running
+          ansible.builtin.command: uname -r
+          register: faas_kernel_running_after
+          changed_when: false
+          failed_when: faas_kernel_running_after.stdout | trim != faas_kernel_target_release
+
+        - name: Require cgroups v2
+          ansible.builtin.command:
+            argv: [stat, -fc, "%T", /sys/fs/cgroup]
+          register: faas_kernel_cgroupfs
+          changed_when: false
+          failed_when: faas_kernel_cgroupfs.stdout | trim != 'cgroup2fs'
+
+        - name: Wait for every enabled faas unit to be active
+          ansible.builtin.shell: |
+            set -euo pipefail
+            units=$(systemctl list-unit-files 'faas-*.service' --state=enabled --no-legend | awk '{print $1}')
+            test -n "$units"
+            for unit in $units; do
+              systemctl is-active --quiet "$unit" || { echo "$unit not active" >&2; exit 1; }
+            done
+          args:
+            executable: /bin/bash
+          register: faas_kernel_units
+          changed_when: false
+          retries: 30
+          delay: 10
+          until: faas_kernel_units.rc == 0
+
+        - name: Read the running vmmd process
+          ansible.builtin.command:
+            argv: [systemctl, show, --property=MainPID, --value, faas-vmmd.service]
+          register: faas_kernel_vmmd_pid
+          changed_when: false
+          failed_when: faas_kernel_vmmd_pid.stdout | trim in ['', '0']
+
+        # The same activation gate node_join.yml applies: a vmmd that cannot
+        # adopt every configured runtime base would fail every wake 503.
+        - name: Wait for vmmd to adopt every configured runtime base
+          ansible.builtin.command:
+            argv:
+              - /opt/faas/current/bin/vmmd
+              - base-adoption-check
+              - --serving-pid
+              - "{{ faas_kernel_vmmd_pid.stdout | trim }}"
+          register: faas_kernel_base_adoption
+          changed_when: false
+          retries: 18
+          delay: 10
+          until: faas_kernel_base_adoption.rc == 0
+      rescue:
+        - name: Keep the node drained when it did not come back healthy
+          ansible.builtin.fail:
+            msg: >-
+              {{ faas_kernel_node }} rebooted but was LEFT DRAINED: running
+              kernel {{ faas_kernel_running_after.stdout | default('unknown', true) | trim }}
+              (want {{ faas_kernel_target_release }}), failed task
+              "{{ ansible_failed_task.name }}":
+              {{ ansible_failed_result.stderr | default(ansible_failed_result.msg | default(''), true) }}.
+              Fix the host, then return it to service by hand
+              (gregalectl compute-nodes activate --node {{ faas_kernel_node }}
+              --reason kernel_patch_reboot_done); a re-run skips a node that
+              already runs the target kernel.
+
+    - name: Return the node to service
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - activate
+          - --node
+          - "{{ faas_kernel_node }}"
+          - --reason
+          - kernel_patch_reboot_done
+          - --break-glass-db
+          - --yes
+      when: faas_kernel_was_active | bool
+      changed_when: true
+
+    - name: Require the node to be active again
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - show
+          - --node
+          - "{{ faas_kernel_node }}"
+          - --break-glass-db
+      register: faas_kernel_node_after
+      changed_when: false
+      failed_when: "'lifecycle=active' not in faas_kernel_node_after.stdout_lines"
+      when: faas_kernel_was_active | bool

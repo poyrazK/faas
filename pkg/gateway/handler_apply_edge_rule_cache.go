@@ -255,7 +255,10 @@ func hasCacheCredentials(r *http.Request) bool {
 			return true
 		}
 	}
-	return hasSessionCookie(r) || authenticatedFrom(r.Context()).CredentialWithheld
+	// A sealed edge-rule header is a credential the instance's vmmd adds
+	// (ADR-20261110210000 slice 3i): the request carries it upstream.
+	return hasSessionCookie(r) || authenticatedFrom(r.Context()).CredentialWithheld ||
+		len(edgeSecretHeadersFrom(r.Context())) != 0
 }
 
 // hasSessionCookie treats any remaining Cookie field as session state. The

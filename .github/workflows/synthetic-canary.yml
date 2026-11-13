@@ -26,6 +26,9 @@ name: synthetic-canary
 # is held to, and the script is already proven in production. It mints its own
 # 2h token, revokes it, and deletes the apps it created on every exit path
 # including cancellation.
+# Successful first scheduled attempts ping an independent missing-run monitor.
+# Its deadline also catches disabled schedules, queued jobs and runner loss.
+# See docs/ops/synthetic-canary-heartbeat.md before activating this workflow.
 
 on:
   schedule:
@@ -135,10 +138,21 @@ jobs:
             < deploy/scripts/production-release-acceptance.sh \
             2>&1 | tee "$RUNNER_TEMP/canary.log"
 
+      - name: Report scheduled canary success to the independent monitor
+        id: heartbeat
+        if: success() && github.event_name == 'schedule' && github.run_attempt == '1' && steps.probe.outcome == 'success'
+        timeout-minutes: 1
+        env:
+          CANARY_HEARTBEAT_URL: ${{ secrets.CANARY_HEARTBEAT_URL }}
+          CANARY_JOB_STATUS: ${{ job.status }}
+          CANARY_PROBE_OUTCOME: ${{ steps.probe.outcome }}
+        run: python3 scripts/ops/canary_heartbeat.py
+
       - name: Page on canary failure
         if: failure() && (github.event_name == 'schedule' || inputs.page_on_failure)
         env:
           CANARY_FALLBACK_WEBHOOK_URL: ${{ secrets.CANARY_FALLBACK_WEBHOOK_URL }}
+          CANARY_HEARTBEAT_OUTCOME: ${{ steps.heartbeat.outcome }}
         run: |
           set -euo pipefail
           # A red GitHub badge is not a notification. Route through the
@@ -146,6 +160,10 @@ jobs:
           # receivers, silences and grouping as every other page.
           tail="$(tail -c 2000 "$RUNNER_TEMP/canary.log" 2>/dev/null || echo 'no output captured')"
           summary="a customer could not deploy and invoke on release ${ACTIVE_RELEASE:-unknown}"
+          if [[ "$CANARY_HEARTBEAT_OUTCOME" == "failure" ]]; then
+            summary="the deployment canary passed on release ${ACTIVE_RELEASE:-unknown}, but its independent heartbeat could not be reported"
+            tail="Check CANARY_HEARTBEAT_URL and the fixed error code in the heartbeat step. No provider response or secret URL is logged."
+          fi
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           # ssh joins its command words with spaces and the REMOTE shell
           # re-parses the result, so these must be quoted for that second
