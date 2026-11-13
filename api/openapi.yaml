@@ -3055,9 +3055,9 @@ paths:
         '400': {description: Invalid or oversized private invocation intent or arguments}
         '403': {description: Agent scope or MFA policy not satisfied}
         '404': {description: Exact tool grant or current credential binding is unavailable}
-        '409': {description: Immutable invocation identity conflicts, deployment changed, or managed renewal is already in progress}
+        '409': {description: "Immutable invocation identity conflicts, deployment changed, or managed renewal is already in progress"}
         '429': {description: Account active-call or retained-identity limit reached}
-        '503': {description: Private invocation is disabled, native workers are unavailable, or the managed connection requires owner reconnection}
+        '503': {description: "Private invocation is disabled, native workers are unavailable, or the managed connection requires owner reconnection"}
   /v1/delegated-tool-invocations/{id}/{action}:
     post:
       operationId: changeDelegatedToolInvocation
@@ -3087,7 +3087,7 @@ paths:
         '409': {description: Delegated target is unavailable or retained terminal evidence differs}
   /v1/tool-invocations/{id}:
     parameters:
-      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Caller-retained canonical nonzero invocation UUID}
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Caller-retained UUID for the local registered-tool invocation journal}
     get:
       operationId: getToolInvocation
       summary: Read an account-owned invocation receipt and sanitized result
@@ -3211,8 +3211,8 @@ paths:
       summary: List retained execution OAuth connections as the personal administrator
       description: Owner metadata only; no token values, ciphertext or renewal leases. This read never exchanges credentials.
       parameters:
-        - {name: cursor, in: query, schema: {type: string, format: uuid}}
-        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 20, default: 20}}
+        - {name: cursor, in: query, schema: {type: string, format: uuid}, description: "Last retained connection UUID from next_cursor; omitted starts the owner-scoped list"}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 20, default: 20}, description: "Maximum retained OAuth connections returned for this page"}
       responses:
         '200':
           description: Retained connections; Cache-Control is no-store
@@ -3220,10 +3220,10 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ToolOAuthConnectionPage'}
         '400': {description: Invalid page bounds}
-        '403': {description: Unscoped personal administrator or MFA policy required}
+        '403': {description: "Listing execution connections requires a personal administrator and current MFA policy"}
   /v1/tool-oauth-connections/{id}:
     parameters:
-      - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: "Owner-assigned immutable execution connection UUID; reconnect uses a new UUID"}
     put:
       operationId: putToolOAuthConnection
       summary: Approve an immutable execution OAuth connection; administrator and MFA policy required
@@ -3240,7 +3240,7 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}
         '400': {description: Invalid immutable provider configuration or secret reference}
-        '403': {description: Unscoped personal administrator or MFA policy required}
+        '403': {description: "Creating immutable execution authority requires personal administrator access and MFA"}
         '404': {description: Application or ordinary source secret unavailable}
         '409': {description: UUID already names different immutable intent}
         '429': {description: Retained account or per-app connection capacity reached}
@@ -3254,7 +3254,7 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}
         '400': {description: Invalid connection UUID}
-        '403': {description: Personal administrator or MFA policy required}
+        '403': {description: "Reading this execution connection requires personal administrator access and MFA"}
         '404': {description: Connection unavailable to this account}
     delete:
       operationId: revokeToolOAuthConnection
@@ -3267,11 +3267,11 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}
         '400': {description: Invalid revocation UUID}
-        '403': {description: Personal administrator or MFA policy required}
-        '404': {description: Connection unavailable to this account}
+        '403': {description: "Revoking execution credentials requires personal administrator access and MFA"}
+        '404': {description: "Execution connection to revoke is unavailable within the caller personal account"}
   /v1/tool-oauth-connections/{id}/authorization:
     parameters:
-      - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: "Execution connection UUID whose single browser authorization attempt is inspected or consumed"}
     get:
       operationId: getToolOAuthAuthorization
       summary: Inspect a guided execution authorization attempt as the personal administrator
@@ -3283,8 +3283,8 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ToolOAuthAuthorizationResponse'}
         '400': {description: Invalid identity or connection is not guided}
-        '403': {description: Unscoped personal administrator or MFA policy required}
-        '404': {description: Connection unavailable to this account}
+        '403': {description: "Inspecting a PKCE authorization requires personal administrator access and MFA"}
+        '404': {description: "No guided authorization is retained for this account and execution connection"}
     post:
       operationId: authorizeToolOAuthConnection
       summary: Begin or complete owner-approved execution OAuth with S256 PKCE
@@ -3300,10 +3300,10 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ToolOAuthAuthorizationResponse'}
-        '400': {description: Invalid action, callback, code or issuer binding}
-        '403': {description: Personal administrator or MFA policy required}
+        '400': {description: "Invalid action, callback, code or issuer binding"}
+        '403': {description: "Issuing or consuming browser authorization requires personal administrator access and MFA"}
         '404': {description: Connection or frozen app authority unavailable}
-        '409': {description: Attempt consumed, identity already used, callback changed or connection revoked}
+        '409': {description: "Attempt consumed, identity already used, callback changed or connection revoked"}
         '503': {description: Credential storage unavailable or fresh owner authorization required}
   /v1/delegated-tool-connections/{grant}:
     get:
@@ -3311,7 +3311,7 @@ paths:
       summary: Read credential-free execution connection status through an exact active tool grant
       description: Personal agent key, immutable app/project binding and exact invocation grant are checked on every read. No provider configuration, secret names, tokens or ciphertext are returned. Does not trigger renewal.
       parameters:
-        - {name: grant, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: grant, in: path, required: true, schema: {type: string, format: uuid}, description: "Exact active invocation-grant UUID bound to the calling personal agent key"}
       responses:
         '200':
           description: Status bound to this exact granted tool; Cache-Control is no-store
@@ -3335,7 +3335,7 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ToolGrantPage'}
-        '400': {description: Invalid page bounds}
+        '400': {description: "Invalid grant-list cursor or requested page bound"}
         '403': {description: Unscoped personal administrator required}
   /v1/tool-grants/{id}:
     parameters:
@@ -74725,6 +74725,7 @@ components:
         recovery_action: {type: string, enum: [connect, reconnect, review_connection]}
     ToolOAuthConnectionPage:
       type: object
+      description: Owner-scoped page of retained execution OAuth metadata and a continuation UUID.
       required: [connections]
       properties:
         connections: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}}

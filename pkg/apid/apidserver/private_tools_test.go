@@ -42,7 +42,7 @@ func TestPrivateToolInvocationOperatorGate(t *testing.T) {
 				{http.MethodGet, "/v1/tool-oauth-connections", *env.Key(), http.StatusOK},
 				{http.MethodGet, "/v1/tool-oauth-connections", key.Plaintext, http.StatusForbidden},
 				{http.MethodPut, "/v1/tool-oauth-connections/" + uuid.NewString(), key.Plaintext, http.StatusForbidden},
-				{http.MethodDelete, "/v1/tool-oauth-connections/" + uuid.NewString(), key.Plaintext, http.StatusForbidden},
+				{http.MethodDelete, "/v1/tool-oauth-connections/" + uuid.NewString(), key.Plaintext, http.StatusPreconditionRequired},
 				{http.MethodGet, "/v1/tool-oauth-connections/" + uuid.NewString() + "/authorization", key.Plaintext, http.StatusForbidden},
 				{http.MethodPost, "/v1/tool-oauth-connections/" + uuid.NewString() + "/authorization", key.Plaintext, http.StatusForbidden},
 				{http.MethodGet, "/v1/tool-oauth-connections/" + uuid.NewString() + "/authorization", *env.Key(), http.StatusNotFound},
@@ -55,6 +55,24 @@ func TestPrivateToolInvocationOperatorGate(t *testing.T) {
 				(*env.H()).ServeHTTP(response, request)
 				if response.Code != tc.want {
 					t.Fatalf("%s %s: %d %s", tc.method, tc.path, response.Code, response.Body.String())
+				}
+				if tc.want == http.StatusPreconditionRequired {
+					var problem api.Problem
+					if json.Unmarshal(response.Body.Bytes(), &problem) != nil || problem.Code != api.CodeApprovalRequired || problem.AgentApproval == nil {
+						t.Fatal("agent deletion did not retain the native approval gate")
+					}
+					_, cookie, form := apidserver.RenderAgentApprovalForTestAs(t, *env.H(), problem.AgentApproval.ID, (*env.Acct()).Email)
+					if approved := apidserver.DecideAgentApprovalForTest(t, *env.H(), problem.AgentApproval.ID, cookie, form, "approve"); approved.Code != http.StatusOK {
+						t.Fatalf("approve deletion: %d %s", approved.Code, approved.Body)
+					}
+					// A person's approval does not give this agent owner credentials.
+					retry := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
+					retry.Header = request.Header.Clone()
+					denied := httptest.NewRecorder()
+					(*env.H()).ServeHTTP(denied, retry)
+					if denied.Code != http.StatusForbidden {
+						t.Fatalf("approved agent deletion bypassed owner authorization: %d %s", denied.Code, denied.Body)
+					}
 				}
 			}
 			req = httptest.NewRequest(http.MethodPost, "/v1/delegated-tool-invocations/"+uuid.NewString()+"/execute", strings.NewReader(`{}`))

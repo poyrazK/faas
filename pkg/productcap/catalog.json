@@ -3288,7 +3288,9 @@
       "acceptance_test": "pkg/apid/toolregistry/delegated_invocations_test.go::TestDelegatedToolInvocationsPostgres",
       "parent": "mcp-hosting",
       "routes": [
-        "/v1/delegated-tool-invocations"
+        "/v1/delegated-tool-invocations",
+        "/v1/delegated-tool-connections",
+        "/v1/tool-oauth-connections"
       ]
     },
     {

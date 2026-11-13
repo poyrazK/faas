@@ -631,6 +631,7 @@ first preview supports only its default environment. Use the existing local
 verified publication workflow for private tools. Hosted publication remains
 open-only.
 
+Enable the `mcp-hosted-tool-invocations` preview capability for the account.
 Enable `FAAS_MCP_PRIVATE_TOOL_INVOCATION=1` on APID, then enable
 `mcp-bridged --allow-tool-invocation --allow-private-tool-invocation --tools registry,invoke`
 after updating the API and bridge. Both private execution gates default off.
