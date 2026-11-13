@@ -59,6 +59,16 @@ class WorkflowStepError(Exception):
         self.attempts = attempts
 
 
+class WorkflowCallError(WorkflowStepError):
+    """Raised into the workflow when a ``wf.call`` fails; ``code`` is function_call_failed."""
+
+    code = "function_call_failed"
+
+    def __init__(self, step: str, function: str, message: str) -> None:
+        super().__init__(step, message, 1)
+        self.function = function
+
+
 class UnknownWorkflowError(LookupError):
     def __init__(self, workflow_name: str) -> None:
         super().__init__(f'no workflow named "{workflow_name}" is served here')
@@ -246,6 +256,26 @@ class WorkflowContext:
             op: dict[str, Any] = {"seq": seq, "name": op_name, "kind": "event", "event": event_name}
             if timeout is not None and not conflict:
                 op["timeout_ms"] = parse_duration_ms(timeout)
+            self._report(op)
+        return await self._suspend()
+
+    async def call(self, function: str, input: Any = None, *, name: str | None = None) -> Any:  # noqa: A002 - mirrors the callee's argument
+        """Calls a function this workflow may call and returns its output.
+
+        The run parks while the function runs, with no VM held; the call keeps
+        the callee's own retries. Raises WorkflowCallError when it fails.
+        """
+        if not function:
+            raise ValueError("wf.call needs a function name")
+        seq, op_name, entry, conflict = self._claim(name or function, "call")
+        if entry is not None and entry.get("status") == "succeeded":
+            return entry.get("output")
+        if entry is not None and entry.get("status") == "failed":
+            raise WorkflowCallError(op_name, function, entry.get("error") or f"function {function} failed")
+        if entry is None:
+            op: dict[str, Any] = {"seq": seq, "name": op_name, "kind": "call", "function": function}
+            if input is not None and not conflict:
+                op["input"] = _json_value(input)
             self._report(op)
         return await self._suspend()
 
@@ -437,11 +467,13 @@ async def run_workflow_locally(
     retry: RetryPolicy | None = None,
     max_invocations: int = 1000,
     run_id: str = "local-run",
+    functions: Mapping[str, Callable[[Any], Any]] | None = None,
 ) -> LocalRunResult:
     """Runs a workflow to completion in-process, the way Gregale would.
 
-    Sleeps finish at once, waits take ``events`` in order or time out, and
-    failed steps retry under their policy. Use it in unit tests.
+    Sleeps finish at once, waits take ``events`` in order or time out,
+    failed steps retry under their policy, and ``wf.call`` reaches the
+    stand-ins in ``functions`` by name. Use it in unit tests.
     """
     journal: list[dict[str, Any]] = []
     consumed: dict[str, int] = {}
@@ -470,6 +502,18 @@ async def run_workflow_locally(
                     entry["error"] = op.get("error") or "step failed"
             elif op["kind"] == "sleep":
                 entry["status"] = "succeeded"
+            elif op["kind"] == "call":
+                stand_in = (functions or {}).get(op.get("function") or "")
+                if stand_in is None:
+                    entry.update(status="failed", error=f'function "{op.get("function")}" is not callable from this workflow')
+                else:
+                    try:
+                        value = stand_in(op.get("input"))
+                        if inspect.isawaitable(value):
+                            value = await value
+                        entry.update(status="succeeded", output=_json_value(value))
+                    except Exception as error:  # noqa: BLE001 - a failed call is data
+                        entry.update(status="failed", error=_message(error))
             else:
                 event_name = op.get("event") or op["name"]
                 index = consumed.get(event_name, 0)

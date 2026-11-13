@@ -493,7 +493,8 @@ export default async function handler(order, wf) {
     payments.charge(order.id, { idempotencyKey }));
   await wf.sleep('delivery_delay', '3d');
   const approval = await wf.waitForEvent('refund_approval', { event: 'approved', timeout: '7d' });
-  return { charge: charge.id, approved: approval !== null };
+  const label = await wf.call('shipping-label', { order: order.id });  // a sibling function
+  return { charge: charge.id, approved: approval !== null, label };
 }
 ```
 
@@ -502,6 +503,11 @@ In Python, write `async def handler(input, wf)` with the same operations
 `faas.ServeWorkflows(...)` from its `main`, as in
 [Code-first workflows](code-workflows.md#go).
 
+- `wf.call('name', input)` calls another function the workflow may call and
+  returns its output. The run parks while the callee runs, so a long call
+  holds no VM; the callee checks its `input` schema and keeps its own
+  retries. A failed call throws `WorkflowCallError`. Wrapping
+  `functions.name.call()` in a `wf.step` still works for quick calls.
 - The workflow is named after the function and runs on the function's app.
   Start a run with
   `gregale workflow run order-followup --app <project>-order-followup --input '{...}'`;
