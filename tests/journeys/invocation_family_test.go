@@ -35,7 +35,7 @@ func TestInvocationFamilyIsolatedAPI(t *testing.T) {
 	defer server.Close()
 	tg := &target{api: server.URL, cli: configured.cli, home: t.TempDir(), appsDomain: configured.appsDomain}
 	for _, args := range [][]string{
-		{"invocation", "run", "billing", "--async", "--wait", "--timeout", "2s", "--interval", "5ms"},
+		{"invocation", "run", "billing", "--wait", "--timeout", "2s", "--interval", "5ms"},
 		{"invocation", "list"},
 		{"invocation", "get", "inv-family"},
 		{"invocation", "wait", "inv-family", "--timeout", "2s"},

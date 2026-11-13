@@ -83,7 +83,7 @@ func cmdInvocationsWait(args []string) int {
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || fs.NArg() != 0 || *timeout < 0 || *interval <= 0 {
+	if len(positional) != 1 || fs.NArg() != 0 || validateInvocationWaitDurations(*timeout, *interval) != nil {
 		PrintUsage(os.Stderr, invocationWaitCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}

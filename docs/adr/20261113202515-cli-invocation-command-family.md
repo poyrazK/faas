@@ -18,8 +18,9 @@ The existing `invocation watch` remains in the same family. The `run` leaf maps
 to the existing `invoke` implementation through the command-tree alias table.
 There is one flag parser and submission path. Invocation results, async receipts,
 authentication, request routing and exit codes retain their existing contracts.
-Async submission with waiting uses `run APP --async --wait`; this decision does
-not change synchronous versus asynchronous defaults.
+Async submission with waiting uses `run APP --wait`; waiting selects async
+submission automatically and rejects an explicit `--async=false`. With neither
+`--wait` nor `--async`, submission retains its synchronous behavior.
 
 Amend the command tree's daily shortcut list: `invoke` becomes a compatibility
 name rather than a second public entry point. Existing `invoke APP` calls still

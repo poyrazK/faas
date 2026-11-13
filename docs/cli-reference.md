@@ -3018,7 +3018,7 @@ Call an app or function once to smoke-test it
 | Flag | Meaning | |
 |---|---|---|
 | `--async` | enqueue once and return status_url unless --wait |  |
-| `--wait` | wait for the accepted invocation result; requires --async |  |
+| `--wait` | wait for the invocation result; implies --async |  |
 | `--timeout <DURATION>` | local wait duration (default 0: until Ctrl-C); requires --wait |  |
 | `--interval <DURATION>` | time between status checks (default 1s); requires --wait |  |
 | `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
@@ -3033,7 +3033,7 @@ Call an app or function once to smoke-test it
 Examples:
 
 ```sh
-gregale invocation run api --async --wait --timeout 2m --payload @request.json
+gregale invocation run api --wait --timeout 2m --payload @request.json
 ```
 
 ### invocation watch

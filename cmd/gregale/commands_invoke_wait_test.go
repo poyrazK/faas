@@ -47,7 +47,7 @@ func TestInvokeAsyncWaitTerminalResults(t *testing.T) {
 				t.Setenv("FAAS_TOKEN", "test-token")
 				out, stderr, restore := main.SwapIO(t)
 				defer restore()
-				args := []string{"invoke", "api", "--async", "--wait", "--interval", "1ms", "--timeout", "2s", "--payload", `{"n":9007199254740993}`, "--method", "PUT", "--path", "/work"}
+				args := []string{"invocation", "run", "api", "--wait", "--interval", "1ms", "--timeout", "2s", "--payload", `{"n":9007199254740993}`, "--method", "PUT", "--path", "/work"}
 				if machine {
 					args = append(args, "--json")
 				}
@@ -82,9 +82,9 @@ func TestInvokeAsyncWaitInvalidOptionsDoNotSubmit(t *testing.T) {
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("FAAS_TOKEN", "test-token")
 	for _, args := range [][]string{
-		{"--wait"}, {"--async=false", "--wait"}, {"--timeout", "0"}, {"--async", "--timeout", "1s"},
+		{"--async=false", "--wait"}, {"--wait", "--async=false"}, {"--timeout", "0"}, {"--async", "--timeout", "1s"},
 		{"--async", "--interval", "1s"}, {"--async", "--wait=false", "--timeout", "0"},
-		{"--async", "--wait", "--timeout", "-1s"}, {"--async", "--wait", "--interval", "0"},
+		{"--wait", "--timeout", "-1s"}, {"--wait", "--interval", "0"},
 		{"--async", "--wait", "--interval", "-1s"}, {"--async", "--wait", "--timeout", "invalid"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -121,7 +121,7 @@ func TestInvokeAsyncWaitTimeoutPreservesAcceptance(t *testing.T) {
 			t.Setenv("FAAS_TOKEN", "test-token")
 			out, stderr, restore := main.SwapIO(t)
 			defer restore()
-			if code := main.Run([]string{"invoke", "api", "--async", "--wait", "--json", "--interval", "1h", "--timeout", "100ms"}); code != 124 || posts.Load() != 1 || gets.Load() != 1 {
+			if code := main.Run([]string{"invocation", "run", "api", "--wait", "--json", "--interval", "1h", "--timeout", "100ms"}); code != 124 || posts.Load() != 1 || gets.Load() != 1 {
 				t.Fatalf("exit=%d posts=%d gets=%d stderr=%s", code, posts.Load(), gets.Load(), stderr())
 			}
 			assertInvokeResumeProblem(t, stderr(), "inv-timeout", "invocation_wait_timeout", 124)

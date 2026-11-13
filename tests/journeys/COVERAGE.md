@@ -95,6 +95,10 @@ custom metric history, SLOs and synthetic checks were hidden for it.
 
 ## Regression journeys
 
+`--wait` alone selects async submission in the invocation family journeys,
+including timeout and interruption; explicit async contradictions are covered
+by CLI validation tests.
+
 `TestInvocationFamilyIsolatedAPI` exercises submission, list, get and wait through
 the single `invocation` family. The invocation wait journeys also use its
 canonical `run` leaf; unit routing tests cover the earlier `invoke` spelling

@@ -30,7 +30,7 @@ import (
 func cmdInvoke(args []string) int {
 	fs := newFlagSet("invoke", flag.ContinueOnError)
 	async := fs.Bool("async", false, "enqueue via /invoke/async; returns the status_url unless --wait")
-	wait := fs.Bool("wait", false, "wait for the accepted async invocation to finish (requires --async)")
+	wait := fs.Bool("wait", false, "wait for the invocation to finish (implies --async)")
 	timeout := fs.Duration("timeout", 0, "stop waiting after this duration (0 waits indefinitely; requires --wait)")
 	interval := fs.Duration("interval", time.Second, "time between status checks (requires --wait)")
 	payload := fs.String("payload", "", "JSON payload (or @file for file body, - for stdin)")
@@ -38,7 +38,7 @@ func cmdInvoke(args []string) int {
 	path := fs.String("path", "", "URL path override (defaults to handler's)")
 	onSuccess := fs.String("on-success-webhook", "", "app webhook id for completed invocation callbacks")
 	onFailure := fs.String("on-failure-webhook", "", "app webhook id for failed or dead-lettered callbacks")
-	workPolicy := fs.String("work-policy", "", "named app work policy (requires --async and --work-key)")
+	workPolicy := fs.String("work-policy", "", "named app work policy (requires --async or --wait, and --work-key)")
 	workKey := fs.String("work-key", "", "JSON string, number, or boolean application key")
 	workFairnessKey := fs.String("work-fairness-key", "", "JSON scalar shared by related work keys, such as a tenant ID")
 	// Go's flag parser stops at the first positional token. Reorder the
@@ -48,11 +48,12 @@ func cmdInvoke(args []string) int {
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if err := validateInvokeWaitFlags(fs, *async, *wait, *timeout, *interval); err != nil {
+	asyncMode, err := resolveInvokeWaitFlags(fs, *async, *wait, *timeout, *interval)
+	if err != nil {
 		return printErr("Invalid invocation wait options", err)
 	}
 	if len(positional) > 1 || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale invocation run [--async [--wait [--timeout D] [--interval D]]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>]", "invoke")
+		PrintUsage(os.Stderr, "usage: gregale invocation run [--async] [--wait [--timeout D] [--interval D]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>]", "invoke")
 		return 1
 	}
 	slug := ""
@@ -63,7 +64,7 @@ func cmdInvoke(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale invocation run [--async [--wait [--timeout D] [--interval D]]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
+				PrintUsage(os.Stderr, "usage: gregale invocation run [--async] [--wait [--timeout D] [--interval D]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)
@@ -85,8 +86,8 @@ func cmdInvoke(args []string) int {
 		}
 	}
 	if *workPolicy != "" || *workKey != "" || *workFairnessKey != "" {
-		if !*async || *workPolicy == "" || *workKey == "" {
-			return printErr("Invalid work policy", errors.New("--work-policy and --work-key must be used together with --async"))
+		if !asyncMode || *workPolicy == "" || *workKey == "" {
+			return printErr("Invalid work policy", errors.New("--work-policy and --work-key must be used together with --async or --wait"))
 		}
 		if _, err := workpolicy.CanonicalScalar(json.RawMessage(*workKey)); err != nil {
 			return printErr("Invalid work key", err)
@@ -109,7 +110,7 @@ func cmdInvoke(args []string) int {
 		ctx, stop = signal.NotifyContext(ctx, os.Interrupt)
 		defer stop()
 	}
-	if *async {
+	if asyncMode {
 		resp, err := client.InvokeAppAsync(ctx, slug, req)
 		if err != nil {
 			return printErr("Invoke (async) failed", err)

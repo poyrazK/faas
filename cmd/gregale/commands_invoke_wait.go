@@ -11,19 +11,29 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func validateInvokeWaitFlags(fs *flag.FlagSet, async, wait bool, timeout, interval time.Duration) error {
-	if wait && !async {
-		return errors.New("--wait requires --async")
-	}
-	var hasWaitOption bool
+func resolveInvokeWaitFlags(fs *flag.FlagSet, async, wait bool, timeout, interval time.Duration) (bool, error) {
+	var hasWaitOption, explicitAsync bool
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "timeout" || f.Name == "interval" {
+		switch f.Name {
+		case "timeout", "interval":
 			hasWaitOption = true
+		case "async":
+			explicitAsync = true
 		}
 	})
-	if hasWaitOption && !wait {
-		return errors.New("--timeout and --interval require --wait")
+	if wait && explicitAsync && !async {
+		return false, errors.New("--wait conflicts with --async=false")
 	}
+	if hasWaitOption && !wait {
+		return false, errors.New("--timeout and --interval require --wait")
+	}
+	if err := validateInvocationWaitDurations(timeout, interval); err != nil {
+		return false, err
+	}
+	return async || wait, nil
+}
+
+func validateInvocationWaitDurations(timeout, interval time.Duration) error {
 	if timeout < 0 || interval <= 0 {
 		return errors.New("--timeout must be nonnegative and --interval must be positive")
 	}

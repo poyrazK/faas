@@ -6,14 +6,17 @@ Related: spec §6.7 (durable async-job contract)
 
 ## Decision
 
-`gregale invoke <app> --async --wait` submits once through the existing async
+`gregale invocation run <app> --wait` submits once through the existing async
 endpoint, then uses the invocation wait poller for the accepted ID. It never
 submits again because of a polling error, timeout or interruption. Poll through
 the configured API client, not an arbitrary receipt `status_url`. Reject missing
 or invalid receipt IDs and status records whose ID differs from the requested ID.
 
-`--wait` requires `--async`. Explicit `--timeout` and `--interval` require
-`--wait`. Validate these combinations and durations before any submission.
+`--wait` implies async submission, so callers do not have to also pass `--async`.
+Reject an explicitly contradictory `--async=false --wait` before any submission.
+Explicit `--timeout` and `--interval` require `--wait`. Resolve the submission
+mode and validate these combinations before payload reads or network access.
+The run-and-wait and standalone wait commands share duration validation.
 Timeout is nonnegative (default zero, meaning indefinite) and polling interval
 is positive (default one second). The timeout begins after acceptance and bounds
 only local waiting; server execution and retry policy are unchanged.

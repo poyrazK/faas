@@ -4825,11 +4825,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:     "invoke",
 		DocSlug:  "invoke",
-		Examples: []string{"gregale invocation run api --async --wait --timeout 2m --payload @request.json"},
+		Examples: []string{"gregale invocation run api --wait --timeout 2m --payload @request.json"},
 		Short:    "Call an app or function once to smoke-test it",
 		Flags: []cliFlag{
 			{Name: "async", Short: "enqueue once and return status_url unless --wait"},
-			{Name: "wait", Short: "wait for the accepted invocation result; requires --async"},
+			{Name: "wait", Short: "wait for the invocation result; implies --async"},
 			{Name: "timeout", Short: "local wait duration (default 0: until Ctrl-C); requires --wait", Value: "DURATION"},
 			{Name: "interval", Short: "time between status checks (default 1s); requires --wait", Value: "DURATION"},
 			{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J|@file|-"},

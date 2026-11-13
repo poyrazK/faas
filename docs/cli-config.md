@@ -100,10 +100,12 @@ aliases. Help, completion and agent examples use `invocation`.
 To submit asynchronously and wait in one command:
 
 ```sh
-gregale invocation run api --async --wait --timeout 2m --payload @request.json
+gregale invocation run api --wait --timeout 2m --payload @request.json
 ```
 
-`--wait` requires `--async`; `--timeout` and `--interval` require `--wait`.
+`--wait` selects async submission automatically; `--timeout` and `--interval`
+require `--wait`. An explicit `--async=false` conflicts with `--wait` and is
+rejected before submission. Use `--async` alone to queue and return immediately.
 The default timeout is `0` (wait until completion or Ctrl-C), and the default
 polling interval is `1s`. The timeout starts after acceptance and only limits
 local polling. The command submits once, then reads that accepted invocation.

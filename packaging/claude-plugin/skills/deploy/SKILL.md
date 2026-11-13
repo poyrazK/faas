@@ -80,6 +80,17 @@ Call the deployed app through the CLI and check the response:
 gregale --non-interactive --json invocation run <app> --method GET --path /
 ```
 
+For a call that may outlast the synchronous response, submit and wait with:
+
+```sh
+gregale --non-interactive --json invocation run <app> --wait --timeout 2m --payload @request.json
+```
+
+`--wait` selects async submission; adding `--async` is unnecessary. A local wait
+timeout exits `124`, and interruption exits `130`. The remote invocation may
+continue: use the diagnostic's `invocation wait` resume command instead of
+submitting the work again.
+
 Use a path the README names if `/` isn't a real page. On Hobby, Pro and Scale
 a new app is private: requesting `app_url` directly answers 401, while
 `invocation run` sends the request with your credential. Never put a key in a URL.
