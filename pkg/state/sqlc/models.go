@@ -8900,6 +8900,19 @@ type ManagedPostgresDatabaseEndpoint struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+// Managed PostgreSQL databases held for sending their own monthly egress allowance, one row per database and UTC month; written only by apid (ADR-20261110160000).
+type ManagedPostgresEgressHoldNotice struct {
+	DatabaseID     pgtype.UUID
+	PeriodStart    pgtype.Timestamptz
+	SubjectID      pgtype.UUID
+	ReachedAt      pgtype.Timestamptz
+	UsedBytes      int64
+	AllowanceBytes int64
+	CeilingBytes   int64
+	OverageBilled  bool
+	MailIntentID   pgtype.UUID
+}
+
 type ManagedPostgresHealth struct {
 	DatabaseID         pgtype.UUID
 	AccountID          pgtype.UUID
