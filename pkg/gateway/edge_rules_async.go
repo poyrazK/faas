@@ -85,6 +85,11 @@ type AsyncRouteRequest struct {
 	// (ADR-20261112160000); empty for every other producer.
 	SentByAppID     string
 	OnCompleteAppID string
+	// MaxPending and MaxBacklogBytes are the target plan's queue caps
+	// (MaxQueueDepth per app, MaxQueueBacklogBytesPerAccount), counted
+	// without the app lock (ADR-20261022105723 amendment 2026-11-13).
+	MaxPending      int
+	MaxBacklogBytes int64
 }
 
 type AsyncRouteAccepted struct {
@@ -178,7 +183,21 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		Payload:          payload,
 		Headers:          asyncRouteHeaders(r.Header),
 		IdempotencyKey:   r.Header.Get("Idempotency-Key"),
+		MaxPending:       limits.MaxQueueDepth,
+		MaxBacklogBytes:  limits.MaxQueueBacklogBytesPerAccount,
 	})
+	var depth *state.InvocationDepthError
+	if errors.As(err, &depth) {
+		api.WriteProblem(w, api.ErrPlanAsyncBacklog(depth.Limit, depth.Observed))
+		h.observeAsyncRule(rule, "blocked", "error")
+		return true
+	}
+	var backlog *state.InvocationBacklogBytesError
+	if errors.As(err, &backlog) {
+		api.WriteProblem(w, api.ErrPlanQueueBacklogBytes(backlog.Limit, backlog.Observed).WithHeader("Retry-After", "60"))
+		h.observeAsyncRule(rule, "blocked", "error")
+		return true
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "invocation_environment_work_isolation_unavailable",

@@ -8,13 +8,21 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/pressly/goose/v3"
 )
 
 func TestPgQueueBacklogBytesCap(t *testing.T) {
 	store, _, _ := pgWithPool(t)
 	testQueueBacklogBytesCap(t, store)
+}
+
+func TestPgAsyncInvocationDepthCap(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testAsyncInvocationDepthCap(t, store)
 }
 
 func TestPgQueueMessageExpiry(t *testing.T) {
@@ -40,7 +48,7 @@ func TestPgInvocationBacklogCountersTrackEveryChange(t *testing.T) {
 			app.ID).Scan(&countedPending, &countedBytes); err != nil {
 			t.Fatal(err)
 		}
-		if err := pool.QueryRow(ctx, `SELECT count(*), coalesce(sum(CASE WHEN source='queue' THEN octet_length(payload::text) ELSE 0 END),0)
+		if err := pool.QueryRow(ctx, `SELECT count(*), coalesce(sum(CASE WHEN source IN ('queue','async_invoke','delayed_task') THEN octet_length(payload::text) ELSE 0 END),0)
 			FROM invocations WHERE app_id=$1 AND state IN ('pending','dispatching')`, app.ID).Scan(&pending, &bytes); err != nil {
 			t.Fatal(err)
 		}
@@ -65,7 +73,10 @@ func TestPgInvocationBacklogCountersTrackEveryChange(t *testing.T) {
 	}
 	claimed, rewritten := enqueue(state.InvocationQueue), enqueue(state.InvocationQueue)
 	enqueue(state.InvocationDelayedTask)
+	asyncInv := enqueue(state.InvocationAsyncInvoke)
+	enqueue(state.InvocationCron)
 	check("enqueue")
+	exec("async payload rewrite", `UPDATE invocations SET payload='{"message":"an async payload rewritten longer"}' WHERE id=$1`, asyncInv.ID)
 	if _, err := store.ClaimInvocationWithCap(ctx, claimed.ID, "", 600, 10); err != nil {
 		t.Fatal(err)
 	}
@@ -116,4 +127,54 @@ func TestPgQueueReplayMeetsQueueDepth(t *testing.T) {
 func TestPgQueueLeaseLapsedOnLastAttemptDeadLetters(t *testing.T) {
 	store, _, _ := pgWithPool(t)
 	testQueueLeaseLapsedOnLastAttempt(t, store)
+}
+
+// The async backlog bytes migration recounts the async and delayed rows that
+// were pending under the old function, so a later decrement never takes a
+// counter below the table (ADR-20261022105723 amendment 2026-11-13).
+func TestPgAsyncBacklogBytesMigrationRecountsPendingRows(t *testing.T) {
+	store, ctx, pool := pgWithPool(t)
+	app := seedQueueBacklogApp(t, store, seedQueueBacklogAccount(t, store, api.PlanPro))
+	sqlDB := stdlib.OpenDBFromPool(pool)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations.FS,
+		goose.WithDisableVersioning(true), goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const version = 20261113190512417
+	if _, err = provider.ApplyVersion(ctx, version, false); err != nil {
+		t.Fatalf("down: %v", err)
+	}
+	pending, err := enqueueBacklogMessage(t, store, app, state.InvocationAsyncInvoke, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = enqueueBacklogMessage(t, store, app, state.InvocationDelayedTask, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.ApplyVersion(ctx, version, true); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+	counted := func() (int64, int64) {
+		t.Helper()
+		var counters, table int64
+		if err := pool.QueryRow(ctx, `SELECT coalesce(sum(bytes),0) FROM invocation_backlog_counters WHERE app_id=$1`, app.ID).Scan(&counters); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `SELECT coalesce(sum(octet_length(payload::text)),0) FROM invocations
+			WHERE app_id=$1 AND state IN ('pending','dispatching') AND source IN ('queue','async_invoke','delayed_task')`, app.ID).Scan(&table); err != nil {
+			t.Fatal(err)
+		}
+		return counters, table
+	}
+	if counters, table := counted(); counters != table || table == 0 {
+		t.Fatalf("after upgrade counters hold %d bytes, pending rows %d", counters, table)
+	}
+	if err := store.CancelInvocation(ctx, pending.ID); err != nil {
+		t.Fatal(err)
+	}
+	if counters, table := counted(); counters != table {
+		t.Fatalf("after cancelling a recounted row counters hold %d bytes, pending rows %d", counters, table)
+	}
 }
