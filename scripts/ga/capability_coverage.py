@@ -170,7 +170,7 @@ RULES = [
     (r"^browser$|whycopy", "`gregale` CLI"),
     (r"edgevalidate", "Edge rules (incl"),
     (r"^focus$", "Plans, usage, invoices"),
-    (r"gitfetch|reposcan", "Repo decomposition"),
+    (r"gitfetch|reposcan|featurehints", "Repo decomposition"),
     (r"hostport", "TCP listeners"),
     (r"^markers$", "Framework profiles"),
     (r"simpleapp", "Apps: create"),
