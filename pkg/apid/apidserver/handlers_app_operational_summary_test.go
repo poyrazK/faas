@@ -158,3 +158,36 @@ func TestAppOperationalSummaryRequiresCompletedMFA(t *testing.T) {
 		t.Fatalf("pending MFA read permitted: %d %s", recorder.Code, recorder.Body)
 	}
 }
+
+// An OOM kill showed only in the plan-gated debug status; the operational
+// summary (inspect, doctor) now names it on every plan, Free included.
+func TestAppOperationalSummaryReportsOOMKillsOnFree(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanFree)
+	app := apidserver.SeedAppForTimeline(t, e, "oom-summary")
+	summary := func() api.AppOperationalSummary {
+		t.Helper()
+		rec := e.Do(t, http.MethodGet, "/v1/apps/"+app.Slug+"/operational-summary", nil, nil)
+		var got api.AppOperationalSummary
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil {
+			t.Fatalf("summary: %d %s", rec.Code, rec.Body)
+		}
+		return got
+	}
+	for _, r := range summary().Recommendations {
+		if r.Code == api.CodeAppRuntimeOOM {
+			t.Fatalf("OOM recommendation without a kill: %+v", r)
+		}
+	}
+	data, _ := json.Marshal(map[string]any{"app_id": app.ID, "deployment_id": uuid.NewString(), "peak_mb": 264, "plan_mb": 256, "deployment_failed": false})
+	subject := uuid.NewString()
+	if err := (*e.Store()).AppendEvent(t.Context(), "schedd", "instances.workload_oom_failed", &subject, data); err != nil {
+		t.Fatal(err)
+	}
+	got := summary().Recommendations
+	if len(got) == 0 || got[0].Code != api.CodeAppRuntimeOOM || got[0].Severity != "error" {
+		t.Fatalf("OOM recommendation missing or not first: %+v", got)
+	}
+	if !strings.Contains(got[0].Message, "264 MB on a 256 MB limit") || !strings.Contains(got[0].Next, "gregale app oom-summary --ram 512") {
+		t.Fatalf("OOM recommendation = %+v", got[0])
+	}
+}

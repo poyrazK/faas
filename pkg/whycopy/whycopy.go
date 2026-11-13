@@ -137,9 +137,9 @@ var catalog = map[string]Render{
 	},
 	api.CodeAppRuntimeOOM: {
 		Title: "Container out of memory",
-		Hint:  "your app exceeded the plan's RAM cap and was killed",
+		Hint:  "your app used more than its RAM limit and was killed",
 		Why:   "the cgroup memory controller killed the process because it exceeded memory.max (plan + 8 MB); the kernel OOM-killer fired inside the microVM",
-		Fix:   "• upgrade to a plan with more RAM\n• trim in-memory state (caches, buffers, large request bodies held in memory)",
+		Fix:   "• raise the app's memory: `gregale app <app> --ram <MB>` (your account plan sets the per-app maximum)\n• trim in-memory state (caches, buffers, large request bodies held in memory)",
 		Observed: func(observed any) (why, fix string) {
 			if observed == nil {
 				return "", ""
@@ -157,8 +157,8 @@ var catalog = map[string]Render{
 			}
 			return fmt.Sprintf("the cgroup memory controller killed the process at %d MB (plan cap %d MB + 8 MB overhead); the kernel OOM-killer fired inside the microVM",
 					v.PeakMB, v.PlanMB),
-				fmt.Sprintf("• upgrade from a %d MB plan to a plan with at least %d MB of RAM\n• trim in-memory state (caches, buffers, large request bodies held in memory)",
-					v.PlanMB, v.PeakMB+8)
+				fmt.Sprintf("• raise the app's memory from %d MB to at least %d MB, e.g. `gregale app <app> --ram %d` (your account plan sets the per-app maximum)\n• trim in-memory state (caches, buffers, large request bodies held in memory)",
+					v.PlanMB, v.PeakMB+8, OOMSuggestedRAMMB(v.PeakMB, v.PlanMB))
 		},
 	},
 	api.CodeDepInstallFailed: {
@@ -395,4 +395,17 @@ func startupFailureGuidance(detail string) (why, fix string) {
 		}
 	}
 	return "", ""
+}
+
+// OOMSuggestedRAMMB is the memory to suggest after an out-of-memory kill at
+// peakMB on a planMB limit: double the limit, and never less than the peak
+// plus the 8 MB in-VM overhead, rounded up to 128 MB. Doubling leaves room
+// for runtimes such as the JVM whose peak exceeds steady use; the kill only
+// shows the limit was too small, not by how much. Zero when neither is known.
+func OOMSuggestedRAMMB(peakMB, planMB int) int {
+	want := max(planMB*2, peakMB+8)
+	if want <= 8 {
+		return 0
+	}
+	return (want + 127) / 128 * 128
 }
