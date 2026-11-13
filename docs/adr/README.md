@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
 - [ADR-20261113133500: Abuse strikes are stored, not counted in memory](20261113133500-persisted-abuse-strikes.md) — accepted; abuse recycles are rows in `account_abuse_strikes`, so the account abuse hold counts across schedds and restarts
 - [ADR-20261112194947: AI gateway semantic response cache](20261112194947-ai-gateway-semantic-cache.md) — accepted; Pro and Scale AI integrations with a response cache can answer a call whose last user turn embeds within a cosine threshold (default 0.95) of a cached call's, matching everything else exactly; per-process index pointing at response-cache entries, embedding through the customer's OpenAI or Gemini integration under the `semantic_cache` caller, fail-open
 - [ADR-20261112120603: Sustained CPU abuse detection](20261112120603-sustained-cpu-abuse.md) — accepted; an instance at 90% of its CPU quota for 15 minutes is recycled on Free (enforce mode) and counts toward the ADR-361 account abuse hold (`cpu_sustained`), flagged on paid plans; ships behind `cpu_abuse_mode` defaulting to shadow
