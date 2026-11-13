@@ -2152,3 +2152,9 @@ func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
+
+func (s *server) VerifyPrivateToolPinForTest(ctx context.Context, target api.ToolInvocationTarget, endpoint string) error {
+	return s.verifyPrivateToolPin(ctx, target, endpoint)
+}
+
+var ToolConnectionRecipientsForTest = toolConnectionRecipients

@@ -191,6 +191,10 @@ so list only the toolsets it needs:
 | `diagnose` | Request, performance, wake, trace and regression diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons |
 | `operate` | Configuration, restart, scaling, plan receipts and costs |
+| `execute` | Local account connections: existing jobs, run/task status, bounded logs, artifact downloads and opt-in dispatch/cancellation |
+| `build-tools` | Local authoring, or opt-in hosted Node publishing from reviewed source uploads |
+| `registry` | Local account connections: search retained publication versions and describe exact runtime schemas |
+| `invoke` | Exact registered-tool invocation, status/results and cancellation; hosted connections require separate consent and exact owner grants |
 | `all` | Everything allowed by the server operator (explicit opt-in) |
 
 Combine them with commas, for example `--tools core,diagnose`.
@@ -244,7 +248,111 @@ runs the matching `gregale domain create`, `add bucket`, `add postgres` or
 your DNS provider; `gregale_check_domain` reports when they verify. See
 [Provision a domain, data and crons](mcp.md#provision-a-domain-data-and-crons).
 
+## Run jobs and retrieve artifacts
+
+On a local account connection, select `--tools core,execute` to inspect existing
+jobs, read their runs and task logs, and retrieve output artifacts. Add
+`--allow-writes` to dispatch or cancel a run. Native API scopes and job plan
+limits still apply: `apps:read` for metadata/logs, `deploy:write` for dispatch
+and cancellation, and `storage:read` as well for artifact download links.
+
+`gregale_start_job` takes an existing `job` and a caller-generated `request_id`
+UUID. Retain the exact UUID and original inputs when retrying after an uncertain
+response or reconnecting. Dispatch uses the job's current configuration; it
+does not take a release plan, command overrides or environment values. Run
+status and artifacts remain on Gregale after the MCP connection closes.
+
+Hosted OAuth and agent-key connections, explicitly app-restricted management
+connections, and organization connections do not expose `execute`: app/environment consent does not grant
+access to account jobs. A local token still needs native account job access;
+selecting tools grants no API permissions. See [execution tools](mcp.md#execute-existing-jobs)
+for the tool catalog, retry window and download contract.
+
+## Build and publish MCP tools
+
+Use `gregale mcp serve --tools core,build-tools --allow-writes` to let an agent
+read versioned starter files, review a local MCP project, run approved fixtures
+against a staged candidate and publish through the MCP release pipeline.
+
+`gregale_get_tool_template` returns a Node, Go or Python file manifest. Request
+an exact file and decode its base64 chunks to materialize the starter. The
+agent writes its handler and `gregale-mcp.tests.json`; creating and editing code
+does not execute it on the management host.
+
+`gregale_plan_tool_deploy` requires an explicit access mode and approval to run
+the declared behavioral fixtures. Review the source digest, tool allowlist,
+test names and account/app/serving identities. `gregale_apply_tool_deploy`
+returns a plan handle immediately; poll `gregale_get_tool_deploy`. Builds run
+from a private source snapshot, so edits made after apply cannot change them.
+Publication requires a catalog pin and passing protocol and behavioral checks.
+
+A repeated apply reads the existing attempt. Failed or uncertain attempts
+never rerun fixtures automatically: inspect the receipt and native deployments
+before planning more work. Started attempts are journaled natively and can be
+read after process restart using the retained plan ID. Add `registry` for
+`gregale_search_tools` and `gregale_describe_tool`: a fresh agent can discover
+exact published versions without source files or a CLI executor. Discovery
+does not grant execution permission. See the
+[publishing contract](mcp.md#build-and-publish-tools) for the tools and limits.
+
+Hosted agents can publish open Node tools when the operator enables
+`--allow-tool-publishing` and offers `build-tools`. Submit bounded inline source
+or a connection-owned upload to `gregale_plan_uploaded_tool_deploy`, review the
+source/fixture digests and target identity, then use the existing apply/status
+tools. A hosted connection never receives access to host directories. Personal
+agent keys need deployment authority; browser OAuth additionally needs
+`gregale:tools:publish` and explicit fixture/publishing consent. Publication does
+not grant invocation access. See [hosted publishing](mcp.md#hosted-tool-publishing-preview)
+for source bounds, consent and recovery.
+
+For private tools, the owner can bind an existing sealed application token to
+one exact grant. With separate private-invocation consent, pass the described
+opaque `credential_binding_sha256` as `credential_binding`. APID resolves and
+uses the token; agents receive no provider credential or secret-read authority.
+Static-source rotation requires a new owner-reviewed grant. See
+[private delegated invocation](mcp.md#private-delegated-invocation-preview).
+
+Owners can also create managed execution OAuth connections with
+`gregale mcp server tool-connection create` and grant their exact tool using
+`--credential-connection-id`. Routine token renewal preserves the grant. Agents
+can read `gregale_get_tool_connection` with the exact `grant_id`; this exposes
+credential-free status and never refreshes. `reconnect_required` needs a new
+owner-reviewed connection and grant. See
+[managed execution OAuth](mcp.md#managed-oauth-for-tool-execution) for setup,
+source-secret trust, local revocation and recovery limits.
+
+Public OAuth clients can use owner-only browser setup with a `guided: true`
+configuration and `gregale mcp server tool-connection connect`. APID saves issued
+tokens directly in encrypted connection state; no initial app-secret refresh
+source is needed. Provider consent is followed by a separate exact tool grant.
+Reconnect creates a new connection identity, revokes old local access and requires
+new grants. Agents receive no browser authorization command or token. See
+[guided owner authorization](mcp.md#guided-owner-authorization).
+
+For reusable published tools, add `registry,invoke` to a local connection with
+writes enabled. Search and describe a version, then explicitly approve
+`gregale_invoke_tool` with a caller-retained UUID. Poll its durable receipt;
+reusing that UUID does not repeat execution. Cancellation after dispatch cannot
+undo remote effects. See [invoking published tools](mcp.md#invoke-published-tools)
+for access, result chunks and uncertain-outcome recovery.
+
+Personal hosted connections can also select `registry` after the owner creates
+an exact connection/version/tool grant using `gregale mcp server tool-grant create`.
+Native apps-read permission is sufficient for granted discovery; project
+limits and consented app identities still apply. Scoped descriptions contain
+only the granted tool, and expiry or revocation takes effect on the next read.
+To invoke an open tool on an enabled hosted bridge, select `registry,invoke`,
+request the separate `gregale:tools:invoke` OAuth scope and approve tool calls.
+The owner must create the exact grant with `--allow-invocation`. Pass that
+active `grant_id` with explicit execution consent and a retained request UUID.
+Deployment permission is unnecessary. Calls, results and cancellation remain
+bound to that original key and grant; revocation denies subsequent access.
+See [hosted invocation](mcp.md#hosted-invocation-with-tool-grants) for setup and
+recovery, and [scoped tool grants](mcp.md#scoped-tool-grants) for owner commands
+and catalog-projection digests.
+
 ## Install the Claude Code plugin
+
 
 The `gregale` plugin connects Claude Code to the hosted MCP server and adds
 two skills:

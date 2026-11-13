@@ -37,6 +37,12 @@ usage: scripts/e2e-journeys.sh [flags]
   --sweep-hours N        first delete e2ej- apps from runs older than N hours (default 3, 0 = off)
   --github-repo O/N      fixture repository for TestGitHubDeploys (needs gh logged in and
                          the account's Gregale GitHub App able to see it)
+  --mcp-tool-lifecycle   enable the preview published-tool journey (full tier, explicit
+                         --api/$GREGALE_E2E_API and owner API token required)
+  --mcp-hosted-tool-lifecycle  use hosted source publication for the preview journey
+  --mcp-private-tool-lifecycle  enable private invocation acceptance (full tier,
+                         explicit API and owner token; separate from open journeys)
+  --mcp-url URL          hosted bridge for that journey (default: API origin + /mcp)
   --list                 list journeys and exit
 EOF
 }
@@ -44,6 +50,12 @@ EOF
 tier=smoke
 run_re=''
 api="${GREGALE_E2E_API:-https://api.gregale.dev}"
+api_explicit=0
+[[ -z "${GREGALE_E2E_API:-}" ]] || api_explicit=1
+mcp_tool_lifecycle="${GREGALE_E2E_MCP_TOOL_LIFECYCLE:-0}"
+mcp_hosted_tool_lifecycle="${GREGALE_E2E_MCP_HOSTED_TOOL_LIFECYCLE:-0}"
+mcp_private_tool_lifecycle="${GREGALE_E2E_MCP_PRIVATE_TOOL_LIFECYCLE:-0}"
+mcp_url="${GREGALE_E2E_MCP_URL:-}"
 apps_domain="${GREGALE_E2E_APPS_DOMAIN:-}"
 cli=''
 cli_version=''
@@ -60,7 +72,7 @@ while (($#)); do
 	case "$1" in
 	--tier) tier="$2"; shift 2 ;;
 	--run) run_re="$2"; shift 2 ;;
-	--api) api="$2"; shift 2 ;;
+	--api) api="$2"; api_explicit=1; shift 2 ;;
 	--apps-domain) apps_domain="$2"; shift 2 ;;
 	--cli) cli="$2"; shift 2 ;;
 	--cli-version) cli_version="$2"; shift 2 ;;
@@ -70,6 +82,10 @@ while (($#)); do
 	--max-deploys) max_deploys="$2"; shift 2 ;;
 	--max-apps) max_apps="$2"; shift 2 ;;
 	--github-repo) github_repo="$2"; shift 2 ;;
+	--mcp-tool-lifecycle) mcp_tool_lifecycle=1; shift ;;
+	--mcp-hosted-tool-lifecycle) mcp_hosted_tool_lifecycle=1; shift ;;
+	--mcp-private-tool-lifecycle) mcp_private_tool_lifecycle=1; shift ;;
+	--mcp-url) mcp_url="$2"; shift 2 ;;
 	--sweep-hours) sweep_hours="$2"; shift 2 ;;
 	--list) list=1; shift ;;
 	-h|--help) usage; exit 0 ;;
@@ -78,6 +94,15 @@ while (($#)); do
 done
 
 case "$tier" in smoke|full) ;; *) echo "--tier must be smoke or full" >&2; exit 2 ;; esac
+case "$mcp_tool_lifecycle" in 0|1) ;; *) echo "GREGALE_E2E_MCP_TOOL_LIFECYCLE must be 0 or 1" >&2; exit 2 ;; esac
+case "$mcp_hosted_tool_lifecycle" in 0|1) ;; *) echo "GREGALE_E2E_MCP_HOSTED_TOOL_LIFECYCLE must be 0 or 1" >&2; exit 2 ;; esac
+case "$mcp_private_tool_lifecycle" in 0|1) ;; *) echo "GREGALE_E2E_MCP_PRIVATE_TOOL_LIFECYCLE must be 0 or 1" >&2; exit 2 ;; esac
+if ((mcp_hosted_tool_lifecycle)); then mcp_tool_lifecycle=1; fi
+if ((mcp_private_tool_lifecycle && mcp_tool_lifecycle)); then echo "select private or open tool lifecycle acceptance, not both" >&2; exit 2; fi
+if (((mcp_tool_lifecycle || mcp_private_tool_lifecycle) && !list)); then
+	[[ "$tier" == full && "$api_explicit" == 1 ]] || { echo "tool lifecycle acceptance requires --tier full and an explicit --api or GREGALE_E2E_API" >&2; exit 2; }
+	[[ -n "${GREGALE_E2E_TOKEN:-}" || -n "$token_file" ]] || { echo "tool lifecycle acceptance requires an owner token through GREGALE_E2E_TOKEN or --token-file" >&2; exit 2; }
+fi
 [[ "$sweep_hours" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo "--sweep-hours must be a number" >&2; exit 2; }
 command -v go >/dev/null || { echo "go is required" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
@@ -158,6 +183,10 @@ GREGALE_E2E_API="$api" \
 	GREGALE_E2E_MAX_DEPLOYS="$max_deploys" \
 	GREGALE_E2E_MAX_APPS="$max_apps" \
 	GREGALE_E2E_GITHUB_REPO="$github_repo" \
+	GREGALE_E2E_MCP_TOOL_LIFECYCLE="$mcp_tool_lifecycle" \
+	GREGALE_E2E_MCP_HOSTED_TOOL_LIFECYCLE="$mcp_hosted_tool_lifecycle" \
+	GREGALE_E2E_MCP_PRIVATE_TOOL_LIFECYCLE="$mcp_private_tool_lifecycle" \
+	GREGALE_E2E_MCP_URL="$mcp_url" \
 	GREGALE_E2E_SWEEP_HOURS="$( [[ "$sweep_hours" == 0 ]] || echo "$sweep_hours")" \
 	go test ./tests/journeys -count=1 -json -timeout 150m -parallel 32 -skip '^TestHarness' ${run_re:+-run "$run_re"} 2>&1 |
 	tee "$out/go-test.json" |

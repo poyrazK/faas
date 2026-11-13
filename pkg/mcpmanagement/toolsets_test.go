@@ -45,6 +45,9 @@ func connectionCatalog(t *testing.T, toolsets []string, hosted bool) []*mcp.Tool
 	noCLI := func(context.Context, []string, []byte) (LocalCLIResult, error) { return LocalCLIResult{}, nil }
 	opts := Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, LocalCLI: noCLI, Toolsets: toolsets}
 	if hosted {
+		opts.AllowToolPublishing = true
+		opts.AllowToolInvocation = true
+		opts.AllowPrivateToolInvocation = true
 		store, err := newUploadStore(filepath.Join(t.TempDir(), "uploads"), "https://api.gregale.test/mcp")
 		if err != nil {
 			t.Fatal(err)
@@ -92,7 +95,7 @@ func TestEveryToolHasAToolset(t *testing.T) {
 }
 
 func TestToolsetsListOnlySelectedTools(t *testing.T) {
-	for _, selected := range [][]string{{ToolsetCore}, {ToolsetRelease}, {ToolsetDiagnose}, {ToolsetProvision}, {ToolsetOperate}, {ToolsetCore, ToolsetDiagnose}} {
+	for _, selected := range [][]string{{ToolsetCore}, {ToolsetRelease}, {ToolsetDiagnose}, {ToolsetProvision}, {ToolsetOperate}, {ToolsetExecute}, {ToolsetBuildTools}, {ToolsetRegistry}, {ToolsetInvoke}, {ToolsetCore, ToolsetDiagnose}} {
 		var want []string
 		for name := range toolsetOf {
 			if slices.ContainsFunc(selected, func(set string) bool { return toolsetIncludes(name, set) }) {
@@ -131,6 +134,8 @@ func TestParseToolsets(t *testing.T) {
 		" diagnose , core ":    {"core", "diagnose"},
 		"core,core,release":    {"core", "release"},
 		"provision,core":       {"core", "provision"},
+		"execute,core":         {"core", "execute"},
+		"build-tools,core":     {"build-tools", "core"},
 		"core,all":             {ToolsetAll},
 		"release,diagnose,all": {ToolsetAll},
 	} {

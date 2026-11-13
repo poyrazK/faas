@@ -210,6 +210,7 @@ func (u *uploadStore) newDir() (string, error) {
 		return "", err
 	}
 	u.mu.Lock()
+	u.pruneLocked()
 	u.dirs[dir] = time.Now().Add(uploadDirTTL)
 	u.mu.Unlock()
 	return dir, nil

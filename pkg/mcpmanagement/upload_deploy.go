@@ -72,29 +72,9 @@ func (m *management) planUploadDeploy(ctx context.Context, args planUploadDeploy
 	if (args.UploadID == "") == (len(args.Files) == 0) {
 		return nil, invalid("invalid_argument", "pass either upload_id or files")
 	}
-	dir, err := m.opts.uploads.newDir()
+	dir, err := m.uploadedProject(args.App, args.UploadID, args.Files)
 	if err != nil {
 		return nil, err
-	}
-	if args.UploadID != "" {
-		up, archive, err := m.opts.uploads.take(m.opts.grantID, args.UploadID)
-		if err != nil {
-			m.opts.uploads.removeDir(dir)
-			return nil, err
-		}
-		if up.app != args.App {
-			m.opts.uploads.removeDir(dir)
-			return nil, invalid("invalid_argument", "this upload was created for app "+up.app)
-		}
-		err = extractUpload(archive, dir, up.maxBytes*4)
-		_ = os.Remove(archive)
-		if err != nil {
-			m.opts.uploads.removeDir(dir)
-			return nil, invalid("invalid_upload", err.Error())
-		}
-	} else if err := writeInlineFiles(dir, args.Files); err != nil {
-		m.opts.uploads.removeDir(dir)
-		return nil, invalid("invalid_argument", err.Error())
 	}
 	plan, err := m.planDirDeploy(ctx, dir, planLocalDeployArgs{Path: dir, App: args.App, Reason: args.Reason, CreateOnly: args.CreateOnly})
 	if err != nil {
@@ -102,4 +82,35 @@ func (m *management) planUploadDeploy(ctx context.Context, args planUploadDeploy
 		return nil, err
 	}
 	return plan, nil
+}
+
+// Both hosted deployment workflows consume the same connection-bound upload
+// or bounded inline source. Neither accepts a management-host path.
+func (m *management) uploadedProject(app, uploadID string, files []inlineFile) (string, error) {
+	dir, err := m.opts.uploads.newDir()
+	if err != nil {
+		return "", err
+	}
+	if uploadID != "" {
+		up, archive, err := m.opts.uploads.take(m.opts.grantID, uploadID)
+		if err != nil {
+			m.opts.uploads.removeDir(dir)
+			return "", err
+		}
+		if up.app != app || up.accountID != m.opts.accountID && m.opts.accountID != "" {
+			m.opts.uploads.removeDir(dir)
+			_ = os.Remove(archive)
+			return "", invalid("invalid_argument", "this upload belongs to another app or account")
+		}
+		err = extractUpload(archive, dir, up.maxBytes*4)
+		_ = os.Remove(archive)
+		if err != nil {
+			m.opts.uploads.removeDir(dir)
+			return "", invalid("invalid_upload", err.Error())
+		}
+	} else if err := writeInlineFiles(dir, files); err != nil {
+		m.opts.uploads.removeDir(dir)
+		return "", invalid("invalid_argument", err.Error())
+	}
+	return dir, nil
 }

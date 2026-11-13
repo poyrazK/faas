@@ -46,15 +46,21 @@ const (
 
 // target is the deployed Gregale the journeys run against.
 type target struct {
-	api        string
-	appsDomain string
-	token      string
-	useLogin   bool // no token: let the CLI use its own `gregale login`
-	cli        string
-	runID      string
-	tier       string
-	keep       bool
-	home       string // isolated HOME and working directory for the CLI
+	api             string
+	appsDomain      string
+	token           string
+	useLogin        bool // no token: let the CLI use its own `gregale login`
+	cli             string
+	runID           string
+	tier            string
+	keep            bool
+	home            string // isolated HOME and working directory for the CLI
+	mcpHostedTools  bool   // select hosted source publication in the preview journey
+	mcpPrivateTools bool   // opt-in credential-bound private invocation acceptance
+	mcpTools        bool   // explicit opt-in to the preview published-tool lifecycle
+	mcpURL          string // hosted bridge; defaults to the target API's /mcp
+	sensitiveMu     sync.RWMutex
+	sensitive       []string // synthetic journey credentials; never included in reports
 
 	preflightOnce sync.Once
 	preflightErr  error
@@ -111,6 +117,9 @@ func TestMain(m *testing.M) {
 func loadTarget(getenv func(string) string) (*target, error) {
 	api := strings.TrimRight(getenv("GREGALE_E2E_API"), "/")
 	if api == "" {
+		if getenv("GREGALE_E2E_MCP_TOOL_LIFECYCLE") == "1" || getenv("GREGALE_E2E_MCP_HOSTED_TOOL_LIFECYCLE") == "1" || getenv("GREGALE_E2E_MCP_PRIVATE_TOOL_LIFECYCLE") == "1" {
+			return nil, fmt.Errorf("the preview MCP tool journey requires an explicit GREGALE_E2E_API target")
+		}
 		return nil, nil
 	}
 	u, err := url.Parse(api)
@@ -141,6 +150,9 @@ func loadTarget(getenv func(string) string) (*target, error) {
 	}
 	if t.tier != tierSmoke && t.tier != tierFull {
 		return nil, fmt.Errorf("GREGALE_E2E_TIER %q: want %s or %s", t.tier, tierSmoke, tierFull)
+	}
+	if err := loadMCPToolJourney(t, getenv); err != nil {
+		return nil, err
 	}
 	if t.runID == "" {
 		t.runID = newRunID(time.Now())
@@ -1208,7 +1220,20 @@ func (tg *target) redact(s string) string {
 	if tg != nil && len(tg.token) >= 8 {
 		s = strings.ReplaceAll(s, tg.token, "<token>")
 	}
+	if tg != nil {
+		tg.sensitiveMu.RLock()
+		for _, credential := range tg.sensitive {
+			s = strings.ReplaceAll(s, credential, "<credential>")
+		}
+		tg.sensitiveMu.RUnlock()
+	}
 	return credentialRe.ReplaceAllString(s, "<credential>")
+}
+
+func (tg *target) addSensitive(value string) {
+	tg.sensitiveMu.Lock()
+	defer tg.sensitiveMu.Unlock()
+	tg.sensitive = append(tg.sensitive, value)
 }
 
 func tail(s string, n int) string {

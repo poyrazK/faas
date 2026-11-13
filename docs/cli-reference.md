@@ -16644,14 +16644,15 @@ Connect agents, host MCP servers, or call MCP tools
 
 Expose Gregale management tools over stdio or OAuth HTTP
 
-`gregale mcp serve [--transport <TRANSPORT>] [--timeout <DURATION>] [--allow-writes] [--tools <TOOLSETS>] [--listen <ADDR>] [--resource-url <URL>] [--oauth-onboarding <MODE>] [--state-file <PATH>] [--admin-socket <PATH>] [--metrics-listen <ADDR>] [--state-key-file <PATH>] [--oauth-redirect-uri <URI>]`
+`gregale mcp serve [--transport <TRANSPORT>] [--timeout <DURATION>] [--allow-writes] [--allow-tool-invocation] [--tools <TOOLSETS>] [--listen <ADDR>] [--resource-url <URL>] [--oauth-onboarding <MODE>] [--state-file <PATH>] [--admin-socket <PATH>] [--metrics-listen <ADDR>] [--state-key-file <PATH>] [--oauth-redirect-uri <URI>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--transport <TRANSPORT>` | management MCP transport (default stdio) | one of `stdio` · `streamable-http` |
 | `--timeout <DURATION>` | per-tool API timeout (default 30s, maximum 1m) |  |
-| `--allow-writes` | enable reviewed deploy, promotion, and rollback actions |  |
-| `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose, provision, operate or all (default core) |  |
+| `--allow-writes` | enable reviewed release actions and local job dispatch/cancellation |  |
+| `--allow-tool-invocation` | enable exact-grant open-tool invocation on HTTP connections |  |
+| `--tools <TOOLSETS>` | toolsets to list, comma-separated: core, release, diagnose, provision, operate, execute, build-tools, registry, invoke or all (default core) |  |
 | `--listen <ADDR>` | HTTP listen address behind TLS proxy (default 127.0.0.1:8787) |  |
 | `--resource-url <URL>` | public HTTPS URL ending in /mcp (required for HTTP) |  |
 | `--oauth-onboarding <MODE>` | remote onboarding (default browser) | one of `browser` · `api-key` |
@@ -17226,6 +17227,145 @@ Examples:
 gregale mcp server tasks status --app mcp-worker --json
 ```
 
+#### mcp server tool-connection
+
+Manage owner-approved execution OAuth connections
+
+`gregale mcp server tool-connection <create|connect|reconnect|get|list|revoke>`
+
+##### mcp server tool-connection create
+
+Create an immutable execution connection from reviewed provider configuration
+
+`gregale mcp server tool-connection create --id <UUID> --config <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | caller-retained connection UUID | required |
+| `--config <PATH>` | owner-reviewed execution OAuth JSON configuration | required |
+
+##### mcp server tool-connection connect
+
+Authorize a new guided execution connection through browser PKCE
+
+`gregale mcp server tool-connection connect --id <UUID> [--callback-port <PORT>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact new guided connection UUID | required |
+| `--callback-port <PORT>` | IPv4 loopback callback port; 0 chooses a dynamic port |  |
+| `--timeout <DURATION>` | browser authorization deadline, at most 5m |  |
+
+##### mcp server tool-connection reconnect
+
+Replace a guided connection with a new identity and fresh provider authorization
+
+`gregale mcp server tool-connection reconnect --id <UUID> --from <UUID> [--callback-port <PORT>] [--timeout <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact new guided connection UUID | required |
+| `--from <UUID>` | old guided connection to replace and locally revoke | required |
+| `--callback-port <PORT>` | IPv4 loopback callback port; 0 chooses a dynamic port |  |
+| `--timeout <DURATION>` | browser authorization deadline, at most 5m |  |
+
+##### mcp server tool-connection get
+
+Read execution connection state without credentials
+
+`gregale mcp server tool-connection get --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact connection UUID | required |
+
+##### mcp server tool-connection list
+
+List retained execution connections
+
+`gregale mcp server tool-connection list [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--cursor <CURSOR>` | opaque continuation |  |
+| `--limit <N>` | page size 1-20 |  |
+
+##### mcp server tool-connection revoke
+
+Revoke execution authority without deleting its identity
+
+`gregale mcp server tool-connection revoke --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact connection UUID | required |
+
+#### mcp server invocation-run
+
+Run one already journaled registered-tool invocation; arguments arrive on stdin
+
+`gregale mcp server invocation-run --id <ID> [--token-env <ENV>] [--delegated]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <ID>` | queued invocation UUID | required |
+| `--token-env <ENV>` | named MCP_* application OAuth token |  |
+| `--delegated` | use the current connection exact native invocation grant |  |
+
+#### mcp server tool-grant
+
+Delegate one exact published tool to an existing agent connection
+
+`gregale mcp server tool-grant <create|get|list|revoke>`
+
+##### mcp server tool-grant create
+
+Create an immutable expiring tool grant as the personal owner
+
+`gregale mcp server tool-grant create --id <UUID> --connection-key <UUID> --version <SHA256> --tool <NAME> --expires-at <TIME> [--allow-invocation] [--credential-secret-ref <REF>] [--credential-connection-id <UUID>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | caller-retained grant UUID | required |
+| `--connection-key <UUID>` | existing native agent connection key UUID | required |
+| `--version <SHA256>` | exact publication version | required |
+| `--tool <NAME>` | exact published tool name | required |
+| `--expires-at <TIME>` | absolute RFC3339 expiry within 30 days | required |
+| `--allow-invocation` | allow exact invocation within separate connection consent |  |
+| `--credential-secret-ref <REF>` | existing secret:MCP_* token reference for a private invocation grant |  |
+| `--credential-connection-id <UUID>` | owner-approved execution OAuth connection UUID; exclusive with secret reference |  |
+
+##### mcp server tool-grant get
+
+Read a retained tool grant
+
+`gregale mcp server tool-grant get --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact grant UUID | required |
+
+##### mcp server tool-grant list
+
+List the personal account&#39;s retained tool grants
+
+`gregale mcp server tool-grant list [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--cursor <CURSOR>` | opaque continuation |  |
+| `--limit <N>` | page size 1-20 |  |
+
+##### mcp server tool-grant revoke
+
+Revoke a grant without deleting its identity
+
+`gregale mcp server tool-grant revoke --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | exact grant UUID | required |
+
 #### mcp server init
 
 Create an MCP starter in Node, Go or Python
@@ -17389,7 +17529,7 @@ Run reviewed MCP application smoke fixtures
 
 Pin the candidate catalog, verify MCP discovery and promote
 
-`gregale mcp server deploy [--path <DIR>] --name <SLUG> [--size <SIZE>] [--profile <SIZE>] [--token-env <ENV>] [--secrets-file <PATH>] [--release-policy <PATH>] [--validate-url <URL>] [--fixtures <PATH>] [--allow-tool-execution] [--access-audit <PLACEMENT>] [--access-audit-algorithms <LIST>] [--idempotency-key <KEY>] [--mcp-task-migration-override] [--timeout <SECONDS>]`
+`gregale mcp server deploy [--path <DIR>] --name <SLUG> [--size <SIZE>] [--profile <SIZE>] [--token-env <ENV>] [--secrets-file <PATH>] [--release-policy <PATH>] [--validate-url <URL>] [--fixtures <PATH>] [--allow-tool-execution] [--access-audit <PLACEMENT>] [--access-audit-algorithms <LIST>] [--idempotency-key <KEY>] [--expected-serving-deployment <ID>] [--expected-app-id <ID>] [--require-catalog-pin] [--require-reviewed-tools] [--mcp-task-migration-override] [--timeout <SECONDS>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -17406,6 +17546,10 @@ Pin the candidate catalog, verify MCP discovery and promote
 | `--access-audit <PLACEMENT>` | optional stored-policy gate with gateway or guest-only placement | one of `gateway` · `guest-only` |
 | `--access-audit-algorithms <LIST>` | reviewed gateway algorithms for --access-audit (default RS256,ES256) |  |
 | `--idempotency-key <KEY>` | retry identity printed by a failed submission |  |
+| `--expected-serving-deployment <ID>` | reviewed serving deployment; empty requires no serving release |  |
+| `--expected-app-id <ID>` | reviewed immutable app identity |  |
+| `--require-catalog-pin` | require candidate catalog integrity support |  |
+| `--require-reviewed-tools` | require runtime tools to match configured tool_scopes before fixtures and promotion |  |
 | `--mcp-task-migration-override` | allow this deployment to replace incompatible MCP task workers once |  |
 | `--timeout <SECONDS>` | deployment and verification wait timeout in seconds (default 1200) |  |
 

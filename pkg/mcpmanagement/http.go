@@ -17,6 +17,9 @@ import (
 
 const scopeRead = "gregale:read"
 const scopeWrite = "gregale:write"
+const scopeInvoke = "gregale:tools:invoke"
+const scopePrivateInvoke = "gregale:tools:invoke-private"
+const scopePublish = "gregale:tools:publish"
 
 // HTTPOptions configures a self-hosted OAuth resource and authorization server.
 // ResourceURL is the public HTTPS /mcp URL, served behind a TLS reverse proxy.
@@ -26,14 +29,17 @@ const scopeWrite = "gregale:write"
 // component; the actual registered URI remains exact for authorization/exchange.
 // No selected CLI credential is used by the remote server.
 type HTTPOptions struct {
-	Lifecycle    *Lifecycle
-	Telemetry    *Telemetry
-	APIBase      string
-	ResourceURL  string
-	RedirectURIs []string
-	Version      string
-	Timeout      time.Duration
-	AllowWrites  bool
+	Lifecycle                  *Lifecycle
+	Telemetry                  *Telemetry
+	APIBase                    string
+	ResourceURL                string
+	RedirectURIs               []string
+	Version                    string
+	Timeout                    time.Duration
+	AllowWrites                bool
+	AllowToolInvocation        bool
+	AllowPrivateToolInvocation bool
+	AllowToolPublishing        bool
 	// Toolsets limits the tools every grant lists; nil lists all.
 	Toolsets []string
 	// Onboarding is browser (default) or the explicit api-key fallback.
@@ -302,10 +308,20 @@ func oauthError(w http.ResponseWriter, status int, code, description string) {
 }
 
 func (r *remoteServer) scopes() []string {
+	out := []string{scopeRead}
 	if r.opts.AllowWrites {
-		return []string{scopeRead, scopeWrite}
+		out = append(out, scopeWrite)
 	}
-	return []string{scopeRead}
+	if r.opts.AllowToolInvocation {
+		out = append(out, scopeInvoke)
+	}
+	if r.opts.AllowPrivateToolInvocation && r.opts.AllowToolInvocation {
+		out = append(out, scopePrivateInvoke)
+	}
+	if r.opts.AllowToolPublishing && r.opts.AllowWrites {
+		out = append(out, scopePublish)
+	}
+	return out
 }
 
 func (r *remoteServer) resourceMetadata(w http.ResponseWriter, _ *http.Request) {

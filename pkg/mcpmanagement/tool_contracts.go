@@ -18,6 +18,21 @@ func toolOutputSchema(name string) map[string]any {
 }
 
 func toolSuccessSchema(name string) map[string]any {
+	if name == "gregale_get_tool_connection" {
+		return map[string]any{"type": "object", "required": []string{"grant_id", "app", "app_id", "version", "name", "state"}, "properties": map[string]any{"grant_id": map[string]any{"type": "string"}, "app": map[string]any{"type": "string"}, "app_id": map[string]any{"type": "string"}, "version": map[string]any{"type": "string"}, "name": map[string]any{"type": "string"}, "state": map[string]any{"type": "string", "enum": []string{"ready", "refresh_required", "refreshing", "reconnect_required"}}, "expires_at": map[string]any{"type": "string"}, "recovery_action": map[string]any{"type": "string"}}, "additionalProperties": false}
+	}
+	if toolsetOf[name] == ToolsetInvoke {
+		return invocationOutputSchema()
+	}
+	if toolsetOf[name] == ToolsetRegistry {
+		return toolRegistryOutputSchema(name)
+	}
+	if toolsetOf[name] == ToolsetBuildTools {
+		return toolBuildingOutputSchema(name)
+	}
+	if toolsetOf[name] == ToolsetExecute {
+		return executionOutputSchema(name)
+	}
 	props := map[string]any{}
 	var required []string
 	add := func(kind string, names ...string) {
@@ -98,6 +113,9 @@ func toolSuccessSchema(name string) map[string]any {
 }
 
 func toolIdempotent(name string, readOnly bool) bool {
+	if name == "gregale_start_job" || name == "gregale_cancel_job_run" {
+		return true // Caller-stable dispatch key, or native repeat-safe cancellation.
+	}
 	if strings.HasPrefix(name, "gregale_plan_") || name == "gregale_request_secret" || name == "gregale_create_source_upload" {
 		return false
 	}

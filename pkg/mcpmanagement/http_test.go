@@ -64,7 +64,7 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/v1/cli-auth/code" {
 			var input api.CliAuthCodeRequest
-			if json.NewDecoder(req.Body).Decode(&input) != nil || (input.Purpose != api.CliAuthPurposeMCPRead && input.Purpose != api.CliAuthPurposeMCP) {
+			if json.NewDecoder(req.Body).Decode(&input) != nil || (input.Purpose != api.CliAuthPurposeMCPRead && input.Purpose != api.CliAuthPurposeMCPWrite && input.Purpose != api.CliAuthPurposeMCP) {
 				t.Error("unexpected native purpose")
 			}
 			f.mu.Lock()

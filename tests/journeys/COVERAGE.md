@@ -4,6 +4,21 @@ Every GA row of `docs/ga-capability-inventory.md`, mapped to the journeys
 that test it end to end against a deployed Gregale, and to what is not
 covered. Update this table when a journey or a GA row changes.
 
+Preview acceptance is separate from this GA matrix: the opt-in
+`TestMCPToolLifecycle` covers verified tool publication, owner grants, scoped
+discovery, both hosted invocation protocols, lost-reply recovery without another
+runtime call, cancellation and revocation. See the
+[staging run instructions](README.md#published-tool-lifecycle-preview).
+Local harness checks do not establish that this deployed journey passed.
+
+The separate opt-in `TestMCPPrivateToolLifecycle` covers synthetic JWT-authenticated
+publication, owner-provisioned sealed credentials, exact private bindings, both
+invocation protocols, result redaction, lost-reply recovery, cancellation,
+expiry, rotation, catalog drift and revocation. See the
+[private staging instructions](README.md#private-tool-lifecycle-preview).
+It does not certify external OAuth provider login/refresh or API/bridge restart
+recovery; local preparation checks do not establish deployed acceptance.
+
 | # | GA capability | Journeys and steps | Not covered |
 |---|---|---|---|
 | 1 | Apps: create, update, rename, delete, restore | `TestAppSettingsAndRename` (update, rename), `TestDeleteAndRestore`, every `deployProbe` | — |
@@ -92,3 +107,8 @@ alias whose revision a rollback superseded answering 409 (row 24); a job
 that exits at once keeping its output, its command given after `--`; the
 standalone default RAM; and `metrics --services` explaining a hidden
 service map. A check fails on a release cut before its fix.
+
+The same preview journey can select hosted source publication with
+`--mcp-hosted-tool-lifecycle`: remote starter retrieval, connection-owned archive
+upload, verified publication by a separate publishing key and native receipt
+recovery before exact grants and invocation. This remains opt-in preview coverage.

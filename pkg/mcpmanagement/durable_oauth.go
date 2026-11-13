@@ -129,7 +129,7 @@ func (r *remoteServer) restoreOAuth() error {
 		}
 		// Operator policy narrowing invalidates existing write grants rather
 		// than silently resurrecting a consent or widening another grant.
-		if r.clients[record.ClientID] == nil || !time.Now().Before(record.Expires) || (slices.Contains(record.Scopes, scopeWrite) && !r.opts.AllowWrites) {
+		if (slices.Contains(record.Scopes, scopePrivateInvoke) && (!r.opts.AllowPrivateToolInvocation || !slices.Contains(record.Scopes, scopeInvoke))) || r.clients[record.ClientID] == nil || !time.Now().Before(record.Expires) || (slices.Contains(record.Scopes, scopeWrite) && !r.opts.AllowWrites) || (slices.Contains(record.Scopes, scopeInvoke) && !r.opts.AllowToolInvocation) || (slices.Contains(record.Scopes, scopePublish) && (!r.opts.AllowToolPublishing || !slices.Contains(record.Scopes, scopeWrite))) {
 			continue
 		}
 		client := r.apiClient(record.Key)

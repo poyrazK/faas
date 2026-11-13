@@ -149,6 +149,10 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	toolInvocations             map[string]api.ToolInvocationRecord
+	toolPublications            map[string]api.ToolPublicationRecord
+	toolGrants                  map[string]api.ToolGrantRecord
+	toolOAuthConnections        map[string]ToolOAuthConnection
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
@@ -7572,6 +7576,11 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	m.publishMemTrafficAppPurgeLocked(id)
 	m.forgetOwnedOperationsLocked("", id)
+	for key, connection := range m.toolOAuthConnections {
+		if connection.Record.AppID == id {
+			delete(m.toolOAuthConnections, key)
+		}
+	}
 	delete(m.appDeletionClaims, id)
 
 	m.deleteAppStandardSnapshotCapturesLocked(id)
@@ -24605,7 +24614,27 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 			delete(m.orgs, orgID)
 		}
 	}
+	for key, record := range m.toolPublications {
+		if record.AccountID == id {
+			delete(m.toolPublications, key)
+		}
+	}
+	for key, record := range m.toolInvocations {
+		if record.AccountID == id {
+			delete(m.toolInvocations, key)
+		}
+	}
+	for key, record := range m.toolGrants {
+		if record.AccountID == id {
+			delete(m.toolGrants, key)
+		}
+	}
 	delete(m.accounts, id)
+	for key, record := range m.toolOAuthConnections {
+		if record.Record.AccountID == id {
+			delete(m.toolOAuthConnections, key)
+		}
+	}
 	if m.internalCI != nil {
 		m.internalCI.RemoveAccount(id)
 	}

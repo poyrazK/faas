@@ -28,6 +28,12 @@ func cmdMCP(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "tool-connection":
+		return cmdMCPToolConnection(args[1:])
+	case "tool-grant":
+		return cmdMCPToolGrant(args[1:])
+	case "invocation-run":
+		return cmdMCPInvocationRun(args[1:])
 	case "connections":
 		return cmdMCPConnections(args[1:])
 	case "serve":
@@ -668,6 +674,10 @@ type mcpDeployOptions struct {
 	accessAudit, accessAuditAlgorithms         string
 	mcpTaskMigrationOverride                   bool
 	timeout                                    int
+	expectedServing                            *string
+	expectedAppID                              string
+	requireCatalogPin                          bool
+	requireReviewedTools                       bool
 }
 
 func cmdMCPDeploy(args []string) int {
@@ -690,6 +700,10 @@ func cmdMCPDeploy(args []string) int {
 	// flag; without it the documented retry was an unknown-flag error
 	// (hunt #9 H9-63).
 	fs.StringVar(&o.idempotencyKey, "idempotency-key", "", "retry identity printed by a failed submission")
+	fs.Func("expected-serving-deployment", "require this reviewed serving deployment before promotion; empty requires no serving release", func(value string) error { o.expectedServing = &value; return nil })
+	fs.StringVar(&o.expectedAppID, "expected-app-id", "", "require this reviewed immutable app identity before promotion")
+	fs.BoolVar(&o.requireCatalogPin, "require-catalog-pin", false, "refuse promotion when the candidate cannot provide a catalog integrity pin")
+	fs.BoolVar(&o.requireReviewedTools, "require-reviewed-tools", false, "require discovered tools to exactly match configured tool_scopes before fixtures and promotion")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -711,6 +725,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	cfg, err := mcphosting.Load(dir)
 	if err != nil {
 		return printErr("MCP configuration", err)
+	}
+	if o.requireReviewedTools && len(cfg.Auth.ToolScopes) == 0 {
+		return printErr("MCP review", errors.New("--require-reviewed-tools requires an explicit tool_scopes allowlist"))
 	}
 	if err := validateMCPDeploySecretsFile(o.secretsFile); err != nil {
 		return printErr("MCP catalog pin", err)
@@ -773,6 +790,16 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	}
 	if pinnedDigest != "" {
 		pinReceipt = &mcpCatalogPinReceipt{DiscoveryDeploymentID: discoveryID, SHA256: pinnedDigest}
+	}
+	if o.requireCatalogPin && pinReceipt == nil {
+		return printErr("MCP catalog pin", errors.New("candidate does not support the required catalog integrity pin; no promotion performed"))
+	}
+	if pinReceipt == nil && (o.expectedServing != nil || o.expectedAppID != "" || o.requireReviewedTools) {
+		pinReceipt = &mcpCatalogPinReceipt{}
+	}
+	if pinReceipt != nil {
+		pinReceipt.expectedServing, pinReceipt.expectedAppID = o.expectedServing, o.expectedAppID
+		pinReceipt.requireReviewedTools = o.requireReviewedTools
 	}
 	verificationCtx, cancel := context.WithTimeout(ctx, time.Duration(o.timeout)*time.Second)
 	defer cancel()

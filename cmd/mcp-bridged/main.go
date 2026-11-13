@@ -56,6 +56,7 @@ func (r *redirectList) Set(value string) error {
 }
 
 type flags struct {
+	allowPrivateToolInvocation, allowToolInvocation, allowToolPublishing               *bool
 	listen, apiBase, resourceURL, stateBridge, stateKeyFile, cliPath, uploadDir, tools *string
 	metricsListen, adminSocket                                                         *string
 	timeout                                                                            *time.Duration
@@ -64,23 +65,27 @@ type flags struct {
 
 func registerFlags(fs *flag.FlagSet) *flags {
 	f := &flags{
-		listen:        fs.String("listen", "127.0.0.1:8787", "loopback address gatewayd-public forwards the bridge's paths to"),
-		apiBase:       fs.String("api-base", "http://127.0.0.1:8081", "apid's loopback listener"),
-		resourceURL:   fs.String("resource-url", "", "public resource URL; defaults to https://api.<platform domain>/mcp"),
-		stateBridge:   fs.String("state-bridge", "hosted", "name of the Postgres state lease and rows"),
-		stateKeyFile:  fs.String("state-key-file", "", "independent private file holding the 32-byte state key"),
-		cliPath:       fs.String("cli", "/opt/faas/current/bin/gregale", "gregale CLI the provisioning and deploy tools run"),
-		uploadDir:     fs.String("upload-dir", filepath.Join(os.TempDir(), "gregale-mcp-uploads"), "private directory for uploads; emptied on start"),
-		tools:         fs.String("tools", "core", "toolsets to list, comma-separated; authorization still follows connection consent"),
-		timeout:       fs.Duration("timeout", 30*time.Second, "per-tool API timeout (positive, at most 1m)"),
-		metricsListen: fs.String("metrics-listen", "127.0.0.1:9110", "loopback address for Prometheus metrics; empty disables them"),
-		adminSocket:   fs.String("admin-socket", "", "owner-only Unix socket for listing and revoking connections; its directory must be the service user's, mode 0700"),
+		allowToolPublishing:        fs.Bool("allow-tool-publishing", false, "enable reviewed hosted Node tool publication with deployment authority and separate consent"),
+		allowPrivateToolInvocation: fs.Bool("allow-private-tool-invocation", false, "enable owner-bound private tools with separate consent; also requires --allow-tool-invocation"),
+		allowToolInvocation:        fs.Bool("allow-tool-invocation", false, "enable exact-grant open-tool invocation with independent connection consent"),
+		listen:                     fs.String("listen", "127.0.0.1:8787", "loopback address gatewayd-public forwards the bridge's paths to"),
+		apiBase:                    fs.String("api-base", "http://127.0.0.1:8081", "apid's loopback listener"),
+		resourceURL:                fs.String("resource-url", "", "public resource URL; defaults to https://api.<platform domain>/mcp"),
+		stateBridge:                fs.String("state-bridge", "hosted", "name of the Postgres state lease and rows"),
+		stateKeyFile:               fs.String("state-key-file", "", "independent private file holding the 32-byte state key"),
+		cliPath:                    fs.String("cli", "/opt/faas/current/bin/gregale", "gregale CLI the provisioning and deploy tools run"),
+		uploadDir:                  fs.String("upload-dir", filepath.Join(os.TempDir(), "gregale-mcp-uploads"), "private directory for uploads; emptied on start"),
+		tools:                      fs.String("tools", "core", "toolsets to list, comma-separated; authorization still follows connection consent"),
+		timeout:                    fs.Duration("timeout", 30*time.Second, "per-tool API timeout (positive, at most 1m)"),
+		metricsListen:              fs.String("metrics-listen", "127.0.0.1:9110", "loopback address for Prometheus metrics; empty disables them"),
+		adminSocket:                fs.String("admin-socket", "", "owner-only Unix socket for listing and revoking connections; its directory must be the service user's, mode 0700"),
 	}
 	fs.Var(&f.redirects, "oauth-redirect-uri", "allowed OAuth callback URI; repeat; omit a loopback port to allow any")
 	return f
 }
 
 type config struct {
+	allowPrivateToolInvocation, allowToolInvocation, allowToolPublishing        bool
 	listen, apiBase, resourceURL, stateBridge, stateKeyFile, cliPath, uploadDir string
 	metricsListen, adminSocket                                                  string
 	toolsets                                                                    []string
@@ -89,7 +94,7 @@ type config struct {
 }
 
 func (f *flags) config() (config, error) {
-	cfg := config{listen: *f.listen, apiBase: strings.TrimRight(*f.apiBase, "/"), resourceURL: *f.resourceURL, stateBridge: *f.stateBridge, stateKeyFile: *f.stateKeyFile, cliPath: *f.cliPath, uploadDir: *f.uploadDir, metricsListen: *f.metricsListen, adminSocket: *f.adminSocket, timeout: *f.timeout, redirects: append([]string(nil), f.redirects...)}
+	cfg := config{allowPrivateToolInvocation: *f.allowPrivateToolInvocation, allowToolPublishing: *f.allowToolPublishing, allowToolInvocation: *f.allowToolInvocation, listen: *f.listen, apiBase: strings.TrimRight(*f.apiBase, "/"), resourceURL: *f.resourceURL, stateBridge: *f.stateBridge, stateKeyFile: *f.stateKeyFile, cliPath: *f.cliPath, uploadDir: *f.uploadDir, metricsListen: *f.metricsListen, adminSocket: *f.adminSocket, timeout: *f.timeout, redirects: append([]string(nil), f.redirects...)}
 	if cfg.resourceURL == "" {
 		// The platform's API host, resolved as every daemon does
 		// (FAAS_PLATFORM_DOMAIN, else FAAS_APPS_DOMAIN).
@@ -153,7 +158,7 @@ func serve(ctx context.Context, log *slog.Logger, cfg config) error {
 	telemetry := mcpmanagement.NewTelemetry()
 	service, err := mcpmanagement.NewHTTPService(mcpmanagement.HTTPOptions{
 		Lifecycle: lifecycle, Telemetry: telemetry, AuditLogger: log, Onboarding: "browser", APIBase: cfg.apiBase, ResourceURL: cfg.resourceURL,
-		RedirectURIs: cfg.redirects, Version: wire.Version, Timeout: cfg.timeout, AllowWrites: true, Toolsets: cfg.toolsets,
+		RedirectURIs: cfg.redirects, Version: wire.Version, Timeout: cfg.timeout, AllowToolInvocation: cfg.allowToolInvocation, AllowPrivateToolInvocation: cfg.allowPrivateToolInvocation, AllowToolPublishing: cfg.allowToolPublishing, AllowWrites: true, Toolsets: cfg.toolsets,
 		StateStore: store, Hosted: true, AgentKeys: true, ClientMetadataDocuments: true, UploadDir: cfg.uploadDir, CLIRunner: mcpmanagement.HostedCLIRunner(cfg.cliPath, cfg.apiBase, cfg.uploadDir),
 	})
 	if err != nil {

@@ -1805,6 +1805,428 @@ paths:
         '403': {description: Administrator access or MFA requirement not satisfied}
         '404': {description: Retirement unavailable to this account}
         '409': {description: "Retirement is leased, terminal or expired"}
+  /v1/delegated-tool-invocations/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Canonical nonzero UUID retained for one delegated attempt}
+    get:
+      operationId: getDelegatedToolInvocation
+      summary: Read a receipt through its exact active invocation grant
+      description: Personal agent or MCP-login key with apps-read only. Rechecks current key, grant, application ownership and project limits on every read. Only the original key and grant can read the retained sanitized runtime result. Revocation or expiry denies access. This operation never starts work.
+      responses:
+        '200':
+          description: Grant-scoped receipt with private noncacheable runtime evidence
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationRecord'}
+        '400': {description: Delegated receipt UUID is malformed}
+        '403': {description: Personal agent connection or native read scope is missing}
+        '404': {description: Delegated receipt or its current grant is inaccessible}
+    put:
+      operationId: beginDelegatedToolInvocation
+      summary: Record one explicitly approved open-tool call under an exact grant
+      description: Requires a personal apps-read agent key, an active allow-invocation grant for the exact version/tool, and native MFA policy. Does not require deploy-write. APID freezes grant, key, application and project identities. Only created=true permits one bounded worker launch; dispatch is a separate atomic transition. No application token, arbitrary URL or argument body is stored. Reusing the UUID never renews execution permission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DelegatedToolInvocationIntent'}
+      responses:
+        '200':
+          description: First delegated insertion or retained fact without another worker grant
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationReceipt'}
+        '400': {description: Delegated call consent or bounded intent is invalid}
+        '403': {description: Delegated creation scope or MFA policy is not satisfied}
+        '404': {description: "Exact invocation grant, tool or native target is unavailable"}
+        '409': {description: Delegated request identity was reused with changed intent or grant}
+        '429': {description: Shared account call concurrency or retained receipt quota reached}
+  /v1/delegated-tool-invocations/{id}/execute:
+    post:
+      operationId: executePrivateToolInvocation
+      summary: Start one exact credential-bound private invocation; native read scope and MFA policy apply
+      description: Requires operator enablement and an active owner-created credential binding. Only a newly created native identity launches a bounded worker. Arguments are transient; no provider credential is returned or stored in the journal. Replays recover the retained fact without another execution. Rotation, deletion, expiry and revocation prevent subsequent dispatch or receipt access. Only the native worker may dispatch or report private outcomes.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Caller-retained canonical nonzero invocation UUID}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PrivateToolInvocationRequest'}
+      responses:
+        '200':
+          description: Single-shot receipt; created authorizes only the native worker, never the caller
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationReceipt'}
+        '400': {description: Invalid or oversized private invocation intent or arguments}
+        '403': {description: Agent scope or MFA policy not satisfied}
+        '404': {description: Exact tool grant or current credential binding is unavailable}
+        '409': {description: Immutable invocation identity conflicts, deployment changed, or managed renewal is already in progress}
+        '429': {description: Account active-call or retained-identity limit reached}
+        '503': {description: Private invocation is disabled, native workers are unavailable, or the managed connection requires owner reconnection}
+  /v1/delegated-tool-invocations/{id}/{action}:
+    post:
+      operationId: changeDelegatedToolInvocation
+      summary: Dispatch, cancel or finish a call through its frozen invocation grant
+      description: Requires the original personal agent key, the same active invocation grant and native MFA policy. Dispatch locks the current grant, key, app and journal row before granting only the first queued-to-running transition. Lost dispatch replies are never replayed as permission. Cancellation after dispatch requests stopping the worker wait without rolling back remote effects. Outcomes are immutable; unknown outcomes never authorize retry.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Existing frozen delegated invocation identity}
+        - {name: action, in: path, required: true, schema: {type: string, enum: [dispatch, cancel, outcome]}, description: Explicit delegated journal transition}
+      requestBody:
+        required: true
+        description: Empty object to dispatch or cancel; complete bounded worker evidence to report an outcome.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - {type: object, maxProperties: 0}
+                - {$ref: '#/components/schemas/ToolInvocationOutcome'}
+      responses:
+        '200':
+          description: Updated delegated journal fact with a fresh single-use dispatch flag
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationReceipt'}
+        '400': {description: Delegated journal action or complete result is malformed}
+        '403': {description: Delegated mutation authority or MFA policy was not satisfied}
+        '404': {description: Original invocation binding or currently active grant cannot be accessed}
+        '409': {description: Delegated target is unavailable or retained terminal evidence differs}
+  /v1/tool-invocations/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Caller-retained canonical nonzero invocation UUID}
+    get:
+      operationId: getToolInvocation
+      summary: Read an account-owned invocation receipt and sanitized result
+      description: Requires an unscoped personal-account connection with deploy-write permission. Runtime results are not disclosed by registry-read permission. This read never dispatches work.
+      responses:
+        '200':
+          description: Durable invocation fact with private noncacheable runtime data
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationRecord'}
+        '400': {description: Malformed invocation identity}
+        '403': {description: Runtime-data authority is missing}
+        '404': {description: Invocation does not belong to this account}
+    put:
+      operationId: beginToolInvocation
+      summary: Journal explicit consent for one exact registered tool invocation
+      description: Requires deploy-write permission and MFA policy. Only created=true authorizes starting one local worker. The native dispatch transition is still required before tools-call. Arguments and credentials are never stored in the intent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolInvocationIntent'}
+      responses:
+        '200':
+          description: New queued receipt or retained attempt without renewed execution authority
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationReceipt'}
+        '400': {description: Invalid consent or incomplete publication metadata}
+        '403': {description: Invocation creation permission or MFA policy is not satisfied}
+        '404': {description: Exact publication or deployment is inaccessible}
+        '409': {description: Request identity changed or exact version is unavailable}
+        '429': {description: Account invocation concurrency or retained-identity limit reached}
+  /v1/tool-invocations/{id}/{action}:
+    post:
+      operationId: changeToolInvocation
+      summary: Acquire single dispatch authority or report invocation cancellation and outcome
+      description: Requires deploy-write authority and MFA policy. Dispatch grants only the first queued-to-running transition after native target revalidation. Queued cancellation prevents dispatch; running cancellation requests stopping the local wait and cannot roll back remote effects. Terminal outcomes are immutable. Owner inspection and cancellation also cover delegated records; dispatch and outcome reporting for those records must use the original grant-scoped route.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Existing account-owned invocation UUID}
+        - {name: action, in: path, required: true, schema: {type: string, enum: [dispatch, cancel, outcome]}, description: Single-dispatch transition or explicit receipt mutation}
+      requestBody:
+        required: true
+        description: Empty object for dispatch or cancel; an outcome object for outcome reporting.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - {type: object, maxProperties: 0}
+                - {$ref: '#/components/schemas/ToolInvocationOutcome'}
+      responses:
+        '200':
+          description: Retained receipt; dispatch_granted is never replayed by this API
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationReceipt'}
+        '400': {description: Invalid transition or malformed bounded result evidence}
+        '403': {description: Receipt mutation permission or MFA policy is not satisfied}
+        '404': {description: Invocation or target deployment is unavailable to this account}
+        '409': {description: Terminal evidence changed or dispatch binding no longer matches}
+  /v1/tool-publications/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Immutable publication identity}
+    get:
+      operationId: getToolPublication
+      summary: Read a private publication journal; requires account-wide apps-read scope
+      description: Unscoped personal-account connections only. Agent and MCP-login keys additionally require explicit deploy-write scope to inspect the account-wide publication journal. This does not grant registry discovery or invocation. An abandoned attempt is outcome_unknown after its deadline and never authorizes replay.
+      responses:
+        '200':
+          description: Retained publication evidence; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolPublicationRecord'}
+        '400': {description: Invalid identity}
+        '403': {description: Scoped principal cannot read account-wide evidence}
+        '404': {description: Record unavailable to this account}
+    put:
+      operationId: beginToolPublication
+      summary: Journal a reviewed publication before execution; requires deploy-write scope and MFA policy
+      description: Only created=true authorizes the publisher to start once. Duplicate identities return created=false; changed reviews conflict. Local paths and credentials are excluded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolPublicationIntent'}
+      responses:
+        '200':
+          description: Created flag and immutable journal record
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BeginToolPublicationResponse'}
+        '400': {description: Invalid or oversized review}
+        '403': {description: Publication review requires account authority and the configured MFA policy}
+        '409': {description: Identity already binds another review or app identity changed}
+        '429': {description: Preview journal limit of 256 identities reached}
+  /v1/tool-publications/{id}/outcome:
+    post:
+      operationId: finishToolPublication
+      summary: Retain immutable publication evidence; requires deploy-write scope and MFA policy
+      description: Publisher-attested runtime catalogs and tests are bound to a native owned serving deployment and source archive. Identical terminal writes are idempotent. This endpoint executes no tools.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Retained publication identity}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolPublicationOutcome'}
+      responses:
+        '200':
+          description: Final publication record
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolPublicationRecord'}
+        '400': {description: Catalog or test evidence does not match review}
+        '403': {description: Account authority or MFA requirement not satisfied}
+        '404': {description: Publication or deployment unavailable to this account}
+        '409': {description: Outcome immutable or publisher deadline elapsed}
+  /v1/tool-oauth-connections:
+    get:
+      operationId: listToolOAuthConnections
+      summary: List retained execution OAuth connections as the personal administrator
+      description: Owner metadata only; no token values, ciphertext or renewal leases. This read never exchanges credentials.
+      parameters:
+        - {name: cursor, in: query, schema: {type: string, format: uuid}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 20, default: 20}}
+      responses:
+        '200':
+          description: Retained connections; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthConnectionPage'}
+        '400': {description: Invalid page bounds}
+        '403': {description: Unscoped personal administrator or MFA policy required}
+  /v1/tool-oauth-connections/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+    put:
+      operationId: putToolOAuthConnection
+      summary: Approve an immutable execution OAuth connection; administrator and MFA policy required
+      description: Binds existing ordinary default-environment app secret references and their ciphertext digests. No credentials are accepted. Identical intent retains the original state; changed intent requires a new UUID. Creating intent performs no provider request. Guided connections require separate browser authorization before exact tool grants. Monitoring OAuth consent is never reused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolOAuthConnectionIntent'}
+      responses:
+        '200':
+          description: Retained owner configuration and credential-free renewal metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}
+        '400': {description: Invalid immutable provider configuration or secret reference}
+        '403': {description: Unscoped personal administrator or MFA policy required}
+        '404': {description: Application or ordinary source secret unavailable}
+        '409': {description: UUID already names different immutable intent}
+        '429': {description: Retained account or per-app connection capacity reached}
+    get:
+      operationId: getToolOAuthConnection
+      summary: Inspect an exact execution OAuth connection as the personal administrator
+      responses:
+        '200':
+          description: Credential-free metadata; no refresh is attempted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}
+        '400': {description: Invalid connection UUID}
+        '403': {description: Personal administrator or MFA policy required}
+        '404': {description: Connection unavailable to this account}
+    delete:
+      operationId: revokeToolOAuthConnection
+      summary: Locally revoke execution use and discard stored renewed credentials
+      description: Irreversible and idempotent. Fences subsequent dispatch and renewal completion; cannot undo dispatched effects. Does not revoke the provider grant or delete the original app secret.
+      responses:
+        '200':
+          description: Retained revoked connection metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}
+        '400': {description: Invalid revocation UUID}
+        '403': {description: Personal administrator or MFA policy required}
+        '404': {description: Connection unavailable to this account}
+  /v1/tool-oauth-connections/{id}/authorization:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: getToolOAuthAuthorization
+      summary: Inspect a guided execution authorization attempt as the personal administrator
+      description: MFA policy applies. Returns phase and expiry without consent URLs, callback state, codes, verifiers or tokens. Never exchanges a code or renews a credential.
+      responses:
+        '200':
+          description: Owner-only authorization status; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthAuthorizationResponse'}
+        '400': {description: Invalid identity or connection is not guided}
+        '403': {description: Unscoped personal administrator or MFA policy required}
+        '404': {description: Connection unavailable to this account}
+    post:
+      operationId: authorizeToolOAuthConnection
+      summary: Begin or complete owner-approved execution OAuth with S256 PKCE
+      description: Owner and MFA policy required. One authorization attempt per fresh guided connection. Begin returns an expiring browser URL bound to an exact IPv4 loopback callback. Same pending begin and callback return the original URL. Completion consumes state and records an exclusive lease before code exchange; no code exchange is replayed after consumption, failure or restart. Issued tokens are sealed directly in Account-domain state, never app environment secrets. Successful provider authorization does not grant an agent access to any tool. Reconnect requires a new connection UUID and exact tool grants. Provider-side revocation is separate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolOAuthAuthorizationRequest'}
+      responses:
+        '200':
+          description: Owner-only consent URL or final connection state; never includes provider tokens or verifiers
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthAuthorizationResponse'}
+        '400': {description: Invalid action, callback, code or issuer binding}
+        '403': {description: Personal administrator or MFA policy required}
+        '404': {description: Connection or frozen app authority unavailable}
+        '409': {description: Attempt consumed, identity already used, callback changed or connection revoked}
+        '503': {description: Credential storage unavailable or fresh owner authorization required}
+  /v1/delegated-tool-connections/{grant}:
+    get:
+      operationId: getDelegatedToolConnection
+      summary: Read credential-free execution connection status through an exact active tool grant
+      description: Personal agent key, immutable app/project binding and exact invocation grant are checked on every read. No provider configuration, secret names, tokens or ciphertext are returned. Does not trigger renewal.
+      parameters:
+        - {name: grant, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Status bound to this exact granted tool; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthConnectionStatus'}
+        '400': {description: Invalid grant UUID}
+        '403': {description: Personal agent read authority required}
+        '404': {description: Grant or managed connection unavailable within current authority}
+  /v1/tool-grants:
+    get:
+      operationId: listToolGrants
+      summary: List retained tool grants as the unscoped personal administrator
+      description: Agent connections cannot enumerate delegation records. Revoked and expired grants remain readable by the owner.
+      parameters:
+        - {name: cursor, in: query, schema: {type: string, format: uuid}, description: Continuation from the previous page}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 20, default: 20}, description: Maximum grants per page}
+      responses:
+        '200':
+          description: Retained grant page; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolGrantPage'}
+        '400': {description: Invalid page bounds}
+        '403': {description: Unscoped personal administrator required}
+  /v1/tool-grants/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Caller-retained canonical nonzero grant UUID}
+    get:
+      operationId: getToolGrant
+      summary: Read an exact retained delegation as the personal administrator
+      responses:
+        '200':
+          description: Immutable grant intent and revocation metadata; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolGrantRecord'}
+        '400': {description: Invalid grant identity}
+        '403': {description: Personal administrator needed to inspect a retained grant}
+        '404': {description: Grant unavailable to this account}
+    put:
+      operationId: putToolGrant
+      summary: Delegate one exact tool to an existing agent connection; administrator and MFA policy required
+      description: Grants one connection key an immutable version/tool within its existing project scope for at most 30 days. Identical requests return the retained record including revocation; changed intent conflicts. This endpoint never starts execution or exposes credentials.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolGrantIntent'}
+      responses:
+        '200':
+          description: Retained exact grant
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolGrantRecord'}
+        '400': {description: Invalid binding or expiry beyond grant or credential lifetime}
+        '403': {description: Personal administrator or MFA policy not satisfied}
+        '404': {description: Connection or completed tool version unavailable within its project scope}
+        '409': {description: Grant identity already names another immutable intent}
+        '429': {description: Retained account or per-key grant limit reached}
+    delete:
+      operationId: revokeToolGrant
+      summary: Revoke exact delegated tool access; administrator and MFA policy required
+      description: Repeated revocation retains the original timestamp. Registry reads recheck authority on every request; this endpoint does not roll back external effects.
+      responses:
+        '200':
+          description: Retained revoked grant
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolGrantRecord'}
+        '400': {description: Grant revocation requires a canonical nonzero UUID}
+        '403': {description: Grant revocation exceeds current authority or MFA policy}
+        '404': {description: No retained grant can be revoked by this personal account}
+  /v1/tool-registry/{version}/tools/{name}:
+    get:
+      operationId: getRegistryTool
+      summary: Read a single-tool catalog projection; apps-read and exact delegated access required for agents
+      description: Returns only the selected tool and its declared application scopes. Agents require a current exact grant, live personal connection key and matching current app/project identities. Full publication catalogs and unrelated test evidence remain owner-only. No execution or runtime availability is implied.
+      parameters:
+        - {name: version, in: path, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Exact immutable publication version}
+        - {name: name, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 128}, description: Exact published tool name}
+      responses:
+        '200':
+          description: Canonical single-tool catalog with separate projected and original digests; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolRegistryTool'}
+        '400': {description: Invalid version or tool name}
+        '403': {description: Principal cannot use this discovery surface}
+        '404': {description: Tool or exact grant unavailable within current authority}
+  /v1/tool-registry:
+    get:
+      operationId: searchToolRegistry
+      summary: Search private completed tool versions; apps-read plus exact grants for agent connections
+      description: Owners read account summaries. Personal agent connections see only actively granted version/tool names within their current project limits. Registry membership grants no invocation permission and does not establish current availability. Shared organizations and tenant/app principals remain excluded.
+      parameters:
+        - {name: query, in: query, schema: {type: string, maxLength: 128}, description: Case-insensitive app or tool-name substring}
+        - {name: cursor, in: query, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Continuation returned by the previous page}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 20, default: 20}, description: Number of publication versions}
+      responses:
+        '200':
+          description: Version summaries; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolRegistryPage'}
+        '400': {description: Invalid query or continuation}
+        '403': {description: Principal cannot search this registry surface}
+        '404': {description: Personal agent connection unavailable within current authority}
   /v1/mcp-connection-health:
     get:
       operationId: getMCPConnectionHealth
@@ -70485,6 +70907,334 @@ components:
           items: {$ref: '#/components/schemas/MCPAdmissionEvidence'}
         limit: {type: integer, minimum: 1, maximum: 50}
         next_cursor: {type: string}
+    ToolOAuthAuthorizationRequest:
+      type: object
+      description: Owner-only transient PKCE command; codes and callback state are never journaled as tool arguments.
+      required: [action]
+      properties:
+        action: {type: string, enum: [begin, complete]}
+        redirect_uri: {type: string, format: uri, maxLength: 2048, description: Begin only; exact http IPv4 loopback callback with a nonzero port and /callback path}
+        state: {type: string, maxLength: 43, writeOnly: true, description: Complete only; exact nonce from the pending browser attempt}
+        code: {type: string, maxLength: 16384, writeOnly: true, description: Complete only; transient provider authorization code}
+        denied: {type: boolean, default: false, description: Complete a denied browser authorization without a code}
+        issuer: {type: string, maxLength: 2048, description: Optional callback issuer; must equal the immutable configured issuer}
+    ToolOAuthAuthorizationResponse:
+      type: object
+      description: Owner-only authorization metadata. Begin alone may return a consent URL and state; GET and completion omit them. No access token, refresh token, client secret or verifier is returned.
+      required: [connection_id, state]
+      properties:
+        connection_id: {type: string, format: uuid}
+        state: {type: string, enum: [not_started, authorization_pending, authorization_uncertain, connected, reconnect_required, authorization_denied]}
+        authorization_url: {type: string, format: uri, description: Begin only; private owner browser URL bound to the retained attempt}
+        callback_state: {type: string, maxLength: 43, description: Begin only; owner callback nonce}
+        expires_at: {type: string, format: date-time}
+    ToolOAuthConnectionIntent:
+      type: object
+      description: Owner-approved immutable execution authority. Guided public clients use browser PKCE and no source-secret references; manually provisioned connections use existing app-secret references. HTTPS provider URLs cannot include userinfo, queries or fragments. No discovery is performed.
+      required: [app, scope, issuer, token_endpoint, client_id, resource, scopes, token_auth_method]
+      properties:
+        guided: {type: boolean, default: false, description: Enable owner-only authorization-code S256 PKCE for a public client}
+        authorization_endpoint: {type: string, format: uri, maxLength: 2048, description: Explicit reviewed HTTPS endpoint for guided mode only}
+        app: {type: string}
+        scope: {type: string, enum: [default]}
+        issuer: {type: string, format: uri, maxLength: 2048}
+        token_endpoint: {type: string, format: uri, maxLength: 2048}
+        client_id: {type: string, minLength: 1, maxLength: 512}
+        resource: {type: string, format: uri, maxLength: 2048}
+        scopes: {type: array, minItems: 1, maxItems: 64, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 128}}
+        refresh_token_secret_ref: {type: string, description: Manual mode only; existing ordinary secret:MCP_* app secret containing the initial refresh token}
+        client_secret_ref: {type: string, description: Manual mode only; existing ordinary secret:MCP_* app secret required for client_secret_basic}
+        token_auth_method: {type: string, enum: [none, client_secret_basic]}
+      oneOf:
+        - required: [guided, authorization_endpoint]
+          properties:
+            guided: {enum: [true]}
+            token_auth_method: {enum: [none]}
+            refresh_token_secret_ref: {maxLength: 0}
+            client_secret_ref: {maxLength: 0}
+        - required: [refresh_token_secret_ref]
+          properties:
+            guided: {enum: [false]}
+            authorization_endpoint: {maxLength: 0}
+            refresh_token_secret_ref: {minLength: 1}
+    ToolOAuthConnectionRecord:
+      type: object
+      description: Owner-only immutable configuration plus credential-free renewal metadata. Binding excludes routine token generations; source replacement requires a new connection and grant.
+      required: [id, account_id, app_id, binding_sha256, source_sha256, intent, created_at, state, generation]
+      properties:
+        id: {type: string, format: uuid}
+        account_id: {type: string}
+        app_id: {type: string}
+        project_id: {type: string}
+        binding_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        source_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Initial source ciphertext digest in manual mode or versioned source-mode marker in guided mode}
+        client_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        intent: {$ref: '#/components/schemas/ToolOAuthConnectionIntent'}
+        created_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+        state: {type: string, enum: [authorization_pending, refresh_required, ready, refreshing, reconnect_required, revoked]}
+        expires_at: {type: string, format: date-time}
+        generation: {type: integer, format: int64, minimum: 0}
+        recovery_action: {type: string, enum: [connect, reconnect, review_connection]}
+    ToolOAuthConnectionPage:
+      type: object
+      required: [connections]
+      properties:
+        connections: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}}
+        next_cursor: {type: string}
+    ToolOAuthConnectionStatus:
+      type: object
+      description: Agent projection for one exact active invocation grant. Provider settings, secret references and credentials are excluded. Status is metadata, not proof of provider availability.
+      required: [grant_id, app, app_id, version, name, state]
+      properties:
+        grant_id: {type: string, format: uuid}
+        app: {type: string}
+        app_id: {type: string}
+        version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        name: {type: string}
+        state: {type: string, enum: [refresh_required, ready, refreshing, reconnect_required]}
+        expires_at: {type: string, format: date-time}
+        recovery_action: {type: string, enum: [reconnect, review_connection]}
+    ToolGrantIntent:
+      type: object
+      description: Exact immutable delegation to an existing agent key. Expiry uses microsecond precision; discovery, invocation consent and single-dispatch authority are checked separately.
+      required: [key_id, version, name, expires_at, allow_invocation]
+      properties:
+        key_id: {type: string, description: Exact existing native agent connection key identity}
+        version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        name: {type: string, minLength: 1, maxLength: 128}
+        expires_at: {type: string, format: date-time, description: Future expiry within 30 days and no later than the connection key expiry}
+        allow_invocation: {type: boolean, default: false, description: Owner permits calls through this exact grant; hosted connections also require independent invocation consent and operator enablement}
+        credential_secret_ref: {type: string, description: Optional existing secret:MCP_* access token in the exact app default environment; exclusive with credential_connection_id. Never a value.}
+        credential_connection_id: {type: string, format: uuid, description: Optional exact owner-approved managed execution connection; private invocation grants only and exclusive with credential_secret_ref.}
+    ToolGrantCredential:
+      type: object
+      description: Owner-readable immutable credential binding; contains no plaintext token. Required scopes follow the existing 4-KiB review metadata bound.
+      required: [sha256, source_sha256, scope, required_scopes]
+      properties:
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        source_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Static source ciphertext digest or managed connection authorization digest; source replacement or resealing invalidates the binding}
+        connection_id: {type: string, format: uuid, description: Present only for a managed execution OAuth connection}
+        scope: {type: string, enum: [default]}
+        required_scopes: {type: array, maxItems: 64, items: {type: string}}
+    ToolGrantRecord:
+      type: object
+      description: Owner-readable retained delegation with frozen application/project identities, optional credential binding and irreversible revocation.
+      required: [id, account_id, app, app_id, intent, created_at]
+      properties:
+        credential: {$ref: '#/components/schemas/ToolGrantCredential'}
+        id: {type: string, format: uuid}
+        account_id: {type: string}
+        app: {type: string}
+        app_id: {type: string}
+        project_id: {type: string}
+        intent: {$ref: '#/components/schemas/ToolGrantIntent'}
+        created_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+    ToolGrantPage:
+      type: object
+      description: Bounded owner-only grant page ordered by grant UUID.
+      required: [grants]
+      properties:
+        grants: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ToolGrantRecord'}}
+        next_cursor: {type: string}
+    ToolGrantAccess:
+      type: object
+      description: Currently active grant for this connection and exact described tool; omits other tools and owner-only grant metadata.
+      required: [grant_id, expires_at, allow_invocation]
+      properties:
+        credential_binding_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Opaque reference required for this private invocation grant}
+        grant_id: {type: string, format: uuid}
+        expires_at: {type: string, format: date-time}
+        allow_invocation: {type: boolean}
+    ToolRegistryTool:
+      type: object
+      description: Single-tool catalog projection excluding sibling tools, prompts, resources, test names and credentials. Projected and full publication digests describe different bytes.
+      required: [version, account_id, app, app_id, name, deployment_id, source_sha256, deployment_source_sha256, catalog_sha256, catalog_contract_sha256, published_catalog_contract_sha256, catalog_base64, access_mode, required_scopes, evidence_origin, availability]
+      properties:
+        grants: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/ToolGrantAccess'}, description: Active grants for the exact requested tool and current key; never a dispatch receipt}
+        version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        account_id: {type: string}
+        app: {type: string}
+        app_id: {type: string}
+        name: {type: string, minLength: 1, maxLength: 128}
+        deployment_id: {type: string}
+        source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Original runtime catalog pin}
+        catalog_contract_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Digest of the returned single-tool projection}
+        published_catalog_contract_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Digest of the complete archived publication contract}
+        catalog_base64: {type: string, format: byte, maxLength: 349528}
+        access_mode: {type: string, enum: [open, external-oauth]}
+        required_scopes: {type: array, maxItems: 64, items: {type: string, maxLength: 256}}
+        evidence_origin: {type: string, enum: [publisher_attested]}
+        availability: {type: string, enum: [not_checked]}
+    ToolPublicationIntent:
+      type: object
+      description: Reviewed publication metadata bounded to 64 KiB; never includes local paths or credentials.
+      required: [app, source_sha256, fixtures_sha256, access_mode, tool_scopes, test_cases]
+      properties:
+        endpoint_path: {type: string, maxLength: 512, description: Reviewed canonical MCP path; new invocations require this field and never infer a missing endpoint}
+        app: {type: string}
+        app_id: {type: string}
+        expected_serving_deployment_id: {type: string}
+        source_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Reviewed local source-tree and mode digest}
+        fixtures_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        access_mode: {type: string, enum: [open, external-oauth]}
+        tool_scopes:
+          type: object
+          minProperties: 1
+          maxProperties: 64
+          additionalProperties: {type: array, maxItems: 64, items: {type: string, maxLength: 256}}
+        test_cases: {type: array, minItems: 1, maxItems: 64, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 256}}
+    ToolInvocationIntent:
+      type: object
+      description: Explicit one-call consent with a canonical argument digest and optional opaque credential binding; no argument bodies or credentials.
+      required: [version, name, arguments_sha256, access_mode, timeout_seconds, allow_tool_execution]
+      properties:
+        version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        name: {type: string, minLength: 1, maxLength: 128}
+        arguments_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        access_mode: {type: string, enum: [open, external-oauth]}
+        credential_binding_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Local token-variable hash or exact owner-granted private binding; never a token hash or value}
+        timeout_seconds: {type: integer, minimum: 1, maximum: 600}
+        allow_tool_execution: {type: boolean, enum: [true]}
+    PrivateToolInvocationRequest:
+      type: object
+      description: Private invocation intent plus bounded transient argument JSON. No credential value or secret reference is accepted.
+      required: [grant_id, intent, arguments_json]
+      properties:
+        grant_id: {type: string, format: uuid}
+        intent: {$ref: '#/components/schemas/ToolInvocationIntent'}
+        arguments_json: {type: string, maxLength: 32768, description: Canonical JSON argument object matching the intent digest}
+    DelegatedToolInvocationIntent:
+      type: object
+      description: Exact owner-issued invocation grant plus explicit one-call intent. Only open access is accepted; credential_binding_sha256 must be omitted.
+      required: [grant_id, intent]
+      properties:
+        grant_id: {type: string, format: uuid}
+        intent: {$ref: '#/components/schemas/ToolInvocationIntent'}
+    ToolInvocationDelegation:
+      type: object
+      description: Immutable authority resolved by APID; never accepted as caller-supplied invocation metadata.
+      required: [grant_id, key_id]
+      properties:
+        grant_id: {type: string, format: uuid}
+        key_id: {type: string}
+        project_id: {type: string}
+    ToolInvocationTarget:
+      type: object
+      description: Immutable native target resolved from the exact owned publication and deployment source artifact.
+      required: [app, app_id, deployment_id, deployment_source_sha256, catalog_sha256, catalog_contract_sha256, endpoint_path]
+      properties:
+        app: {type: string}
+        app_id: {type: string}
+        deployment_id: {type: string}
+        deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        catalog_contract_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        endpoint_path: {type: string}
+    ToolInvocationOutcome:
+      type: object
+      description: Worker-reported complete MCP result or explicit preflight/transport uncertainty. Unknown outcomes never authorize a replay.
+      required: [status, code]
+      properties:
+        status: {type: string, enum: [completed, tool_error, not_started, outcome_unknown]}
+        code: {type: string, enum: [result_received, preflight_failed, version_unavailable, catalog_changed, transport_error, timeout, cancel_requested, worker_interrupted]}
+        result_base64: {type: string, format: byte, description: Sanitized complete MCP content and structuredContent only; at most 64 KiB decoded}
+        result_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        result_bytes: {type: integer, minimum: 1}
+        result_omitted: {type: boolean, description: True when a complete result exceeded retention size; only its digest and length are retained}
+        redacted: {type: boolean}
+    ToolInvocationRecord:
+      type: object
+      description: Account-owned single-dispatch fact; cancellation after dispatch does not establish remote rollback or successful cancellation.
+      required: [id, account_id, intent, target, status, created_at, deadline, cancellation_requested]
+      properties:
+        delegation: {$ref: '#/components/schemas/ToolInvocationDelegation'}
+        id: {type: string, format: uuid}
+        account_id: {type: string, format: uuid}
+        intent: {$ref: '#/components/schemas/ToolInvocationIntent'}
+        target: {$ref: '#/components/schemas/ToolInvocationTarget'}
+        status: {type: string, enum: [queued, running, completed, tool_error, not_started, cancelled, outcome_unknown]}
+        created_at: {type: string, format: date-time}
+        deadline: {type: string, format: date-time}
+        dispatched_at: {type: string, format: date-time}
+        cancellation_requested: {type: boolean}
+        finished_at: {type: string, format: date-time}
+        outcome: {$ref: '#/components/schemas/ToolInvocationOutcome'}
+    ToolInvocationReceipt:
+      type: object
+      description: Invocation transition receipt; creation and dispatch flags are fresh transition facts and are false on duplicates.
+      required: [created, dispatch_granted, record]
+      properties:
+        created: {type: boolean}
+        dispatch_granted: {type: boolean}
+        record: {$ref: '#/components/schemas/ToolInvocationRecord'}
+    BeginToolPublicationResponse:
+      type: object
+      description: Journal insertion receipt; only a new insertion can authorize one publisher launch.
+      required: [created, record]
+      properties:
+        created: {type: boolean, description: True only for the first successful journal insertion; never cached as execution permission}
+        record: {$ref: '#/components/schemas/ToolPublicationRecord'}
+    ToolRegistryPage:
+      type: object
+      description: Private immutable tool version summaries with an optional keyset continuation.
+      required: [versions]
+      properties:
+        versions: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ToolRegistryVersion'}}
+        next_cursor: {type: string}
+    ToolPublicationCheck:
+      type: object
+      description: Publisher attestation that one explicitly reviewed behavioral case passed.
+      required: [name, status]
+      properties:
+        name: {type: string}
+        status: {type: string, enum: [passed]}
+    ToolPublicationOutcome:
+      type: object
+      description: Immutable publisher-attested evidence bounded to 512 KiB. Completed outcomes require the complete observed catalog and exact passing tests. Failed or uncertain outcomes contain only status and protocol_verified=false.
+      required: [status, protocol_verified]
+      properties:
+        status: {type: string, enum: [completed, failed, outcome_unknown]}
+        deployment_id: {type: string}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Runtime integrity pin; separate from the caller-visible contract digest}
+        catalog_base64: {type: string, format: byte, description: "Canonical format-2 MCP contract bytes, at most 256 KiB decoded; base64 preserves byte identity through JSONB"}
+        protocol_verified: {type: boolean}
+        checks: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/ToolPublicationCheck'}}
+    ToolPublicationRecord:
+      type: object
+      description: Account-owned durable publication review and immutable outcome bound to native deployment source identity.
+      required: [id, account_id, intent, status, created_at, deadline, evidence_origin]
+      properties:
+        id: {type: string, pattern: '^[0-9a-f]{64}$'}
+        account_id: {type: string, format: uuid}
+        intent: {$ref: '#/components/schemas/ToolPublicationIntent'}
+        status: {type: string, enum: [running, completed, failed, outcome_unknown]}
+        outcome: {$ref: '#/components/schemas/ToolPublicationOutcome'}
+        deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: "Native source-archive digest, distinct from the reviewed source-tree digest"}
+        created_at: {type: string, format: date-time}
+        deadline: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+        evidence_origin: {type: string, enum: [publisher_attested]}
+    ToolRegistryVersion:
+      type: object
+      description: Completed publisher-attested tool version and access requirements; current availability is not inferred from history.
+      required: [version, account_id, app, tools, deployment_id, source_sha256, deployment_source_sha256, catalog_sha256, evidence_origin, access_mode, availability]
+      properties:
+        app_id: {type: string, description: Immutable app identity when available}
+        version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        account_id: {type: string, format: uuid}
+        app: {type: string}
+        tools: {type: array, minItems: 1, maxItems: 64, items: {type: string}}
+        deployment_id: {type: string}
+        source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        evidence_origin: {type: string, enum: [publisher_attested]}
+        access_mode: {type: string, enum: [open, external-oauth]}
+        availability: {type: string, enum: [not_checked]}
     MCPConnectionHealthSnapshot:
       type: object
       description: Account-wide or app-filtered connection issues with complete counts independent of issue pagination. Incomplete inventory cannot prove alert recovery.
