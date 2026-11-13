@@ -173,7 +173,7 @@ func cmdScan(args []string) int {
 		return printErr("Scan failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(plan))
+		return jsonOut(writeJSON(withFeatureHints(plan)))
 	}
 	return printPlanTextWithExplain(osStdout, plan, excludeList, *showAffected, *explain)
 }
@@ -241,7 +241,7 @@ func executeConnectedRepoScan(opts connectedRepoScanOptions) int {
 		return printErr("Scan failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(plan))
+		return jsonOut(writeJSON(withFeatureHints(plan)))
 	}
 	return printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
 }
@@ -258,7 +258,7 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 		return code
 	}
 	if emitJSON {
-		if code := jsonOut(writeJSON(plan)); code != 0 {
+		if code := jsonOut(writeJSON(withFeatureHints(plan))); code != 0 {
 			return code
 		}
 		if strict && !plan.CanApply {
@@ -380,7 +380,7 @@ func runProjectDeployPreviewWithMode(
 		return printErr("Scan failed", err)
 	}
 	if emitJSON {
-		if code := jsonOut(writeJSON(plan)); code != 0 {
+		if code := jsonOut(writeJSON(withFeatureHints(plan))); code != 0 {
 			return code
 		}
 		if strict && !plan.CanApply {
@@ -910,6 +910,7 @@ func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanRes
 //
 //nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
+	plan = withFeatureHints(plan)
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
 	if plan.Environment != "" {
 		fmt.Fprintf(w, "Environment: %s\n", plan.Environment)
@@ -969,6 +970,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 		printPublicURLs(w, plan.Workloads)
 		printUnsetEnvKeys(w, plan.Workloads)
 		printDefaultMemoryServices(w, plan)
+		printFeatureHints(w, plan.FeatureHints)
 		if explain {
 			printPlanDetectionTrace(w, plan.Workloads)
 			printPlanDetectionWarnings(w, plan.DetectionWarnings)
@@ -1040,6 +1042,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			fmt.Fprintln(w, "  - "+wn)
 		}
 	}
+	printFeatureHints(w, plan.FeatureHints)
 	if explain && len(plan.Workloads) == 0 {
 		printPlanDetectionTrace(w, nil)
 	}

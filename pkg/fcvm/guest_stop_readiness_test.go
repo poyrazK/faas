@@ -123,6 +123,10 @@ func TestGuestStoppedDuringStartupAttributesSupervisedCrashesToTheApp(t *testing
 		{name: "restart budget", lines: []string{
 			"guest-init: app restart budget exhausted after 3 restart(s)\n",
 		}, wantCrash: true},
+		{name: "companion restarts", lines: []string{
+			"Too many arguments!\n",
+			"guest-init: sidecar echo crashed (restart 1/3): run sidecar echo: exit status 127\n",
+		}, wantCrash: true},
 		{name: "guest-init failure", lines: []string{
 			"guest-init: assemble overlay: mount overlay: invalid argument\n",
 			"[    0.912345] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000100\n",
@@ -149,6 +153,45 @@ func TestGuestStoppedDuringStartupAttributesSupervisedCrashesToTheApp(t *testing
 				t.Fatalf("guest failure without supervisor output = %#v, want a platform (non-problem) error", p)
 			}
 		})
+	}
+}
+
+// Hunt 34 H34-35: an essential companion whose command failed crash-looped
+// and ended guest-init just after the main workload passed readiness, and the
+// wake noticed only at its next vsock dial. The lines are the production
+// console's; the companion's output is the deploy's error.
+func TestExplainGuestStopNamesACompanionCrashAfterReadiness(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), 0)
+	ring := v.registerRing("inst")
+	for _, line := range []string{
+		"2026/11/13 12:41:44 INFO runWorkloads: workload starting name=echo type=sidecar essential=true\n",
+		"Too many arguments!\n",
+		"guest-init: sidecar echo crashed (restart 3/3): run sidecar echo: exit status 127\n",
+		"Too many arguments!\n",
+		"2026/11/13 12:41:44 ERROR runWorkloads: workload exited with error name=echo essential=true err=\"app crash-looped after 3 restart(s): run sidecar echo: exit status 127\"\n",
+		"[    3.600487] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000100\n",
+	} {
+		if _, err := ring.Write("stdout", []byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := &instanceRecord{done: make(chan struct{})}
+	close(rec.done)
+	v.mu.Lock()
+	v.recs["inst"] = rec
+	v.mu.Unlock()
+
+	p := api.AsProblem(v.ExplainGuestStop(Lease{Instance: "inst"}))
+	if p == nil || p.Code != api.CodeAppStartupCrash || p.Status != 422 {
+		t.Fatalf("explanation = %#v, want a 422 %s problem", p, api.CodeAppStartupCrash)
+	}
+	for _, want := range []string{"exited after becoming ready", "Too many arguments!", "run sidecar echo: exit status 127"} {
+		if !strings.Contains(p.Detail, want) {
+			t.Errorf("detail %q lacks %q", p.Detail, want)
+		}
+	}
+	if strings.Contains(p.Detail, "Kernel panic") {
+		t.Errorf("detail kept the kernel panic: %q", p.Detail)
 	}
 }
 
