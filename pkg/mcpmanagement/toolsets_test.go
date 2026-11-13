@@ -24,8 +24,11 @@ import (
 // Raised from 68 KB on 2026-11-12 for gregale_agent_activity,
 // gregale_plan_undo and gregale_apply_undo (about 8 KB): an agent on the
 // default catalog must be able to see and reverse its own changes
-// (ADR-20261112080601). The fully consented hosted catalog is about 73 KB.
-const coreCatalogBudget = 74 << 10
+// (ADR-20261112080601). Raised to 76 KB on 2026-11-13 for
+// gregale_agent_budget (about 1.3 KB): an agent checks what it may still
+// commit before it plans (ADR-20261111114059, amendment 2026-11-13). The
+// fully consented hosted catalog is about 74.5 KB.
+const coreCatalogBudget = 76 << 10
 
 func TestReadOnlyCoreCatalogMatchesStdioContract(t *testing.T) {
 	backend := httptest.NewServer(http.NotFoundHandler())
@@ -36,7 +39,7 @@ func TestReadOnlyCoreCatalogMatchesStdioContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Tools) != 26 {
+	if len(catalog.Tools) != 27 {
 		t.Fatalf("read-only core count=%d names=%v", len(catalog.Tools), toolNamesOf(catalog.Tools))
 	}
 	for _, tool := range catalog.Tools {

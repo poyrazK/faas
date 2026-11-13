@@ -65,7 +65,10 @@ type ObsTenantDiagnosis struct {
 	HealthyDomains    int                     `json:"healthy_domains"`
 	EnabledFlags      []string                `json:"enabled_flags"`
 	CustomerErrors    ObsCustomerErrorSummary `json:"customer_errors"`
-	Unavailable       []string                `json:"unavailable,omitempty"`
+	// AttentionSignals are the account's open or dismissed attention
+	// signals (ADR-20261113123000).
+	AttentionSignals []ObsAttentionSignal `json:"attention_signals"`
+	Unavailable      []string             `json:"unavailable,omitempty"`
 }
 
 // ObsTenantRestriction kinds.
@@ -140,4 +143,42 @@ type ObsCustomerErrorEvent struct {
 	AppSlug    string    `json:"app_slug,omitempty"`
 	RequestID  string    `json:"request_id,omitempty"`
 	TraceID    string    `json:"trace_id,omitempty"`
+}
+
+// Attention signal kinds and states (ADR-20261113123000).
+const (
+	AttentionKindDeployFailing = "deploy_failing"
+	AttentionKindRefusedBurst  = "refused_burst"
+	AttentionKindDomainStuck   = "domain_stuck"
+
+	AttentionStateOpen      = "open"
+	AttentionStateDismissed = "dismissed"
+	AttentionStateResolved  = "resolved"
+)
+
+// ObsAttentionSignal is one customer who is probably stuck: what kind of
+// trouble, on which subject (app slug, problem code or hostname), since
+// when, and whether support dismissed it.
+type ObsAttentionSignal struct {
+	ID        int64  `json:"id"`
+	AccountID string `json:"account_id"`
+	Kind      string `json:"kind"`
+	Subject   string `json:"subject"`
+	Detail    string `json:"detail,omitempty"`
+	State     string `json:"state"`
+	// Observed is the count behind the signal at its last evaluation:
+	// failed deployments, refusals or 1 for a domain.
+	Observed      int64      `json:"observed"`
+	FirstSeenAt   time.Time  `json:"first_seen_at"`
+	LastSeenAt    time.Time  `json:"last_seen_at"`
+	ResolvedAt    *time.Time `json:"resolved_at,omitempty"`
+	DismissedAt   *time.Time `json:"dismissed_at,omitempty"`
+	DismissedBy   string     `json:"dismissed_by,omitempty"`
+	DismissReason string     `json:"dismiss_reason,omitempty"`
+}
+
+// ObsAttentionListResponse answers GET /v1/admin/obs/attention.
+type ObsAttentionListResponse struct {
+	Items []ObsAttentionSignal `json:"items"`
+	Limit int                  `json:"limit"`
 }
