@@ -154,3 +154,16 @@ test('replay pins requests to reviewed contract routes without accepting path es
   }
   assert.equal(calls.length,1)
 })
+
+test('DAPI024 replay refuses rounded expectations, comparisons and captures',async t=>{
+ const root=await mkdtemp(join(tmpdir(),'replay-exact-'));t.after(()=>rm(root,{recursive:true,force:true}))
+ const path=join(root,'data-api.requests.json')
+ await writeFile(path,'{"version":1,"requests":[{"name":"exact","method":"GET","path":"/rest/v1/notes","identity":"alice","expect":{"status":200,"json":{"id":9007199254740993}}}]}')
+ await assert.rejects(requestStore(path).read(true),/Cannot read/)
+ const {replayRequest}=await import(runtime?pathToFileURL(join(runtime,'request-replay.mjs')):'../../cmd/gregale/templates/data-api/request-replay.mjs')
+ const variables=new Map([['id','old']])
+ const result=await replayRequest({...request(),expect:{status:200,json:{id:9007199254740992}},capture:{id:'/id'}},{url:'https://data.example',identities:{bob:{token:'test'}},variables,fetcher:async()=>new Response('{"id":9007199254740993}')})
+ assert.equal(result.passed,false)
+ assert.match(result.error,/cannot be represented exactly/)
+ assert.equal(variables.has('id'),false)
+})

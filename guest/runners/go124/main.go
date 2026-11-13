@@ -130,6 +130,11 @@ func main() {
 // runner core (internal.Serve): a complete §4.9 response, or a streamed one
 // flushed frame by frame (ADR-999).
 func handle(w http.ResponseWriter, r *http.Request, handlerPath string, signal *internal.RunnerSignal, tailWaitSec int, tailPipePath string) {
+	// A typed-client call that breaks the function's input schema never
+	// reaches the handler (ADR-20261112160000 §5).
+	if internal.RejectInvalidFunctionInput(w, r) {
+		return
+	}
 	internal.Serve(w, r, internal.ServeConfig{
 		Runtime:      reportedRuntime,
 		Spec:         handlerSpec(handlerPath),

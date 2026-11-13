@@ -54,6 +54,7 @@ func topLevelUsage(showAll, showOperator bool) string {
 		b.WriteString("Run 'gregale help --all --operator' to include operator and compatibility commands.\n")
 	}
 	b.WriteString("\nGlobal flags:\n")
+	b.WriteString("  --debug-http           Write HTTP metadata diagnostics to stderr (before the command).\n")
 	b.WriteString("  --agent-reason TEXT    With an agent key, tell the person who approves a request\n")
 	b.WriteString("                         what it is for (before the command; up to 280 characters).\n")
 	b.WriteString("                         Equivalent env: GREGALE_AGENT_REASON.\n")
@@ -114,6 +115,17 @@ func init() {
 
 func run(args []string) (status int) {
 	args = protectImageRunCommandArgs(args)
+	previousDebug, previousTrace := httpDebugEnabled, activeHTTPDebug.Load()
+	httpDebugEnabled = false
+	activeHTTPDebug.Store(nil)
+	var invocationTrace *httpDebugRecorder
+	defer func() {
+		if invocationTrace != nil {
+			invocationTrace.close()
+		}
+		httpDebugEnabled = previousDebug
+		activeHTTPDebug.Store(previousTrace)
+	}()
 	resetCapabilityView()
 	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
 	defer func() {
@@ -153,6 +165,10 @@ func run(args []string) (status int) {
 	}
 	if profileErr != nil {
 		return printErr("Invalid connection profile", profileErr)
+	}
+	if httpDebugEnabled {
+		invocationTrace = &httpDebugRecorder{out: osStderr}
+		activeHTTPDebug.Store(invocationTrace)
 	}
 	// ADR-20261026145832: a path in the new command tree runs the command
 	// that implements it today, so help, gating and dispatch see that path.

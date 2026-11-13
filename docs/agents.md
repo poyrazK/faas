@@ -306,11 +306,12 @@ Undo restores:
 - app settings the agent changed, such as `min_instances`, `ram_mb`,
   `idle_timeout_s`, egress and CORS settings,
 - scaling changes,
-- env vars of the app (not yet those of a named environment),
+- env vars of the app and of its project's named environments,
 - deploys and rollbacks: a deployment the agent started is cancelled while
   it builds, and once it serves the app is rolled back to the deployment
   that served before it,
-
+- promotes and traffic changes: the app's live deployments get back the
+  exact traffic split they had before,
 - things the agent created (apps, buckets, crons, domains, Postgres
   databases) are deleted: an app is parked and can be restored for 7 days, a
   bucket that holds objects is left, and a database can be undeleted for 7
@@ -327,7 +328,7 @@ Some changes cannot be undone, and the plan says so and why: a secret the
 agent set or removed (Gregale keeps no copy of a replaced secret, so set it
 again), a few settings that cannot be set back to empty, an app's first
 deploy (there is nothing to return to), and kinds of change Gregale cannot
-undo yet, such as promotes and traffic changes, and a deleted bucket. A canary in progress, or an agent's rollback still starting, is left
+undo yet, such as an individual canary step or a deleted bucket. A canary in progress, or an agent's rollback still starting, is left
 until it settles; undo again then. If someone changed a resource again after the agent did, undo leaves
 it, and the agent's older changes to it, as they are; pass `--force` to undo
 them anyway. Each change is undone once, and changes are kept 7 days.
@@ -421,7 +422,7 @@ so list only the toolsets it needs:
 
 | Toolset | Tools |
 |---|---|
-| `core` (default) | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back, then verify readiness. About a quarter of the full catalog. |
+| `core` (default) | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back, then verify readiness; wait for approvals, list and undo the agent's own changes. About a third of the full catalog. |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets |
 | `diagnose` | Request, performance, wake, trace and regression diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons |

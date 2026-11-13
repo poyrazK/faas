@@ -248,13 +248,11 @@ export async function readAccessSafety(connection, config) {
 // migrating: a table whose RLS was disabled, or dropped and recreated without
 // it, a public relation or function made unsafe, would stay reachable until
 // the next refresh. The gate is reread at most every accessRecheckMs while
-// requests arrive, without holding them, and after each restore before the
-// API serves again. A failed reread keeps the last state and tries again at
-// the next request; PostgREST cannot reach the database either then.
+// requests arrive, and after each restore before the API serves again. Only
+// successful reads renew the safety lease. An expired or unknown lease holds
+// data requests within their deadline and fails closed if the reread fails.
 export function createAccessSafety(config, { read = readAccessSafety, monotonic = () => performance.now() } = {}) {
-  // running is any reread; restoring only the one a restore started, which
-  // requests wait for. A periodic reread never holds a request.
-  let checkedAt = monotonic(), running = null, restoring = null
+  let checkedAt = monotonic(), attemptedAt = -Infinity, running = null, required = false, generation = 0
   const apply = safety => {
     config.rowSecurity = safety.rowSecurity
     config.unsafePublicRead = safety.unsafePublicRead
@@ -262,24 +260,37 @@ export function createAccessSafety(config, { read = readAccessSafety, monotonic 
   }
   const refresh = () => {
     if (running) return running
-    running = read(config.connection, config).then(apply, () => runtimeFailure('data_api_access_recheck_unavailable'))
-      .finally(() => { checkedAt = monotonic(); running = null })
+    const epoch = generation
+    attemptedAt = monotonic()
+    required = true
+    const work = Promise.resolve().then(() => read(config.connection, config)).then(safety => {
+      if (epoch !== generation) return false
+      apply(safety)
+      checkedAt = monotonic()
+      required = false
+      return true
+    }, () => { runtimeFailure('data_api_access_recheck_unavailable'); return false })
+      .finally(() => { if (running === work) running = null })
+    running = work
     return running
   }
+  const due = () => required || monotonic() - checkedAt >= limits.accessRecheckMs
+  const retry = () => monotonic() - attemptedAt >= Math.min(limits.accessRecheckMs, limits.healthProbeMs)
   return Object.freeze({
-    // maybeRefresh starts a reread when the last one is old; it never waits.
-    maybeRefresh: () => { if (monotonic() - checkedAt >= limits.accessRecheckMs) void refresh() },
-    // restored rereads now; ready waits for that reread within waitMs.
+    maybeRefresh: () => { if (due() && retry()) void refresh() },
     restored: () => {
-      const current = refresh()
-      restoring = current
-      void current.finally(() => { if (restoring === current) restoring = null })
+      generation++
+      running = null
+      required = true
+      void refresh()
     },
     ready: async waitMs => {
-      if (!restoring) return true
+      if (!due()) return true
+      if (!running && retry()) void refresh()
+      if (!running || waitMs <= 0) return false
       let timer
       const expired = new Promise(resolve => { timer = setTimeout(() => resolve(false), Math.max(0, waitMs)); timer.unref?.() })
-      try { return await Promise.race([restoring.then(() => true), expired]) } finally { clearTimeout(timer) }
+      try { return await Promise.race([running, expired]) } finally { clearTimeout(timer) }
     },
     refresh,
   })

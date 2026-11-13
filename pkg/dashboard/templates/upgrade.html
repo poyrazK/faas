@@ -57,6 +57,15 @@
           <form method="POST" action="/dashboard/upgrade" style="margin-top:1rem">
             <input type="hidden" name="csrf_token" value="{{.Data.ConfirmToken}}">
             <input type="hidden" name="plan" value="{{.Data.Target.Plan}}">
+            {{if .Data.SalespersonCodeAvailable}}
+              <p>
+                <label for="salesperson-code">Salesperson code (optional)</label><br>
+                <input id="salesperson-code" name="salesperson_code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="6" pattern="[A-Za-z0-9]{6}" placeholder="POJU43">
+                <br><small>This code will be saved for your first paid purchase.</small>
+              </p>
+            {{else if .Data.ExistingReferralCode}}
+              <p>Your existing referral will be kept.</p>
+            {{end}}
             {{if .Data.SubscriptionChange}}
               <button type="submit">Upgrade now</button>
             {{else}}

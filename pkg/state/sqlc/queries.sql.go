@@ -28782,6 +28782,23 @@ func (q *Queries) GetInstanceTailCount(ctx context.Context, db DBTX, id pgtype.U
 	return tail_count, err
 }
 
+const getInvocationSend = `-- name: GetInvocationSend :one
+SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
+FROM invocation_sends WHERE invocation_id = $1::uuid
+`
+
+type GetInvocationSendRow struct {
+	SenderAppID     string
+	OnCompleteAppID string
+}
+
+func (q *Queries) GetInvocationSend(ctx context.Context, db DBTX, invocationID pgtype.UUID) (GetInvocationSendRow, error) {
+	row := db.QueryRow(ctx, getInvocationSend, invocationID)
+	var i GetInvocationSendRow
+	err := row.Scan(&i.SenderAppID, &i.OnCompleteAppID)
+	return i, err
+}
+
 const getInvoiceSnapshot = `-- name: GetInvoiceSnapshot :one
 SELECT id, account_id, provider, provider_invoice_id, provider_charge_id, number, status,
        period_start, period_end, subtotal_cents, tax_cents, total_cents, amount_paid_cents,
@@ -35675,6 +35692,24 @@ func (q *Queries) InsertInstanceApplicationStandardPromotion(ctx context.Context
 		arg.ParentToken,
 		arg.Binding,
 	)
+	return err
+}
+
+const insertInvocationSend = `-- name: InsertInvocationSend :exec
+INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id)
+VALUES ($1::uuid, $2::uuid, $3::uuid)
+`
+
+type InsertInvocationSendParams struct {
+	InvocationID    pgtype.UUID
+	SenderAppID     pgtype.UUID
+	OnCompleteAppID pgtype.UUID
+}
+
+// ADR-20261112160000: the app that sent this invocation with send(), and the
+// app its completion goes to, written with the invocation row.
+func (q *Queries) InsertInvocationSend(ctx context.Context, db DBTX, arg InsertInvocationSendParams) error {
+	_, err := db.Exec(ctx, insertInvocationSend, arg.InvocationID, arg.SenderAppID, arg.OnCompleteAppID)
 	return err
 }
 
@@ -91711,9 +91746,15 @@ SELECT jsonb_build_object(
     'AccountID', account_id,
     'ProjectID', project_id,
     'Slug', slug
-)::jsonb AS data FROM project_environments WHERE id = $1::uuid
+)::jsonb AS data FROM project_environments
+WHERE id = $1::uuid
+   OR id = (SELECT environment_id FROM project_environment_branches WHERE slot_id = $1::uuid)
+ORDER BY (id = $1::uuid) DESC
+LIMIT 1
 `
 
+// A branch's slot names the environment of the branch holding it
+// (ADR-20261031193635 stable branch URLs).
 func (q *Queries) ReadPublicHostEnvironment(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]byte, error) {
 	row := db.QueryRow(ctx, readPublicHostEnvironment, environmentID)
 	var data []byte
@@ -101020,7 +101061,7 @@ WITH filtered AS (
             WHEN 'consumer_id' THEN COALESCE(consumer_id::text, '__anonymous__')
             ELSE route
         END::text AS dimension,
-        CASE WHEN $5::text = 'route' THEN method ELSE '' END AS method,
+        CASE WHEN $5::text = 'route' THEN request_analytics_method(method)::text ELSE '' END AS method,
         latency_ms,
         cold_boot,
         status,
@@ -101315,7 +101356,7 @@ func (q *Queries) RequestTelemetryAnalyticsByDimension(ctx context.Context, db D
 
 const requestTelemetryAnalyticsByRoute = `-- name: RequestTelemetryAnalyticsByRoute :many
 WITH filtered AS (
-    SELECT route, method, latency_ms, cold_boot, status,
+    SELECT route, request_analytics_method(method)::text AS method, latency_ms, cold_boot, status,
            count::bigint AS request_count
     FROM request_telemetry
     WHERE app_id = $1
@@ -101427,7 +101468,7 @@ func (q *Queries) RequestTelemetryAnalyticsByRoute(ctx context.Context, db DBTX,
 const requestTelemetryAnalyticsByRouteDeployment = `-- name: RequestTelemetryAnalyticsByRouteDeployment :many
 WITH filtered AS (
     SELECT route,
-           method,
+           request_analytics_method(method)::text AS method,
            deployment_id::text AS deployment_id,
            commit_sha,
            deployment_tag,
@@ -101653,7 +101694,7 @@ WITH buckets AS (
       AND received_at >= $3::timestamptz
       AND received_at <  $4::timestamptz
       AND ($5::text = '' OR route = $5::text)
-      AND ($6::text = '' OR method = $6::text)
+      AND ($6::text = '' OR request_analytics_method(method) = $6::text)
 ), latency_values AS (
     SELECT bucket_start,
            latency_ms,
@@ -101769,7 +101810,7 @@ WITH buckets AS (
                WHEN 'consumer_id' THEN COALESCE(consumer_id::text, '__anonymous__')
                ELSE route
            END::text AS dimension,
-           CASE WHEN $5::text = 'route' THEN method ELSE '' END AS method,
+           CASE WHEN $5::text = 'route' THEN request_analytics_method(method)::text ELSE '' END AS method,
            latency_ms,
            cold_boot,
            status,
@@ -101780,7 +101821,7 @@ WITH buckets AS (
       AND received_at >= $3::timestamptz
       AND received_at <  $4::timestamptz
       AND ($6::text = '' OR route = $6::text)
-      AND ($7::text = '' OR method = $7::text)
+      AND ($7::text = '' OR request_analytics_method(method) = $7::text)
 ), top_groups AS (
     SELECT dimension, method
     FROM filtered
@@ -102397,6 +102438,56 @@ func (q *Queries) RequestTelemetryErrorsByRoute(ctx context.Context, db DBTX, ar
 		return nil, err
 	}
 	return items, nil
+}
+
+const requestTelemetryKnownServerErrors = `-- name: RequestTelemetryKnownServerErrors :one
+WITH known AS (
+    SELECT DISTINCT method, route, status
+      FROM request_telemetry
+     WHERE app_id = $1::uuid
+       AND deployment_id = $5::uuid
+       AND received_at >= $6::timestamptz
+       AND received_at < $7::timestamptz
+       AND status >= 500 AND status < 600
+)
+SELECT COALESCE(SUM(r.count::bigint), 0)::bigint AS known_server_errors
+  FROM request_telemetry AS r
+  JOIN known AS k ON k.method = r.method AND k.route = r.route AND k.status = r.status
+ WHERE r.app_id = $1::uuid
+   AND r.deployment_id = $2::uuid
+   AND r.received_at >= $3::timestamptz
+   AND r.received_at < $4::timestamptz
+   AND r.status >= 500 AND r.status < 600
+`
+
+type RequestTelemetryKnownServerErrorsParams struct {
+	AppID         pgtype.UUID
+	ReleaseID     pgtype.UUID
+	ReleaseSince  pgtype.Timestamptz
+	ReleaseUntil  pgtype.Timestamptz
+	BaselineID    pgtype.UUID
+	BaselineSince pgtype.Timestamptz
+	BaselineUntil pgtype.Timestamptz
+}
+
+// A release's 5xx responses on method+route+status triples its predecessor
+// also answered in the baseline window (Hunt 34 H34-17). The first-wake 5xx
+// guard and the post-release watch's quiet-predecessor bar leave them out,
+// so a route that already failed before the release cannot roll it back.
+// Both windows use request_telemetry_app_dep_received_idx.
+func (q *Queries) RequestTelemetryKnownServerErrors(ctx context.Context, db DBTX, arg RequestTelemetryKnownServerErrorsParams) (int64, error) {
+	row := db.QueryRow(ctx, requestTelemetryKnownServerErrors,
+		arg.AppID,
+		arg.ReleaseID,
+		arg.ReleaseSince,
+		arg.ReleaseUntil,
+		arg.BaselineID,
+		arg.BaselineSince,
+		arg.BaselineUntil,
+	)
+	var known_server_errors int64
+	err := row.Scan(&known_server_errors)
+	return known_server_errors, err
 }
 
 const requestTelemetryLatencyWeightsByRoute = `-- name: RequestTelemetryLatencyWeightsByRoute :many

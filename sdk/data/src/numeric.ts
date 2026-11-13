@@ -1,5 +1,5 @@
 /** Lossless mode represents every JSON number as its original decimal text. */
-export type NumericMode = 'number' | 'lossless'
+export type NumericMode = 'number' | 'lossless' | 'exact'
 
 /** Decode numbers without first passing them through IEEE 754. Includes JSON columns. */
 export function parseLosslessJSON(source: string): unknown {
@@ -10,13 +10,16 @@ export function parseLosslessJSON(source: string): unknown {
 }
 
 const losslessFetchers = new WeakSet<Function>()
+const exactFetchers = new WeakSet<Function>()
+export function usesExactNumbers(query: {fetch?:unknown}): boolean { return typeof query.fetch === 'function' && exactFetchers.has(query.fetch) }
 export function usesLosslessNumbers(query: { fetch?: unknown }): boolean {
   return typeof query.fetch === 'function' && losslessFetchers.has(query.fetch)
 }
 
 export function numericFetch(send: typeof globalThis.fetch, mode: NumericMode = 'number'): typeof globalThis.fetch {
-  if (mode !== 'number' && mode !== 'lossless') throw new TypeError('numericMode must be number or lossless')
+  if (mode !== 'number' && mode !== 'lossless' && mode !== 'exact') throw new TypeError('numericMode must be number, lossless or exact')
   if (mode === 'number') return send
+  if (mode === 'exact') { const marked: typeof globalThis.fetch = (input, init) => send(input, init); exactFetchers.add(marked); return marked }
   const fetcher: typeof globalThis.fetch = async (input, init) => {
     const response = await send(input, init)
     // PostgREST reads response.text() and parses it internally. Convert only

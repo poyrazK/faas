@@ -81,6 +81,10 @@ type AsyncRouteRequest struct {
 	// EdgeJWT is the caller a kind=jwt rule verified (ADR-091 amendment
 	// 2026-11-04, round 11); zero when no rule did.
 	EdgeJWT EdgeJWTIdentity
+	// SentByAppID and OnCompleteAppID record a function send()
+	// (ADR-20261112160000); empty for every other producer.
+	SentByAppID     string
+	OnCompleteAppID string
 }
 
 type AsyncRouteAccepted struct {

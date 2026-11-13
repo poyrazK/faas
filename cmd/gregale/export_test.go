@@ -2856,5 +2856,11 @@ var WorkerNoInstancesLine = workerNoInstancesLine
 // PrintPublicURLs exposes the plan's public URL list (H32-30).
 var PrintPublicURLs = printPublicURLs
 
+var RenderRequestAnalytics = renderRequestAnalytics
+
 var InvocationSourceLabel = invocationSourceLabel
 var RenderDeploymentHostingReceiptFor = renderDeploymentHostingReceiptFor
+
+var ParseAppPortsFlag = parseAppPortsFlag
+
+var RenderThrottleSuggestions = renderThrottleSuggestions

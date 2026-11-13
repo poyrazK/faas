@@ -69,6 +69,8 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0011_shared_team_views.sql', import.meta.url), 'utf8'))
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0012_team_order_summary.sql', import.meta.url), 'utf8'))
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0013_background_data_jobs.sql', import.meta.url), 'utf8'))
+  await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0014_job_retry_scheduling.sql', import.meta.url), 'utf8'))
+  await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/migrations/sql/0015_job_history_retention.sql', import.meta.url), 'utf8'))
   await owner.query(await readFile(new URL('../../cmd/gregale/templates/data-api-teams/seed.sql', import.meta.url), 'utf8'))
   await owner.query(`GRANT USAGE ON SCHEMA api TO "${role}";
     GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA api TO "${role}";
@@ -78,7 +80,7 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
     GRANT EXECUTE ON FUNCTION api.create_team_invitation_once(uuid,text,text,api.team_role,timestamptz), api.revoke_team_invitation_once(uuid,text), api.accept_team_invitation_once(uuid,text,text), api.team_invitation_identity(), api.start_team_order_import_once(uuid,text,text,jsonb), api.advance_team_order_import_once(uuid,text,integer), api.transition_team_order_once(uuid,text,uuid,integer,api.order_status), api.claim_team_order_webhook(text,uuid), api.finish_team_order_webhook(text,uuid,uuid,boolean,integer), api.replay_team_order_webhook(text,uuid,integer), api.get_team_delivery_health(text), api.get_team_delivery_operation(text,uuid), api.preview_team_delivery_replay(text,integer), api.set_team_delivery_pause_once(text,uuid,uuid,boolean), api.batch_replay_team_deliveries_once(text,uuid,jsonb), api.save_webhook_subscription_once(text,uuid,uuid,uuid,text,text[],text,boolean,boolean), api.get_webhook_subscription_receipt(text,uuid), api.claim_subscription_webhook(text,uuid,uuid), api.finish_subscription_webhook(text,uuid,uuid,uuid,boolean,integer,text), api.replay_subscription_webhook(text,uuid,uuid,integer), api.get_subscription_health(text,uuid), api.queue_webhook_test_once(text,uuid,uuid,uuid), api.get_webhook_test_receipt(text,uuid), api.save_order_view_once(text,uuid,uuid,uuid,text,api.order_status,integer,integer,text), api.get_order_view_receipt(text,uuid), api.list_view_orders(text,api.order_status,integer,integer,text,uuid,integer,integer), api.preview_team_order_fulfilment(text,jsonb), api.fulfil_team_orders_once(text,uuid,jsonb), api.get_team_bulk_order_receipt(text,uuid), api.save_shared_order_view_once(text,uuid,uuid,uuid,text,api.order_status,integer,integer,text), api.copy_shared_order_view_once(text,uuid,uuid,uuid,uuid,text), api.get_shared_order_view_receipt(text,uuid) TO "${role}"`)
   const loginURL = new URL(ownerURL); loginURL.username = role; loginURL.password = 'test-only'
   await owner.query(`GRANT EXECUTE ON FUNCTION api.summarize_team_orders(text,api.order_status,integer,integer) TO "${role}"`)
-  await owner.query(`GRANT EXECUTE ON FUNCTION api.start_team_order_job(uuid,text,text,uuid),api.claim_team_order_job(),api.advance_team_order_job(uuid,uuid),api.fail_team_order_job(uuid,uuid,text),api.cancel_team_order_job(uuid) TO "${role}"`)
+  await owner.query(`GRANT EXECUTE ON FUNCTION api.start_team_order_job(uuid,text,text,uuid),api.claim_team_order_job(),api.retry_team_order_job(uuid,uuid,text),api.resume_team_order_job(uuid),api.advance_team_order_job(uuid,uuid),api.fail_team_order_job(uuid,uuid,text),api.cancel_team_order_job(uuid) TO "${role}"`)
   const snapshot = await inspect(loginURL.toString(), ['api'])
   const typed = await mkdtemp(join(tmpdir(), 'team-orders-client-'))
   t.after(() => rm(typed, { recursive: true, force: true }))
@@ -1033,7 +1035,7 @@ test('team orders enforce membership, idempotency, concurrency and real dashboar
   const lostTestForm=createWebhookTestForm(teamsClient({url,accessToken:token,fetch:async(input,init)=>{const response=await fetch(input,init);if(String(input).includes('/rpc/queue_webhook_test_once')){testWrites++;lostTestArgs=JSON.parse(init.body);await response.text();throw TypeError('test response lost')}return response}},'shop-a'))
   assert.equal((await lostTestForm.submit(update.subscription,true)).uncertain,true)
   assert.equal(testWrites,1)
-  await owner.query("UPDATE api.team_members SET role='member' WHERE tenant_id='shop-a' AND subject='alice'")
+  await owner.query("UPDATE api.team_members SET role='owner' WHERE tenant_id='shop-a' AND subject='amy'; UPDATE api.team_members SET role='member' WHERE tenant_id='shop-a' AND subject='alice'")
   const recoveredTest=await lostTestForm.reconcile()
   assert.equal(recoveredTest.outcome,'queued',JSON.stringify(recoveredTest));assert.equal(testWrites,1)
   await owner.query("UPDATE api.team_members SET role='owner' WHERE tenant_id='shop-a' AND subject='alice'")

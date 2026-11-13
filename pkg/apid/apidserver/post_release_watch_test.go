@@ -245,3 +245,47 @@ func TestPostReleaseWatchJudgesLatencyOnSharedRoutes(t *testing.T) {
 		t.Fatalf("decision = %+v, want a shared-route p95 abort", decision)
 	}
 }
+
+// knownErrorTelemetry adds the known-5xx reader Postgres telemetry has.
+type knownErrorTelemetry struct {
+	*postReleaseTelemetry
+	known      int64
+	knownReads int
+}
+
+func (f *knownErrorTelemetry) RequestTelemetryKnownServerErrors(context.Context, string, string, time.Time, time.Time, string, time.Time, time.Time) (int64, error) {
+	f.knownReads++
+	return f.known, nil
+}
+
+// Hunt 34 H34-17b: with a quiet predecessor the watch applies the absolute 5xx
+// bar, and eight deliberate 5xx rolled a config-only release back. 5xx the
+// predecessor also returned on the same method, route and status do not count.
+func TestPostReleaseWatchLeavesOutKnown5xxOfAQuietPredecessor(t *testing.T) {
+	f := newPostReleaseFixture(t, "prw-known", true, time.Minute)
+	known := &knownErrorTelemetry{postReleaseTelemetry: f.telemetry, known: 8}
+	(*f.e.S()).SetPostReleaseTelemetry(known)
+	f.telemetry.windows[f.previous.ID] = canary.HealthWindow{Requests: 3}
+	f.telemetry.windows[f.release.ID] = canary.HealthWindow{Requests: 10, ServerErrors: 8}
+	f.sweep(t)
+	if got := f.read(t, f.release.ID); got.Status != state.DeployLive || got.LastAutoRollbackReason != "" {
+		t.Fatalf("release failing only where its predecessor failed = %s %q, want it left live", got.Status, got.LastAutoRollbackReason)
+	}
+	if known.knownReads != 1 {
+		t.Fatalf("known-5xx reads = %d, want 1 after the quiet-predecessor bar tripped", known.knownReads)
+	}
+
+	known.known = 2
+	f.sweep(t)
+	got := f.read(t, f.release.ID)
+	if got.LastAutoRollbackReason != string(state.AutoRollbackReasonPostReleaseRegression) {
+		t.Fatalf("release with new 5xx = %q, want %q", got.LastAutoRollbackReason, state.AutoRollbackReasonPostReleaseRegression)
+	}
+	var decision api.RolloutDecision
+	if err := json.Unmarshal(got.RolloutDecision, &decision); err != nil {
+		t.Fatalf("decode decision %s: %v", got.RolloutDecision, err)
+	}
+	if decision.Rule != api.RolloutRuleAbortPostRelease5xx || !strings.Contains(decision.Summary, "2 5xx the previous release also returned") {
+		t.Fatalf("decision = %+v, want a 5xx abort naming the 2 left out", decision)
+	}
+}
