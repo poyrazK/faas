@@ -96,7 +96,7 @@ type WorkflowCodeOpWrite struct {
 // WorkflowCodeInvocation is one entry-handler call's outcome.
 type WorkflowCodeInvocation struct {
 	// runID is set by the stores before validation, for call operations.
-	runID string
+	runID      string
 	Attempt    int
 	HTTPStatus *int
 	// Error marks a failed call; RetryAt is its retry deadline.
