@@ -4412,7 +4412,9 @@
       "resolved_at",
       "dismissed_at",
       "dismissed_by",
-      "dismiss_reason"
+      "dismiss_reason",
+      "outcome",
+      "ticket_id"
     ],
     "kind": "operational"
   },
@@ -10852,6 +10854,21 @@
       "owner": "account",
       "strategy": "shared"
     }
+  },
+  {
+    "table": "managed_postgres_egress_hold_notices",
+    "columns": [
+      "allowance_bytes",
+      "ceiling_bytes",
+      "database_id",
+      "mail_intent_id",
+      "overage_billed",
+      "period_start",
+      "reached_at",
+      "subject_id",
+      "used_bytes"
+    ],
+    "kind": "operational"
   },
   {
     "table": "managed_postgres_health",

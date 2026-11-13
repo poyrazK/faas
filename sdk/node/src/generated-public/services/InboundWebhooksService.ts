@@ -12,6 +12,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class InboundWebhooksService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List durable inbound webhook endpoints for this app.
    * @returns InboundWebhookEndpointResponse The configured endpoints. Public route tokens are never returned.
@@ -25,7 +26,7 @@ export class InboundWebhooksService {
      */
     slug: string,
   }): CancelablePromise<Array<InboundWebhookEndpointResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/inbound-webhooks',
       path: {
@@ -63,7 +64,7 @@ export class InboundWebhooksService {
     slug: string,
     requestBody: CreateInboundWebhookEndpointRequest,
   }): CancelablePromise<InboundWebhookEndpointResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/inbound-webhooks',
       path: {
@@ -108,7 +109,7 @@ export class InboundWebhooksService {
      */
     id: string,
   }): CancelablePromise<InboundWebhookEndpointResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/inbound-webhooks/{id}',
       path: {
@@ -146,7 +147,7 @@ export class InboundWebhooksService {
     id: string,
     requestBody: UpdateInboundWebhookEndpointRequest,
   }): CancelablePromise<InboundWebhookEndpointResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/inbound-webhooks/{id}',
       path: {
@@ -190,7 +191,7 @@ export class InboundWebhooksService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/inbound-webhooks/{id}',
       path: {
@@ -268,7 +269,7 @@ export class InboundWebhooksService {
      */
     xGregaleSignature?: string,
   }): CancelablePromise<(WebhookWorkflowReceiptResponse | WorkflowCallbackWebhookReceiptResponse | InboundWebhookReceiptResponse)> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/hooks/{token}',
       path: {

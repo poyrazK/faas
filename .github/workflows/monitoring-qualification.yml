@@ -1,0 +1,125 @@
+name: monitoring-qualification
+
+# Manual only. Exercise emits REAL page/warn notifications; prepare is read-only.
+# See docs/ops/monitoring-qualification.md for receipt scope and watchdog testing.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "prepare reads intent; exercise sends real page/warn tests; record imports operator-attested receipts"
+        type: choice
+        default: prepare
+        options: [prepare, exercise, record]
+      deploy_environment:
+        description: "Target GitHub deployment environment"
+        type: choice
+        default: production-us
+        options: [production, production-us]
+      source_run_id:
+        description: "record only: workflow run ID of the completed exercise"
+        type: string
+        default: ""
+      source_run_attempt:
+        description: "record only: attempt that produced the exercise artifact"
+        type: string
+        default: "1"
+      receipts_json:
+        description: "record only: completed receipt-template.json; hashes/timestamps only, no URLs or credentials"
+        type: string
+        default: "{}"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: monitoring-qualification-${{ inputs.deploy_environment }}
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.deploy_environment }}
+    timeout-minutes: 10
+    env:
+      QUALIFICATION_FLEET: ${{ inputs.deploy_environment }}
+      QUALIFICATION_REPORT: qualification-output/report.json
+      QUALIFICATION_MODE: ${{ inputs.mode }}
+      QUALIFICATION_SOURCE_RUN: ${{ inputs.source_run_id }}
+      QUALIFICATION_SOURCE_ATTEMPT: ${{ inputs.source_run_attempt }}
+      CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Initialize unknown qualification evidence
+        run: python3 scripts/ops/monitoring_qualification.py --mode initialize
+
+      - name: Validate source selection
+        if: inputs.mode == 'record'
+        run: |
+          [[ "$QUALIFICATION_SOURCE_RUN" =~ ^[1-9][0-9]{0,19}$ && "$QUALIFICATION_SOURCE_ATTEMPT" =~ ^[1-9][0-9]{0,5}$ ]] || {
+            echo '::error::record requires an exercise run ID and attempt'
+            exit 1
+          }
+
+      - name: Download selected exercise evidence
+        if: inputs.mode == 'record'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+          name: monitoring-qualification-${{ inputs.deploy_environment }}-${{ inputs.source_run_id }}-${{ inputs.source_run_attempt }}
+          path: ${{ runner.temp }}/qualification-source
+
+      - name: Set up pinned control-plane SSH
+        env:
+          CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$CP_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$ && -n "$CP_SSH_KEY" && -n "$COMPUTE_KNOWN_HOSTS" ]] || {
+            echo '::error::control-plane SSH credentials and pinned known hosts are required'
+            exit 1
+          }
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CP_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 0600 ~/.ssh/deploy_key
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
+          pinned=0
+          # Clear prior runner entries; accept only keys from the operator pin.
+          : > ~/.ssh/known_hosts
+          while read -r _ key_type key; do
+            [[ -n "${key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> ~/.ssh/known_hosts
+              pinned=1
+            fi
+          done <<<"$scanned"
+          [[ "$pinned" == 1 ]] || {
+            echo '::error::the control-plane host did not present a pinned key'
+            exit 1
+          }
+          chmod 0600 ~/.ssh/known_hosts
+
+      - name: Run selected qualification operation
+        timeout-minutes: 5
+        env:
+          MONITORING_OPERATOR_TOKEN: ${{ secrets.MONITORING_OPERATOR_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          QUALIFICATION_RECEIPTS: ${{ inputs.receipts_json }}
+          QUALIFICATION_SOURCE_FILE: ${{ runner.temp }}/qualification-source/report.json
+        run: |
+          python3 scripts/ops/monitoring_qualification.py \
+            --mode "$QUALIFICATION_MODE" --source "$QUALIFICATION_SOURCE_FILE"
+
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: monitoring-qualification-${{ inputs.deploy_environment }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: qualification-output/*.json
+          if-no-files-found: warn
+          retention-days: 30

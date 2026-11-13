@@ -22,6 +22,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class OperatorService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read normalized managed PostgreSQL usage for an account
    * Operator-only view with effective guardrail ceilings and internal COGS line items. Provider IDs and credentials are never returned.
@@ -37,7 +38,7 @@ export class OperatorService {
      */
     accountId: string,
   }): CancelablePromise<ManagedPostgresUsageOperatorResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/managed-postgres/usage/{account_id}',
       path: {
@@ -70,7 +71,7 @@ export class OperatorService {
      */
     limit?: number,
   }): CancelablePromise<ManagedPostgresAccountingDiagnosticsResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/managed-postgres/accounting/{account_id}',
       path: {
@@ -102,7 +103,7 @@ export class OperatorService {
      */
     requestBody: ManagedPostgresUsageImportRequest,
   }): CancelablePromise<ManagedPostgresUsageImportResult | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/managed-postgres/accounting/{account_id}/usage-imports/preview',
       path: {
@@ -137,7 +138,7 @@ export class OperatorService {
      */
     requestBody: ManagedPostgresUsageImportRequest,
   }): CancelablePromise<ManagedPostgresUsageImportResult | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/managed-postgres/accounting/{account_id}/usage-imports',
       path: {
@@ -170,7 +171,7 @@ export class OperatorService {
      */
     requestBody: ManagedPostgresAccountingReconciliationRequest,
   }): CancelablePromise<ManagedPostgresAccountingReconciliationResult | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/managed-postgres/accounting/{account_id}/reconciliations/preview',
       path: {
@@ -205,7 +206,7 @@ export class OperatorService {
      */
     requestBody: ManagedPostgresAccountingReconciliationRequest,
   }): CancelablePromise<ManagedPostgresAccountingReconciliationResult | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/managed-postgres/accounting/{account_id}/reconciliations',
       path: {
@@ -234,7 +235,7 @@ export class OperatorService {
     idempotencyKey: string,
     requestBody: ObjectStorageUsageReport,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/object-storage/usage-reports',
       headers: {
@@ -257,7 +258,7 @@ export class OperatorService {
     items: Array<OperatorRuntimeConfig>;
     generated_at: string;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/config',
       errors: {
@@ -293,7 +294,7 @@ export class OperatorService {
       expected_version?: number;
     },
   }): CancelablePromise<OperatorRuntimeConfig | OperatorRuntimeConfigOperation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/admin/config/{key}',
       path: {
@@ -326,7 +327,7 @@ export class OperatorService {
      */
     id: string,
   }): CancelablePromise<OperatorRuntimeConfigOperation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/config-operations/{id}',
       path: {
@@ -359,7 +360,7 @@ export class OperatorService {
     key: string,
     requestBody: RollbackOperatorRuntimeConfigRequest,
   }): CancelablePromise<OperatorRuntimeConfig> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/config/{key}/rollback',
       path: {
@@ -397,7 +398,7 @@ export class OperatorService {
   }): CancelablePromise<{
     items: Array<OperatorRuntimeConfigRevision>;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/config/{key}/revisions',
       path: {
@@ -424,7 +425,7 @@ export class OperatorService {
    * @throws ApiError
    */
   public static listOperatorPlatformFlags(): CancelablePromise<OperatorPlatformFlagList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/flags',
       errors: {
@@ -447,7 +448,7 @@ export class OperatorService {
      */
     key: string,
   }): CancelablePromise<OperatorPlatformFlag> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/flags/{key}',
       path: {
@@ -493,7 +494,7 @@ export class OperatorService {
      */
     at?: string,
   }): CancelablePromise<OperatorPlatformFlagDecision> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/flags/{key}/decision',
       path: {
@@ -526,7 +527,7 @@ export class OperatorService {
      */
     id: string,
   }): CancelablePromise<OperatorAccountPlatformFlags> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/accounts/{id}/flags',
       path: {

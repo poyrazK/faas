@@ -34,12 +34,29 @@ func registeredToolOutputSchema(name string) *jsonschema.Schema {
 // Schemas describe stable envelope fields while allowing additive native
 // evidence. Nested diagnostic projections retain their existing versioned
 // contracts; this does not pretend unknown evidence fields are fixed.
+//
+// A tool's output schema describes its successful result only. Errors are
+// answered with isError and the recovery contract (toolErrorSchema), which
+// clients do not validate against outputSchema; repeating that contract in
+// every tool cost about 950 bytes per tool on every turn
+// (ADR-20261103193000, amendment 2026-11-13). The contract is described once,
+// in gregale://contracts/errors and docs/mcp.md.
 func toolOutputSchema(name string) map[string]any {
-	defs := map[string]any{"recovery": recoverySchema()}
-	if isApplyTool(name) || name == "gregale_get_plan" || name == "gregale_verify_plan" || name == "gregale_list_plans" {
+	schema := toolSuccessSchema(name)
+	raw, _ := json.Marshal(schema)
+	defs := map[string]any{}
+	if bytes.Contains(raw, []byte("#/$defs/verification")) {
+		// The verification contract names its next step as a recovery.
 		defs["verification"] = verificationSchema()
+		defs["recovery"] = recoverySchema()
 	}
-	return map[string]any{"type": "object", "anyOf": []any{toolSuccessSchema(name), toolErrorSchema()}, "$defs": defs}
+	if bytes.Contains(raw, []byte("#/$defs/recovery")) {
+		defs["recovery"] = recoverySchema()
+	}
+	if len(defs) > 0 {
+		schema["$defs"] = defs
+	}
+	return schema
 }
 
 func toolSuccessSchema(name string) map[string]any {

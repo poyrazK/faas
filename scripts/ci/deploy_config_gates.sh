@@ -40,6 +40,8 @@ promtool_install() {
 }
 
 rules() {
+  PROMTOOL=promtool python3 scripts/ops/obs_gate_test.py
+  PROMTOOL=promtool python3 scripts/ops/serving_probe_coverage_test.py
   promtool check rules \
     deploy/ansible/roles/prometheus/files/faas.rules.yml \
     deploy/ansible/roles/prometheus/files/data_repair.rules.yml \
@@ -61,6 +63,7 @@ rules() {
 syntax() {
   cd deploy/ansible
   ansible-playbook -i localhost, -c local tests/tcp_tls_config.yml
+  ansible-playbook -i localhost, -c local tests/serving_probe_config.yml
   # The observability smoke playbook converges only in obs-stack-smoke.yml.
   ansible-playbook --syntax-check -i localhost, tests/obs_stack_smoke.yml
   # Gate-A: parse the complete-inventory safety preflight.

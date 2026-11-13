@@ -7542,8 +7542,26 @@ func (m *MemStore) CompareAndSetAppStatus(ctx context.Context, id string, from, 
 	if to != AppActive {
 		m.clearCurrentAppWakeTransitionLocked(id)
 	}
+	if from == AppEvictedCold && to == AppActive {
+		m.clearRecoverableDeploymentParksLocked(id)
+	}
 	m.apps[id] = a
 	return true, nil
+}
+
+// clearRecoverableDeploymentParksLocked mirrors PgStore.wakeAppStatus: a
+// wake clears the app's liveness and lifecycle parks, never a security park.
+func (m *MemStore) clearRecoverableDeploymentParksLocked(appID string) {
+	for id, d := range m.deployments {
+		if d.AppID != appID {
+			continue
+		}
+		switch ParkReason(d.ParkedReason) {
+		case ParkReasonLivenessExhausted, ParkReasonLifecyclePark, ParkReasonAdminPark:
+			d.ParkedReason, d.ParkedAt = "", nil
+			m.deployments[id] = d
+		}
+	}
 }
 
 // RenameApp atomically swaps an app's slug (issue #63). Scans the

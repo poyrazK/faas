@@ -281,8 +281,12 @@ inputs. When you deny it or it expires, the agent gets `stop`, with your
 reason, and stops. `gregale_agent_activity` lists the agent's own write
 requests of the last 7 days, and `gregale_agent_budget` its monthly budget
 and what it committed this month (`core` toolset). An agent's
-`gregale_plan_scale` plan carries `agent_budget`: the cost the change adds,
-the budget left, and whether a person would be asked first.
+`gregale_plan_scale` and `gregale_plan_local_deploy` plans carry
+`agent_budget`: the cost the change adds, the budget left, and whether a
+person would be asked first. A local deploy is priced for the deployment
+settings in the directory's `gregale.yaml` (execution mode, replicas,
+scaling policy); for a new app, a scaling policy's floor is priced when the
+deploy applies it.
 
 An agent can undo its own changes: `gregale_plan_undo` lists them with what
 undoing each will do, and `gregale_apply_undo` applies that plan. Applying
@@ -2739,8 +2743,12 @@ connection is lost. Source uploads retain their separate temporary-input
 lifecycle.
 
 Tool output schemas require stable plan, receipt and identity fields while
-allowing additive native evidence. Errors and plan/status receipts include
-`schema_version: 1` and a structured `recovery` object. Agents should follow
+allowing additive native evidence. They describe successful results only: an
+error is answered with `isError` and structured content that follows one
+error contract for every tool, served as the resource
+`gregale://contracts/errors` (code, message, `recovery`). Errors and
+plan/status receipts include `schema_version: 1` and a structured `recovery`
+object. Agents should follow
 `recovery.action` rather than infer a retry from problem prose:
 
 | Action | Agent behavior |

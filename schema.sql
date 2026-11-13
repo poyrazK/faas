@@ -36264,15 +36264,19 @@ CREATE TABLE public.customer_attention_signals (
     dismissed_at timestamp with time zone,
     dismissed_by uuid,
     dismiss_reason text DEFAULT ''::text NOT NULL,
+    outcome text,
+    ticket_id uuid,
     CONSTRAINT customer_attention_signals_check CHECK (((state = 'resolved'::text) = (resolved_at IS NOT NULL))),
     CONSTRAINT customer_attention_signals_check1 CHECK (((state <> 'dismissed'::text) OR (dismissed_at IS NOT NULL))),
+    CONSTRAINT customer_attention_signals_contact_ticket_check CHECK (((NOT (outcome IS DISTINCT FROM 'contacted'::text)) = (ticket_id IS NOT NULL))),
     CONSTRAINT customer_attention_signals_detail_check CHECK ((octet_length(detail) <= 500)),
     CONSTRAINT customer_attention_signals_dismiss_reason_check CHECK ((octet_length(dismiss_reason) <= 200)),
     CONSTRAINT customer_attention_signals_dismissed_at_check CHECK (((dismissed_at IS NULL) OR isfinite(dismissed_at))),
     CONSTRAINT customer_attention_signals_first_seen_at_check CHECK (isfinite(first_seen_at)),
-    CONSTRAINT customer_attention_signals_kind_check CHECK ((kind = ANY (ARRAY['deploy_failing'::text, 'refused_burst'::text, 'domain_stuck'::text]))),
+    CONSTRAINT customer_attention_signals_kind_v2_check CHECK ((kind = ANY (ARRAY['deploy_failing'::text, 'refused_burst'::text, 'domain_stuck'::text, 'app_oom'::text, 'boot_failing'::text, 'jobs_failing'::text, 'payment_failing'::text, 'limit_pressure'::text]))),
     CONSTRAINT customer_attention_signals_last_seen_at_check CHECK (isfinite(last_seen_at)),
     CONSTRAINT customer_attention_signals_observed_check CHECK ((observed >= 0)),
+    CONSTRAINT customer_attention_signals_outcome_check CHECK (((outcome IS NULL) OR (outcome = ANY (ARRAY['contacted'::text, 'platform_issue'::text, 'already_in_touch'::text, 'not_needed'::text, 'false_positive'::text, 'resolved_on_own'::text])))),
     CONSTRAINT customer_attention_signals_resolved_at_check CHECK (((resolved_at IS NULL) OR isfinite(resolved_at))),
     CONSTRAINT customer_attention_signals_state_check CHECK ((state = ANY (ARRAY['open'::text, 'dismissed'::text, 'resolved'::text]))),
     CONSTRAINT customer_attention_signals_subject_check CHECK (((octet_length(subject) >= 1) AND (octet_length(subject) <= 253)))
@@ -46447,6 +46451,35 @@ CREATE TABLE public.managed_postgres_databases (
     CONSTRAINT managed_postgres_preview_fields_chk CHECK ((((preview_source_database_id IS NULL) AND (preview_environment_id IS NULL) AND (preview_pr_number IS NULL)) OR ((preview_source_database_id IS NOT NULL) AND (preview_source_database_id <> id) AND (preview_environment_id ~ '^[A-Za-z0-9-]{1,64}$'::text) AND (preview_pr_number > 0) AND (previews = 'off'::text)))),
     CONSTRAINT managed_postgres_restore_fields_ck CHECK ((((restore_source_database_id IS NULL) AND (restore_source_resource_id IS NULL) AND (restore_point_in_time IS NULL)) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL))))
 );
+
+
+--
+-- Name: managed_postgres_egress_hold_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_egress_hold_notices (
+    database_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    subject_id uuid NOT NULL,
+    reached_at timestamp with time zone NOT NULL,
+    used_bytes bigint NOT NULL,
+    allowance_bytes bigint NOT NULL,
+    ceiling_bytes bigint NOT NULL,
+    overage_billed boolean NOT NULL,
+    mail_intent_id uuid,
+    CONSTRAINT managed_postgres_egress_hold_notices_allowance_bytes_check CHECK ((allowance_bytes > 0)),
+    CONSTRAINT managed_postgres_egress_hold_notices_check CHECK ((isfinite(reached_at) AND (reached_at >= period_start))),
+    CONSTRAINT managed_postgres_egress_hold_notices_check1 CHECK ((ceiling_bytes >= allowance_bytes)),
+    CONSTRAINT managed_postgres_egress_hold_notices_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT managed_postgres_egress_hold_notices_used_bytes_check CHECK ((used_bytes >= 0))
+);
+
+
+--
+-- Name: TABLE managed_postgres_egress_hold_notices; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_egress_hold_notices IS 'Managed PostgreSQL databases held for sending their own monthly egress allowance, one row per database and UTC month; written only by apid (ADR-20261110160000).';
 
 
 --
@@ -68904,6 +68937,14 @@ ALTER TABLE ONLY public.managed_postgres_databases
 
 
 --
+-- Name: managed_postgres_egress_hold_notices managed_postgres_egress_hold_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_egress_hold_notices
+    ADD CONSTRAINT managed_postgres_egress_hold_notices_pkey PRIMARY KEY (database_id, period_start);
+
+
+--
 -- Name: managed_postgres_health managed_postgres_health_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -81797,6 +81838,13 @@ CREATE INDEX managed_postgres_databases_reconcile_idx ON public.managed_postgres
 --
 
 CREATE INDEX managed_postgres_databases_restore_source_idx ON public.managed_postgres_databases USING btree (restore_source_database_id) WHERE (restore_source_database_id IS NOT NULL);
+
+
+--
+-- Name: managed_postgres_egress_hold_notices_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_egress_hold_notices_subject_idx ON public.managed_postgres_egress_hold_notices USING btree (subject_id);
 
 
 --
@@ -103193,6 +103241,22 @@ ALTER TABLE ONLY public.managed_postgres_databases
 
 ALTER TABLE ONLY public.managed_postgres_databases
     ADD CONSTRAINT managed_postgres_databases_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id);
+
+
+--
+-- Name: managed_postgres_egress_hold_notices managed_postgres_egress_hold_notices_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_egress_hold_notices
+    ADD CONSTRAINT managed_postgres_egress_hold_notices_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_egress_hold_notices managed_postgres_egress_hold_notices_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_egress_hold_notices
+    ADD CONSTRAINT managed_postgres_egress_hold_notices_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --

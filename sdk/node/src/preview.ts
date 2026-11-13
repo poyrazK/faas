@@ -13,11 +13,10 @@
 // sentinels + idempotency + SSE). Customers `import { ... } from
 // '@gregale/sdk-node'` and never touch `src/generated/` directly.
 //
-// The generated services call `OpenAPI.BASE/TOKEN/HEADERS` from
-// `src/generated/core/OpenAPI.ts` — the `FaaSClient` constructor
-// sets these once at construction time. Mutating methods receive a
-// fresh `Idempotency-Key` per logical call, preserved across retries, via
-// the fetch wrapper stack installed on `globalThis.fetch` (see `client.ts`).
+// createClient binds the full service surface to private configuration.
+// Static services and FaaSClient retain their legacy shared state.
+
+export { createClient, type GregaleClient } from './isolated-client-preview.js';
 
 // Generated surface.
 export {
@@ -101,6 +100,7 @@ export {
   type ExecutionEvent,
   type ExecutionEventData,
   type ExecutionEventType,
+  type ExecutionHelpers,
   type RunExecutionOptions,
   type WatchExecutionOptions,
 } from './executions.js';
