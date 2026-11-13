@@ -6815,6 +6815,23 @@ groups:
           description: "More than three hub connections dropped in 15m. Subscriptions go stale until realtimed redials and resubscribes them. Check the hub's health, its TLS certificates and the network path to it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLiveQueries.md"
 
+  - name: faas_customer_attention
+    interval: 1m
+    rules:
+      - alert: FaasCustomerAttentionSpike
+        expr: |
+          (max by (kind) (apid_customer_attention_signals_open)
+            - max by (kind) (apid_customer_attention_signals_open offset 1h)) >= 10
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: customer_attention
+        annotations:
+          summary: "{{ $value }} more customers look stuck ({{ $labels.kind }}) than an hour ago"
+          description: "apid's customer attention evaluator opened at least ten more {{ $labels.kind }} signals within an hour. Many customers failing the same way at once usually means a platform cause (a builder image, a certificate authority, a new refusal code) rather than customer mistakes. Check the staff page of customers who may be stuck and the per-code refusal counter before contacting customers."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerAttentionSpike.md"
+
   - name: faas_stale_deployments
     interval: 30s
     rules:

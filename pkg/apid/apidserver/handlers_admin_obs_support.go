@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -297,6 +298,13 @@ func (s *server) buildTenantDiagnosis(ctx context.Context, target state.Account,
 		unavailable("customer_errors")
 	}
 	d.CustomerErrors = errorsSummary
+
+	d.AttentionSignals = []api.ObsAttentionSignal{}
+	if signals, err := s.attention.List(ctx, attention.Filter{AccountID: target.ID}); err != nil {
+		unavailable("attention_signals")
+	} else {
+		d.AttentionSignals = signals
+	}
 	return d
 }
 

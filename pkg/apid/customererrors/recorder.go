@@ -93,6 +93,10 @@ func (r *Recorder) Dropped() int64 {
 	return r.dropped.Load()
 }
 
+// ValidCode reports whether code is a well-formed problem code, the same
+// check Normalize applies; metrics use it to bound their label values.
+func ValidCode(code string) bool { return codePattern.MatchString(code) }
+
 // Normalize validates and bounds an Event. It reports false when the event
 // cannot be recorded (no account, route or valid code). Optional fields that
 // fail validation are cleared rather than rejected.
