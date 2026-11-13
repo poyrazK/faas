@@ -12,8 +12,24 @@ const isWorkflowCall = (headers) => {
   return false;
 };
 let workflowSDK;
+// The SDK is the function's dependency: resolve it beside the adapter (a
+// deployed function), else from the handler's directory upward (the adapter
+// gregale dev --local writes lives outside the function's tree).
+async function importWorkflowSDKFromHandler() {
+  const fs = await import("node:fs");
+  for (let dir = path.dirname(handlerFile); ; dir = path.dirname(dir)) {
+    const root = path.join(dir, "node_modules", "@gregale", "sdk-node");
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+      const entry = pkg.exports && pkg.exports["./workflows"];
+      const rel = typeof entry === "string" ? entry : entry && (entry.import || entry.default);
+      if (rel) return import(urlModule.pathToFileURL(path.join(root, rel)).href);
+    } catch (_) {}
+    if (path.dirname(dir) === dir) throw new Error("@gregale/sdk-node is not installed");
+  }
+}
 async function loadWorkflowSDK() {
-  if (!workflowSDK) workflowSDK = import("@gregale/sdk-node/workflows");
+  if (!workflowSDK) workflowSDK = import("@gregale/sdk-node/workflows").catch(() => importWorkflowSDKFromHandler());
   return workflowSDK;
 }
 function workflowDefinition(sdk, name) {

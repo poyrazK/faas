@@ -537,6 +537,15 @@ In Python, write `async def handler(input, wf)` with the same operations
   `requirements.txt` or `pyproject.toml`); `gregale deploy` refuses it
   otherwise. Workflows are available on Hobby and higher plans.
 
+`gregale dev --local` drives workflow functions in process: steps and
+`wf.call` really run against the local functions, sleeps finish at once
+(`--workflow-sleep-scale 0.01` runs them at 1% of their length instead), and an
+event wait lasts until the event arrives. Start a run and wait for its output
+with `gregale dev trigger --local workflow order-followup --data '{"id":1}'`,
+send the latest unfinished run an event with
+`gregale dev trigger --local workflow order-followup --event refund_approval --data '{"approved":true}'`,
+or use `start()` and the run handle from another local function.
+
 ## Snapshot hooks
 
 A parked function wakes from a snapshot of its workers, so anything they set
