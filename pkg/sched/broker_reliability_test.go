@@ -124,8 +124,11 @@ func TestBrokerReliabilityKafkaPoisonRecordBoundsRetainedPayloads(t *testing.T) 
 			t.Fatal(err)
 		}
 	}
+	// Settled records behind the poison keep only their offsets: no payload
+	// bytes, and at most the settled backlog bound (100 batches, ADR-
+	// 20261101093512 amendment 2026-11-13) while the partition drains.
 	count, bytes := sched.ReliabilityKafkaBuffered(poller)
-	if count > 100 || bytes != 0 {
+	if count > 100*100 || bytes != 0 {
 		t.Fatalf("one poison record retained %d settled payloads (%d bytes) while continuing to drain the partition; commits=%v", count, bytes, reader.commits())
 	}
 }
