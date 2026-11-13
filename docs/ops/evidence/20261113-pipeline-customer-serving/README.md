@@ -46,4 +46,7 @@ The source-aware runner requires direct Neon URLs and reviewed source-provider
 evidence separately from destination evidence. The existing positive native
 WAL cap of at most 1 GiB remains mandatory.
 
-CI results and the review URL will be recorded here after the branch is checked.
+Review and the complete CI results are tracked in
+[PR #7219](https://github.com/poyrazK/faas/pull/7219). The race-enabled native
+acceptance check must pass before this draft is ready for review. No merge or
+deployment is performed by the provider runner.
