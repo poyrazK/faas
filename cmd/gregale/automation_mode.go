@@ -35,11 +35,12 @@ func extractAutomationFlag(args []string) ([]string, error) {
 		if arg == "--http-timeout" || strings.HasPrefix(arg, "--http-timeout=") {
 			value := strings.TrimPrefix(arg, "--http-timeout=")
 			if arg == "--http-timeout" {
-				if i+1 >= len(args) {
+				rest := args[i+1:]
+				if len(rest) == 0 {
 					return out, errors.New("--http-timeout requires a positive duration, such as 90s or 2m")
 				}
+				value = rest[0]
 				i++
-				value = args[i]
 			}
 			if err := setHTTPRequestTimeout(value); err != nil {
 				// Do not let another global parser interpret or print the
