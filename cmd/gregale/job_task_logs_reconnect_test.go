@@ -54,7 +54,7 @@ func TestJobLogReconnectReplayAndAttemptBoundaries(t *testing.T) {
 		{name: "retained window lost new output", responses: []string{a, gap + c + finished}, stdout: "one\nthree\n", lines: 2, calls: 2, gaps: true},
 		{name: "unconfirmed replay gap", responses: []string{a, gap + finished}, stdout: "one\n", lines: 1, calls: 2, gaps: true, unverified: true},
 		{name: "empty resumed attempt", responses: []string{a, finished}, stdout: "one\n", lines: 1, calls: 2, unverified: true},
-		{name: "unidentified resumed output is not duplicated", responses: []string{a, reconnectLog("", 1, "stdout", "one") + finished}, stdout: "one\n", lines: 1, calls: 2, unverified: true, wantErr: true},
+		{name: "unidentified resumed output is not duplicated", responses: []string{a, reconnectLog("", 1, "stdout", "one") + finished}, stdout: "one\n", lines: 1, calls: 2, wantErr: true},
 		{name: "attempt changed while disconnected", responses: []string{a + b + c, reconnectLog("vm-b", 1, "stdout", "new attempt") + finished}, stdout: "one\nthree\nnew attempt\n", stderr: "two\n", lines: 4, calls: 2, attemptChanges: 1},
 		{name: "normal attempt transition", responses: []string{a + reconnectLog("vm-b", 1, "stdout", "new attempt") + finished}, stdout: "one\nnew attempt\n", lines: 2, calls: 1, complete: true},
 		{name: "missing instance cannot be replayed", responses: []string{reconnectLog("", 1, "stdout", "legacy")}, stdout: "legacy\n", lines: 1, calls: 1, wantErr: true},

@@ -38,7 +38,7 @@ func followJobTaskLogsWithRetry(ctx context.Context, client *api.Client, job, ru
 		if live.replay.gapPending {
 			live.Gaps++ // No following line proved that the gap was already printed.
 		}
-		live.UnverifiedResume = live.replay.opening && live.Lines > 0
+		live.UnverifiedResume = err == nil && live.Reason == api.JobTaskLogsEndFinished && live.replay.opening && live.Lines > 0
 	}()
 	for attempt := 0; ; attempt++ {
 		if ctx.Err() != nil {
