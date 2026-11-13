@@ -25,12 +25,23 @@ func TestPrivateToolInvocationOperatorGate(t *testing.T) {
 				flag = "1"
 			}
 			t.Setenv("FAAS_MCP_PRIVATE_TOOL_INVOCATION", flag)
-			env, _ := apidserver.SetupChangePlan(t, api.PlanPro, "")
+			handler, store := apidserver.NewCliAuthTestServer(t)
+			owner, err := store.CreateAccount(t.Context(), "private-owner@example.com", api.PlanPro)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ownerToken, ownerHash, err := api.GenerateAPIKey()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.CreateAPIKey(t.Context(), owner.ID, ownerHash, "owner", api.ScopesAdminOnly); err != nil {
+				t.Fatal(err)
+			}
 			req := httptest.NewRequest(http.MethodPost, "/v1/keys", strings.NewReader(`{"label":"private-agent","scopes":["agent"]}`))
-			req.Header.Set("Authorization", "Bearer "+*env.Key())
+			req.Header.Set("Authorization", "Bearer "+ownerToken)
 			req.Header.Set("Content-Type", "application/json")
 			created := httptest.NewRecorder()
-			(*env.H()).ServeHTTP(created, req)
+			handler.ServeHTTP(created, req)
 			var key api.APIKeyResponse
 			if created.Code != http.StatusCreated || json.Unmarshal(created.Body.Bytes(), &key) != nil {
 				t.Fatalf("agent key: %d %s", created.Code, created.Body.String())
@@ -39,20 +50,20 @@ func TestPrivateToolInvocationOperatorGate(t *testing.T) {
 				method, path, token string
 				want                int
 			}{
-				{http.MethodGet, "/v1/tool-oauth-connections", *env.Key(), http.StatusOK},
+				{http.MethodGet, "/v1/tool-oauth-connections", ownerToken, http.StatusOK},
 				{http.MethodGet, "/v1/tool-oauth-connections", key.Plaintext, http.StatusForbidden},
 				{http.MethodPut, "/v1/tool-oauth-connections/" + uuid.NewString(), key.Plaintext, http.StatusForbidden},
 				{http.MethodDelete, "/v1/tool-oauth-connections/" + uuid.NewString(), key.Plaintext, http.StatusPreconditionRequired},
 				{http.MethodGet, "/v1/tool-oauth-connections/" + uuid.NewString() + "/authorization", key.Plaintext, http.StatusForbidden},
 				{http.MethodPost, "/v1/tool-oauth-connections/" + uuid.NewString() + "/authorization", key.Plaintext, http.StatusForbidden},
-				{http.MethodGet, "/v1/tool-oauth-connections/" + uuid.NewString() + "/authorization", *env.Key(), http.StatusNotFound},
+				{http.MethodGet, "/v1/tool-oauth-connections/" + uuid.NewString() + "/authorization", ownerToken, http.StatusNotFound},
 				{http.MethodGet, "/v1/delegated-tool-connections/" + uuid.NewString(), key.Plaintext, http.StatusNotFound},
 			} {
 				request := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
 				request.Header.Set("Authorization", "Bearer "+tc.token)
 				request.Header.Set("Content-Type", "application/json")
 				response := httptest.NewRecorder()
-				(*env.H()).ServeHTTP(response, request)
+				handler.ServeHTTP(response, request)
 				if response.Code != tc.want {
 					t.Fatalf("%s %s: %d %s", tc.method, tc.path, response.Code, response.Body.String())
 				}
@@ -61,15 +72,15 @@ func TestPrivateToolInvocationOperatorGate(t *testing.T) {
 					if json.Unmarshal(response.Body.Bytes(), &problem) != nil || problem.Code != api.CodeApprovalRequired || problem.AgentApproval == nil {
 						t.Fatal("agent deletion did not retain the native approval gate")
 					}
-					_, cookie, form := apidserver.RenderAgentApprovalForTestAs(t, *env.H(), problem.AgentApproval.ID, (*env.Acct()).Email)
-					if approved := apidserver.DecideAgentApprovalForTest(t, *env.H(), problem.AgentApproval.ID, cookie, form, "approve"); approved.Code != http.StatusOK {
+					_, cookie, form := apidserver.RenderAgentApprovalForTestAs(t, handler, problem.AgentApproval.ID, owner.Email)
+					if approved := apidserver.DecideAgentApprovalForTest(t, handler, problem.AgentApproval.ID, cookie, form, "approve"); approved.Code != http.StatusOK {
 						t.Fatalf("approve deletion: %d %s", approved.Code, approved.Body)
 					}
 					// A person's approval does not give this agent owner credentials.
 					retry := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
 					retry.Header = request.Header.Clone()
 					denied := httptest.NewRecorder()
-					(*env.H()).ServeHTTP(denied, retry)
+					handler.ServeHTTP(denied, retry)
 					if denied.Code != http.StatusForbidden {
 						t.Fatalf("approved agent deletion bypassed owner authorization: %d %s", denied.Code, denied.Body)
 					}
@@ -79,7 +90,7 @@ func TestPrivateToolInvocationOperatorGate(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+key.Plaintext)
 			req.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
-			(*env.H()).ServeHTTP(response, req)
+			handler.ServeHTTP(response, req)
 			want := http.StatusServiceUnavailable
 			if enabled {
 				want = http.StatusBadRequest
