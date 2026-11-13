@@ -367,6 +367,11 @@ func newKafkaPoller(t sqlc.Trigger) (triggerSource, error) {
 // Kind returns the trigger kind this poller handles.
 func (k *kafkaPoller) Kind() string { return "kafka" }
 
+// kafkaSettledBacklogBatches bounds settled-but-uncommitted records, in
+// batches: 100 batches of 100 is 10,000 offsets (well under 1 MiB) per
+// trigger, and at most that many records run again after a restart.
+const kafkaSettledBacklogBatches = 100
+
 // Poll fetches up to batchMax messages. We use FetchMessage
 // (non-committing) so we can hold the messages across the
 // dispatch tick and only commit them after the function returns
@@ -376,11 +381,6 @@ func (k *kafkaPoller) Kind() string { return "kafka" }
 //   - context cancel  (schedd shutdown / per-tick deadline)
 //   - empty fetch     (no messages available right now)
 //   - PollResult.Error (broker-side problem)
-// kafkaSettledBacklogBatches bounds settled-but-uncommitted records, in
-// batches: 100 batches of 100 is 10,000 offsets (well under 1 MiB) per
-// trigger, and at most that many records run again after a restart.
-const kafkaSettledBacklogBatches = 100
-
 func (k *kafkaPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	limit := k.batchMax
 	if t.BatchSizeMax > 0 && t.BatchSizeMax < int32(limit) {
