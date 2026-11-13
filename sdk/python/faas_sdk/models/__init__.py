@@ -854,6 +854,7 @@ from .failure_rules import FailureRules
 from .failure_rules_uncertain_outcome import FailureRulesUncertainOutcome
 from .failure_rules_unmatched_failure import FailureRulesUnmatchedFailure
 from .failure_rules_version import FailureRulesVersion
+from .feature_hint import FeatureHint
 from .field_error import FieldError
 from .financial_allocation import FinancialAllocation
 from .financial_app_cost_allocation import FinancialAppCostAllocation
@@ -3555,6 +3556,7 @@ __all__ = (
     "FailureRulesUncertainOutcome",
     "FailureRulesUnmatchedFailure",
     "FailureRulesVersion",
+    "FeatureHint",
     "FieldError",
     "FinancialAllocation",
     "FinancialAppCostAllocation",

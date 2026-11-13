@@ -74,6 +74,8 @@ type Handler struct {
 	Routes               RouteResolver
 	managedAuthorization map[string]string
 	responseCache        *outboundResponseCache
+	// semanticIndex is the semantic cache's index (ADR 20261112194947).
+	semanticIndex *aiSemanticIndex
 	// vertexTokens caches exchanged Google access tokens (ADR-991).
 	vertexTokens vertexTokenCache
 	// keyPools holds local key cooldowns and round-robin positions.
@@ -190,6 +192,7 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		Client:                 client,
 		workflowClient:         workflowClient,
 		responseCache:          responseCache,
+		semanticIndex:          newAISemanticIndex(),
 		MaxBodyBytes:           defaultMaxBodyBytes,
 		MaxResponseBytes:       defaultMaxResponseBytes,
 		MaxResponseHeaderBytes: defaultMaxResponseHeaderBytes,
@@ -672,6 +675,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// every signed or exchanged token, shares one entry (ADR-991).
 		cacheKey = h.responseCache.key(integration.ID, principalID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq, cacheBody)
 	}
+	// ADR 20261112194947: the semantic partition is keyed here too, before
+	// the credential is applied.
+	var semantic *aiSemanticCandidate
+	var semanticErr error
+	if cacheEligible && integration.AISemanticCache != nil && !isReplay && !isInternal {
+		semantic, semanticErr = h.semanticCandidate(integration, aiPlan, aiReq, upstreamReq, principalID, aiEndUser)
+	}
 	if integration.ProviderAuthMode == ProviderAuthManaged {
 		// The guest may send an Authorization header, but it cannot replace
 		// or read the provider credential held by outboundd.
@@ -715,6 +725,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		upstreamStarted = time.Now()
+	}
+	// ADR 20261112194947: the semantic index is searched after the check,
+	// since a similar prompt was never checked.
+	var semanticVector []float32
+	switch {
+	case cacheHit:
+	case semantic != nil:
+		var cached *http.Response
+		if cached, semanticVector = h.semanticLookup(ctx, w, integration, semantic, metricIntegrationID); cached != nil {
+			resp, cacheHit = cached, true
+			dependencySpan.SetAttributes(attribute.Bool("gregale.outbound.cache_hit", true),
+				attribute.String("gregale.ai.semantic_similarity", w.Header().Get(AISimilarityHeader)))
+		}
+		upstreamStarted = time.Now()
+	case semanticErr != nil:
+		h.Metrics.ObserveAISemanticCache(metricIntegrationID, aiSemanticSkipped)
 	}
 	if !cacheHit {
 		cooldown, ok := h.Backend.(ProviderCooldownBackend)
@@ -814,6 +840,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil && cacheEligible {
 			h.responseCache.storeResponse(cacheKey, resp, integration.ResponseCacheTTLSeconds, time.Now(), h.MaxResponseHeaderBytes, h.MaxResponseHeaders, h.MaxResponseBytes)
+			if semanticVector != nil && resp.StatusCode == http.StatusOK {
+				// A hit still needs the answer in the response cache.
+				h.semanticIndex.add(integration.ID, semantic.partition, cacheKey, semanticVector)
+			}
 		}
 	}
 	dependencySpan.SetAttributes(attribute.Int("gregale.outbound.attempt_count", attempts))

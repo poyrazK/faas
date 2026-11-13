@@ -14738,6 +14738,7 @@
       "ai_response_moderation",
       "ai_response_payment_card",
       "ai_response_secret",
+      "ai_semantic_cache",
       "ai_trace_max_calls",
       "ai_trace_max_cost_millicents",
       "ai_trace_max_repeated_tool_calls",

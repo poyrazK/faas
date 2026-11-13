@@ -7237,6 +7237,33 @@ func (v *JailerVMM) guestStopRequested(instance string) bool {
 // with the workload's own last output lines, in the same form as a
 // characterization report of a workload that exited during startup.
 func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
+	return v.guestStopped(l, fmt.Sprintf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance))
+}
+
+// ExplainGuestStop reports a guest that passed readiness and then stopped
+// before its wake finished, from the workload's own output, the way
+// guestStoppedDuringStartup reports one that stopped before readiness. Hunt
+// 34 H34-35: a crash-looping essential companion ended guest-init just after
+// the main workload answered its readiness probe, and the deploy failed with
+// "apply current app CPU policy: … connection refused" and none of the
+// companion's output.
+func (v *JailerVMM) ExplainGuestStop(l Lease) error {
+	v.mu.Lock()
+	rec := v.recs[l.Instance]
+	v.mu.Unlock()
+	if rec != nil && rec.done != nil {
+		select {
+		case <-rec.done:
+			// The tailer copies the guest's last lines into the ring once
+			// the process has exited.
+			v.awaitConsoleDrain(l.Instance, rec)
+		default:
+		}
+	}
+	return v.guestStopped(l, fmt.Sprintf("workload stopped during startup (guest %s exited after becoming ready)", l.Instance))
+}
+
+func (v *JailerVMM) guestStopped(l Lease, detail string) error {
 	var lines []string
 	if ring := v.LogRing(l.Instance); ring != nil {
 		// Seq starts at 1; Snapshot(0) means "tail from now" and returned
@@ -7246,7 +7273,6 @@ func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 			lines = append(lines, line.Line)
 		}
 	}
-	detail := fmt.Sprintf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance)
 	if tail := workloadOutputTail(lines, 20); tail != "" {
 		detail += ": " + tail
 	}
@@ -7278,6 +7304,8 @@ var supervisedWorkloadMarkers = []string{
 	"guest-init: main restart (",
 	"app crash-looped after ",
 	"app restart budget exhausted",
+	// A companion's restarts: "guest-init: sidecar echo crashed (restart 1/3): …".
+	" crashed (restart ",
 }
 
 func supervisedWorkloadExited(lines []string) bool {

@@ -5876,7 +5876,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		needsPolicyApply := lease.CPUMillicores != policy.cpuMillicores || hasWorkloadName(inst.WorkloadNames, WorkloadNameMain)
 		if hasPolicy && !req.ExecutionOnly && needsPolicyApply {
 			if err := m.applyAppCPULimit(ctx, inst, policy.cpuMillicores); err != nil {
-				return nil, m.wakeStepError(req.Instance, "apply current app CPU policy", err)
+				return nil, m.wakeStepError(lease, "apply current app CPU policy", err)
 			}
 			lease.CPUMillicores = policy.cpuMillicores
 			inst.Lease.CPUMillicores = policy.cpuMillicores
@@ -5901,7 +5901,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			delete(m.waking, req.Instance)
 			m.dropFunctionStartingLocked(req.Instance, inst.Lease.processGeneration)
 			m.mu.Unlock()
-			err = fmt.Errorf("wake %s: firecracker exited before lifecycle registration (exit code %d)", req.Instance, exitCode)
+			err = m.guestExitError(lease, exitCode, fmt.Errorf("wake %s: firecracker exited before lifecycle registration (exit code %d)", req.Instance, exitCode))
 			return nil, err
 		}
 		delete(m.waking, req.Instance)
@@ -7640,20 +7640,49 @@ var (
 // exited, the exit is the cause and the step's error (typically a refused
 // vsock dial) only a symptom, so the exit leads the message (Hunt 34 H34-35:
 // a guest that stopped during boot read as an app CPU policy fault).
-func (m *Manager) wakeStepError(instance, step string, err error) error {
+func (m *Manager) wakeStepError(lease Lease, step string, err error) error {
+	instance := lease.Instance
 	deadline := time.Now().Add(wakeStepExitGrace)
 	for {
 		m.mu.Lock()
 		exitCode, exited := m.pendingProcessExits[instance]
 		m.mu.Unlock()
 		if exited {
-			return fmt.Errorf("wake %s: firecracker exited during boot (exit code %d); %s then failed: %w", instance, exitCode, step, err)
+			return m.guestExitError(lease, exitCode, fmt.Errorf("wake %s: firecracker exited during boot (exit code %d); %s then failed: %w", instance, exitCode, step, err))
 		}
 		if !time.Now().Before(deadline) {
 			return fmt.Errorf("wake %s: %s: %w", instance, step, err)
 		}
 		time.Sleep(wakeStepExitPoll)
 	}
+}
+
+// guestStopExplainer names why a guest stopped during its wake from what its
+// workloads printed (JailerVMM.ExplainGuestStop).
+type guestStopExplainer interface {
+	ExplainGuestStop(Lease) error
+}
+
+// guestExitError reports a Firecracker exit found after the guest passed
+// readiness. A guest stops on its own when guest-init exits, most often
+// because a supervised workload crash-looped, and the workload's output is
+// what the deploy needs to show: an essential companion whose command failed
+// stopped the guest just after the main workload became ready, and the
+// deploy said only that a vsock dial was refused (Hunt 34 H34-35). The
+// explainer's startup-crash problem carries that output to the caller; cause
+// stays in the chain for the operator log. Only a clean Firecracker exit is
+// the guest's own doing (guest-init's exit panics the kernel, which reboots,
+// and Firecracker exits 0); a signal or error exit stays a platform failure.
+func (m *Manager) guestExitError(lease Lease, exitCode int, cause error) error {
+	explainer, ok := m.vmm.(guestStopExplainer)
+	if !ok || exitCode != 0 {
+		return cause
+	}
+	explained := explainer.ExplainGuestStop(lease)
+	if explained == nil {
+		return cause
+	}
+	return fmt.Errorf("%w: %w", cause, explained)
 }
 
 func hasWorkloadName(names []string, want string) bool {

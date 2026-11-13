@@ -405,6 +405,7 @@ export type { ExecutionWorkflowStatusCounts } from './ExecutionWorkflowStatusCou
 export type { ExecutionWorkflowUsage } from './ExecutionWorkflowUsage.js';
 export type { FailureRule } from './FailureRule.js';
 export type { FailureRules } from './FailureRules.js';
+export type { FeatureHint } from './FeatureHint.js';
 export type { FieldError } from './FieldError.js';
 export type { FinancialAllocation } from './FinancialAllocation.js';
 export type { FinancialAppCostAllocation } from './FinancialAppCostAllocation.js';
