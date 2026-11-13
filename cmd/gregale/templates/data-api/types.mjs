@@ -491,8 +491,11 @@ export function enrichOpenAPI(document, snapshot, schema) {
     const required = columns.filter(c => kind === 'Row' || kind === 'Insert' && c.insertable && !c.optional).map(c => c.name)
     return { type: 'object', properties, ...(required.length ? { required } : {}), ...(kind === 'Row' ? {} : { additionalProperties: false }) }
   }
-  for (const table of snapshot.tables.filter(t => t.schema === schema)) {
-    for (const kind of table.view ? ['Row'] : ['Row', 'Insert', 'Update']) document.definitions[`${schema}.${table.name}.${kind}`] = object(table.columns, kind)
+  for (const table of snapshot.tables) {
+    // An approved RPC can return a row from another exposed schema. Its row
+    // contract must be resolvable even though this profile has no path for it.
+    for (const kind of table.view || table.schema !== schema ? ['Row'] : ['Row', 'Insert', 'Update']) document.definitions[`${table.schema}.${table.name}.${kind}`] = object(table.columns, kind)
+    if (table.schema !== schema) continue
     const path = document.paths?.[`/${table.name}`]
     if (!path) continue
     for (const method of ['get', 'post', 'patch', 'delete']) {

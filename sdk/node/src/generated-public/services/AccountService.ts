@@ -6,6 +6,7 @@ import type { AccountDeletionResponse } from '../models/AccountDeletionResponse.
 import type { AccountEgressAllowlistExtraResponse } from '../models/AccountEgressAllowlistExtraResponse.js';
 import type { AccountEmailChangeRequest } from '../models/AccountEmailChangeRequest.js';
 import type { AccountExportResponse } from '../models/AccountExportResponse.js';
+import type { AccountHealth } from '../models/AccountHealth.js';
 import type { AccountOverageCapResponse } from '../models/AccountOverageCapResponse.js';
 import type { AccountProfileUpdate } from '../models/AccountProfileUpdate.js';
 import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsResponse.js';
@@ -299,6 +300,12 @@ export class AccountService {
    * pays for another account or organization answers 409
    * `billing_email_in_use`.
    *
+   * The optional `salesperson_code` requires a verified browser session and
+   * applies only before the first paid personal-account purchase. Invalid or
+   * unavailable codes return 400; an existing different referral or prior
+   * paid purchase returns 409. A saved referral survives checkout retries
+   * and provider failures. Only a confirmed invoice payment earns credit.
+   *
    * Asking for the plan the account already pays for keeps its
    * subscription: a scheduled cancellation or downgrade is undone and the
    * 200 carries `plan_change_status: scheduled_change_undone`. A
@@ -372,6 +379,32 @@ export class AccountService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Account health.
+   * Returns what may stop the calling account from working: restrictions
+   * such as a suspension, failed payment or unverified email with the
+   * next step, failed deployments from the last 7 days, custom domains
+   * that are not serving, and API requests refused in the last 24 hours
+   * with their problem codes and request ids. Internal review details are
+   * never included. Available to suspended and past-due accounts.
+   *
+   * @returns AccountHealth The account health checks.
+   * @throws ApiError
+   */
+  public static getAccountHealth(): CancelablePromise<AccountHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/health',
+      errors: {
+        401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

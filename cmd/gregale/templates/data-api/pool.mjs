@@ -31,41 +31,46 @@ const unknown = reason => ({ state: 'unknown', checked_at: new Date().toISOStrin
 // The pinned admin handler checks SQL twice before exporting metrics when its
 // listener is disabled. Keep pending work shared after a caller's shorter timeout.
 export function createPoolObservation(port, capacity) {
-  let pending
-  return () => {
-    pending ??= new Promise(resolve => {
-      let settled = false, response, bytes = 0
-      const chunks = []
-      const finish = (counts, reason) => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        response?.destroy()
-        request.destroy()
-        resolve(counts ? { state: 'observed', checked_at: new Date().toISOString(), ...counts } : unknown(reason))
-      }
-      const request = http.get({ hostname: '127.0.0.1', port, path: '/metrics', agent: false, headers: { Accept: 'text/plain' } }, res => {
-        response = res
-        res.on('error', () => finish(null, 'unavailable'))
-        res.on('aborted', () => finish(null, 'unavailable'))
-        if (res.statusCode !== 200) return finish(null, res.statusCode === 404 ? 'unsupported' : 'unavailable')
-        res.on('data', chunk => {
-          bytes += chunk.length
-          if (bytes > limits.healthBytes) return finish(null, 'too_large')
-          chunks.push(chunk)
+  let pending, cancel
+  const observe = () => {
+    if (!pending) {
+      const work = new Promise(resolve => {
+        let settled = false, response, bytes = 0
+        const chunks = []
+        const finish = (counts, reason) => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          response?.destroy()
+          request.destroy()
+          resolve(counts ? { state: 'observed', checked_at: new Date().toISOString(), ...counts } : unknown(reason))
+        }
+        const request = http.get({ hostname: '127.0.0.1', port, path: '/metrics', agent: false, headers: { Accept: 'text/plain' } }, res => {
+          response = res
+          res.on('error', () => finish(null, 'unavailable'))
+          res.on('aborted', () => finish(null, 'unavailable'))
+          if (res.statusCode !== 200) return finish(null, res.statusCode === 404 ? 'unsupported' : 'unavailable')
+          res.on('data', chunk => {
+            bytes += chunk.length
+            if (bytes > limits.healthBytes) return finish(null, 'too_large')
+            chunks.push(chunk)
+          })
+          res.on('end', () => {
+            const counts = parsePoolMetrics(Buffer.concat(chunks).toString('utf8'), capacity)
+            finish(counts, 'invalid_metrics')
+          })
         })
-        res.on('end', () => {
-          const counts = parsePoolMetrics(Buffer.concat(chunks).toString('utf8'), capacity)
-          finish(counts, 'invalid_metrics')
-        })
-      })
-      const timer = setTimeout(() => finish(null, 'timeout'), limits.queryMs)
-      request.on('error', () => finish(null, 'unavailable'))
-    }).finally(() => { pending = undefined })
+        const timer = setTimeout(() => finish(null, 'timeout'), limits.queryMs)
+        cancel = () => finish(null, 'unavailable')
+        request.on('error', () => finish(null, 'unavailable'))
+      }).finally(() => { if (pending === work) { pending = undefined; cancel = undefined } })
+      pending = work
+    }
     const work = pending
     return new Promise(resolve => {
       const timer = setTimeout(() => resolve(unknown('timeout')), limits.healthProbeMs)
       work.then(value => { clearTimeout(timer); resolve(value) })
     })
   }
+  return Object.assign(observe, { invalidate() { cancel?.(); pending = undefined; cancel = undefined } })
 }

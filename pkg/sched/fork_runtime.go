@@ -186,7 +186,8 @@ func (e *Engine) bootFork(ctx context.Context, ins state.Instance, app state.App
 		StartupDeadlineS: startupDeadlineForApp(app, acct.Plan), ExecutionMode: executionModeForApp(app),
 		Plan: acct.Plan, AccountID: acct.ID, AppID: app.ID, DeploymentID: dep.ID,
 		Port: deploymentRuntimePort(dep), HealthcheckPath: healthcheckPathForApp(dep, app),
-		Runtime: app.Runtime, AppProtocol: app.AppProtocol,
+		RoutedPortRawTCP: routedPortRawTCPForApp(dep, app, healthcheckPathForApp(dep, app), false),
+		Runtime:          app.Runtime, AppProtocol: app.AppProtocol,
 		Quarantine: true,
 	}
 	if spec.BaseKey == "" || !spec.Plan.Valid() {

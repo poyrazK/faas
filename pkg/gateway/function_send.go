@@ -15,6 +15,7 @@ type FunctionSendStore interface {
 	AsyncRouteInvocationStore
 	AccountByID(context.Context, string) (state.Account, error)
 	DeploymentByID(context.Context, string) (state.Deployment, error)
+	AppBySlug(context.Context, string) (state.App, error)
 }
 
 // functionSendRuleID labels sends in async-route metrics; no edge rule exists.
@@ -71,12 +72,18 @@ func NewFunctionSendAdmitter(store FunctionSendStore) ServiceProxyAsyncAdmitter 
 			}
 			scope = deployment.Scope
 		}
+		onComplete, problem := functionSendCompletionTarget(r, store, caller, app)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return true
+		}
 		request := r.Clone(r.Context())
 		request.Header = r.Header.Clone()
 		// The stored request replays straight to the callee; the marker has done
 		// its job here. X-Gregale-Function-Call stays, so the callee still checks
 		// the input against its schema when the invocation runs.
 		request.Header.Del(api.FunctionInvokeHeader)
+		request.Header.Del(api.FunctionOnCompleteHeader)
 		// The caller's release and request deadline belong to the caller's
 		// request, not to work that runs later under its own deadline.
 		request.Header.Del(api.ReleaseHeader)
@@ -84,7 +91,7 @@ func NewFunctionSendAdmitter(store FunctionSendStore) ServiceProxyAsyncAdmitter 
 		u := *r.URL
 		u.Path, u.RawPath = path, ""
 		request.URL = &u
-		h := Handler{asyncRoutes: functionSendEnqueuer{store: store}}
+		h := Handler{asyncRoutes: functionSendEnqueuer{store: store, sender: caller.AppID, onComplete: onComplete}}
 		rule := &EdgeRuleAsyncResolved{ID: functionSendRuleID, AccountID: app.AccountID, AppID: app.ID}
 		return h.applyEdgeRuleAsync(w, request, App{
 			ID: app.ID, AccountID: app.AccountID, Plan: account.Plan, Scope: scope,
@@ -93,10 +100,46 @@ func NewFunctionSendAdmitter(store FunctionSendStore) ServiceProxyAsyncAdmitter 
 	}
 }
 
-type functionSendEnqueuer struct{ store AsyncRouteInvocationStore }
+// functionSendEnqueuer stamps the send's sender and completion target onto
+// the async route request.
+type functionSendEnqueuer struct {
+	store              AsyncRouteInvocationStore
+	sender, onComplete string
+}
 
 func (e functionSendEnqueuer) EnqueueAsyncRoute(ctx context.Context, r AsyncRouteRequest) (AsyncRouteAccepted, error) {
+	r.SentByAppID, r.OnCompleteAppID = e.sender, e.onComplete
 	return EnqueueAsyncRoute(ctx, e.store, r)
+}
+
+// functionSendCompletionTarget resolves X-Gregale-On-Complete to an app id:
+// the caller itself for "self", else a name in the caller's own
+// function_callables. The completion goes to an app the caller may already
+// call, in its account; anything else is refused before the send is queued.
+func functionSendCompletionTarget(r *http.Request, store FunctionSendStore, caller ServiceCaller, target state.App) (string, *api.Problem) {
+	name := r.Header.Get(api.FunctionOnCompleteHeader)
+	if name == "" {
+		return "", nil
+	}
+	if caller.AppID == "" {
+		return "", api.ErrValidation("onComplete needs a calling function")
+	}
+	if name == api.FunctionOnCompleteSelf {
+		return caller.AppID, nil
+	}
+	callerApp, err := store.AppByID(r.Context(), caller.AppID)
+	if err != nil {
+		return "", api.ErrCapacity("async send caller unavailable")
+	}
+	slug, ok := callerApp.Manifest.FunctionCallables[name]
+	if !ok {
+		return "", api.ErrValidation("onComplete names " + name + ", which this function cannot call; use a name from its functions or \"self\"")
+	}
+	app, err := store.AppBySlug(r.Context(), slug)
+	if err != nil || app.AccountID != callerApp.AccountID || app.AccountID != target.AccountID {
+		return "", api.ErrValidation("onComplete names " + name + ", which is not available")
+	}
+	return app.ID, nil
 }
 
 // ChainServiceProxyAsyncAdmitters runs admitters in order; the first that

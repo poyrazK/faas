@@ -3,7 +3,7 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "c1d9bca4438e4a07034e074ba8002c9ebc3f6aa4096c318551a19b4278f08e77",
+      "revision": "ed1bcc7effefce7107fc9800aa71530d6424278d9e09d02e9f9907e0b8fa7625",
       "expected": {
         "id": "gregale-core-v1",
         "revision": "1687432ce22245d54fe46a82da0b2068207e9022db7e9145254836b44065449e",
@@ -1248,8 +1248,8 @@
           }
         ]
       },
-      "alert_set_revision": "e10e62f57ddaa96362c4af7345e9bdc2d5dc48b866a005b290e08b7ed0138efe",
-      "alert_count": 548,
+      "alert_set_revision": "b85e814640fce4d638937e8294d9563351d194e17c0332de72c62dd420cf700d",
+      "alert_count": 549,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -2832,7 +2832,7 @@
       ]
     },
     {
-      "revision": "0ef3f07cbfcd336c82b4d88013d75986e93d73f7c4089c57c898c7ea965b6c9c",
+      "revision": "471d8fc3771ab5bfc5b0f793e55c501206f1c1325389fdaed667b30c7e8f2e1c",
       "expected": {
         "id": "gregale-full-v1",
         "revision": "fdfb015f00046499c20f4d13eaa6971fa728e8e3292a3f6186a2965c135f13d1",
@@ -4081,8 +4081,8 @@
           }
         ]
       },
-      "alert_set_revision": "9e98e8c73ff7c049eaefd42bae7cb1bbbfbd0f4c6c270da96259fe98da02c60e",
-      "alert_count": 572,
+      "alert_set_revision": "1a2252283a4ef4f8ae339809de1299d3f6c91d5a3eda6b17b87171021ce3a420",
+      "alert_count": 573,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",

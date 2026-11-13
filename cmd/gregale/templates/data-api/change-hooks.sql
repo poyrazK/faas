@@ -39,6 +39,15 @@ CREATE POLICY gregale_change_relay ON {{schema}}.gregale_change_events
 CREATE SCHEMA IF NOT EXISTS gregale_hooks;
 REVOKE ALL ON SCHEMA gregale_hooks FROM PUBLIC;
 
+-- gregale:upgrade-begin. `gregale data-api hooks export --upgrade` replays
+-- everything from here to gregale:upgrade-end on an existing installation, so
+-- each statement here can run again.
+
+ALTER TABLE {{schema}}.gregale_change_events ADD COLUMN IF NOT EXISTS schema_version text
+  CHECK (schema_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$');
+
+-- The schema owner selects the version for future changes. Capture freezes it
+-- on each outbox row, so changing the setting cannot reinterpret a retry.
 -- enable hooks a table with a primary key, or changes its options.
 CREATE OR REPLACE FUNCTION gregale_hooks.enable(relation regclass, payload text DEFAULT 'row', exclude text[] DEFAULT '{}')
 RETURNS void LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
@@ -59,9 +68,10 @@ BEGIN
   IF relation = '{{schema}}.gregale_change_events'::regclass THEN
     RAISE EXCEPTION 'the change event table cannot be hooked' USING ERRCODE = '22023';
   END IF;
-  SELECT array_agg(a.attname::text ORDER BY array_position(i.indkey::int2[], a.attnum)) INTO key_columns
-    FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey::int2[])
-    WHERE i.indrelid = relation AND i.indisprimary;
+  SELECT array_agg(a.attname::text ORDER BY k.ordinality) INTO key_columns
+    FROM pg_index i CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+    JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum
+    WHERE i.indrelid = relation AND i.indisprimary AND k.ordinality<=i.indnkeyatts;
   IF key_columns IS NULL THEN
     RAISE EXCEPTION '% needs a primary key to be hooked', relation USING ERRCODE = '55000';
   END IF;
@@ -89,15 +99,6 @@ END
 $$;
 REVOKE ALL ON FUNCTION gregale_hooks.disable(regclass) FROM PUBLIC;
 
--- gregale:upgrade-begin. `gregale data-api hooks export --upgrade` replays
--- everything from here to gregale:upgrade-end on an existing installation, so
--- each statement here can run again.
-
-ALTER TABLE {{schema}}.gregale_change_events ADD COLUMN IF NOT EXISTS schema_version text
-  CHECK (schema_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$');
-
--- The schema owner selects the version for future changes. Capture freezes it
--- on each outbox row, so changing the setting cannot reinterpret a retry.
 CREATE TABLE IF NOT EXISTS gregale_hooks.schema_versions (
   relation regclass PRIMARY KEY,
   schema_version text NOT NULL CHECK (schema_version ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$')
@@ -165,9 +166,29 @@ DECLARE
   truncated boolean := false;
   newest bigint;
   oldest bigint;
+  root_relation oid;
+  current_keys text[];
 BEGIN
   IF current_setting('gregale_hooks.skip', true) = 'on' THEN
     RETURN NULL;
+  END IF;
+  -- Follow cloned partition triggers to the configured parent. Names in older
+  -- trigger arguments are a contract: DDL must never turn a key into JSON null
+  -- or redirect events to a different table that reuses the previous name.
+  WITH RECURSIVE parents AS (
+    SELECT oid,tgrelid,tgparentid,0 AS depth FROM pg_trigger WHERE tgrelid=TG_RELID AND tgname=TG_NAME
+    UNION ALL
+    SELECT t.oid,t.tgrelid,t.tgparentid,p.depth+1 FROM pg_trigger t JOIN parents p ON t.oid=p.tgparentid
+  ) SELECT tgrelid INTO root_relation FROM parents ORDER BY depth DESC LIMIT 1;
+  SELECT array_agg(a.attname::text ORDER BY k.ordinality) INTO current_keys
+    FROM pg_index i CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
+    JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=k.attnum
+    WHERE i.indrelid=root_relation AND i.indisprimary AND k.ordinality<=i.indnkeyatts;
+  IF root_relation IS DISTINCT FROM to_regclass(format('%I.%I',TG_ARGV[3],TG_ARGV[4]))::oid
+    OR current_keys IS DISTINCT FROM key_columns
+    OR EXISTS(SELECT 1 FROM unnest(excluded) e WHERE NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=root_relation AND attname=e AND attnum>0 AND NOT attisdropped)) THEN
+    RAISE EXCEPTION 'change hook metadata changed; enable the hook again after DDL'
+      USING ERRCODE='55000', HINT='Run gregale_hooks.enable with the current relation, payload and excluded columns.';
   END IF;
   IF TG_OP <> 'INSERT' THEN
     old_row := to_jsonb(OLD) - excluded;
@@ -209,7 +230,7 @@ BEGIN
   INSERT INTO {{schema}}.gregale_change_events (relation_schema, relation_name, op, row_key, old_row, new_row, changed, truncated, schema_version)
   VALUES (TG_ARGV[3], TG_ARGV[4], lower(TG_OP), row_key, old_row, new_row, changed, truncated,
     (SELECT schema_version FROM gregale_hooks.schema_versions
-      WHERE relation=coalesce(to_regclass(format('%I.%I', TG_ARGV[3], TG_ARGV[4])), TG_RELID::regclass)));
+      WHERE relation=root_relation::regclass));
   RETURN NULL;
 END
 $$;

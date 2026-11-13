@@ -69,7 +69,7 @@ func runDataAPIDev(args []string, rehearsal *dataAPIMigrationOptions) int {
 	port := fs.Int("port", 8080, "loopback gateway port (0 selects a free port)")
 	check := fs.Bool("check", false, "run configured client checks")
 	validators := fs.Bool("validators", false, "generate runtime table and RPC argument validators alongside types")
-	numericMode := fs.String("numeric-mode", "number", "TypeScript JSON numbers: number or lossless (decimal strings)")
+	numericMode := fs.String("numeric-mode", "number", "TypeScript JSON numbers: number, lossless (decimal strings), or exact (ExactNumber)")
 	checkTypes := fs.Bool("check-types", false, "compare committed types without rewriting them (requires --once)")
 	once := fs.Bool("once", false, "verify the local workflow and exit, removing containers")
 	browser := fs.Bool("browser", false, "build and serve the starter browser with local test identities")
@@ -89,8 +89,8 @@ func runDataAPIDev(args []string, rehearsal *dataAPIMigrationOptions) int {
 	if *browser && (*once || rehearsal.Explain || rehearsal.Verify || preview) {
 		return printErr("Invalid browser launch", errors.New("--browser requires an interactive development session"))
 	}
-	if !dataAPIDiagnosticAllowed(*numericMode, "number", "lossless") || (*numericMode == "lossless" && *validators) {
-		return printErr("Invalid numeric mode", errors.New("use number or lossless; lossless mode requires types without validators"))
+	if !dataAPIDiagnosticAllowed(*numericMode, "number", "lossless", "exact") || (*numericMode != "number" && *validators) {
+		return printErr("Invalid numeric mode", errors.New("use number, lossless or exact; non-default numeric modes require types without validators"))
 	}
 	if ((*behaviorBaseline != "" || *behaviorOutput != "" || *behaviorReplays != "") && !*once) || (*behaviorReplays != "" && *behaviorBaseline == "") {
 		return printErr("Invalid behavior comparison", errors.New("use --once and a behavior baseline for replay coverage"))

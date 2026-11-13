@@ -170,6 +170,20 @@ func TestRecorderPersistsSummarizesLooksUpAndPrunes(t *testing.T) {
 		t.Fatalf("trace lookup = %+v, %v", matches, err)
 	}
 
+	own, err := r.RequestForAccount(ctx, account, "req-2")
+	if err != nil || own == nil || own.Code != "plan_excess" || own.AppSlug != "shop" || own.RequestID != "req-2" {
+		t.Fatalf("own request = %+v, %v", own, err)
+	}
+	if byTrace, err := r.RequestForAccount(ctx, account, trace); err != nil || byTrace == nil || byTrace.Code != "not_found" {
+		t.Fatalf("own trace = %+v, %v", byTrace, err)
+	}
+	if foreign, err := r.RequestForAccount(ctx, account, "req-other"); err != nil || foreign != nil {
+		t.Fatalf("another account's request matched: %+v, %v", foreign, err)
+	}
+	if missing, err := r.RequestForAccount(ctx, account, "bad id with spaces"); err != nil || missing != nil {
+		t.Fatalf("malformed id matched: %+v, %v", missing, err)
+	}
+
 	// Retention removes the 15-day-old row; the five live rows remain.
 	if deleted, err := r.PruneExpired(ctx); err != nil || deleted != 1 {
 		t.Fatalf("pruned %d rows, err %v; want 1", deleted, err)

@@ -1,0 +1,9 @@
+# Managed by the seal_domains role (ADR-20261112160000 §3): neond seals and
+# opens the per-project Neon API keys with the neon identity, and with the
+# previous one during a rotation, so keys sealed before it still open.
+[Service]
+LoadCredential=faas_seal_domain_neon:/etc/faas/secrets/domains/neon.age
+{% if faas_seal_domain_neon_previous_identity_src | length > 0 %}
+LoadCredential=faas_seal_domain_neon_previous:/etc/faas/secrets/domains/neon.age.previous
+{% endif %}
+Environment=FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH=%d/faas_seal_domain_neon

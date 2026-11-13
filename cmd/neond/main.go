@@ -29,7 +29,9 @@ import (
 	neondpb "github.com/onebox-faas/faas/api/proto/onebox/faas/neond/v1"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/neond"
+	"github.com/onebox-faas/faas/pkg/neond/neondpg"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -46,8 +48,13 @@ func main() {
 	wire.Daemon("neond", run)
 }
 
+// sealIdentityEnv names the neon seal domain's identity, which the
+// seal_domains role hands to neond as a credential (ADR 20261022111812).
+const sealIdentityEnv = "FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH"
+
 type config struct {
 	listen, adminKeyFile, metricsAddr string
+	org, sealIdentityFile             string
 	callers                           []string
 	destructivePerHour                int
 }
@@ -57,7 +64,12 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		listen:             getenv("FAAS_NEOND_LISTEN"),
 		adminKeyFile:       getenv("FAAS_NEOND_ADMIN_KEY_FILE"),
 		metricsAddr:        getenv("FAAS_NEOND_METRICS_ADDR"),
+		org:                strings.TrimSpace(getenv("FAAS_NEOND_ORG_ID")),
+		sealIdentityFile:   getenv(sealIdentityEnv),
 		destructivePerHour: defaultDestructivePerHour,
+	}
+	if (cfg.org == "") != (cfg.sealIdentityFile == "") {
+		return config{}, errors.New("neond: project keys need both FAAS_NEOND_ORG_ID and " + sealIdentityEnv + " (the neon seal domain), or neither")
 	}
 	target, err := wire.ParseTarget(cfg.listen)
 	if err != nil || target.Scheme != wire.SchemeUnix {
@@ -118,6 +130,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	sealdomain.RegisterLoaded(reg, sealdomain.Neon, cfg.org != "")
+	if cfg.org != "" {
+		identities, err := sealdomain.LoadReaderIdentities(cfg.sealIdentityFile)
+		if err != nil {
+			return fmt.Errorf("neond: load the neon seal domain: %w", err)
+		}
+		if err := server.UseProjectKeys(neond.ProjectKeys{Org: cfg.org, Identities: identities, Store: neondpg.New(pool)}); err != nil {
+			return err
+		}
+	}
 	if err := serveMetrics(ctx, cfg.metricsAddr, reg, log); err != nil {
 		return err
 	}
@@ -132,7 +154,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		<-ctx.Done()
 		srv.GracefulStop()
 	}()
-	log.Info("neond: serving", "listen", cfg.listen, "callers", cfg.callers, "destructive_per_hour", cfg.destructivePerHour)
+	log.Info("neond: serving", "listen", cfg.listen, "callers", cfg.callers, "destructive_per_hour", cfg.destructivePerHour, "project_keys", cfg.org != "")
 	if err := srv.Serve(lis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 		return fmt.Errorf("neond: serve: %w", err)
 	}

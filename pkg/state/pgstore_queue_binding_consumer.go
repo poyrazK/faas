@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -102,6 +103,27 @@ func (s *PgStore) mutateQueueBindingConsumerTx(ctx context.Context, tx pgx.Tx, a
 	limits, _ := api.LimitsFor(owner.Plan)
 	var binding QueueBinding
 	wasPush := false
+	if create != nil && create.DeploymentScope == "" && create.EnvironmentID == "" {
+		// ADR-20261112200000: a create naming a retired binding's exact name
+		// and queue name revives it, so its held messages drain again; it
+		// then takes the requested settings as an ordinary update.
+		retired, err := q.QueueConsumerRetiredBindingForRevive(ctx, tx, sqlc.QueueConsumerRetiredBindingForReviveParams{
+			AppID: appUUID, AccountID: accountUUID, Name: create.Name, QueueName: create.QueueName})
+		switch {
+		case err == nil:
+			if err := q.QueueConsumerAuthorizeRevive(ctx, tx, uuidString(retired.ID)); err != nil {
+				return QueueBindingConsumerResult{}, err
+			}
+			revived, err := q.QueueConsumerReviveBinding(ctx, tx, sqlc.QueueConsumerReviveBindingParams{ID: retired.ID, AppID: appUUID, AccountID: accountUUID})
+			if err != nil {
+				return QueueBindingConsumerResult{}, mapErr(err)
+			}
+			wanted := *create
+			create, patch, bindingUUID, id = nil, revivePatch(wanted), revived.ID, uuidString(revived.ID)
+		case !errors.Is(err, pgx.ErrNoRows):
+			return QueueBindingConsumerResult{}, err
+		}
+	}
 	if create != nil {
 		binding = applyQueueBindingPatch(*create, UpdateQueueBindingParams{})
 		binding.ID, binding.AccountID, binding.AppID = id, accountID, appID
@@ -114,6 +136,15 @@ func (s *PgStore) mutateQueueBindingConsumerTx(ctx context.Context, tx pgx.Tx, a
 		wasPush = binding.Mode == "push"
 		if patch != nil {
 			binding = applyQueueBindingPatch(binding, *patch)
+		}
+		if wasPush && binding.Mode == "pull" && !remove {
+			keyed, err := q.QueueBindingHasKeyedWork(ctx, tx, bindingUUID)
+			if err != nil {
+				return QueueBindingConsumerResult{}, err
+			}
+			if keyed {
+				return QueueBindingConsumerResult{}, ErrQueueBindingKeyedWork
+			}
 		}
 	}
 	if !remove {

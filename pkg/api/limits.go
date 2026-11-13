@@ -22,12 +22,47 @@ import (
 	"time"
 )
 
+// Referral program bounds. Rewards are estimates only; payout execution is
+// deliberately unavailable until a separately reviewed payment integration.
+const (
+	ReferralPageSize               = 25
+	ReferralCodeGenerationAttempts = 8
+	ReferralNoteMaxBytes           = 2000
+	ReferralBodyMaxBytes           = 8192
+	ReferralRewardMaxCents         = 100_000_000
+	ReferralCommissionMaxBPS       = 10_000
+	ReferralPolicyMaxDays          = 365
+	ReferralSelectionTTL           = 15 * time.Minute
+	ReferralReadTimeout            = 10 * time.Second
+)
+
+// Sales workspace input and pagination bounds.
+const (
+	SalesReportMaxDays      = 366
+	SalesPageSize           = ReferralPageSize
+	SalesNameMaxBytes       = 120
+	SalesFieldMaxBytes      = 200
+	SalesEmailMaxBytes      = 254
+	SalesSearchMaxBytes     = 100
+	SalesTaskMinYear        = 2000
+	SalesTaskMaxYear        = 2100
+	SalesTaskRefreshSeconds = 60
+)
+
 // SSEMaxLineBytes bounds one line of a server-sent event stream read by the
 // CLI and SDK. A runtime log line may be up to 1 MiB (logbuf
 // MaxPartialLineBytes) and JSON escaping can grow it up to six times, so 8 MiB
 // carries the largest log frame apid sends. The old 64 KiB cap ended a whole
 // `gregale logs` stream at the first long line (ADR-20261110090000).
 const SSEMaxLineBytes = 8 << 20
+
+// CLILogExplanation bounds a read-only CLI deployment-log snapshot. These
+// are client operation budgets, independent of plan retention and log quotas.
+const (
+	CLILogExplanationEntries      = 500
+	CLILogExplanationMessageBytes = 4096
+	CLILogExplanationTimeout      = 30 * time.Second
+)
 
 // Shared traffic counters bound each admission round trip and aggregate replay.
 const (
@@ -174,6 +209,15 @@ const (
 const (
 	QueueReceiveWaitersPerAccount = 32
 	QueueReceiveWaitersPerAPID    = 4096
+)
+
+// Pull-lease long-polls (wait_seconds > 0) one account and one apid hold at
+// a time; past them a lease does not wait but answers at once (ADR-20261112200000).
+// Each waiter reruns a binding-locking lease transaction on every wake and
+// recheck, so the caps bound idle database work, not just goroutines.
+const (
+	QueueLeaseWaitersPerAccount = 64
+	QueueLeaseWaitersPerAPID    = 4096
 )
 
 // Failed password sign-ins one email address may collect from any client
@@ -1293,6 +1337,16 @@ const (
 	ProfileCPUSaturationGrace              = 5 * time.Second
 	ProfileCaptureCPUSaturationMinInterval = 15 * time.Minute
 	ProfileCaptureCPUSaturationDuration    = 10 * time.Second
+	// Sustained CPU abuse (ADR-20261112120603). schedd's stats poller counts
+	// an instance pinned while its host CPU use is at least
+	// CPUAbuseSaturationPercent of its sustained cgroup quota; a dip shorter
+	// than CPUAbuseGrace does not end the episode. An episode lasting
+	// CPUAbuseSustainedAfter is a CPU abuse signal: a Free instance is
+	// recycled (enforce mode) and the recycle counts toward the ADR-361
+	// account abuse hold; a paid instance is only flagged.
+	CPUAbuseSaturationPercent = 90
+	CPUAbuseSustainedAfter    = 15 * time.Minute
+	CPUAbuseGrace             = 30 * time.Second
 	// ProfileCaptureMaxKinds bounds the kinds one capture collects: every kind.
 	ProfileCaptureMaxKinds = 5
 	// Go contention sampling while a capture asks for block or mutex
@@ -16378,9 +16432,18 @@ const (
 	DataAPIServerKeyPermissionsMaxEntries = 64
 	// Single-app projects upload migrations beside the runtime; structural
 	// bounds only, inside the plan's source-archive limit.
-	DataAPISingleAppMigrationsMaxFiles = 4096
-	DataAPISingleAppMigrationsMaxBytes = 16 << 20
-	DataAPIReleaseCommandMaxBytes      = 1024
+	DataAPISingleAppMigrationsMaxFiles   = 4096
+	DataAPIBackgroundJobMaxAttempts      = 8
+	DataAPIBackgroundJobRetryBaseSeconds = 2
+	DataAPIBackgroundJobRetryMaxSeconds  = 300
+	DataAPIMaintenanceGraceSeconds       = 300
+	DataAPIMaintenanceRetentionDays      = 30
+	DataAPIMaintenanceBatch              = 100
+	DataAPIMaintenanceInventory          = 10000
+	DataAPIMaintenanceResponseBytes      = 4 << 20
+	DataAPIMaintenanceRunMS              = 110000
+	DataAPISingleAppMigrationsMaxBytes   = 16 << 20
+	DataAPIReleaseCommandMaxBytes        = 1024
 	// The CLI deploys the runtime archive apid serves (ADR-20261031095954);
 	// a larger download, or one that unpacks larger, is refused.
 	DataAPIRuntimeArchiveMaxBytes = 2 << 20
@@ -18966,6 +19029,34 @@ func (l Limits) PendingTenantHostnamesPerSurface() int {
 	}
 	return l.TenantHostnamesPerSurface
 }
+
+// Website sales intake is independent of the authentication failure budget.
+const (
+	SalesIntakeMessageMaxBytes     = 1500
+	SalesIntakeFollowupDefaultDays = 1
+	SalesIntakeFollowupMaxDays     = 30
+	SalesIntakeChallengeMinAge     = 2 * time.Second
+	SalesIntakeChallengeTTL        = time.Hour
+	SalesIntakeRequestsPerMinute   = 10
+	SalesIntakeReceiptPurge        = 100
+)
+
+// Staff conversation history and computed lead attention.
+const (
+	SalesActivitySummaryMaxBytes = 1000
+	SalesActivityDetailMaxBytes  = 500
+	SalesStaleDefaultDays        = 14
+	SalesStaleMaxDays            = 365
+)
+
+// Staff qualification text and closing rationale.
+const (
+	SalesQualificationTextMaxBytes = 1000
+	SalesOutcomeNoteMaxBytes       = 1000
+)
+
+// SalesTemplateBodyMaxBytes bounds editable plain-text sales messages.
+const SalesTemplateBodyMaxBytes = 4000
 
 // App resource metadata pages are filtered by immutable app and scope before
 // counting or pagination. Offsets are bounded request selectors, not quotas.

@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/referrals"
 	quotasql "github.com/onebox-faas/faas/pkg/state/appquota/sqlc"
 	ownersql "github.com/onebox-faas/faas/pkg/state/resourceownership/sqlc"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -394,6 +395,12 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 			values ($1, $2, $3, $4)
 		`, acct.ID, LegalDocumentTerms, a.Version, a.Method); err != nil {
 			return CreateAccountWithPersonalOrgResult{}, fmt.Errorf("state: record terms acceptance: %w", mapErr(err))
+		}
+	}
+
+	if params.Referral != nil {
+		if err := referrals.Attribute(ctx, tx, acct.ID, *params.Referral); err != nil {
+			return CreateAccountWithPersonalOrgResult{}, err
 		}
 	}
 
@@ -5807,11 +5814,17 @@ func (s *PgStore) ProjectEnvironmentBySlug(ctx context.Context, accountID, proje
 
 // ProjectEnvironmentByID is the identity lookup for a platform-owned
 // environment hostname. The router separately verifies its account/project
-// association with the workload encoded in the same hostname.
+// association with the workload encoded in the same hostname. An ID that is
+// an environment branch's slot names the environment of the branch holding
+// it (ADR-20261031193635 stable branch URLs); the returned environment then
+// carries its own ID.
 func (s *PgStore) ProjectEnvironmentByID(ctx context.Context, id string) (ProjectEnvironment, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, account_id, project_id, slug, protected, created_at, updated_at
-		  from project_environments where id = $1
+		  from project_environments
+		 where id = $1 or id = (select environment_id from project_environment_branches where slot_id = $1)
+		 order by (id = $1) desc
+		 limit 1
 	`, id)
 	return scanProjectEnvironment(row)
 }
@@ -17288,7 +17301,10 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 		return Invocation{}, err
 	}
 	if info.environment.ID == "" && inv.AdmissionMaxPending <= 0 && inv.AdmissionMaxBacklogBytes <= 0 {
-		return enqueueInvocationRow(ctx, s.pool, inv)
+		if inv.SentByAppID == "" {
+			return enqueueInvocationRow(ctx, s.pool, inv)
+		}
+		return enqueueSentInvocation(ctx, s.pool, inv)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -17306,6 +17322,10 @@ func (s *PgStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoca
 	}
 	out, err := enqueueInvocationRow(ctx, tx, inv)
 	if err != nil {
+		return Invocation{}, err
+	}
+	inv.ID = out.ID
+	if err := insertInvocationSendDB(ctx, tx, inv); err != nil {
 		return Invocation{}, err
 	}
 	if info.environment.ID != "" && !stageCronInvocationShape(inv) {
@@ -17691,6 +17711,11 @@ func decrementAccountAsyncInflightTx(ctx context.Context, tx pgx.Tx, accountID s
 // transition transaction, so either both the outcome and callback are durable
 // or neither is.
 func enqueueInvocationDestinationTx(ctx context.Context, tx pgx.Tx, inv Invocation) error {
+	// A send()'s completion invocation commits with the outcome too
+	// (ADR-20261112160000).
+	if err := enqueueInvocationCompletionTx(ctx, tx, inv); err != nil {
+		return err
+	}
 	delivery, ok, err := invocationDestinationDelivery(inv)
 	if err != nil {
 		return fmt.Errorf("state: build invocation destination: %w", err)

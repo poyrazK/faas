@@ -24,7 +24,9 @@ export async function runDataJobs({ url, key, fetchImpl = fetch, signal = AbortS
     if (!Array.isArray(claimed) || claimed.length > 1) throw new Error('Invalid job claim')
     if (!claimed.length) break
     let job = claimed[0]
-    if (!job || typeof job.id !== 'string' || typeof job.actor !== 'string' || typeof job.lease_token !== 'string') throw new Error('Invalid job claim')
+    if (!job || typeof job.id !== 'string' || typeof job.actor !== 'string') throw new Error('Invalid job claim')
+    if (job.state === 'blocked') { log({ event: 'data_api_job_blocked', job_id: job.id, attempts: job.attempts }); failed++; continue }
+    if (typeof job.lease_token !== 'string') throw new Error('Invalid job claim')
     const claim = job.lease_token
     for (let step = 0; step < 60; step++) {
       signal.throwIfAborted()
@@ -37,7 +39,15 @@ export async function runDataJobs({ url, key, fetchImpl = fetch, signal = AbortS
       } catch (error) {
         // Network errors and 5xx can hide a committed batch. Leave its lease
         // recoverable; the saved import offset/receipt resolves the next run.
-        if (!(error instanceof JobHTTPError) || ![400,401,403,404,409,412,413,422].includes(error.status)) throw error
+        if (!(error instanceof JobHTTPError) || ![400,401,403,404,409,412,413,422].includes(error.status)) {
+          signal.throwIfAborted()
+          const retried = await rpc('retry_team_order_job', { job_id: job.id, claim_token: claim, failure_code: error instanceof JobHTTPError ? error.code : 'request_uncertain' })
+          if (!Array.isArray(retried) || retried.length !== 1 || retried[0].id !== job.id) throw new Error('Invalid job retry receipt')
+          if (retried[0].state === 'completed') completed++
+          else if (retried[0].state === 'blocked') { failed++; log({ event: 'data_api_job_blocked', job_id: job.id, attempts: retried[0].attempts }) }
+          else log({ event: 'data_api_job_retry', job_id: job.id, state: retried[0].state, attempts: retried[0].attempts, next_attempt_at: retried[0].next_attempt_at })
+          break
+        }
         await rpc('fail_team_order_job', { job_id: job.id, claim_token: claim, failure_code: error.code })
         log({ event: 'data_api_job_failed', job_id: job.id, code: error.code })
         failed++; break
