@@ -197,7 +197,7 @@ func (d Deps) approvalResponse(ctx context.Context, approval state.AgentApproval
 	out := api.AgentApprovalResponse{
 		ID: approval.ID, Category: approval.Category, Method: approval.Method, Path: approval.Path,
 		BodyBound: approval.BodySHA256 != nil, Status: approval.EffectiveStatus(time.Now()),
-		Agent:     AgentName(ctx, d.Store, approval), ConnectionID: approval.KeyID,
+		Agent: AgentName(ctx, d.Store, approval), ConnectionID: approval.KeyID,
 		CreatedAt: approval.CreatedAt.UTC().Format(time.RFC3339), ExpiresAt: approval.ExpiresAt.UTC().Format(time.RFC3339),
 		Note: approval.Note, Reason: approval.Reason,
 	}

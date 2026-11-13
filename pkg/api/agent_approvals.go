@@ -108,9 +108,9 @@ type AgentApprovalResponse struct {
 	// ConnectionID is the id of the agent connection that asked, as
 	// GET /v1/agent-connections lists it.
 	ConnectionID string `json:"connection_id,omitempty"`
-	CreatedAt string `json:"created_at"`
-	ExpiresAt string `json:"expires_at"`
-	DecidedAt string `json:"decided_at,omitempty"`
+	CreatedAt    string `json:"created_at"`
+	ExpiresAt    string `json:"expires_at"`
+	DecidedAt    string `json:"decided_at,omitempty"`
 	// Note is the person's reason for a denial, when they gave one.
 	Note string `json:"note,omitempty"`
 	// Reason is what the agent said the request is for, when it said
