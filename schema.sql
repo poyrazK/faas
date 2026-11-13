@@ -35990,6 +35990,53 @@ ALTER TABLE public.customer_api_errors ALTER COLUMN id ADD GENERATED ALWAYS AS I
 
 
 --
+-- Name: customer_attention_signals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_attention_signals (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject text NOT NULL,
+    detail text DEFAULT ''::text NOT NULL,
+    state text NOT NULL,
+    observed bigint NOT NULL,
+    first_seen_at timestamp with time zone NOT NULL,
+    last_seen_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    dismissed_at timestamp with time zone,
+    dismissed_by uuid,
+    dismiss_reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT customer_attention_signals_check CHECK (((state = 'resolved'::text) = (resolved_at IS NOT NULL))),
+    CONSTRAINT customer_attention_signals_check1 CHECK (((state <> 'dismissed'::text) OR (dismissed_at IS NOT NULL))),
+    CONSTRAINT customer_attention_signals_detail_check CHECK ((octet_length(detail) <= 500)),
+    CONSTRAINT customer_attention_signals_dismiss_reason_check CHECK ((octet_length(dismiss_reason) <= 200)),
+    CONSTRAINT customer_attention_signals_dismissed_at_check CHECK (((dismissed_at IS NULL) OR isfinite(dismissed_at))),
+    CONSTRAINT customer_attention_signals_first_seen_at_check CHECK (isfinite(first_seen_at)),
+    CONSTRAINT customer_attention_signals_kind_check CHECK ((kind = ANY (ARRAY['deploy_failing'::text, 'refused_burst'::text, 'domain_stuck'::text]))),
+    CONSTRAINT customer_attention_signals_last_seen_at_check CHECK (isfinite(last_seen_at)),
+    CONSTRAINT customer_attention_signals_observed_check CHECK ((observed >= 0)),
+    CONSTRAINT customer_attention_signals_resolved_at_check CHECK (((resolved_at IS NULL) OR isfinite(resolved_at))),
+    CONSTRAINT customer_attention_signals_state_check CHECK ((state = ANY (ARRAY['open'::text, 'dismissed'::text, 'resolved'::text]))),
+    CONSTRAINT customer_attention_signals_subject_check CHECK (((octet_length(subject) >= 1) AND (octet_length(subject) <= 253)))
+);
+
+
+--
+-- Name: customer_attention_signals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.customer_attention_signals ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.customer_attention_signals_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: customer_operation_approval_forms; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -64032,6 +64079,14 @@ ALTER TABLE ONLY public.customer_api_errors
 
 
 --
+-- Name: customer_attention_signals customer_attention_signals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_attention_signals
+    ADD CONSTRAINT customer_attention_signals_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: customer_operation_approval_forms customer_operation_approval_for_app_id_scope_operation_step_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -77502,6 +77557,34 @@ CREATE INDEX customer_api_errors_request_idx ON public.customer_api_errors USING
 --
 
 CREATE INDEX customer_api_errors_trace_idx ON public.customer_api_errors USING btree (trace_id) WHERE (trace_id <> ''::text);
+
+
+--
+-- Name: customer_attention_signals_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_attention_signals_account_idx ON public.customer_attention_signals USING btree (account_id, state);
+
+
+--
+-- Name: customer_attention_signals_active_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_attention_signals_active_key ON public.customer_attention_signals USING btree (account_id, kind, subject) WHERE (state = ANY (ARRAY['open'::text, 'dismissed'::text]));
+
+
+--
+-- Name: customer_attention_signals_resolved_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_attention_signals_resolved_idx ON public.customer_attention_signals USING btree (resolved_at) WHERE (state = 'resolved'::text);
+
+
+--
+-- Name: customer_attention_signals_state_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_attention_signals_state_idx ON public.customer_attention_signals USING btree (state, last_seen_at DESC);
 
 
 --
@@ -97305,6 +97388,22 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.customer_api_errors
     ADD CONSTRAINT customer_api_errors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_attention_signals customer_attention_signals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_attention_signals
+    ADD CONSTRAINT customer_attention_signals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_attention_signals customer_attention_signals_dismissed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_attention_signals
+    ADD CONSTRAINT customer_attention_signals_dismissed_by_fkey FOREIGN KEY (dismissed_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

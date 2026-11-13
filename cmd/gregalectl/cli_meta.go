@@ -728,6 +728,16 @@ var cliCommands = []cliCommand{
 				Short: "Find the account behind an email, app slug, hostname, URL, id, request id or trace id",
 			},
 			{
+				Name:  "attention",
+				Short: "List customers who are probably stuck (failed deploys, refused bursts, stuck domains)",
+				Flags: []cliFlag{
+					{Name: "kind", Short: "signal kind", ClosedSet: []string{"deploy_failing", "refused_burst", "domain_stuck"}},
+					{Name: "state", Short: "signal state", ClosedSet: []string{"active", "open", "dismissed", "resolved"}},
+					{Name: "account-id", Short: "only this account (uuid)"},
+					{Name: "limit", Short: "maximum signals (1..200)"},
+				},
+			},
+			{
 				Name:  "show",
 				Short: "Show one account's apps, orgs, API keys, and sessions",
 				Flags: []cliFlag{

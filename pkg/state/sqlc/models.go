@@ -3434,6 +3434,22 @@ type CustomerApiError struct {
 	TraceID    string
 }
 
+type CustomerAttentionSignal struct {
+	ID            int64
+	AccountID     pgtype.UUID
+	Kind          string
+	Subject       string
+	Detail        string
+	State         string
+	Observed      int64
+	FirstSeenAt   pgtype.Timestamptz
+	LastSeenAt    pgtype.Timestamptz
+	ResolvedAt    pgtype.Timestamptz
+	DismissedAt   pgtype.Timestamptz
+	DismissedBy   pgtype.UUID
+	DismissReason string
+}
+
 type CustomerOperation struct {
 	ID                  pgtype.UUID
 	AccountID           pgtype.UUID
