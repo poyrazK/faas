@@ -16,7 +16,7 @@ import (
 // rotation path as app credentials, but are scoped by (account, job, host).
 func (h *Handler) resolveJobRegistryAuth(ctx context.Context, job state.Job, host string) (*oci.BasicAuth, error) {
 	identities := h.registryCredentialIdentities()
-	if len(identities) == 0 || host == "" {
+	if (len(identities) == 0 && h.registryProxy == nil) || host == "" {
 		return nil, nil
 	}
 	store, ok := h.store.(state.JobRegistryCredentialStore)
@@ -29,6 +29,11 @@ func (h *Handler) resolveJobRegistryAuth(ctx context.Context, job state.Job, hos
 			return nil, nil
 		}
 		return nil, fmt.Errorf("imaged: lookup job registry credential for %s: %w", logsanitize.Field(host), err)
+	}
+	if h.registryProxy != nil {
+		// ADR-20261110210000 slice 3j-2b: secretd adds the credential
+		// for the node holding the job's materialization lease.
+		return &oci.BasicAuth{Transport: h.registryProxy.ForJob(job.ID)}, nil
 	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(identities, cred.PasswordEncrypted)
 	if err != nil {

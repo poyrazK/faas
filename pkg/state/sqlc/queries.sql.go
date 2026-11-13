@@ -65764,6 +65764,36 @@ func (q *Queries) ManagedPostgresAccountDeletionIncluded(ctx context.Context, db
 	return included, err
 }
 
+const managedPostgresAccountsInProject = `-- name: ManagedPostgresAccountsInProject :many
+SELECT DISTINCT account_id::text AS account_id FROM managed_postgres_databases
+WHERE provider_resource_id=$1::text OR provider_resource_id LIKE $1::text || '/%'
+ORDER BY 1
+`
+
+// ADR-20261112160000 slice 2c: the accounts whose managed PostgreSQL
+// databases, in any state, name a Neon project. neond counts a destructive
+// call against each for the per-subject limit, and refuses quota writes and
+// role deletes on a project no database names.
+func (q *Queries) ManagedPostgresAccountsInProject(ctx context.Context, db DBTX, project string) ([]string, error) {
+	rows, err := db.Query(ctx, managedPostgresAccountsInProject, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var account_id string
+		if err := rows.Scan(&account_id); err != nil {
+			return nil, err
+		}
+		items = append(items, account_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const managedPostgresAdmissionFenced = `-- name: ManagedPostgresAdmissionFenced :one
 SELECT (managed_postgres_admission_cutover_id IS NOT NULL)::boolean AS fenced FROM apps WHERE id=$1::text::uuid
 `

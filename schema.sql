@@ -860,6 +860,50 @@ $$;
 
 
 --
+-- Name: app_owner_authority_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_owner_authority_check() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    current_mode text;
+    login text := session_user;
+    is_authorized boolean;
+    previous uuid;
+BEGIN
+    IF NEW.node_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'UPDATE' THEN
+        previous := OLD.node_id;
+        IF NEW.node_id IS NOT DISTINCT FROM previous THEN
+            RETURN NEW;
+        END IF;
+    END IF;
+    EXECUTE format('SELECT mode FROM %I.app_owner_authority WHERE singleton', TG_TABLE_SCHEMA)
+        INTO current_mode;
+    IF current_mode IS NULL OR current_mode = 'any' THEN
+        RETURN NEW;
+    END IF;
+    is_authorized := to_regrole('faas_owner_authority') IS NOT NULL
+        AND pg_has_role(login, 'faas_owner_authority', 'MEMBER');
+    IF NOT is_authorized AND current_mode = 'enforce' THEN
+        RAISE LOG 'faas_app_owner_refused app=% from=% to=% login=%', NEW.id, previous, NEW.node_id, login;
+        RAISE EXCEPTION 'app owner changes are made by the control plane'
+            USING ERRCODE = '42501',
+                  DETAIL = format('app=%s to=%s login=%s', NEW.id, NEW.node_id, login);
+    END IF;
+    EXECUTE format('INSERT INTO %I.app_owner_writes (app_id, from_node_id, to_node_id, login_role, authorized, mode) '
+                   'VALUES ($1, $2, $3, $4, $5, $6)', TG_TABLE_SCHEMA)
+        USING NEW.id, previous, NEW.node_id, login, is_authorized, current_mode;
+    RETURN NEW;
+END;
+$_$;
+
+
+--
 -- Name: app_private_network_attachment_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7206,6 +7250,41 @@ END $$;
 
 
 --
+-- Name: compute_node_identity_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compute_node_identity_check() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $$
+DECLARE
+    current_mode text;
+    login text := session_user;
+    is_authorized boolean;
+BEGIN
+    IF NEW.id IS NOT DISTINCT FROM OLD.id AND NEW.name IS NOT DISTINCT FROM OLD.name THEN
+        RETURN NEW;
+    END IF;
+    EXECUTE format('SELECT mode FROM %I.app_owner_authority WHERE singleton', TG_TABLE_SCHEMA)
+        INTO current_mode;
+    IF current_mode IS NULL OR current_mode = 'any' THEN
+        RETURN NEW;
+    END IF;
+    is_authorized := to_regrole('faas_owner_authority') IS NOT NULL
+        AND pg_has_role(login, 'faas_owner_authority', 'MEMBER');
+    RAISE LOG 'faas_node_identity_change node=% name=%->% authorized=% login=% mode=%',
+        OLD.id, OLD.name, NEW.name, is_authorized, login, current_mode;
+    IF NOT is_authorized AND current_mode = 'enforce' THEN
+        RAISE EXCEPTION 'compute node identities are changed by the control plane'
+            USING ERRCODE = '42501',
+                  DETAIL = format('node=%s login=%s', OLD.id, login);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: compute_node_keys_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7275,6 +7354,101 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: compute_node_report_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compute_node_report_scope() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    node_name text;
+    node uuid;
+BEGIN
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node_name USING session_user::text;
+    IF node_name IS NOT NULL THEN
+        -- A node that has not registered yet has no row, so no report of
+        -- any node can match: NULL is distinct from every node_id.
+        EXECUTE format('SELECT id FROM %I.compute_nodes WHERE name = $1', TG_TABLE_SCHEMA)
+            INTO node USING node_name;
+    END IF;
+    IF node_name IS NOT NULL AND (
+        (TG_OP IN ('UPDATE', 'DELETE') AND OLD.node_id IS DISTINCT FROM node)
+        OR (TG_OP IN ('INSERT', 'UPDATE') AND NEW.node_id IS DISTINCT FROM node)) THEN
+        RAISE EXCEPTION 'a compute node login writes only its own node''s reports'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s table=%s', session_user, node_name, TG_TABLE_NAME);
+    END IF;
+    IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+    RETURN NEW;
+END;
+$_$;
+
+
+--
+-- Name: compute_node_row_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compute_node_row_scope() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    node text;
+BEGIN
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node USING session_user::text;
+    IF node IS NULL THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'a compute node login cannot delete compute node rows'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s', session_user, node);
+    END IF;
+    IF TG_OP = 'INSERT' THEN
+        -- vmmd registers with INSERT ... ON CONFLICT (name) DO UPDATE: the
+        -- insert is admitted only under the node's own name, where it
+        -- becomes an update of its own row (or its first registration).
+        IF NEW.name IS DISTINCT FROM node THEN
+            RAISE EXCEPTION 'a compute node login writes only its own compute node row'
+                USING ERRCODE = '42501', DETAIL = format('login=%s node=%s name=%s', session_user, node, NEW.name);
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF OLD.name IS DISTINCT FROM node THEN
+        RAISE EXCEPTION 'a compute node login writes only its own compute node row'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s row=%s', session_user, node, OLD.name);
+    END IF;
+    IF NEW.id IS DISTINCT FROM OLD.id OR NEW.name IS DISTINCT FROM OLD.name
+        OR (OLD.region IS NOT NULL AND NEW.region IS DISTINCT FROM OLD.region)
+        OR (OLD.zone IS NOT NULL AND NEW.zone IS DISTINCT FROM OLD.zone)
+        OR (OLD.role IS NOT NULL AND NEW.role IS DISTINCT FROM OLD.role)
+        OR NEW.target_url IS DISTINCT FROM OLD.target_url
+        OR (OLD.schedd_target_url IS NOT NULL AND NEW.schedd_target_url IS DISTINCT FROM OLD.schedd_target_url)
+        OR (OLD.gateway_target_url IS NOT NULL AND NEW.gateway_target_url IS DISTINCT FROM OLD.gateway_target_url)
+        OR (OLD.cert_fingerprint IS NOT NULL AND NEW.cert_fingerprint IS DISTINCT FROM OLD.cert_fingerprint)
+        OR (OLD.host_certificate IS NOT NULL AND NEW.host_certificate IS DISTINCT FROM OLD.host_certificate) THEN
+        RAISE EXCEPTION 'a compute node''s identity, placement labels and addresses are changed by the control plane'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s', session_user, node);
+    END IF;
+    IF NEW.vpcpus > OLD.vpcpus OR NEW.mem_mb > OLD.mem_mb OR NEW.max_concurrency > OLD.max_concurrency
+        OR NEW.admission_ceiling_mb > OLD.admission_ceiling_mb OR NEW.vcpu_budget > OLD.vcpu_budget THEN
+        RAISE LOG 'faas_node_capacity_clamped node=% login=% vpcpus=%->% mem_mb=%->% max_concurrency=%->% admission_ceiling_mb=%->% vcpu_budget=%->%',
+            node, session_user, OLD.vpcpus, NEW.vpcpus, OLD.mem_mb, NEW.mem_mb, OLD.max_concurrency, NEW.max_concurrency,
+            OLD.admission_ceiling_mb, NEW.admission_ceiling_mb, OLD.vcpu_budget, NEW.vcpu_budget;
+        NEW.vpcpus := LEAST(NEW.vpcpus, OLD.vpcpus);
+        NEW.mem_mb := LEAST(NEW.mem_mb, OLD.mem_mb);
+        NEW.max_concurrency := LEAST(NEW.max_concurrency, OLD.max_concurrency);
+        NEW.admission_ceiling_mb := LEAST(NEW.admission_ceiling_mb, OLD.admission_ceiling_mb);
+        NEW.vcpu_budget := LEAST(NEW.vcpu_budget, OLD.vcpu_budget);
+    END IF;
+    RETURN NEW;
+END;
+$_$;
 
 
 --
@@ -31836,6 +32010,19 @@ CREATE TABLE public.app_api_routes (
 
 
 --
+-- Name: app_basic_auth_verifiers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_basic_auth_verifiers (
+    sealed_sha256 bytea NOT NULL,
+    verifier text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_basic_auth_verifiers_sealed_sha256_check CHECK ((octet_length(sealed_sha256) = 32)),
+    CONSTRAINT app_basic_auth_verifiers_verifier_check CHECK (((verifier ~~ '$argon2id$%'::text) AND (length(verifier) <= 256)))
+);
+
+
+--
 -- Name: app_binding_promotion_revisions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32696,6 +32883,62 @@ CREATE TABLE public.app_openapi_docs (
     CONSTRAINT app_openapi_docs_openapi_version_vocab_chk CHECK ((openapi_version = ANY (ARRAY['3.0.0'::text, '3.0.1'::text, '3.0.2'::text, '3.0.3'::text, '3.0.4'::text, '3.1.0'::text, '3.1.1'::text]))),
     CONSTRAINT app_openapi_docs_sha256_len_chk CHECK ((octet_length(doc_sha256) = 32)),
     CONSTRAINT app_openapi_docs_source_vocab_chk CHECK ((source = 'manual_import'::text))
+);
+
+
+--
+-- Name: app_owner_authority; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_owner_authority (
+    singleton boolean DEFAULT true NOT NULL,
+    mode text DEFAULT 'any'::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_owner_authority_mode_check CHECK ((mode = ANY (ARRAY['any'::text, 'observe'::text, 'enforce'::text]))),
+    CONSTRAINT app_owner_authority_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: app_owner_release_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_owner_release_requests (
+    app_id uuid NOT NULL,
+    from_node_id uuid NOT NULL,
+    reason text DEFAULT 'pressure'::text NOT NULL,
+    requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_owner_release_requests_reason_check CHECK ((reason = 'pressure'::text))
+);
+
+
+--
+-- Name: app_owner_writes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_owner_writes (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    from_node_id uuid,
+    to_node_id uuid NOT NULL,
+    login_role text NOT NULL,
+    authorized boolean NOT NULL,
+    mode text NOT NULL,
+    written_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: app_owner_writes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.app_owner_writes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.app_owner_writes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -35357,6 +35600,20 @@ CREATE TABLE public.complimentary_accounts (
 --
 
 COMMENT ON TABLE public.complimentary_accounts IS 'Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).';
+
+
+--
+-- Name: compute_node_db_logins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.compute_node_db_logins (
+    login text NOT NULL,
+    node_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT compute_node_db_logins_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT compute_node_db_logins_login_check CHECK ((login ~ '^faas_[a-z0-9_]{1,58}$'::text)),
+    CONSTRAINT compute_node_db_logins_node_name_check CHECK ((node_name ~ '^[A-Za-z0-9._-]{1,253}$'::text))
+);
 
 
 --
@@ -59023,6 +59280,52 @@ COMMENT ON TABLE public.seal_domain_probe IS 'One non-secret secretbox probe per
 
 
 --
+-- Name: secret_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.secret_grants (
+    app_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    granted_by_node_id uuid NOT NULL,
+    granted_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT secret_grants_expiry_check CHECK ((expires_at > granted_at))
+);
+
+
+--
+-- Name: secret_open_audit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.secret_open_audit (
+    id bigint NOT NULL,
+    node_id uuid NOT NULL,
+    app_id uuid,
+    via text NOT NULL,
+    entries integer NOT NULL,
+    opened_at timestamp with time zone DEFAULT now() NOT NULL,
+    job_id uuid,
+    CONSTRAINT secret_open_audit_entries_check CHECK ((entries >= 0)),
+    CONSTRAINT secret_open_audit_subject_check CHECK (((app_id IS NULL) <> (job_id IS NULL))),
+    CONSTRAINT secret_open_audit_via_check CHECK ((via = ANY (ARRAY['owner'::text, 'grant'::text])))
+);
+
+
+--
+-- Name: secret_open_audit_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.secret_open_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.secret_open_audit_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: service_caller_key_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -62002,6 +62305,14 @@ ALTER TABLE ONLY public.app_application_standards
 
 
 --
+-- Name: app_basic_auth_verifiers app_basic_auth_verifiers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_basic_auth_verifiers
+    ADD CONSTRAINT app_basic_auth_verifiers_pkey PRIMARY KEY (sealed_sha256);
+
+
+--
 -- Name: app_binding_promotion_revisions app_binding_promotion_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62359,6 +62670,30 @@ ALTER TABLE ONLY public.app_memory_pressure
 
 ALTER TABLE ONLY public.app_openapi_docs
     ADD CONSTRAINT app_openapi_docs_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_owner_authority app_owner_authority_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_authority
+    ADD CONSTRAINT app_owner_authority_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: app_owner_release_requests app_owner_release_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_release_requests
+    ADD CONSTRAINT app_owner_release_requests_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_owner_writes app_owner_writes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_writes
+    ADD CONSTRAINT app_owner_writes_pkey PRIMARY KEY (id);
 
 
 --
@@ -63855,6 +64190,14 @@ ALTER TABLE ONLY public.commit_sources
 
 ALTER TABLE ONLY public.complimentary_accounts
     ADD CONSTRAINT complimentary_accounts_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: compute_node_db_logins compute_node_db_logins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.compute_node_db_logins
+    ADD CONSTRAINT compute_node_db_logins_pkey PRIMARY KEY (login);
 
 
 --
@@ -74050,6 +74393,22 @@ ALTER TABLE ONLY public.seal_domain_probe
 
 
 --
+-- Name: secret_grants secret_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_grants
+    ADD CONSTRAINT secret_grants_pkey PRIMARY KEY (app_id, node_id);
+
+
+--
+-- Name: secret_open_audit secret_open_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_open_audit
+    ADD CONSTRAINT secret_open_audit_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: service_caller_key_history service_caller_key_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75999,6 +76358,20 @@ CREATE INDEX app_openapi_docs_account_id_idx ON public.app_openapi_docs USING bt
 
 
 --
+-- Name: app_owner_release_requests_requested_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_owner_release_requests_requested_idx ON public.app_owner_release_requests USING btree (requested_at);
+
+
+--
+-- Name: app_owner_writes_unauthorized_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_owner_writes_unauthorized_idx ON public.app_owner_writes USING btree (written_at) WHERE (NOT authorized);
+
+
+--
 -- Name: app_park_transitions_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -77162,6 +77535,13 @@ CREATE INDEX commit_receipts_source_history ON public.commit_receipts USING btre
 --
 
 CREATE INDEX complimentary_accounts_expires_at_idx ON public.complimentary_accounts USING btree (expires_at) WHERE (expires_at IS NOT NULL);
+
+
+--
+-- Name: compute_node_db_logins_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX compute_node_db_logins_node_idx ON public.compute_node_db_logins USING btree (node_name);
 
 
 --
@@ -85341,6 +85721,34 @@ CREATE UNIQUE INDEX scheduled_releases_one_pending ON public.scheduled_releases 
 
 
 --
+-- Name: secret_grants_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_grants_expires_idx ON public.secret_grants USING btree (expires_at);
+
+
+--
+-- Name: secret_open_audit_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_open_audit_app_idx ON public.secret_open_audit USING btree (app_id, opened_at);
+
+
+--
+-- Name: secret_open_audit_job_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_open_audit_job_idx ON public.secret_open_audit USING btree (job_id, opened_at) WHERE (job_id IS NOT NULL);
+
+
+--
+-- Name: secret_open_audit_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_open_audit_node_idx ON public.secret_open_audit USING btree (node_id, opened_at);
+
+
+--
 -- Name: service_caller_key_history_retire_after_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -86959,6 +87367,13 @@ CREATE TRIGGER app_object_buckets_guard BEFORE UPDATE OF status ON public.apps F
 --
 
 CREATE TRIGGER app_openapi_docs_set_updated_at_trg BEFORE UPDATE ON public.app_openapi_docs FOR EACH ROW EXECUTE FUNCTION public.app_openapi_docs_set_updated_at();
+
+
+--
+-- Name: apps app_owner_authority_check; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_owner_authority_check BEFORE INSERT OR UPDATE OF node_id ON public.apps FOR EACH ROW EXECUTE FUNCTION public.app_owner_authority_check();
 
 
 --
@@ -88876,6 +89291,13 @@ CREATE TRIGGER compute_node_changed_trg AFTER INSERT OR UPDATE ON public.compute
 
 
 --
+-- Name: compute_nodes compute_node_identity_check; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_node_identity_check BEFORE UPDATE OF id, name ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.compute_node_identity_check();
+
+
+--
 -- Name: compute_node_keys compute_node_keys_changed_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -88887,6 +89309,27 @@ CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON
 --
 
 CREATE TRIGGER compute_node_lifecycle_generation_guard BEFORE INSERT OR UPDATE OF lifecycle, lifecycle_generation, drain_initiated_at, recovery_initiated_at ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.compute_node_lifecycle_generation_guard();
+
+
+--
+-- Name: compute_node_heartbeats compute_node_report_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_node_report_scope BEFORE INSERT OR DELETE OR UPDATE ON public.compute_node_heartbeats FOR EACH ROW EXECUTE FUNCTION public.compute_node_report_scope();
+
+
+--
+-- Name: node_memory_reports compute_node_report_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_node_report_scope BEFORE INSERT OR DELETE OR UPDATE ON public.node_memory_reports FOR EACH ROW EXECUTE FUNCTION public.compute_node_report_scope();
+
+
+--
+-- Name: compute_nodes compute_node_row_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_node_row_scope BEFORE INSERT OR DELETE OR UPDATE ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.compute_node_row_scope();
 
 
 --
@@ -95572,6 +96015,14 @@ ALTER TABLE ONLY public.app_openapi_docs
 
 ALTER TABLE ONLY public.app_openapi_docs
     ADD CONSTRAINT app_openapi_docs_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_owner_release_requests app_owner_release_requests_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_owner_release_requests
+    ADD CONSTRAINT app_owner_release_requests_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -109564,6 +110015,22 @@ ALTER TABLE ONLY public.scheduled_releases
 
 ALTER TABLE ONLY public.scheduled_releases
     ADD CONSTRAINT scheduled_releases_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: secret_grants secret_grants_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_grants
+    ADD CONSTRAINT secret_grants_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: secret_grants secret_grants_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_grants
+    ADD CONSTRAINT secret_grants_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
 
 
 --

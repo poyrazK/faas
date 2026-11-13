@@ -16,3 +16,9 @@ Environment=FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED={{ faas_seal_domain_runtime_s
 # host identity. faas_seal_domain_legacy_identities reports it.
 Environment=FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED=true
 {% endif %}
+{% if faas_seal_domain_runtime_retired_on_compute | bool %}
+# ADR-20261110210000 slice 3e: this node holds no runtime identity. vmmd
+# opens runtime secrets through secretd, refuses to start while a runtime
+# identity is left on disk, and seals crash-capture keys to runtime.age.pub.
+Environment=FAAS_SEAL_DOMAIN_RUNTIME_RETIRED=true
+{% endif %}

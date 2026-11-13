@@ -713,6 +713,16 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	} else if len(legacyIdentities) == 0 {
 		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — registry credential unseal disabled (Free plan + anonymous-only deployments)")
 	}
+	// ADR-20261110210000 slice 3j-2: private images through secretd, so
+	// this node never opens an app's registry password.
+	registryProxy, closeRegistryProxy, err := registryProxyFromEnv(ctx, getenv, log)
+	if err != nil {
+		return err
+	}
+	defer closeRegistryProxy()
+	if registryProxy != nil {
+		h.WithRegistryProxy(registryProxy)
+	}
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
 	log.Info("build seal domain", "domain_identity", len(buildIdentities) > 0, "fleet_identity", len(legacyIdentities) > 0)
 
