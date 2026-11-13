@@ -4412,7 +4412,9 @@
       "resolved_at",
       "dismissed_at",
       "dismissed_by",
-      "dismiss_reason"
+      "dismiss_reason",
+      "outcome",
+      "ticket_id"
     ],
     "kind": "operational"
   },

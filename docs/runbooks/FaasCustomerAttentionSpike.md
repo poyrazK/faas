@@ -5,9 +5,12 @@
 ## What it means
 
 apid evaluates customer attention signals every five minutes
-(ADR-20261113123000): accounts with repeated failed deployments
-(`deploy_failing`), bursts of one refused API problem code
-(`refused_burst`), or custom domains that are not serving (`domain_stuck`).
+(ADR-20261113123000, ADR-20261113180000): repeated failed deployments
+(`deploy_failing`), runtime OOM kills (`app_oom`), failed boots
+(`boot_failing`), failing scheduled jobs (`jobs_failing`), custom domains
+that are not serving (`domain_stuck`), bursts of one refused API problem
+code (`refused_burst`), repeated plan-limit refusals (`limit_pressure`) and
+unrecovered payment failures (`payment_failing`).
 The alert fires when open signals of one kind rose by at least ten within an
 hour and stayed there for ten minutes.
 
@@ -35,6 +38,12 @@ otherwise.
      `apid_customer_api_errors_total` by `code` with the hours before; a code
      that appeared with a release usually means a regression in validation
      or a limit.
+   - `app_oom`, `boot_failing`: many apps at once points at a runtime,
+     base image or node problem rather than customer code; check the wake
+     and node dashboards and recent runtime releases.
+   - `jobs_failing`: check the job runner and recent releases of it.
+   - `limit_pressure`, `payment_failing`: a jump usually follows a limit
+     change or a billing provider incident.
    - `domain_stuck`: the `detail` says whether certificate issuance failed
      (with the authority's error) or DNS drifted. A shared certificate
      authority error points at ACME or rate limits; widespread drift points
@@ -42,10 +51,11 @@ otherwise.
 
 3. If a platform cause is confirmed, follow that component's runbook and
    post a status update. Signals resolve on their own once the condition
-   clears; do not dismiss them in bulk.
+   clears; do not dismiss them in bulk, and do not contact customers one by
+   one about a platform problem.
 
 4. If the signals are unrelated customer issues that happened to cluster,
-   leave them for support. Dismiss individual signals only with a reason.
+   leave them for support to contact or dismiss with an outcome.
 
 ## Notes
 

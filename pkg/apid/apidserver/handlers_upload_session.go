@@ -874,6 +874,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		Workflows:              append(json.RawMessage(nil), rollout.Workflows...),
 		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
 		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideReadinessProbe: append(json.RawMessage(nil), rollout.OverrideReadinessProbe...),
 		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		ReleaseCommand:         releaseCommand.command,
 		ReleaseCommandShell:    releaseCommand.shell,

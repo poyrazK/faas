@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { ObsNotificationAPIStatus } from './ObsNotificationAPIStatus.js';
 import type { ObsNotificationIntegration } from './ObsNotificationIntegration.js';
+import type { ObsNotificationReceiverHealth } from './ObsNotificationReceiverHealth.js';
 import type { ObsNotificationSignal } from './ObsNotificationSignal.js';
 /**
  * Current pipeline evidence without per-episode delivery or human receipt claims.
@@ -21,6 +22,7 @@ export type ObsNotificationHealth = {
    * Observed integration types ordered by name; missing counters remain unknown.
    */
   integrations: Array<ObsNotificationIntegration>;
+  receiver_health?: ObsNotificationReceiverHealth;
   limitations: Array<string>;
 };
 

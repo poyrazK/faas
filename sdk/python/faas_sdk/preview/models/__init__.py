@@ -3327,6 +3327,12 @@ from .obs_notification_health_signals import ObsNotificationHealthSignals
 from .obs_notification_health_state import ObsNotificationHealthState
 from .obs_notification_integration import ObsNotificationIntegration
 from .obs_notification_integration_integration import ObsNotificationIntegrationIntegration
+from .obs_notification_receiver import ObsNotificationReceiver
+from .obs_notification_receiver_health import ObsNotificationReceiverHealth
+from .obs_notification_receiver_health_state import ObsNotificationReceiverHealthState
+from .obs_notification_receiver_integration import ObsNotificationReceiverIntegration
+from .obs_notification_receiver_receiver import ObsNotificationReceiverReceiver
+from .obs_notification_receiver_state import ObsNotificationReceiverState
 from .obs_notification_signal import ObsNotificationSignal
 from .obs_notification_signal_state import ObsNotificationSignalState
 from .obs_notification_signal_window_seconds import ObsNotificationSignalWindowSeconds
@@ -3360,6 +3366,13 @@ from .obs_rule_health_item_state import ObsRuleHealthItemState
 from .obs_rule_health_response import ObsRuleHealthResponse
 from .obs_rule_health_response_state import ObsRuleHealthResponseState
 from .obs_rule_health_totals import ObsRuleHealthTotals
+from .obs_serving_health import ObsServingHealth
+from .obs_serving_health_state import ObsServingHealthState
+from .obs_serving_probe import ObsServingProbe
+from .obs_serving_probe_counts import ObsServingProbeCounts
+from .obs_serving_probe_inventory import ObsServingProbeInventory
+from .obs_serving_probe_inventory_state import ObsServingProbeInventoryState
+from .obs_serving_probe_state import ObsServingProbeState
 from .obs_wake_event import ObsWakeEvent
 from .obs_wake_event_data import ObsWakeEventData
 from .obs_wake_timeline import ObsWakeTimeline
@@ -9659,6 +9672,12 @@ __all__ = (
     "ObsNotificationHealthState",
     "ObsNotificationIntegration",
     "ObsNotificationIntegrationIntegration",
+    "ObsNotificationReceiver",
+    "ObsNotificationReceiverHealth",
+    "ObsNotificationReceiverHealthState",
+    "ObsNotificationReceiverIntegration",
+    "ObsNotificationReceiverReceiver",
+    "ObsNotificationReceiverState",
     "ObsNotificationSignal",
     "ObsNotificationSignalState",
     "ObsNotificationSignalWindowSeconds",
@@ -9692,6 +9711,13 @@ __all__ = (
     "ObsRuleHealthResponse",
     "ObsRuleHealthResponseState",
     "ObsRuleHealthTotals",
+    "ObsServingHealth",
+    "ObsServingHealthState",
+    "ObsServingProbe",
+    "ObsServingProbeCounts",
+    "ObsServingProbeInventory",
+    "ObsServingProbeInventoryState",
+    "ObsServingProbeState",
     "ObsWakeEvent",
     "ObsWakeEventData",
     "ObsWakeTimeline",
