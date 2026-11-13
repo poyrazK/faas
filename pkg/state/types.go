@@ -2145,7 +2145,10 @@ func (m AppManifest) IsZero() bool {
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
 		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0 &&
-		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0
+		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0 &&
+		// A function app whose only settings are its callables or input
+		// schema must not be stored as {} (ADR-20261111150000).
+		len(m.FunctionCallables) == 0 && len(m.FunctionInputSchema) == 0
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
