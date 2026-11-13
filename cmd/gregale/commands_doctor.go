@@ -144,6 +144,8 @@ func (r doctorReport) HasProfileWarnings() bool {
 var actionableProfileWarnings = map[string]bool{
 	"package_json_invalid":  true,
 	"missing_start_command": true,
+	// A raw TCP server built from source fails readiness every time.
+	"non_http_service": true,
 }
 
 // ActionableProfileWarnings lists the profile warnings doctor reports.

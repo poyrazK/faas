@@ -86,8 +86,17 @@ the retail-store and voting-app runs:
 | `dev-setup` | A `dev` build target or a dev command (nodemon, `--inspect`, …) |
 | `project-releases` | More than one service: `--only`, `--release-policy immediate`, `logs --project --follow` |
 
+Single-app deploys print source-inference warnings, not a plan, so their
+first rule is a profile warning. `non_http_service` fires when a Dockerfile's
+serving port is a raw TCP server's: its own EXPOSE, or else the default port of
+a known server image it builds FROM (redis, postgres, mongo, …). A source build
+must answer HTTP GET /healthz there and never will (eval 2026-11-13: an agent
+built `FROM redis` and hit `app_startup_timeout`). The warning names the image
+deploy, which is gated by TCP accept, and the internal `--ports` declaration.
+Preflight rates it amber, and `gregale doctor` reports it.
+
 Later rules: Spring actuator inference, `.env*` files in the upload set,
-single-app plans and `gregale doctor`.
+more single-app rules.
 
 `TestEveryHintCommandIsARealCommand` resolves every command a hint can print
 against the CLI manifest (after the command-tree rewrite) and fails on an
