@@ -854,6 +854,8 @@ type Querier interface {
 	CountProductionPendingInvocations(ctx context.Context, db DBTX, arg CountProductionPendingInvocationsParams) (int64, error)
 	CountProductionPendingQueueWorkInLane(ctx context.Context, db DBTX, arg CountProductionPendingQueueWorkInLaneParams) (int64, error)
 	CountProductionQueueBindingActive(ctx context.Context, db DBTX, arg CountProductionQueueBindingActiveParams) (int64, error)
+	// Counted up to row_limit (ADR-20261113180000, R7-3): every state read
+	// counted the whole dead letter.
 	CountProductionQueueDeadLetter(ctx context.Context, db DBTX, arg CountProductionQueueDeadLetterParams) (int64, error)
 	CountProfileInvestigations(ctx context.Context, db DBTX, appID string) (int64, error)
 	CountProjectEnvironmentCloneDatabaseAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -1858,6 +1860,16 @@ type Querier interface {
 	// message replayed from the dead letter gets the whole retention again. A
 	// replay is never earlier than the send, so the created_at bound still
 	// narrows invocations_queue_pending_created_idx.
+	// ADR-20261112200000: the wait also restarts when a retry or a nack delay
+	// makes the message due again, so a back-off longer than the retention no
+	// longer turns the retry into an expiry.
+	// ADR-20261113180000 (R5-3, R6-3): a held owner (suspended, or under an abuse
+	// hold) keeps its messages: the sweep restarts their wait at half the
+	// retention instead of dead-lettering them, so after the hold lifts each has
+	// at least half the retention left (skipping them only deferred the expiry to
+	// the first sweep after reactivation). An expired message's push receipt
+	// moves to dead_letter with it; left pending it was never reaped, and a
+	// replay re-arms it from dead_letter.
 	ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error)
 	ExpireProfileCanaryChecks(ctx context.Context, db DBTX, arg ExpireProfileCanaryChecksParams) error
 	ExpireProfileDeploymentChecks(ctx context.Context, db DBTX, arg ExpireProfileDeploymentChecksParams) error
@@ -6107,7 +6119,11 @@ type Querier interface {
 	QueueConsumerOwnedTriggers(ctx context.Context, db DBTX, arg QueueConsumerOwnedTriggersParams) ([]QueueConsumerOwnedTriggersRow, error)
 	QueueConsumerRetireBinding(ctx context.Context, db DBTX, arg QueueConsumerRetireBindingParams) (QueueBinding, error)
 	// ADR-20261112200000: the retired production binding a create with the same
-	// name and queue name revives.
+	// name revives. ADR-20261113180000 (R5-2): the name alone selects it; the
+	// create's queue name then applies as an ordinary rename, so its held
+	// messages drain under the new name (leases and push claims select them by
+	// binding). Requiring the old queue name too left a binding re-created under
+	// a new queue name refused and its messages stranded.
 	QueueConsumerRetiredBindingForRevive(ctx context.Context, db DBTX, arg QueueConsumerRetiredBindingForReviveParams) (QueueBinding, error)
 	QueueConsumerReviveBinding(ctx context.Context, db DBTX, arg QueueConsumerReviveBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg QueueConsumerUpdateBindingParams) (QueueBinding, error)
@@ -6452,6 +6468,12 @@ type Querier interface {
 	ReadProductionDeadLetterEvent(ctx context.Context, db DBTX, arg ReadProductionDeadLetterEventParams) (DeadLetterEvent, error)
 	// ADR-531: production filtering precedes aggregates, limits, and cursor anchors.
 	ReadProductionQueueInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error)
+	// ADR-20261113180000 (R7-3): a named queue counts the messages sent under
+	// the name and those of the production binding that reads the name now, so
+	// a binding's backlog from before a queue_name rename still shows; leases
+	// and push claims already take it. The oldest pending message is the oldest
+	// one ready for delivery: a message waiting out a retry back-off made the
+	// queue look stalled.
 	ReadProductionQueueStateLive(ctx context.Context, db DBTX, arg ReadProductionQueueStateLiveParams) (ReadProductionQueueStateLiveRow, error)
 	// ReadProductionQueueStateLive plus CountProductionQueueDeadLetter for the
 	// status reads a customer can poll: each count stops at row_limit, and the
@@ -7075,6 +7097,10 @@ type Querier interface {
 	// same order changes nothing.
 	RedeemCreditDiscount(ctx context.Context, db DBTX, arg RedeemCreditDiscountParams) (int64, error)
 	RefreshGitHubConnectionToken(ctx context.Context, db DBTX, arg RefreshGitHubConnectionTokenParams) (int64, error)
+	// ADR-20261113180000 (R5-5): a held push queue's due messages that have
+	// waited older_than restart their retention wait. due_at moves to now: the
+	// row stays due, and its state does not change, so no notification fires.
+	RefreshHeldQueueMessages(ctx context.Context, db DBTX, arg RefreshHeldQueueMessagesParams) (int64, error)
 	RegisterApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg RegisterApplicationStandardLogConsumerParams) ([]byte, error)
 	RegisterComputeNodeRuntimeIdentity(ctx context.Context, db DBTX, arg RegisterComputeNodeRuntimeIdentityParams) (int64, error)
 	// ADR-20261018030613: schedd fences rollback before vmmd can reopen a function source.
@@ -7189,6 +7215,8 @@ type Querier interface {
 	// the row is replaced only if no one changed it since it was read.
 	ReplaceEdgeRuleSetVersionRules(ctx context.Context, db DBTX, arg ReplaceEdgeRuleSetVersionRulesParams) (int64, error)
 	ReplaceProductionAppWorkloadSettings(ctx context.Context, db DBTX, arg ReplaceProductionAppWorkloadSettingsParams) error
+	// ADR-20261113180000 (R6-1, R8-2): the replay drops the dead letter's
+	// outcome code and retention horizon with its result.
 	ReplayDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayDeadLetterInvocationParams) (int64, error)
 	ReplayProductionDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayProductionDeadLetterInvocationParams) (int64, error)
 	// ADR-570: only the current process may acknowledge durable policy replay.
@@ -7510,6 +7538,10 @@ type Querier interface {
 	RetryExternalTriggerRecordByOperator(ctx context.Context, db DBTX, arg RetryExternalTriggerRecordByOperatorParams) (int64, error)
 	RetryProductionQueueDeadLetter(ctx context.Context, db DBTX, arg RetryProductionQueueDeadLetterParams) (Invocation, error)
 	RetryProductionQueueTriggerInvocations(ctx context.Context, db DBTX, arg RetryProductionQueueTriggerInvocationsParams) error
+	// ADR-20261113180000 (R6-1, R8-2): a replay starts a new delivery, so it
+	// also drops the dead letter's outcome code and its retention horizon. Kept,
+	// the horizon let the reaper delete the replayed message the moment it
+	// settled again, and the code reported the old expiry on a later success.
 	RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, arg RetryQueueDeadLetterInvocationParams) (Invocation, error)
 	RetryQueueLeaseInvocation(ctx context.Context, db DBTX, arg RetryQueueLeaseInvocationParams) (int64, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)

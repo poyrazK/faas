@@ -674,7 +674,8 @@ func (s *server) queueReceive(w http.ResponseWriter, r *http.Request, acct state
 	}
 	var headers map[string]string
 	_ = json.Unmarshal(inv.Headers, &headers)
-	writeJSON(w, http.StatusOK, api.QueueReceiveResponse{ID: inv.ID, Payload: inv.Payload, Result: inv.Result, TraceID: headers[api.TraceIDHeader], Traceparent: headers["traceparent"]})
+	writeJSON(w, http.StatusOK, api.QueueReceiveResponse{ID: inv.ID, Payload: inv.Payload, Result: inv.Result, State: string(inv.State),
+		TraceID: headers[api.TraceIDHeader], Traceparent: headers["traceparent"]})
 }
 
 func (s *server) receiveProductionQueueInvocation(r *http.Request, acct state.Account, app state.App) (state.Invocation, error) {

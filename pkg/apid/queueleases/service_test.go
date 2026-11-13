@@ -164,8 +164,12 @@ func TestQueueMessageDue(t *testing.T) {
 		{`{"app_id":"a","source":"async_invoke"}`, false},
 		{`{"app_id":"b","source":"queue"}`, false},
 		{`not json`, false},
+		// adr: 20261113180000 — a payload naming a queue wakes only its waiters.
+		{`{"app_id":"a","source":"queue","queue_name":"jobs"}`, true},
+		{`{"app_id":"a","source":"queue","queue_name":"other"}`, false},
+		{`{"app_id":"a","source":"queue","queue_name":""}`, false},
 	} {
-		if got := queueMessageDue(tc.payload, "a"); got != tc.want {
+		if got := queueMessageDue(tc.payload, "a", "jobs"); got != tc.want {
 			t.Errorf("queueMessageDue(%s) = %v, want %v", tc.payload, got, tc.want)
 		}
 	}
@@ -204,5 +208,52 @@ func TestNackPersistsSafeErrorText(t *testing.T) {
 				t.Fatalf("persisted error is not safe text: %q", invocation.LastError)
 			}
 		})
+	}
+}
+
+// adr: 20261113180000 — a worker token addresses its app by the slug it had
+// before a rename, but never by a slug another app holds now (R8-1).
+func TestWorkloadPathNamesAppAcrossRename(t *testing.T) {
+	f := newLeaseFixture(t)
+	ctx := context.Background()
+	renamed, err := f.host.store.RenameApp(ctx, f.account.ID, "waiter", "waiter-renamed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.host.store.CreateApp(ctx, state.App{AccountID: f.account.ID, Slug: "taken", Type: state.AppTypeApp,
+		WorkloadClass: state.WorkloadClassWorker, Status: state.AppActive}); err != nil {
+		t.Fatal(err)
+	}
+	for slug, want := range map[string]bool{"waiter-renamed": true, "waiter": true, "taken": false} {
+		r := httptest.NewRequest(http.MethodPost, "/v1/apps/"+slug+"/queues/jobs/leases", nil)
+		r.SetPathValue("slug", slug)
+		if got := workloadPathNamesApp(r, f.host.store, renamed); got != want {
+			t.Errorf("slug %q names the renamed app = %v, want %v", slug, got, want)
+		}
+	}
+}
+
+// adr: 20261113180000 — a lease over the waiter cap that finds nothing holds
+// the request for its wait instead of answering at once, which made SDK
+// consumers poll again immediately and spin lease transactions (R5-1).
+func TestLeaseOverWaiterCapHoldsEmptyAnswer(t *testing.T) {
+	f := newLeaseFixture(t)
+	slots := &WaiterSlots{perAccount: map[string]int{f.account.ID: api.QueueLeaseWaitersPerAccount}, total: api.QueueLeaseWaitersPerAccount}
+	r := httptest.NewRequest(http.MethodPost, "/v1/apps/waiter/queues/jobs/leases", strings.NewReader(`{"wait_seconds":1}`))
+	r.SetPathValue("slug", "waiter")
+	r.SetPathValue("queue", "jobs")
+	w := httptest.NewRecorder()
+	start := time.Now()
+	Service{Host: f.host, Waiters: slots}.Lease(w, r, f.account, f.app, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", w.Code)
+	}
+	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
+		t.Fatalf("over-cap empty lease answered after %v, want the 1 s wait", elapsed)
+	}
+	select {
+	case <-f.host.subscribed:
+		t.Fatal("over-cap lease subscribed to notifications")
+	default:
 	}
 }

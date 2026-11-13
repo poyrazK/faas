@@ -445,6 +445,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// ADR-20261023115741: a trigger whose capability is off for the account
 	// is not polled; its records stay in the broker until the flag is on.
 	if !l.engine.appIDCapabilityAllowed(ctx, t.AppID.String(), triggerCapability(t.Kind)) {
+		l.refreshHeldQueueMessages(ctx, t)
 		return nil
 	}
 	// A Gregale queue's push consumer holds its messages while the app's
@@ -453,6 +454,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// refused wake, which spent their attempts until they dead-lettered
 	// (ADR-20261112200000).
 	if t.Kind == string(api.TriggerKindQueue) && l.queueTriggerAppHeld(ctx, t.AppID.String()) {
+		l.refreshHeldQueueMessages(ctx, t)
 		return nil
 	}
 	// An agent-target trigger is not polled on a scheduler that cannot
@@ -924,6 +926,16 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		respBody, postErr = l.postBatch(dispatchCtx, envelope)
 	}
 	stopRenewing()
+	// A queue batch whose gateway answer does not parse retries like a
+	// failed post (ADR-20261113180000, R7-2): the fault is the platform's,
+	// and dead-lettering every message in the batch as a poison record spent
+	// none of their attempts on their own handling.
+	if _, isQueue := poller.(*queuePoller); postErr == nil && isQueue && !agentTarget && exclusiveBinding == nil {
+		var probe triggerDispatchResponse
+		if err := json.Unmarshal(respBody, &probe); err != nil {
+			postErr = fmt.Errorf("gateway response malformed: %w", err)
+		}
+	}
 	if postErr != nil {
 		dispatchSpan.SetAttributes(attribute.String("gregale.trigger.outcome", "gateway_error"))
 		dispatchSpan.RecordError(postErr)
@@ -1560,6 +1572,34 @@ func (l *Loop) queueTriggerAppHeld(ctx context.Context, appID string) bool {
 		return false
 	}
 	return l.cronAppBudgetHeld(ctx, app)
+}
+
+// refreshHeldQueueMessages keeps a held push queue's messages within their
+// retention while the hold lasts (ADR-20261113180000, R5-5): skipping the
+// queue spent no attempts, but its messages expired as queue_message_expired
+// once the hold outlasted the plan's retention.
+func (l *Loop) refreshHeldQueueMessages(ctx context.Context, t sqlc.Trigger) {
+	if l.engine == nil || t.Kind != string(api.TriggerKindQueue) || !t.Source.Valid || t.Source.String != string(state.InvocationQueue) {
+		return
+	}
+	refresher, ok := l.engine.Store().(state.QueueHoldRefresher)
+	if !ok {
+		return
+	}
+	// Messages only need a refresh once per QueueHoldRefreshAge; a minute
+	// between scans keeps a long hold from costing a query every tick.
+	now := time.Now()
+	if last, seen := l.queueHoldRefreshed.Load(t.ID.String()); seen && now.Sub(last.(time.Time)) < time.Minute {
+		return
+	}
+	l.queueHoldRefreshed.Store(t.ID.String(), now)
+	bindingID := ""
+	if t.QueueBindingID.Valid {
+		bindingID = t.QueueBindingID.String()
+	}
+	if _, err := refresher.RefreshHeldQueueMessages(ctx, t.AppID.String(), bindingID, t.Slug, state.QueueHoldRefreshAge(), 256); err != nil {
+		l.log.Warn("sched trigger tick: refresh held queue messages", "trigger_id", t.ID.String(), "err", err)
+	}
 }
 
 func appAsyncInvocationTimeout(ctx context.Context, store interface {
@@ -2731,14 +2771,20 @@ func (l *Loop) closeTriggerPoller(id string, p triggerSource) {
 // Only pollers this loop built are evicted.
 func (l *Loop) evictTriggerPollers(enabled []sqlc.Trigger) {
 	l.queuePushLanes.prune(enabled)
+	live := make(map[string]bool, len(enabled))
+	for i := range enabled {
+		live[enabled[i].ID.String()] = true
+	}
+	l.queueHoldRefreshed.Range(func(id, _ any) bool {
+		if !live[id.(string)] {
+			l.queueHoldRefreshed.Delete(id)
+		}
+		return true
+	})
 	l.triggerPollersMu.Lock()
 	if len(l.triggerPollerConfigs) == 0 {
 		l.triggerPollersMu.Unlock()
 		return
-	}
-	live := make(map[string]bool, len(enabled))
-	for i := range enabled {
-		live[enabled[i].ID.String()] = true
 	}
 	evicted := map[string]triggerSource{}
 	for id := range l.triggerPollerConfigs {

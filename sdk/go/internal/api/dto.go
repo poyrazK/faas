@@ -1566,8 +1566,10 @@ type QueueReceiveResponse struct {
 	ID             string          `json:"id"`
 	Payload        json.RawMessage `json:"payload"`
 	Result         json.RawMessage `json:"result,omitempty"`
-	TraceID        string          `json:"trace_id,omitempty"`
-	Traceparent    string          `json:"traceparent,omitempty"`
+	// State is how the message settled: completed, failed or cancelled.
+	State       string `json:"state,omitempty"`
+	TraceID     string `json:"trace_id,omitempty"`
+	Traceparent string `json:"traceparent,omitempty"`
 }
 
 // DelayedTaskResponse is the create/get/list shape for delayed tasks.

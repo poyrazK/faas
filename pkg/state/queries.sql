@@ -8817,33 +8817,54 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
 -- message replayed from the dead letter gets the whole retention again. A
 -- replay is never earlier than the send, so the created_at bound still
 -- narrows invocations_queue_pending_created_idx.
+-- ADR-20261112200000: the wait also restarts when a retry or a nack delay
+-- makes the message due again, so a back-off longer than the retention no
+-- longer turns the retry into an expiry.
+-- ADR-20261113180000 (R5-3, R6-3): a held owner (suspended, or under an abuse
+-- hold) keeps its messages: the sweep restarts their wait at half the
+-- retention instead of dead-lettering them, so after the hold lifts each has
+-- at least half the retention left (skipping them only deferred the expiry to
+-- the first sweep after reactivation). An expired message's push receipt
+-- moves to dead_letter with it; left pending it was never reaped, and a
+-- replay re-arms it from dead_letter.
 WITH plan_retention AS (
     SELECT unnest(sqlc.arg(plans)::text[]) AS plan, unnest(sqlc.arg(retention_seconds)::bigint[]) AS seconds
 ), batch AS (
-    SELECT i.id
+    SELECT i.id,
+        (coalesce(a.status, o.status) = 'suspended' OR coalesce(a.abuse_hold_at, o.abuse_hold_at) IS NOT NULL) AS held
     FROM invocations i
     LEFT JOIN accounts a ON a.id = i.account_id
     LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
-      AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => sqlc.arg(min_retention_seconds)::bigint)
-      -- ADR-20261112200000: the wait also restarts when a retry or a nack
-      -- delay makes the message due again, so a back-off longer than the
-      -- retention no longer turns the retry into an expiry; and a suspended
-      -- owner's messages wait for its reactivation instead of expiring.
-      AND greatest(coalesce(i.last_replayed_at, i.created_at), i.due_at) < sqlc.arg(now_at)::timestamptz - make_interval(secs => r.seconds)
-      AND coalesce(a.status, o.status) <> 'suspended'
+      AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => sqlc.arg(min_retention_seconds)::bigint / 2)
+      AND greatest(coalesce(i.last_replayed_at, i.created_at), i.due_at) < sqlc.arg(now_at)::timestamptz - make_interval(secs =>
+          CASE WHEN coalesce(a.status, o.status) = 'suspended' OR coalesce(a.abuse_hold_at, o.abuse_hold_at) IS NOT NULL
+               THEN r.seconds / 2 ELSE r.seconds END)
     ORDER BY i.created_at
     LIMIT sqlc.arg(batch_limit)::integer
     FOR UPDATE OF i SKIP LOCKED
+), refreshed AS (
+    UPDATE invocations i SET due_at = sqlc.arg(now_at)::timestamptz
+    FROM batch WHERE i.id = batch.id AND batch.held AND i.state = 'pending'
+    RETURNING i.id
+), expired AS (
+    UPDATE invocations i
+    SET state = 'dead_letter', outcome = 'dead_letter', completed_at = now(),
+        last_error = 'queue message expired: it waited longer than the plan retention',
+        outcome_code = 'queue_message_expired'
+    FROM batch
+    WHERE i.id = batch.id AND NOT batch.held AND i.state = 'pending'
+    RETURNING i.id, i.app_id
+), receipts AS (
+    UPDATE trigger_records r SET state = 'dead_letter', claim_expires_at = NULL,
+        last_error = 'queue message expired: it waited longer than the plan retention'
+    FROM expired e, triggers t
+    WHERE t.id = r.trigger_id AND t.app_id = e.app_id AND t.kind = 'queue' AND t.source = 'queue'
+      AND r.item_identifier = e.id::text AND r.state IN ('pending', 'retry', 'claimed')
+    RETURNING r.id
 )
-UPDATE invocations i
-SET state = 'dead_letter', outcome = 'dead_letter', completed_at = now(),
-    last_error = 'queue message expired: it waited longer than the plan retention',
-    outcome_code = 'queue_message_expired'
-FROM batch
-WHERE i.id = batch.id AND i.state = 'pending'
-RETURNING i.id::text AS id, i.app_id::text AS app_id;
+SELECT e.id::text AS id, e.app_id::text AS app_id FROM expired e;
 
 -- name: StampDefaultInvocationRetention :execrows
 -- ADR 20261019104819: finished rows whose producer set no horizon get the
@@ -8876,15 +8897,28 @@ SELECT count(*) FROM production_invocation_work WHERE app_id=$1 AND source='queu
     AND work_policy_name=$2 AND work_key_digest=$3;
 
 -- name: ReadProductionQueueStateLive :one
+-- ADR-20261113180000 (R7-3): a named queue counts the messages sent under
+-- the name and those of the production binding that reads the name now, so
+-- a binding's backlog from before a queue_name rename still shows; leases
+-- and push claims already take it. The oldest pending message is the oldest
+-- one ready for delivery: a message waiting out a retry back-off made the
+-- queue look stalled.
 SELECT count(*) AS depth,
     count(*) FILTER(WHERE state='dispatching' AND lease_expires_at IS NOT NULL AND lease_expires_at>now()) AS in_flight,
-    min(created_at) FILTER(WHERE state='pending')::timestamptz AS oldest_pending_at
+    min(created_at) FILTER(WHERE state='pending' AND due_at<=now())::timestamptz AS oldest_pending_at
 FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state IN ('pending','dispatching')
-    AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text);
+    AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text OR queue_binding_id=(
+        SELECT b.id FROM queue_bindings b WHERE b.app_id=sqlc.arg(app_id)::uuid AND b.deployment_scope=''
+          AND b.queue_name=sqlc.arg(queue_name)::text ORDER BY b.created_at, b.id LIMIT 1));
 
 -- name: CountProductionQueueDeadLetter :one
-SELECT count(*) FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state='dead_letter'
-    AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text);
+-- Counted up to row_limit (ADR-20261113180000, R7-3): every state read
+-- counted the whole dead letter.
+SELECT count(*) FROM (SELECT 1 FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state='dead_letter'
+    AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text OR queue_binding_id=(
+        SELECT b.id FROM queue_bindings b WHERE b.app_id=sqlc.arg(app_id)::uuid AND b.deployment_scope=''
+          AND b.queue_name=sqlc.arg(queue_name)::text ORDER BY b.created_at, b.id LIMIT 1))
+    LIMIT sqlc.arg(row_limit)::integer) bounded;
 
 -- name: TrimCompletedQueuePayloads :execrows
 -- A completed queue message keeps its payload for a day after its ack, then
@@ -8962,7 +8996,10 @@ WHERE p.id = sqlc.arg(id)::uuid AND p.source = 'queue' AND p.state = 'dead_lette
 
 -- name: RetryProductionQueueDeadLetter :one
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
-    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code=''
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code='',
+    -- ADR-20261113180000 (R6-1, R8-2): a replay settles anew; the dead
+    -- letter's result and retention horizon do not carry over.
+    result=NULL,result_retention_until=NULL
 FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1 AND i.account_id=$2 AND i.state='dead_letter' AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
 RETURNING i.*;
 
@@ -9003,7 +9040,10 @@ DELETE FROM dead_letter_events d USING production_dead_letter_events p WHERE p.i
 
 -- name: ReplayProductionDeadLetterInvocation :execrows
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
-    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code=''
+    instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code='',
+    -- ADR-20261113180000 (R6-1, R8-2): a replay settles anew; the dead
+    -- letter's result and retention horizon do not carry over.
+    result=NULL,result_retention_until=NULL
 FROM production_invocation_work p WHERE p.id=i.id AND i.id=sqlc.arg(invocation_id)::uuid
     AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid AND i.state='dead_letter' AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id);
 
@@ -13515,10 +13555,15 @@ where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(accoun
 
 -- name: QueueConsumerRetiredBindingForRevive :one
 -- ADR-20261112200000: the retired production binding a create with the same
--- name and queue name revives.
+-- name revives. ADR-20261113180000 (R5-2): the name alone selects it; the
+-- create's queue name then applies as an ordinary rename, so its held
+-- messages drain under the new name (leases and push claims select them by
+-- binding). Requiring the old queue name too left a binding re-created under
+-- a new queue name refused and its messages stranded.
 select * from queue_bindings
 where app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and environment_id is null
-  and name=sqlc.arg(name) and queue_name=sqlc.arg(queue_name) and retired_at is not null
+  and name=sqlc.arg(name) and retired_at is not null
+order by retired_at desc, id limit 1
 for update;
 
 -- name: QueueConsumerAuthorizeRevive :exec
@@ -14400,6 +14445,22 @@ where i.id=sqlc.arg(id)::uuid and i.app_id=sqlc.arg(app_id)::uuid and i.source='
  AND i.environment_id IS NULL AND NOT EXISTS (SELECT 1 FROM invocation_environment_queue_receipts r WHERE r.invocation_id=i.id)
 returning i.*;
 
+-- name: RefreshHeldQueueMessages :execrows
+-- ADR-20261113180000 (R5-5): a held push queue's due messages that have
+-- waited older_than restart their retention wait. due_at moves to now: the
+-- row stays due, and its state does not change, so no notification fires.
+UPDATE invocations i SET due_at = clock_timestamp()
+WHERE i.id IN (
+    SELECT c.id FROM invocations c
+    WHERE c.app_id = sqlc.arg(app_id)::uuid AND c.source = 'queue' AND c.state = 'pending' AND c.environment_id IS NULL
+      AND c.due_at <= clock_timestamp()
+      AND (c.queue_binding_id = sqlc.narg(binding_id)::uuid OR (c.queue_binding_id IS NULL AND c.queue_name = sqlc.arg(queue_name)::text))
+      AND greatest(coalesce(c.last_replayed_at, c.created_at), c.due_at) < clock_timestamp() - make_interval(secs => sqlc.arg(older_than_seconds)::bigint)
+    ORDER BY c.created_at
+    LIMIT sqlc.arg(batch_limit)::integer
+    FOR UPDATE SKIP LOCKED)
+  AND i.state = 'pending';
+
 -- name: QueueReleasePendingBatchClaims :exec
 -- A claim the poller hands back undelivered returns the attempt the claim
 -- took (ADR-20261112200000): a message bumped out of a full batch must not
@@ -14481,9 +14542,14 @@ select i.id::text from invocations i cross join consumer
 
 
 -- name: RetryQueueDeadLetterInvocation :one
+-- ADR-20261113180000 (R6-1, R8-2): a replay starts a new delivery, so it
+-- also drops the dead letter's outcome code and its retention horizon. Kept,
+-- the horizon let the reaper delete the replayed message the moment it
+-- settled again, and the code reported the old expiry on a later success.
 update invocations set state='pending', attempts=0, last_error=null, outcome=null,
   due_at=clock_timestamp(), lease_expires_at=null, instance_id=null,
-  last_replayed_at=clock_timestamp(), completed_at=null, result=null
+  last_replayed_at=clock_timestamp(), completed_at=null, result=null,
+  outcome_code='', work_decision=null, quota_reserved=false, result_retention_until=null
 where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid and state='dead_letter'
   and operation_id IS NULL
   and NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=invocations.id)
@@ -14610,9 +14676,12 @@ with claimed as (
 		 order by created_at asc, id asc;
 
 -- name: ReplayDeadLetterInvocation :execrows
+-- ADR-20261113180000 (R6-1, R8-2): the replay drops the dead letter's
+-- outcome code and retention horizon with its result.
 update invocations set state='pending', attempts=0, last_error=null, outcome=null,
   due_at=clock_timestamp(),lease_expires_at=null,instance_id=null,
-  last_replayed_at=clock_timestamp(),completed_at=null,result=null
+  last_replayed_at=clock_timestamp(),completed_at=null,result=null,
+  outcome_code='', work_decision=null, quota_reserved=false, result_retention_until=null
 where id=sqlc.arg(id)::uuid and account_id=sqlc.arg(account_id)::uuid
   and app_id=sqlc.arg(app_id)::uuid and state='dead_letter'
   and operation_id IS NULL

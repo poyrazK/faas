@@ -202,11 +202,23 @@ export class GregaleQueueConsumer<T = unknown> {
 
   private async process(leased: LeasedMessage): Promise<void> {
     const lost = new AbortController();
+    // Extend every third of the visibility timeout, so one failed extend
+    // still leaves a retry before the lease runs out; once no extend has
+    // held for a whole timeout the lease has lapsed and the message is being
+    // redelivered, so the handler is told (ADR-20261113180000, R6-2).
+    let heldAt = Date.now();
     const heartbeat = setInterval(() => {
+      if (Date.now() - heldAt >= this.visibility * 1000) {
+        lost.abort(new Error('Queue lease lost: extensions failed until it expired'));
+        return;
+      }
       this.extensions.add(leased.receipt)
-        .then(held => { if (!held) lost.abort(new Error('Queue lease lost')); })
+        .then(held => {
+          if (held) heldAt = Date.now();
+          else lost.abort(new Error('Queue lease lost'));
+        })
         .catch(error => this.report(error));
-    }, (this.visibility * 1000) / 2);
+    }, (this.visibility * 1000) / 3);
     heartbeat.unref?.();
     const message: QueueMessage<T> = {
       id: leased.id, payload: leased.payload as T, headers: leased.headers ?? {},
@@ -225,9 +237,11 @@ export class GregaleQueueConsumer<T = unknown> {
     if (failed) this.report(failure);
     if (lost.signal.aborted) return; // the message belongs to its next delivery now
     try {
-      const held = failed
-        ? await this.settle(':nack', leased.receipt, { error: errorText(failure), delay_seconds: this.retryDelay })
-        : await this.acks.add(leased.receipt);
+      // A transient settle failure is retried: otherwise the message was
+      // redelivered after its timeout although it had been handled.
+      const held = await retrySettle(() => failed
+        ? this.settle(':nack', leased.receipt, { error: errorText(failure), delay_seconds: this.retryDelay })
+        : this.acks.add(leased.receipt), this.stopping.signal);
       if (!held) this.report(new Error(`Queue lease for message ${leased.id} expired before it was settled`));
     } catch (error) {
       this.report(error);
@@ -304,6 +318,23 @@ export function consumeQueue<T = unknown>(options: ConsumeQueueOptions, handler:
     process.once('SIGINT', onSignal);
   }
   return consumer;
+}
+
+const SETTLE_RETRY_DELAYS_MS = [500, 2000];
+
+/** Runs a settle call, retrying a thrown (transport or 5xx) failure. */
+async function retrySettle(call: () => Promise<boolean>, signal: AbortSignal): Promise<boolean> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (error) {
+      if (attempt >= SETTLE_RETRY_DELAYS_MS.length) throw error;
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, SETTLE_RETRY_DELAYS_MS[attempt]);
+        signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+      });
+    }
+  }
 }
 
 function errorText(error: unknown): string {

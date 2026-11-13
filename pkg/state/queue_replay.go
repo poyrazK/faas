@@ -131,6 +131,8 @@ func (m *MemStore) retryQueueDeadLetterLocked(accountID, invocationID string, no
 	inv.ReplayGeneration++
 	inv.LastError, inv.InstanceID = "", ""
 	inv.Outcome, inv.Result, inv.LeaseExpiresAt, inv.CompletedAt = nil, nil, nil, nil
+	// ADR-20261113180000 (R6-1, R8-2): mirrors RetryQueueDeadLetterInvocation.
+	inv.OutcomeCode, inv.WorkDecision, inv.ResultRetentionUntil = "", nil, nil
 	inv.DueAt, inv.LastReplayedAt = now, &now
 	m.setInvocationLocked(invocationID, inv)
 	if inv.Source != InvocationQueue && inv.Source != InvocationDelayedTask {

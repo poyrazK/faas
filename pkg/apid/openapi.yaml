@@ -121026,7 +121026,7 @@ components:
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Canonical platform trace id when the request carried a valid trace context." }
 
     QueueReceiveResponse:
-      description: "200 — a completed queue invocation observed by the long-poll feed. 204 (no body) on timeout."
+      description: "200 — a settled queue invocation observed by the long-poll feed: every waiting receive sees it, and one that settles while none waits is not replayed. 204 (no body) on timeout. Consume with pull leases instead."
       type: object
       required: [id, payload]
       properties:
@@ -121035,6 +121035,7 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         payload: { type: object, additionalProperties: true }
         result: { type: object, additionalProperties: true }
+        state: { type: string, description: "How the message settled: completed, failed or cancelled. A failed or cancelled message's result is its error." }
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         traceparent: { type: string, description: "W3C traceparent propagated from the producer." }
 

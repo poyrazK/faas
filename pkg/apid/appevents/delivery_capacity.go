@@ -24,6 +24,17 @@ func QueueCapProblem(err error) *api.Problem {
 	return nil
 }
 
+// QueueBindingRetiredProblem answers a replay refused because the message's
+// queue binding is retired, or nil for any other error. It answered as an
+// internal error before (ADR-20261113180000).
+func QueueBindingRetiredProblem(err error) *api.Problem {
+	if !errors.Is(err, state.ErrQueueBindingRetired) {
+		return nil
+	}
+	return api.NewProblem(http.StatusConflict, "queue_binding_retired", "Queue binding retired",
+		"this message's queue binding was deleted; create a binding with the same name to revive it")
+}
+
 func EventDeliveryReplayProblem(err error, fallback string) *api.Problem {
 	if problem := QueueCapProblem(err); problem != nil {
 		return problem
@@ -36,6 +47,9 @@ func EventDeliveryReplayProblem(err error, fallback string) *api.Problem {
 	}
 	if errors.Is(err, state.ErrKeyedReplayExpired) {
 		return api.ErrDeadLetterKeyedReplayExpired()
+	}
+	if problem := QueueBindingRetiredProblem(err); problem != nil {
+		return problem
 	}
 	if errors.Is(err, state.ErrConflict) {
 		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Replay work changed", "refresh the retained work before retrying recovery")

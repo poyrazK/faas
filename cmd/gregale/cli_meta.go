@@ -6268,6 +6268,7 @@ var cliCommands = []cliCommand{
 					{Name: "mode", Short: "delivery mode", Value: "MODE", ClosedSet: []string{"pull", "push"}},
 					{Name: "workload-class", Short: "consumer workload class", Value: "CLASS", ClosedSet: []string{"worker", "job", "http"}},
 					{Name: "max-concurrency", Short: "maximum concurrent deliveries", Value: "N"},
+					{Name: "enabled", Short: "turn delivery on or off", Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				}},
 				{Name: "rm", Short: "Retire a queue binding", Positionals: []string{"<slug>", "<binding-id>"}},
 			}},

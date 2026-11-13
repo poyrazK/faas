@@ -138,7 +138,18 @@ func (s *PgStore) productionDeadLetterReplayMany(ctx context.Context, accountID,
 	var capped error
 	for _, row := range rows {
 		ev := deadLetterEventFromSQLC(row)
-		if _, err := replayDeadLetterEventTx(ctx, tx, accountID, ev.AppID, ev); err != nil {
+		// Each event replays under its own savepoint (ADR-20261113180000,
+		// R8-3): a skipped event whose refusal came from a failed statement
+		// (a guard's exception) aborted the shared transaction, so every
+		// later event failed and the whole replay rolled back.
+		savepoint, err := tx.Begin(ctx)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := replayDeadLetterEventTx(ctx, savepoint, accountID, ev.AppID, ev); err != nil {
+			if rollbackErr := savepoint.Rollback(ctx); rollbackErr != nil {
+				return 0, rollbackErr
+			}
 			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) || errors.Is(err, ErrDeadLetterNotReplayable) || errors.Is(err, ErrConflict) {
 				continue
 			}
@@ -150,6 +161,9 @@ func (s *PgStore) productionDeadLetterReplayMany(ctx context.Context, accountID,
 				}
 				continue
 			}
+			return 0, err
+		}
+		if err := savepoint.Commit(ctx); err != nil {
 			return 0, err
 		}
 		replayed++

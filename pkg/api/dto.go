@@ -6096,8 +6096,12 @@ type QueueReceiveResponse struct {
 	ID             string          `json:"id"`
 	Payload        json.RawMessage `json:"payload"`
 	Result         json.RawMessage `json:"result,omitempty"`
-	TraceID        string          `json:"trace_id,omitempty"`
-	Traceparent    string          `json:"traceparent,omitempty"`
+	// State is how the message settled: completed, failed or cancelled.
+	// Receive returned all three alike, so a failure looked processed
+	// (ADR-20261113180000, R6-5).
+	State       string `json:"state,omitempty"`
+	TraceID     string `json:"trace_id,omitempty"`
+	Traceparent string `json:"traceparent,omitempty"`
 }
 
 // LogQueryEvent is the stable, source-neutral shape emitted by database-backed

@@ -103,6 +103,36 @@ func TestConfigureQueueWorkloadRejectsQueueMoveWithoutForce(t *testing.T) {
 	}
 }
 
+// adr: 20261113180000 (R5-9) — re-running queue setup re-enabled a binding
+// the customer had disabled.
+func TestConfigureQueueWorkloadKeepsDisabledBinding(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	ctx := context.Background()
+	app, err := (*e.Store()).CreateApp(ctx, state.App{
+		AccountID: (*e.Acct()).ID, Slug: "queue-disabled", WorkloadClass: state.WorkloadClassWorker,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (*e.Store()).CreateQueueBinding(ctx, state.QueueBinding{
+		AccountID: (*e.Acct()).ID, AppID: app.ID, Name: "default", QueueName: "default",
+		Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: false, MaxConcurrency: 4,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.Do(t, http.MethodPut, "/v1/apps/queue-disabled/queue-workload", api.QueueWorkloadProfileRequest{}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var got api.QueueWorkloadProfileResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Binding.Enabled || got.Binding.MaxConcurrency != 4 {
+		t.Fatalf("binding = %+v; want it still disabled with its concurrency", got.Binding)
+	}
+}
+
 func TestConfigureQueueWorkloadIsPlanGated(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanFree)
 	app, err := (*e.Store()).CreateApp(context.Background(), state.App{

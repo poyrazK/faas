@@ -183,7 +183,11 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 	// A batch for a long-timeout app may hold one record for its whole run
 	// (ADR-1180); the claims must outlast it or they would be requeued
 	// while the handler still ran.
-	leaseSeconds := 600
+	// The lease is the gateway's bound on the batch plus a margin to record
+	// it (ADR-20261113180000, R5-11). A flat ten-minute floor outlived every
+	// ordinary batch by minutes, and when a schedd died mid-dispatch a
+	// binding at its concurrency stalled for the whole of it.
+	leaseSeconds := int((api.TriggerBatchTimeout + api.AsyncInvocationLeaseMargin) / time.Second)
 	if timeout := appAsyncInvocationTimeout(ctx, store, t.AppID.String()); timeout > api.AsyncInvocationTimeoutFloor {
 		leaseSeconds = max(leaseSeconds, int((api.TriggerBatchDispatchTimeout(timeout)+api.AsyncInvocationLeaseMargin)/time.Second))
 	}
