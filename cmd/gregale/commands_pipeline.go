@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
@@ -90,12 +91,16 @@ func cmdPipelineConnection(args []string) int {
 		}
 		return jsonOut(writeJSON(out))
 	case "rotate":
+		id, parseErr := canonicalPipelineID(fs.Arg(0))
+		if parseErr != nil {
+			return printErr("Invalid connection ID", parseErr)
+		}
 		items, err := client.ListDataConnections(ctx)
 		if err != nil {
 			return printErr("Could not inspect connection", err)
 		}
 		for _, c := range items.Items {
-			if c.ID == fs.Arg(0) {
+			if c.ID == id {
 				out, err := client.RotateDataConnection(ctx, c.ID, api.RotateDataConnectionRequest{ExpectedRevision: c.Revision, ConnectionURL: raw})
 				if err != nil {
 					return printErr("Could not rotate connection", err)
@@ -105,7 +110,11 @@ func cmdPipelineConnection(args []string) int {
 		}
 		return printErr("Connection not found", errors.New("use pipeline connection list to inspect owned connections"))
 	case "delete":
-		if err := client.DeleteDataConnection(ctx, fs.Arg(0)); err != nil {
+		id, parseErr := canonicalPipelineID(fs.Arg(0))
+		if parseErr != nil {
+			return printErr("Invalid connection ID", parseErr)
+		}
+		if err := client.DeleteDataConnection(ctx, id); err != nil {
 			return printErr("Could not delete connection", err)
 		}
 		return 0
@@ -132,6 +141,9 @@ func cmdPipelineCreate(args []string) int {
 	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || ((*connection == "") == (*sourceFile == "")) || *tables == "" || *subjects == "" || *timeout <= 0 || *timeout > time.Hour || (*apiName != "" && (*authApp == "" || !api.ValidAppSlug(*apiName))) {
 		return printErr("Invalid pipeline", errors.New("supply NAME, one of --connection/--url-file, --tables and --read-subjects; --api also requires --auth"))
 	}
+	if *apiName != "" && api.IsReservedAppSlug(*apiName) {
+		return printErr("Invalid Data API name", errors.New("choose an app name that is not reserved by Gregale"))
+	}
 	validationID := *connection
 	if validationID == "" {
 		validationID = uuid.NewString()
@@ -140,9 +152,22 @@ func cmdPipelineCreate(args []string) int {
 	if err := datapipeline.ValidateCreate(validation); err != nil {
 		return printErr("Invalid pipeline", err)
 	}
+	if *connection != "" {
+		*connection, _ = canonicalPipelineID(*connection)
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *apiName != "" {
+		if _, err := resolveAuthIssuer(context.Background(), client, *authApp); err != nil {
+			return printErr("Could not resolve the Auth app before provisioning", err)
+		}
+		if _, err := client.GetApp(context.Background(), *apiName); err == nil {
+			return printErr("Data API app already exists", errors.New("choose an unused API app name"))
+		} else if apiErr := new(api.APIError); !errors.As(err, &apiErr) || apiErr.Problem.Status != 404 {
+			return printErr("Could not check Data API app name", err)
+		}
 	}
 	if *sourceFile != "" {
 		raw, readErr := readCommitConnectionFile(*sourceFile)
@@ -151,7 +176,8 @@ func cmdPipelineCreate(args []string) int {
 		}
 		sourceName := fs.Arg(0)
 		if len(sourceName) > 32 {
-			sourceName = sourceName[:32]
+			digest := sha256.Sum256([]byte(sourceName))
+			sourceName = sourceName[:24] + fmt.Sprintf("-%x", digest[:4])
 		}
 		sourceName += "-source"
 		registered, createErr := client.CreateDataConnection(api.ContextWithIdempotencyKey(context.Background(), addResourceIdempotencyKey("pipeline-source", sourceName, raw)), api.CreateDataConnectionRequest{Name: sourceName, ConnectionURL: raw})
@@ -191,7 +217,7 @@ func cmdPipelineCreate(args []string) int {
 			}
 			*region = caps.Region
 		}
-		req := api.CreateManagedPostgresDatabaseRequest{Name: fs.Arg(0) + "-mirror", Region: *region, PostgresMajor: 16}
+		req := api.CreateManagedPostgresDatabaseRequest{Name: datapipeline.MirrorName(fs.Arg(0)), Region: *region, PostgresMajor: 16}
 		db, err = client.CreateManagedPostgresDatabase(api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("pipeline-mirror", req.Name, req.Region)), req)
 	}
 	if err != nil {
@@ -227,6 +253,10 @@ func cmdPipelineCreate(args []string) int {
 
 func cmdPipelineControl(action string, args []string) int {
 	fs := newFlagSet("pipeline "+action, flag.ContinueOnError)
+	var yes bool
+	if action == "resync" {
+		fs.BoolVar(&yes, "yes", false, "confirm replacing imported tables and interrupting reads")
+	}
 	wait := fs.Bool("wait", false, "wait for the requested observation")
 	timeout := fs.Duration("timeout", 10*time.Minute, "maximum wait (maximum 1h)")
 	if err := parseInterspersed(fs, args); err != nil {
@@ -234,6 +264,14 @@ func cmdPipelineControl(action string, args []string) int {
 	}
 	if fs.NArg() != 1 || *timeout <= 0 || *timeout > time.Hour {
 		return printErr("Invalid arguments", errors.New("supply a pipeline ID and a timeout up to 1h"))
+	}
+	if action == "resync" {
+		if code := requireConfirmationFlag(yes, "--yes", "replacing imported pipeline tables"); code != 0 {
+			return code
+		}
+		if !yes && !requireTyped("replace imported tables") {
+			return 1
+		}
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -295,7 +333,7 @@ func waitDataPipeline(ctx context.Context, client pipelineReader, p api.DataPipe
 		if expected == "verified" && p.ObservationFresh && p.Verification == "inconclusive" {
 			return p, errors.New("verification was inconclusive; inspect saved progress in Data connections, then retry or use explicit recovery")
 		}
-		if (p.State == "resync_required" || (p.State == "blocked" && p.Reason != "database_unavailable")) && expected != "deleted" && expected != "paused" {
+		if p.ObservationFresh && (p.State == "resync_required" || (p.State == "blocked" && p.Reason != "database_unavailable")) && expected != "deleted" && expected != "paused" {
 			return p, fmt.Errorf("pipeline %s: %s", p.State, p.Reason)
 		}
 		select {

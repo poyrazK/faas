@@ -3,7 +3,6 @@ package datapipeline
 import (
 	"context"
 	"encoding/json"
-	"reflect"
 	"slices"
 	"time"
 
@@ -68,7 +67,7 @@ func (e *Engine) reconcileTables(ctx context.Context, p Pipeline, raw string, so
 	}
 	for _, old := range before {
 		i := slices.IndexFunc(actual, func(r relation) bool { return r.Name == old.Name })
-		if i < 0 || !reflect.DeepEqual(old, actual[i]) {
+		if i < 0 || !sameVerificationRelation(old, actual[i]) {
 			return &blocked{"source_schema_changed", true}
 		}
 	}

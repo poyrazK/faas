@@ -95,7 +95,7 @@ func (e *Engine) reconcileLiveRepair(ctx context.Context, p Pipeline, raw string
 	if err != nil {
 		return true, err
 	}
-	if !reflect.DeepEqual(actual, base.After) {
+	if !sameRelations(actual, base.After) {
 		return true, &blocked{"source_schema_changed", true}
 	}
 	if err = checkRetention(ctx, p, source, target, ob); err != nil {

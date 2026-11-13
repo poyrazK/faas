@@ -8831,10 +8831,12 @@ List sources without credentials
 
 Check source compatibility and discover public tables
 
-`gregale pipeline connection check [--database <ID>] [--wait] [--timeout <DURATION>] <id>`
+`gregale pipeline connection check [--search <TEXT>] [--tables <TABLES>] [--database <ID>] [--wait] [--timeout <DURATION>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--search <TEXT>` | discover table names containing this text; mutually exclusive with --tables |  |
+| `--tables <TABLES>` | check exact comma-separated table names beyond the default discovery page |  |
 | `--database <ID>` | also check an existing empty managed mirror |  |
 | `--wait` | wait for a fresh result (default true; use --wait=false to queue only) |  |
 | `--timeout <DURATION>` | maximum wait (default 2m; maximum 1h) |  |
@@ -8843,10 +8845,12 @@ Check source compatibility and discover public tables
 
 Read the latest checked source schema and compatibility issues
 
-`gregale pipeline connection tables [--wait] [--timeout <DURATION>] <id>`
+`gregale pipeline connection tables [--search <TEXT>] [--tables <TABLES>] [--wait] [--timeout <DURATION>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--search <TEXT>` | discover table names containing this text; mutually exclusive with --tables |  |
+| `--tables <TABLES>` | check exact comma-separated table names beyond the default discovery page |  |
 | `--wait` | wait for a fresh result (default true) |  |
 | `--timeout <DURATION>` | maximum wait (default 2m; maximum 1h) |  |
 
@@ -8935,10 +8939,11 @@ Resume replication
 
 Replace the owned mirror with a fresh copy
 
-`gregale pipeline resync [--wait] [--timeout <DURATION>] <id>`
+`gregale pipeline resync [--yes] [--wait] [--timeout <DURATION>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--yes` | confirm replacing imported tables and interrupting reads |  |
 | `--wait` | wait for the requested observation |  |
 | `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
 

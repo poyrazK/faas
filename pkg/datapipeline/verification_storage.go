@@ -18,16 +18,27 @@ func verificationSourceStorage(ctx context.Context, source receiptSQL, relations
 	for i, r := range relations {
 		var oid, filenode, toast, tablespace uint32
 		var path string
-		if err := source.QueryRow(ctx, `SELECT c.oid,c.relfilenode,c.reltoastrelid,c.reltablespace,pg_relation_filepath(c.oid) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=$1 AND c.relkind='r'`, r.Name).Scan(&oid, &filenode, &toast, &tablespace, &path); err != nil {
+		var keyOrder string
+		if err := source.QueryRow(ctx, `SELECT c.oid,c.relfilenode,c.reltoastrelid,c.reltablespace,pg_relation_filepath(c.oid),
+ coalesce((SELECT indkey::text FROM pg_index WHERE indrelid=c.oid AND indisprimary AND indisvalid AND indimmediate),'')
+ FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=$1 AND c.relkind='r'`, r.Name).Scan(&oid, &filenode, &toast, &tablespace, &path, &keyOrder); err != nil {
 			return nil, err
 		}
 		if oid != r.OID {
 			return nil, ErrConflict
 		}
+		// Fence the cursor's query order too: DDL can reorder the source key
+		// between planner hydration and this storage observation. A later tick
+		// must not reuse those bounds with a newly hydrated ordering.
+		var queryKeys []string
+		for _, key := range primaryColumns(r) {
+			queryKeys = append(queryKeys, key.Name)
+		}
 		encoded, _ := json.Marshal(struct {
 			OID, File, Toast, Space uint32
-			Path                    string
-		}{oid, filenode, toast, tablespace, path})
+			Path, KeyOrder          string
+			QueryKeys               []string
+		}{oid, filenode, toast, tablespace, path, keyOrder, queryKeys})
 		sum := sha256.Sum256(encoded)
 		result[i] = hex.EncodeToString(sum[:])
 	}
@@ -39,7 +50,7 @@ func physicalVerificationID(intent string, storage []string) string {
 	encoded, _ := json.Marshal(struct {
 		Intent, Encoding string
 		Storage          []string
-	}{intent, "nullable-text-v1", storage})
+	}{intent, "nullable-text-v2-key-order", storage})
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
 }

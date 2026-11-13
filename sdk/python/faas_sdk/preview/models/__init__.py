@@ -1155,6 +1155,7 @@ from .data_pipeline_health_state import DataPipelineHealthState
 from .data_pipeline_list import DataPipelineList
 from .data_pipeline_state import DataPipelineState
 from .data_pipeline_verification import DataPipelineVerification
+from .data_pipeline_wal_retention import DataPipelineWALRetention
 from .data_repair_health import DataRepairHealth
 from .data_repair_health_item import DataRepairHealthItem
 from .data_repair_health_item_node_status import DataRepairHealthItemNodeStatus
@@ -7408,6 +7409,7 @@ __all__ = (
     "DataPipelineList",
     "DataPipelineState",
     "DataPipelineVerification",
+    "DataPipelineWALRetention",
     "DataRepairHealth",
     "DataRepairHealthItem",
     "DataRepairHealthItemNodeStatus",

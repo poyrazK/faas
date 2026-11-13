@@ -60,7 +60,14 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 			h.Code, h.Message, h.Recovery = "deleted", "Pipeline deleted.", "Imported rows were retained."
 		}
 	case p.DesiredState == "paused" && p.State != "resync_required":
+		if !p.ObservationFresh || p.State != "paused" {
+			h.State, h.Code, h.Message, h.Recovery = "unknown", "pause_unconfirmed", "Pause has not been confirmed.", "Wait for a current destination acknowledgement. Native replication may still be running."
+			return h
+		}
 		h.State, h.Code, h.Message, h.Recovery, h.Action = "inactive", "paused", "Sync is paused.", "Resume to continue replication; monitor retained WAL while paused.", "resume"
+		if p.ObservationFresh && retentionPressure(p) {
+			h.State, h.Code, h.Message = "attention", "retention_pressure", "Sync is paused and retained WAL is approaching the source safety limit."
+		}
 	case !p.ObservationFresh:
 		h.State, h.Code, h.Message, h.Recovery = "unknown", "monitoring_stale", "Monitoring is stale; data freshness is unknown.", "Check worker availability and refresh status. Native replication may still be running."
 	case p.State == "resync_required":
@@ -125,8 +132,10 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		h.Message, h.Recovery, h.Action = "Source credentials need attention.", "Rotate the source connection credential, then wait for reconciliation.", "rotate_credentials"
 	case p.State == "blocked":
 		h.Message, h.Recovery = "Sync is blocked.", "Check source and mirror reachability, permissions, and capacity. Reconciliation retries automatically."
-	case p.RetainedWALBytes != nil && *p.RetainedWALBytes >= api.DataPipelineRetentionWarningBytes:
+	case retentionPressure(p):
 		h.Code, h.Message, h.Recovery, h.Action = "retention_pressure", "Retained WAL is approaching the safety limit.", "Check destination apply progress and available capacity. Resume if paused; increasing retention requires operator review.", ""
+	case p.Reason == "initial_copy_stalled":
+		h.Code, h.Message, h.Recovery = "initial_copy_stalled", "The initial copy has no recent observed progress.", "Check native copy workers, source access from the destination, and copy errors. Recovery remains explicit; no resync was started."
 	case p.State == "copying" || p.State == "validating":
 		h.State, h.Code, h.Message, h.Recovery = "pending", "initial_copy", "The initial copy is not complete.", "Wait for all selected tables to become ready."
 	default:

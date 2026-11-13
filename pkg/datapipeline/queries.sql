@@ -42,11 +42,12 @@ SELECT * FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid A
 -- name: PipelineControl :one
 UPDATE data_pipelines SET
  verification_progress=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '{}'::jsonb
- WHEN sqlc.arg(start_verification)::boolean THEN jsonb_build_object('ManualAttempt',revision+1) ELSE verification_progress END,
+ WHEN sqlc.arg(start_verification)::boolean THEN sqlc.arg(queued_verification)::jsonb ELSE verification_progress END,
  schema_change=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '{}'::jsonb ELSE schema_change END,
  schema_approval=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '' ELSE schema_approval END,
  desired_state=sqlc.arg(desired_state),state=sqlc.arg(state),generation=generation+sqlc.arg(generation_delta)::bigint,
  applied_through_at=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN NULL ELSE applied_through_at END,
+ wal_retention=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '{}'::jsonb ELSE wal_retention END,
  initialized=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN false ELSE initialized END,
  revision=revision+1,verify_requested=sqlc.arg(verify_requested),verification=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN 'unknown' WHEN sqlc.arg(start_verification) THEN 'pending' ELSE verification END,
  verified_at=CASE WHEN sqlc.arg(start_verification) OR sqlc.arg(generation_delta)::bigint>0 THEN NULL ELSE verified_at END,
@@ -78,7 +79,7 @@ UPDATE data_pipelines SET
  AND sqlc.arg(reason)::text='live_table_mismatch' THEN sqlc.narg(schema_change)::jsonb->>'ID'
  WHEN sqlc.narg(schema_change)::jsonb->>'State'='withdrawn' THEN '' ELSE schema_approval END,
  applied_through_at=coalesce(sqlc.narg(applied_through_at),applied_through_at),
- retained_wal_bytes=sqlc.narg(retained_wal_bytes),observed_at=clock_timestamp(),
+ retained_wal_bytes=sqlc.narg(retained_wal_bytes),wal_retention=sqlc.arg(wal_retention),observed_at=clock_timestamp(),
  verification=sqlc.arg(verification),verified_at=sqlc.narg(verified_at),verify_requested=(sqlc.arg(verification)='pending'),
  lease_token='',lease_until=NULL,retry_at=clock_timestamp()+interval '15 seconds'
 WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
@@ -111,10 +112,10 @@ WHERE ch.account_id=sqlc.arg(account_id)::text::uuid AND ch.connection_id=sqlc.a
 FOR SHARE OF c,ch;
 
 -- name: PipelineCheckRequest :one
-INSERT INTO data_connection_checks(connection_id,account_id,id,connection_revision,database_id)
-VALUES(sqlc.arg(connection_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(id)::text::uuid,sqlc.arg(connection_revision),sqlc.arg(database_id))
+INSERT INTO data_connection_checks(connection_id,account_id,id,connection_revision,database_id,result)
+VALUES(sqlc.arg(connection_id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(id)::text::uuid,sqlc.arg(connection_revision),sqlc.arg(database_id),sqlc.arg(result))
 ON CONFLICT(connection_id) DO UPDATE SET id=excluded.id,connection_revision=excluded.connection_revision,database_id=excluded.database_id,
- state='pending',result='{}',lease_token='',lease_until=NULL,created_at=clock_timestamp(),observed_at=NULL
+ state='pending',result=excluded.result,lease_token='',lease_until=NULL,created_at=clock_timestamp(),observed_at=NULL
 RETURNING *;
 
 -- name: PipelineCheckClaim :one
@@ -227,12 +228,17 @@ SELECT id FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid 
  AND schema_change->'Cancellation'->>'State'='approved')) FOR UPDATE;
 
 -- name: PipelineSchemaRefreshPrune :exec
-DELETE FROM data_pipeline_schema_refreshes WHERE pipeline_id=sqlc.arg(pipeline_id)::text::uuid AND change_id<>sqlc.arg(change_id);
+DELETE FROM data_pipeline_schema_refreshes WHERE pipeline_id=sqlc.arg(pipeline_id)::text::uuid AND read_gate=sqlc.arg(read_gate)::boolean AND change_id<>sqlc.arg(change_id);
 
 -- name: PipelineSchemaRefreshInsert :execrows
-INSERT INTO data_pipeline_schema_refreshes(pipeline_id,change_id,attempt,app_id,wake_id)
-VALUES(sqlc.arg(pipeline_id)::text::uuid,sqlc.arg(change_id),sqlc.arg(attempt),sqlc.arg(app_id)::text::uuid,sqlc.arg(wake_id)::text::uuid)
+INSERT INTO data_pipeline_schema_refreshes(pipeline_id,change_id,attempt,app_id,wake_id,read_gate)
+VALUES(sqlc.arg(pipeline_id)::text::uuid,sqlc.arg(change_id),sqlc.arg(attempt),sqlc.arg(app_id)::text::uuid,sqlc.arg(wake_id)::text::uuid,sqlc.arg(read_gate)::boolean)
 ON CONFLICT DO NOTHING;
+
+-- name: PipelineReadGateRefreshLock :one
+SELECT id FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid
+ AND revision=sqlc.arg(revision) AND lease_token=sqlc.arg(lease_token) AND lease_until>clock_timestamp()
+ AND desired_state IN ('running','paused') AND state<>'deleted' FOR UPDATE;
 
 -- name: PipelineSchemaApps :many
 SELECT DISTINCT a.id,a.slug,a.status FROM managed_postgres_bindings b JOIN apps a ON a.id=b.app_id AND a.account_id=b.account_id
@@ -251,7 +257,7 @@ UPDATE data_pipelines SET revision=revision+1,retry_at=clock_timestamp(),verify_
  verification=CASE WHEN verify_requested THEN 'inconclusive' ELSE verification END,
  verification_progress=jsonb_set(verification_progress,'{State}','"cancelled"')
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid
- AND revision=sqlc.arg(revision) AND desired_state='running'
+ AND revision=sqlc.arg(revision) AND desired_state IN ('running','paused') AND state<>'deleted'
  AND verification_progress->>'ID'=sqlc.arg(run_id)::text
  AND verification_progress->>'State' IN ('running','waiting');
 

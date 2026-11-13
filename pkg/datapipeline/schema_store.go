@@ -2,8 +2,10 @@ package datapipeline
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -59,6 +61,27 @@ func (s *PostgresStore) RefreshSchema(ctx context.Context, p Pipeline, c SchemaC
 	if _, err = s.q.PipelineSchemaRefreshLock(ctx, tx, sqlc.PipelineSchemaRefreshLockParams{AccountID: p.AccountID, ID: p.ID, Revision: p.Revision, LeaseToken: p.LeaseToken, ChangeID: c.ID}); err != nil {
 		return nil, false, storeError(err)
 	}
+	return s.refreshApps(ctx, tx, p, c, false)
+}
+
+// RefreshReadGate uses the same freshness/outbox boundary as schema changes.
+// Its receipts are independent, so schema pruning cannot re-stamp a delivered
+// read-gate restart. Ordinary app restart recovery owns delivery failures.
+func (s *PostgresStore) RefreshReadGate(ctx context.Context, p Pipeline, version string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return storeError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = s.q.PipelineReadGateRefreshLock(ctx, tx, sqlc.PipelineReadGateRefreshLockParams{AccountID: p.AccountID, ID: p.ID, Revision: p.Revision, LeaseToken: p.LeaseToken}); err != nil {
+		return storeError(err)
+	}
+	id := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%s", p.ID, p.Generation, version))))
+	_, _, err = s.refreshApps(ctx, tx, p, SchemaChange{ID: id}, true)
+	return err
+}
+
+func (s *PostgresStore) refreshApps(ctx context.Context, tx pgx.Tx, p Pipeline, c SchemaChange, readGate bool) ([]SchemaRefresh, bool, error) {
 	apps, err := s.q.PipelineSchemaApps(ctx, tx, sqlc.PipelineSchemaAppsParams{AccountID: p.AccountID, DatabaseID: p.DatabaseID, PageLimit: api.DataPipelineSchemaRefreshAppsMax + 1})
 	if err != nil {
 		return nil, false, storeError(err)
@@ -66,7 +89,7 @@ func (s *PostgresStore) RefreshSchema(ctx context.Context, p Pipeline, c SchemaC
 	if len(apps) > api.DataPipelineSchemaRefreshAppsMax {
 		return nil, false, ErrQuota
 	}
-	if err = s.q.PipelineSchemaRefreshPrune(ctx, tx, sqlc.PipelineSchemaRefreshPruneParams{PipelineID: p.ID, ChangeID: c.ID}); err != nil {
+	if err = s.q.PipelineSchemaRefreshPrune(ctx, tx, sqlc.PipelineSchemaRefreshPruneParams{PipelineID: p.ID, ChangeID: c.ID, ReadGate: readGate}); err != nil {
 		return nil, false, storeError(err)
 	}
 	records := make([]SchemaRefresh, 0, len(apps))
@@ -80,7 +103,7 @@ func (s *PostgresStore) RefreshSchema(ctx context.Context, p Pipeline, c SchemaC
 			Retry                 int
 		}{p.ID, c.ID, id, c.Retry})
 		wake := uuid.NewSHA1(uuid.NameSpaceOID, append([]byte("gregale.pipeline.schema.refresh:"), nonce...)).String()
-		n, err := s.q.PipelineSchemaRefreshInsert(ctx, tx, sqlc.PipelineSchemaRefreshInsertParams{PipelineID: p.ID, ChangeID: c.ID, Attempt: int32(c.Retry), AppID: id, WakeID: wake})
+		n, err := s.q.PipelineSchemaRefreshInsert(ctx, tx, sqlc.PipelineSchemaRefreshInsertParams{PipelineID: p.ID, ChangeID: c.ID, Attempt: int32(c.Retry), AppID: id, WakeID: wake, ReadGate: readGate})
 		if err != nil {
 			return nil, false, storeError(err)
 		}
@@ -100,6 +123,9 @@ func (s *PostgresStore) RefreshSchema(ctx context.Context, p Pipeline, c SchemaC
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return nil, false, storeError(err)
+	}
+	if readGate {
+		return records, true, nil
 	}
 	ready := true
 	for i, r := range records {

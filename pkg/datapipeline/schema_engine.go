@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -63,7 +62,7 @@ func reconcileSchema(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 		_, err = target.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET schema_spec=$3 WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation, encoded)
 		return false, false, err
 	}
-	same := saved == hash && reflect.DeepEqual(baseline, relations)
+	same := saved == hash && sameRelations(baseline, relations)
 	if same {
 		if phase == "" && p.SchemaChange != nil && p.SchemaChange.State == "pending" && p.SchemaChange.ID != change {
 			copy := *p.SchemaChange

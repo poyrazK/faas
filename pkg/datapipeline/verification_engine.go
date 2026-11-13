@@ -33,6 +33,10 @@ func verificationCancelled(p Pipeline, intent string) bool {
 	return p.VerificationProgress != nil && p.VerificationProgress.State == "cancelled" && (p.VerificationProgress.IntentID == intent || p.VerificationProgress.ID == intent)
 }
 func verifyResumable(ctx context.Context, p Pipeline, source *pgxpool.Pool, target *pgx.Conn, relations []relation, ob *Observation, current func(context.Context) error) (bool, error) {
+	relations, err := orderedVerificationRelations(ctx, source, relations)
+	if err != nil {
+		return false, err
+	}
 	intent, spec := verificationID(p, relations)
 	c, err := loadVerification(ctx, target, p)
 	if err != nil {
@@ -139,6 +143,10 @@ func verifyResumable(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 // Range tracking covers every write since each comparison. A clean journal at
 // this boundary proves all ranges simultaneously; independent scans never do.
 func sealVerification(ctx context.Context, p Pipeline, source *pgxpool.Pool, target *pgx.Conn, relations []relation, ob *Observation, current func(context.Context) error, complete func(pgx.Tx) error) (bool, error) {
+	relations, err := orderedVerificationRelations(ctx, source, relations)
+	if err != nil {
+		return false, err
+	}
 	c, err := loadVerification(ctx, target, p)
 	if err != nil || c == nil {
 		return false, err

@@ -63,7 +63,11 @@ func nativeCopyRelations(ctx context.Context, p Pipeline, target *pgx.Conn) ([]n
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	for _, before := range p.SchemaChange.Before {
+	var baseline []relation
+	if p.SchemaChange != nil {
+		baseline = p.SchemaChange.Before
+	}
+	for _, before := range baseline {
 		if liveTableRepair(p.SchemaChange) && before.Name == p.SchemaChange.Recovery.Table {
 			continue
 		}
@@ -72,6 +76,27 @@ func nativeCopyRelations(ctx context.Context, p Pipeline, target *pgx.Conn) ([]n
 		}
 	}
 	return result, nil
+}
+
+// Initial selection uses the same durable high-water marks as later additions,
+// without creating a schema approval or changing the customer's selected tables.
+func observeInitialCopy(ctx context.Context, p Pipeline, target *pgx.Conn, ob *Observation, current func(context.Context) error) error {
+	if err := ensureTableReceipt(ctx, target); err != nil {
+		return err
+	}
+	p.SchemaChange = &SchemaChange{AddedTables: slices.Clone(p.Tables)}
+	ready, err := observeTableCopies(ctx, p, target, current)
+	if err != nil {
+		return err
+	}
+	ob.TablesReady = ready
+	for _, copy := range p.SchemaChange.Copies {
+		if copy.Stalled {
+			ob.Reason = "initial_copy_stalled"
+			break
+		}
+	}
+	return nil
 }
 
 func copyStateRank(state string) int {
