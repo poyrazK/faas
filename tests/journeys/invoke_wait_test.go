@@ -58,6 +58,11 @@ func TestInvokeAsyncWaitIsolatedAPI(t *testing.T) {
 func TestInvokeAsyncWaitInterrupt(t *testing.T) {
 	configured := needs(t, tierSmoke, false)
 	t.Parallel()
+	t.Run("submitted", func(t *testing.T) { testInvocationWaitInterrupt(t, configured, true) })
+	t.Run("standalone", func(t *testing.T) { testInvocationWaitInterrupt(t, configured, false) })
+}
+
+func testInvocationWaitInterrupt(t *testing.T, configured *target, submitted bool) {
 	opened, closed := make(chan struct{}, 1), make(chan struct{}, 1)
 	var posts, gets atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +84,12 @@ func TestInvokeAsyncWaitInterrupt(t *testing.T) {
 	tg := &target{api: server.URL, cli: configured.cli, home: t.TempDir(), appsDomain: configured.appsDomain}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, tg.cli, "--non-interactive", "--json", "invocation", "run", "api", "--wait")
+	args := []string{"--non-interactive", "--json", "invocation", "wait", "inv-interrupt"}
+	wantPosts := int32(0)
+	if submitted {
+		args, wantPosts = []string{"--non-interactive", "--json", "invocation", "run", "api", "--wait"}, 1
+	}
+	cmd := exec.CommandContext(ctx, tg.cli, args...)
 	cmd.Env, cmd.Dir = tg.cliEnv("fp_invoke-wait-private"), tg.home
 	var out, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &stderr
@@ -120,8 +130,12 @@ func TestInvokeAsyncWaitInterrupt(t *testing.T) {
 	var problem struct {
 		Code, Detail, Hint string
 		ExitCode           int `json:"exit_code"`
+		Recovery           struct {
+			InvocationID  string `json:"invocation_id"`
+			ResumeCommand string `json:"resume_command"`
+		} `json:"recovery"`
 	}
-	if json.Unmarshal(stderr.Bytes(), &problem) != nil || problem.Code != "invocation_wait_interrupted" || problem.ExitCode != 130 || !strings.Contains(problem.Detail, "inv-interrupt") || !strings.Contains(problem.Hint, "invocation wait inv-interrupt") || out.Len() != 0 || posts.Load() != 1 || gets.Load() != 1 {
+	if json.Unmarshal(stderr.Bytes(), &problem) != nil || problem.Code != "invocation_wait_interrupted" || problem.ExitCode != 130 || !strings.Contains(problem.Detail, "inv-interrupt") || !strings.Contains(problem.Hint, "invocation wait inv-interrupt") || problem.Recovery.InvocationID != "inv-interrupt" || !strings.Contains(problem.Recovery.ResumeCommand, "invocation wait inv-interrupt") || out.Len() != 0 || posts.Load() != wantPosts || gets.Load() != 1 {
 		t.Fatalf("interrupted wait lost acceptance: posts=%d gets=%d stdout=%s stderr=%s", posts.Load(), gets.Load(), out.String(), stderr.String())
 	}
 }

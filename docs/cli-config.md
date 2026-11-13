@@ -116,6 +116,31 @@ known status when available, and an error to stderr. A timeout (`124`), Ctrl-C
 diagnostic. Use that `invocation wait` command to resume; submitting again
 creates new work.
 
+In JSON mode, timeout, Ctrl-C and polling failures from both run-and-wait and
+standalone wait include a `recovery` object when there is a valid invocation ID.
+They keep the existing Problem fields, category and exit code:
+
+```json
+{
+  "code": "invocation_wait_timeout",
+  "exit_code": 124,
+  "recovery": {
+    "invocation_id": "INVOCATION_ID",
+    "inspect_command": "gregale --profile staging invocation get INVOCATION_ID",
+    "resume_command": "gregale --profile staging invocation wait INVOCATION_ID"
+  }
+}
+```
+
+These read-only commands use POSIX shell quoting, retain the selected profile
+and redact credentials. They use the current credentials and endpoint on the
+next CLI invocation; keep the same connection overrides when resuming. Follow
+the Problem's remediation for authentication or polling errors before resuming.
+For standalone wait, the ID identifies the requested target; recovery does not
+prove that it exists or is still running. No recovery ID is invented for a
+missing or invalid submission receipt. Agents should read these fields instead
+of parsing the human hint. The CLI never executes the recovery command itself.
+
 ## HTTP diagnostics
 
 Put `--debug-http` before the command to diagnose CLI API requests. It works

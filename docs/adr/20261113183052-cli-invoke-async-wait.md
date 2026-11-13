@@ -31,17 +31,32 @@ does not justify an automatic second submission.
 
 JSON stdout contains the invocation record, without a preceding receipt or
 progress document. JSON diagnostics go to stderr and include the actual exit
-code. Human progress names the accepted invocation on stderr. Existing async
-invocation without `--wait`, synchronous invoke and standalone invocation wait
-keep their output contracts. Credential redaction still applies to diagnostics.
+code. Timeout, interruption and polling failures include the CLI-local
+`recovery` extension: `invocation_id`, `inspect_command` and `resume_command`.
+The commands are read-only, POSIX-quoted and profile-aware; flag-shaped IDs use
+an argument separator. Credential redaction
+applies to every recovery field as well as the Problem. Preserve server
+remediation and transport error classification. Invalid or missing submission
+IDs do not produce a recovery target. Standalone wait also emits this extension,
+including a JSON diagnostic on Ctrl-C; its target is caller-supplied and does
+not prove acceptance, existence or current execution. Human standalone Ctrl-C
+remains silent. The CLI does not execute recovery commands. Retain current
+credential/endpoint overrides when resuming because commands read connection
+configuration afresh. Human progress names the accepted invocation on stderr.
+Async invocation without `--wait` and synchronous invoke keep their contracts.
 
 ## Verification
 
 Table tests cover all terminal outcomes in human and JSON mode, payload/routing
 preservation, flags before submission, timeout before/after a status read,
-polling HTTP failures, invalid receipts and mismatched status IDs. Every submitted
-wait path asserts a single POST. A built-CLI journey sends a real Ctrl-C while
-the first status request is blocked, checks exit 130 and resumable acceptance,
-and proves the request closes without cancellation or another submission. The
+polling HTTP/transport/decode failures, invalid receipts and mismatched status
+IDs. Every submitted wait path asserts a single POST. Recovery assertions cover
+typed targets, redaction and preservation of server remediation. A built-CLI
+journey times out, executes the returned inspect and resume commands with a
+quoted opaque ID and a flag-shaped ID, and verifies only the original invocation
+is read. Another
+journey sends a real Ctrl-C during run-and-wait and standalone wait while the
+first status request is blocked, checks exit 130 and typed recovery, and proves
+the request closes without cancellation or another submission. The
 live journey sends a harmless health request through the durable queue and
 compares the final result with the stored invocation ledger record.

@@ -90,6 +90,10 @@ gregale --non-interactive --json invocation run <app> --wait --timeout 2m --payl
 timeout exits `124`, and interruption exits `130`. The remote invocation may
 continue: use the diagnostic's `invocation wait` resume command instead of
 submitting the work again.
+JSON stderr exposes `recovery.invocation_id`, `recovery.inspect_command` and
+`recovery.resume_command`; read those fields instead of parsing the hint.
+Fix any reported authentication or connection problem before resuming, and
+retain the same credential and endpoint overrides.
 
 Use a path the README names if `/` isn't a real page. On Hobby, Pro and Scale
 a new app is private: requesting `app_url` directly answers 401, while

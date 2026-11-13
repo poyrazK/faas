@@ -112,12 +112,12 @@ func cmdInvocationsWait(args []string) int {
 func renderInvocationWaitOutcome(ctx context.Context, id string, inv api.Invocation, err error, accepted bool) int {
 	if err != nil {
 		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-			if accepted {
+			if accepted || jsonOutput {
 				return renderInvocationWaitProblem(api.Problem{
 					Code: "invocation_wait_interrupted", Title: "Invocation wait interrupted",
 					Detail: fmt.Sprintf("stopped waiting for invocation %s; it may still be running", id),
 					Hint:   invocationResumeHint(id), DocsURL: cliDocsURL,
-				}, 130)
+				}, 130, id)
 			}
 			return 130
 		}
@@ -140,7 +140,7 @@ func renderInvocationWaitOutcome(ctx context.Context, id string, inv api.Invocat
 			}
 			// The CLI wait deadline keeps its conventional exit status; it
 			// does not cancel the durable invocation on the server.
-			_ = renderInvocationWaitProblem(problem, 124)
+			_ = renderInvocationWaitProblem(problem, 124, id)
 			return 124
 		}
 		var remote *APIError
@@ -151,16 +151,13 @@ func renderInvocationWaitOutcome(ctx context.Context, id string, inv api.Invocat
 			} else if remote.Problem.Status >= 500 {
 				code = 3
 			}
-			problem := remote.Problem
+			problem := diagnosticProblem(remote.Problem)
 			if accepted {
 				problem.Hint = strings.TrimSpace(problem.Hint + " " + invocationResumeHint(id))
 			}
-			return renderInvocationWaitProblem(problem, code)
+			return renderInvocationWaitProblem(problem, code, id)
 		}
-		if accepted {
-			return printErr("Could not wait for invocation", fmt.Errorf("%w; %s", err, invocationResumeHint(id)))
-		}
-		return printErr("Could not wait for invocation", err)
+		return renderInvocationWaitError(err, id, accepted)
 	}
 
 	if code := renderInvocationWaitResult(inv); code != 0 {
@@ -453,18 +450,6 @@ func oneLine(s string) string {
 	}
 	b.WriteString("…")
 	return b.String()
-}
-
-// Invocation wait retains its dedicated exit contract instead of the shared
-// HTTP mapping. Encode the actual returned status in machine diagnostics.
-func renderInvocationWaitProblem(problem api.Problem, code int) int {
-	problem = diagnosticProblem(problem)
-	if jsonOutput {
-		_ = writeJSONProblemWithExit(osStderr, problem, code)
-	} else {
-		renderAPIError(osStderr, &APIError{Problem: problem})
-	}
-	return code
 }
 
 // invocationSourceLabel names a synchronous `gregale invoke` sync_invoke. The

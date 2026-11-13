@@ -204,19 +204,24 @@ func TestInvokeAsyncWaitRejectsInvalidReceiptAndWrongStatusID(t *testing.T) {
 			if gets.Load() != wantGets {
 				t.Fatalf("GET count=%d want=%d", gets.Load(), wantGets)
 			}
+			if id == "inv-valid" {
+				assertInvocationWaitRecovery(t, stderr(), id)
+			} else {
+				var problem invocationWaitDiagnostic
+				if json.Unmarshal([]byte(stderr()), &problem) != nil || problem.Recovery != nil {
+					t.Fatalf("invented recovery for invalid receipt: %s", stderr())
+				}
+			}
 		})
 	}
 }
 
 func assertInvokeResumeProblem(t *testing.T, stderr, id, code string, exit int) {
 	t.Helper()
-	var got struct {
-		api.Problem
-		ExitCode int `json:"exit_code"`
-	}
-	if err := json.Unmarshal([]byte(stderr), &got); err != nil || got.Code != code || got.ExitCode != exit ||
+	got := assertInvocationWaitRecovery(t, stderr, id)
+	if got.Code != code || got.ExitCode != exit ||
 		!strings.Contains(got.Hint, "invocation wait "+id) || !strings.Contains(got.Hint, "--profile") {
-		t.Fatalf("missing accepted ID or resume command: %+v: %v: %s", got, err, stderr)
+		t.Fatalf("missing accepted ID or resume command: %+v: %s", got, stderr)
 	}
 }
 

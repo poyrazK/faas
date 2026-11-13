@@ -77,5 +77,5 @@ func validInvocationWaitID(id string) bool {
 
 func invocationResumeHint(id string) string {
 	return fmt.Sprintf("Resume waiting for invocation %s with: %s. Do not submit it again.", id,
-		savedNameSuggestionCommand([]string{"invocation", "wait", id}))
+		invocationRecoveryCommand("wait", id))
 }
