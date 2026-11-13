@@ -989,6 +989,8 @@ var ApplicationStandardRuntimeProblem = applicationStandardRuntimeProblem
 var HealthcheckGRPCForApp = healthcheckGRPCForApp
 var StartupProbeForApp = startupProbeForApp
 
+var RoutedPortRawTCPForApp = routedPortRawTCPForApp
+
 // ADR-20261024225612 (CPU-compatible restore, per-platform snapshot slots).
 var (
 	SnapshotRestorableOn      = snapshotRestorableOn

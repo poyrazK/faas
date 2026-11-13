@@ -4471,6 +4471,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
 				return appID, err
 			}, pgStore)
+			// ADR-20261112160000: a function reads the invocations it sent at
+			// api.svc.gregale/v1/invocations/{id}, authorized by its own VM.
+			guestServiceProxy = gateway.WithFunctionInvocationAPI(guestServiceProxy, func(ctx context.Context, remote string) (string, error) {
+				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
+				return appID, err
+			}, pgStore)
 		}
 	}
 

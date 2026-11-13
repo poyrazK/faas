@@ -40,6 +40,25 @@ type CustomerContext struct {
 	// Unavailable means the panel could not be loaded; the ticket page
 	// still renders.
 	Unavailable bool
+	// Snapshot is the account health captured when the ticket was opened
+	// (ADR-20261112210000); nil when none was saved. Lifted and Added name
+	// the restriction kinds that have gone away or appeared since.
+	Snapshot      *TicketSnapshot
+	Lifted, Added []string
+}
+
+// TicketSnapshot is what apid stores in support_ticket_snapshots: the
+// customer's own account-health view at ticket creation plus the refused
+// request matching the request id they attached, if any.
+type TicketSnapshot struct {
+	CapturedAt time.Time                 `json:"captured_at"`
+	Plan       string                    `json:"plan"`
+	Status     string                    `json:"status"`
+	Health     api.AccountHealth         `json:"health"`
+	Request    *api.AccountHealthRequest `json:"request,omitempty"`
+	// RequestID is the id the customer attached; set even when no
+	// recorded error matched it.
+	RequestID string `json:"request_id,omitempty"`
 }
 
 type Data struct {

@@ -3436,6 +3436,21 @@ groups:
           description: "schedd destroyed {{ $value }} instance(s) of app {{ $labels.app }} in the last 15m for egress {{ $labels.reason }}: fanout means at least the plan's EgressNewDestinationsPerMinute new destinations in one minute, flood means at least EgressFloodDropsPerMinute new flows dropped against single destinations. Treat it as a likely scan, flood or other abuse from the node's egress address until reviewed."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressAbuse.md"
 
+      # ADR-20261112120603: an instance stayed at 90% of its CPU quota for
+      # 15 minutes. Free instances are recycled in enforce mode; shadow mode
+      # and paid plans only record the signal, so every action warns for
+      # review.
+      - alert: FaasTenantCPUAbuse
+        expr: sum by (plan, action) (increase(schedd_cpu_abuse_signals_total[1h])) > 0
+        labels:
+          severity: warn
+          component: schedd
+          family: tenant_abuse
+        annotations:
+          summary: "Sustained CPU abuse signal ({{ $labels.plan }}, {{ $labels.action }})"
+          description: "schedd saw {{ $value }} {{ $labels.plan }} instance(s) pinned at 90% or more of their CPU quota for 15 minutes in the last hour (action {{ $labels.action }}: recycled destroys a Free instance in enforce mode, shadow records a Free signal without acting, flagged records a paid one). The instance.cpu_abuse audit event names the app and account. Treat a Free signal as likely mining until reviewed."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantCPUAbuse.md"
+
       # ADR-373: a guest looked up a blocklisted name (mining pool or an
       # operator feed entry).
       - alert: FaasGuestDNSBlocked
@@ -3484,7 +3499,7 @@ groups:
           family: tenant_abuse
         annotations:
           summary: "Account abuse hold placed ({{ $labels.reason }})"
-          description: "schedd placed {{ $value }} account abuse hold(s) in the last 15m. Every workload of the held account is stopped and refused until an operator releases the hold. Review the account's egress before releasing it."
+          description: "schedd placed {{ $value }} account abuse hold(s) in the last 15m. Every workload of the held account is stopped and refused until an operator releases the hold. Review the account's egress (egress_fanout, egress_flood) or CPU use (cpu_sustained) before releasing it."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTenantEgressAbuse.md"
 
       # ─────────────────────────────────────────────────────────────────

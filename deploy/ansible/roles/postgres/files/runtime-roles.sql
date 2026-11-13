@@ -150,6 +150,11 @@ BEGIN
 	IF to_regclass('public.managed_postgres_databases') IS NOT NULL THEN
 		GRANT SELECT ON public.managed_postgres_databases TO faas_neond;
 	END IF;
+	-- Project keys are neond's alone: no faas_runtime member reads them.
+	IF to_regclass('public.neon_project_keys') IS NOT NULL THEN
+		REVOKE ALL ON public.neon_project_keys FROM faas_runtime;
+		GRANT SELECT, INSERT, UPDATE ON public.neon_project_keys TO faas_neond;
+	END IF;
 END
 $$;
 

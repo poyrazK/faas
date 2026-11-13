@@ -1885,6 +1885,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithEgressAbuseHandler(func(ctx context.Context, row instancestats.InstanceStat, reason sched.EgressAbuseReason, observed, limit int64) error {
 			return engine.RecycleForEgressAbuse(ctx, row.InstanceID, reason, observed, limit)
 		})
+	// ADR-20261112120603: config load already validated the mode.
+	if mode, _ := sched.ParseCPUAbuseMode(cfg.CPUAbuseMode); mode != sched.CPUAbuseOff && mode != "" {
+		statsPoller.WithCPUAbuseHandler(cpuAbuseSignals{engine: engine, mode: mode})
+		log.Info("sustained CPU abuse detection enabled (ADR-20261112120603)", "mode", mode)
+	}
 	if os.Getenv("FAAS_PROFILING_ON_DEMAND") == "1" {
 		statsPoller.WithCPUSaturationHandler(cpuSaturationCaptures{engine: engine, log: log})
 		log.Info("automatic CPU captures on CPU saturation enabled (ADR-1155)")

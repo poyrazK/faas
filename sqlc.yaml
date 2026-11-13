@@ -8,6 +8,16 @@
 version: "2"
 sql:
   - engine: "postgresql"
+    queries: "pkg/referrals/queries.sql"
+    schema: "pkg/referrals/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/referrals/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  - engine: "postgresql"
     queries: "pkg/apid/support/queries.sql"
     schema: "pkg/apid/support/schema.sql"
     gen:
@@ -58,6 +68,17 @@ sql:
       go:
         package: "sqlc"
         out: "pkg/secretd/secretpg/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+  # neond's project keys (ADR-20261112160000 decision 3).
+  - engine: "postgresql"
+    queries: "pkg/neond/neondpg/queries.sql"
+    schema: "pkg/neond/neondpg/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/neond/neondpg/sqlc"
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_empty_slices: true

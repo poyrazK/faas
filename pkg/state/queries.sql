@@ -8827,7 +8827,12 @@ WITH plan_retention AS (
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
       AND i.created_at < sqlc.arg(now_at)::timestamptz - make_interval(secs => sqlc.arg(min_retention_seconds)::bigint)
-      AND coalesce(i.last_replayed_at, i.created_at) < sqlc.arg(now_at)::timestamptz - make_interval(secs => r.seconds)
+      -- ADR-20261112200000: the wait also restarts when a retry or a nack
+      -- delay makes the message due again, so a back-off longer than the
+      -- retention no longer turns the retry into an expiry; and a suspended
+      -- owner's messages wait for its reactivation instead of expiring.
+      AND greatest(coalesce(i.last_replayed_at, i.created_at), i.due_at) < sqlc.arg(now_at)::timestamptz - make_interval(secs => r.seconds)
+      AND coalesce(a.status, o.status) <> 'suspended'
     ORDER BY i.created_at
     LIMIT sqlc.arg(batch_limit)::integer
     FOR UPDATE OF i SKIP LOCKED
@@ -10080,7 +10085,13 @@ SELECT jsonb_build_object(
     'AccountID', account_id,
     'ProjectID', project_id,
     'Slug', slug
-)::jsonb AS data FROM project_environments WHERE id = sqlc.arg(environment_id)::uuid;
+)::jsonb AS data FROM project_environments
+-- A branch's slot names the environment of the branch holding it
+-- (ADR-20261031193635 stable branch URLs).
+WHERE id = sqlc.arg(environment_id)::uuid
+   OR id = (SELECT environment_id FROM project_environment_branches WHERE slot_id = sqlc.arg(environment_id)::uuid)
+ORDER BY (id = sqlc.arg(environment_id)::uuid) DESC
+LIMIT 1;
 
 -- name: ReadPublicHostEnvironmentPolicy :one
 WITH policy AS (SELECT jsonb_build_object(
@@ -13502,6 +13513,23 @@ update queue_bindings set queue_name=sqlc.arg(queue_name),mode=sqlc.arg(mode),wo
 enabled=sqlc.arg(enabled),max_concurrency=sqlc.arg(max_concurrency),retry_policy=sqlc.arg(retry_policy)::jsonb,updated_at=now()
 where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and retired_at is null returning *;
 
+-- name: QueueConsumerRetiredBindingForRevive :one
+-- ADR-20261112200000: the retired production binding a create with the same
+-- name and queue name revives.
+select * from queue_bindings
+where app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and environment_id is null
+  and name=sqlc.arg(name) and queue_name=sqlc.arg(queue_name) and retired_at is not null
+for update;
+
+-- name: QueueConsumerAuthorizeRevive :exec
+-- Names the one binding guard_queue_binding_retirement lets this transaction
+-- revive.
+select set_config('gregale.queue_binding_revive', sqlc.arg(binding_id)::text, true);
+
+-- name: QueueConsumerReviveBinding :one
+update queue_bindings set retired_at=null, updated_at=now()
+where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and retired_at is not null returning *;
+
 -- name: QueueConsumerRetireBinding :one
 update queue_bindings set retired_at=now(), enabled=false, updated_at=now()
 where id=sqlc.arg(id) and app_id=sqlc.arg(app_id) and account_id=sqlc.arg(account_id) and retired_at is null returning *;
@@ -14215,10 +14243,19 @@ where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
 -- QueueStateInScope's depth, counted only up to row_limit: worker scaling
 -- needs no more than the depth that saturates the pool (ADR-20261022105723
 -- amendment 2026-10-24).
+-- ADR-20261112200000: only messages something consumes count: unnamed ones
+-- the drain delivers, a binding's own messages, a name a live binding reads,
+-- or a name an enabled legacy queue trigger reads. A send
+-- to any other name on an app without bindings waited unconsumed and kept
+-- the worker pool scaled out for nothing until it expired.
 select count(*)::bigint as depth from (
-  select 1 from invocations
-  where app_id=sqlc.arg(app_id)::uuid and deployment_scope=sqlc.arg(deployment_scope)::text
-    and source='queue' and state in ('pending','dispatching') and (state='dispatching' or due_at <= now())
+  select 1 from invocations i
+  where i.app_id=sqlc.arg(app_id)::uuid and i.deployment_scope=sqlc.arg(deployment_scope)::text
+    and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
+    and (i.queue_name='' or i.queue_binding_id is not null
+      or exists (select 1 from queue_bindings qb where qb.app_id=i.app_id and qb.queue_name=i.queue_name and qb.retired_at is null)
+      or exists (select 1 from triggers t where t.app_id=i.app_id and t.kind='queue'
+        and t.source='queue' and t.enabled and t.slug=i.queue_name))
   limit sqlc.arg(row_limit)::integer
 ) bounded;
 
@@ -14364,10 +14401,13 @@ where i.id=sqlc.arg(id)::uuid and i.app_id=sqlc.arg(app_id)::uuid and i.source='
 returning i.*;
 
 -- name: QueueReleasePendingBatchClaims :exec
+-- A claim the poller hands back undelivered returns the attempt the claim
+-- took (ADR-20261112200000): a message bumped out of a full batch must not
+-- lose budget, and a canary is claimable only at attempt 0.
 with targets as (
   select unnest(sqlc.arg(ids)::text[]) as id, unnest(sqlc.arg(attempts)::integer[]) as attempt,
     unnest(sqlc.arg(replay_generations)::bigint[]) as replay_generation
-) update invocations i set state='pending',lease_expires_at=null from targets
+) update invocations i set state='pending',lease_expires_at=null,attempts=greatest(i.attempts-1,0) from targets
 where i.id::text=targets.id and i.environment_id is null and i.attempts=targets.attempt and i.replay_generation=targets.replay_generation
   and i.app_id=sqlc.arg(app_id)::uuid and i.source='queue' and i.state='dispatching'
   and (sqlc.narg(binding_id)::uuid is null or i.queue_binding_id=sqlc.narg(binding_id)::uuid
@@ -30193,3 +30233,13 @@ WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
   AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key;
+
+-- name: InsertInvocationSend :exec
+-- ADR-20261112160000: the app that sent this invocation with send(), and the
+-- app its completion goes to, written with the invocation row.
+INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id)
+VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(on_complete_app_id)::uuid);
+
+-- name: GetInvocationSend :one
+SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
+FROM invocation_sends WHERE invocation_id = sqlc.arg(invocation_id)::uuid;

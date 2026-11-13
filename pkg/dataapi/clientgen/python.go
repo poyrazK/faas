@@ -152,7 +152,7 @@ func RenderPython(contract dataapi.Contract) ([]byte, error) {
 		p.printf("\n\nclass %s(_%sRequired, _%sOptional):\n    pass\n", f.Base, f.Base, f.Base)
 	}
 	p.b.WriteString(pythonRuntime)
-	methods := newNames("rpc", "table")
+	methods := newNames("rpc", "table", "base_url", "access_token", "server_key", "subject", "anonymous", "timeout", "_request")
 	for _, t := range p.m.Tables {
 		p.printf("\n    def %s(self) -> \"Table[%sRow, %sInsert, %sUpdate]\":\n        \"\"\"Query %s.%s.\"\"\"\n        return Table(self, %s, %s)\n",
 			methods.take(pyIdentifier(qualified(p.m.Schemas, t.Schema, t.Name))), t.Base, t.Base, t.Base, t.Schema, t.Name, pyString(t.Schema), pyString(t.Name))
@@ -362,7 +362,7 @@ class Table(Generic[R, I, U]):
                 if following:
                     branches.append(f"and({','.join(prefix + [following])})" if prefix else following)
                 prefix.append(f"{column}.is.null" if value is None else f"{column}.eq.{_cursor_literal(value)}")
-        table = Table(self._client, self._schema, self._name, [p for p in self._params if p[0] not in ("order", "or")])
+        table = Table(self._client, self._schema, self._name, [p for p in self._params if p[0] not in ("order", "offset")])
         for field in traversal:
             table = table.order(field["column"], descending=not field.get("ascending", True), nulls_first=field.get("nulls_first", False))
         if cursor is not None:
@@ -377,12 +377,12 @@ class Table(Generic[R, I, U]):
 
     def get(self) -> List[R]:
         """Read matching rows. The server caps one response at 1,000 rows."""
-        return self._client._request("GET", self._schema, "/rest/v1/" + self._name, self._params)
+        return self._client._request("GET", self._schema, "/rest/v1/" + urllib.parse.quote(self._name, safe=""), self._params)
 
     def insert(self, rows: Union[I, Sequence[I]]) -> List[R]:
         """Insert rows in one transaction and return them as stored."""
         body = list(rows) if isinstance(rows, (list, tuple)) else [rows]
-        return self._client._request("POST", self._schema, "/rest/v1/" + self._name, self._params, body)
+        return self._client._request("POST", self._schema, "/rest/v1/" + urllib.parse.quote(self._name, safe=""), self._params, body)
 
     def _filtered(self) -> bool:
         return any(k not in ("select", "order", "limit", "offset") for k, _ in self._params)
@@ -391,13 +391,18 @@ class Table(Generic[R, I, U]):
         """Update matching rows; refuses to run without a filter."""
         if not self._filtered():
             raise ValueError(f"update of {self._schema}.{self._name} requires a filter")
-        return self._client._request("PATCH", self._schema, "/rest/v1/" + self._name, self._params, values)
+        return self._client._request("PATCH", self._schema, "/rest/v1/" + urllib.parse.quote(self._name, safe=""), self._params, values)
 
     def delete(self) -> List[R]:
         """Delete matching rows; refuses to run without a filter."""
         if not self._filtered():
             raise ValueError(f"delete from {self._schema}.{self._name} requires a filter")
-        return self._client._request("DELETE", self._schema, "/rest/v1/" + self._name, self._params)
+        return self._client._request("DELETE", self._schema, "/rest/v1/" + urllib.parse.quote(self._name, safe=""), self._params)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("Data API redirects are not allowed")
 
 
 class DataClient:
@@ -432,10 +437,22 @@ class DataClient:
         the query string, as public RPCs require; PostgREST runs it read-only."""
         if get:
             params = [(key, _query_arg(key, value)) for key, value in (args or {}).items()]
-            return self._request("GET", schema, "/rest/v1/rpc/" + name, params)
-        return self._request("POST", schema, "/rest/v1/rpc/" + name, [], args or {})
+            return self._request("GET", schema, "/rest/v1/rpc/" + urllib.parse.quote(name, safe=""), params)
+        return self._request("POST", schema, "/rest/v1/rpc/" + urllib.parse.quote(name, safe=""), [], args or {})
 
     def _request(self, method: str, schema: str, path: str, params: List[tuple], body: Any = None) -> Any:
+        base = urllib.parse.urlsplit(self.base_url)
+        if not base.hostname or base.username is not None or base.password is not None or base.path not in ("", "/") or base.query or base.fragment or "?" in self.base_url or "#" in self.base_url:
+            raise ValueError("base_url must be an HTTP(S) origin without credentials, query or fragment")
+        import ipaddress
+        try:
+            loopback = ipaddress.ip_address(base.hostname).is_loopback
+        except ValueError:
+            loopback = base.hostname == "localhost"
+        if base.scheme != "https" and not (base.scheme == "http" and loopback):
+            raise ValueError("HTTPS is required except for loopback development")
+        if "%2f" in path.lower():
+            raise ValueError("relation and RPC names cannot contain slashes")
         url = self.base_url + path
         if params:
             url += "?" + urllib.parse.urlencode(params)
@@ -461,7 +478,7 @@ class DataClient:
         data = None if body is None or method == "GET" else json.dumps(body).encode()
         request = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.build_opener(_NoRedirect()).open(request, timeout=self.timeout) as response:
                 payload = response.read(16 * 1024 * 1024 + 1)
         except urllib.error.HTTPError as error:
             raw = error.read(64 * 1024)

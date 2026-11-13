@@ -133,17 +133,25 @@ func (s *server) branchProjectEnvironment(ctx context.Context, store state.Proje
 // (projectaccess.BranchParent). A missing parent is left to the create, which
 // reports it.
 func (s *server) environmentBranchParentProblem(r *http.Request, acct state.Account, project state.Project, parent string) *api.Problem {
+	return s.protectedEnvironmentChangeProblem(r, acct, project.ID, parent, "branch a protected project environment")
+}
+
+// protectedEnvironmentChangeProblem refuses a company-project member who may
+// not make a change that a protected environment reserves for approvers
+// (projectaccess.ProtectedEnvironmentChange). A missing environment is left to
+// the operation, which reports it.
+func (s *server) protectedEnvironmentChangeProblem(r *http.Request, acct state.Account, projectID, environment, what string) *api.Problem {
 	if _, shared := projectaccess.From(r.Context()); !shared {
 		return nil
 	}
-	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, project.ID, parent)
+	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, projectID, environment)
 	if errors.Is(err, state.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return api.ErrCapacity("could not load project environment")
 	}
-	return projectaccess.BranchParent(r, env)
+	return projectaccess.ProtectedEnvironmentChange(r, env, what)
 }
 
 // publishEnvironmentBranchWorkloads creates one branch deployment per parent
@@ -172,12 +180,25 @@ func (s *server) publishEnvironmentBranchWorkloads(ctx context.Context, store st
 				s.log.Warn("environment branch activation notification failed; prime recovery will retry", "deployment_id", d.ID, "err", err)
 			}
 		}
-		workloads = append(workloads, api.ProjectEnvironmentBranchWorkload{
+		workload := api.ProjectEnvironmentBranchWorkload{
 			Workload: parent.WorkloadSlug, DeploymentID: d.ID, SourceDeployment: parent.SourceDeploymentID, Status: string(d.Status),
-			URL: projectEnvironmentWorkloadURL(branch.EnvironmentID, parent.AppID),
-		})
+		}
+		workload.URL, workload.EnvironmentURL = environmentBranchWorkloadURLs(branch, parent.AppID)
+		workloads = append(workloads, workload)
 	}
 	return workloads, nil
+}
+
+// environmentBranchWorkloadURLs returns a branch workload's stable URL,
+// built from the branch's slot so a reset keeps it, and the URL of this
+// incarnation, built from its environment ID. A branch made before slots has
+// only the environment URL.
+func environmentBranchWorkloadURLs(branch state.ProjectEnvironmentBranch, appID string) (url, environmentURL string) {
+	environmentURL = projectEnvironmentWorkloadURL(branch.EnvironmentID, appID)
+	if branch.SlotID == "" {
+		return environmentURL, ""
+	}
+	return projectEnvironmentWorkloadURL(branch.SlotID, appID), environmentURL
 }
 
 func (s *server) environmentBranchCreateProblem(ctx context.Context, acct state.Account, project state.Project, parent, slug string, limits api.Limits, err error) *api.Problem {

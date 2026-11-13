@@ -407,3 +407,20 @@ func writeIdentity(t *testing.T, path string) *age.X25519Identity {
 	}
 	return id
 }
+
+// Per-project Neon keys open only in neond (ADR-20261112160000 §3): apid asks
+// neond to call Neon and never holds a key or the identity that opens one.
+func TestRegistry_NeonIsWiredToNeondAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Neon)
+	if !ok || !s.Wired || s.Dedicated {
+		t.Fatalf("neon domain = %+v, %v; want wired and managed", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "neond" || len(s.Roles) != 1 || s.Roles[0] != sealdomain.RoleControlPlane {
+		t.Fatalf("neon readers = %v on %v, want [neond] on the control plane", s.Readers, s.Roles)
+	}
+	for _, d := range []string{"apid", "schedd", "meterd"} {
+		if containsDomain(sealdomain.ReaderDomains(d), sealdomain.Neon) {
+			t.Fatalf("%s reads the neon domain; only neond opens project keys", d)
+		}
+	}
+}

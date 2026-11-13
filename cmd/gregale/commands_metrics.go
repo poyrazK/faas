@@ -421,7 +421,10 @@ func renderThrottleSuggestions(w io.Writer, slug string, r api.ThrottleSuggestio
 		return
 	}
 	if r.RoutesCollapsed > 0 {
-		_, _ = fmt.Fprintf(w, "Collapsed:     %d routes beyond RouteMetricsPerAppCap (covered by __route_other__)\n", r.RoutesCollapsed)
+		// The __route_other__ series also holds every request to a path the
+		// app does not declare, so an app without declared routes always
+		// "exceeded" the cap (Hunt 34 H34-8). Say what the bucket holds.
+		_, _ = fmt.Fprintf(w, "Other routes:  requests to undeclared paths, or to routes beyond the %d-route cap, are grouped as __route_other__ and get no suggestion\n", api.RouteMetricsPerAppCap)
 	}
 	if len(r.Suggestions) == 0 {
 		_, _ = fmt.Fprintln(w, "\nSuggestions:   (none)")

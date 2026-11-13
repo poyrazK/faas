@@ -145,8 +145,8 @@
   <label>Priority <select aria-label="Priority" name="priority"><option value="low" {{if eq (.Value "create" "priority" "normal") "low"}}selected{{end}}>Low</option><option value="normal" {{if eq (.Value "create" "priority" "normal") "normal"}}selected{{end}}>Normal</option><option value="high" {{if eq (.Value "create" "priority" "normal") "high"}}selected{{end}}>High</option><option value="urgent" {{if eq (.Value "create" "priority" "normal") "urgent"}}selected{{end}}>Urgent</option></select></label></div>
   <label>How can we help? <textarea name="body" required maxlength="{{.BodyMax}}">{{.Value "create" "body" ""}}</textarea></label>
   <p class="meta">Describe what happened and what you expected. Keep passwords, API keys, and other credentials out of your message.</p>
-  <details {{if eq .Failed "create"}}open{{end}}><summary>Optional troubleshooting context</summary><p class="meta">Identifiers only. Logs and credentials are never collected automatically.</p>
-    <label>App ID <input name="app_id" value="{{.Value "create" "app_id" ""}}"></label><label>Deployment ID <input name="deployment_id" value="{{.Value "create" "deployment_id" ""}}"></label><label>Request ID <input name="request_id" value="{{.Value "create" "request_id" ""}}"></label>
+  <details {{if or (eq .Failed "create") (.Filters.Get "app_id") (.Filters.Get "request_id")}}open{{end}}><summary>Optional troubleshooting context</summary><p class="meta">Identifiers only. Logs and credentials are never collected automatically. Gregale also saves a summary of your account's health with the conversation.</p>
+    <label>App ID <input name="app_id" value="{{.Value "create" "app_id" (.Filters.Get "app_id")}}"></label><label>Deployment ID <input name="deployment_id" value="{{.Value "create" "deployment_id" (.Filters.Get "deployment_id")}}"></label><label>Request ID <input name="request_id" value="{{.Value "create" "request_id" (.Filters.Get "request_id")}}"></label>
   </details><button type="submit">Send to Gregale support</button>
 </form></section>
 {{end}}
@@ -166,6 +166,15 @@
 <section class="panel" aria-label="Customer account"><h2>Customer account</h2>
 {{if .Unavailable}}<p class="muted">Account context could not be loaded. The conversation is unaffected.</p>{{else}}
 <dl><dt>Account</dt><dd><code>{{.AccountID}}</code></dd>{{with .OrgSlug}}<dt>Organization</dt><dd>{{.}}</dd>{{end}}<dt>Plan</dt><dd>{{.Plan}}</dd><dt>Status</dt><dd>{{.Status}}</dd><dt>Apps</dt><dd>{{.Apps}}</dd></dl>
+{{with .Snapshot}}<details open><summary><strong>At ticket creation</strong> <small class="muted">{{$d.Date .CapturedAt}}</small></summary>
+<p>Plan {{.Plan}}, status {{.Status}}.</p>
+{{with .RequestID}}<p>Attached request <code>{{.}}</code>:</p>{{end}}{{with .Request}}<p><code>{{.Route}}</code> refused with <code>{{.Code}}</code>{{with .AppSlug}} for <code>{{.}}</code>{{end}} <small class="muted">{{$d.Date .OccurredAt}}</small></p>{{else}}{{if .RequestID}}<p class="muted">No refused request with this id was recorded for the account in the last 14 days.</p>{{end}}{{end}}
+{{with .Health}}<p>{{range .Restrictions}}<strong>{{.Kind}}</strong> · {{else}}No restrictions · {{end}}{{len .FailedDeployments}} failed deployments · {{len .DomainIssues}} domain problems · {{.RefusedRequests.Total}} refused requests in 24 h</p>
+{{range .FailedDeployments}}<p>{{with .AppSlug}}<code>{{.}}</code> {{end}}{{with .ErrorCode}}<code>{{.}}</code> {{end}}{{.Error}}</p>{{end}}{{end}}
+</details>{{end}}
+{{with .Lifted}}<p class="meta">Lifted since the ticket was opened: {{range $i, $k := .}}{{if $i}}, {{end}}<strong>{{$k}}</strong>{{end}}</p>{{end}}
+{{with .Added}}<p class="meta">New since the ticket was opened: {{range $i, $k := .}}{{if $i}}, {{end}}<strong>{{$k}}</strong>{{end}}</p>{{end}}
+{{if .Snapshot}}<h3>Now</h3>{{end}}
 {{with .Diagnosis}}
 <h3>Restrictions</h3>{{range .Restrictions}}<p><strong>{{.Kind}}</strong>{{with .Reason}}: {{.}}{{end}}{{with .Since}} <small class="muted">since {{$d.Date .}}</small>{{end}}</p>{{else}}<p class="muted">None.</p>{{end}}
 <h3>Failed deployments, last 7 days</h3>{{range .FailedDeployments}}<p>{{with .AppSlug}}<code>{{.}}</code> {{end}}{{with .ErrorCode}}<code>{{.}}</code> {{end}}{{.Error}} <small class="muted">{{$d.Date .CreatedAt}}</small></p>{{else}}<p class="muted">None.</p>{{end}}

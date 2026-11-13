@@ -65,6 +65,9 @@ func extractAutomationFlag(args []string) ([]string, error) {
 		if !handled && err == nil {
 			handled, err = extractBoolPrefixFlag(arg, "wait-for-approval", &approvalWaitEnabled)
 		}
+		if !handled && err == nil {
+			handled, err = extractBoolPrefixFlag(arg, "debug-http", &httpDebugEnabled)
+		}
 		if err != nil {
 			return args, err
 		}

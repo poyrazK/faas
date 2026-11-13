@@ -86,6 +86,7 @@ func (s *server) supportCustomerContext(r *http.Request, ticket *support.StaffTi
 		billing = api.ObsTenantBilling{}
 	}
 	panel.Diagnosis = s.buildTenantDiagnosis(r.Context(), target, billing)
+	s.loadTicketSnapshot(r.Context(), ticket.Ticket.ID, panel)
 	return panel
 }
 

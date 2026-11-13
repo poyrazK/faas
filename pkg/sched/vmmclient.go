@@ -553,6 +553,10 @@ type AppSpec struct {
 	// Empty HealthcheckGRPCService checks overall server health.
 	HealthcheckGRPC        bool
 	HealthcheckGRPCService string
+	// RoutedPortRawTCP marks TCP readiness on a declared raw TCP listener;
+	// vmmd then runs no plan-default HTTP liveness probe (ADR-079
+	// amendment 1).
+	RoutedPortRawTCP bool
 	// ImageHealthcheckRequired requires a fresh guest command check before readiness (ADR-683).
 	ImageHealthcheckRequired bool
 	// ReadinessProbeJSON carries the optional continuous primary-app
@@ -2032,6 +2036,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		HealthcheckPath:          a.HealthcheckPath,
 		HealthcheckGrpc:          a.HealthcheckGRPC,
 		HealthcheckGrpcService:   a.HealthcheckGRPCService,
+		RoutedPortRawTcp:         a.RoutedPortRawTCP,
 		ImageHealthcheckRequired: a.ImageHealthcheckRequired,
 		ReadinessProbeJson:       a.ReadinessProbeJSON,
 		LivenessProbeJson:        a.LivenessProbeJSON,

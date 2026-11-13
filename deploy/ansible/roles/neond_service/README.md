@@ -24,6 +24,28 @@ Off by default. To turn it on (control plane or single box):
    `FAAS_MANAGED_POSTGRES_NEON_BROKER=unix:///run/faas/neond.sock` and
    restarts; from then on every Neon call goes through neond.
 
+## Project keys
+
+With `faas_neond_org_id` set to the Neon organization ID, neond mints a Neon
+API key scoped to each project it creates (`POST
+/organizations/{org}/api_keys` with `project_id`), seals it to its own
+identity and stores it in `neon_project_keys`, which only `faas_neond` can
+read. Calls on that project then go out with its key; admin routes (create,
+list and delete projects, consumption) keep the admin key. When the admin
+key mints keys it must be the personal key of an organization Admin (the
+dedicated service user). A project without a key, or whose key Neon
+refuses, falls back to the admin key (`neond_requests_total{tier="admin_fallback"}`).
+Deleting a project revokes its keys (`neond_project_keys_total`).
+
+Keys are sealed to the `neon` seal domain (ADR 20261022111812), which only
+neond reads. Before setting `faas_neond_org_id`, create the domain with
+`gregalectl seal-domain init --domain neon`, set
+`faas_seal_domain_neon_identity_src` (and `faas_seal_domains_managed`) and
+converge: the seal_domains role stages `/etc/faas/secrets/domains/neon.age`,
+hands it to neond and proves the domain probe. This role refuses project
+keys without it. Losing the identity leaves projects on the admin key until
+their keys are re-minted.
+
 To roll back, set `faas_neond_broker: false` (apid calls Neon with its own key
 again), then `faas_neond_enabled: false`.
 

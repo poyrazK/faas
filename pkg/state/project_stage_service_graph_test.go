@@ -72,4 +72,20 @@ func testStageServiceGraphBeforeReleaseSets(t *testing.T, store Store) {
 	if !managed || found {
 		t.Fatalf("deployment outside the stage's release graph: managed=%t found=%t; want refused", managed, found)
 	}
+
+	// Deactivating the stage's release sets returns later stage deploys to the
+	// environment lane; a member of the deactivated set keeps its graph while
+	// the set is retained for rollback (ADR-20261019120024 amendment 2026-11-13).
+	fallback := []ProjectReleaseMember{{apps["api"].ID, deployments["api"].ID}, {apps["web"].ID, outside.ID}}
+	if err := store.(ProjectReleaseSetPromotionStore).DeactivateProjectReleaseSetIfActive(ctx, account.ID, project.ID, "staging", release.ID, fallback); err != nil {
+		t.Fatalf("deactivate stage release set: %v", err)
+	}
+	_, managed, found, err = graphs.ResolveProjectServiceBinding(ctx, apps["web"].ID, outside.ID, "api")
+	if err != nil || managed || found {
+		t.Fatalf("stage deploy after deactivation: managed=%t found=%t err=%v; want the environment lane", managed, found, err)
+	}
+	route, managed, found, err = graphs.ResolveProjectServiceBinding(ctx, apps["web"].ID, deployments["web"].ID, "api")
+	if err != nil || !managed || !found || route.ReleaseSetID != release.ID {
+		t.Fatalf("member of a retained release set: %+v managed=%t found=%t err=%v; want its graph", route, managed, found, err)
+	}
 }

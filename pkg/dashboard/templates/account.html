@@ -31,6 +31,7 @@
       <a href="/dashboard/pricing">Pricing</a>
       <a href="/dashboard/invoices">Invoices</a>
       <a href="/dashboard/account">Account</a>
+      {{if .Data}}{{if .Data.ReferralsEnabled}}<a href="/dashboard/referrals">Referrals</a>{{end}}{{if .Data.SalesEnabled}}<a href="/dashboard/sales">Sales workspace</a>{{end}}{{end}}
       {{if $.On "customer-support"}}<a href="/dashboard/support">Support</a>{{end}}
     </nav>
   </header>
@@ -38,6 +39,7 @@
     {{template "email-verification-banner" .}}
     <h1>Account</h1>
     <p>Signed in as <code>{{.Account.Email}}</code> on the <strong>{{.Account.Plan}}</strong> plan.</p>
+    <p><a href="/dashboard/account/health">Account health</a>: restrictions, failed deployments, domain problems and refused requests.</p>
 	<p><a href="/dashboard/account/mfa">Manage two-factor authentication</a></p>
 
     {{if .Data}}

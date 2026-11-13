@@ -9,7 +9,7 @@
 # (created when missing).
 #
 #   control-plane  identities of the domains read there (outbound, source,
-#                  alerting, storage, control, delivery, account)
+#                  alerting, storage, control, delivery, account, neon)
 #                  and the recipient of every domain (apid seals to it);
 #                  runtime's identity too when secretd opens runtime
 #                  secrets there (SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true,
@@ -77,7 +77,7 @@ case "${SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE:-}" in
     ;;
 esac
 
-domains=(outbound source alerting storage control delivery account runtime build edge edge_tls)
+domains=(outbound source alerting storage control delivery account runtime build edge edge_tls neon)
 
 source_kind=${SEAL_DOMAIN_KEY_SOURCE:-secrets}
 case "$source_kind" in
@@ -129,7 +129,7 @@ staged() { # ROLE DOMAIN
       # ADR-20261110210000 slice 3e: retired compute nodes seal capture keys
       # to the recipient and never hold the identity.
       if $runtime_retired; then echo recipient; else echo identity; fi ;;
-    compute/build | compute/edge | compute/edge_tls | compute/control | compute/delivery | control-plane/control | control-plane/account)
+    compute/build | compute/edge | compute/edge_tls | compute/control | compute/delivery | control-plane/control | control-plane/account | control-plane/neon)
       echo identity ;;
     compute/storage)
       if [[ "${SEAL_DOMAIN_STORAGE_ON_COMPUTE:-}" == true ]]; then echo identity; fi ;;

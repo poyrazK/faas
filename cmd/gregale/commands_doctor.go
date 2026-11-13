@@ -261,6 +261,7 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	if hasDeployableSource(abs) {
 		appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
 		report = runDoctorChecksForApp(abs, detectShape(abs), &appEnv)
+		replaceDoctorCheck(&report, doctorRuntimeOOMForApp(context.Background(), appEnv.App))
 	} else {
 		report = noSourceDoctorReport(abs)
 	}

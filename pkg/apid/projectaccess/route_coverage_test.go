@@ -11,14 +11,9 @@ import (
 
 var registeredRoute = regexp.MustCompile(`mux\.Handle(?:Func)?\("([A-Z]+ /v1/[^"]+)"`)
 
-// deliberatelyUnreviewed stays outside shared project administration (the
-// routeActions comment): GitOps, full clones and browser approvals. A route
-// added under one of them stays refused until someone reviews it.
-var deliberatelyUnreviewed = regexp.MustCompile(`/gitops(/|$)|/environment-clones(/|$)|/approval-requests(/|$)`)
-
 // An unreviewed project route is refused to every member of a company
 // project, owners included (bug hunt 37). Every project route apidserver
-// registers must have an action or be deliberately unreviewed.
+// registers must have an action.
 func TestEveryProjectRouteIsReviewed(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("..", "apidserver", "*.go"))
 	if err != nil || len(files) == 0 {
@@ -44,7 +39,7 @@ func TestEveryProjectRouteIsReviewed(t *testing.T) {
 				continue
 			}
 			seen++
-			if _, ok := Action(pattern); ok || deliberatelyUnreviewed.MatchString(path) {
+			if _, ok := Action(pattern); ok {
 				continue
 			}
 			missing = append(missing, pattern)

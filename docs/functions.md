@@ -416,15 +416,45 @@ synchronous handler.
   its id at once. The callee runs it with the same retries and dead letters as
   any async invocation, and `gregale invocation get <id>` shows it. A send
   from staging runs on the callee's staging release.
+- The invocation a send returns has `wait()` and `status()`. `wait()`
+  long-polls until the callee finishes and returns its output, or raises
+  `FunctionCallError` with code `function_invocation_failed` when it failed
+  for good (`function_invocation_pending` when your timeout passes first).
+  Only the function that sent an invocation can read it.
+- `send(input, { onComplete: 'name' })` (Python `on_complete="name"`) asks the
+  platform to call another function, or `'self'`, when the invocation
+  finishes. The target must be one this function may call. It receives a
+  `POST /` with the header `X-Gregale-Invocation-Completion: <id>` and the
+  body `{invocation_id, app_id, status, outcome, attempts, result | error}`,
+  where `status` is `succeeded` or the failure outcome. The completion is an
+  async invocation with its own retries.
 - `input` and `output` are JSON Schema. The callee checks each call's body
   against its own `input` before the handler runs, and answers 422
   `function_input_invalid` naming the field at fault. Only calls from these
   clients are checked; browsers, webhooks and other service calls never are.
   A repository push keeps the schema set by the last `gregale deploy`.
 
+A Go function uses the `functions` package of the Go SDK:
+
+```go
+import "github.com/gregale-dev/gregale-go/functions"
+
+user, err := functions.Call[UserInput, User](ctx, "users", UserInput{Email: "a@example.com"})
+sent, err := functions.Send(ctx, "billing-api", Charge{User: user.ID},
+	functions.WithOnComplete("self"))
+var receipt Receipt
+err = sent.Wait(ctx, &receipt) // ctx's deadline bounds the wait
+```
+
+A callee's error comes back as `*functions.Error` with its `Code`. A Go
+callee checks typed calls against its `input` schema like Node and Python
+callees do.
+
 `gregale function types` writes each function's typed client into its root:
-`gregale-functions.d.ts` for a Node function and `gregale_functions.py` for a
-Python one. Each covers the functions that function may call, typed from their
+`gregale-functions.d.ts` for a Node function, `gregale_functions.py` for a
+Python one and `gregale_functions.go` for a Go one. The Go file declares a
+struct per schema and a `functions` value with a method pair per callee
+(`functions.Users(ctx, in)` and `functions.SendUsers(ctx, in)`). Each covers the functions that function may call, typed from their
 schemas. In Python, import `functions` from `gregale_functions` instead of the
 SDK to get the types. Siblings without a schema and `calls:` apps get unknown
 (`Any`) types. `gregale deploy` refreshes files that already exist when a
@@ -433,7 +463,8 @@ anything when a file is out of date.
 
 `gregale dev --local` runs the same calls between the functions it serves:
 `call()` reaches the local sibling, `send()` answers at once and runs the call
-in the background, and the callee checks its `input` schema as it does when
+in the background, `wait()`, `status()` and completions work between local
+functions, and the callee checks its `input` schema as it does when
 deployed. It also refreshes generated type files that are out of date.
 `calls:` apps are not served locally.
 
