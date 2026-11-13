@@ -5837,6 +5837,13 @@ var cliCommands = []cliCommand{
 					{Name: "scenario", Value: "NAME", Short: "one named replay scenario (requires --replay)"},
 				}, Examples: []string{"gregale --json data-api migration preview --baseline schema.json --replay data-api.requests.json"}},
 			}},
+			{Name: "integrate", Short: "Add typed data and local two-user authorization checks to an existing npm TypeScript app", Flags: []cliFlag{
+				{Name: "directory", Value: "DIR", Short: "existing project directory (default .)"},
+				{Name: "client-directory", Value: "DIR", Short: "npm client directory relative to the project (default .)"},
+				{Name: "bundle", Value: "MANIFEST", Short: "approved local data-api-bundle.json"},
+				{Name: "sdk-version", Value: "VERSION", Short: "exact public @gregale/data version, instead of a bundle"},
+				{Name: "dry-run", Short: "preview files and installation without writing or starting services"},
+			}, Examples: []string{"gregale data-api integrate --bundle /path/to/data-api-bundle.json --dry-run", "gregale data-api integrate --bundle /path/to/data-api-bundle.json"}},
 			{Name: "onboard", Short: "Create and verify a local typed application with two-user isolation", Flags: []cliFlag{
 				{Name: "template", Value: "NAME", Short: "data-api-starter or data-api-teams", ClosedSet: []string{"data-api-starter", "data-api-teams"}},
 				{Name: "path", Value: "DIR", Short: "new starter project directory", Req: true},

@@ -25,7 +25,7 @@ var cliTreeVerbs = []string{
 	"abandon", "activate", "deactivate", "adopt", "allow", "assign", "attach", "detach",
 	"authorize", "bind", "unbind", "rebind", "capture", "clear", "close", "compare", "configure",
 	"confirm", "copy", "correlate", "diagnose", "dismiss", "download", "upload", "drain", "drop",
-	"enroll", "evaluate", "export", "import", "finalize", "grant", "ignore", "init", "install",
+	"enroll", "evaluate", "export", "import", "finalize", "grant", "ignore", "init", "install", "integrate",
 	"invite", "investigate", "lift", "lock", "merge", "minimize", "onboard", "prepare", "protect",
 	"unprotect", "qualify", "reconcile", "reconnect", "refresh", "rehearse", "reopen", "require",
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
