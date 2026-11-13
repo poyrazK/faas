@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [ADR-20261113120824: Workflow functions](20261113120824-workflow-functions.md) — accepted; `workflow: true` makes a function a code-first workflow with no wiring, `wf.call` parks the run while a sibling runs and the invocation's completion settles it, `functions.x.start()` returns a run handle (status/wait/signal, starter-only), and `gregale dev --local` drives runs locally
+
 - [ADR-20261112193755: Opt-in CLI HTTP metadata diagnostics](20261112193755-http-metadata-diagnostics.md) — accepted; prefix-only flag, redacted request metadata on stderr, request IDs and time to headers, unchanged stdout and body streaming
 
 - [ADR-20261112160000: Results of sent function calls, and Go typed clients](20261112160000-function-send-results-and-go-clients.md) — accepted; the sender is recorded on a sent invocation, which only it can read from its VM at `api.svc.gregale` (`wait()`/`status()`, long-poll), `send(..., {onComplete})` enqueues a completion invocation atomically at the terminal transition; gregale-go gets a `functions` client and generated structs, and Go callees check input
