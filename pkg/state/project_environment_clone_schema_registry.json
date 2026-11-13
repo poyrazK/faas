@@ -4999,6 +4999,7 @@
       "change_id",
       "created_at",
       "pipeline_id",
+      "read_gate",
       "wake_id"
     ],
     "kind": "operational"
@@ -5059,7 +5060,8 @@
       "verification",
       "verification_progress",
       "verified_at",
-      "verify_requested"
+      "verify_requested",
+      "wal_retention"
     ],
     "kind": "configuration",
     "capabilities": [],

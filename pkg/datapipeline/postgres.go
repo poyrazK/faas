@@ -78,6 +78,11 @@ func pipelineRow(r sqlc.DataPipeline) Pipeline {
 		v := r.RetainedWalBytes.Int64
 		p.RetainedWALBytes = &v
 	}
+	if len(r.WalRetention) > 2 {
+		if json.Unmarshal(r.WalRetention, &p.WALSample) == nil && p.WALSample != nil && p.WALSample.Generation == p.Generation && time.Since(p.WALSample.SampledAt) >= 0 && time.Since(p.WALSample.SampledAt) < api.DataPipelineObservationMaxAge {
+			p.WALRetention = &p.WALSample.DataPipelineWALRetention
+		}
+	}
 	p.Health = pipelineHealth(p.DataPipeline, time.Now())
 	return p
 }
@@ -276,7 +281,7 @@ func (s *PostgresStore) Control(ctx context.Context, account, id string, revisio
 		}
 		return Pipeline{}, ErrConflict
 	}
-	arg := sqlc.PipelineControlParams{AccountID: account, ID: id, Revision: revision, DesiredState: p.DesiredState, VerifyRequested: p.VerifyRequested, State: p.State}
+	arg := sqlc.PipelineControlParams{AccountID: account, ID: id, Revision: revision, DesiredState: p.DesiredState, VerifyRequested: p.VerifyRequested, State: p.State, QueuedVerification: []byte("{}")}
 	switch action {
 	case "pause":
 		arg.DesiredState = "paused"
@@ -286,6 +291,9 @@ func (s *PostgresStore) Control(ctx context.Context, account, id string, revisio
 		}
 		arg.DesiredState = "running"
 	case "delete":
+		if p.ReaderChange != nil && p.ReaderChange.State == "approved" && !readerSubset(p.ReaderChange.Before, p.ReaderChange.After) {
+			return Pipeline{}, ErrConflict
+		}
 		arg.DesiredState = "deleted"
 	case "resync":
 		if p.State == "validating" || p.State == "copying" || p.State == "catching_up" || p.Generation >= api.DataPipelineGenerationsMax {
@@ -301,6 +309,7 @@ func (s *PostgresStore) Control(ctx context.Context, account, id string, revisio
 		}
 		arg.VerifyRequested = true
 		arg.StartVerification = true
+		arg.QueuedVerification = queuedVerification(p)
 	default:
 		return Pipeline{}, ErrInvalid
 	}
@@ -322,6 +331,10 @@ func (s *PostgresStore) Finish(ctx context.Context, p Pipeline, ob Observation) 
 		ob.Verification = "unknown"
 	}
 	arg := sqlc.PipelineFinishParams{AppliedThroughAt: pgtype.Timestamptz{Time: ob.AppliedThroughAt, Valid: !ob.AppliedThroughAt.IsZero()}, AccountID: p.AccountID, ID: p.ID, Revision: p.Revision, LeaseToken: p.LeaseToken, State: ob.State, Reason: ob.Reason, TablesReady: int32(ob.TablesReady), Verification: ob.Verification, Initialized: ob.Initialized, VerifiedAt: pgtype.Timestamptz{Time: ob.VerifiedAt, Valid: !ob.VerifiedAt.IsZero()}}
+	arg.WalRetention = []byte("{}")
+	if ob.WALSample != nil {
+		arg.WalRetention, _ = json.Marshal(ob.WALSample)
+	}
 	if ob.ReaderChange != nil {
 		arg.ReaderChange, _ = json.Marshal(ob.ReaderChange)
 	}
