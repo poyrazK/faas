@@ -1323,7 +1323,7 @@ func cmdDashboard(args []string) int {
 //	status       queue doctor view (depth, scaling, bindings, and liveness)
 //	peek         inspect up to N rows without draining
 //	dead-letter  rows that exhausted attempts
-//	ack          release a leased row
+//	ack          acknowledge a processed message's result
 //	setup        configure a simple push workload with queue-depth scaling
 //	bindings     manage first-class queue bindings
 func cmdQueueDispatch(args []string) int {
@@ -1337,8 +1337,8 @@ func cmdQueueDispatch(args []string) int {
 			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect up to N rows without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    release a leased row\n"+
-			"  setup <slug>           configure a push workload + queue-depth scaling\n"+
+			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
+			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
 			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		return 1
@@ -1374,8 +1374,8 @@ func cmdQueueDispatch(args []string) int {
 			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    release a leased row\n"+
-			"  setup <slug>           configure a push workload + queue-depth scaling\n"+
+			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
+			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
 			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		maybeSuggestSub(sug)

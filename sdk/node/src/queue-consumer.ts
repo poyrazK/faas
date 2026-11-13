@@ -137,7 +137,11 @@ export class GregaleQueueConsumer<T = unknown> {
     if (!(Number.isInteger(this.wait) && this.wait >= 0 && this.wait <= MAX_WAIT_SECONDS)) throw new Error('waitSeconds must be 0-20');
     if (!(Number.isInteger(this.retryDelay) && this.retryDelay >= 0)) throw new Error('retryDelaySeconds must be a non-negative integer');
     if (!options.apiKey) {
-      this.identityURL = new URL(options.identityEndpoint ?? process.env.FAAS_WORKLOAD_IDENTITY_ENDPOINT ?? '');
+      const endpoint = options.identityEndpoint ?? process.env.FAAS_WORKLOAD_IDENTITY_ENDPOINT ?? '';
+      if (!endpoint || !URL.canParse(endpoint)) {
+        throw new Error('No workload identity endpoint (FAAS_WORKLOAD_IDENTITY_ENDPOINT); pass apiKey outside a Gregale VM');
+      }
+      this.identityURL = new URL(endpoint);
       if (this.identityURL.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(this.identityURL.hostname)) {
         throw new Error('Workload identity endpoint must be loopback HTTP; pass apiKey outside a Gregale VM');
       }
@@ -258,7 +262,9 @@ export class GregaleQueueConsumer<T = unknown> {
     if (this.options.apiKey) return this.options.apiKey;
     if (this.token && Date.now() < this.token.refreshAt) return this.token.value;
     const response = await this.fetchImpl(this.identityURL!, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(5000) });
-    if (!response.ok) throw new Error('Queue workload identity unavailable');
+    if (!response.ok) {
+      throw new Error(`Queue workload identity unavailable (${response.status}): this platform may not issue workload tokens; pass apiKey (a key with queues:consume) instead`);
+    }
     const token = await response.json() as { access_token?: unknown; expires_in?: unknown };
     if (typeof token.access_token !== 'string' || !token.access_token || token.access_token.length > 8192) throw new Error('Invalid workload identity');
     const lifetimeMs = typeof token.expires_in === 'number' && token.expires_in > 0 ? token.expires_in * 1000 : 300_000;

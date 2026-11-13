@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -42,6 +43,48 @@ type Host interface {
 // Service is the pull-lease surface.
 type Service struct {
 	Host Host
+	// Waiters bounds lease long-polls per account and per apid; nil leaves
+	// them unbounded (tests).
+	Waiters *WaiterSlots
+}
+
+// WaiterSlots counts lease long-polls in flight. Each waiter reruns a lease
+// transaction that locks its binding on every wake and recheck, so an
+// unbounded number of idle consumers made idle database work grow with them
+// (queue review 2026-11-12, ADR-20261112200000). A call over the cap is not
+// refused: it leases once without waiting, which the SDK consumers already
+// treat as an empty poll.
+type WaiterSlots struct {
+	mu         sync.Mutex
+	perAccount map[string]int
+	total      int
+}
+
+func (w *WaiterSlots) acquire(accountID string) (func(), bool) {
+	if w == nil {
+		return func() {}, true
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.perAccount[accountID] >= api.QueueLeaseWaitersPerAccount || w.total >= api.QueueLeaseWaitersPerAPID {
+		return nil, false
+	}
+	if w.perAccount == nil {
+		w.perAccount = map[string]int{}
+	}
+	w.perAccount[accountID]++
+	w.total++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			w.total--
+			if w.perAccount[accountID]--; w.perAccount[accountID] <= 0 {
+				delete(w.perAccount, accountID)
+			}
+		})
+	}, true
 }
 
 // Handler is a lease verb bound to an authenticated account and app.
@@ -151,7 +194,15 @@ func (s Service) Lease(w http.ResponseWriter, r *http.Request, acct state.Accoun
 		return
 	}
 	if r.Context().Err() != nil {
-		return // the consumer went away; anything leased is redelivered after its timeout
+		// The consumer went away before it could receive these leases.
+		// Waiting out the visibility timeout spent an attempt it never had
+		// (ADR-20261112200000); return them to pending instead.
+		if len(leases) > 0 {
+			releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+			defer cancel()
+			_ = store.ReleaseQueueLeases(releaseCtx, app.ID, leases)
+		}
+		return
 	}
 	if err != nil {
 		writeError(w, acct, r.PathValue("queue"), err)
@@ -171,6 +222,11 @@ func (s Service) lease(ctx context.Context, store state.QueueLeaseStore, req sta
 	if wait <= 0 {
 		return store.LeaseQueueMessages(ctx, req)
 	}
+	release, ok := s.Waiters.acquire(req.AccountID)
+	if !ok {
+		return store.LeaseQueueMessages(ctx, req)
+	}
+	defer release()
 	waitCtx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	// Subscribe before the first lease so a message sent in between wakes us.
@@ -208,7 +264,32 @@ func waitForQueueWake(ctx context.Context, wakes *<-chan db.Notification, rechec
 				continue
 			}
 			if queueMessageDue(n.Payload, appID) {
+				coalesceQueueWakes(ctx, *wakes)
 				return true
+			}
+		}
+	}
+}
+
+// leaseWakeCoalesce is how long a woken waiter lets a burst of sends land
+// before it leases: a batch send fires one notification per message, and
+// every one used to cost each waiting consumer a lease transaction.
+const leaseWakeCoalesce = 25 * time.Millisecond
+
+// coalesceQueueWakes waits leaseWakeCoalesce, discarding the notifications
+// that arrive meanwhile; the lease that follows sees all of their messages.
+func coalesceQueueWakes(ctx context.Context, wakes <-chan db.Notification) {
+	timer := time.NewTimer(leaseWakeCoalesce)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			return
+		case _, ok := <-wakes:
+			if !ok {
+				return
 			}
 		}
 	}

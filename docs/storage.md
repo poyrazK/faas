@@ -108,30 +108,35 @@ gregale env set --app <slug> DATABASE_URL='postgres://user:pass@host/db?sslmode=
 
 ## Detecting writes that will not survive
 
-Every write to a state-shaped path emits one `stateless.advisory` audit
-row per debounced 1-second batch. The contract is advisory-only by
-design (no EROFS), so a customer app that *does* try to persist
-state will continue to run — the audit row is your signal that the
+Gregale watches the state-shaped directories in every app instance:
+`data/` and `db/` under the app's working directory (for a buildpack app,
+`/app/data` and `/app/db`), plus `/data`, `/db`, `/var/lib/postgresql`,
+`/var/lib/mysql`, `/var/lib/redis`, `/var/lib/mongodb`, `/var/lib/mongo`,
+`/var/lib/cockroach`, `/var/lib/cassandra` and `/var/lib/clickhouse`.
+The first write to each file in them records one `stateless.advisory`
+audit row (writes within about a second share a row). The contract is
+advisory-only by design (no read-only filesystem), so an app that *does*
+try to persist state keeps running — the audit row is your signal that the
 data will not survive the next park.
 
 - **Querying the audit log:**
-  `gregale audit --kind-prefix=stateless.advisory` lists
-  recent batches. The dashboard's app-detail page links to the
-  same view at `/dashboard/audit-events?kind_prefix=
-  stateless.advisory&app_id={uuid}`. The HTTP API is
+  `gregale audit list --kind-prefix stateless.advisory` lists recent rows.
+  The dashboard's app-detail page links to the same view at
+  `/dashboard/audit-events?kind_prefix=stateless.advisory&app_id={uuid}`.
+  The HTTP API is
   `GET /v1/audit-events?kind_prefix=stateless.advisory&limit=50`.
-- **Live events:** one summary frame per batch
-  (`{app_id, instance, n, sample_path}`) arrives on
-  `GET /v1/events`, within ~2s of the write. Toggle on the CLI with
+- **Live events:** one summary frame per row
+  (`{app_id, instance, n, sample_path}`) arrives on `GET /v1/events`
+  within a few seconds of the write. Toggle on the CLI with
   `gregale invocation watch --include-stateless`.
-- **Anonymous rows:** if the app row was deleted between wake and
-  advisory, the row lands with `subject=NULL`. Pass
-  `?include_anonymous=true` on the HTTP query, or
-  `--include-anonymous` on `gregale audit-events`, to surface
-  those rows.
-- **Noise:** a noisy app that writes `/data` on every request
-  produces one advisory row per second; the dashboard collapses
-  repeats into `+1 more`.
+- **Anonymous rows:** if the app was deleted between the wake and the
+  advisory, no row is written on a compute node; on a single-box
+  installation the row may land with `subject=NULL`. Pass
+  `?include_anonymous=true` on the HTTP query, or `--include-anonymous`
+  on `gregale audit-events`, to surface those rows.
+- **Noise:** each file is reported once per instance, however often the
+  app rewrites it; a new instance (the next wake) reports it again. An
+  instance reports at most 256 files.
 
 ## Templates
 
