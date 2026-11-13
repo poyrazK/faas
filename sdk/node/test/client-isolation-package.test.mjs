@@ -45,17 +45,50 @@ test('packed SDK exposes isolated public/preview clients and the legacy migratio
       await Promise.all([AppsService.getApp({ slug: 'old' }), a.apps.getApp({ slug: 'after' })]);
       assert.ok(seen.some(([url, token]) => url === 'https://legacy.test/v1/apps/old' && token === 'Bearer legacy'));
       assert.ok(seen.some(([url, token]) => url === 'https://a.test/v1/apps/after' && token === 'Bearer a'));
+      let submissions = 0;
+      let streams = 0;
+      const events = [];
+      const runs = createPreviewClient('https://runs.test/prefix', { token: 'runs-token', fetch: async (url, init) => {
+        assert.ok(String(url).startsWith('https://runs.test/prefix/v1/executions'));
+        assert.equal(new Headers(init.headers).get('Authorization'), 'Bearer runs-token');
+        if (init.method === 'POST') { submissions++; return Response.json({ id: 'run/1', status: 'queued' }); }
+        if (String(url).includes('/events')) {
+          streams++;
+          if (streams > 1) assert.match(String(url), /after=1/);
+          return new Response(streams === 1
+            ? 'id: 1\\nevent: stdout\\ndata: {"chunk":"hello"}\\n\\n'
+            : 'id: 2\\nevent: terminal\\ndata: {"status":"succeeded"}\\n\\n',
+            { headers: { 'Content-Type': 'text/event-stream' } });
+        }
+        return Response.json({ id: 'run/1', status: 'succeeded' });
+      } });
+      const receipt = await runs.runExecution({ runtime: 'node22', source: 'console.log(1)' }, {
+        retryInitialMs: 0, retryMaxMs: 0, onEvent: event => events.push(event.type),
+      });
+      assert.equal(receipt.status, 'succeeded');
+      assert.deepEqual(events, ['stdout', 'terminal']);
+      assert.equal(submissions, 1);
+      assert.equal(streams, 2);
+      assert.equal('runExecution' in a, false);
     } finally { legacy.uninstall(); globalThis.fetch = original; Object.assign(OpenAPI, config); }
   `);
   await exec(process.execPath, ['app.mjs'], { cwd: app });
   await writeFile(join(app, 'app.ts'), `
     import { createClient, type GregaleClient, type AppResponse, type CancelablePromise, FaaSClient, AppsService } from '@gregale/sdk-node';
-    import { createClient as createPreviewClient, type GregaleClient as PreviewClient } from '@gregale/sdk-node/preview';
+    import { createClient as createPreviewClient, type GregaleClient as PreviewClient, type ExecutionResponse, type ExecutionEvent, type ExecutionHelpers } from '@gregale/sdk-node/preview';
     const client: GregaleClient = createClient('https://api.test');
     const request: CancelablePromise<AppResponse> = client.apps.getApp({ slug: 'typed' });
     request.cancel();
     const preview: PreviewClient = createPreviewClient('https://api.test');
     void preview.flags;
+    const helpers: ExecutionHelpers = preview;
+    const execution: Promise<ExecutionResponse> = helpers.runExecution({ runtime: 'node22', source: 'console.log(1)' });
+    const events: AsyncGenerator<ExecutionEvent, void, void> = helpers.watchExecution('run', { after: 1 });
+    void execution; void events;
+    // @ts-expect-error workflow helpers remain preview-only
+    client.runExecution({ runtime: 'node22' });
+    // @ts-expect-error generated execution inputs remain checked
+    preview.runExecution({ runtime: 'unsupported' });
     // @ts-expect-error preview APIs are not exposed by the public factory
     void client.flags;
     // @ts-expect-error generated method arguments remain checked

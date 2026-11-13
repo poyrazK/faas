@@ -6,6 +6,21 @@ type Methods<T> = {
   readonly [K in keyof T as T[K] extends (...args: never[]) => unknown ? K : never]: T[K];
 };
 
+/** Internal transport snapshot; independent clients always supply FETCH. */
+export type ClientConfig = Readonly<OpenAPIConfig> & { readonly FETCH: typeof fetch };
+
+/** Bind a generated service to a configuration provider. */
+export function bindService<T extends object>(service: T, getConfig: () => OpenAPIConfig): Methods<T> {
+  const receiver = Object.create(service) as object;
+  Object.defineProperty(receiver, 'clientConfig', { get: getConfig });
+  const methods: Record<string, unknown> = {};
+  for (const key of Object.getOwnPropertyNames(service)) {
+    const method: unknown = Reflect.get(service, key);
+    if (typeof method === 'function') methods[key] = method.bind(receiver);
+  }
+  return Object.freeze(methods) as Methods<T>;
+}
+
 export type BoundClient<Services> = {
   readonly [K in keyof Services as K extends `${infer Name}Service` ? Uncapitalize<Name> : never]: Methods<Services[K]>;
 } & {
@@ -30,13 +45,14 @@ function normalizeBaseURL(value: string): string {
  * snapshots its config before the generated request starts resolving headers.
  * Replacing config on updates also isolates requests waiting to retry.
  */
-export function bindClient<Services extends Record<string, object>>(
+export function bindClient<Services extends Record<string, object>, Helpers extends object = object>(
   services: Services,
   baseURL: string,
   options: FaaSClientOptions = {},
-): BoundClient<Services> {
+  helpers?: (getConfig: () => ClientConfig) => Helpers,
+): BoundClient<Services> & Helpers {
   const transportOptions = { ...options, retry: options.retry && { ...options.retry } };
-  let config: OpenAPIConfig = Object.freeze({
+  let config: ClientConfig = Object.freeze({
     ...createOpenAPIConfig(),
     BASE: normalizeBaseURL(baseURL),
     TOKEN: options.token,
@@ -58,14 +74,11 @@ export function bindClient<Services extends Record<string, object>>(
     if (!name.endsWith('Service')) throw new Error(`Unexpected SDK service: ${name}`);
     const namespace = name[0]!.toLowerCase() + name.slice(1, -'Service'.length);
     if (namespace in client) throw new Error(`Duplicate SDK namespace: ${namespace}`);
-    const receiver = Object.create(service) as object;
-    Object.defineProperty(receiver, 'clientConfig', { get: () => config });
-    const methods: Record<string, unknown> = {};
-    for (const key of Object.getOwnPropertyNames(service)) {
-      const method: unknown = Reflect.get(service, key);
-      if (typeof method === 'function') methods[key] = method.bind(receiver);
-    }
-    client[namespace] = Object.freeze(methods);
+    client[namespace] = bindService(service, () => config);
   }
-  return Object.freeze(client) as BoundClient<Services>;
+  for (const [name, helper] of Object.entries(helpers?.(() => config) ?? {})) {
+    if (name in client) throw new Error(`Duplicate SDK helper: ${name}`);
+    client[name] = helper;
+  }
+  return Object.freeze(client) as BoundClient<Services> & Helpers;
 }
