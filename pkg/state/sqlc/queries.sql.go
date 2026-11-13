@@ -22265,7 +22265,12 @@ WITH plan_retention AS (
     JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
     WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
       AND i.created_at < $3::timestamptz - make_interval(secs => $4::bigint)
-      AND coalesce(i.last_replayed_at, i.created_at) < $3::timestamptz - make_interval(secs => r.seconds)
+      -- ADR-20261112200000: the wait also restarts when a retry or a nack
+      -- delay makes the message due again, so a back-off longer than the
+      -- retention no longer turns the retry into an expiry; and a suspended
+      -- owner's messages wait for its reactivation instead of expiring.
+      AND greatest(coalesce(i.last_replayed_at, i.created_at), i.due_at) < $3::timestamptz - make_interval(secs => r.seconds)
+      AND coalesce(a.status, o.status) <> 'suspended'
     ORDER BY i.created_at
     LIMIT $5::integer
     FOR UPDATE OF i SKIP LOCKED
@@ -81583,6 +81588,17 @@ func (q *Queries) QueueClaimPendingInvocation(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const queueConsumerAuthorizeRevive = `-- name: QueueConsumerAuthorizeRevive :exec
+select set_config('gregale.queue_binding_revive', $1::text, true)
+`
+
+// Names the one binding guard_queue_binding_retirement lets this transaction
+// revive.
+func (q *Queries) QueueConsumerAuthorizeRevive(ctx context.Context, db DBTX, bindingID string) error {
+	_, err := db.Exec(ctx, queueConsumerAuthorizeRevive, bindingID)
+	return err
+}
+
 const queueConsumerBindingForUpdate = `-- name: QueueConsumerBindingForUpdate :one
 select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id from queue_bindings where id=$1
 and app_id=$2 and account_id=$3 and retired_at is null for update
@@ -81886,6 +81902,86 @@ func (q *Queries) QueueConsumerRetireBinding(ctx context.Context, db DBTX, arg Q
 	return i, err
 }
 
+const queueConsumerRetiredBindingForRevive = `-- name: QueueConsumerRetiredBindingForRevive :one
+select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id from queue_bindings
+where app_id=$1 and account_id=$2 and environment_id is null
+  and name=$3 and queue_name=$4 and retired_at is not null
+for update
+`
+
+type QueueConsumerRetiredBindingForReviveParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	Name      string
+	QueueName string
+}
+
+// ADR-20261112200000: the retired production binding a create with the same
+// name and queue name revives.
+func (q *Queries) QueueConsumerRetiredBindingForRevive(ctx context.Context, db DBTX, arg QueueConsumerRetiredBindingForReviveParams) (QueueBinding, error) {
+	row := db.QueryRow(ctx, queueConsumerRetiredBindingForRevive,
+		arg.AppID,
+		arg.AccountID,
+		arg.Name,
+		arg.QueueName,
+	)
+	var i QueueBinding
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.QueueName,
+		&i.Mode,
+		&i.WorkloadClass,
+		&i.Enabled,
+		&i.MaxConcurrency,
+		&i.RetryPolicy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetiredAt,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
+		&i.OrgID,
+	)
+	return i, err
+}
+
+const queueConsumerReviveBinding = `-- name: QueueConsumerReviveBinding :one
+update queue_bindings set retired_at=null, updated_at=now()
+where id=$1 and app_id=$2 and account_id=$3 and retired_at is not null returning id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id
+`
+
+type QueueConsumerReviveBindingParams struct {
+	ID        pgtype.UUID
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) QueueConsumerReviveBinding(ctx context.Context, db DBTX, arg QueueConsumerReviveBindingParams) (QueueBinding, error) {
+	row := db.QueryRow(ctx, queueConsumerReviveBinding, arg.ID, arg.AppID, arg.AccountID)
+	var i QueueBinding
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.QueueName,
+		&i.Mode,
+		&i.WorkloadClass,
+		&i.Enabled,
+		&i.MaxConcurrency,
+		&i.RetryPolicy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetiredAt,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
+		&i.OrgID,
+	)
+	return i, err
+}
+
 const queueConsumerUpdateBinding = `-- name: QueueConsumerUpdateBinding :one
 update queue_bindings set queue_name=$1,mode=$2,workload_class=$3,
 enabled=$4,max_concurrency=$5,retry_policy=$6::jsonb,updated_at=now()
@@ -82024,9 +82120,13 @@ func (q *Queries) QueueDepthForBinding(ctx context.Context, db DBTX, arg QueueDe
 
 const queueDepthInScope = `-- name: QueueDepthInScope :one
 select count(*)::bigint as depth from (
-  select 1 from invocations
-  where app_id=$1::uuid and deployment_scope=$2::text
-    and source='queue' and state in ('pending','dispatching') and (state='dispatching' or due_at <= now())
+  select 1 from invocations i
+  where i.app_id=$1::uuid and i.deployment_scope=$2::text
+    and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
+    and (i.queue_name='' or i.queue_binding_id is not null
+      or exists (select 1 from queue_bindings qb where qb.app_id=i.app_id and qb.queue_name=i.queue_name and qb.retired_at is null)
+      or exists (select 1 from triggers t where t.app_id=i.app_id and t.kind='queue'
+        and t.source='queue' and t.enabled and t.slug=i.queue_name))
   limit $3::integer
 ) bounded
 `
@@ -82040,6 +82140,11 @@ type QueueDepthInScopeParams struct {
 // QueueStateInScope's depth, counted only up to row_limit: worker scaling
 // needs no more than the depth that saturates the pool (ADR-20261022105723
 // amendment 2026-10-24).
+// ADR-20261112200000: only messages something consumes count: unnamed ones
+// the drain delivers, a binding's own messages, a name a live binding reads,
+// or a name an enabled legacy queue trigger reads. A send
+// to any other name on an app without bindings waited unconsumed and kept
+// the worker pool scaled out for nothing until it expired.
 func (q *Queries) QueueDepthInScope(ctx context.Context, db DBTX, arg QueueDepthInScopeParams) (int64, error) {
 	row := db.QueryRow(ctx, queueDepthInScope, arg.AppID, arg.DeploymentScope, arg.RowLimit)
 	var depth int64
@@ -82460,7 +82565,7 @@ const queueReleasePendingBatchClaims = `-- name: QueueReleasePendingBatchClaims 
 with targets as (
   select unnest($4::text[]) as id, unnest($5::integer[]) as attempt,
     unnest($6::bigint[]) as replay_generation
-) update invocations i set state='pending',lease_expires_at=null from targets
+) update invocations i set state='pending',lease_expires_at=null,attempts=greatest(i.attempts-1,0) from targets
 where i.id::text=targets.id and i.environment_id is null and i.attempts=targets.attempt and i.replay_generation=targets.replay_generation
   and i.app_id=$1::uuid and i.source='queue' and i.state='dispatching'
   and ($2::uuid is null or i.queue_binding_id=$2::uuid
@@ -82476,6 +82581,9 @@ type QueueReleasePendingBatchClaimsParams struct {
 	ReplayGenerations []int64
 }
 
+// A claim the poller hands back undelivered returns the attempt the claim
+// took (ADR-20261112200000): a message bumped out of a full batch must not
+// lose budget, and a canary is claimable only at attempt 0.
 func (q *Queries) QueueReleasePendingBatchClaims(ctx context.Context, db DBTX, arg QueueReleasePendingBatchClaimsParams) error {
 	_, err := db.Exec(ctx, queueReleasePendingBatchClaims,
 		arg.AppID,

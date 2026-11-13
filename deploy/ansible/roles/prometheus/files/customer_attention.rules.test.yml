@@ -1,0 +1,40 @@
+# ADR-20261113123000: a jump in customers who look stuck pages as a likely
+# platform cause; a steady level or a slow rise stays quiet.
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: ten more deploy_failing signals within an hour fire
+    interval: 1m
+    input_series:
+      # Two signals for an hour, then twelve.
+      - series: apid_customer_attention_signals_open{job="apid",instance="a",kind="deploy_failing"}
+        values: 2x60 12x30
+      - series: apid_customer_attention_signals_open{job="apid",instance="a",kind="domain_stuck"}
+        values: 5x90
+    alert_rule_test:
+      - eval_time: 65m
+        alertname: FaasCustomerAttentionSpike
+        exp_alerts: []
+      - eval_time: 75m
+        alertname: FaasCustomerAttentionSpike
+        exp_alerts:
+          - exp_labels:
+              kind: deploy_failing
+              severity: warn
+              component: apid
+              family: customer_attention
+            exp_annotations:
+              summary: "10 more customers look stuck (deploy_failing) than an hour ago"
+              description: "apid's customer attention evaluator opened at least ten more deploy_failing signals within an hour. Many customers failing the same way at once usually means a platform cause (a builder image, a certificate authority, a new refusal code) rather than customer mistakes. Check the staff page of customers who may be stuck and the per-code refusal counter before contacting customers."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerAttentionSpike.md"
+
+  - name: a rise of fewer than ten stays quiet
+    interval: 1m
+    input_series:
+      - series: apid_customer_attention_signals_open{job="apid",instance="a",kind="refused_burst"}
+        values: 1x60 10x30
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: FaasCustomerAttentionSpike
+        exp_alerts: []

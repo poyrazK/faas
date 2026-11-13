@@ -337,6 +337,68 @@ func inferDocker(fsys fs.FS, profile *Profile) {
 		profile.Port = port
 	}
 	profile.Warnings = append(profile.Warnings, Warning{Code: "container_command_deferred", Message: "The container entrypoint and health contract will be read from the image; source inference is intentionally conservative.", Sources: []string{"Dockerfile"}})
+	if warning, ok := nonHTTPServiceWarning(body); ok {
+		profile.Warnings = append(profile.Warnings, warning)
+	}
+}
+
+// nonHTTPServers maps official images of servers that speak their own TCP
+// protocol to the port they serve on (ADR-20261112223000 §1).
+var nonHTTPServers = map[string]int{
+	"redis": 6379, "valkey": 6379, "keydb": 6379,
+	"postgres": 5432, "mysql": 3306, "mariadb": 3306, "mongo": 27017,
+	"memcached": 11211, "rabbitmq": 5672, "nats": 4222,
+	"eclipse-mosquitto": 1883, "cassandra": 9042, //nolint:misspell // the official image name
+}
+
+// nonHTTPPorts are those servers' ports, plus Kafka's.
+var nonHTTPPorts = func() map[int]bool {
+	ports := map[int]bool{9092: true}
+	for _, port := range nonHTTPServers {
+		ports[port] = true
+	}
+	return ports
+}()
+
+var fromPattern = regexp.MustCompile(`(?im)^\s*FROM\s+(?:--\S+\s+)*(\S+)`)
+
+// nonHTTPServiceWarning reports a Dockerfile whose serving port is a raw TCP
+// server's: its own EXPOSE, else the port of a known server image it builds
+// FROM. A source build is probed with HTTP GET /healthz on that port, which a
+// raw TCP server never answers, so the deploy fails with
+// app_startup_timeout. A directly deployed image is gated by TCP accept.
+func nonHTTPServiceWarning(dockerfile string) (Warning, bool) {
+	server, port := "", firstPort(dockerfile)
+	if froms := fromPattern.FindAllStringSubmatch(dockerfile, -1); len(froms) > 0 {
+		ref := strings.ToLower(froms[len(froms)-1][1])
+		if at := strings.IndexByte(ref, '@'); at >= 0 {
+			ref = ref[:at]
+		}
+		if slash := strings.LastIndexByte(ref, '/'); slash >= 0 {
+			ref = ref[slash+1:]
+		}
+		if colon := strings.IndexByte(ref, ':'); colon >= 0 {
+			ref = ref[:colon]
+		}
+		if serverPort, known := nonHTTPServers[ref]; known {
+			server = ref
+			if port == 0 {
+				port = serverPort
+			}
+		}
+	}
+	if !nonHTTPPorts[port] {
+		return Warning{}, false
+	}
+	what := fmt.Sprintf("port %d is a raw TCP port", port)
+	if server != "" {
+		what = fmt.Sprintf("this builds %s, which serves its own TCP protocol on port %d", server, port)
+	}
+	return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
+		"%s. A source build must answer HTTP GET /healthz on its serving port, so this deploy fails with app_startup_timeout. "+
+			"Deploy the published image instead, which is ready once the port accepts connections: "+
+			"`gregale deploy --image <image>@sha256:<digest> --name <app>`. Then keep it private and let other apps reach it "+
+			"with `gregale app <app> --visibility internal --ports <name>=tcp:%d:internal`.", what, port)}, true
 }
 
 func nodePackageManager(fsys fs.FS, declared string) string {

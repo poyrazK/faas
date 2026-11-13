@@ -10,6 +10,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_abuse_strikes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "id",
+      "reason",
+      "struck_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "account_billing_connections",
     "columns": [
       "account_id",
@@ -4332,6 +4343,25 @@
       "app_slug",
       "request_id",
       "trace_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_attention_signals",
+    "columns": [
+      "id",
+      "account_id",
+      "kind",
+      "subject",
+      "detail",
+      "state",
+      "observed",
+      "first_seen_at",
+      "last_seen_at",
+      "resolved_at",
+      "dismissed_at",
+      "dismissed_by",
+      "dismiss_reason"
     ],
     "kind": "operational"
   },
@@ -14688,6 +14718,7 @@
       "ai_response_moderation",
       "ai_response_payment_card",
       "ai_response_secret",
+      "ai_semantic_cache",
       "ai_trace_max_calls",
       "ai_trace_max_cost_millicents",
       "ai_trace_max_repeated_tool_calls",

@@ -101,6 +101,14 @@ type Account struct {
 	EgressOverageDisabledAt pgtype.Timestamptz
 }
 
+type AccountAbuseStrike struct {
+	ID        int64
+	AccountID pgtype.UUID
+	Reason    string
+	AppID     pgtype.UUID
+	StruckAt  pgtype.Timestamptz
+}
+
 type AccountAsyncQuotum struct {
 	AccountID       pgtype.UUID
 	MaxInflight     int32
@@ -3424,6 +3432,22 @@ type CustomerApiError struct {
 	AppSlug    string
 	RequestID  string
 	TraceID    string
+}
+
+type CustomerAttentionSignal struct {
+	ID            int64
+	AccountID     pgtype.UUID
+	Kind          string
+	Subject       string
+	Detail        string
+	State         string
+	Observed      int64
+	FirstSeenAt   pgtype.Timestamptz
+	LastSeenAt    pgtype.Timestamptz
+	ResolvedAt    pgtype.Timestamptz
+	DismissedAt   pgtype.Timestamptz
+	DismissedBy   pgtype.UUID
+	DismissReason string
 }
 
 type CustomerOperation struct {
@@ -11659,6 +11683,7 @@ type OutboundIntegration struct {
 	AiOnlineEvalModel              pgtype.Text
 	AiOnlineEvalRubric             pgtype.Text
 	AiQualityAlerts                bool
+	AiSemanticCache                []byte
 }
 
 type OutboundIntegrationApp struct {

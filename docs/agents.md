@@ -238,8 +238,15 @@ gregale mcp connection budget <id> --unlimited
 gregale mcp connection budget <id> --default
 ```
 
-An agent reads its own with `gregale mcp connection budget --self`, so it can
-plan within it. An organization can cap every agent acting in it; the lower
+An agent reads its own with `gregale mcp connection budget --self` (MCP:
+`gregale_agent_budget`), so it can plan within it. Before making a change it
+can ask what the change would cost: `gregale_plan_scale` and
+`gregale app <slug> scale --plan` show the added cost, the budget left and
+whether a person would be asked first. Sending a request with the header
+`Gregale-Agent-Preview: budget` does the same for any client; Gregale prices
+it as the real request and changes nothing. Previews work on app settings
+(`PATCH /v1/apps/{slug}`), scaling and prewarm; other routes refuse the
+header. An organization can cap every agent acting in it; the lower
 of the agent's budget and the ceiling applies:
 
 ```sh

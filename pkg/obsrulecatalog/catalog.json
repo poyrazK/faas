@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "e10e62f57ddaa96362c4af7345e9bdc2d5dc48b866a005b290e08b7ed0138efe",
+      "revision": "78af63f2e49fe910a9d0b1c9192266900ce195d17331e3784d514485e1444798",
       "files": [
         "faas.rules.yml"
       ],
@@ -3377,6 +3377,19 @@
           }
         },
         {
+          "id": "736e4ef53830995dc54954a06b28d959e8bf1d7fe0315f16f1fd996c4036052d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasTenantCPUAbuse",
+          "definition": {
+            "expression_hash": "91bcd057714b60b0d4b07e84f1f2607787599c2bdb236ffd3344c9885cdf6773",
+            "labels_hash": "f5bd3832083e40708298bb2ac436a093e8a0888947298321d8462bfce2f67176",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e9b17d1c06a69f24d6c01c18e7634845aad985723792408f6053ea01ea7e303e"
+          }
+        },
+        {
           "id": "73ca733dd4129971409c2b13761fab2b7bbeb08e0d157084240fa4cf4a24e2ef",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -3868,6 +3881,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "378b24927c85de567046a55870aa03a97f2c2e6fc94d4eebde7595091e075511"
+          }
+        },
+        {
+          "id": "888faa93e240f1afd42b8fc6afd77c6020552905a2a0bab7e2707298348acdf4",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_attention",
+          "rule_name": "FaasCustomerAttentionSpike",
+          "definition": {
+            "expression_hash": "1ffe9c3751211799ee9223380bdf4357cb8c3a5eae1f84b040ba7878d45b0227",
+            "labels_hash": "1190ba47db36f1679421f2e465534a623371c811acc054713721d327278b7bd0",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "7a4d4434ecd020aedd3bd4ff249783a1dbe96572cb0e7ff04aa72b14a1b70bbb"
           }
         },
         {
@@ -7137,7 +7163,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "9e98e8c73ff7c049eaefd42bae7cb1bbbfbd0f4c6c270da96259fe98da02c60e",
+      "revision": "5c4248a464d3ba981503a6ecb0f9f3f7e65a3e0a297c20a10e02a8e6dfd698e2",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -10631,6 +10657,19 @@
           }
         },
         {
+          "id": "736e4ef53830995dc54954a06b28d959e8bf1d7fe0315f16f1fd996c4036052d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasTenantCPUAbuse",
+          "definition": {
+            "expression_hash": "91bcd057714b60b0d4b07e84f1f2607787599c2bdb236ffd3344c9885cdf6773",
+            "labels_hash": "f5bd3832083e40708298bb2ac436a093e8a0888947298321d8462bfce2f67176",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e9b17d1c06a69f24d6c01c18e7634845aad985723792408f6053ea01ea7e303e"
+          }
+        },
+        {
           "id": "73ca733dd4129971409c2b13761fab2b7bbeb08e0d157084240fa4cf4a24e2ef",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -11200,6 +11239,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "378b24927c85de567046a55870aa03a97f2c2e6fc94d4eebde7595091e075511"
+          }
+        },
+        {
+          "id": "888faa93e240f1afd42b8fc6afd77c6020552905a2a0bab7e2707298348acdf4",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_attention",
+          "rule_name": "FaasCustomerAttentionSpike",
+          "definition": {
+            "expression_hash": "1ffe9c3751211799ee9223380bdf4357cb8c3a5eae1f84b040ba7878d45b0227",
+            "labels_hash": "1190ba47db36f1679421f2e465534a623371c811acc054713721d327278b7bd0",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "7a4d4434ecd020aedd3bd4ff249783a1dbe96572cb0e7ff04aa72b14a1b70bbb"
           }
         },
         {

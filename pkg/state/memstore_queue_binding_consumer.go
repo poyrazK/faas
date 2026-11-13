@@ -53,6 +53,19 @@ func (m *MemStore) mutateQueueBindingConsumerLocked(accountID, appID, id string,
 	limits, _ := api.LimitsFor(account.Plan)
 	var binding QueueBinding
 	wasPush := false
+	if create != nil && create.DeploymentScope == "" && create.EnvironmentID == "" {
+		// Mirrors the PgStore revive (ADR-20261112200000).
+		for retiredID, retired := range m.queueBindings {
+			if retired.AppID == appID && retired.AccountID == accountID && retired.EnvironmentID == "" && retired.RetiredAt != nil &&
+				retired.Name == create.Name && retired.QueueName == create.QueueName {
+				retired.RetiredAt = nil
+				m.queueBindings[retiredID] = retired
+				wanted := *create
+				create, patch, id = nil, revivePatch(wanted), retiredID
+				break
+			}
+		}
+	}
 	if create != nil {
 		if _, exists := m.queueBindings[id]; exists {
 			return QueueBindingConsumerResult{}, ErrConflict
@@ -71,6 +84,14 @@ func (m *MemStore) mutateQueueBindingConsumerLocked(accountID, appID, id string,
 		wasPush = binding.Mode == "push"
 		if patch != nil {
 			binding = applyQueueBindingPatch(binding, *patch)
+		}
+		if wasPush && binding.Mode == "pull" && !remove {
+			for _, inv := range m.invocations {
+				if inv.QueueBindingID == id && inv.Source == InvocationQueue && inv.WorkPolicyName != "" &&
+					(inv.State == InvocationPending || inv.State == InvocationDispatching) {
+					return QueueBindingConsumerResult{}, ErrQueueBindingKeyedWork
+				}
+			}
 		}
 	}
 	if !remove {

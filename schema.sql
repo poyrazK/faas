@@ -18891,6 +18891,12 @@ BEGIN
   AND environment_gitops_queue_recovery_authorized(OLD.id) THEN
   RETURN NEW;
  END IF;
+ IF OLD.retired_at IS NOT NULL AND NEW.retired_at IS NULL
+  AND (to_jsonb(NEW)-'retired_at'-'updated_at')=(to_jsonb(OLD)-'retired_at'-'updated_at')
+  AND OLD.environment_id IS NULL
+  AND current_setting('gregale.queue_binding_revive', true)=OLD.id::text THEN
+  RETURN NEW;
+ END IF;
  IF OLD.retired_at IS NOT NULL AND
   (NEW.retired_at IS DISTINCT FROM OLD.retired_at OR NEW.id IS DISTINCT FROM OLD.id
    OR NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.app_id IS DISTINCT FROM OLD.app_id
@@ -20603,7 +20609,7 @@ CREATE TABLE public.accounts (
     display_name text DEFAULT ''::text NOT NULL,
     egress_overage_enabled_at timestamp with time zone,
     egress_overage_disabled_at timestamp with time zone,
-    CONSTRAINT accounts_abuse_hold_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'operator'::text]))))),
+    CONSTRAINT accounts_abuse_hold_v2_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'cpu_sustained'::text, 'operator'::text]))))),
     CONSTRAINT accounts_billing_address_length_chk CHECK (((billing_address IS NULL) OR ((char_length(billing_address) >= 1) AND (char_length(billing_address) <= 1000)))),
     CONSTRAINT accounts_billing_mail_revision_check CHECK ((billing_mail_revision > 0)),
     CONSTRAINT accounts_business_name_length_chk CHECK (((business_name IS NULL) OR ((char_length(business_name) >= 1) AND (char_length(business_name) <= 256)))),
@@ -29959,6 +29965,35 @@ CREATE AGGREGATE public.request_analytics_hist_sum(bigint[]) (
 
 
 --
+-- Name: account_abuse_strikes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_abuse_strikes (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    reason text NOT NULL,
+    app_id uuid,
+    struck_at timestamp with time zone NOT NULL,
+    CONSTRAINT account_abuse_strikes_reason_check CHECK ((reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'cpu_sustained'::text]))),
+    CONSTRAINT account_abuse_strikes_struck_at_check CHECK (isfinite(struck_at))
+);
+
+
+--
+-- Name: account_abuse_strikes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.account_abuse_strikes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.account_abuse_strikes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: account_async_quota; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -35946,6 +35981,53 @@ CREATE TABLE public.customer_api_errors (
 
 ALTER TABLE public.customer_api_errors ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
     SEQUENCE NAME public.customer_api_errors_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: customer_attention_signals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.customer_attention_signals (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject text NOT NULL,
+    detail text DEFAULT ''::text NOT NULL,
+    state text NOT NULL,
+    observed bigint NOT NULL,
+    first_seen_at timestamp with time zone NOT NULL,
+    last_seen_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    dismissed_at timestamp with time zone,
+    dismissed_by uuid,
+    dismiss_reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT customer_attention_signals_check CHECK (((state = 'resolved'::text) = (resolved_at IS NOT NULL))),
+    CONSTRAINT customer_attention_signals_check1 CHECK (((state <> 'dismissed'::text) OR (dismissed_at IS NOT NULL))),
+    CONSTRAINT customer_attention_signals_detail_check CHECK ((octet_length(detail) <= 500)),
+    CONSTRAINT customer_attention_signals_dismiss_reason_check CHECK ((octet_length(dismiss_reason) <= 200)),
+    CONSTRAINT customer_attention_signals_dismissed_at_check CHECK (((dismissed_at IS NULL) OR isfinite(dismissed_at))),
+    CONSTRAINT customer_attention_signals_first_seen_at_check CHECK (isfinite(first_seen_at)),
+    CONSTRAINT customer_attention_signals_kind_check CHECK ((kind = ANY (ARRAY['deploy_failing'::text, 'refused_burst'::text, 'domain_stuck'::text]))),
+    CONSTRAINT customer_attention_signals_last_seen_at_check CHECK (isfinite(last_seen_at)),
+    CONSTRAINT customer_attention_signals_observed_check CHECK ((observed >= 0)),
+    CONSTRAINT customer_attention_signals_resolved_at_check CHECK (((resolved_at IS NULL) OR isfinite(resolved_at))),
+    CONSTRAINT customer_attention_signals_state_check CHECK ((state = ANY (ARRAY['open'::text, 'dismissed'::text, 'resolved'::text]))),
+    CONSTRAINT customer_attention_signals_subject_check CHECK (((octet_length(subject) >= 1) AND (octet_length(subject) <= 253)))
+);
+
+
+--
+-- Name: customer_attention_signals_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.customer_attention_signals ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.customer_attention_signals_id_seq
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -50965,7 +51047,7 @@ CREATE TABLE public.outbound_ai_usage_daily (
     evaluation_errors bigint DEFAULT 0 NOT NULL,
     CONSTRAINT outbound_ai_usage_daily_audio_chk CHECK ((((input_audio_tokens >= 0) AND (input_audio_tokens <= input_tokens)) AND ((output_audio_tokens >= 0) AND (output_audio_tokens <= output_tokens)))),
     CONSTRAINT outbound_ai_usage_daily_cache_chk CHECK ((((cached_requests >= 0) AND (cached_requests <= requests)) AND (cache_saved_millicents >= 0))),
-    CONSTRAINT outbound_ai_usage_daily_caller_chk CHECK (((caller = ANY (ARRAY['runs'::text, 'replay'::text, 'moderation'::text, 'evaluation'::text])) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
+    CONSTRAINT outbound_ai_usage_daily_caller_chk CHECK (((caller = ANY (ARRAY['runs'::text, 'replay'::text, 'moderation'::text, 'evaluation'::text, 'semantic_cache'::text])) OR (caller ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text))),
     CONSTRAINT outbound_ai_usage_daily_cost_chk CHECK ((cost_millicents >= 0)),
     CONSTRAINT outbound_ai_usage_daily_counts_chk CHECK (((requests >= 0) AND (error_requests >= 0) AND (usage_unknown_requests >= 0) AND ((error_requests + usage_unknown_requests) <= requests) AND (input_tokens >= 0) AND (cached_input_tokens >= 0) AND (cache_write_tokens >= 0) AND (output_tokens >= 0))),
     CONSTRAINT outbound_ai_usage_daily_media_chk CHECK (((images >= 0) AND (audio_seconds >= 0) AND (characters >= 0))),
@@ -51159,6 +51241,7 @@ CREATE TABLE public.outbound_integrations (
     ai_online_eval_model text,
     ai_online_eval_rubric text,
     ai_quality_alerts boolean DEFAULT false NOT NULL,
+    ai_semantic_cache jsonb,
     CONSTRAINT outbound_customer_integration_policy_chk CHECK (((owner_kind <> 'customer'::text) OR ((provider_auth_mode = 'managed'::text) AND (credential_source = 'customer_sealed'::text) AND ((cardinality(allowed_methods) >= 1) AND (cardinality(allowed_methods) <= 6)) AND ((cardinality(allowed_path_prefixes) >= 1) AND (cardinality(allowed_path_prefixes) <= 32))))),
     CONSTRAINT outbound_integrations_ai_allow_unmetered_chk CHECK (((NOT ai_allow_unmetered) OR (ai_provider IS NOT NULL))),
     CONSTRAINT outbound_integrations_ai_auto_prompt_cache_chk CHECK (((NOT ai_auto_prompt_cache) OR (ai_provider IS NOT NULL))),
@@ -51172,6 +51255,7 @@ CREATE TABLE public.outbound_integrations (
     CONSTRAINT outbound_integrations_ai_request_log_chk CHECK (((NOT ai_request_log_enabled) OR (ai_provider IS NOT NULL))),
     CONSTRAINT outbound_integrations_ai_request_log_content_chk CHECK (((NOT ai_request_log_content) OR ai_request_log_enabled)),
     CONSTRAINT outbound_integrations_ai_response_policy_chk CHECK (((ai_response_email = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_payment_card = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_iban = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_secret = ANY (ARRAY['off'::text, 'redact'::text, 'block'::text])) AND (ai_response_blocked_terms = ANY (ARRAY['off'::text, 'block'::text])) AND (ai_response_moderation = ANY (ARRAY['off'::text, 'flag'::text, 'block'::text])) AND ((ai_provider IS NOT NULL) OR ((ai_response_email = 'off'::text) AND (ai_response_payment_card = 'off'::text) AND (ai_response_iban = 'off'::text) AND (ai_response_secret = 'off'::text) AND (ai_response_blocked_terms = 'off'::text) AND (ai_response_moderation = 'off'::text))) AND ((ai_response_moderation = 'off'::text) OR ((ai_moderation_kind IS NOT NULL) AND (cardinality(ai_moderation_categories) >= 1) AND (NOT (ai_moderation_categories <@ ARRAY['prompt_injection'::text])) AND ((ai_moderation_kind = 'openai_moderation'::text) OR (ai_moderation_model IS NOT NULL)))))),
+    CONSTRAINT outbound_integrations_ai_semantic_cache_chk CHECK (((ai_semantic_cache IS NULL) OR ((ai_provider IS NOT NULL) AND (jsonb_typeof(ai_semantic_cache) = 'object'::text) AND (octet_length((ai_semantic_cache)::text) <= 1024)))),
     CONSTRAINT outbound_integrations_ai_trace_limits_chk CHECK ((((ai_trace_max_calls IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_trace_max_calls >= 1) AND (ai_trace_max_calls <= 1000000)))) AND ((ai_trace_max_cost_millicents IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_trace_max_cost_millicents >= 1) AND (ai_trace_max_cost_millicents <= '1000000000000'::bigint)))) AND ((ai_trace_max_repeated_tool_calls IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_trace_max_repeated_tool_calls >= 1) AND (ai_trace_max_repeated_tool_calls <= 1000)))))),
     CONSTRAINT outbound_integrations_ai_user_limits_chk CHECK ((((ai_user_daily_token_limit IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_token_limit >= 1) AND (ai_user_daily_token_limit <= '100000000000'::bigint)))) AND ((ai_user_daily_cost_limit_millicents IS NULL) OR ((ai_provider IS NOT NULL) AND ((ai_user_daily_cost_limit_millicents >= 1) AND (ai_user_daily_cost_limit_millicents <= '1000000000000'::bigint)))))),
     CONSTRAINT outbound_integrations_allowed_methods_count_chk CHECK ((cardinality(allowed_methods) <= 6)),
@@ -61221,6 +61305,14 @@ ALTER TABLE ONLY public.status_incidents ALTER COLUMN id SET DEFAULT nextval('pu
 
 
 --
+-- Name: account_abuse_strikes account_abuse_strikes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_abuse_strikes
+    ADD CONSTRAINT account_abuse_strikes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: account_async_quota account_async_quota_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63986,6 +64078,14 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.customer_api_errors
     ADD CONSTRAINT customer_api_errors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_attention_signals customer_attention_signals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_attention_signals
+    ADD CONSTRAINT customer_attention_signals_pkey PRIMARY KEY (id);
 
 
 --
@@ -74989,6 +75089,20 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 
 --
+-- Name: account_abuse_strikes_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_abuse_strikes_account_idx ON public.account_abuse_strikes USING btree (account_id, struck_at);
+
+
+--
+-- Name: account_abuse_strikes_struck_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_abuse_strikes_struck_at_idx ON public.account_abuse_strikes USING btree (struck_at);
+
+
+--
 -- Name: account_credits_account_active_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -77461,6 +77575,34 @@ CREATE INDEX customer_api_errors_request_idx ON public.customer_api_errors USING
 --
 
 CREATE INDEX customer_api_errors_trace_idx ON public.customer_api_errors USING btree (trace_id) WHERE (trace_id <> ''::text);
+
+
+--
+-- Name: customer_attention_signals_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_attention_signals_account_idx ON public.customer_attention_signals USING btree (account_id, state);
+
+
+--
+-- Name: customer_attention_signals_active_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_attention_signals_active_key ON public.customer_attention_signals USING btree (account_id, kind, subject) WHERE (state = ANY (ARRAY['open'::text, 'dismissed'::text]));
+
+
+--
+-- Name: customer_attention_signals_resolved_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_attention_signals_resolved_idx ON public.customer_attention_signals USING btree (resolved_at) WHERE (state = 'resolved'::text);
+
+
+--
+-- Name: customer_attention_signals_state_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX customer_attention_signals_state_idx ON public.customer_attention_signals USING btree (state, last_seen_at DESC);
 
 
 --
@@ -97264,6 +97406,22 @@ ALTER TABLE ONLY public.custom_domains
 
 ALTER TABLE ONLY public.customer_api_errors
     ADD CONSTRAINT customer_api_errors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_attention_signals customer_attention_signals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_attention_signals
+    ADD CONSTRAINT customer_attention_signals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_attention_signals customer_attention_signals_dismissed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_attention_signals
+    ADD CONSTRAINT customer_attention_signals_dismissed_by_fkey FOREIGN KEY (dismissed_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

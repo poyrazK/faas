@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -334,6 +335,7 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	setInvocationVersionResponseHeaders(w, inv)
+	s.warnUnconsumedQueue(r.Context(), w, app, inv)
 	writeJSON(w, http.StatusCreated, api.QueueSendResponse{
 		Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID,
 		ID:      inv.ID,
@@ -393,7 +395,27 @@ func (s *server) queueSendBatch(w http.ResponseWriter, r *http.Request, acct sta
 	if refused != nil && len(accepted) < len(resp.Results) {
 		resp.Results[len(accepted)] = api.QueueSendBatchResult{Index: len(accepted), Status: "rejected", Problem: refused}
 	}
+	if len(accepted) > 0 {
+		s.warnUnconsumedQueue(r.Context(), w, app, accepted[0])
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// warnUnconsumedQueue sets a Warning header when nothing reads the named
+// queue a message was accepted into: on an app with no queue binding or
+// consumer, a send to any queue name succeeds, but the generic drain takes
+// only unnamed messages, so it waits, counts toward the app's queue depth
+// and expires after the plan's retention. Only the CLI warned; API and SDK
+// callers saw a plain success (ADR-20261112200000).
+func (s *server) warnUnconsumedQueue(ctx context.Context, w http.ResponseWriter, app state.App, inv state.Invocation) {
+	if inv.QueueName == "" || inv.QueueBindingID != "" {
+		return
+	}
+	names, problem := s.unboundQueueConsumerNames(ctx, app.ID)
+	if problem != nil || slices.Contains(names, inv.QueueName) {
+		return
+	}
+	w.Header().Set("Warning", fmt.Sprintf(`199 gregale "no queue binding or consumer reads queue %q; the message waits until one exists and expires after the plan's retention"`, inv.QueueName))
 }
 
 // sendQueueBatch admits payloads in order with one queue selection and
@@ -463,6 +485,7 @@ func (s *server) sendAppMessage(w http.ResponseWriter, r *http.Request, acct sta
 		return
 	}
 	setInvocationVersionResponseHeaders(w, inv)
+	s.warnUnconsumedQueue(r.Context(), w, app, inv)
 	writeJSON(w, http.StatusAccepted, api.SendAppMessageResponse{
 		Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID,
 		ID:        inv.ID,
@@ -577,7 +600,7 @@ func (s *server) appMessageTemplate(ctx context.Context, acct state.Account, app
 		QueueName:        selection.Name,
 		Headers:          traceHeaders,
 		DueAt:            time.Now().UTC(),
-		RetryPolicyJSON:  effectiveInvocationRetryPolicy(app, retryPolicy, limits.MaxQueueAttempts),
+		RetryPolicyJSON:  effectiveQueueRetryPolicy(app, selection.Binding, retryPolicy, limits.MaxQueueAttempts),
 		// The store counts and inserts under one app lock, so concurrent
 		// senders cannot overshoot; keep_latest replacement is net zero.
 		AdmissionMaxPending: limits.MaxQueueDepth,
@@ -1100,6 +1123,22 @@ func marshalRetryPolicy(p *api.RetryPolicyDTO) json.RawMessage {
 // default, followed by the plan default. The materialized row is always
 // finite and plan-capped; the scheduler clamps it again at dispatch time so a
 // later plan downgrade cannot retain a larger budget.
+// effectiveQueueRetryPolicy is a queue message's retry policy: the send's own
+// policy, else the selected binding's, else the app's. A pull consumer's
+// nacks and lapsed leases are budgeted by the message's policy, so a binding
+// policy that only shaped push deliveries left pull messages on the app's
+// default budget although the docs promise the binding's (queue review
+// 2026-11-12, ADR-20261112200000).
+func effectiveQueueRetryPolicy(app state.App, binding *state.QueueBinding, override *api.RetryPolicyDTO, planLimit int) json.RawMessage {
+	if override == nil && binding != nil && len(binding.RetryPolicyJSON) > 0 && string(binding.RetryPolicyJSON) != "{}" {
+		var policy api.RetryPolicyDTO
+		if json.Unmarshal(binding.RetryPolicyJSON, &policy) == nil {
+			return effectiveInvocationRetryPolicy(app, &policy, planLimit)
+		}
+	}
+	return effectiveInvocationRetryPolicy(app, override, planLimit)
+}
+
 func effectiveInvocationRetryPolicy(app state.App, override *api.RetryPolicyDTO, planLimit int) json.RawMessage {
 	policy := api.RetryPolicyDTO{}
 	if override != nil {

@@ -43,23 +43,48 @@ func (e *Engine) escalateEgressAbuse(ctx context.Context, appID string, reason E
 	if err != nil {
 		return fmt.Errorf("sched: egress abuse: resource owner: %w", err)
 	}
-	if !e.noteEgressAbuseRecycle(owner.ResourceOwnerID(), e.clock()) {
-		return nil
+	reached, err := e.noteAbuseStrike(ctx, owner.ResourceOwnerID(), reason.holdReason(), appID)
+	if err != nil || !reached {
+		return err
 	}
 	detail := map[string]any{"app": appID, "signal": string(reason), "observed_per_min": observed, "limit": limit,
 		"recycles": api.EgressFanoutHoldRecycles, "window_seconds": api.EgressFanoutHoldWindowSeconds}
 	return e.HoldAccountForAbuse(ctx, owner.ResourceOwnerID(), reason.holdReason(), detail)
 }
 
-// noteEgressAbuseRecycle appends a recycle at now and reports whether the
-// account has reached the hold threshold within the window.
+// abuseHoldWindow is the escalation window strikes are counted in.
+func abuseHoldWindow() time.Duration {
+	return time.Duration(api.EgressFanoutHoldWindowSeconds) * time.Second
+}
+
+// noteAbuseStrike records an abuse recycle against the resource owner and
+// reports whether the owner has reached api.EgressFanoutHoldRecycles strikes
+// within the window. The strikes live in the store, so every schedd and every
+// restart count toward the same hold (ADR-20261113133500); a store without
+// strike support (test fakes) falls back to this schedd's memory.
+func (e *Engine) noteAbuseStrike(ctx context.Context, accountID, reason, appID string) (bool, error) {
+	now := e.clock()
+	strikes, ok := e.store.(state.AccountAbuseStrikeStore)
+	if !ok {
+		return e.noteEgressAbuseRecycle(accountID, now), nil
+	}
+	n, err := strikes.RecordAccountAbuseStrike(ctx, accountID, reason, appID, now, abuseHoldWindow())
+	if err != nil {
+		return false, fmt.Errorf("sched: abuse strike for %s: %w", accountID, err)
+	}
+	return n >= api.EgressFanoutHoldRecycles, nil
+}
+
+// noteEgressAbuseRecycle is noteAbuseStrike's in-memory fallback: it appends a
+// recycle at now and reports whether the account has reached the hold
+// threshold within the window.
 func (e *Engine) noteEgressAbuseRecycle(accountID string, now time.Time) bool {
 	e.egressAbuseMu.Lock()
 	defer e.egressAbuseMu.Unlock()
 	if e.egressAbuseRecycles == nil {
 		e.egressAbuseRecycles = make(map[string][]time.Time)
 	}
-	cutoff := now.Add(-time.Duration(api.EgressFanoutHoldWindowSeconds) * time.Second)
+	cutoff := now.Add(-abuseHoldWindow())
 	kept := e.egressAbuseRecycles[accountID][:0]
 	for _, at := range e.egressAbuseRecycles[accountID] {
 		if at.After(cutoff) {

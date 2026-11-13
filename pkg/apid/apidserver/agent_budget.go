@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -74,6 +75,10 @@ func standingMillicents(floor, ramMB int, plan api.Plan) int64 {
 // chargeAgentBudget charges an agent key for raising standing cost from
 // before to after. answered reports that a 428 or an error was written.
 func (s *server) chargeAgentBudget(w http.ResponseWriter, r *http.Request, plan api.Plan, before, after int64) (commit func(), answered bool) {
+	if s.authMw != nil && authmw.Previewing(r) {
+		// A preview is answered even for a change that adds nothing.
+		return s.authMw.ChargeAgentBudget(w, r, plan, after-before)
+	}
 	if s.authMw == nil || after <= before {
 		return func() {}, false
 	}

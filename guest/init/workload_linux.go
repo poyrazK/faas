@@ -878,6 +878,7 @@ func runSidecarAt(root string, spec workloadSpec, apiEnv, workloadEnv map[string
 		return fmt.Errorf("run sidecar %s: prepare service proxy trust: %w", spec.Name, trustErr)
 	}
 	env = StampServiceProxyTrustEnv(env, serviceProxyTrust)
+	program := argv0
 	if directRoot != "" {
 		// exec.Command resolves bare names against the guest-init process's
 		// host PATH before the child chroots. Resolve them against the image
@@ -1077,7 +1078,7 @@ func runSidecarAt(root string, spec workloadSpec, apiEnv, workloadEnv map[string
 	default:
 	}
 	if runErr != nil {
-		return fmt.Errorf("run sidecar %s: %w", spec.Name, runErr)
+		return fmt.Errorf("run sidecar %s: %w%s", spec.Name, runErr, repeatedProgramHint(program, argv))
 	}
 	if sup != nil && !sidecarProbeDisabled(readinessProbe) {
 		sup.reportHealth("unready", "process_exited")
@@ -1240,6 +1241,23 @@ func resolveWorkloadCommandPath(root, command string, env []string) string {
 // without a real fork. The fallback path (/usr/local/bin/start.sh)
 // preserves the PR-B contract for images that don't set
 // cmd/entrypoint at deploy time.
+// repeatedProgramHint explains a companion that exited after a command that
+// names its program twice. A companion's cmd keeps the image ENTRYPOINT (OCI
+// CMD semantics), so cmd ["/http-echo", "-listen=:5678"] on an image whose
+// entrypoint is /http-echo runs "/http-echo /http-echo -listen=:5678", and
+// http-echo exits 127 with "Too many arguments!" (Hunt 34 H34-35). The
+// sentence names only the program, never an argument.
+func repeatedProgramHint(program string, args []string) string {
+	if program == "" || len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return ""
+	}
+	name := filepath.Base(program)
+	if filepath.Base(args[0]) != name {
+		return ""
+	}
+	return fmt.Sprintf(" (the command names %q twice: a companion's cmd keeps the image entrypoint, so list only its arguments)", name)
+}
+
 func resolveSidecarCommand(spec workloadSpec) (argv0 string, argv []string) {
 	switch {
 	case len(spec.Entrypoint) > 0:

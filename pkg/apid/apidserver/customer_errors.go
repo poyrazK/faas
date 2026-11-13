@@ -32,7 +32,7 @@ func (s *server) configureCustomerErrors(ctx context.Context, pool *pgxpool.Pool
 // not recorded: they are not customer traffic.
 func (s *server) recordCustomerErrors(next accountHandler) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
-		if s.customerErrorSink == nil || strings.Contains(r.Pattern, " /v1/admin/") {
+		if strings.Contains(r.Pattern, " /v1/admin/") {
 			next(w, r, acct)
 			return
 		}
@@ -42,7 +42,12 @@ func (s *server) recordCustomerErrors(next accountHandler) accountHandler {
 			return
 		}
 		code := w.Header().Get(api.ErrorCodeHeader)
-		if code == "" {
+		if !customererrors.ValidCode(code) {
+			return
+		}
+		// ADR-20261113123000: the per-code counter needs no database.
+		s.countCustomerError(code)
+		if s.customerErrorSink == nil {
 			return
 		}
 		event := customererrors.Event{
