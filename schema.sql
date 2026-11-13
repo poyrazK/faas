@@ -60939,6 +60939,18 @@ CREATE TABLE public.workflow_run_resumes (
 
 
 --
+-- Name: workflow_run_starts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_run_starts (
+    run_id uuid NOT NULL,
+    starter_app_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workflow_run_starts_created_at_check CHECK (isfinite(created_at))
+);
+
+
+--
 -- Name: workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -74902,6 +74914,14 @@ ALTER TABLE ONLY public.workflow_run_resumes
 
 
 --
+-- Name: workflow_run_starts workflow_run_starts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_starts
+    ADD CONSTRAINT workflow_run_starts_pkey PRIMARY KEY (run_id);
+
+
+--
 -- Name: workflow_runs workflow_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86018,6 +86038,13 @@ CREATE INDEX workflow_recovery_review_completion_pending ON public.workflow_reco
 --
 
 CREATE INDEX workflow_recovery_review_notifications_pending ON public.workflow_recovery_review_notifications USING btree (next_at, review_id) WHERE (receipt IS NULL);
+
+
+--
+-- Name: workflow_run_starts_starter_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_run_starts_starter_idx ON public.workflow_run_starts USING btree (starter_app_id, created_at);
 
 
 --
@@ -110313,6 +110340,22 @@ ALTER TABLE ONLY public.workflow_run_resumes
 
 ALTER TABLE ONLY public.workflow_run_resumes
     ADD CONSTRAINT workflow_run_resumes_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_run_starts workflow_run_starts_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_starts
+    ADD CONSTRAINT workflow_run_starts_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_run_starts workflow_run_starts_starter_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_starts
+    ADD CONSTRAINT workflow_run_starts_starter_app_id_fkey FOREIGN KEY (starter_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

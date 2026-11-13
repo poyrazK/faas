@@ -2530,6 +2530,7 @@ type Querier interface {
 	GetWorkflowCallbackPayload(ctx context.Context, db DBTX, id pgtype.UUID) ([]byte, error)
 	GetWorkflowDiagnosticsSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]GetWorkflowDiagnosticsStepsRow, error)
 	GetWorkflowRecoveryTarget(ctx context.Context, db DBTX, arg GetWorkflowRecoveryTargetParams) (GetWorkflowRecoveryTargetRow, error)
+	GetWorkflowRunStarter(ctx context.Context, db DBTX, runID pgtype.UUID) (string, error)
 	GetWorkflowScheduleCursor(ctx context.Context, db DBTX, arg GetWorkflowScheduleCursorParams) (WorkflowScheduleCursor, error)
 	// Replay reads and locks one retained occurrence inside the app admission lock.
 	// The replay run identity is separate from the original skipped outcome.
@@ -3146,6 +3147,8 @@ type Querier interface {
 	InsertWorkflowPlaybookProgress(ctx context.Context, db DBTX, arg InsertWorkflowPlaybookProgressParams) (int64, error)
 	InsertWorkflowResume(ctx context.Context, db DBTX, arg InsertWorkflowResumeParams) (pgtype.Timestamptz, error)
 	InsertWorkflowRun(ctx context.Context, db DBTX, arg InsertWorkflowRunParams) (InsertWorkflowRunRow, error)
+	// ADR-20261113120824 §3: the app that started a run with start().
+	InsertWorkflowRunStart(ctx context.Context, db DBTX, arg InsertWorkflowRunStartParams) error
 	InsertWorkflowScheduleOccurrence(ctx context.Context, db DBTX, arg InsertWorkflowScheduleOccurrenceParams) error
 	InstallApplicationStandardDrain(ctx context.Context, db DBTX, arg InstallApplicationStandardDrainParams) error
 	InstallApplicationStandardEnrollmentIntent(ctx context.Context, db DBTX, arg InstallApplicationStandardEnrollmentIntentParams) (int64, error)

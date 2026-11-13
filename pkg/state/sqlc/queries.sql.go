@@ -30855,6 +30855,17 @@ func (q *Queries) GetWorkflowRecoveryTarget(ctx context.Context, db DBTX, arg Ge
 	return i, err
 }
 
+const getWorkflowRunStarter = `-- name: GetWorkflowRunStarter :one
+SELECT starter_app_id::text FROM workflow_run_starts WHERE run_id = $1::uuid
+`
+
+func (q *Queries) GetWorkflowRunStarter(ctx context.Context, db DBTX, runID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, getWorkflowRunStarter, runID)
+	var starter_app_id string
+	err := row.Scan(&starter_app_id)
+	return starter_app_id, err
+}
+
 const getWorkflowScheduleCursor = `-- name: GetWorkflowScheduleCursor :one
 SELECT app_id, workflow_name, deployment_id, trigger_snapshot, last_evaluated_at, scheduled_for, status, last_run_id, updated_at, last_admitted_at FROM workflow_schedule_cursors WHERE app_id = $1 AND workflow_name = $2
 `
@@ -39792,6 +39803,23 @@ func (q *Queries) InsertWorkflowRun(ctx context.Context, db DBTX, arg InsertWork
 	var i InsertWorkflowRunRow
 	err := row.Scan(&i.CreatedAt, &i.UpdatedAt)
 	return i, err
+}
+
+const insertWorkflowRunStart = `-- name: InsertWorkflowRunStart :exec
+INSERT INTO workflow_run_starts (run_id, starter_app_id)
+VALUES ($1::uuid, $2::uuid)
+ON CONFLICT (run_id) DO NOTHING
+`
+
+type InsertWorkflowRunStartParams struct {
+	RunID        pgtype.UUID
+	StarterAppID pgtype.UUID
+}
+
+// ADR-20261113120824 §3: the app that started a run with start().
+func (q *Queries) InsertWorkflowRunStart(ctx context.Context, db DBTX, arg InsertWorkflowRunStartParams) error {
+	_, err := db.Exec(ctx, insertWorkflowRunStart, arg.RunID, arg.StarterAppID)
+	return err
 }
 
 const insertWorkflowScheduleOccurrence = `-- name: InsertWorkflowScheduleOccurrence :exec

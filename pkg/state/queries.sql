@@ -30226,6 +30226,15 @@ WHERE run_id = sqlc.arg(run_id)::uuid AND step_name = sqlc.arg(step_name)::text
   AND status IN ('pending', 'awaiting_event')
   AND input -> 'gregale_code_op' ->> 'invocation_id' = sqlc.arg(invocation_id)::text;
 
+-- name: InsertWorkflowRunStart :exec
+-- ADR-20261113120824 §3: the app that started a run with start().
+INSERT INTO workflow_run_starts (run_id, starter_app_id)
+VALUES (sqlc.arg(run_id)::uuid, sqlc.arg(starter_app_id)::uuid)
+ON CONFLICT (run_id) DO NOTHING;
+
+-- name: GetWorkflowRunStarter :one
+SELECT starter_app_id::text FROM workflow_run_starts WHERE run_id = sqlc.arg(run_id)::uuid;
+
 -- name: WakeWorkflowRunForCall :exec
 UPDATE workflow_runs SET status = 'pending', scheduled_for = now(), updated_at = now()
 WHERE id = sqlc.arg(run_id)::uuid AND status = 'awaiting_event';

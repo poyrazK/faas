@@ -1,8 +1,6 @@
 package apidserver
 
 import (
-	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/workflowstart"
 )
 
 func workflowRunResponse(r *state.WorkflowRun) api.WorkflowRunResponse {
@@ -243,134 +242,29 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	var requestFingerprint []byte
-	if idempotencyKey != "" {
-		requestFingerprint = workflowRunCreateRequestFingerprint(inputRaw)
-		original, err := s.store.GetWorkflowRunByIdempotencyKey(r.Context(), app.ID, workflowName, idempotencyKey, requestFingerprint, tenantID)
-		if err == nil {
-			w.Header().Set("Idempotent-Replayed", "true")
-			writeJSON(w, http.StatusCreated, workflowRunResponse(original))
-			return
-		}
-		if errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-				"Idempotency key already used", "use a new Idempotency-Key when starting a run with different input"))
-			return
-		}
-		if !errors.Is(err, state.ErrWorkflowRunNotFound) {
-			s.log.Error("look up idempotent workflow run failed", "app_id", app.ID, "err", err)
-			api.WriteProblem(w, api.ErrCapacity("failed to look up workflow run idempotency key"))
-			return
-		}
-	}
-
-	// Gating: check plan allows workflows
-	if !acct.Plan.WorkflowsAllowed() {
-		api.WriteProblem(w, api.ErrPlanWorkflowsNotAllowed(acct.Plan))
-		return
-	}
-	if !s.workflowRuntimeEnabled {
-		api.WriteProblem(w, api.ErrWorkflowDeploymentUnavailable())
-		return
-	}
-
-	// Runs must snapshot a definition from the current live deployment.
-	// This keeps a run deterministic even when a later deployment changes
-	// the workflow, and avoids accepting a name that was never deployed.
-	dep, err := s.store.LiveDeploymentForScope(r.Context(), app.ID, "default")
-	if err != nil {
-		api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
-		return
-	}
-	if store, ok := s.store.(state.StoredWorkflowStore); ok {
-		dep.Workflows, err = store.EffectiveWorkflowDefinitions(r.Context(), app.ID, dep.Workflows)
-		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("failed to read published stored workflows"))
-			return
-		}
-	}
-	var definitions []api.WorkflowSpec
-	if err := json.Unmarshal(dep.Workflows, &definitions); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("deployed workflow definitions are invalid"))
-		return
-	}
-	var definition *api.WorkflowSpec
-	for i := range definitions {
-		if definitions[i].Name == workflowName {
-			definition = &definitions[i]
-			break
-		}
-	}
-	if definition == nil {
-		api.WriteProblem(w, api.ErrWorkflowDefinitionNotFound())
-		return
-	}
-	defSnapshot, err := json.Marshal(definition)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("failed to snapshot workflow definition"))
-		return
-	}
-
-	maxConcurrent, maxParked := acct.Plan.WorkflowMaxConcurrentRuns(), acct.Plan.WorkflowMaxParkedRuns()
-
-	run := &state.WorkflowRun{
-		DeploymentID:       dep.ID,
-		AppID:              app.ID,
-		PlatformTenantID:   tenantID,
-		WorkflowName:       workflowName,
-		Input:              inputRaw,
-		DefinitionSnapshot: defSnapshot,
-		Status:             state.WorkflowRunStatusPending,
-		ScheduledFor:       time.Now().UTC(),
-	}
-
-	var activeRuns int
-	var replayed bool
-	if idempotencyKey != "" {
-		activeRuns, replayed, err = s.store.CreateWorkflowRunAdmittedWithIdempotencyKey(r.Context(), run, maxConcurrent, maxParked, idempotencyKey, requestFingerprint)
-	} else {
-		activeRuns, err = s.store.CreateWorkflowRunAdmitted(r.Context(), run, maxConcurrent, maxParked)
-	}
-	if errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
-		api.WriteProblem(w, api.ErrPlanWorkflowsQuota(acct.Plan, maxConcurrent, activeRuns))
-		return
-	}
-	if errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Idempotency key already used", "use a new Idempotency-Key when starting a run with different input"))
-		return
-	}
-	if errors.Is(err, state.ErrWorkflowDeploymentUnavailable) {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-			"Workflow deployment changed", "the captured deployment is unavailable; retry starting a new run"))
-		return
-	}
+	// The run is admitted exactly as a function's start() is
+	// (ADR-20261113120824 §3).
+	result, err := workflowstart.Start(r.Context(), s.store, workflowstart.Request{
+		Plan: acct.Plan, App: app, Workflow: workflowName, Input: inputRaw,
+		IdempotencyKey: idempotencyKey, TenantID: tenantID, RuntimeDisabled: !s.workflowRuntimeEnabled,
+	})
 	if err != nil {
 		s.log.Error("create workflow run failed", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("failed to persist workflow run"))
 		return
 	}
-
-	if replayed {
+	if result.Problem != nil {
+		api.WriteProblem(w, result.Problem)
+		return
+	}
+	if result.Replayed {
 		w.Header().Set("Idempotent-Replayed", "true")
 	}
-	writeJSON(w, http.StatusCreated, workflowRunResponse(run))
+	writeJSON(w, http.StatusCreated, workflowRunResponse(result.Run))
 }
 
 func workflowRunCreateRequestFingerprint(input json.RawMessage) []byte {
-	var value any
-	decoder := json.NewDecoder(bytes.NewReader(input))
-	decoder.UseNumber()
-	canonical := input
-	if err := decoder.Decode(&value); err == nil {
-		if encoded, err := json.Marshal(value); err == nil {
-			canonical = encoded
-		}
-	}
-	hash := sha256.New()
-	_, _ = hash.Write([]byte("gregale.workflow-run.create:v1\x00"))
-	_, _ = hash.Write(canonical)
-	return hash.Sum(nil)
+	return workflowstart.Fingerprint(input)
 }
 
 // listWorkflowRuns handles GET /v1/apps/{slug}/workflows/runs

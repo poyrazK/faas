@@ -21493,5 +21493,14 @@
       "workflow_op"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "workflow_run_starts",
+    "columns": [
+      "run_id",
+      "starter_app_id",
+      "created_at"
+    ],
+    "kind": "operational"
   }
 ]

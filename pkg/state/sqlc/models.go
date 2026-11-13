@@ -16894,6 +16894,12 @@ type WorkflowRunResume struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+type WorkflowRunStart struct {
+	RunID        pgtype.UUID
+	StarterAppID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+}
+
 type WorkflowScheduleCursor struct {
 	AppID           pgtype.UUID
 	WorkflowName    string
