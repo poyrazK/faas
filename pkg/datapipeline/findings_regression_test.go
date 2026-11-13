@@ -276,6 +276,25 @@ func TestVerificationUsesSourcePrimaryKeyOrder(t *testing.T) {
 	}
 }
 
+func TestVerificationQueryStorageRejectsMismatchedVectors(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		actual    []string
+		relations []relation
+	}{
+		{"missing relation", []string{"storage"}, nil},
+		{"missing storage", nil, []relation{{Name: "orders"}}},
+		{"extra storage", []string{"one", "two"}, []relation{{Name: "orders"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proof, err := verificationQueryStorage(tc.actual, "epoch", tc.relations)
+			if !errors.Is(err, ErrConflict) || proof != nil {
+				t.Fatalf("mismatched vectors produced a proof: %v, %v", proof, err)
+			}
+		})
+	}
+}
+
 func TestReadGateRefreshIsDurableAndIndependentOfSchemaRefresh(t *testing.T) {
 	_, store, p, _ := schemaPipelineFixture(t)
 	ctx := t.Context()

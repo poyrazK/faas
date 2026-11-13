@@ -46,11 +46,9 @@ func verificationQueryStorage(actual []string, epoch string, relations []relatio
 	}
 	proof := make([]string, len(actual))
 	for i, storage := range actual {
-		if i >= len(relations) {
-			return nil, ErrConflict
-		}
+		r := relations[i] // #nosec G602 -- Equal vector lengths are checked above; i ranges over actual.
 		var keys []string
-		for _, key := range primaryColumns(relations[i]) {
+		for _, key := range primaryColumns(r) {
 			keys = append(keys, key.Name)
 		}
 		encoded, _ := json.Marshal(struct {
