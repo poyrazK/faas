@@ -206,6 +206,10 @@ func TestAgentBudgetPreviewPostgres(t *testing.T) {
 		}
 	})
 	t.Run("resizing an always-on database is priced and not done", func(t *testing.T) {
+		// Finish the resize the replay case made before changing the policy.
+		if _, err := service.Reconcile(t.Context(), acct.ID, d.ID); err != nil {
+			t.Fatal(err)
+		}
 		if _, err := service.ChangeComputePolicy(t.Context(), managedpostgres.ChangeComputePolicyRequest{
 			AccountID: acct.ID, DatabaseID: d.ID, RequestID: uuid.NewString(), ScaleToZero: false,
 		}); err != nil {
