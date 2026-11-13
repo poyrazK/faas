@@ -18,6 +18,23 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
+// A trigger's lane allowance stayed in the map for the scheduler's lifetime
+// after the trigger was disabled or deleted (ADR-20261112200000).
+func TestQueuePushLaneAllowancePrunesUnpolledTriggers(t *testing.T) {
+	kept := sqlc.Trigger{ID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}}
+	gone := sqlc.Trigger{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}}
+	var a queuePushLaneAllowance
+	a.observe(kept.ID.String(), 8, false)
+	a.observe(gone.ID.String(), 8, false)
+	a.prune([]sqlc.Trigger{kept})
+	if _, ok := a.allowed[gone.ID.String()]; ok {
+		t.Fatal("allowance of an unpolled trigger survived the prune")
+	}
+	if got := a.current(kept.ID.String()); got != 2 {
+		t.Fatalf("polled trigger's allowance = %d, want 2", got)
+	}
+}
+
 func TestQueuePushLaneEligible(t *testing.T) {
 	binding := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
 	queue := pgtype.Text{String: "queue", Valid: true}
