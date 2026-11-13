@@ -153,6 +153,9 @@ func setupCreationSubjects(r SetupRequest) []string {
 }
 
 func sourceServingSetupCheck(c api.DataConnectionCheck, tables []string, serving *api.DataPipelineServing) error {
+	if serving == nil {
+		return sourceSetupCheck(c, tables)
+	}
 	if err := ValidateServingSelection(c, tables, serving); err != nil {
 		return err
 	}
