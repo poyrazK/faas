@@ -188,6 +188,7 @@ var bearerReadableOperatorReads = []string{
 	"/v1/admin/obs/builder-heartbeats",
 	"/v1/admin/obs/health",
 	"/v1/admin/obs/notification-health",
+	"/v1/admin/obs/serving-health",
 	"/v1/admin/obs/rule-health",
 	"/v1/admin/obs/rule-coverage",
 	"/v1/admin/obs/recording-coverage",

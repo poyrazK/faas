@@ -27,6 +27,13 @@ func (l liveProjects) LiveResourcesInProject(_ context.Context, project string) 
 	return l[project], nil
 }
 
+func (l liveProjects) AccountsInProject(_ context.Context, project string) ([]string, error) {
+	if len(l[project]) == 0 {
+		return nil, nil
+	}
+	return []string{"acct-1"}, nil
+}
+
 func TestBrokerCallsNeonWithNeondsKey(t *testing.T) {
 	var mu sync.Mutex
 	var seen, auth []string
@@ -40,7 +47,7 @@ func TestBrokerCallsNeonWithNeondsKey(t *testing.T) {
 		}})
 	}))
 	server, err := neond.NewServer(p.baseURL, p.httpClient, "neond-admin-key",
-		liveProjects{"quiet-river-12345678": {"quiet-river-12345678"}}, 100, nil, slog.New(slog.DiscardHandler))
+		liveProjects{"quiet-river-12345678": {"quiet-river-12345678"}}, neond.Limits{PerHour: 100, PerSubjectPerHour: 100}, nil, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

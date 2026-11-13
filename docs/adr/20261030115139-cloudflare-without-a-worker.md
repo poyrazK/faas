@@ -207,6 +207,16 @@ bot challenges on platform hosts as well; Cloudflare DDoS mitigation stays
 active. Gregale's per-app challenges, attack mode and throttles remain separate,
 opt-in controls, subject to their plan and rollout gates.
 
+The owner clarified the crawler policy on 2026-11-13: allow Search, Agents
+and Training at Cloudflare, and disable Bot Preference Sync so each app owns
+its robots.txt. These choices and Bot Fight Mode Off were applied through the
+owner's explicitly authorized Chrome dashboard and verified after reload.
+Paired curl checks confirm the training crawler 403s are gone and the apex
+robots.txt matches Vercel directly. HTML injection nevertheless remains in
+the after-capture: Bot Fight Mode Off is not sufficient evidence that JSD
+stopped. Its API `enable_js` value still needs owner-terminal inspection;
+the Free dashboard exposes no separate JavaScript Detections control.
+
 The public Tunnel route does not establish a gRPC contract: Cloudflare documents
 public Tunnel hostnames as unsupported for gRPC. The zone gRPC toggle cannot
 be treated as a fix for stripped success trailers. A supported direct-origin
@@ -220,12 +230,14 @@ not add a paid product or rewrite customer status codes. Origin error page
 pass-through is documented as Enterprise. Customers can deliberately choose
 503 with their own application error code if they need a body on this front.
 
-The owner applies settings from their own TTY using the dry-run/APPLY script;
-the API token never enters chat, a file, environment or command-line arguments.
+The owner applies API settings from their own TTY using the dry-run/APPLY
+script, or explicitly authorizes dashboard changes. The API token never
+enters chat, a file, environment or command-line arguments.
 The [zone traffic runbook](../runbooks/CloudflareZoneTraffic.md) gives the
 setting plan, risks, primary references, rollback and paired Cloudflare/direct
 verification. This amendment describes the intended configuration, not a
-claim that the owner's changes or traffic verification have happened.
+claim that all four findings are resolved. The runbook records the applied
+browser changes, verified crawler outcome and remaining protocol/HTML limits.
 
 ## Open questions
 

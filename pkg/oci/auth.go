@@ -3,6 +3,7 @@ package oci
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,7 +31,34 @@ import (
 type BasicAuth struct {
 	Username string
 	Password string
+	// Transport, when set, carries every request of the pull to a proxy
+	// that holds the credential (ADR-20261110210000 slice 3j: the control
+	// plane's secretd). Username and Password are then empty: the client
+	// never answers an auth challenge itself.
+	Transport http.RoundTripper
 }
+
+// Proxied reports whether a holds no credential but a proxy that does.
+func (a *BasicAuth) Proxied() bool { return a != nil && a.Transport != nil }
+
+// credentialed reports whether a pull with a reads private content.
+func (a *BasicAuth) credentialed() bool {
+	return a != nil && (a.Username != "" || a.Password != "" || a.Transport != nil)
+}
+
+type proxyTransportKey struct{}
+
+// withProxy routes the requests made under ctx through a's proxy.
+func withProxy(ctx context.Context, a *BasicAuth) context.Context {
+	if !a.Proxied() {
+		return ctx
+	}
+	return context.WithValue(ctx, proxyTransportKey{}, a.Transport)
+}
+
+// errProxyUnauthorized: the credential-holding proxy passed on a 401, so
+// the registry refused the app's own credential.
+var errProxyUnauthorized = errors.New("oci: the registry refused the app's credential")
 
 // Token is the parsed body of a token-endpoint response. RefreshToken +
 // ExpiresIn are optional; many public registries omit refresh_token and

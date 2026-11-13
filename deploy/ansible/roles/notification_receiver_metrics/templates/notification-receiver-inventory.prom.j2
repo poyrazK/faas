@@ -1,0 +1,23 @@
+# Expected receiver/integration groups, independent of collector execution.
+# HELP faas_notification_receiver_expected Receiver transport group configured by Alertmanager deployment intent.
+# TYPE faas_notification_receiver_expected gauge
+{% set email = am_smtp_smarthost | default('') | trim | length > 0 and am_smtp_password_file | default('') | trim | length > 0 %}
+{% set pushover = am_pushover_token_file | default('') | trim | length > 0 and am_pushover_user_key_file | default('') | trim | length > 0 %}
+{% set page_chat = am_slack_webhook_url_file | default('') | trim | length > 0 or am_discord_webhook_url_file | default('') | trim | length > 0 %}
+{% set warn_chat = page_chat or am_slack_warn_webhook_url_file | default('') | trim | length > 0 or am_discord_warn_webhook_url_file | default('') | trim | length > 0 %}
+{% if email %}
+faas_notification_receiver_expected{receiver="faas-page",integration="email"} 1
+faas_notification_receiver_expected{receiver="faas-warn",integration="email"} 1
+{% endif %}
+{% if pushover %}
+faas_notification_receiver_expected{receiver="faas-page",integration="pushover"} 1
+{% endif %}
+{% if page_chat %}
+faas_notification_receiver_expected{receiver="faas-page",integration="slack"} 1
+{% endif %}
+{% if warn_chat %}
+faas_notification_receiver_expected{receiver="faas-warn",integration="slack"} 1
+{% endif %}
+{% if am_heartbeat_url_file | default('') | trim | length > 0 %}
+faas_notification_receiver_expected{receiver="faas-heartbeat",integration="webhook"} 1
+{% endif %}

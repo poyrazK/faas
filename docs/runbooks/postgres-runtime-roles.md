@@ -134,6 +134,73 @@ converges in the same order; until the compute rollout, the daemons'
 existing sessions keep working and new ones on a not-yet-rolled node fail.
 So roll every node right after the control plane.
 
+## Give each compute node its own logins (ADR-20261110210000 slice 1c-2)
+
+With step 3 every node's daemon shares one password per daemon, so the
+database cannot tell which node wrote a placement input. Slice 1c-2 gives
+each daemon on each node its own login, authenticated by a fleet-CA client
+certificate, and the database confines that login's writes to its node's
+`compute_nodes`, `node_memory_reports` and `compute_node_heartbeats` rows
+(a capacity raise is clamped and logged as `faas_node_capacity_clamped`).
+
+1. On the control plane set `faas_postgres_compute_cert_logins: true` and
+   converge (`cd-controlplane`). PostgreSQL then serves TLS with the
+   certificate the replication path already uses (its names now include the
+   non-loopback `listen_addresses`; set `faas_postgres_replication_tls_names`
+   if compute nodes dial another name), trusts the fleet CA for client
+   certificates (`client-ca.crt`), creates `faas_node_logins`, and admits its
+   members over `hostssl ... cert` only.
+2. For each compute node set `faas_compute_db_cert_logins: true` and roll
+   it. The join play, on the control plane, creates the node's six logins
+   (`<role>_<12 hex>`, from `compute-node-db-logins.sql`) and maps them to the
+   node's name, issues the `db-login` leaves under
+   `/var/lib/faas/pki-features/<node>/db-client`, and copies them to
+   `/etc/faas/tls/db-client/` on the node (each key owned by its daemon's
+   service user) with the server certificate. It proves every login, all or
+   none, and then installs them as the per-daemon logins of step 3.
+   The DSN host is the one in the node's `compute-db.env`, which must be a
+   name on the server certificate.
+
+Check on the control plane:
+
+```sh
+sudo -u postgres psql -d faas -Atc "SELECT d.login, d.node_name, a.client_addr IS NOT NULL AS connected
+  FROM compute_node_db_logins d LEFT JOIN pg_stat_activity a ON a.usename = d.login ORDER BY 2, 1"
+```
+
+The leaves last as long as other feature leaves; each join run renews them
+within 30 days of expiry. To roll a node back, set
+`faas_compute_db_cert_logins: false` and roll it: it returns to the step-3
+logins (or `faas_compute`). The logins stay mapped, unused; dropping one is
+`DROP ROLE` plus deleting its `compute_node_db_logins` row as the owner.
+Slice 1c-3 retires the shared passwords once every node is moved.
+
+## Retire the shared compute passwords (ADR-20261110210000 slice 1c-3)
+
+Once every compute node runs on its per-node logins, the shared passwords
+(`faas_compute` and the per-daemon roles of step 3) only add risk: anyone
+holding one can write any node's placement inputs.
+
+1. Set `faas_compute_db_password_logins_retired: true` for the whole fleet
+   (the control plane and every compute node read it).
+2. Roll each compute node first. Node join now points the node's
+   `compute-db.env` at vmmd's per-node login (operator tools run as root on
+   the node use it), and makes the node's identity and lifecycle writes
+   (pre-register, drain, activate) from the control plane with
+   `gregalectl ... --break-glass-db` there.
+3. Then converge the control plane. It refuses, naming each blocker, while
+   the owner is not contracted, `faas_postgres_compute_cert_logins` is off,
+   any session from a non-loopback address uses a login other than a
+   per-node one (`replicator` and `faas_pgproxyd` aside), or any compute node
+   that is not retired has no mapped logins. Then pg_hba drops the
+   `+faas_runtime` password lines for the compute networks and leaves the
+   `faas-compute-passwords-retired` marker, so node joins keep them out.
+4. Remove `POSTGRES_COMPUTE_ROLE_KEY` and the `faas_compute` password from CD
+   when nothing has needed them for a release.
+
+To undo, set the variable to `false` and converge the control plane first,
+then roll the nodes.
+
 ## Roll back
 
 Undo the contract first: set `faas_postgres_owner_contracted: false` (or the

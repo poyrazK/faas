@@ -751,6 +751,7 @@ func sealedFromProto(pbs []*vmmdpb.SealedSecret) []fcvm.SealedEnvEntry {
 			Key:        p.GetKey(),
 			Ciphertext: p.GetCiphertext(),
 			SourceKey:  p.GetSourceKey(),
+			Scope:      p.GetSecretScope(),
 		})
 	}
 	return out

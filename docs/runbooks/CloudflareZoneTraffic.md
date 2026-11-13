@@ -2,21 +2,52 @@
 
 Owner decision: Cloudflare provides free safety services, with no product
 billed per request (ADR-20261030115139). This runbook covers H34-22, H34-24,
-H34-29 and H34-42. Changing settings is an owner-terminal operation. Never
-paste a Cloudflare token into chat, a file, an environment variable or argv.
+H34-29 and H34-42. API writes run in the owner's terminal. The owner can also
+explicitly authorize changes in their signed-in dashboard, as on 2026-11-13.
+Never paste a Cloudflare token into chat, a file, an environment variable or argv.
 
 ## Decisions and scope
 
 | Finding | Current evidence / value | Proposed action | Risk and completion evidence |
 |---|---|---|---|
-| H34-22, successful gRPC loses trailers | Hunt: messages arrive through the public Tunnel hostname without `grpc-status`; direct TLS entry preserves it. The private zone toggle has **not** been read during this takeover. | Read `grpc`. Enable it for a supported direct-origin pilot; the toggle alone cannot fix the Tunnel path. Keep this finding open until a supported route passes. | A direct-origin pilot changes routing and must satisfy EdgeDirectEntry's TLS, origin authentication, client-IP, health and failure checks. Unary, streaming and trailers-only errors must pass through Cloudflare with a standard client. |
-| H34-24, training crawlers refused | Hunt: four training UAs get Cloudflare 403 before Gregale. `ai_bots_protection` is suspected, not yet confirmed by API read. | Set `ai_bots_protection: disabled`. Gregale's per-app crawler rule decides. | Zone-wide: includes apex on Vercel and `api.`, as well as app hosts. More crawler traffic can reach Gregale. With no Gregale blocking rule, all eight probe UAs must get the app body through both routes. |
+| H34-22, successful gRPC loses trailers | Dashboard: gRPC is already **On**. After-change curl/http2 still gets messages without `grpc-status` through the Tunnel, versus `0` direct. | Leave the toggle on; a supported direct-origin route is still needed. Keep this finding open. | A direct-origin pilot changes routing and must satisfy EdgeDirectEntry's TLS, origin authentication, client-IP, health and failure checks. Unary, streaming and trailers-only errors must pass through Cloudflare with a standard client. |
+| H34-24, training crawlers refused | Dashboard before: Training **Disallow**, Search/Agents **Allow**, Bot Preference Sync **On**, Bot Fight Mode **On**. After the approved changes, all 12 UA probes get matching app 200 bodies through both routes. | **Applied and verified:** Search/Agents/Training **Allow**, Bot Preference Sync **Off**, Bot Fight Mode **Off**. Gregale's per-app crawler rule decides. | Zone-wide: includes apex on Vercel and `api.`, as well as app hosts. More crawler traffic can reach Gregale. Cloudflare documents that Training Disallow with Bot Preference Sync enables edge blocking; the combined change was tested, not each switch in isolation. |
 | H34-29, customer 502/504 body replaced | Hunt: 500/503 pass; 502/504 lose the JSON body through Cloudflare, while direct preserves all four. | Retain and document this Free-proxy limitation. Do not rewrite customer status codes. Platform problems keep their existing 503 transport. | Customers needing an error body can deliberately return 503 with their own application error code, or use a separately supported direct route. Retention requires owner acceptance and paired curl evidence. |
-| H34-42, HTML JSD injection | Hunt: `/cdn-cgi/challenge-platform/scripts/jsd/main.js` changes HTML and violates strict CSP. `fight_mode` / `enable_js` values await owner read. | Set `fight_mode: false` and `enable_js: false`. On Free, JSD cannot be disabled while Bot Fight Mode remains on. | Removes Cloudflare's zone-wide bot challenges, including on apex and API. Free DDoS protection remains. Gregale's opt-in challenge/attack mode is a separate control, subject to plan and rollout gates. Exact HTML bytes and CSP must survive. |
+| H34-42, HTML JSD injection | Bot Fight Mode is **Off** after dashboard reload, but HTML still grows from 106 to 1,220 bytes with JSD. No separate JavaScript Detections switch is exposed in this Free dashboard. `enable_js` has not been read through the API. | **Still open:** the owner can inspect/disable `enable_js` using the terminal script, then repeat the HTML check. Do not call Bot Fight Mode Off alone a content fix. | Free DDoS protection and the managed WAF remain on. The remaining snippet still violates the fixture's strict CSP. Do not disable unrelated script monitoring or upgrade the plan to chase this setting. |
 
-The Hunt evidence is from rc.339 on 2026-11-12. It establishes symptoms,
-not current private settings or completed remediation. Record the owner
-`plan` output and the new capture before declaring causes confirmed.
+The Hunt evidence is from rc.339 on 2026-11-12. The dashboard application and
+paired after-capture below establish the current outcomes. No Cloudflare API
+token was read or used during the browser operation.
+
+### Browser application and after-verification, 2026-11-13
+
+The owner explicitly confirmed: allow Search, Agents and Training; disable
+Bot Fight Mode and Bot Preference Sync; verify. These settings were saved in
+the owner's signed-in Chrome dashboard and then checked again after reload.
+Search/Agents were already Allow; Training moved from Disallow to Allow,
+and both switches moved from On to Off. Supported personal-agent policies
+also read Allow. The managed WAF and HTTP DDoS protection still read On.
+The gRPC toggle already read On and was not changed.
+
+[After evidence](../ops/hunt34-cloudflare-after-browser-20261113.json)
+records paired curl/Node results, body hashes and selected headers. Raw
+captures are at `/private/tmp/h34-zone-after-browser-20261113` on the operator
+workstation. All 12 bare/versioned crawler probes now reach the app through
+both fronts with the same 200 body. The apex robots.txt also matches its
+direct Vercel origin (`76.76.21.21`, matching TLS SNI): 108 identical bytes,
+without Cloudflare-managed training directives.
+
+The first after-capture and a subsequent uncached HTML recheck still contain
+`/cdn-cgi/challenge-platform/scripts/jsd/main.js` through Cloudflare. The
+dashboard's search for JavaScript Detections has no matches; its broader
+JavaScript search exposes only script monitoring and library replacement.
+No unrelated protections were disabled. API `enable_js` remains the next
+owner-terminal check; no claim is made that H34-42 is fixed.
+
+The 502/504 replacement and successful-gRPC trailer loss remain as before.
+Only this chat's two disposable test-account apps were restored for these
+checks and deleted afterward. No DNS, Tunnel, paid-product or subscription
+changes were made.
 
 ### Takeover baseline, 2026-11-13
 
@@ -93,30 +124,37 @@ APPLY=1 deploy/scripts/cloudflare-zone-settings.sh bots
 deploy/scripts/cloudflare-zone-settings.sh plan
 ```
 
-`bots` writes only a changed configuration and reads it back. The API body
-is `{"fight_mode":false,"enable_js":false,"ai_bots_protection":"disabled"}`.
-Optional AI robots.txt preferences, AI Labyrinth, other AI agent controls and
-WAF rules are printed when relevant but not silently changed. If crawler
+`bots` writes only a changed configuration and reads it back. Its target is
+Bot Fight Mode and JSD off, the legacy AI block off, Search/Training/Agents
+allowed, and Bot Preference Sync off. The API represents Allow with
+`"disabled"` for `ai_search`, `ai_training` and `ai_user`; the sync field is
+`bot_preference_sync_enabled: false`. This matches the owner's explicit
+browser decision. It does not change AI Labyrinth or WAF rules. If crawler
 blocks persist, inspect Cloudflare Security Events and those controls using
 the request's `CF-Ray`; do not classify a successful settings write as a
 traffic fix. An absent optional `enable_js` is allowed in readback, but HTML
 verification is mandatory. An API/readback error stops without retry;
 rerun `plan` to inspect possible partial application.
 
-Dashboard fallback: select `gregale.dev` → **Security → Settings**, filter
-**Bot traffic**. Turn **Block AI bots** off and **Bot Fight Mode** off. If a
+Dashboard: select `gregale.dev` → **Security → Settings**, filter
+**Bot traffic**. In **AI Crawler and Agent access policies**, set Search,
+Training and Agents to **Allow (do not block)** and turn **Bot Preference
+Sync** off, then save. Turn **Bot Fight Mode** off. If a
 separate **JavaScript detections** switch is exposed, turn it off too. Read
 back and test exactly as for the API. Do not upgrade the plan to expose a
 switch. Cloudflare changes dashboard wording; the API field names above
 identify the intended controls.
 
-Rollback: restore only the three printed prior values via the same dashboard
+Rollback: restore only the printed prior values via the same dashboard
 controls. That deliberately restores crawler blocking/HTML injection if
 they were enabled before. Keep the previous `plan` output so the prior
 values are known. Do not re-enable bots merely to recover from an unrelated
 gRPC or error-body failure.
 
 ## gRPC: the Tunnel is a separate blocker
+
+The 2026-11-13 browser read confirmed the zone gRPC switch was already On.
+It was left on; enabling it again cannot resolve the observed trailer loss.
 
 Cloudflare's current gRPC documentation explicitly excludes public Tunnel
 hostnames; private subnet routing is supported. The repository's Tunnel
@@ -236,6 +274,8 @@ outcome per finding. Until then the changes are prepared, not applied.
 - [Bot Fight Mode behavior and disabling](https://developers.cloudflare.com/bots/get-started/bot-fight-mode/)
 - [JavaScript detections on Free Bot Fight Mode](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/javascript-detections/)
 - [Bot Management API write fields](https://developers.cloudflare.com/api/resources/bot_management/methods/update/)
+- [AI access policies and Disallow with Bot Preference Sync](https://developers.cloudflare.com/bots/additional-configurations/block-ai-bots/)
+- [Bot Preference Sync robots.txt behavior](https://developers.cloudflare.com/bots/additional-configurations/managed-robots-txt/)
 - [Cloudflare Custom Errors: origin 5xx pass-through is Enterprise](https://developers.cloudflare.com/rules/custom-errors/)
 - [Cache Rules origin error page pass-through API field](https://developers.cloudflare.com/cache/how-to/cache-rules/settings/)
 

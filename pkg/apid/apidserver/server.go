@@ -4679,6 +4679,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/obs/health",
 		s.authLimited(s.requireOperatorRead(s.obsHealthHandler)))
 	mux.HandleFunc("GET /v1/admin/obs/notification-health", s.authLimited(s.requireOperatorRead(s.obsNotificationHealth)))
+	mux.HandleFunc("GET /v1/admin/obs/serving-health", s.authLimited(s.requireOperatorRead(s.obsServingHealth)))
 	mux.HandleFunc("GET /v1/admin/obs/rule-health", s.authLimited(s.requireOperatorRead(s.obsRuleHealth)))
 	mux.HandleFunc("GET /v1/admin/obs/rule-coverage", s.authLimited(s.requireOperatorRead(s.obsRuleCoverage)))
 	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireOperatorRead(s.obsRecordingCoverage)))
