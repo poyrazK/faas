@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/aiconsole"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
+	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
 	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/capgate"
@@ -138,6 +139,10 @@ type server struct {
 	// customerErrorSink receives each recorded event; it is
 	// customerErrors.Record in production and a capture in tests.
 	customerErrorSink func(customererrors.Event)
+	// attention evaluates customer attention signals (ADR-20261113123000);
+	// nil without PostgreSQL. supportSignals holds their metrics.
+	attention      *attention.Evaluator
+	supportSignals supportSignalsHolder
 
 	domainChecks domainverify.Checker
 	// requestIDLookups resolves request IDs kept on compute nodes
@@ -858,6 +863,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	s.configureInternalCIHealthMetrics(ctx)
 	if ops == nil {
 		s.domainVerificationMetrics = nil
+		s.supportSignals.Store(nil)
 		s.metricsDiscoveryMetrics = nil
 		s.prewarmMetrics = nil
 		s.statusMetrics = nil
@@ -866,6 +872,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.durable.Metrics = nil
 	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
 		s.domainVerificationMetrics = newDomainVerificationMetrics(ops.Registry(), ops.MetricPrefix())
+		s.supportSignals.Store(newSupportSignalMetrics(ops.Registry(), ops.MetricPrefix()))
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
 		s.prewarmMetrics = wire.NewPrewarmMetrics(ops.Registry())
 	}
@@ -4607,6 +4614,9 @@ func (s *server) handler() http.Handler {
 	// ADR-20261112170000: resolve a customer-supplied identifier.
 	mux.HandleFunc("GET /v1/admin/obs/lookup",
 		s.authLimited(s.requireOperatorSessionRead(s.obsLookup)))
+	// ADR-20261113123000: customers who are probably stuck.
+	mux.HandleFunc("GET /v1/admin/obs/attention",
+		s.authLimited(s.requireOperatorSessionRead(s.obsListAttention)))
 	mux.HandleFunc("GET /v1/admin/obs/capacity",
 		s.authLimited(s.requireOperatorRead(s.obsCapacity)))
 	mux.HandleFunc("GET /v1/admin/obs/tenants/{id}/360",

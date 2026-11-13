@@ -100,6 +100,33 @@ const (
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
 
+// Customer attention signals (ADR-20261113123000): when a customer is
+// probably stuck. Thresholds are platform-wide, not per plan.
+const (
+	// AttentionDeployFailures failed deployments of one app within
+	// AttentionDeployWindow, with no successful deployment since the first,
+	// open a deploy_failing signal.
+	AttentionDeployFailures = 3
+	AttentionDeployWindow   = 24 * time.Hour
+	// AttentionRefusedBurst refusals of one problem code within
+	// AttentionRefusedWindow open a refused_burst signal.
+	AttentionRefusedBurst  = 20
+	AttentionRefusedWindow = time.Hour
+	// A custom domain whose certificate issuance failed more than
+	// AttentionDomainFailedAfter ago, or that is still unverified
+	// AttentionDomainUnverifiedAfter after verification started, opens a
+	// domain_stuck signal. Drifted DNS opens one at once: the verifier has
+	// already confirmed the drift.
+	AttentionDomainFailedAfter     = time.Hour
+	AttentionDomainUnverifiedAfter = 24 * time.Hour
+	// AttentionEvaluateInterval is how often apid evaluates the rules;
+	// AttentionResolvedRetention bounds how long resolved signals are kept.
+	AttentionEvaluateInterval  = 5 * time.Minute
+	AttentionResolvedRetention = 30 * 24 * time.Hour
+	AttentionListMax           = 200
+	AttentionDismissReasonMax  = 200
+)
+
 // Management MCP history is connection-local metadata, not an account audit log.
 const (
 	ManagementMCPActionHistoryMax       = 256

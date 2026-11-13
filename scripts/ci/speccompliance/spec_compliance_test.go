@@ -495,6 +495,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/tenants":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/360":        true, // operator-only tenant 360 projection
 	"GET /v1/admin/obs/lookup":                  true, // operator-only identifier lookup (ADR-20261112170000)
+	"GET /v1/admin/obs/attention":               true, // operator-only customer attention signals (ADR-20261113123000)
 	"GET /v1/admin/obs/tenants/{id}":            true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":   true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":               true, // operator-only app workload drill-down

@@ -15,6 +15,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"io"
 	"log/slog"
@@ -2379,6 +2380,12 @@ var RouteProbeAccountQueues = routeProbeAccountQueues
 
 func (s *server) ConfigureCustomerSupportForTest(ctx context.Context, pool *pgxpool.Pool) error {
 	return s.configureCustomerSupport(ctx, pool, func(string) string { return "" })
+}
+
+// ConfigureAttentionForTest wires the attention evaluator without starting
+// its loop; tests insert signals directly.
+func (s *server) ConfigureAttentionForTest(pool *pgxpool.Pool) {
+	s.attention = attention.New(pool, slog.Default(), nil)
 }
 
 func (s *server) DispatchCustomerSupportNotificationForTest(ctx context.Context) error {
