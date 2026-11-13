@@ -31,6 +31,12 @@ func TestServingContractRejectsAmbiguousAccess(t *testing.T) {
 	for _, mutate := range []func(*api.CreateDataPipelineRequest){
 		func(r *api.CreateDataPipelineRequest) { r.ReadSubjects = []string{"admin"} },
 		func(r *api.CreateDataPipelineRequest) { r.Serving.Version = 2 },
+		func(r *api.CreateDataPipelineRequest) {
+			r.Serving.TenantAccess.Memberships[0].Subject = string([]byte{0xff})
+		},
+		func(r *api.CreateDataPipelineRequest) {
+			r.Serving.TenantAccess.Memberships[0].Tenant = string([]byte{0xff})
+		},
 		func(r *api.CreateDataPipelineRequest) { r.Serving.Columns["orders"] = []string{"id", "status"} },
 		func(r *api.CreateDataPipelineRequest) {
 			r.Serving.Columns["orders"] = []string{"id", "tenant_id", "id"}

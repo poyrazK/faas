@@ -21,18 +21,23 @@ func normalizeServing(in *api.DataPipelineServing) *api.DataPipelineServing {
 	if in == nil {
 		return nil
 	}
-	b, _ := json.Marshal(in)
-	var out api.DataPipelineServing
-	_ = json.Unmarshal(b, &out)
+	out := *in
 	if out.Version == 0 {
 		out.Version = 1
 	}
-	for _, columns := range out.Columns {
-		slices.Sort(columns)
+	out.Columns = nil
+	if len(in.Columns) > 0 {
+		out.Columns = make(map[string][]string, len(in.Columns))
+		for table, columns := range in.Columns {
+			out.Columns[table] = slices.Clone(columns)
+			slices.Sort(out.Columns[table])
+		}
 	}
-	if out.TenantAccess != nil {
-		out.TenantAccess.Memberships = append([]api.DataPipelineTenantMembership{}, out.TenantAccess.Memberships...)
-		slices.SortFunc(out.TenantAccess.Memberships, compareMemberships)
+	if in.TenantAccess != nil {
+		access := *in.TenantAccess
+		access.Memberships = append([]api.DataPipelineTenantMembership{}, access.Memberships...)
+		slices.SortFunc(access.Memberships, compareMemberships)
+		out.TenantAccess = &access
 	}
 	return &out
 }
