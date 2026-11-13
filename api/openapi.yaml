@@ -116862,6 +116862,7 @@ components:
         status: { type: string, enum: [pending, approved, denied, consumed, expired], description: "`consumed` once the approved request was made." }
         review_url: { type: string, format: uri, description: The review page, while the request is pending. }
         agent: { type: string, description: "The connection's client name or key label." }
+        connection_id: { type: string, description: "The id of the agent connection that asked, as GET /v1/agent-connections lists it." }
         created_at: { type: string, format: date-time, description: When the agent first made the request. }
         expires_at: { type: string, format: date-time, description: After this time the request can no longer be approved or used. }
         decided_at: { type: string, format: date-time, description: When a person approved or denied it. }
