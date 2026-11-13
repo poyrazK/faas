@@ -43,7 +43,10 @@ func resolveSimpleAppPlanWithWarnings(sourceDir, slug, profile string, source si
 		}
 		frameworkName = inferred.Framework
 		port = inferred.Port
-		health = inferred.HealthPath
+		if !inferred.HealthDefaulted {
+			// A defaulted /healthz is TCP readiness (ADR-079 amendment 2).
+			health = inferred.HealthPath
+		}
 		warnings = filterActionableProfileWarnings(inferred.Warnings)
 	}
 	plan, err := simpleapp.Resolve(simpleapp.Spec{

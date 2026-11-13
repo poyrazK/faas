@@ -17,12 +17,17 @@ type ComputeHoldProvider interface {
 }
 
 // capHoldable keeps the databases the sweep holds and releases. A database
-// being created or changed is left to its lifecycle worker, which connects to
-// it; the next sweep after it settles decides. One in its delete grace period
-// is not in the sweep. The lifecycle claim rechecks this before provider I/O,
-// so a stale sweep cannot release a deletion hold.
+// being created is left to its lifecycle worker, which connects to it; the
+// next sweep after it settles decides. A database being changed (a resize, a
+// compute policy or storage change) is held too, so a change that waits for
+// a retry cannot keep it running past its cap or egress allowance: the hold
+// takes the lifecycle lease, so it only lands between attempts, never while
+// the worker runs one, and a change that then meets the held compute is
+// refused as compute_held, as one requested while held is. One in its delete
+// grace period is not in the sweep. The lifecycle claim rechecks this before
+// provider I/O, so a stale sweep cannot release a deletion hold.
 func capHoldable(database Database) bool {
-	return database.State == StateReady || database.State == StateFailed
+	return database.State == StateReady || database.State == StateFailed || database.State == StateUpdating
 }
 
 // Why the sweep holds every database of a subject.

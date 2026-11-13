@@ -393,7 +393,7 @@ func cmdPostgresCreate(args []string) int {
 	args = normalizePostgresArgs(args)
 	fs := newFlagSet("postgres create", flag.ContinueOnError)
 	region := fs.String("region", "", "provider-neutral region (required)")
-	major := fs.Int("postgres-major", 16, "PostgreSQL major version")
+	major := fs.Int("postgres-major", api.ManagedPostgresDefaultMajor, "PostgreSQL major version")
 	serviceClass := fs.String("class", "development", "service class: development|burstable|production")
 	availability := fs.String("availability", "single_zone", "availability: single_zone|high_availability")
 	scaleToZero := fs.Bool("scale-to-zero", true, "suspend compute when idle")

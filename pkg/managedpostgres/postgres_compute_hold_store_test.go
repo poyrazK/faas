@@ -12,7 +12,8 @@ import (
 func TestPostgresComputeHoldLease(t *testing.T) {
 	testComputeHoldLease(t, func(t *testing.T) computeHoldFixture {
 		store, _, _, account := postgresStoreFixture(t)
-		return computeHoldFixture{store, store, postgresResizeDatabase(t, store, account), time.Now().UTC()}
+		now := time.Now().UTC()
+		return computeHoldFixture{store, store, postgresResizeDatabase(t, store, account), now, reserveResizeUpdating(store, now)}
 	})
 }
 

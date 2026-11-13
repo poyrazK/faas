@@ -6320,7 +6320,7 @@ WITH locked AS MATERIALIZED (
 UPDATE managed_postgres_databases d SET lease_token=$1::text,
     lease_until=clock_timestamp()+$2::bigint*interval '1 millisecond'
 FROM locked l WHERE d.id=l.id
-    AND l.state=$3::text AND l.state IN ('ready','failed')
+    AND l.state=$3::text AND l.state IN ('ready','failed','updating')
     AND l.desired_generation=$4::bigint
     AND l.backend_id=$5::text AND l.backend_fingerprint=$6::text
     AND l.provider_resource_id=$7::text

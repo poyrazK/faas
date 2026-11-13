@@ -16475,7 +16475,7 @@ WITH locked AS MATERIALIZED (
 UPDATE managed_postgres_databases d SET lease_token=sqlc.arg(lease_token)::text,
     lease_until=clock_timestamp()+sqlc.arg(lease_milliseconds)::bigint*interval '1 millisecond'
 FROM locked l WHERE d.id=l.id
-    AND l.state=sqlc.arg(state)::text AND l.state IN ('ready','failed')
+    AND l.state=sqlc.arg(state)::text AND l.state IN ('ready','failed','updating')
     AND l.desired_generation=sqlc.arg(generation)::bigint
     AND l.backend_id=sqlc.arg(backend_id)::text AND l.backend_fingerprint=sqlc.arg(backend_fingerprint)::text
     AND l.provider_resource_id=sqlc.arg(provider_resource_id)::text

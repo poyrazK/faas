@@ -219,7 +219,7 @@ func cmdPipelineCreate(args []string) int {
 			}
 			*region = caps.Region
 		}
-		req := api.CreateManagedPostgresDatabaseRequest{Name: pipelineMirrorName(fs.Arg(0)), Region: *region, PostgresMajor: 16}
+		req := api.CreateManagedPostgresDatabaseRequest{Name: pipelineMirrorName(fs.Arg(0)), Region: *region, PostgresMajor: api.ManagedPostgresDefaultMajor}
 		db, err = client.CreateManagedPostgresDatabase(api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("pipeline-mirror", req.Name, req.Region)), req)
 	}
 	if err != nil {

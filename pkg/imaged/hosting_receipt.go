@@ -49,13 +49,15 @@ func hostingReceiptProfile(app state.App, dep state.Deployment) frameworkprofile
 	// non-default app value remains an intentional override.
 	if app.Manifest.Healthz != "" && (!isDirectOCIImage(app, dep) || app.Manifest.Healthz != defaultHealthzPath) {
 		profile.HealthPath = app.Manifest.Healthz
+		// The seeded /healthz is the platform default, not a promise.
+		profile.HealthDefaulted = profile.HealthDefaulted && app.Manifest.Healthz == defaultHealthzPath
 	}
 	if len(dep.OverrideHealthcheck) > 0 {
 		var check struct {
 			Path string `json:"path"`
 		}
 		if err := json.Unmarshal(dep.OverrideHealthcheck, &check); err == nil && check.Path != "" {
-			profile.HealthPath = check.Path
+			profile.HealthPath, profile.HealthDefaulted = check.Path, false
 		}
 	}
 	if start := strings.TrimSpace(app.StartCommand); start != "" {
@@ -179,7 +181,9 @@ func hostingSmokeFailure(smoke apihostingreceipt.SmokeResult) error {
 // by the gRPC health check inside the VM. The public smoke only has to show
 // that the route reaches the candidate.
 func routeConnectivitySmoke(app state.App, dep state.Deployment) bool {
-	if isDirectOCIImage(app, dep) && hostingReceiptProfile(app, dep).HealthPath == "" {
+	profile := hostingReceiptProfile(app, dep)
+	if isDirectOCIImage(app, dep) && profile.HealthPath == "" || profile.HealthDefaulted {
+		// TCP readiness: the app never promised an HTTP health route.
 		return true
 	}
 	return strings.EqualFold(app.AppProtocol, "grpc") || grpcReadiness(dep)
