@@ -279,7 +279,10 @@ tool, which waits up to 50 seconds per call. When you approve, the tool
 answers `retry_original` and the agent repeats its call once with the same
 inputs. When you deny it or it expires, the agent gets `stop`, with your
 reason, and stops. `gregale_agent_activity` lists the agent's own write
-requests of the last 7 days (`core` toolset).
+requests of the last 7 days, and `gregale_agent_budget` its monthly budget
+and what it committed this month (`core` toolset). An agent's
+`gregale_plan_scale` plan carries `agent_budget`: the cost the change adds,
+the budget left, and whether a person would be asked first.
 
 An agent can undo its own changes: `gregale_plan_undo` lists them with what
 undoing each will do, and `gregale_apply_undo` applies that plan. Applying
@@ -409,6 +412,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_get_action_outcome` | Read supported native receipts for a retained action attempt, including after plan expiry; missing evidence stays unresolved. |
 | `gregale_wait_for_approval` | Wait up to 50 seconds for a person to decide an agent approval request; answers `retry_original`, `await_approval` or `stop`. |
 | `gregale_agent_activity` | The calling agent key's write requests of the last 7 days, with status and the approval each used. |
+| `gregale_agent_budget` | The calling agent key's monthly budget for always-on cost and what it committed this month. |
 | `gregale_plan_undo` | Plan undoing the calling agent's own changes: each change, newest first, with what undoing it will do. |
 | `gregale_apply_undo` | Undo the agent's own changes from a plan, after a person approves. |
 | `gregale_get_route_budgets` | Effective advisory budgets, inheritance source and policy revisions for the selected environment. |
