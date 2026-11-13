@@ -166,6 +166,7 @@
       "deploy/ansible/cp_state_restore.yml",
       "deploy/ansible/database_node.yml",
       "deploy/ansible/fleet_runner.yml",
+      "deploy/ansible/kernel_patch_reboot.yml",
       "deploy/ansible/metal-h2c-acceptance.yml",
       "deploy/ansible/native-acceptance-host.yml",
       "deploy/ansible/node_join_control_plane.yml",

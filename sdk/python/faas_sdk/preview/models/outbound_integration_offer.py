@@ -24,6 +24,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.outbound_ai_content_policy import OutboundAIContentPolicy
     from ..models.outbound_ai_online_evaluation import OutboundAIOnlineEvaluation
+    from ..models.outbound_ai_semantic_cache import OutboundAISemanticCache
     from ..models.outbound_request_policy import OutboundRequestPolicy
 
 
@@ -77,6 +78,12 @@ class OutboundIntegrationOffer:
     """Whether writes the gateway can neither meter nor knows to be free go through, outside the caps."""
     ai_auto_prompt_cache: bool | Unset = UNSET
     """Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none."""
+    ai_semantic_cache: OutboundAISemanticCache | Unset = UNSET
+    """Answer a call from the response cache when its last user turn means the same as a cached call's and
+    everything else matches exactly. Pro and Scale plans; needs ai_provider and a response cache TTL. The embedding
+    integration, one of the account's enabled OpenAI or Gemini integrations, embeds each candidate call on its own
+    key, metered under the caller semantic_cache. A hit carries X-Gregale-AI-Cache semantic and X-Gregale-AI-
+    Similarity."""
     ai_trace_max_calls: int | Unset = UNSET
     """Calls each AI trace may make, settled and in flight. Absent when unlimited."""
     ai_trace_max_cost_millicents: int | Unset = UNSET
@@ -157,6 +164,10 @@ class OutboundIntegrationOffer:
 
         ai_auto_prompt_cache = self.ai_auto_prompt_cache
 
+        ai_semantic_cache: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.ai_semantic_cache, Unset):
+            ai_semantic_cache = self.ai_semantic_cache.to_dict()
+
         ai_trace_max_calls = self.ai_trace_max_calls
 
         ai_trace_max_cost_millicents = self.ai_trace_max_cost_millicents
@@ -219,6 +230,8 @@ class OutboundIntegrationOffer:
             field_dict["ai_allow_unmetered"] = ai_allow_unmetered
         if ai_auto_prompt_cache is not UNSET:
             field_dict["ai_auto_prompt_cache"] = ai_auto_prompt_cache
+        if ai_semantic_cache is not UNSET:
+            field_dict["ai_semantic_cache"] = ai_semantic_cache
         if ai_trace_max_calls is not UNSET:
             field_dict["ai_trace_max_calls"] = ai_trace_max_calls
         if ai_trace_max_cost_millicents is not UNSET:
@@ -240,6 +253,7 @@ class OutboundIntegrationOffer:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.outbound_ai_content_policy import OutboundAIContentPolicy
         from ..models.outbound_ai_online_evaluation import OutboundAIOnlineEvaluation
+        from ..models.outbound_ai_semantic_cache import OutboundAISemanticCache
         from ..models.outbound_request_policy import OutboundRequestPolicy
 
         d = dict(src_dict)
@@ -327,6 +341,13 @@ class OutboundIntegrationOffer:
 
         ai_auto_prompt_cache = d.pop("ai_auto_prompt_cache", UNSET)
 
+        _ai_semantic_cache = d.pop("ai_semantic_cache", UNSET)
+        ai_semantic_cache: OutboundAISemanticCache | Unset
+        if isinstance(_ai_semantic_cache, Unset):
+            ai_semantic_cache = UNSET
+        else:
+            ai_semantic_cache = OutboundAISemanticCache.from_dict(_ai_semantic_cache)
+
         ai_trace_max_calls = d.pop("ai_trace_max_calls", UNSET)
 
         ai_trace_max_cost_millicents = d.pop("ai_trace_max_cost_millicents", UNSET)
@@ -385,6 +406,7 @@ class OutboundIntegrationOffer:
             ai_log_export=ai_log_export,
             ai_allow_unmetered=ai_allow_unmetered,
             ai_auto_prompt_cache=ai_auto_prompt_cache,
+            ai_semantic_cache=ai_semantic_cache,
             ai_trace_max_calls=ai_trace_max_calls,
             ai_trace_max_cost_millicents=ai_trace_max_cost_millicents,
             ai_trace_max_repeated_tool_calls=ai_trace_max_repeated_tool_calls,

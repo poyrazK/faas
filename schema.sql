@@ -37312,6 +37312,7 @@ CREATE TABLE public.data_pipeline_schema_refreshes (
     attempt integer NOT NULL,
     wake_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    read_gate boolean DEFAULT false NOT NULL,
     CONSTRAINT data_pipeline_schema_refreshes_attempt_check CHECK (((attempt >= 0) AND (attempt <= 10))),
     CONSTRAINT data_pipeline_schema_refreshes_change_id_check CHECK ((change_id ~ '^[a-f0-9]{64}$'::text))
 );
@@ -37386,11 +37387,12 @@ CREATE TABLE public.data_pipelines (
     schema_change jsonb DEFAULT '{}'::jsonb NOT NULL,
     verification_progress jsonb DEFAULT '{}'::jsonb NOT NULL,
     reader_change jsonb DEFAULT '{}'::jsonb NOT NULL,
+    wal_retention jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT data_pipelines_check CHECK (((observed_revision >= 0) AND (observed_revision <= revision))),
     CONSTRAINT data_pipelines_desired_state_check CHECK ((desired_state = ANY (ARRAY['running'::text, 'paused'::text, 'deleted'::text]))),
     CONSTRAINT data_pipelines_generation_check CHECK ((generation > 0)),
     CONSTRAINT data_pipelines_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'::text)),
-    CONSTRAINT data_pipelines_read_subjects_check CHECK (((jsonb_typeof(read_subjects) = 'array'::text) AND ((jsonb_array_length(read_subjects) >= 1) AND (jsonb_array_length(read_subjects) <= 32)))),
+    CONSTRAINT data_pipelines_read_subjects_v2_check CHECK (((jsonb_typeof(read_subjects) = 'array'::text) AND ((jsonb_array_length(read_subjects) >= 0) AND (jsonb_array_length(read_subjects) <= 32)))),
     CONSTRAINT data_pipelines_reader_change_check CHECK (((jsonb_typeof(reader_change) = 'object'::text) AND (octet_length((reader_change)::text) <= 131072) AND ((reader_change = '{}'::jsonb) OR ((reader_change ->> 'State'::text) = ANY (ARRAY['preview'::text, 'approved'::text, 'applied'::text]))))),
     CONSTRAINT data_pipelines_reason_check CHECK ((reason ~ '^[a-z0-9_]{0,80}$'::text)),
     CONSTRAINT data_pipelines_retained_wal_bytes_check CHECK ((retained_wal_bytes >= 0)),
@@ -64923,6 +64925,14 @@ ALTER TABLE ONLY public.data_pipelines
 
 ALTER TABLE ONLY public.data_pipelines
     ADD CONSTRAINT data_pipelines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: data_pipelines data_pipelines_wal_retention_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.data_pipelines
+    ADD CONSTRAINT data_pipelines_wal_retention_check CHECK (((jsonb_typeof(wal_retention) = 'object'::text) AND (octet_length((wal_retention)::text) <= 4096))) NOT VALID;
 
 
 --
