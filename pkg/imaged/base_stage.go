@@ -899,18 +899,21 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, digestKey, ref,
 		// derived, so copy the placeholder counts explicitly.
 		fixAvailableFindings = findings.toMap()
 	}
+	scannedAt := time.Now().UTC()
 	scanBlob, err := json.Marshal(struct {
 		Image                string         `json:"image"`
 		Source               string         `json:"source"`
 		Findings             map[string]int `json:"findings"`
 		FixAvailableFindings map[string]int `json:"fix_available_findings"`
 		ScannedAt            time.Time      `json:"scanned_at"`
+		FixableCriticalSince *time.Time     `json:"fixable_critical_since,omitempty"`
 	}{
 		Image:                ref,
 		Source:               scanSource,
 		Findings:             findings.toMap(),
 		FixAvailableFindings: fixAvailableFindings,
-		ScannedAt:            time.Now().UTC(),
+		ScannedAt:            scannedAt,
+		FixableCriticalSince: fixableCriticalSince(ctx, be, baseKey, ref, fixAvailableFindings[SeverityCritical], scannedAt),
 	})
 	if err != nil {
 		return fmt.Errorf("imaged: marshal scan sidecar: %w", err)

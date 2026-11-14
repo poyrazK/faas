@@ -27,8 +27,8 @@ DELETE FROM data_pipeline_connections c WHERE c.account_id=sqlc.arg(account_id):
 SELECT count(*) FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid AND state<>'deleted';
 
 -- name: PipelineInsert :one
-INSERT INTO data_pipelines(id,account_id,name,source_connection_id,database_id,tables,read_subjects)
-VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(name),sqlc.arg(source_connection_id)::text::uuid,sqlc.arg(database_id)::text::uuid,sqlc.arg(tables),sqlc.arg(read_subjects)) RETURNING *;
+INSERT INTO data_pipelines(id,account_id,name,source_connection_id,database_id,tables,read_subjects,serving_config,freshness_target_seconds)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(name),sqlc.arg(source_connection_id)::text::uuid,sqlc.arg(database_id)::text::uuid,sqlc.arg(tables),sqlc.arg(read_subjects),sqlc.arg(serving_config),sqlc.arg(freshness_target_seconds)) RETURNING *;
 
 -- name: PipelinesList :many
 SELECT * FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid ORDER BY (state='deleted'),created_at DESC,id LIMIT sqlc.arg(page_limit);
@@ -56,6 +56,9 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uui
  AND (coalesce(reader_change->>'State','')<>'approved' OR sqlc.arg(generation_delta)::bigint=0)
 RETURNING *;
 
+-- name: PipelineWorkerProtocol :exec
+SELECT set_config('gregale.pipeline_worker_protocol','pipeline-operability-v1',true);
+
 -- name: PipelineClaim :one
 WITH candidate AS (
  SELECT id FROM data_pipelines WHERE state<>'deleted' AND retry_at<=clock_timestamp()
@@ -66,6 +69,9 @@ WITH candidate AS (
 
 -- name: PipelineFinish :execrows
 UPDATE data_pipelines SET
+ serving_config=CASE WHEN reader_change->>'State'='approved' AND reader_change->>'Tenant'='true'
+ AND sqlc.narg(reader_change)::jsonb->>'State'='applied' AND reader_change->>'ID'=sqlc.narg(reader_change)::jsonb->>'ID'
+ THEN jsonb_set(serving_config,'{tenant_access,memberships}',sqlc.narg(reader_change)::jsonb->'AfterMemberships') ELSE serving_config END,
  read_subjects=CASE WHEN reader_change->>'State'='approved' AND sqlc.narg(reader_change)::jsonb->>'State'='applied' AND reader_change->>'ID'=sqlc.narg(reader_change)::jsonb->>'ID' THEN reader_change->'After' ELSE read_subjects END,
  reader_change=CASE WHEN reader_change->>'State'='approved' AND sqlc.narg(reader_change)::jsonb->>'State'='applied' AND reader_change->>'ID'=sqlc.narg(reader_change)::jsonb->>'ID' THEN sqlc.narg(reader_change)::jsonb ELSE reader_change END,
  verification_progress=coalesce(sqlc.narg(verification_progress)::jsonb,verification_progress),schema_change=coalesce(sqlc.narg(schema_change)::jsonb,schema_change),observed_revision=revision,initialized=initialized OR sqlc.arg(initialized),state=sqlc.arg(state),reason=sqlc.arg(reason),tables_ready=sqlc.arg(tables_ready),
@@ -399,7 +405,7 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uui
  (tables=sqlc.arg(reader_change)::jsonb->'Tables' AND read_subjects=sqlc.arg(reader_change)::jsonb->'Before' AND generation=(sqlc.arg(reader_change)::jsonb->>'Generation')::bigint));
 
 -- name: PipelineFinishReaders :execrows
-UPDATE data_pipelines SET read_subjects=reader_change->'After',reader_change=jsonb_set(reader_change,'{State}','"applied"'),
+UPDATE data_pipelines SET serving_config=CASE WHEN reader_change->>'Tenant'='true' THEN jsonb_set(serving_config,'{tenant_access,memberships}',reader_change->'AfterMemberships') ELSE serving_config END,read_subjects=reader_change->'After',reader_change=jsonb_set(reader_change,'{State}','"applied"'),
  lease_token='',lease_until=NULL,retry_at=clock_timestamp()
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
  AND lease_token=sqlc.arg(lease_token) AND lease_until>clock_timestamp()
@@ -420,7 +426,7 @@ RETURNING *;
 
 -- name: PipelineAlertLock :one
 SELECT a.* FROM data_pipeline_alerts a JOIN data_pipelines p ON p.id=a.pipeline_id AND p.account_id=a.account_id
-WHERE a.enabled AND a.check_at<=sqlc.arg(now_at) AND a.account_id=ANY(sqlc.arg(accounts)::uuid[])
+WHERE (p.freshness_target_seconds=0 OR current_setting('gregale.pipeline_worker_protocol',true)='pipeline-operability-v1') AND a.enabled AND a.check_at<=sqlc.arg(now_at) AND a.account_id=ANY(sqlc.arg(accounts)::uuid[])
 ORDER BY a.check_at,a.pipeline_id FOR UPDATE OF a SKIP LOCKED LIMIT 1;
 
 -- name: PipelineAlertObserve :exec
@@ -463,3 +469,19 @@ FROM candidate c WHERE d.id=c.id RETURNING d.*;
 UPDATE data_pipeline_alert_deliveries SET status=sqlc.arg(status),attempts=attempts+1,response_code=sqlc.arg(response_code),result=sqlc.arg(result),next_attempt_at=sqlc.arg(next_attempt_at),lease_token='',lease_until=NULL
 WHERE id=sqlc.arg(id)::text::uuid AND status='pending' AND lease_token=sqlc.arg(lease_token) AND lease_until>sqlc.arg(now_at)
 AND EXISTS(SELECT 1 FROM data_pipeline_alerts a WHERE a.pipeline_id=data_pipeline_alert_deliveries.pipeline_id AND a.enabled AND a.revision=data_pipeline_alert_deliveries.config_revision);
+
+-- name: PipelineSetFreshness :execrows
+UPDATE data_pipelines SET freshness_target_seconds=sqlc.arg(target_seconds),revision=revision+1,retry_at=clock_timestamp()
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
+ AND state<>'deleted' AND desired_state<>'deleted';
+
+-- name: PipelineIndexIntent :execrows
+UPDATE data_pipelines SET index_change=sqlc.arg(index_change)::jsonb,revision=revision+1,retry_at=clock_timestamp()
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
+ AND state<>'deleted' AND desired_state<>'deleted' AND coalesce(index_change->>'state','')<>'approved';
+
+-- name: PipelineFinishIndex :execrows
+UPDATE data_pipelines SET index_change=sqlc.arg(index_change)::jsonb,lease_token='',lease_until=NULL,retry_at=clock_timestamp()
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
+ AND lease_token=sqlc.arg(lease_token) AND lease_until>clock_timestamp()
+ AND index_change->>'RequestID'=sqlc.arg(request_id)::text AND index_change->>'state' IN ('requested','approved');

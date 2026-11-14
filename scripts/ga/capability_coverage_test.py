@@ -57,6 +57,17 @@ class CoverageGateTest(unittest.TestCase):
                 cc.main()
         self.assertEqual(out.getvalue().count("-> Sales workspace and lead management"), 2)
 
+    def test_durable_pipeline_setup_routes_include_resource_planning(self):
+        src = {"routes": {"/v1/data/pipeline-setups", "/v1/data/pipeline-setups/{id}",
+                          "/v1/data/pipeline-setups/{id}/control", "/v1/data/pipeline-setups/plan"}}
+        out = io.StringIO()
+        with mock.patch.object(cc, "collect", return_value=src), mock.patch.object(cc.sys, "argv", ["capability_coverage.py", "--show", "routes"]):
+            with contextlib.redirect_stdout(out):
+                cc.main()
+        self.assertEqual(out.getvalue().count("-> Data pipelines"), 4)
+        self.assertNotIn("UNMATCHED routes", out.getvalue())
+        self.assertNotIn("-> Plans, usage", out.getvalue())
+
     def test_route_keys_drop_path_parameters(self):
         self.assertEqual(cc.normalize("routes", "/v1/apps/{slug}/Crons/{id}"), "/v1/apps/crons/")
         self.assertEqual(cc.route_key("/v1/apps/crons/"), "apps/crons crons")

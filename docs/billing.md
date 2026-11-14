@@ -51,7 +51,7 @@ Opening the billing portal (`GET /v1/billing/portal`) and changing the spend cap
 
 ## Billing email
 
-The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it, so give the organization its own address:
+The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it; until then the organization's quota and billing mail goes to its owner. Give the organization its own address:
 
 ```bash
 curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \
@@ -109,7 +109,11 @@ When the month's overage reaches the cap:
   policy records the occurrences it missed;
 - object storage, which is billed once the month closes, is billed only up
   to what the cap still allows after the month's compute and egress overage.
-  Object storage keeps serving within its plan limits.
+  Object storage keeps serving within its plan limits;
+- managed PostgreSQL overage (compute, storage and database egress) counts
+  toward the cap too and is billed only up to it. At the cap your databases
+  stop (`hold: compute_ceiling`) like your apps; with a cap of 0 they stop at
+  once. Their data is kept.
 
 When the cap first stops your workloads in a month, Gregale emails the
 account with the cap and the month's overage.
@@ -143,7 +147,12 @@ organization's cap, not at the cap of the member who created them.
 Each plan includes a monthly allowance of application egress: Free 10 GiB,
 Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB. By default every plan stops at
 it: once the month's egress reaches the allowance, the account's apps are
-parked (`quota_exceeded_egress`) until the month ends or the plan grows.
+parked (`quota_exceeded_egress`) until the month ends, the plan grows or, on a
+paid plan, egress overage is turned on. New deploys wait until then too. Your
+managed PostgreSQL databases and buckets keep running: databases have their
+own egress allowance. Gregale emails the account once a day from 80% of the
+allowance, and again when the apps are parked. The Free plan's compute
+allowance works the same way.
 
 A paid account can instead elect to pay for egress above the allowance:
 
@@ -171,8 +180,8 @@ cap: egress in hours the election does not cover, or on Free, never does.
 Only egress sent while the election is on is billed: egress above the
 allowance before you turned it on is never billed, and turning it off keeps
 the hours it covered billable, so turning it off cannot undo egress already
-sent. Turning it back on keeps the original start. The hour in which you turn
-it on is not billed.
+sent. Turning it back on starts a new window, so the hours it was off are
+never billed. The hour in which you turn it on is not billed.
 
 An organization that owns its resources elects for itself:
 `PUT /v1/orgs/{slug}/egress-overage` (owner) or

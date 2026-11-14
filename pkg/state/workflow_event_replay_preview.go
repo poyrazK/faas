@@ -279,7 +279,8 @@ func (m *MemStore) PreviewWorkflowEventReplay(ctx context.Context, accountID str
 			(!c.AcceptedAt.IsZero() && (work.CreatedAt.Before(c.AcceptedAt) || work.CreatedAt.Equal(c.AcceptedAt) && work.ID <= c.OutboxID)) {
 			continue
 		}
-		if !m.eventAppInProducerReachLocked(accountID, work.Payload, query.AppID) {
+		if !m.eventAppInProducerReachLocked(accountID, work.Payload, query.AppID) ||
+			!memEventInEnvironment(work.Payload, "") {
 			continue
 		}
 		var identity publishedEventIdentity

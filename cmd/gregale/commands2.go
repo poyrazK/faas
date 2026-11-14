@@ -2039,6 +2039,11 @@ type deployExecution struct {
 	compactProgress  bool // Guided sessions own their review and progress display.
 	streamLogsOnJSON bool
 	developerSource  *devSourceSyncState
+	// devBuildNow opts developer-source syncs out of build coalescing
+	// (ADR-20261021221906); untilDevPatched finishes a sync whose build was deferred
+	// behind its live patch, and reports false to follow the build instead.
+	devBuildNow     bool
+	untilDevPatched func(context.Context, api.DeploymentResponse) (int, bool)
 	// overrideEnv carries non-secret values that belong only to the new
 	// deployment revision. MCP hosting uses it to pin a candidate catalog.
 	overrideEnv map[string]string
@@ -4112,6 +4117,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err != nil {
 		return printErr("Manifest resource scope resolution failed", err)
 	}
+	if existingApp && !projectRequested && !*createOnly {
+		warnMissingRequiredSecrets(ctx, client, slug, manifestScope)
+	}
 	// The deploy session is written after the app is created or updated;
 	// prove it can be before changing anything remotely (#6625).
 	if !*createOnly {
@@ -4376,7 +4384,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if developerSync != nil {
 			var deployErr error
 			sourceSyncStarted := time.Now()
-			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, ann, developerSync)
+			devAnn := ann
+			devAnn.DevBuildNow = execution.devBuildNow
+			dep, deployErr = deployDeveloperSource(client, ctx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, uploadRoot, devAnn, developerSync)
 			if execution.onSourceSync != nil {
 				execution.onSourceSync(time.Since(sourceSyncStarted), deployErr)
 			}
@@ -4443,6 +4453,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		if issueMaps != nil && !jsonOutput {
 			PrintOK(osStdout, "Source maps ready: %d map(s) for deployment %s (%s)", issueMaps.MapCount, issueMaps.DeploymentID, issueMaps.ManifestSHA256)
+		}
+		if execution.untilDevPatched != nil && dep.DevPatch != nil && dep.DevPatch.BuildDeferredUntil != nil {
+			if code, handled := execution.untilDevPatched(ctx, dep); handled {
+				return code
+			}
 		}
 		if jsonOutput && !streamLogsOnJSON {
 			// Legacy multipart uploads do not calculate the digest while

@@ -36,7 +36,8 @@ func TestStartupGuidanceUsesRecordedPhase(t *testing.T) {
 	} {
 		p := api.NewProblem(422, api.CodeAppStartupTimeout, "timeout", detail)
 		Decorate(p, p.Code, nil)
-		if !strings.Contains(p.Fix, "gregale deploy --image") || !strings.Contains(p.Fix, "--ports <name>=tcp:<port>:internal") {
+		if !strings.Contains(p.Fix, "Gregale does not run datastores") || !strings.Contains(p.Fix, "gregale deploy --image") ||
+			!strings.Contains(p.Fix, "--ports <name>=tcp:<port>:internal") {
 			t.Fatalf("detail %q: fix=%q, want the image deploy", detail, p.Fix)
 		}
 	}

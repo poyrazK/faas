@@ -195,6 +195,37 @@ func TestExplainGuestStopNamesACompanionCrashAfterReadiness(t *testing.T) {
 	}
 }
 
+// Deploy-path review P4 (production h35-comp 2026-11-13): the app exited with
+// status 0 just after readiness. A clean exit is not restarted and prints no
+// supervisor marker, and the deploy failed as internal with no app code.
+func TestExplainGuestStopNamesACleanAppExitAfterReadiness(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), 0)
+	ring := v.registerRing("inst")
+	for _, line := range []string{
+		"seeding cache... done\n",
+		"[    2.100000] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000000\n",
+	} {
+		if _, err := ring.Write("stdout", []byte(line)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := &instanceRecord{done: make(chan struct{})}
+	close(rec.done)
+	v.mu.Lock()
+	v.recs["inst"] = rec
+	v.mu.Unlock()
+
+	p := api.AsProblem(v.ExplainGuestStop(Lease{Instance: "inst"}))
+	if p == nil || p.Code != api.CodeAppStartupCrash {
+		t.Fatalf("explanation = %#v, want %s", p, api.CodeAppStartupCrash)
+	}
+	for _, want := range []string{"exited after becoming ready", "seeding cache", "clean exit is not restarted"} {
+		if !strings.Contains(p.Detail, want) {
+			t.Errorf("detail %q lacks %q", p.Detail, want)
+		}
+	}
+}
+
 // spec: §6.1, §12
 // A characterization report of a startup exit is the workload's own exit code.
 func TestCharacterizationStartupExitIsAnAppStartupCrash(t *testing.T) {

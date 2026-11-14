@@ -143,38 +143,11 @@ func (s *server) extendProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 		return
 	}
 	ctx := r.Context()
-	copies, err := s.environmentBranchDatabases(ctx, branch)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list the branch's database copies"))
-		return
-	}
-	expiresAt := time.Now().UTC().Add(ttl).Truncate(time.Second)
-	if problem := environmentBranchLifetimeProblem(branch, len(copies) > 0, expiresAt); problem != nil {
+	extended, problem := s.moveEnvironmentBranchExpiry(ctx, extender, acct, project, branch, time.Now().UTC().Add(ttl).Truncate(time.Second), false)
+	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
-	// The copies move first: a copy that ended before its branch would take
-	// the branch's database away while it still serves.
-	for _, copy := range copies {
-		if problem := s.moveEnvironmentBranchCopyExpiry(ctx, acct, branch, copy, expiresAt); problem != nil {
-			api.WriteProblem(w, problem)
-			return
-		}
-	}
-	extended, err := extender.ExtendProjectEnvironmentBranch(ctx, acct.ID, project.ID, branch.Slug, expiresAt)
-	switch {
-	case errors.Is(err, state.ErrProjectEnvironmentBranchDataPending):
-		api.WriteProblem(w, environmentBranchDataPending(branch.Slug))
-		return
-	case err != nil:
-		api.WriteProblem(w, api.ErrCapacity("could not extend the environment branch"))
-		return
-	}
-	s.audit.Emit(ctx, "project.environment.branch_extended", &acct.ID, map[string]any{
-		"project_id": project.ID, "environment_id": branch.EnvironmentID, "environment_slug": branch.Slug,
-		"previous_expires_at": branch.ExpiresAt.Format(time.RFC3339), "expires_at": extended.ExpiresAt.Format(time.RFC3339),
-		"database_copies": len(copies),
-	})
 	env, err := s.store.ProjectEnvironmentBySlug(ctx, acct.ID, project.ID, branch.Slug)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not load the environment branch"))
@@ -184,6 +157,55 @@ func (s *server) extendProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 	response.Branch = environmentBranchResponse(extended)
 	response.Branch.CreatedAt = extended.CreatedAt.Format(time.RFC3339Nano)
 	writeJSON(w, http.StatusOK, response)
+}
+
+// moveEnvironmentBranchExpiry moves a branch's expiry, and its database
+// copies' first, to expiresAt. A move past the branch's longest lifetime is
+// refused, or with clamp moved to the end of that lifetime instead.
+func (s *server) moveEnvironmentBranchExpiry(ctx context.Context, extender state.ProjectEnvironmentBranchExtender, acct state.Account, project state.Project, branch state.ProjectEnvironmentBranch, expiresAt time.Time, clamp bool) (state.ProjectEnvironmentBranch, *api.Problem) {
+	copies, err := s.environmentBranchDatabases(ctx, branch)
+	if err != nil {
+		return state.ProjectEnvironmentBranch{}, api.ErrCapacity("could not list the branch's database copies")
+	}
+	if clamp {
+		expiresAt = environmentBranchLifetimeEnd(branch, len(copies) > 0, expiresAt)
+	}
+	if problem := environmentBranchLifetimeProblem(branch, len(copies) > 0, expiresAt); problem != nil {
+		return state.ProjectEnvironmentBranch{}, problem
+	}
+	// The copies move first: a copy that ended before its branch would take
+	// the branch's database away while it still serves.
+	for _, copy := range copies {
+		if problem := s.moveEnvironmentBranchCopyExpiry(ctx, acct, branch, copy, expiresAt); problem != nil {
+			return state.ProjectEnvironmentBranch{}, problem
+		}
+	}
+	extended, err := extender.ExtendProjectEnvironmentBranch(ctx, acct.ID, project.ID, branch.Slug, expiresAt)
+	switch {
+	case errors.Is(err, state.ErrProjectEnvironmentBranchDataPending):
+		return state.ProjectEnvironmentBranch{}, environmentBranchDataPending(branch.Slug)
+	case err != nil:
+		return state.ProjectEnvironmentBranch{}, api.ErrCapacity("could not extend the environment branch")
+	}
+	s.audit.Emit(ctx, "project.environment.branch_extended", &acct.ID, map[string]any{
+		"project_id": project.ID, "environment_id": branch.EnvironmentID, "environment_slug": branch.Slug,
+		"previous_expires_at": branch.ExpiresAt.Format(time.RFC3339), "expires_at": extended.ExpiresAt.Format(time.RFC3339),
+		"database_copies": len(copies),
+	})
+	return extended, nil
+}
+
+// environmentBranchLifetimeEnd is expiresAt, or the end of the branch's
+// longest lifetime when expiresAt is past it.
+func environmentBranchLifetimeEnd(branch state.ProjectEnvironmentBranch, hasCopies bool, expiresAt time.Time) time.Time {
+	longest := api.EnvironmentBranchMaxTTL
+	if hasCopies {
+		longest = api.EnvironmentBranchWithDatabasesMaxLifetime
+	}
+	if end := branch.CreatedAt.Add(longest).Truncate(time.Second); expiresAt.After(end) {
+		return end
+	}
+	return expiresAt
 }
 
 func environmentBranchDataPending(slug string) *api.Problem {
@@ -244,8 +266,8 @@ func (s *server) moveEnvironmentBranchCopyExpiry(ctx context.Context, acct state
 // POST /v1/projects/{slug}/environments/{environment}/branch/reset makes the
 // branch again from its parent, with its settings and its lifetime: the
 // branch is deleted (its deployments retired, its copies left to the
-// reconciler) and created anew, so its workloads get new URLs. Work done in
-// the branch is discarded.
+// reconciler) and created anew with the same slot, so its workloads keep
+// their URLs. Work done in the branch is discarded.
 func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, project, branch, ok := s.environmentBranchTarget(w, r, acct)
 	if !ok {

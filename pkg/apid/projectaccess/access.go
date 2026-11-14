@@ -306,6 +306,15 @@ func MayApprove(ctx context.Context, store Store, orgID, accountID string) (bool
 	return authz.Can(snapshot.Role, authz.OrgActionApproveProjectEnvironment), nil
 }
 
+// AuthorizeManifestAsyncRoutes refuses a company-project deploy whose manifest
+// declares async_routes (including an empty list, which clears them) unless
+// the member may manage app security: async routes are edge rules, which
+// POST /v1/apps/{slug}/edge-rules reserves for that action
+// (ADR-20261114090000).
+func AuthorizeManifestAsyncRoutes(ctx context.Context, audit authz.AuditEmitter) *api.Problem {
+	return authz.AuthorizeOrgAction(ctx, authz.OrgActionManageAppSecurity, audit)
+}
+
 func lookupProblem(err error) *api.Problem {
 	if errors.Is(err, state.ErrNotFound) {
 		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such project resource")

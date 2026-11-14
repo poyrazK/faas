@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -375,5 +376,41 @@ func TestPg_SetAccountKeyGraceWindow_UnknownAccountIsNotFound(t *testing.T) {
 	// MemStore, rather than claiming a write it did not make (#6604).
 	if err := s.SetAccountKeyGraceWindow(ctx, "00000000-0000-0000-0000-000000000000", &days); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("SetAccountKeyGraceWindow(unknown) = %v, want ErrNotFound", err)
+	}
+}
+
+// TestPg_AuthenticateKey_RefusalNamesKeyAndAccount pins ADR-20261114190002:
+// a revoked or expired key comes back with its id and owning account, and
+// nothing that grants access.
+func TestPg_AuthenticateKey_RefusalNamesKeyAndAccount(t *testing.T) {
+	s, ctx := pgStore(t)
+	acctID := createAccount(t, s, ctx, pgTestEmail(t))
+	past := time.Now().Add(-time.Hour)
+	for _, tc := range []struct {
+		name    string
+		hash    []byte
+		expires *time.Time
+		revoke  bool
+		want    error
+	}{
+		{"revoked", api.HashAPIKey("fp_live_refusal_revoked_0123456789abcdef"), nil, true, state.ErrAPIKeyRevoked},
+		{"expired", api.HashAPIKey("fp_live_refusal_expired_0123456789abcdef"), &past, false, state.ErrAPIKeyExpired},
+	} {
+		k, err := s.CreateAPIKeyWithExpiry(ctx, acctID, tc.hash, tc.name, []string{"admin"}, tc.expires)
+		if err != nil {
+			t.Fatalf("%s: create: %v", tc.name, err)
+		}
+		if tc.revoke {
+			if _, err := s.MarkAPIKeyRevoked(ctx, acctID, k.ID); err != nil {
+				t.Fatalf("%s: revoke: %v", tc.name, err)
+			}
+		}
+		acct, key, err := s.AuthenticateKey(ctx, tc.hash)
+		if !errors.Is(err, tc.want) {
+			t.Fatalf("%s: err = %v, want %v", tc.name, err, tc.want)
+		}
+		if acct.ID != "" || key.ID != k.ID || key.AccountID != acctID || len(key.Scopes) != 0 || len(key.Hash) != 0 {
+			t.Fatalf("%s: acct=%q key=%+v, want only the key id and account", tc.name, acct.ID, key)
+		}
 	}
 }
