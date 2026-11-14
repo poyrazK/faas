@@ -43,8 +43,10 @@ func TestEgressOverage_ElectTurnOffAndBack(t *testing.T) {
 	}
 	rec = e.Do(t, "PUT", "/v1/account/egress-overage", map[string]any{"enabled": true}, nil)
 	again := decodeEgressOverage(t, rec.Body.Bytes())
-	if rec.Code != http.StatusOK || !again.Enabled || again.DisabledAt != nil || !again.EnabledAt.Equal(*on.EnabledAt) {
-		t.Fatalf("turn on again = %d %+v, want the first start kept", rec.Code, again)
+	// Billing review R9-2: turning it back on starts a new window at or
+	// after the end of the last one, so the gap is never billed.
+	if rec.Code != http.StatusOK || !again.Enabled || again.DisabledAt != nil || again.EnabledAt == nil || again.EnabledAt.Before(*off.DisabledAt) {
+		t.Fatalf("turn on again = %d %+v, want a new start no earlier than %v", rec.Code, again, off.DisabledAt)
 	}
 }
 

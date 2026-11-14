@@ -6854,9 +6854,31 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 		select {
 		case <-ctx.Done():
 			return v.readinessCutShort(ctx, l, healthcheckPath, seen, readyTimeout, readinessStartedAt)
-		case <-time.After(10 * time.Millisecond):
+		case <-time.After(seen.nextProbeDelay()):
 		}
 	}
+}
+
+// Readiness probe cadence. While nothing listens a probe costs the guest a
+// kernel RST, so it repeats every readinessProbeMinDelay to catch a fast boot.
+// Once the app answers without being ready, every probe runs the app's own
+// healthcheck on the guest's vCPU: production saw 1.3k-2.5k probes in a 30 s
+// boot (~80/s), slowing the startup they wait for and, for a healthcheck that
+// queries its database, issuing thousands of queries per cold boot
+// (deploy-path review P8). The delay then doubles up to readinessProbeMaxDelay.
+const (
+	readinessProbeMinDelay = 10 * time.Millisecond
+	readinessProbeMaxDelay = 100 * time.Millisecond
+)
+
+// nextProbeDelay is the wait before the next HTTP readiness probe.
+func (o *readinessObservation) nextProbeDelay() time.Duration {
+	if o.responses+o.nonHTTP == 0 {
+		o.delay = readinessProbeMinDelay
+		return o.delay
+	}
+	o.delay = min(max(o.delay*2, readinessProbeMinDelay), readinessProbeMaxDelay)
+	return o.delay
 }
 
 // readinessAnswerMargin is how long before the caller's deadline a readiness
@@ -7260,7 +7282,17 @@ func (v *JailerVMM) ExplainGuestStop(l Lease) error {
 		default:
 		}
 	}
-	return v.guestStopped(l, fmt.Sprintf("workload stopped during startup (guest %s exited after becoming ready)", l.Instance))
+	err := v.guestStopped(l, fmt.Sprintf("workload stopped during startup (guest %s exited after becoming ready)", l.Instance))
+	if api.AsProblem(err) != nil {
+		return err
+	}
+	// The guest passed readiness, so its init, overlay and the app all ran;
+	// guest-init then exited cleanly, which it does when the supervisor
+	// returns. A workload that exits with status 0 is not restarted and
+	// prints no restart marker, so this read as an internal platform failure
+	// and the customer got no app code or logs hint (deploy-path review P4,
+	// production h35-comp 2026-11-13: the app exited 0 without listening).
+	return startupCrashProblem("", err.Error()+"; the app's process exited after it became ready (a clean exit is not restarted). Keep the server process running in the foreground")
 }
 
 func (v *JailerVMM) guestStopped(l Lease, detail string) error {
@@ -7387,6 +7419,8 @@ func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefused
 // crashed app was reported as "answered 348 readiness probes without a 2xx").
 type readinessObservation struct {
 	responses, lastStatus, connRefused, nonHTTP int
+	// delay is the current wait between probes (nextProbeDelay).
+	delay time.Duration
 }
 
 // isNonHTTPReply reports a probe the app accepted and answered with something

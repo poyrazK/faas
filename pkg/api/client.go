@@ -6623,6 +6623,20 @@ func (c *Client) TransferOrgOwnership(ctx context.Context, slug string, req Tran
 	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/transfer_ownership", req, &out)
 }
 
+// GetOrgSecurityPolicy returns the organization's security policy, such
+// as whether members must use two-factor authentication.
+func (c *Client) GetOrgSecurityPolicy(ctx context.Context, slug string) (OrgSecurityPolicy, error) {
+	var out OrgSecurityPolicy
+	return out, c.do(ctx, "GET", "/v1/orgs/"+slug+"/security-policy", nil, &out)
+}
+
+// PutOrgSecurityPolicy replaces the organization's security policy. Only
+// an owner can change it, after a fresh step-up.
+func (c *Client) PutOrgSecurityPolicy(ctx context.Context, slug string, req OrgSecurityPolicy) (OrgSecurityPolicy, error) {
+	var out OrgSecurityPolicy
+	return out, c.do(ctx, "PUT", "/v1/orgs/"+slug+"/security-policy", req, &out)
+}
+
 // PeekInvitation is a read-only lookup that returns the invitation
 // metadata (email, role, org slug, expires_at) without consuming
 // the token. Used by the dashboard to render "you've been invited
