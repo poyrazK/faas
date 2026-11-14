@@ -2,6 +2,7 @@
 package apidserver_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -12,14 +13,25 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
-// Slice 3: a branch of an environment that binds object storage gets an
-// empty overlay bucket on each parent bucket, bound into its own scope with
-// its own credential, and the bucket is emptied and deleted after the branch.
-func TestEnvironmentBranchOverlaysParentBuckets(t *testing.T) {
-	_, restore := apidserver.WithTestIdentities(t)
-	defer restore()
+// branchObjectFixture is a project whose production environment binds one
+// bucket, with a pending branch pr-9.
+type branchObjectFixture struct {
+	e             *apidserver.TestEnv
+	srv           *apidserver.Server
+	store         *state.MemStore
+	acct          state.Account
+	project       state.Project
+	app           state.App
+	source        api.ObjectBucket
+	parentBinding api.ObjectStorageComputeBinding
+	parentObjects map[string][]byte
+}
+
+func newBranchObjectFixture(t *testing.T) branchObjectFixture {
+	t.Helper()
 	e := apidserver.SetupSecrets(t, api.PlanPro)
 	srv, store, acct := *e.S(), *e.Store(), *e.Acct()
 	ctx := t.Context()
@@ -69,6 +81,20 @@ func TestEnvironmentBranchOverlaysParentBuckets(t *testing.T) {
 	if rows, err := store.ListAppSecretsInScope(ctx, acct.ID, app.ID, "pr-9"); err != nil || len(rows) != 0 {
 		t.Fatalf("the parent's bucket credential was copied into the branch: %+v, %v", rows, err)
 	}
+	return branchObjectFixture{e: &e, srv: srv, store: store, acct: acct, project: project, app: app, source: source, parentBinding: parentBinding, parentObjects: parentObjects}
+}
+
+// Slice 3: a branch of an environment that binds object storage gets an
+// empty overlay bucket on each parent bucket, bound into its own scope with
+// its own credential, and the bucket is emptied and deleted after the branch.
+// A source without versioning is read live; the branch credential may copy
+// from it (copy-through).
+func TestEnvironmentBranchOverlaysParentBuckets(t *testing.T) {
+	_, restore := apidserver.WithTestIdentities(t)
+	defer restore()
+	f := newBranchObjectFixture(t)
+	srv, store, acct, project, app, source, parentBinding, parentObjects := f.srv, f.store, f.acct, f.project, f.app, f.source, f.parentBinding, f.parentObjects
+	ctx := t.Context()
 
 	for range 2 { // the second pass finds nothing left to do
 		if err := srv.ReconcileEnvironmentBranchData(ctx, time.Now().UTC()); err != nil {
@@ -96,6 +122,10 @@ func TestEnvironmentBranchOverlaysParentBuckets(t *testing.T) {
 	if err != nil || len(credentials) != 1 || credentials[0].ManagedScope != "pr-9" || credentials[0].ManagedPrefix != parentBinding.Prefix ||
 		credentials[0].Permission != state.ObjectBucketPermissionReadWrite {
 		t.Fatalf("branch credentials = %+v, %v", credentials, err)
+	}
+	grants, err := store.ListObjectS3CopySources(ctx, acct.ID, copyID, credentials[0].ID)
+	if err != nil || len(grants) != 1 || grants[0].SourceBucketID != source.ID || grants[0].Prefix != "" {
+		t.Fatalf("branch credential copy grants = %+v, %v", grants, err)
 	}
 	keys := object.ObjectStorageBindingSecretKeys(parentBinding.Prefix)
 	if secret, err := store.GetAppSecretInScope(ctx, acct.ID, app.ID, "pr-9", keys.Bucket); err != nil || secret.ManagedObjectStorageCredentialID != credentials[0].ID {
@@ -131,5 +161,63 @@ func TestEnvironmentBranchOverlaysParentBuckets(t *testing.T) {
 	}
 	if _, _, err := store.ResolveObjectS3Credential(ctx, parentBinding.Credential.AccessKeyID); err != nil {
 		t.Fatalf("parent credential after branch delete: %v", err)
+	}
+}
+
+// versionedSourceStore reports versioning on and settled for one bucket.
+type versionedSourceStore struct {
+	MemStore *state.MemStore
+	bucket   string
+}
+
+func (s *versionedSourceStore) GetObjectBucketVersioning(ctx context.Context, account, app, bucket string) (state.ObjectBucketVersioning, error) {
+	if bucket != s.bucket {
+		return s.MemStore.GetObjectBucketVersioning(ctx, account, app, bucket)
+	}
+	return state.ObjectBucketVersioning{ObjectBucketVersioning: api.ObjectBucketVersioning{BucketID: bucket, ObservedStatus: "Enabled", DesiredStatus: "Enabled", State: "ready"}}, nil
+}
+
+// A source with versioning on is read as of the branch point.
+func TestEnvironmentBranchReadsAVersionedSourceAsOfTheBranchPoint(t *testing.T) {
+	_, restore := apidserver.WithTestIdentities(t)
+	defer restore()
+	f := newBranchObjectFixture(t)
+	*f.srv.Store() = statetest.NewMem(&versionedSourceStore{MemStore: f.store, bucket: f.source.ID})
+	ctx := t.Context()
+	if err := f.srv.ReconcileEnvironmentBranchData(ctx, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	branch, err := f.store.ProjectEnvironmentBranchBySlug(ctx, f.acct.ID, f.project.ID, "pr-9")
+	if err != nil || branch.DataState != state.EnvironmentBranchDataReady {
+		t.Fatalf("branch after reconcile = %+v, %v", branch, err)
+	}
+	owned, err := f.store.ListProjectEnvironmentBranchBuckets(ctx, branch.EnvironmentID)
+	if err != nil || len(owned) != 1 {
+		t.Fatalf("branch buckets = %+v, %v", owned, err)
+	}
+	overlay, err := f.store.ObjectBucketOverlay(ctx, owned[0].CopyBucketID)
+	if err != nil || overlay.Consistency != state.ObjectBucketOverlayAsOf || !overlay.AsOf.Equal(branch.BranchPoint) {
+		t.Fatalf("overlay = %+v, %v", overlay, err)
+	}
+}
+
+func TestEnvironmentBranchSourceVersioned(t *testing.T) {
+	now := time.Date(2026, 11, 14, 12, 0, 0, 0, time.UTC)
+	past, future := now.Add(-time.Minute), now.Add(time.Minute)
+	for _, tc := range []struct {
+		name string
+		v    api.ObjectBucketVersioning
+		want bool
+	}{
+		{"never versioned", api.ObjectBucketVersioning{State: "ready"}, false},
+		{"on and settled", api.ObjectBucketVersioning{ObservedStatus: "Enabled", State: "ready", PropagationUntil: &past}, true},
+		{"on, no propagation recorded", api.ObjectBucketVersioning{ObservedStatus: "Enabled", State: "ready"}, true},
+		{"still propagating", api.ObjectBucketVersioning{ObservedStatus: "Enabled", State: "ready", PropagationUntil: &future}, false},
+		{"transition in flight", api.ObjectBucketVersioning{ObservedStatus: "Enabled", State: "waiting", PropagationUntil: &past}, false},
+		{"suspended", api.ObjectBucketVersioning{ObservedStatus: "Suspended", State: "ready", PropagationUntil: &past}, false},
+	} {
+		if got := apidserver.EnvironmentBranchSourceVersioned(state.ObjectBucketVersioning{ObjectBucketVersioning: tc.v}, now); got != tc.want {
+			t.Errorf("%s: versioned = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
