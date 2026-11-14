@@ -1,4 +1,6 @@
-# ADR-20261114120000: The node cache sizes itself from its disk, drops what nothing references, and evicts live snapshots last
+# ADR-20261114182830: The node cache sizes itself from its disk, drops what nothing references, and evicts live snapshots last
+
+Identifier note: renumbered from ADR-20261114120000 to distinguish the earlier per-plan startup-window decision. Runtime policy is unchanged.
 
 ## Status
 Proposed.

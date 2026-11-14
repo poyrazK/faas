@@ -1,6 +1,6 @@
 package attention
 
-// Customer view of attention signals (ADR-20261114090000). The account
+// Customer view of attention signals (ADR-20261114190002). The account
 // health page and GET /v1/account/health show a customer their own open
 // signals of the kinds below, worded for them. Every other kind stays
 // internal: refused_burst, domain_stuck and payment_failing repeat sections

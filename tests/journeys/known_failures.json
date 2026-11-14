@@ -63,5 +63,10 @@
     "step": "TestDataAPI/data_api_enabled",
     "bug": "managed PostgreSQL and the Data API (GA rows 109 and 110) are preview and not released to production accounts: production provisioning waits on the operator approval pin (ADR-20261028103115), and the later steps report blocked; remove once the e2e account is released",
     "since": "2026-10-31"
+  },
+  {
+    "step": "TestDebugger/regression_detected",
+    "bug": "a platform cold-boot health check reaching the old release after the rollout makes the regression detector compare the two releases side by side, where the old one has no baseline for GET /, so a 24x slowdown is not reported (ADR-127 amendment 2026-11-14); known until that fix is released. Passes when no such request lands",
+    "since": "2026-11-14"
   }
 ]

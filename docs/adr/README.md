@@ -2312,6 +2312,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261111163000: Workflow recovery and replay integrity](20261111163000-workflow-recovery-and-replay-integrity.md) — tenant-scoped idempotency, monotonic HTTP attempts, replay cursors, reserved timeout payloads, and safe workflow transport budgets
 - [ADR-20261112160000: Neon API keys are held by neond, which enforces what apid may ask](20261112160000-neon-keys-held-by-neond.md) — accepted (design); a new control-plane `neond` holds the Neon service user's admin key and a project-scoped key per Neon project; apid forwards its Neon requests over a unix socket, and neond allow-lists them, picks the key, refuses deleting a live database's project or branch, rate-limits destructive calls and logs every call; no backups outside Neon (owner's choice)
 - [ADR-20261112210000: Data API investigation hardening](20261112210000-data-api-investigation-hardening.md) — accepted; resolves DAPI001–DAPI030, with exact numeric mode, bounded authorization leases, independent budget counters, retry/quarantine scheduling and opt-in owner maintenance with shared-bucket ownership protection.
+
+- [ADR-20261113181050: Pipeline freshness, durable CLI setup and index advice](20261113181050-pipeline-freshness-durable-cli-and-index-advice.md) — staging pilot; checkpoint confirmation targets, resumable provisioning and explicitly approved bounded mirror indexes.
 - [ADR-20261113120820: Invocation-scoped CLI HTTP request timeout](20261113120820-cli-http-request-timeout.md) — accepted; positive prefix duration overrides API/upload budgets, while streams retain caller-controlled body lifetime
 - [ADR-20261113132310: Opt-in retries for selected CLI reads](20261113132310-cli-read-request-retries.md) — accepted; bounded invocation-scoped retries on a closed JSON read set, authoritative Retry-After, cancellation and attempt metadata
 
@@ -2328,3 +2330,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-20261113230000: Guided OAuth for execution connections](20261113230000-guided-tool-oauth.md) — accepted; owner-only browser PKCE, direct encrypted credentials, consumed authorization attempts and new identities for reconnects
 - [ADR-20261114100000: Bill only public-bound app egress](20261114100000-bill-only-public-app-egress.md) — proposed; per-netns nftables counters split internal from public egress, meterd bills a new public_tx_bytes column; the egress meter stays off/shadow until then (billing review R8-2)
+- [ADR-20261114170352: Organization ownership guards and a require-2FA policy](20261114170352-org-ownership-and-security-policy.md) — accepted; ownership eligibility, browser-only transfer/deletion, organization two-factor policy and owner recovery. Renumbered from the colliding customer-attention identifier.
+- [ADR-20261114164404: Structured recovery for CLI Workflow waits](20261114164404-cli-workflow-wait-recovery.md) — accepted; exact-run read-only inspection/resumption for wait and accepted run/resume/retry waits, preserved timing options, snapshots, polling and exit contracts.
+- [ADR-20261114182830: Node cache disk budget and reference-based retention](20261114182830-node-cache-budget-from-disk-and-retention.md) — accepted; filesystem-sized budget, unreferenced capture/base retention and live snapshots evicted last. Renumbered from the startup-window identifier collision.
+
+- [ADR-20261114190002: Customers see their own attention signals; sign-in refusals are recorded](20261114190002-customer-signal-hints-and-credential-refusals.md)

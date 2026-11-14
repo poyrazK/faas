@@ -745,7 +745,14 @@ func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now t
 		l.log.Warn("meter: object storage charge read failed", "account", acct.ID, "err", err)
 		return err
 	}
-	observed := saturatedAdd(saturatedAdd(monthCents, meterCents), objectStorageCents)
+	// Managed PostgreSQL overage counts toward the cap too (billing review
+	// 2026-11-13, R7-1), delivered the same way.
+	databaseCents, err := SpendCapManagedPostgresCents(ctx, l.store, acct.ID, now)
+	if err != nil {
+		l.log.Warn("meter: managed postgres charge read failed", "account", acct.ID, "err", err)
+		return err
+	}
+	observed := saturatedAdd(saturatedAdd(saturatedAdd(monthCents, meterCents), objectStorageCents), databaseCents)
 	complimentary := false
 	if capCents == 0 {
 		if complimentary, err = state.IsComplimentaryAccount(ctx, l.store, acct.ID); err != nil {

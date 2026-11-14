@@ -38,7 +38,7 @@ func ResolveCacheMaxBytes(memTotalBytes int64) int64 {
 }
 
 // ResolveCacheBudget sizes the artifact cache from the disk it lives on as
-// well as from RAM (ADR-20261114120000). The cache shares its filesystem with
+// well as from RAM (ADR-20261114182830). The cache shares its filesystem with
 // capture staging, writable layer clones and builder drives, so it keeps a
 // reserve free on that filesystem: api.ArtifactCacheReservePercent of the
 // disk, never less than api.ArtifactCacheMinFreeBytes. The byte budget is

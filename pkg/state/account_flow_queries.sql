@@ -232,7 +232,7 @@ DELETE FROM login_failure_budgets WHERE email_hash IN (
     WHERE window_started_at <= now() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
     ORDER BY window_started_at LIMIT 200);
 
--- Organization security policy (ADR 20261113180000).
+-- Organization security policy (ADR 20261114170352).
 -- name: OrgSecurityPolicy :one
 SELECT org_id, require_mfa, updated_by_account_id, updated_at
 FROM org_security_policies WHERE org_id = $1;

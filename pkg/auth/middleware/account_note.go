@@ -7,7 +7,7 @@ import (
 
 // AccountNote lets the daemon that mounts RequireSession learn which account
 // a request's credential belongs to, even when the middleware refuses the
-// request before calling the account handler (ADR-20261114090000): a revoked
+// request before calling the account handler (ADR-20261114190002): a revoked
 // or expired API key, a suspended account, a key limited to other projects.
 // apid records those refusals for the account as it records the ones its
 // handlers return.

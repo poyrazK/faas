@@ -1,5 +1,5 @@
 -- name: ListReferencedSnapshotCaptureKeys :many
--- ADR-20261114120000: every snapshot memory key a row still references, so
+-- ADR-20261114182830: every snapshot memory key a row still references, so
 -- a compute node can drop cached captures nothing references. use is 'live'
 -- for a non-stale snapshot (evicted last), 'stale' for a stale one (evicted
 -- first) and 'other' for branch captures, crash captures and in-flight live
@@ -29,7 +29,7 @@ SELECT mem_storage_key::text, 'other'::text
  WHERE mem_storage_key LIKE 'snap/%';
 
 -- name: ListRuntimeReleaseRetention :many
--- ADR-20261114120000: every runtime release, and whether a compute node must
+-- ADR-20261114182830: every runtime release, and whether a compute node must
 -- keep its base cached: a deployment that is not failed or cancelled is
 -- bound to it, or a runtime upgrade targets it.
 SELECT r.id, r.runtime, r.architecture, r.created_at,

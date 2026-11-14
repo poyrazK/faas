@@ -74,11 +74,46 @@ func SpendCapObjectStorageCents(ctx context.Context, store state.Store, accountI
 	return delivered/api.MillicentsPerCent + min(delivered%api.MillicentsPerCent, 1), nil
 }
 
+// liveManagedPostgresCharge is the subject's live managed PostgreSQL overage
+// charge for the month of at, delivered and pending. Since the billing review
+// of 2026-11-13 (R7-1) the spend cap counts it like object storage: before,
+// databases could be billed past a cap the docs call a hard ceiling. A store
+// without managed PostgreSQL charges reserves nothing.
+func liveManagedPostgresCharge(ctx context.Context, store state.Store, subjectID string, at time.Time) (delivered, pending int64, err error) {
+	charges, ok := store.(state.ManagedPostgresLiveChargeStore)
+	if !ok {
+		return 0, 0, nil
+	}
+	delivered, pending, err = charges.LiveManagedPostgresMillicents(ctx, subjectID, at)
+	if err != nil {
+		return 0, 0, fmt.Errorf("load live managed postgres charge: %w", err)
+	}
+	return delivered, pending, nil
+}
+
+// SpendCapManagedPostgresCents is the managed PostgreSQL charge the spend-cap
+// hold counts for the month of at, as SpendCapObjectStorageCents counts
+// object storage: delivered only, a part cent counting as a whole one.
+func SpendCapManagedPostgresCents(ctx context.Context, store state.Store, subjectID string, at time.Time) (int64, error) {
+	delivered, _, err := liveManagedPostgresCharge(ctx, store, subjectID, at)
+	if err != nil {
+		return 0, err
+	}
+	return delivered/api.MillicentsPerCent + min(delivered%api.MillicentsPerCent, 1), nil
+}
+
 // liveObjectStorageReserved is the delivered and pending live object-storage
-// charge the cap reserves.
+// and managed PostgreSQL charge the cap reserves before compute and egress.
 func liveObjectStorageReserved(ctx context.Context, store state.Store, accountID string, at time.Time) (int64, error) {
 	delivered, pending, err := liveObjectStorageCharge(ctx, store, accountID, at)
-	return delivered + pending, err
+	if err != nil {
+		return 0, err
+	}
+	pgDelivered, pgPending, err := liveManagedPostgresCharge(ctx, store, accountID, at)
+	if err != nil {
+		return 0, err
+	}
+	return delivered + pending + pgDelivered + pgPending, nil
 }
 
 // clampToAllowance bills [before, after) only up to allowance.

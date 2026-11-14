@@ -246,6 +246,12 @@ func (h *cliAuthHandlers) exchangeCliAuthCode(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.ErrCapacity("account lookup failed"))
 		return
 	}
+	// Each `gregale login` mints a 30-day full-access key; keep only the
+	// newest CLILoginKeysMax so logins on many machines (or a CLI that
+	// failed to revoke the key it replaced) cannot pile them up (F11-2).
+	if label == cliLoginKeyLabel {
+		h.srv.retireOldLoginKeys(r, acct, cliLoginKeyLabel, api.CLILoginKeysMax)
+	}
 	// The approval page can be phished (device-code phishing), so the
 	// owner learns about every credential it hands out.
 	what := credentialCLISignIn

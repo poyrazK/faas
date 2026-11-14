@@ -3493,6 +3493,7 @@
       "id",
       "kind",
       "log_path",
+      "not_before",
       "source_bytes",
       "started_at",
       "status"
@@ -5107,8 +5108,10 @@
       "created_at",
       "database_id",
       "desired_state",
+      "freshness_target_seconds",
       "generation",
       "id",
+      "index_change",
       "initialized",
       "lease_token",
       "lease_until",
