@@ -260,7 +260,7 @@ export class DataPipelinesService {
     id: string,
     requestBody: DataPipelineTenantReadersRequest,
   }): CancelablePromise<Problem | DataPipeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines/{id}/tenant-readers',
       path: {
