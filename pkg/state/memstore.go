@@ -8363,6 +8363,7 @@ func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
 			m.apps[id] = preview
 		}
 	}
+	m.expirePullRequestBranchesLocked(parent.AccountID, parent.ProjectID, now)
 }
 
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch
