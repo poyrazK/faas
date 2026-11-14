@@ -198,6 +198,11 @@ var budgetRoutes = map[string]bool{
 	"POST /v1/projects/{}/environments":             true,
 	"POST /v1/projects/{}/environment-clones":       true,
 	"POST /v1/projects/{}/environments/{}/branches": true,
+	// Source deploys apply gregale.yaml's deployment settings.
+	"POST /v1/apps/{}/deployments":                true,
+	"POST /v1/apps/{}/deployments/source-ref":     true,
+	"POST /v1/apps/{}/deployments/source-tarball": true,
+	"POST /v1/uploads/{}/commit":                  true,
 }
 
 // ChargesBudget reports whether a route's handler charges the agent's

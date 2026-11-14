@@ -1030,6 +1030,23 @@ func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bo
 		 where id = $1 and status = 'active'`, AccountSuspended)
 }
 
+// QuotaSuspended reports whether the account or resource-owning organization
+// id is suspended by the plan's monthly quota stop (SuspendAccountForFreeQuota:
+// the Free compute allowance or an unbilled egress allowance), rather than for
+// payment, abuse or by an operator. That stop parks the subject's apps until
+// the month ends or the plan grows; it does not stop its other resources.
+func (s *PgStore) QuotaSuspended(ctx context.Context, id string) (bool, error) {
+	var suspended bool
+	err := s.pool.QueryRow(ctx, `
+		select exists(select 1 from accounts where id = $1::uuid and status = 'suspended' and suspended_reason = 'free_quota')
+		    or exists(select 1 from orgs where id = $1::uuid and not personal_org and status = 'suspended' and suspended_reason = 'free_quota')`,
+		id).Scan(&suspended)
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return suspended, nil
+}
+
 // RestoreFreeQuotaSuspension lifts only a suspension that
 // SuspendAccountForFreeQuota applied.
 func (s *PgStore) RestoreFreeQuotaSuspension(ctx context.Context, id string) (bool, error) {
