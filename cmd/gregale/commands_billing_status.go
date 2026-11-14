@@ -2,7 +2,7 @@
 // `gregale billing status --watch` (PR-P4).
 //
 // Prints the authenticated customer's provider-independent billing status.
-// Provider catalogs remain under `gregale billing price-catalog`, while this
+// Provider catalogs are managed with `gregalectl billing price-catalog`, while this
 // customer command works without operator allowlisting.
 //
 // PR-P4 additions:
@@ -227,7 +227,7 @@ func printCustomerBillingStatus(w io.Writer, resp api.BillingStatusResponse) {
 //
 // An empty catalog (no hydration yet) renders the active provider,
 // SyncedAt: never synced" header followed by a one-line hint to run
-// `gregale billing price-catalog sync`. We do not gate that hint on
+// `gregalectl billing price-catalog sync`. We do not gate that hint on
 // the response — the operator's CLI subcommand is the right place
 // for actionable guidance.
 func printBillingStatus(w io.Writer, resp api.BillingCatalogResponse) {
@@ -242,7 +242,7 @@ func printBillingStatus(w io.Writer, resp api.BillingCatalogResponse) {
 	_, _ = fmt.Fprintf(tw, "SyncedAt:\t%s\n", syncedAt)
 	if len(resp.Entries) == 0 {
 		_, _ = fmt.Fprintln(tw, "\nCatalog:\t<empty>")
-		_, _ = fmt.Fprintln(tw, "\nRun `gregale billing price-catalog sync` to hydrate.")
+		_, _ = fmt.Fprintln(tw, "\nAn operator runs `gregalectl billing price-catalog sync` to hydrate.")
 		return
 	}
 	_, _ = fmt.Fprintln(tw, "\nCatalog:")
