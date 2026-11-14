@@ -31,12 +31,18 @@ the preview-only pipeline surface.
 The local TLS/native baseline passed: pipeline 591.015s, HTTP 28.758s, source
 adapter 0.374s and dashboard 0.563s. After the final configuration/safety-deadline
 fixes, the TLS snapshot/quality regressions and native verification window,
-cancellation and one-batch-budget regression passed again (6.686s), including
-quality-window rescheduling and staging without redundant target indexes. The final
+cancellation and one-batch-budget regression passed again (5.276s), including
+quality-window rescheduling, staging without redundant target indexes and legacy
+API control guards. The final
 domain suite passed in 97.691s; HTTP/dashboard control checks also passed.
 The public CLI, apidserver, clone-registry and migrated-capacity checks passed
 (5.920s, 0.494s, 36.075s and 30.523s respectively). Source qualification is still
 operator-reviewed; the fixture does not establish a live provider allocation.
+
+The final migration was replayed into a fresh PostgreSQL database and dumped
+again (111,195 schema lines); the migrated snapshot-capacity regression passed
+again (24.796s). Trigger replacement is atomic and normal pause SQL remains
+compatible with older API binaries. [Final schema/compatibility proof](schema-proof.txt).
 
 Schema dump/migration and SQLC generation passed, along with OpenAPI AST parity,
 Node generation/build, Python generation/import/DTO round trip, migration online

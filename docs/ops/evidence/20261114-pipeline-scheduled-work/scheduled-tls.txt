@@ -1,1 +1,1 @@
-ok  	github.com/onebox-faas/faas/pkg/datapipeline	6.686s
+ok  	github.com/onebox-faas/faas/pkg/datapipeline	5.276s

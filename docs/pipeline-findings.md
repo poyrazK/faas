@@ -64,6 +64,7 @@ batch**; these are not claims about production incidents:
 | Changing a work window left a preserved quality result advertising a run outside that window. | Recalculate the next allowed quality run while retaining its previous result; the quality regression changes and removes the window before a manual run. |
 | Temporary staging copied target secondary indexes and expressions on every refresh. | Build staging from the reviewed source columns and primary key, preserve public indexes, and reject unsupported target column types. The multi-table rollback regression verifies that staging has only its required primary-key indexes. |
 | Old workers/monitors could process unfamiliar scheduled intent or falsely recover a quality incident. | Database capability fences for pipelines, checks and monitors; preserve them on binary rollback. `TestScheduledWorkersFenceOlderClaims` and `TestQualityIncidentDoesNotRecoverFromUnknownOrIncompleteScan` cover these boundaries. |
+| An older API server could queue native resync/verification/schema work for a snapshot despite the worker claim fence. | Database guards reject native generations, verification, schema workflows and initialized snapshot selection changes. The compatibility regression executes legacy control SQL directly and confirms ordinary pause still works. |
 
 This batch does not enable production or imply that the source provider has
 passed the live drill. Simple views, one-to-many relationships, reviewed Auth

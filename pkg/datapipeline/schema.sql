@@ -221,6 +221,13 @@ BEGIN
   IF TG_OP='UPDATE' AND (NEW.work_config ? 'snapshot') IS DISTINCT FROM (OLD.work_config ? 'snapshot') THEN
    RAISE EXCEPTION 'pipeline import mode is immutable' USING ERRCODE='23514';
   END IF;
+  IF OLD.work_config ? 'snapshot' AND (
+   NEW.generation IS DISTINCT FROM OLD.generation OR NEW.verify_requested
+   OR NEW.schema_change IS DISTINCT FROM OLD.schema_change
+   OR (OLD.initialized AND (NEW.tables IS DISTINCT FROM OLD.tables
+    OR coalesce(NEW.serving_config->'columns','{}'::jsonb) IS DISTINCT FROM coalesce(OLD.serving_config->'columns','{}'::jsonb)))) THEN
+   RAISE EXCEPTION 'snapshot pipelines cannot enter native replication workflows' USING ERRCODE='23514';
+  END IF;
   IF NEW.work_config<>'{}' AND NEW.lease_token<>'' AND (TG_OP='INSERT' OR NEW.lease_token IS DISTINCT FROM OLD.lease_token)
    AND current_setting('gregale.pipeline_worker_protocol',true) IS DISTINCT FROM 'pipeline-scheduled-v1' THEN RETURN NULL; END IF;
  ELSE
@@ -230,7 +237,5 @@ BEGIN
  RETURN NEW;
 END $$;
 
-DROP TRIGGER IF EXISTS data_pipelines_scheduled_fence ON data_pipelines;
-CREATE TRIGGER data_pipelines_scheduled_fence BEFORE UPDATE OF work_config,lease_token ON data_pipelines FOR EACH ROW EXECUTE FUNCTION pipeline_scheduled_worker_fence();
-DROP TRIGGER IF EXISTS data_pipeline_checks_scheduled_fence ON data_connection_checks;
-CREATE TRIGGER data_pipeline_checks_scheduled_fence BEFORE UPDATE OF lease_token ON data_connection_checks FOR EACH ROW EXECUTE FUNCTION pipeline_scheduled_worker_fence();
+CREATE OR REPLACE TRIGGER data_pipelines_scheduled_fence BEFORE UPDATE OF work_config,lease_token,generation,verify_requested,schema_change,tables,serving_config ON data_pipelines FOR EACH ROW EXECUTE FUNCTION pipeline_scheduled_worker_fence();
+CREATE OR REPLACE TRIGGER data_pipeline_checks_scheduled_fence BEFORE UPDATE OF lease_token ON data_connection_checks FOR EACH ROW EXECUTE FUNCTION pipeline_scheduled_worker_fence();

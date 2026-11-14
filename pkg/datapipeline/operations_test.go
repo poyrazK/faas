@@ -103,6 +103,24 @@ func TestScheduledWorkersFenceOlderClaims(t *testing.T) {
 	if err != nil || claimed.ID != p.ID {
 		t.Fatal("capable worker could not claim", err)
 	}
+	// Old API binaries cannot see operations mode. Their native control SQL
+	// must still be rejected without depending on application-side checks.
+	for _, assignment := range []string{"generation=generation+1", "verify_requested=true", `schema_change='{"State":"requested"}'::jsonb`} {
+		if _, err = store.pool.Exec(t.Context(), "UPDATE data_pipelines SET "+assignment+" WHERE id=$1", p.ID); err == nil {
+			t.Fatal("old API queued a native snapshot workflow", assignment)
+		}
+	}
+	if _, err = store.pool.Exec(t.Context(), `UPDATE data_pipelines SET initialized=true WHERE id=$1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, assignment := range []string{`tables='["orders","customers"]'::jsonb`, `serving_config='{"version":1,"columns":{"orders":["id"]}}'::jsonb`} {
+		if _, err = store.pool.Exec(t.Context(), "UPDATE data_pipelines SET "+assignment+" WHERE id=$1", p.ID); err == nil {
+			t.Fatal("old API changed a snapshot selection", assignment)
+		}
+	}
+	if _, err = store.pool.Exec(t.Context(), `UPDATE data_pipelines SET desired_state='paused',generation=generation,verify_requested=false,schema_change=schema_change WHERE id=$1`, p.ID); err != nil {
+		t.Fatal("compatibility fence blocked ordinary pause", err)
+	}
 }
 
 // Real PostgreSQL endpoints, a SELECT-only source login, and the real catalog
