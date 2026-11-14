@@ -165,6 +165,28 @@
       ]
     },
     {
+      "id": "ai-prompts",
+      "name": "AI managed prompts",
+      "category": "data",
+      "description": "Version prompts apps call by name, with canaries, rollback and evaluations.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/ai-gateway",
+      "acceptance_test": "pkg/apid/outboundai/prompts_test.go::TestPromptAPILifecycle",
+      "parent": "ai-gateway",
+      "routes": [
+        "/v1/outbound/ai-prompt-evaluations",
+        "/v1/outbound/ai-prompts"
+      ],
+      "cli": [
+        "ai prompts"
+      ]
+    },
+    {
       "id": "ai-request-replay",
       "name": "AI request capture and replay",
       "category": "data",

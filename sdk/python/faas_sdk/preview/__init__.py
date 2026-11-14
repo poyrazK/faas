@@ -99,14 +99,18 @@ from ._event_deadline_policy import (
 from ._wrapper import FaaSClient
 from .ai_gateway import (
     AI_CALL_HEADER,
+    AI_PROMPT_VERSION_HEADER,
     AI_SESSION_HEADER,
     AI_TAGS_HEADER,
     AI_TRACE_HEADER,
     AI_USER_HEADER,
     AIGatewayError,
+    AIPrompt,
+    AIPromptResult,
     ai_gateway_feedback,
     ai_gateway_headers,
     ai_gateway_url,
+    ai_prompt,
     is_valid_ai_user_id,
     opaque_ai_user_id,
 )
@@ -419,6 +423,7 @@ from .realtime_workers import (
 __all__ = (
     *_PACKAGE_ALL,
     "AI_CALL_HEADER",
+    "AI_PROMPT_VERSION_HEADER",
     "AI_SESSION_HEADER",
     "AI_TAGS_HEADER",
     "AI_TRACE_HEADER",
@@ -427,6 +432,9 @@ __all__ = (
     "ai_gateway_feedback",
     "ai_gateway_headers",
     "ai_gateway_url",
+    "AIPrompt",
+    "AIPromptResult",
+    "ai_prompt",
     "is_valid_ai_user_id",
     "opaque_ai_user_id",
     "IssueReporter",
