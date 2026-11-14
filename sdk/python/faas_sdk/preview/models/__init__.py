@@ -25,6 +25,8 @@ from .account_health_request import AccountHealthRequest
 from .account_health_requests import AccountHealthRequests
 from .account_health_restriction import AccountHealthRestriction
 from .account_health_restriction_kind import AccountHealthRestrictionKind
+from .account_health_signal import AccountHealthSignal
+from .account_health_signal_kind import AccountHealthSignalKind
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_overage_cap_response import AccountOverageCapResponse
@@ -4268,6 +4270,7 @@ from .plan_managed_provision import PlanManagedProvision
 from .plan_platform_tenant_reconciliation_request import PlanPlatformTenantReconciliationRequest
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
+from .plan_source_host import PlanSourceHost
 from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
@@ -6568,6 +6571,8 @@ __all__ = (
     "AccountHealthRequests",
     "AccountHealthRestriction",
     "AccountHealthRestrictionKind",
+    "AccountHealthSignal",
+    "AccountHealthSignalKind",
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountOverageCapResponse",
@@ -10557,6 +10562,7 @@ __all__ = (
     "PlanPlatformTenantReconciliationRequest",
     "PlanResponse",
     "PlanResponseScanSource",
+    "PlanSourceHost",
     "PlanWorkload",
     "PlanWorkloadAction",
     "PlanWorkloadClass",

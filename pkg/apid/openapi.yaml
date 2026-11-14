@@ -40923,8 +40923,8 @@ paths:
         Deletes the branch and creates it again from its parent with the same
         slug, egress, private-network mode and time to live. Its workloads
         are published from the parent's current builds and its data is copied
-        again as of now. Work done in the branch is discarded, and its
-        workloads get new URLs. A branch with branches of its own cannot be
+        again as of now. Work done in the branch is discarded; its
+        workloads keep their URLs. A branch with branches of its own cannot be
         reset.
       responses:
         '200':
@@ -91410,16 +91410,20 @@ components:
           description: Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
 
     AccountHealth:
-      description: "What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain problems and refused API requests."
+      description: "What may stop the calling account from working: restrictions with the next step, problems that keep recurring, failed deployments, custom-domain problems and refused API requests."
       type: object
       required: [generated_at, attention, restrictions, failed_deployments, domain_issues, refused_requests]
       properties:
         generated_at: { type: string, format: date-time, description: When the checks ran. }
-        attention: { type: integer, description: "Number of restrictions, failed deployments and domain issues; zero means nothing needs action." }
+        attention: { type: integer, description: "Number of restrictions, signals, failed deployments and domain issues; zero means nothing needs action." }
         restrictions:
           type: array
           description: Restrictions currently applied to the account, one per kind.
           items: { $ref: '#/components/schemas/AccountHealthRestriction' }
+        signals:
+          type: array
+          description: "Problems that keep recurring on the account, such as repeated failed deployments or out-of-memory stops, with the next step. Absent from older servers."
+          items: { $ref: '#/components/schemas/AccountHealthSignal' }
         failed_deployments:
           type: array
           description: Failed deployments from the last 7 days, newest first, at most 10.
@@ -91447,6 +91451,21 @@ components:
         action: { type: string, description: Label of the next step. }
         action_url: { type: string, description: Dashboard path for the next step. }
         since: { type: string, format: date-time, description: "When the restriction started, when known." }
+    AccountHealthSignal:
+      description: "A problem that keeps recurring, in customer wording, with the next step when there is one."
+      type: object
+      required: [kind, subject, title, detail, since]
+      properties:
+        kind:
+          type: string
+          enum: [deploy_failing, app_oom, jobs_failing, limit_pressure]
+          description: Stable signal identifier.
+        subject: { type: string, description: "What the signal is about: an app slug, a scheduled job name or a problem code." }
+        title: { type: string, description: Short headline for the signal. }
+        detail: { type: string, description: What keeps happening and how to fix it. }
+        action: { type: string, description: Label of the link that fixes the signal. }
+        action_url: { type: string, description: Dashboard path of the page that fixes the signal. }
+        since: { type: string, format: date-time, description: When Gregale first detected the problem. }
     AccountHealthDeployment:
       description: A failed deployment with the error and fix hint the build or rollout reported.
       type: object
@@ -114105,6 +114124,10 @@ components:
             type: string
             enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
           description: "For an unset_env_keys name with a Compose value, why that value is not imported. Never values."
+        source_hosts:
+          type: array
+          items: { $ref: '#/components/schemas/PlanSourceHost' }
+          description: "String literals in the workload's source that dial another service by its Compose name, which does not resolve on Gregale. At most a few per workload."
         imported_env_keys:
           type: array
           items: { type: string }
@@ -114317,6 +114340,14 @@ components:
         observed: { type: integer, format: int64 }
         docs_url: { type: string }
 
+    PlanSourceHost:
+      type: object
+      description: "One place source code dials a service by its Compose name."
+      required: [host, file, line]
+      properties:
+        host: { type: string, description: "The Compose service name the code uses as a host." }
+        file: { type: string, description: "Repository-relative path of the file." }
+        line: { type: integer, description: "1-based line number." }
     FeatureHint:
       description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable."
       type: object

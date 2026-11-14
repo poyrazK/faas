@@ -593,6 +593,9 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			// error and emit the audit event from here so the
 			// store stays independent of the audit seam.
 			if err != nil {
+				// ADR-20261114090000: a revoked or expired key still
+				// names its account.
+				noteAccount(r, key.AccountID)
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
 					if m.Audit != nil {
@@ -619,6 +622,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// simply unknown; both surface as "invalid
 				// bearer" through the legacy 401 path.
 			} else {
+				noteAccount(r, acct.ID)
 				if !acct.Active() {
 					if !inactiveCallerMayReach(r, acct) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
@@ -743,6 +747,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				api.WriteProblem(w, api.ErrCapacity("authenticate platform tenant access token"))
 				return
 			}
+			noteAccount(r, acct.ID)
 			if !acct.Active() {
 				api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 					"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
@@ -786,6 +791,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		if api.ValidOIDCKeyFormat(tok) {
 			acct, key, err := m.Authn.AuthenticateOIDCBearer(r.Context(), api.HashAPIKey(tok))
 			if err == nil {
+				noteAccount(r, acct.ID)
 				// A bearer exchanged under a trust policy Gregale created is
 				// bound to one app and confined like a per-app deploy token
 				// (ADR-20261101100000).
@@ -828,6 +834,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if deployAuth, ok := m.Authn.(DeployTokenAuthenticator); ok {
 				acct, key, err := deployAuth.AuthenticateDeployToken(r.Context(), api.HashAPIKey(tok))
 				if err == nil {
+					noteAccount(r, acct.ID)
 					if m.appBoundCredentialRefused(w, r, key, "Deploy token scope is app-bound") {
 						return
 					}
@@ -850,6 +857,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					next(w, r, acct)
 					return
 				}
+				noteAccount(r, key.AccountID)
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
 					api.WriteProblem(w, api.ErrAPIKeyExpired())
@@ -905,6 +913,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					r = r.WithContext(withSession(r.Context(), sess))
 					//nolint:contextcheck // same pointer-mutation contract: AccountByID reads from r.Context() so the returned principal stamps into the same ctx as withPrincipal below.
 					if acct, err := m.Authn.AccountByID(r.Context(), env.AccountID); err == nil {
+						noteAccount(r, acct.ID)
 						if !acct.Active() {
 							if !inactiveCallerMayReach(r, acct) {
 								api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,

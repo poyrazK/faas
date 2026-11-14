@@ -2664,7 +2664,7 @@ func (m *MemStore) AuthenticateKey(_ context.Context, hash []byte) (Account, API
 		return Account{}, APIKey{}, ErrNotFound
 	}
 	if k.Status == string(APIKeyStatusRevoked) {
-		return Account{}, APIKey{}, ErrAPIKeyRevoked
+		return Account{}, refusedKey(k.ID, k.AccountID), ErrAPIKeyRevoked
 	}
 	if k.ExpiresAt != nil && !k.ExpiresAt.IsZero() && k.ExpiresAt.Before(time.Now()) {
 		k.Status = string(APIKeyStatusRevoked)
@@ -2674,7 +2674,7 @@ func (m *MemStore) AuthenticateKey(_ context.Context, hash []byte) (Account, API
 		}
 		m.keys[k.ID] = k
 		m.keyByHash[hex.EncodeToString(k.Hash)] = k
-		return Account{}, APIKey{}, ErrAPIKeyExpired
+		return Account{}, refusedKey(k.ID, k.AccountID), ErrAPIKeyExpired
 	}
 	return acct, k, nil
 }
@@ -30163,6 +30163,9 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		delivery, ok := m.appWebhookDeliveries[event.SourceID]
 		if !ok || delivery.AccountID != accountID || delivery.AppID != appID || delivery.Status != AppWebhookDeliveryDead {
 			return DeadLetterEvent{}, ErrNotFound
+		}
+		if err := m.checkWebhookReplayAdmissionLocked(delivery); err != nil {
+			return DeadLetterEvent{}, err
 		}
 		delivery.Status = AppWebhookDeliveryPending
 		delivery.Attempt = 0
