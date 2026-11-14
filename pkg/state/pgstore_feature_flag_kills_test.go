@@ -76,4 +76,14 @@ func TestPg_FeatureFlagKillsForDeployment(t *testing.T) {
 	if keys, err := s.FeatureFlagKillsForDeployment(ctx, "not-a-uuid"); err != nil || keys != nil {
 		t.Fatalf("invalid id: %v %v", keys, err)
 	}
+
+	// ADR 20261114150000 §4: the lifecycle reconciler pages environments
+	// with a published configuration, once each.
+	envs, err := s.ListFeatureFlagEnvironments(ctx, "", 10)
+	if err != nil || len(envs) != 1 || envs[0].Scope != scope || envs[0].ProjectSlug != "flags-kill" || envs[0].EnvironmentSlug != "production" {
+		t.Fatalf("environments = %+v, %v", envs, err)
+	}
+	if after, err := s.ListFeatureFlagEnvironments(ctx, env.ID, 10); err != nil || len(after) != 0 {
+		t.Fatalf("page after the last environment = %+v, %v", after, err)
+	}
 }

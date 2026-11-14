@@ -27,6 +27,47 @@ JOIN LATERAL (
 CROSS JOIN LATERAL jsonb_array_elements(latest.config->'flags') f
 WHERE d.id = $1 AND f->'killed' = 'true'::jsonb`
 
+// ListFeatureFlagEnvironments pages, by environment id, every environment
+// with a published flag configuration, for the lifecycle reconciler
+// (ADR 20261114150000 §4).
+func (s *PgStore) ListFeatureFlagEnvironments(ctx context.Context, afterEnvironmentID string, limit int) ([]FeatureFlagAutoRolloutCandidate, error) {
+	after := uuid.Nil
+	if afterEnvironmentID != "" {
+		parsed, err := uuid.Parse(afterEnvironmentID)
+		if err != nil {
+			return nil, ErrInvalidArgument
+		}
+		after = parsed
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT DISTINCT ON (e.id) v.account_id::text, v.project_id::text, e.id::text, p.slug, e.slug
+FROM feature_flag_versions v
+JOIN projects p ON p.id = v.project_id
+JOIN project_environments e ON e.id = v.environment_id
+WHERE e.id > $1
+ORDER BY e.id
+LIMIT $2`, after, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list flag environments: %w", err)
+	}
+	defer rows.Close()
+	var out []FeatureFlagAutoRolloutCandidate
+	for rows.Next() {
+		var c FeatureFlagAutoRolloutCandidate
+		if err := rows.Scan(&c.Scope.AccountID, &c.Scope.ProjectID, &c.Scope.EnvironmentID, &c.ProjectSlug, &c.EnvironmentSlug); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// FeatureFlagEnvironmentLister is the optional Postgres capability the
+// lifecycle reconciler needs.
+type FeatureFlagEnvironmentLister interface {
+	ListFeatureFlagEnvironments(ctx context.Context, afterEnvironmentID string, limit int) ([]FeatureFlagAutoRolloutCandidate, error)
+}
+
 // FeatureFlagKillsForDeployment returns the sorted killed flag keys of the
 // deployment's project environment, or none.
 func (s *PgStore) FeatureFlagKillsForDeployment(ctx context.Context, deploymentID string) ([]string, error) {

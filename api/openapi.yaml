@@ -61923,6 +61923,26 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/flags/lifecycle:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    get:
+      tags: [flags]
+      operationId: getProjectFlagLifecycle
+      summary: Report each flag's owner, expiry, last change and use.
+      description: "Flags whose attention list is not empty need a decision: expired, expires_soon (within 7 days), stale (serves one value and unchanged for 14 days), never_evaluated (enabled, no decision in 7 days of retained request telemetry) or no_owner. An hourly check also records one flags.lifecycle_attention audit event per flag, reason and configuration version."
+      responses:
+        '200':
+          description: Lifecycle report for the current configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagLifecycleReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/flags/rollback:
     parameters:
       - { $ref: '#/components/parameters/FlagsProjectSlug' }
@@ -86739,6 +86759,28 @@ components:
           oneOf:
             - { type: boolean }
             - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Directly select a configured variant. }
+    FlagLifecycleReport:
+      description: Lifecycle of every flag in the current configuration.
+      type: object
+      required: [config_version, generated_at, flags]
+      properties:
+        config_version: { type: integer, format: int64, minimum: 0 }
+        generated_at: { type: string, format: date-time }
+        flags: { type: array, items: { $ref: '#/components/schemas/FlagLifecycle' } }
+    FlagLifecycle:
+      description: One flag's owner, expiry, last change and recent use.
+      type: object
+      required: [key, last_changed_version, last_changed_at, serves_one_value, evidence, attention]
+      properties:
+        key: { type: string }
+        owner: { type: string }
+        expires_at: { type: string, format: date }
+        last_changed_version: { type: integer, format: int64, description: "Newest version that changed this flag, within the last 200 versions." }
+        last_changed_at: { type: string, format: date-time }
+        serves_one_value: { type: boolean, description: "True when every request gets the same value (disabled, killed, no rules, or a first rule matching everybody)." }
+        evaluated_requests: { type: integer, format: int64, description: Requests with a decision for this flag in the last 7 days of retained telemetry. }
+        evidence: { type: string, enum: [available, unavailable] }
+        attention: { type: array, items: { type: string, enum: [expired, expires_soon, stale, never_evaluated, no_owner] } }
     FlagCondition:
       description: "One request attribute condition. gregale.country (ISO 3166-1 alpha-2) and gregale.ua_family are verified by the gateway; app.<name> attributes are supplied by the application after it authenticates the user. A missing attribute never matches, including not_in. ends_with applies only to app.* attributes."
       type: object
@@ -86850,6 +86892,8 @@ components:
         description: { type: string, maxLength: 512 }
         type: { type: string, enum: [boolean, variant], default: boolean }
         enabled: { type: boolean }
+        owner: { type: string, maxLength: 128, description: "Who decides about this flag, for example a team or an email. Not used in evaluation." }
+        expires_at: { type: string, format: date, description: Date after which the lifecycle report marks the flag expired. Not used in evaluation. }
         killed: { type: boolean, default: false, description: "Forces every evaluation to the application's fallback (reason killed), whatever the default, rules or inherited decisions say. Gregale's gateway also reports killed flags on each request, so a kill applies on the next request. SDKs without capability kill-v1 receive bundles without killed flags." }
         default:
           description: Boolean fallback for boolean flags or named fallback variant for variant flags.

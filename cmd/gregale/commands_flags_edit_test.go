@@ -243,6 +243,54 @@ func TestFlagsKillAndUnkill(t *testing.T) {
 	}
 }
 
+func TestFlagsOwnerAndExpiry(t *testing.T) {
+	api := &fakeFlagsAPI{}
+	if code, out := runFlagsCLI(t, api, "create", "launch", "--owner", "growth", "--expires", "2027-01-31"); code != 0 || !strings.Contains(out, "owner growth") {
+		t.Fatalf("create: %d %q", code, out)
+	}
+	if f := api.flag(t, "launch"); f.Owner != "growth" || f.ExpiresAt != "2027-01-31" {
+		t.Fatalf("created %+v", f)
+	}
+	if code, _ := runFlagsCLI(t, api, "set", "launch", "--expires", "never"); code != 0 || api.flag(t, "launch").ExpiresAt != "" {
+		t.Fatal("expires never did not clear")
+	}
+	if code, _ := runFlagsCLI(t, api, "set", "launch", "--expires", "31/01/2027"); code == 0 {
+		t.Fatal("bad date accepted")
+	}
+	if code, out := runFlagsCLI(t, api, "list"); code != 0 || !strings.Contains(out, "growth") {
+		t.Fatalf("list: %q", out)
+	}
+}
+
+// The tree names (gregale flag rollout set, flag kill set, ...) reach the
+// same commands as the short verbs.
+func TestFlagsTreeNamesDispatch(t *testing.T) {
+	api := &fakeFlagsAPI{}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
+	var out bytes.Buffer
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	defer func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON }()
+	for _, args := range [][]string{
+		{"flag", "create", "tree"},
+		{"flag", "rollout", "set", "tree", "25"},
+		{"flag", "rule", "create", "tree", "--id", "eu", "--attr", "country=DE"},
+		{"flag", "kill", "set", "tree"},
+		{"flag", "disable", "tree"},
+	} {
+		if code := main.Run(append(args, "--project", "exports")); code != 0 {
+			t.Fatalf("%v: exit %d: %s", args, code, out.String())
+		}
+	}
+	f := api.flag(t, "tree")
+	if f.Enabled || !f.Killed || len(f.Rules) != 2 || f.Rules[0].ID != "eu" || *f.Rules[1].Rollout != 2500 {
+		t.Fatalf("flag after tree commands = %+v", f)
+	}
+}
+
 func TestFlagsEditRetriesAfterVersionConflict(t *testing.T) {
 	api := &fakeFlagsAPI{conflictOnce: true}
 	if code, _ := runFlagsCLI(t, api, "create", "retry-me"); code != 0 {

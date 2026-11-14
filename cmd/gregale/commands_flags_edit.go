@@ -26,15 +26,16 @@ const (
 	flagsEditAttempts     = 3
 	flagsEveryonePercent  = "everyone-percent"
 	flagsTypeVariant      = "variant"
-	flagsUsageEditVerbs   = "list|create|set|on|off|kill|unkill|percent|rule-add|rule-rm|rm"
+	flagsUsageEditVerbs   = "list|stale|create|set|on|off|kill|unkill|percent|rule-add|rule-rm|rm"
 	flagsEditConflictCode = "flags_version_conflict"
 )
 
 // flagsEditVerbs are the short verbs; cmdFlags hands them to cmdFlagsEdit.
 var flagsEditVerbs = map[string]string{
 	"list":     "--project",
+	"stale":    "--project",
 	"create":   "a flag KEY",
-	"set":      "a flag KEY and at least one of --default, --description",
+	"set":      "a flag KEY and at least one of --default, --description, --owner, --expires",
 	"on":       "a flag KEY",
 	"off":      "a flag KEY",
 	"kill":     "a flag KEY",
@@ -71,6 +72,9 @@ func cmdFlagsEdit(verb string, args []string) int {
 	group := fs.String("group", "", "customer group")
 	percent := fs.String("percent", "", "percentage of eligible customers, 0..100")
 	value := fs.String("value", "", "rule value: true/false, or a variant key")
+	owner := fs.String("owner", "", "who decides about the flag: a team or an email")
+	expires := fs.String("expires", "", "expiry date YYYY-MM-DD, or 'never' to clear")
+	all := fs.Bool("all", false, "stale: list every flag, not only those needing attention")
 	var customers, attrs repeatedFlag
 	fs.Var(&customers, "customer", "platform customer UUID (repeatable)")
 	fs.Var(&attrs, "attr", "attribute condition NAME=V1,V2, NAME!=V1,V2 or NAME$=SUFFIX (repeatable)")
@@ -80,7 +84,7 @@ func cmdFlagsEdit(verb string, args []string) int {
 	}
 	want := 1
 	switch verb {
-	case "list":
+	case "list", "stale":
 		want = 0
 	case "percent":
 		want = 2
@@ -101,6 +105,13 @@ func cmdFlagsEdit(verb string, args []string) int {
 		}
 		return printFlagsList(snap)
 	}
+	if verb == "stale" {
+		raw, err := client.ProjectFlagLifecycle(ctx, *project, *environment)
+		if err != nil {
+			return printErr("Flags operation failed", err)
+		}
+		return printFlagsLifecycle(raw, *all)
+	}
 	key := positionals[0]
 	if !flags.ValidKey(key) {
 		printCommandValidation(os.Stderr, "gregale flags %s: %q is not a valid flag key (lowercase letter, then up to 63 of a-z 0-9 _ -)\n", verb, key)
@@ -109,13 +120,13 @@ func cmdFlagsEdit(verb string, args []string) int {
 	var edit flagsEdit
 	switch verb {
 	case "create":
-		edit = flagsCreate(key, *variants, *defaultValue, *description, fs)
+		edit = withFlagsMeta(flagsCreate(key, *variants, *defaultValue, *description, fs), key, *owner, *expires, fs)
 	case "set":
-		if !flagSetAny(fs, "default", "description") {
-			PrintUsage(os.Stderr, "gregale flags set needs at least one of --default, --description", "flags")
+		if !flagSetAny(fs, "default", "description", "owner", "expires") {
+			PrintUsage(os.Stderr, "gregale flag set needs at least one of --default, --description, --owner, --expires", "flags")
 			return 1
 		}
-		edit = flagsSet(key, *defaultValue, *description, fs)
+		edit = withFlagsMeta(flagsSet(key, *defaultValue, *description, fs), key, *owner, *expires, fs)
 	case "on":
 		edit = flagsOnOff(key, true)
 	case "off":
@@ -127,20 +138,20 @@ func cmdFlagsEdit(verb string, args []string) int {
 	case "percent":
 		bp, err := parseFlagsPercent(positionals[1])
 		if err != nil {
-			printCommandValidation(os.Stderr, "gregale flags percent: %v\n", err)
+			printCommandValidation(os.Stderr, "gregale flag rollout set: %v\n", err)
 			return 1
 		}
 		edit = flagsPercent(key, bp)
 	case "rule-add":
 		rule, err := flagsRuleFromOptions(*ruleID, customers, *group, attrs, *percent, *value, fs)
 		if err != nil {
-			printCommandValidation(os.Stderr, "gregale flags rule-add: %v\n", err)
+			printCommandValidation(os.Stderr, "gregale flag rule create: %v\n", err)
 			return 1
 		}
 		edit = flagsRuleAdd(key, rule)
 	case "rule-rm":
 		if *ruleID == "" {
-			PrintUsage(os.Stderr, "gregale flags rule-rm needs --id", "flags")
+			PrintUsage(os.Stderr, "gregale flag rule delete needs --id", "flags")
 			return 1
 		}
 		edit = flagsRuleRemove(key, *ruleID)
@@ -246,7 +257,7 @@ func findFlag(cfg *flags.Config, key string) (*flags.Flag, error) {
 			return &cfg.Flags[i], nil
 		}
 	}
-	return nil, fmt.Errorf("flag %q does not exist; create it with gregale flags create %s", key, key)
+	return nil, fmt.Errorf("flag %q does not exist; create it with gregale flag create %s", key, key)
 }
 
 func isVariantFlag(f *flags.Flag) bool { return f.Type == flagsTypeVariant }
@@ -347,6 +358,91 @@ func flagsOnOff(key string, on bool) flagsEdit {
 	}
 }
 
+// withFlagsMeta applies --owner and --expires after edit
+// (ADR 20261114150000 §4). --expires never clears the date.
+func withFlagsMeta(edit flagsEdit, key, owner, expires string, fs *flag.FlagSet) flagsEdit {
+	return func(cfg *flags.Config) (string, error) {
+		summary, err := edit(cfg)
+		if err != nil {
+			return "", err
+		}
+		f, err := findFlag(cfg, key)
+		if err != nil {
+			return "", err
+		}
+		var changed []string
+		if flagSetAny(fs, "owner") {
+			if !flags.ValidOwner(owner) {
+				return "", fmt.Errorf("--owner must be at most %d bytes of printable text", api.FlagsMaxOwnerBytes)
+			}
+			f.Owner = owner
+			changed = append(changed, "owner "+owner)
+		}
+		if flagSetAny(fs, "expires") {
+			if expires == "never" || expires == "" {
+				f.ExpiresAt = ""
+				changed = append(changed, "no expiry")
+			} else {
+				if _, err := flags.ParseExpiresAt(expires); err != nil {
+					return "", err
+				}
+				f.ExpiresAt = expires
+				changed = append(changed, "expires "+expires)
+			}
+		}
+		if len(changed) == 0 {
+			return summary, nil
+		}
+		if strings.HasPrefix(summary, "Updated "+key+": ") {
+			return summary + ", " + strings.Join(changed, ", "), nil
+		}
+		if strings.HasSuffix(summary, ": ") {
+			return summary + strings.Join(changed, ", "), nil
+		}
+		return summary + "; " + strings.Join(changed, ", "), nil
+	}
+}
+
+// printFlagsLifecycle prints the lifecycle report, by default only the flags
+// that need attention.
+func printFlagsLifecycle(raw json.RawMessage, all bool) int {
+	var report struct {
+		ConfigVersion int64                 `json:"config_version"`
+		Flags         []flags.FlagLifecycle `json:"flags"`
+	}
+	if err := json.Unmarshal(raw, &report); err != nil {
+		return printErr("Flags operation failed", fmt.Errorf("decode lifecycle report: %w", err))
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(report))
+	}
+	rows := report.Flags
+	if !all {
+		rows = slices.DeleteFunc(slices.Clone(rows), func(f flags.FlagLifecycle) bool { return len(f.Attention) == 0 })
+	}
+	if len(rows) == 0 {
+		fmt.Fprintf(osStdout, "No flag needs attention (version %d).\n", report.ConfigVersion)
+		return 0
+	}
+	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, "KEY\tOWNER\tEXPIRES\tLAST CHANGED\tREQUESTS (7D)\tATTENTION")
+	for _, f := range rows {
+		requests := "-"
+		if f.EvaluatedRequests != nil {
+			requests = strconv.FormatInt(*f.EvaluatedRequests, 10)
+		}
+		changed := f.LastChangedAt
+		if len(changed) >= 10 {
+			changed = changed[:10]
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s (v%d)\t%s\t%s\n", f.Key, dashIfEmpty(f.Owner), dashIfEmpty(f.ExpiresAt), changed, f.LastChangedVersion, requests, dashIfEmpty(strings.Join(f.Attention, ", ")))
+	}
+	if err := tw.Flush(); err != nil {
+		return 1
+	}
+	return 0
+}
+
 // flagsKill sets or clears a flag's kill (ADR 20261114150000 §3). A killed
 // flag serves the application's fallback on the next request through the
 // gateway, whatever its default or rules say.
@@ -391,7 +487,7 @@ func flagsPercent(key string, bp int) flagsEdit {
 		}
 		at := slices.IndexFunc(f.Rules, func(r flags.Rule) bool { return r.ID == flagsEveryonePercent })
 		if at >= 0 && f.Rules[at].Progression != nil {
-			return "", fmt.Errorf("rule %s has a progression plan; advance it with gregale flags promote", flagsEveryonePercent)
+			return "", fmt.Errorf("rule %s has a progression plan; advance it with gregale flag promote", flagsEveryonePercent)
 		}
 		if bp == 0 {
 			if at < 0 {
@@ -507,7 +603,7 @@ func flagsRuleAdd(key string, rule flags.Rule) flagsEdit {
 			return "", err
 		}
 		if slices.ContainsFunc(f.Rules, func(r flags.Rule) bool { return r.ID == rule.ID }) {
-			return "", fmt.Errorf("flag %s already has a rule %q; remove it first with gregale flags rule-rm", key, rule.ID)
+			return "", fmt.Errorf("flag %s already has a rule %q; remove it first with gregale flag rule delete", key, rule.ID)
 		}
 		if raw, ok := rule.Value.(string); ok {
 			v, err := parseFlagValue(f, raw)
@@ -568,17 +664,17 @@ func printFlagsList(snap flagsSnapshot) int {
 		return jsonOut(writeJSON(snap))
 	}
 	if len(snap.Flags) == 0 {
-		fmt.Fprintf(osStdout, "No flags (version %d). Create one with gregale flags create KEY --project ...\n", snap.Version)
+		fmt.Fprintf(osStdout, "No flags (version %d). Create one with gregale flag create KEY --project ...\n", snap.Version)
 		return 0
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "KEY\tTYPE\tSTATE\tDEFAULT\tRULES")
+	fmt.Fprintln(tw, "KEY\tTYPE\tSTATE\tDEFAULT\tRULES\tOWNER\tEXPIRES")
 	for _, f := range snap.Flags {
 		typ := f.Type
 		if typ == "" {
 			typ = "boolean"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%d\n", f.Key, typ, flagState(f), f.Default, len(f.Rules))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%d\t%s\t%s\n", f.Key, typ, flagState(f), f.Default, len(f.Rules), dashIfEmpty(f.Owner), dashIfEmpty(f.ExpiresAt))
 	}
 	if err := tw.Flush(); err != nil {
 		return 1

@@ -2640,6 +2640,8 @@ const (
 	FlagsMaxConditionValues     = 100
 	FlagsMaxAttributeValueBytes = 128
 	FlagsMaxAppAttributes       = 16
+	// FlagsMaxOwnerBytes bounds a flag's owner (ADR 20261114150000 §4).
+	FlagsMaxOwnerBytes = 128
 )
 
 // Progressive rollout controls are structural bounds, not plan allowances.

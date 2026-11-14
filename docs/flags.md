@@ -17,20 +17,20 @@ publish it with the version they read. If someone else published in between,
 they apply the same change to the new configuration, at most three times.
 
 ```bash
-gregale flags create new-export --project exports            # enabled, default false
-gregale flags percent new-export 10 --project exports        # 10% of customers get true
-gregale flags rule-add new-export --id pilot --group pilot-customers --project exports
-gregale flags off new-export --project exports               # also sets default false
-gregale flags list --project exports
-gregale flags create checkout --variants legacy,new --project exports
-gregale flags rm new-export --project exports
+gregale flag create new-export --project exports              # enabled, default false
+gregale flag rollout set new-export 10 --project exports      # 10% of customers get true
+gregale flag rule create new-export --id pilot --group pilot-customers --project exports
+gregale flag disable new-export --project exports             # also sets default false
+gregale flag list --project exports
+gregale flag create checkout --variants legacy,new --project exports
+gregale flag delete new-export --project exports
 ```
 
 ### Kill a flag
 
 ```bash
-gregale flags kill new-export --project exports     # every check serves the fallback in your code
-gregale flags unkill new-export --project exports
+gregale flag kill set new-export --project exports     # every check serves the fallback in your code
+gregale flag kill unset new-export --project exports
 ```
 
 A killed flag (`"killed": true`) evaluates to the **fallback your code passes**
@@ -47,10 +47,32 @@ picks the kill up on the SDK's next refresh. SDKs advertise capability
 also serves its fallback (reason `flag_missing`) after its next refresh. A kill
 is a published version like any other change, with history and rollback.
 
-`percent` manages a rule named `everyone-percent` that always stays last;
-`rule-add` inserts new rules before it, so targeted rules win. `off` on a
+`rollout set` manages a rule named `everyone-percent` that always stays last;
+`rule create` inserts new rules before it, so targeted rules win. `disable` on a
 boolean flag also sets its default to `false`, because a disabled flag serves
-its default. Use `flags apply --file` for whole-configuration changes.
+its default. Use `flags apply --file` for whole-configuration changes. The earlier spellings
+(`flags on`, `off`, `percent`, `rule-add`, `rule-rm`, `kill`, `unkill`, `stale`)
+keep working.
+
+### Owners, expiry and stale flags
+
+Give each flag an owner and a removal date when you create it:
+
+```bash
+gregale flag create new-export --owner payments --expires 2027-01-31 --project exports
+gregale flag set new-export --expires never --project exports
+gregale flag stale list --project exports          # add --all for every flag
+```
+
+`flag stale list` (`GET .../flags/lifecycle`) reports, for each flag, its owner,
+expiry, the newest version that changed it (looking back 200 versions), whether
+it serves one value to everybody, and how many requests decided it in the last
+7 days when your plan keeps request telemetry. A flag needs attention when it
+is `expired`, `expires_soon` (within 7 days), `stale` (serves one value and
+unchanged for 14 days), `never_evaluated` (enabled, unchanged for a week and no
+decisions) or has `no_owner`. Gregale also checks every environment hourly and
+records one `flags.lifecycle_attention` audit event per flag, reason and
+configuration version. Owner and expiry never change evaluation.
 
 ## Publish a customer release
 
@@ -222,7 +244,7 @@ From the CLI, `--attr country=DE,FR` means `in`, `--attr 'plan!=free'` means
 `ua_family` are the gateway's attributes; any other bare name is `app.<name>`:
 
 ```bash
-gregale flags rule-add new-export --id eu-pro --attr country=DE,FR --attr plan=pro --project exports
+gregale flag rule create new-export --id eu-pro --attr country=DE,FR --attr plan=pro --project exports
 gregale flags inspect --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111 --attr country=DE --attr plan=pro
 ```
 
@@ -293,7 +315,7 @@ fallback, with reason `configuration_stale`. Missing flags also use the fallback
 Startup during a configuration outage also permits explicit fallback behavior.
 Disabling a defined flag uses its configured default; use `default: false` for an
 off switch. Changes do not interrupt requests already using an earlier version.
-Do not use this mechanism for an instantaneous security revocation; use `gregale flags kill` for an emergency stop of application behavior.
+Do not use this mechanism for an instantaneous security revocation; use `gregale flag kill set` for an emergency stop of application behavior.
 
 ### Use flags in a Python ASGI application
 

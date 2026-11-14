@@ -22,7 +22,7 @@ func cmdFlags(args []string) int {
 		return cmdFlagsEdit(args[0], args[1:])
 	}
 	if !knownFlagsVerb(args[0]) {
-		// `flags list` answered "invalid flags command or missing required
+		// `flags bogus` answered "invalid flags command or missing required
 		// options", naming neither (Hunt 14 H14-63).
 		printCommandValidation(os.Stderr, "gregale flags: unknown subcommand %q\n", args[0])
 		parent, _ := lookupCliCommand("flags")
@@ -97,7 +97,7 @@ func cmdFlags(args []string) int {
 		var attributes map[string]string
 		attributes, err = parseFlagsInspectAttributes(attrs)
 		if err != nil {
-			printCommandValidation(os.Stderr, "gregale flags inspect: %v\n", err)
+			printCommandValidation(os.Stderr, "gregale flag inspect: %v\n", err)
 			return 1
 		}
 		out, err = client.InspectProjectFlagWithContext(ctx, *project, *environment, *key, api.InspectFlagContext{Customer: *customer, Subject: *subject, Version: *version, FallbackVariant: *fallbackVariant, Attributes: attributes})

@@ -48,6 +48,13 @@ func (c *Client) InspectProjectFlagForSubject(ctx context.Context, project, envi
 	return c.InspectProjectFlagWithContext(ctx, project, environment, key, InspectFlagContext{Customer: customer, Subject: subject, Version: version, FallbackVariant: fallbackVariant})
 }
 
+// ProjectFlagLifecycle reads the lifecycle report (ADR 20261114150000 §4).
+func (c *Client) ProjectFlagLifecycle(ctx context.Context, project, environment string) (json.RawMessage, error) {
+	var out json.RawMessage
+	err := c.do(ctx, http.MethodGet, flagsPath(project, environment)+"/lifecycle", nil, &out)
+	return out, err
+}
+
 // InspectFlagContext is a simulated request for InspectProjectFlagWithContext.
 type InspectFlagContext struct {
 	Customer        string

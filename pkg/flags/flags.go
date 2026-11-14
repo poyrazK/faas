@@ -195,11 +195,15 @@ type Flag struct {
 	Enabled bool   `json:"enabled"`
 	// Killed forces every evaluation to the application's fallback, whatever
 	// the default, rules or inherited decisions say (ADR 20261114150000 §3).
-	Killed   bool          `json:"killed,omitempty"`
-	Default  any           `json:"default"`
-	Seed     string        `json:"seed"`
-	Rules    []Rule        `json:"rules"`
-	Variants []FlagVariant `json:"variants,omitempty"`
+	Killed bool `json:"killed,omitempty"`
+	// Owner and ExpiresAt (YYYY-MM-DD) drive the lifecycle report
+	// (ADR 20261114150000 §4); they never change evaluation.
+	Owner     string        `json:"owner,omitempty"`
+	ExpiresAt string        `json:"expires_at,omitempty"`
+	Default   any           `json:"default"`
+	Seed      string        `json:"seed"`
+	Rules     []Rule        `json:"rules"`
+	Variants  []FlagVariant `json:"variants,omitempty"`
 }
 type FlagVariant struct {
 	Key    string `json:"key"`
@@ -494,6 +498,14 @@ func Validate(c Config) error {
 		keys[f.Key] = true
 		if len(f.Description) > api.FlagsMaxDescriptionBytes || len(f.Seed) > api.FlagsMaxSeedBytes || strings.ContainsRune(f.Seed, 0) {
 			return fmt.Errorf("invalid flag description or seed")
+		}
+		if !ValidOwner(f.Owner) {
+			return fmt.Errorf("flag owner must be at most %d bytes of printable text", api.FlagsMaxOwnerBytes)
+		}
+		if f.ExpiresAt != "" {
+			if _, err := ParseExpiresAt(f.ExpiresAt); err != nil {
+				return err
+			}
 		}
 		typ := flagType(f)
 		if typ != "boolean" && typ != "variant" {
