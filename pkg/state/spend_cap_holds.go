@@ -26,6 +26,34 @@ func (h SpendCapHold) Holds(capCents int64, now time.Time) bool {
 	return h.CapCents == capCents && h.Month.UTC().Equal(month)
 }
 
+// SpendCapReached reports whether observedCents of the month's billable
+// overage reaches an account's spend cap of capCents. A $0 cap is a pause
+// switch for a customer (docs/billing.md): reached at once, even within the
+// included allowance. A complimentary account (ADR-20261111140000) holds a
+// $0 cap only so that nothing past its plan's allowances is ever billed or
+// used: it runs within the allowances and stops at the first overage, so for
+// it the cap is reached only past it.
+func SpendCapReached(capCents, observedCents int64, complimentary bool) bool {
+	if complimentary {
+		return observedCents > capCents
+	}
+	return observedCents >= capCents
+}
+
+// IsComplimentaryAccount reports whether store records accountID as
+// complimentary. A store without complimentary accounts has none.
+func IsComplimentaryAccount(ctx context.Context, store any, accountID string) (bool, error) {
+	comps, ok := store.(ComplimentaryAccountStore)
+	if !ok || accountID == "" {
+		return false, nil
+	}
+	comp, err := comps.ComplimentaryAccount(ctx, accountID)
+	if err != nil {
+		return false, err
+	}
+	return comp != nil, nil
+}
+
 // SpendCapHoldStore keeps one hold per account.
 type SpendCapHoldStore interface {
 	PutSpendCapHold(ctx context.Context, hold SpendCapHold) error

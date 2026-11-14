@@ -79,3 +79,15 @@ for a burst and off again before the burst's hours were billed.
 - **Reuse the spend cap as the opt-in.** A NULL cap means "no limit", which
   every paid account has unless it chose otherwise; it is not consent to
   egress charges.
+
+## Amendment 2026-11-14 (billing review R9-2)
+
+Decision 2 kept an earlier `enabled_at` when the election was turned back on,
+so the gap the customer had opted out of was covered again: hours above the
+allowance in it (enforcement lag, edge or cache bytes) were billed although
+the customer had the election off. Turning it back on now starts a new
+window: `enabled_at` moves to the re-enable and `disabled_at` clears. An hour
+of the earlier window still undelivered at the re-enable is not billed;
+delivery runs hourly, so that is at most a few hours of overage, and the
+error is in the customer's favour. Keeping every window as its own row was
+rejected as more storage and reads for that small amount.
