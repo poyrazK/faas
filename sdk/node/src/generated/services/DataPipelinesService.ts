@@ -270,7 +270,7 @@ export class DataPipelinesService {
     id: string,
     requestBody: DataPipelineEvolutionRequest,
   }): CancelablePromise<Problem | DataPipeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines/{id}/evolution',
       path: {
@@ -297,7 +297,7 @@ export class DataPipelinesService {
     id: string,
     requestBody: DataPipelineSchemaApprovalRequest,
   }): CancelablePromise<Problem | DataPipeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines/{id}/schema-approval',
       path: {
@@ -323,7 +323,7 @@ export class DataPipelinesService {
     id: string,
     requestBody: DataPipelineTenantReadersRequest,
   }): CancelablePromise<Problem | DataPipeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines/{id}/tenant-readers',
       path: {
@@ -344,7 +344,7 @@ export class DataPipelinesService {
   }: {
     requestBody: DataPipelineSetupRequest,
   }): CancelablePromise<DataPipelineSetupPlan | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipeline-setups/plan',
       body: requestBody,
@@ -369,7 +369,7 @@ export class DataPipelinesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | DataPipelineSetup> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipeline-setups',
       headers: {
@@ -386,7 +386,7 @@ export class DataPipelinesService {
    * @throws ApiError
    */
   public static listDataPipelineSetups(): CancelablePromise<DataPipelineSetupList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/data/pipeline-setups',
     });
@@ -405,7 +405,7 @@ export class DataPipelinesService {
      */
     id: string,
   }): CancelablePromise<DataPipelineSetup | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/data/pipeline-setups/{id}',
       path: {
@@ -429,7 +429,7 @@ export class DataPipelinesService {
     id: string,
     requestBody: DataPipelineSetupControlRequest,
   }): CancelablePromise<Problem | DataPipelineSetup> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipeline-setups/{id}/control',
       path: {
@@ -455,7 +455,7 @@ export class DataPipelinesService {
     id: string,
     requestBody: DataPipelineFreshnessRequest,
   }): CancelablePromise<Problem | DataPipeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines/{id}/freshness',
       path: {
@@ -481,7 +481,7 @@ export class DataPipelinesService {
     id: string,
     requestBody: DataPipelineIndexRequest,
   }): CancelablePromise<Problem | DataPipeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines/{id}/indexes',
       path: {
