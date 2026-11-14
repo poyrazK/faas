@@ -1282,10 +1282,10 @@ from deployments where id = $1;
 
 -- name: ClearProjectPromotionDeployment :execrows
 UPDATE deployments d
-SET status = 'failed', error = 'environment promotion rollback', traffic_percent = 0,
+SET status = 'failed', error = sqlc.arg(message)::text, error_code = 'promotion_rolled_back', traffic_percent = 0,
     rollout_state = 'aborted', rollout_completed_at = NULL,
     rollout_aborted_at = coalesce(rollout_aborted_at, now()),
-    rollout_aborted_reason = 'environment promotion rollback',
+    rollout_aborted_reason = sqlc.arg(message)::text,
     stage_state = sqlc.arg(stage_state)
 WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid
   AND d.reason = sqlc.arg(reason)::text AND d.status = 'live' AND d.deleted_at IS NULL

@@ -124,6 +124,11 @@ const (
 	// for the whole organization (ADR 20261021080640). Owner + admin: it
 	// changes what every member gets while acting for the company.
 	OrgActionManagePreviews OrgAction = "org.manage_previews"
+
+	// OrgActionManageSecurity changes the organization's security policy,
+	// such as requiring two-factor authentication (ADR 20261113180000).
+	// Owner only: it decides who may keep working in the organization.
+	OrgActionManageSecurity OrgAction = "org.manage_security"
 )
 
 // AllOrgActions is the closed vocabulary in iteration order. Used by
@@ -172,6 +177,7 @@ var AllOrgActions = []OrgAction{
 	OrgActionApproveApplicationStandards,
 	OrgActionSetApplicationStandardLocalIntent,
 	OrgActionManagePreviews,
+	OrgActionManageSecurity,
 }
 
 // AllOrgRoles is the closed role vocabulary in priority order. The

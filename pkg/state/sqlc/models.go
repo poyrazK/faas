@@ -11221,6 +11221,13 @@ type OrgMembership struct {
 	AccessRevision     int64
 }
 
+type OrgSecurityPolicy struct {
+	OrgID              pgtype.UUID
+	RequireMfa         bool
+	UpdatedByAccountID pgtype.UUID
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type OutboundAdmissionLease struct {
 	LeaseID                  pgtype.UUID
 	IntegrationID            pgtype.UUID
