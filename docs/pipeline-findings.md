@@ -59,6 +59,7 @@ batch**; these are not claims about production incidents:
 | A quality aggregate checked read policies before acquiring its table locks. | Lock dependencies before validating shapes and owned/open policies; quarantined or changed tables yield unknown. `TestScheduledQualityCoverageUnknownAndTenantReferences` checks coverage, privacy and tenant-equal reference semantics. |
 | Removing a table used by a quality rule left an invalid saved configuration. | Exclude rule source/reference dependencies from removable choices until the owner removes those rules. |
 | Queueing a failed refresh could clear its stale incident before a new capture succeeded. | Preserve failure reason while queued/running and report the next allowed UTC run. The snapshot regression keeps the stale condition while the window defers work. |
+| Editing quality rules or work budgets immediately recaptured an otherwise idle snapshot source. | Preserve the capture receipt and next run; reschedule only the interval/window and require an explicit manual run for an immediate refresh. The snapshot regression rejects source access during a quality-only edit. |
 | Old workers/monitors could process unfamiliar scheduled intent or falsely recover a quality incident. | Database capability fences for pipelines, checks and monitors; preserve them on binary rollback. `TestScheduledWorkersFenceOlderClaims` and `TestQualityIncidentDoesNotRecoverFromUnknownOrIncompleteScan` cover these boundaries. |
 
 This batch does not enable production or imply that the source provider has

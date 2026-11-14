@@ -170,11 +170,26 @@ func (s *PostgresStore) Operations(ctx context.Context, account, id string, r ap
 		if (c.Snapshot != nil) != snapshotMode(p) {
 			return ErrConflict
 		}
-		status.Quality = nil
-		if status.Snapshot != nil {
-			status.Snapshot.State = "due"
-			status.Snapshot.RunID = ""
-			status.Snapshot.NextRunAt = ""
+		if p.Operations == nil || string(operationsJSON(p.Operations.Quality)) != string(operationsJSON(c.Quality)) {
+			status.Quality = nil
+		}
+		if status.Snapshot != nil && c.Snapshot != nil {
+			// Editing quality or work budgets must not wake an idle source.
+			// Preserve attempts/receipts and adjust only the scheduled time.
+			next, _ := time.Parse(time.RFC3339Nano, status.Snapshot.NextRunAt)
+			if p.Operations.Snapshot.EverySeconds != c.Snapshot.EverySeconds {
+				base, _ := time.Parse(time.RFC3339Nano, status.Snapshot.CapturedAt)
+				if base.IsZero() || status.Snapshot.State == "failed" {
+					base = time.Now().UTC()
+				}
+				next = base.Add(time.Duration(c.Snapshot.EverySeconds) * time.Second)
+			}
+			if next.IsZero() || next.Before(time.Now()) {
+				next = time.Now().UTC()
+			}
+			scheduled := p
+			scheduled.Operations = c
+			status.Snapshot.NextRunAt = nextWorkTime(scheduled, next).Format(time.RFC3339Nano)
 		}
 	case "run_snapshot":
 		if r.Config != nil || !snapshotMode(p) {

@@ -72,7 +72,7 @@ func (e *Engine) reconcileSnapshot(ctx context.Context, p Pipeline, raw string, 
 			}
 		}
 		if status.Snapshot == nil {
-			status.Snapshot = &api.DataPipelineSnapshotStatus{State: "due"}
+			status.Snapshot = &api.DataPipelineSnapshotStatus{State: "due", NextRunAt: nextWorkTime(p, time.Now().UTC()).Format(time.RFC3339Nano)}
 		}
 		run := status.Snapshot
 		// The committed target receipt precedes the catalog acknowledgement and

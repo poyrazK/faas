@@ -275,6 +275,20 @@ func TestScheduledSnapshotRetainsLastGoodCaptureAndRecoversAcknowledgement(t *te
 		t.Fatal("stale operation", err)
 	}
 	captured := p.OperationsStatus.Snapshot.CapturedAt
+	open := w.Engine.openSource
+	w.Engine.openSource = func(context.Context, string) (*pgxpool.Pool, error) {
+		t.Error("quality configuration woke an idle source")
+		return nil, ErrUnavailable
+	}
+	config := normalizedOperations(p.Operations)
+	config.Quality = nil
+	if err = s.Operations(t.Context(), p.AccountID, p.ID, api.DataPipelineOperationsRequest{ExpectedRevision: p.Revision, Action: "configure", Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	p = scheduledTick(t, store, w, p)
+	if p.OperationsStatus.Snapshot.State != "succeeded" || p.OperationsStatus.Snapshot.CapturedAt != captured {
+		t.Fatal("configuration recaptured source", p.OperationsStatus.Snapshot)
+	}
 	// Simulate lost catalog acknowledgement after the atomic target commit.
 	status := operationsStatus(p)
 	status.Snapshot.State = "running"
@@ -282,7 +296,6 @@ func TestScheduledSnapshotRetainsLastGoodCaptureAndRecoversAcknowledgement(t *te
 	if _, err := store.pool.Exec(t.Context(), `UPDATE data_pipelines SET work_status=$2 WHERE id=$1`, p.ID, operationsJSON(status)); err != nil {
 		t.Fatal(err)
 	}
-	open := w.Engine.openSource
 	w.Engine.openSource = func(context.Context, string) (*pgxpool.Pool, error) {
 		t.Error("committed receipt recovery opened source")
 		return nil, ErrUnavailable
@@ -306,9 +319,16 @@ func TestScheduledSnapshotRetainsLastGoodCaptureAndRecoversAcknowledgement(t *te
 	}
 	w.Engine.openSource = open
 	// A budget failure also rolls back all staged data.
-	config := normalizedOperations(p.Operations)
+	config = normalizedOperations(p.Operations)
 	config.Snapshot.MaxRows = 1
 	if err := s.Operations(t.Context(), p.AccountID, p.ID, api.DataPipelineOperationsRequest{ExpectedRevision: p.Revision, Action: "configure", Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	p, err = store.Get(t.Context(), p.AccountID, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Operations(t.Context(), p.AccountID, p.ID, api.DataPipelineOperationsRequest{ExpectedRevision: p.Revision, Action: "run_snapshot"}); err != nil {
 		t.Fatal(err)
 	}
 	p = scheduledTick(t, store, w, p)
@@ -320,6 +340,13 @@ func TestScheduledSnapshotRetainsLastGoodCaptureAndRecoversAcknowledgement(t *te
 	minute := now.Hour()*60 + now.Minute()
 	config.Workload = &api.DataPipelineWorkload{Window: &api.DataPipelineWorkWindow{StartMinuteUTC: (minute + 2) % 1440, EndMinuteUTC: (minute + 3) % 1440}, QueryTimeoutMillis: 50, BatchesPerTick: 1}
 	if err := s.Operations(t.Context(), p.AccountID, p.ID, api.DataPipelineOperationsRequest{ExpectedRevision: p.Revision, Action: "configure", Config: config}); err != nil {
+		t.Fatal(err)
+	}
+	p, err = store.Get(t.Context(), p.AccountID, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Operations(t.Context(), p.AccountID, p.ID, api.DataPipelineOperationsRequest{ExpectedRevision: p.Revision, Action: "run_snapshot"}); err != nil {
 		t.Fatal(err)
 	}
 	w.Engine.openSource = func(context.Context, string) (*pgxpool.Pool, error) {
