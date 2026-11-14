@@ -51,7 +51,7 @@ Opening the billing portal (`GET /v1/billing/portal`) and changing the spend cap
 
 ## Billing email
 
-The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it, so give the organization its own address:
+The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it; until then the organization's quota and billing mail goes to its owner. Give the organization its own address:
 
 ```bash
 curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \
@@ -143,7 +143,12 @@ organization's cap, not at the cap of the member who created them.
 Each plan includes a monthly allowance of application egress: Free 10 GiB,
 Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB. By default every plan stops at
 it: once the month's egress reaches the allowance, the account's apps are
-parked (`quota_exceeded_egress`) until the month ends or the plan grows.
+parked (`quota_exceeded_egress`) until the month ends, the plan grows or, on a
+paid plan, egress overage is turned on. New deploys wait until then too. Your
+managed PostgreSQL databases and buckets keep running: databases have their
+own egress allowance. Gregale emails the account once a day from 80% of the
+allowance, and again when the apps are parked. The Free plan's compute
+allowance works the same way.
 
 A paid account can instead elect to pay for egress above the allowance:
 

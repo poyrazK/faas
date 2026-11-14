@@ -33,7 +33,11 @@ func (s *server) managedPostgresHoldInputs(ctx context.Context, acct state.Accou
 // managedPostgresHoldInputsFrom is managedPostgresHoldInputs over a usage
 // summary already read.
 func (s *server) managedPostgresHoldInputsFrom(ctx context.Context, acct state.Account, subject string, summary managedpostgres.UsageSummary) (managedpostgres.HoldInputs, error) {
-	in := managedpostgres.HoldInputs{Mode: s.managedPostgresCapMode, Inactive: !acct.Active(),
+	inactive, err := managedPostgresSubjectInactive(ctx, s.store, acct)
+	if err != nil {
+		return managedpostgres.HoldInputs{}, err
+	}
+	in := managedpostgres.HoldInputs{Mode: s.managedPostgresCapMode, Inactive: inactive,
 		ComputeUsed: summary.Snapshot.ComputeUnitSeconds, DatabaseEgress: summary.Snapshot.DatabaseEgress}
 	if summary.PolicyEnabled {
 		in.ComputeCeiling = summary.EffectivePolicy.MaxMonthlyComputeUnitSeconds
