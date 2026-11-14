@@ -1293,7 +1293,8 @@ func treeHelpWords(typed []string) ([]string, bool) {
 	// `--help --all` on one of today's commands (`github`, `deploy`, `app`)
 	// asks for that command's full manifest help, every option grouped; a
 	// tree-only noun (`release`) has no such help, so the tree's answers.
-	if path := leadingTreeWords(words); slices.Contains(words, "--all") && (words[0] == appSlugFallback || oldPathDepth(path) == len(path)) {
+	if path := leadingTreeWords(words); slices.Contains(words, "--all") && (words[0] == appSlugFallback || oldPathDepth(path) == len(path)) &&
+		!appTreeOnlyVerb(path) {
 		return nil, false
 	}
 	if _, ok := lookupCliTreeNoun(words[0]); ok || slices.Contains(cliTreeShortcutCommands, words[0]) {
@@ -1575,6 +1576,22 @@ func cliTreeVerbsSharing(old string) int {
 }
 
 // cliTreeAppVerb reports a word the tree's `app` takes as its verb.
+// appTreeOnlyVerb reports `app <verb>` where the verb exists only in the
+// tree (`app listener`): today's `app` help would read the verb as a slug and
+// its words as positionals, so `--help --all` must take the tree's help
+// (agent eval 2026-11-13, ADR-20261112223000).
+func appTreeOnlyVerb(path []string) bool {
+	if len(path) < 2 || path[0] != appSlugFallback || !cliTreeAppVerb(path[1]) {
+		return false
+	}
+	command, ok := lookupCliCommand(appSlugFallback)
+	if !ok {
+		return false
+	}
+	_, today := findCliSubcommand(command.Subcommands, path[1])
+	return !today && path[1] != "get" && path[1] != "update"
+}
+
 func cliTreeAppVerb(word string) bool {
 	if _, _, ok := matchCliTreeAlias([]string{appSlugFallback, word}); ok {
 		return true

@@ -20,10 +20,19 @@ func ResolveHintCommand(line string) error {
 	if err != nil {
 		return fmt.Errorf("%q: %w", line, err)
 	}
+	if at := slices.Index(args, "--"); at >= 0 {
+		args = args[:at] // what follows -- is the command's payload
+	}
 	var leading []string
 	for _, word := range args {
 		if strings.HasPrefix(word, "-") {
 			break
+		}
+		// A <placeholder> after a slug-first command stands for its app.
+		if strings.HasPrefix(word, "<") && len(leading) > 0 {
+			if node, ok := lookupCliPath(leading); ok && node.AfterPositionals {
+				continue
+			}
 		}
 		leading = append(leading, word)
 	}
@@ -48,4 +57,14 @@ func ResolveHintCommand(line string) error {
 		}
 	}
 	return nil
+}
+
+// ConceptWords lists the guessed words concept hints answer.
+func ConceptWords() []string {
+	words := make([]string, 0, len(conceptHints))
+	for word := range conceptHints {
+		words = append(words, word)
+	}
+	slices.Sort(words)
+	return words
 }
