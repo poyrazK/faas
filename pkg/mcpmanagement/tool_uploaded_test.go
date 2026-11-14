@@ -88,6 +88,10 @@ func hostedToolPublicationJourney(t *testing.T, protocol, runtime string, archiv
 	f, backend := newPublicationFixture(t)
 	opts := hostedPublicationOptions(t, f, backend)
 	privateMode := len(private) > 0 && private[0]
+	roleMode := len(private) > 1 && private[1]
+	if roleMode {
+		f.readiness = api.MCPReadinessPolicy{Revision: "c7b7b9cf-c423-4e17-8bd1-dcb5a25574f0", Enabled: true, Endpoint: "/mcp", MaxAgeSeconds: 300, Roles: []api.MCPReadinessRole{{Name: "reader", ProtocolVersion: api.MCPProtocolVersion, CatalogFormat: 2, CatalogSHA256: strings.Repeat("a", 64), Monitor: &api.MCPReadinessMonitorConfig{SecretRef: "secret:MCP_PRIVATE_ROLE", IntervalSeconds: 60, FailureThreshold: 1}}}}
+	}
 	if privateMode {
 		opts.LocalCLI = privatePublicationCLI(t, f)
 	}
@@ -141,6 +145,9 @@ func hostedToolPublicationJourney(t *testing.T, protocol, runtime string, archiv
 	}
 	if privateMode && (string(plan["owner_approval_required"]) != "true" || !strings.Contains(string(plan["auth"]), "issuer.example")) {
 		t.Fatal("private plan omitted owner approval or auth review")
+	}
+	if roleMode && (!strings.Contains(string(plan["readiness"]), "reader") || strings.Contains(string(plan["readiness"]), "MCP_PRIVATE_ROLE")) {
+		t.Fatal("readiness review omitted roles or disclosed a credential reference")
 	}
 	var id string
 	_ = json.Unmarshal(plan["plan_id"], &id)

@@ -23,6 +23,9 @@ var hexID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 func ValidID(id string) bool { return hexID.MatchString(id) }
 
 func ValidateIntent(in api.ToolPublicationIntent) error {
+	if !ValidReadinessReview(in) {
+		return errors.New("invalid publication readiness review")
+	}
 	if in.PlatformVerification {
 		if in.AccessMode != "external-oauth" || in.Auth == nil || in.Auth.Scopes == nil || in.EndpointPath == "" || !validAuthURL(in.Auth.Issuer) || !validAuthURL(in.Auth.JWKSURL) || !validAuthURL(in.Auth.Resource) || !validVerificationScopes(in.Auth.Scopes) {
 			return errors.New("invalid platform verification OAuth contract")

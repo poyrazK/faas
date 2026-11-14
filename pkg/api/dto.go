@@ -3914,8 +3914,9 @@ type DeploymentAliasListResponse struct {
 // its own "min_instances required" presence rule. Splitting the
 // DTOs keeps each handler's contract crisp.
 type UpdateDeploymentTrafficRequest struct {
-	ExpectedReview *AppReleaseReview `json:"expected_review,omitempty"`
-	TrafficPercent int               `json:"traffic_percent"`
+	ExpectedMCPReadiness *MCPReadinessExpectation `json:"expected_mcp_readiness,omitempty"`
+	ExpectedReview       *AppReleaseReview        `json:"expected_review,omitempty"`
+	TrafficPercent       int                      `json:"traffic_percent"`
 	// An explicit empty id requires no live sibling with positive traffic.
 	ExpectedServingDeploymentID *string                     `json:"expected_serving_deployment_id,omitempty"`
 	ExpectedMCPAccessPolicy     *MCPAccessPolicyExpectation `json:"expected_mcp_access_policy,omitempty"`

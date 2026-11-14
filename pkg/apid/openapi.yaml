@@ -3232,7 +3232,7 @@ paths:
     put:
       operationId: decideToolPublicationVerification
       summary: Approve or revoke private candidate test authority as the personal administrator
-      description: Requires unscoped personal administrator authority and MFA policy. Approval selects exactly one existing ordinary secret:MCP_* test token or managed execution OAuth connection on the candidate app's default environment. The exact request digest and credential authorization binding are immutable. Managed connections must match the reviewed issuer and resource and cover all reviewed scopes. Approval performs no provider request. Revocation blocks subsequent credential dispatches; an accepted HTTP request may finish. Completed test evidence is consumed and cannot be reauthorized or revoked. This grants no invocation access.
+      description: Requires unscoped personal administrator authority and MFA policy. Approval selects exactly one existing ordinary secret:MCP_* test token or managed execution OAuth connection on the candidate app's default environment. The exact request digest and credential authorization binding are immutable. Managed connections must match the reviewed issuer and resource and cover all reviewed scopes. Approval performs no provider request. Candidates with readiness roles also require approve_readiness_roles acknowledgement bound to the reviewed policy and credential authority. Revocation blocks subsequent credential dispatches; an accepted HTTP request may finish. Completed test evidence is consumed and cannot be reauthorized or revoked. This grants no invocation access.
       requestBody:
         required: true
         content:
@@ -74962,6 +74962,44 @@ components:
         jwks_url: {type: string, format: uri, maxLength: 2048}
         resource: {type: string, format: uri, maxLength: 2048}
         scopes: {type: array, maxItems: 64, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 256}}
+    ToolPublicationReadinessRole:
+      type: object
+      description: One required role with its reviewed protocol and canonical catalog identity.
+      required: [name, protocol_version, catalog_format, catalog_sha256]
+      properties:
+        name: {type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'}
+        protocol_version: {type: string, enum: ['2026-07-28', '2025-11-25']}
+        catalog_format: {type: integer, enum: [1, 2]}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+    ToolPublicationReadiness:
+      type: object
+      description: Reviewed default-environment role expectations without credential sources or monitors.
+      required: [policy_revision, endpoint, max_age_seconds, roles]
+      properties:
+        policy_revision: {type: string, format: uuid}
+        endpoint: {type: string, maxLength: 256}
+        max_age_seconds: {type: integer, minimum: 60, maximum: 3600}
+        roles: {type: array, minItems: 1, maxItems: 32, items: {$ref: '#/components/schemas/ToolPublicationReadinessRole'}}
+    ToolPublicationRoleResult:
+      type: object
+      description: Sanitized read-only role probe result; no catalog or credentials.
+      required: [role, passed]
+      properties:
+        role: {type: string}
+        evidence_id: {type: string, format: uuid}
+        passed: {type: boolean}
+    MCPReadinessExpectation:
+      type: object
+      description: Exact fresh role observations required in the traffic transaction, independently of emergency overrides. Mismatches return 409 without changing traffic.
+      required: [policy_revision, artifact_sha256, evidence_ids]
+      properties:
+        policy_revision: {type: string, format: uuid}
+        artifact_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        evidence_ids:
+          type: object
+          minProperties: 1
+          maxProperties: 32
+          additionalProperties: {type: string, format: uuid}
     ToolPublicationVerificationRequest:
       type: object
       description: Exact native candidate and catalog pin with the reviewed transient behavioral fixture bytes.
@@ -74980,6 +75018,7 @@ components:
         request_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
         credential_secret_ref: {type: string, description: Existing ordinary secret:MCP_* app test-token reference; exclusive with credential_connection_id and forbidden for revocation}
         credential_connection_id: {type: string, format: uuid, description: Existing owner-approved execution OAuth connection; exclusive with credential_secret_ref and forbidden for revocation}
+        approve_readiness_roles: {type: boolean, default: false, description: Required explicit owner acknowledgement for this candidate to use its reviewed policy readiness credentials; forbidden on revocation}
         revoke: {type: boolean, default: false}
     ToolPublicationVerification:
       type: object
@@ -74993,6 +75032,7 @@ components:
         deployment_id: {type: string, format: uuid}
         deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
         catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        readiness_artifact_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Candidate readiness configuration and credential authority fingerprint}
         status: {type: string, enum: [pending, approved, running, completed, failed, revoked, not_started, outcome_unknown]}
         created_at: {type: string, format: date-time}
         deadline: {type: string, format: date-time}
@@ -75006,6 +75046,7 @@ components:
         protocol_verified: {type: boolean}
         catalog_base64: {type: string, format: byte, description: Canonical verified catalog; absent on failure}
         checks: {type: array, maxItems: 64, items: {type: object, required: [name, status], properties: {name: {type: string}, status: {type: string, enum: [passed, failed]}}}}
+        readiness: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/ToolPublicationRoleResult'}}
         code: {type: string, description: Stable verification failure stage without upstream response data}
     ToolPublicationIntent:
       type: object
@@ -75014,6 +75055,7 @@ components:
       properties:
         platform_verification: {type: boolean, default: false, description: Private hosted candidates require separate owner-approved API-held test execution}
         auth: {$ref: '#/components/schemas/ToolPublicationAuth'}
+        readiness: {$ref: '#/components/schemas/ToolPublicationReadiness'}
         legacy: {type: boolean, default: false, description: Include legacy protocol qualification for platform verification}
         endpoint_path: {type: string, maxLength: 512, description: Reviewed canonical MCP path; new invocations require this field and never infer a missing endpoint}
         app: {type: string}
@@ -100973,6 +101015,7 @@ components:
             type: integer
             minimum: 1
             maximum: 100
+        expected_mcp_readiness: {$ref: '#/components/schemas/MCPReadinessExpectation'}
         expected_mcp_access_policy:
           type: object
           description: "Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the transaction also requires the unchanged account revision and fresh replay from every currently registered serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on fleet membership."

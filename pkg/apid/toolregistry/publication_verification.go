@@ -74,7 +74,7 @@ func (e *PrivateExecutor) decidePublicationVerification(w http.ResponseWriter, r
 		return
 	}
 	var in api.ToolPublicationVerificationDecision
-	if !toolpublication.ValidID(r.PathValue("id")) || httpkit.DecodeJSONSized(r, &in, api.ToolPublicationIntentMaxBytes) != nil || !toolpublication.ValidID(in.RequestSHA256) || in.Revoke && (in.CredentialSecretRef != "" || in.CredentialConnectionID != "") {
+	if !toolpublication.ValidID(r.PathValue("id")) || httpkit.DecodeJSONSized(r, &in, api.ToolPublicationIntentMaxBytes) != nil || !toolpublication.ValidID(in.RequestSHA256) || in.Revoke && (in.CredentialSecretRef != "" || in.CredentialConnectionID != "" || in.ApproveReadiness) {
 		respond(w, nil, state.ErrInvalidArgument)
 		return
 	}
@@ -149,6 +149,20 @@ func (e *PrivateExecutor) requestPublicationVerification(r *http.Request, acct s
 			return api.ToolPublicationVerification{}, state.ErrNotFound
 		}
 		v := api.ToolPublicationVerification{PublicationID: p.ID, KeyID: key, AppID: app.ID, DeploymentID: dep.ID, DeploymentSourceSHA256: dep.SourceSHA256, CatalogSHA256: in.CatalogSHA256}
+		if p.Intent.Readiness != nil {
+			store, ok := e.store.(state.MCPReadinessStore)
+			if !ok {
+				return v, state.ErrNotFound
+			}
+			subject, err := store.MCPReadinessSubject(r.Context(), acct.ID, dep.ID)
+			if err != nil {
+				return v, err
+			}
+			if !toolpublication.ReadinessMatches(p.Intent.Readiness, subject.Policy) {
+				return v, state.ErrConflict
+			}
+			v.ReadinessArtifactSHA256 = subject.ArtifactSHA256
+		}
 		v.RequestSHA256 = toolpublication.VerificationDigest(v, p.Intent)
 		out, err := e.publicationChange(r.Context(), acct.ID, p.ID, key, "review", state.ToolPublicationVerificationChange{Review: &v})
 		return out.Verification, err
@@ -270,6 +284,12 @@ func (e *PrivateExecutor) runPublicationVerification(ctx context.Context, accoun
 		outcome.Code = "publication_evidence_too_large"
 		return
 	}
+	outcome.Code = "readiness_verification_failed"
+	roles, roleSensitive, err := e.publicationReadiness(ctx, account, p, v, endpoint)
+	outcome.Readiness = roles
+	if err != nil || publicationCatalogSensitive(catalog, roleSensitive) {
+		return
+	}
 	outcome.Code = "protocol_verification_failed"
 	if err = e.opts.PublicationProtocols(ctx, target, endpoint, token, contract, p.Intent.Legacy, wrap); err != nil {
 		return
@@ -286,11 +306,17 @@ func (e *PrivateExecutor) runPublicationVerification(ctx context.Context, accoun
 	if err = e.opts.VerifyPin(ctx, target, endpoint); err != nil {
 		return
 	}
+	if p.Intent.Readiness != nil {
+		outcome.Code = "readiness_changed"
+		if _, err = e.publicationChange(ctx, account, p.ID, v.KeyID, "readiness_assert", state.ToolPublicationVerificationChange{Outcome: &outcome}); err != nil {
+			return
+		}
+	}
 	checks := []api.ToolPublicationCheck{}
 	for _, c := range smoke.Checks {
 		checks = append(checks, api.ToolPublicationCheck{Name: c.Name, Status: c.Status})
 	}
-	outcome = api.ToolPublicationVerificationOutcome{OK: true, ProtocolVerified: true, Catalog: catalog, Checks: checks}
+	outcome = api.ToolPublicationVerificationOutcome{OK: true, ProtocolVerified: true, Catalog: catalog, Checks: checks, Readiness: roles}
 }
 
 // The journal's SQL payload ceiling is the combined outcome and catalog budgets.
@@ -302,6 +328,11 @@ func publicationVerificationFits(p api.ToolPublicationRecord, v api.ToolPublicat
 		checks = append(checks, api.ToolPublicationCheck{Name: name, Status: "passed"})
 	}
 	v.Status, v.Outcome = "completed", &api.ToolPublicationVerificationOutcome{OK: true, ProtocolVerified: true, Catalog: catalog, Checks: checks}
+	if p.Intent.Readiness != nil {
+		for _, role := range p.Intent.Readiness.Roles {
+			v.Outcome.Readiness = append(v.Outcome.Readiness, api.ToolPublicationRoleResult{Role: role.Name, EvidenceID: "00000000-0000-0000-0000-000000000000", Passed: true})
+		}
+	}
 	p.Status, p.Verification, p.DeploymentSourceSHA256 = "completed", &v, v.DeploymentSourceSHA256
 	p.Outcome = &api.ToolPublicationOutcome{Status: "completed", DeploymentID: v.DeploymentID, CatalogSHA256: v.CatalogSHA256, Catalog: catalog, ProtocolVerified: true, Checks: checks}
 	data, err := json.MarshalIndent(p, "", " ")

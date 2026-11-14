@@ -9185,6 +9185,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if err := s.checkMCPAccessPolicy(ctx, tx, appID); err != nil {
 		return Deployment{}, err
 	}
+	if err := s.checkMCPReadinessExpectation(ctx, tx, appID, id); err != nil {
+		return Deployment{}, err
+	}
 
 	if err := pgAuthorizeBindingRelease(ctx, tx); err != nil {
 		return Deployment{}, err

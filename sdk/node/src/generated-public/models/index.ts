@@ -530,6 +530,7 @@ export type { ListWorkflowStepAttemptsResponse } from './ListWorkflowStepAttempt
 export type { ListWorkflowStepsResponse } from './ListWorkflowStepsResponse.js';
 export type { LogExcerpt } from './LogExcerpt.js';
 export type { MCPPolicyConvergenceSnapshot } from './MCPPolicyConvergenceSnapshot.js';
+export type { MCPReadinessExpectation } from './MCPReadinessExpectation.js';
 export type { MCPResourcePolicy } from './MCPResourcePolicy.js';
 export type { MFAConfirmRequest } from './MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './MFAConfirmResponse.js';

@@ -33,6 +33,13 @@ type PublicationFixture struct {
 	Token                 string
 	Credential            atomic.Value
 	CatalogReflection     atomic.Value
+	PrimaryTools          atomic.Value
+	RoleViews             atomic.Value
+	ReadinessDrift        atomic.Bool
+	ReadinessCalls        atomic.Int32
+	ReadinessToolCalls    atomic.Int32
+	OnFixture             atomic.Value
+	OnReadiness           atomic.Value
 	Calls                 atomic.Int32
 	Mode                  atomic.Int32 // 1: fixture failure, 2: catalog credential reflection, 3: protocol failure
 	LoseVerificationReply atomic.Bool
@@ -43,6 +50,10 @@ func NewPublication(t *testing.T, store state.Store, configure ...func(*toolregi
 	f := &PublicationFixture{Base: New(t, store, ""), Token: "publication-provider-access-token"}
 	f.Credential.Store(f.Token)
 	f.CatalogReflection.Store("")
+	f.PrimaryTools.Store([]mcphosting.Tool{{Name: "visible", Description: "reviewed tool", InputSchema: map[string]any{"type": "object"}}})
+	f.RoleViews.Store(map[string][]mcphosting.Tool{})
+	f.OnFixture.Store(func() {})
+	f.OnReadiness.Store(func() {})
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)
@@ -180,7 +191,11 @@ func (f *PublicationFixture) RotateTestToken(t *testing.T, token string) {
 func (f *PublicationFixture) serveRuntime(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/.well-known/oauth-protected-resource") {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"resource": "https://private.example/mcp", "authorization_servers": []string{"https://issuer.example"}, "scopes_supported": []string{"tool:read"}})
+		scopes := []string{"tool:read"}
+		if len(f.PrimaryTools.Load().([]mcphosting.Tool)) > 1 {
+			scopes = append(scopes, "tool:write")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"resource": "https://private.example/mcp", "authorization_servers": []string{"https://issuer.example"}, "scopes_supported": scopes})
 		return
 	}
 	if r.Header.Get("Origin") != "" {
@@ -188,10 +203,16 @@ func (f *PublicationFixture) serveRuntime(w http.ResponseWriter, r *http.Request
 		return
 	}
 	token := f.Credential.Load().(string)
-	if r.Header.Get("Authorization") != "Bearer "+token {
+	provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	roleTools, isRole := f.RoleViews.Load().(map[string][]mcphosting.Tool)[provided]
+	if r.Header.Get("Authorization") != "Bearer "+token && !isRole {
 		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="https://private.example/.well-known/oauth-protected-resource/mcp"`)
 		w.WriteHeader(401)
 		return
+	}
+	if isRole {
+		f.ReadinessCalls.Add(1)
+		f.OnReadiness.Load().(func())()
 	}
 	var request struct {
 		ID     json.RawMessage `json:"id"`
@@ -214,16 +235,32 @@ func (f *PublicationFixture) serveRuntime(w http.ResponseWriter, r *http.Request
 	case "initialize":
 		result = map[string]any{"protocolVersion": r.Header.Get("MCP-Protocol-Version"), "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "private-fixture", "version": "1"}}
 	case "tools/list":
-		description := "reviewed tool"
+		tools := append([]mcphosting.Tool{}, f.PrimaryTools.Load().([]mcphosting.Tool)...)
+		if isRole {
+			tools = append([]mcphosting.Tool{}, roleTools...)
+			if f.ReadinessDrift.Load() {
+				tools = append(tools, mcphosting.Tool{Name: "unexpected", InputSchema: map[string]any{"type": "object"}})
+			}
+		}
+		description := ""
 		if f.Mode.Load() == 2 {
 			description = token
 		}
 		if reflected := f.CatalogReflection.Load().(string); reflected != "" {
 			description = reflected
 		}
-		result = map[string]any{"tools": []mcphosting.Tool{{Name: "visible", Description: description, InputSchema: map[string]any{"type": "object"}}}}
+		if !isRole && description != "" && len(tools) > 0 {
+			tools[0].Description = description
+		}
+		result = map[string]any{"tools": tools}
 	case "tools/call":
+		if isRole {
+			f.ReadinessToolCalls.Add(1)
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		f.Calls.Add(1)
+		f.OnFixture.Load().(func())()
 		text := "ok"
 		if f.Mode.Load() == 1 {
 			text = "failed"
@@ -239,7 +276,7 @@ func (f *PublicationFixture) Approve(t *testing.T) api.ToolPublicationVerificati
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err = f.Owner.DecideToolPublicationVerification(t.Context(), f.Publication.ID, api.ToolPublicationVerificationDecision{RequestSHA256: v.RequestSHA256, CredentialSecretRef: "secret:MCP_PUBLICATION_TEST"})
+	v, err = f.Owner.DecideToolPublicationVerification(t.Context(), f.Publication.ID, api.ToolPublicationVerificationDecision{RequestSHA256: v.RequestSHA256, CredentialSecretRef: "secret:MCP_PUBLICATION_TEST", ApproveReadiness: f.Publication.Intent.Readiness != nil})
 	if err != nil {
 		t.Fatal(err)
 	}

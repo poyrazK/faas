@@ -21,6 +21,7 @@ import (
 )
 
 type publicationFixture struct {
+	readiness      api.MCPReadinessPolicy
 	journal        map[string]api.ToolPublicationRecord
 	base           *localFixture
 	mu             sync.Mutex
@@ -57,6 +58,12 @@ func newPublicationFixture(t *testing.T) (*publicationFixture, *httptest.Server)
 	f := &publicationFixture{base: newLocalFixture(t, true, "stable"), journal: map[string]api.ToolPublicationRecord{}}
 	f.base.app.URL = "https://alpha.gregale.dev"
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/alpha/mcp-readiness-policy" {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(f.readiness)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/v1/tool-publications/") || r.URL.Path == "/v1/tool-registry" {
 			f.serveJournal(w, r)
 			return

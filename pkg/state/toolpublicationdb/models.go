@@ -56,6 +56,12 @@ type Deployment struct {
 	TrafficPercent int32
 }
 
+type DeploymentMcpReadinessEvidence struct {
+	DeploymentID pgtype.UUID
+	Role         string
+	Evidence     []byte
+}
+
 type Org struct {
 	ID                     pgtype.UUID
 	PersonalOrg            bool

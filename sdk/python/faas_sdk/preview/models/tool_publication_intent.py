@@ -13,7 +13,9 @@ from ..models.tool_publication_intent_access_mode import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.tool_publication_auth import ToolPublicationAuth
     from ..models.tool_publication_intent_tool_scopes import ToolPublicationIntentToolScopes
+    from ..models.tool_publication_readiness import ToolPublicationReadiness
 
 
 T = TypeVar("T", bound="ToolPublicationIntent")
@@ -30,6 +32,14 @@ class ToolPublicationIntent:
     access_mode: ToolPublicationIntentAccessMode
     tool_scopes: ToolPublicationIntentToolScopes
     test_cases: list[str]
+    platform_verification: bool | Unset = False
+    """Private hosted candidates require separate owner-approved API-held test execution"""
+    auth: ToolPublicationAuth | Unset = UNSET
+    """Reviewed external OAuth issuer, signing keys, resource and scopes for one private publication."""
+    readiness: ToolPublicationReadiness | Unset = UNSET
+    """Reviewed default-environment role expectations without credential sources or monitors."""
+    legacy: bool | Unset = False
+    """Include legacy protocol qualification for platform verification"""
     endpoint_path: str | Unset = UNSET
     """Reviewed canonical MCP path; new invocations require this field and never infer a missing endpoint"""
     app_id: str | Unset = UNSET
@@ -49,6 +59,18 @@ class ToolPublicationIntent:
 
         test_cases = self.test_cases
 
+        platform_verification = self.platform_verification
+
+        auth: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.auth, Unset):
+            auth = self.auth.to_dict()
+
+        readiness: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.readiness, Unset):
+            readiness = self.readiness.to_dict()
+
+        legacy = self.legacy
+
         endpoint_path = self.endpoint_path
 
         app_id = self.app_id
@@ -67,6 +89,14 @@ class ToolPublicationIntent:
                 "test_cases": test_cases,
             }
         )
+        if platform_verification is not UNSET:
+            field_dict["platform_verification"] = platform_verification
+        if auth is not UNSET:
+            field_dict["auth"] = auth
+        if readiness is not UNSET:
+            field_dict["readiness"] = readiness
+        if legacy is not UNSET:
+            field_dict["legacy"] = legacy
         if endpoint_path is not UNSET:
             field_dict["endpoint_path"] = endpoint_path
         if app_id is not UNSET:
@@ -78,7 +108,9 @@ class ToolPublicationIntent:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.tool_publication_auth import ToolPublicationAuth
         from ..models.tool_publication_intent_tool_scopes import ToolPublicationIntentToolScopes
+        from ..models.tool_publication_readiness import ToolPublicationReadiness
 
         d = dict(src_dict)
         app = d.pop("app")
@@ -93,6 +125,24 @@ class ToolPublicationIntent:
 
         test_cases = cast(list[str], d.pop("test_cases"))
 
+        platform_verification = d.pop("platform_verification", UNSET)
+
+        _auth = d.pop("auth", UNSET)
+        auth: ToolPublicationAuth | Unset
+        if isinstance(_auth, Unset):
+            auth = UNSET
+        else:
+            auth = ToolPublicationAuth.from_dict(_auth)
+
+        _readiness = d.pop("readiness", UNSET)
+        readiness: ToolPublicationReadiness | Unset
+        if isinstance(_readiness, Unset):
+            readiness = UNSET
+        else:
+            readiness = ToolPublicationReadiness.from_dict(_readiness)
+
+        legacy = d.pop("legacy", UNSET)
+
         endpoint_path = d.pop("endpoint_path", UNSET)
 
         app_id = d.pop("app_id", UNSET)
@@ -106,6 +156,10 @@ class ToolPublicationIntent:
             access_mode=access_mode,
             tool_scopes=tool_scopes,
             test_cases=test_cases,
+            platform_verification=platform_verification,
+            auth=auth,
+            readiness=readiness,
+            legacy=legacy,
             endpoint_path=endpoint_path,
             app_id=app_id,
             expected_serving_deployment_id=expected_serving_deployment_id,

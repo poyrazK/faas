@@ -21738,6 +21738,18 @@ components:
         until: {type: string, format: date-time, description: Exclusive first_at bound for the traversal.}
         limit: {type: integer, minimum: 1, maximum: 100, default: 100, description: Page size included in the cursor scope binding.}
         cursor: {type: string, maxLength: 2048, description: Previous page continuation retaining its initial cutoff.}
+    MCPReadinessExpectation:
+      type: object
+      description: Exact fresh role observations required in the traffic transaction, independently of emergency overrides. Mismatches return 409 without changing traffic.
+      required: [policy_revision, artifact_sha256, evidence_ids]
+      properties:
+        policy_revision: {type: string, format: uuid}
+        artifact_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        evidence_ids:
+          type: object
+          minProperties: 1
+          maxProperties: 32
+          additionalProperties: {type: string, format: uuid}
     MCPPolicyConvergenceSnapshot:
       description: "Account-scoped live gateway replay observation for an active HTTP deployment. Snapshot metadata only; token enforcement is not attested. Correlates retained admission evidence when available."
       type: object
@@ -30368,6 +30380,7 @@ components:
             type: integer
             minimum: 1
             maximum: 100
+        expected_mcp_readiness: {$ref: '#/components/schemas/MCPReadinessExpectation'}
         expected_mcp_access_policy:
           type: object
           description: "Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the transaction also requires the unchanged account revision and fresh replay from every currently registered serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on fleet membership."

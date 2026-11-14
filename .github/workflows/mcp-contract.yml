@@ -14,6 +14,9 @@ on:
       - 'pkg/mcphosting/**'
       - 'pkg/mcpmanagement/**'
       - 'pkg/apid/toolregistry/**'
+      - 'pkg/apid/trafficguard/**'
+      - 'pkg/apid/mcpreadiness/**'
+      - 'pkg/state/mcp_readiness_expectation.go'
       - 'pkg/apid/apidserver/private_publication*'
       - 'pkg/api/tool_publication*'
       - 'pkg/state/tool_publication*'
@@ -250,7 +253,7 @@ jobs:
           GOMEMLIMIT: 2GiB
           GOGC: 10
           GOMAXPROCS: 2
-        run: go test -race -p=1 ./pkg/apid/toolregistry -run '^TestPrivateToolPublication|^TestManagedPublication|^TestPrivatePublicationCombinedEvidenceBudget' -count=1
+        run: go test -race -p=1 ./pkg/apid/toolregistry -run '^TestReadinessPublication|^TestPrivateToolPublication|^TestManagedPublication|^TestPrivatePublicationCombinedEvidenceBudget' -count=1
 
   # Core contracts and starter qualification use independent runners and
   # databases; run their cold race builds in parallel.

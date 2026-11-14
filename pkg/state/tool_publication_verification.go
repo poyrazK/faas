@@ -21,24 +21,30 @@ type ToolPublicationVerificationStore interface {
 }
 
 type ToolPublicationVerificationChange struct {
-	Review   *api.ToolPublicationVerification
-	Decision *api.ToolPublicationVerificationDecision
-	Outcome  *api.ToolPublicationVerificationOutcome
-	LeaseID  string
+	Role              string
+	ReadinessSubject  *MCPReadinessSubject
+	ReadinessEvidence *api.MCPReadinessEvidence
+	Review            *api.ToolPublicationVerification
+	Decision          *api.ToolPublicationVerificationDecision
+	Outcome           *api.ToolPublicationVerificationOutcome
+	LeaseID           string
 }
 
 type ToolPublicationVerificationResult struct {
-	Verification api.ToolPublicationVerification
-	Created      bool
-	Secret       *AppSecret           // internal dispatch only; never serialize this result
-	Connection   *ToolOAuthConnection // internal credential state, never serialize
-	RenewalFresh bool
+	ReadinessSubject  *MCPReadinessSubject
+	ReadinessEvidence *api.MCPReadinessEvidence
+	Verification      api.ToolPublicationVerification
+	Created           bool
+	Secret            *AppSecret           // internal dispatch only; never serialize this result
+	Connection        *ToolOAuthConnection // internal credential state, never serialize
+	RenewalFresh      bool
 }
 
 type toolPublicationTestCredential struct {
-	Ref          string `json:"ref"`
-	SHA256       string `json:"sha256"`
-	ConnectionID string `json:"connection_id,omitempty"`
+	ReadinessApproved bool   `json:"readiness_approved,omitempty"`
+	Ref               string `json:"ref"`
+	SHA256            string `json:"sha256"`
+	ConnectionID      string `json:"connection_id,omitempty"`
 }
 
 // Private approval metadata shares the existing bounded publication payload.
@@ -130,12 +136,28 @@ func changeToolVerification(p *storedToolPublication, key, action string, in Too
 			}
 			out.Secret = secret
 		}
+	case "readiness_dispatch", "readiness_record", "readiness_assert":
+		if v.Status != "running" || p.Intent.Readiness == nil || p.TestCredential == nil || !p.TestCredential.ReadinessApproved {
+			return out, ErrNotFound
+		}
+		if action != "readiness_assert" {
+			found := false
+			for _, role := range p.Intent.Readiness.Roles {
+				found = found || role.Name == in.Role
+			}
+			if !found {
+				return out, ErrInvalidArgument
+			}
+		}
 	case "finish":
 		if v.Status != "running" || in.Outcome == nil {
 			return out, ErrConflict
 		}
 		v.Outcome, v.Status = in.Outcome, "failed"
 		if in.Outcome.OK {
+			if !toolpublication.ReadinessResultsMatch(p.Intent.Readiness, in.Outcome.Readiness) {
+				return out, ErrInvalidArgument
+			}
 			candidate := api.ToolPublicationOutcome{Status: "completed", DeploymentID: v.DeploymentID, Catalog: in.Outcome.Catalog, CatalogSHA256: v.CatalogSHA256, ProtocolVerified: in.Outcome.ProtocolVerified, Checks: in.Outcome.Checks}
 			if toolpublication.ValidateOutcome(p.Intent, candidate) != nil {
 				return out, ErrInvalidArgument
@@ -165,8 +187,16 @@ func (m *MemStore) ChangeToolPublicationVerification(_ context.Context, account,
 		v = in.Review
 	}
 	var secret *AppSecret
-	if action == "approve" || action == "begin" || action == "dispatch" || action == "renew" || action == "renew_dispatch" || action == "review" && p.Verification == nil {
+	if publicationAuthorityAction(action, in) {
 		if err := m.toolPublicationCandidateLocked(account, p.Intent, v); err != nil {
+			return ToolPublicationVerificationResult{}, err
+		}
+	}
+	var readiness *MCPReadinessSubject
+	if publicationAuthorityAction(action, in) {
+		var err error
+		readiness, err = m.publicationReadinessLocked(p, v)
+		if err != nil {
 			return ToolPublicationVerificationResult{}, err
 		}
 	}
@@ -207,6 +237,18 @@ func (m *MemStore) ChangeToolPublicationVerification(_ context.Context, account,
 	if err != nil {
 		return out, err
 	}
+	out.ReadinessSubject = readiness
+	if action == "readiness_record" {
+		if readiness == nil || in.ReadinessSubject == nil || in.ReadinessEvidence == nil || in.ReadinessSubject.AccountID != account || in.ReadinessSubject.DeploymentID != v.DeploymentID || in.ReadinessEvidence.Role != in.Role || !validateReadinessEvidence(*in.ReadinessSubject, *in.ReadinessEvidence) {
+			return out, ErrInvalidArgument
+		}
+		saved, err := m.recordMCPReadinessLocked(*in.ReadinessSubject, *in.ReadinessEvidence)
+		out.ReadinessEvidence = &saved
+		return out, err
+	}
+	if (action == "readiness_assert" || action == "finish" && in.Outcome != nil && in.Outcome.OK) && !publicationReadinessPassed(p, readiness, m.publicationReadinessEvidenceLocked(v.DeploymentID), in.Outcome) {
+		return out, ErrConflict
+	}
 	if action == "renew" && connection != nil {
 		claim, claimErr := claimToolOAuth(*connection, time.Now().UTC())
 		if claim.Connection.Record.ID != "" {
@@ -224,6 +266,9 @@ func (m *MemStore) ChangeToolPublicationVerification(_ context.Context, account,
 }
 
 func publicationCredentialBinding(p storedToolPublication, in api.ToolPublicationVerificationDecision, secret *AppSecret, connection *ToolOAuthConnection) (*toolPublicationTestCredential, error) {
+	if (p.Intent.Readiness != nil) != in.ApproveReadiness {
+		return nil, ErrInvalidArgument
+	}
 	if in.CredentialConnectionID != "" {
 		if in.CredentialSecretRef != "" || !toolgrant.ValidID(in.CredentialConnectionID) || connection == nil || connection.Record.ID != in.CredentialConnectionID {
 			return nil, ErrInvalidArgument
@@ -231,12 +276,12 @@ func publicationCredentialBinding(p storedToolPublication, in api.ToolPublicatio
 		if err := publicationConnectionAuthority(p, *connection); err != nil {
 			return nil, err
 		}
-		return &toolPublicationTestCredential{ConnectionID: connection.Record.ID, SHA256: connection.Record.BindingSHA256}, nil
+		return &toolPublicationTestCredential{ConnectionID: connection.Record.ID, SHA256: connection.Record.BindingSHA256, ReadinessApproved: in.ApproveReadiness}, nil
 	}
 	if secret == nil || !toolgrant.ValidCredentialRef(in.CredentialSecretRef) {
 		return nil, ErrInvalidArgument
 	}
-	return &toolPublicationTestCredential{Ref: in.CredentialSecretRef, SHA256: toolpublication.Digest(secret.Ciphertext)}, nil
+	return &toolPublicationTestCredential{Ref: in.CredentialSecretRef, SHA256: toolpublication.Digest(secret.Ciphertext), ReadinessApproved: in.ApproveReadiness}, nil
 }
 
 func publicationConnectionAuthority(p storedToolPublication, c ToolOAuthConnection) error {

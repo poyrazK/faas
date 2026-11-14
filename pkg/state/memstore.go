@@ -6428,6 +6428,9 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	if err := m.checkMCPAccessPolicyLocked(ctx, d.AppID); err != nil {
 		return Deployment{}, err
 	}
+	if err := m.checkMCPReadinessExpectationLocked(ctx, d); err != nil {
+		return Deployment{}, err
+	}
 	if len(reviews) > 0 {
 		if len(reviews) != 1 || reviews[0] == nil {
 			return Deployment{}, ErrInvalidArgument
