@@ -16462,6 +16462,54 @@ type TenantSurface struct {
 	PlatformTenantManaged bool
 }
 
+type ToolGrant struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+	KeyID     pgtype.UUID
+	Version   string
+	ExpiresAt pgtype.Timestamptz
+	RevokedAt pgtype.Timestamptz
+	Payload   []byte
+}
+
+type ToolInvocation struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+	Status    string
+	Deadline  pgtype.Timestamptz
+	Payload   []byte
+}
+
+type ToolOauthAuthorization struct {
+	AccountID      pgtype.UUID
+	ConnectionID   pgtype.UUID
+	StateSha256    string
+	Phase          string
+	ExpiresAt      pgtype.Timestamptz
+	FlowCiphertext []byte
+}
+
+type ToolOauthConnection struct {
+	AccountID             pgtype.UUID
+	ID                    pgtype.UUID
+	AppID                 pgtype.UUID
+	Payload               []byte
+	State                 string
+	Generation            int64
+	CredentialsCiphertext []byte
+	ExpiresAt             pgtype.Timestamptz
+	LeaseID               pgtype.UUID
+	LeaseUntil            pgtype.Timestamptz
+	RevokedAt             pgtype.Timestamptz
+}
+
+type ToolPublication struct {
+	AccountID pgtype.UUID
+	ID        string
+	Status    string
+	Payload   []byte
+}
+
 type TrafficRetryCounter struct {
 	AppID     pgtype.UUID
 	Originals int64

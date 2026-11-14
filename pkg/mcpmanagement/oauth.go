@@ -82,7 +82,10 @@ func (r *remoteServer) requestedScopes(raw string) ([]string, bool) {
 		return []string{scopeRead}, true
 	}
 	requested := strings.Fields(raw)
-	if len(requested) == 0 || len(requested) > 2 || !slices.Contains(requested, scopeRead) {
+	if slices.Contains(requested, scopePrivateInvoke) && !slices.Contains(requested, scopeInvoke) {
+		return nil, false
+	}
+	if len(requested) == 0 || len(requested) > len(r.scopes()) || !slices.Contains(requested, scopeRead) || slices.Contains(requested, scopePublish) && !slices.Contains(requested, scopeWrite) {
 		return nil, false
 	}
 	for _, scope := range requested {

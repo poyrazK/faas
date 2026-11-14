@@ -1,3 +1,5 @@
+- [ADR-20261112200001: Agent tool authoring and verified publication over MCP](20261112200001-management-mcp-tool-publication.md) — accepted; local build-tools catalog, reviewed source snapshots, staged behavioral tests and single-attempt asynchronous publication
+- [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
 - [ADR-20261113180307: Bind execution workflows to independent Node clients](20261113180307-node-sdk-bound-execution-workflows.md) — accepted; preview helpers retain one client snapshot across submission, resumed event streams, and terminal receipt reads, with per-caller cancellation and legacy compatibility.
@@ -2309,3 +2311,16 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261112210000: Data API investigation hardening](20261112210000-data-api-investigation-hardening.md) — accepted; resolves DAPI001–DAPI030, with exact numeric mode, bounded authorization leases, independent budget counters, retry/quarantine scheduling and opt-in owner maintenance with shared-bucket ownership protection.
 - [ADR-20261113120820: Invocation-scoped CLI HTTP request timeout](20261113120820-cli-http-request-timeout.md) — accepted; positive prefix duration overrides API/upload budgets, while streams retain caller-controlled body lifetime
 - [ADR-20261113132310: Opt-in retries for selected CLI reads](20261113132310-cli-read-request-retries.md) — accepted; bounded invocation-scoped retries on a closed JSON read set, authoritative Retry-After, cancellation and attempt metadata
+
+- [ADR-20261112210001: Durable tool publications and private registry](20261112210001-durable-tool-publications-and-registry.md) — accepted; native single-attempt journals, immutable runtime catalog evidence and account-scoped version discovery
+- [ADR-20261113100001: Scoped tool grants and hosted registry discovery](20261113100001-scoped-tool-grants-and-hosted-discovery.md) — accepted; immutable expiring connection/version/tool grants, native project checks and single-tool hosted catalog projections
+- [ADR-20261112220001: Authorized invocation of exact registered tool versions](20261112220001-registered-tool-invocation.md) — accepted; explicit local consent, native single-dispatch receipts, exact version/catalog gates and cancellation without replay
+- [ADR-20261113130001: Hosted invocation through exact tool grants](20261113130001-hosted-granted-tool-invocation.md) — accepted; independent invocation consent, open-tool hosted workers and atomic native grant-scoped dispatch
+
+- [ADR-20261113180001: Reviewed hosted tool publication from source uploads](20261113180001-hosted-tool-publication.md) — accepted; opt-in hosted Node publication, separate publishing consent, reviewed uploads and native single-attempt recovery
+
+- [ADR-20261113200000: Private delegated invocation with sealed credential bindings](20261113200000-private-tool-invocation.md) — accepted; owner-bound application tokens, bounded native workers, rotation/dispatch serialization and independent private invocation consent
+
+- [ADR-20261113220000: Managed OAuth connections for private tool execution](20261113220000-managed-tool-oauth.md) — accepted; immutable execution authority, encrypted rotating credentials, durable renewal leases and credential-free agent status
+
+- [ADR-20261113230000: Guided OAuth for execution connections](20261113230000-guided-tool-oauth.md) — accepted; owner-only browser PKCE, direct encrypted credentials, consumed authorization attempts and new identities for reconnects
