@@ -13,7 +13,7 @@ synchronization does not require application Auth.
 
 ## Neon source onboarding
 
-Run `gregale pipeline connection explain neon` without logging in, or open
+Run `gregale pipeline connection guide get neon` without logging in, or open
 **Connect a Neon source** in the dashboard. Use a direct PostgreSQL 16 endpoint;
 `-pooler` URLs are rejected before connecting. Keep `sslmode=verify-full`.
 Enable logical replication in Neon project settings only after reviewing its
@@ -75,10 +75,10 @@ To change tenant memberships, save the complete replacement array in a private
 `members.json` file, preview the diff, then approve its returned `tenant_change.id`:
 
 ```sh
-gregale pipeline access set PIPELINE_ID --members-file ./members.json
-gregale pipeline access set PIPELINE_ID --approve SAVED_CHANGE_ID --wait
+gregale pipeline access PIPELINE_ID --members-file ./members.json
+gregale pipeline access PIPELINE_ID --approve SAVED_CHANGE_ID --wait
 # Or discard an unapproved preview:
-gregale pipeline access set PIPELINE_ID --discard
+gregale pipeline access PIPELINE_ID --discard
 ```
 
 The public API is `POST /v1/data/pipelines/{id}/tenant-readers` with
@@ -1462,11 +1462,11 @@ monitors from evaluating targets they do not understand.
 Describe the filter and order columns used by a read query, without SQL or values:
 
 ```sh
-gregale pipeline index set PIPELINE_UUID --table orders \
+gregale pipeline indexes PIPELINE_UUID --table orders \
   --filters status --order-by=-created_at --max-index-bytes 16777216 --wait
 # Review the returned statement, limits and frozen advice ID, then approve it:
-gregale pipeline index set PIPELINE_UUID --approve ADVICE_ID --wait
-gregale pipeline index set PIPELINE_UUID
+gregale pipeline indexes PIPELINE_UUID --approve ADVICE_ID --wait
+gregale pipeline indexes PIPELINE_UUID
 ```
 
 The dashboard offers the same preview and explicit approval. API/SDK clients use

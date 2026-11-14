@@ -227,14 +227,14 @@ func cmdWorkflowsRun(args []string) int {
 	if err != nil {
 		return printRunSubmissionError("Request failed", err, recoveryCLI()+" workflow list --app "+recoveryArgument(*appSlug)+" --workflow-name "+recoveryArgument(workflowName), *idempotencyKey != "")
 	}
+	if *wait && !workflowUUIDPattern.MatchString(run.ID) {
+		if code := renderWorkflowRunStatus(run); code != 0 {
+			return code
+		}
+		return printWorkflowWaitError("Cannot wait for accepted workflow", fmt.Errorf("submission response did not include a valid run ID; inspect workflows list --app %s --workflow-name %s before submitting again", recoveryArgument(*appSlug), recoveryArgument(workflowName)), run.ID, *timeout, *interval)
+	}
 	rememberAcceptedWorkflow(*appSlug, workflowName, run)
 	if *wait {
-		if !workflowUUIDPattern.MatchString(run.ID) {
-			if code := renderWorkflowRunStatus(run); code != 0 {
-				return code
-			}
-			return printErr("Cannot wait for accepted workflow", fmt.Errorf("submission response did not include a valid run ID; inspect workflows list --app %s --workflow-name %s before submitting again", recoveryArgument(*appSlug), recoveryArgument(workflowName)))
-		}
 		if !jsonOutput {
 			_, _ = fmt.Fprintf(osStderr, "Workflow run accepted: %s. Waiting for this exact run.\n", run.ID)
 		}
