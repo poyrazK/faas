@@ -3,6 +3,7 @@ package s3gateway
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -225,7 +226,7 @@ func TestAsOfVersionPagesAcrossAKey(t *testing.T) {
 	if _, _, err := asOfVersion(t.Context(), p, "gregale-source", "k", asOfBranchPoint, func() bool { return true }); err == nil {
 		t.Fatal("a key with more versions than the page budget was answered")
 	}
-	if _, _, err := asOfVersion(t.Context(), p, "gregale-source", "k", asOfBranchPoint, func() bool { return false }); err != errOverlayListAnswered {
+	if _, _, err := asOfVersion(t.Context(), p, "gregale-source", "k", asOfBranchPoint, func() bool { return false }); !errors.Is(err, errOverlayListAnswered) {
 		t.Fatalf("a refused request count = %v", err)
 	}
 }
