@@ -46,6 +46,7 @@ func (w *Worker) reconcilePipeline(ctx context.Context, p Pipeline) error {
 	defer cancel()
 	intent := p
 	admitted := w.Allowed != nil && w.Allowed(op, p.AccountID)
+	intent.IndexWorkBlocked = !admitted
 	if !admitted && intent.DesiredState == "running" {
 		intent.DesiredState = "paused"
 	}
