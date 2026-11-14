@@ -27,8 +27,8 @@ DELETE FROM data_pipeline_connections c WHERE c.account_id=sqlc.arg(account_id):
 SELECT count(*) FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid AND state<>'deleted';
 
 -- name: PipelineInsert :one
-INSERT INTO data_pipelines(id,account_id,name,source_connection_id,database_id,tables,read_subjects,serving_config,freshness_target_seconds)
-VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(name),sqlc.arg(source_connection_id)::text::uuid,sqlc.arg(database_id)::text::uuid,sqlc.arg(tables),sqlc.arg(read_subjects),sqlc.arg(serving_config),sqlc.arg(freshness_target_seconds)) RETURNING *;
+INSERT INTO data_pipelines(id,account_id,name,source_connection_id,database_id,tables,read_subjects,serving_config,freshness_target_seconds,work_config)
+VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(name),sqlc.arg(source_connection_id)::text::uuid,sqlc.arg(database_id)::text::uuid,sqlc.arg(tables),sqlc.arg(read_subjects),sqlc.arg(serving_config),sqlc.arg(freshness_target_seconds),sqlc.arg(work_config)) RETURNING *;
 
 -- name: PipelinesList :many
 SELECT * FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid ORDER BY (state='deleted'),created_at DESC,id LIMIT sqlc.arg(page_limit);
@@ -60,7 +60,7 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uui
 RETURNING *;
 
 -- name: PipelineWorkerProtocol :exec
-SELECT set_config('gregale.pipeline_worker_protocol','pipeline-evolution-v1',true);
+SELECT set_config('gregale.pipeline_worker_protocol','pipeline-scheduled-v1',true);
 
 -- name: PipelineClaim :one
 WITH candidate AS (
@@ -72,6 +72,7 @@ WITH candidate AS (
 
 -- name: PipelineFinish :execrows
 UPDATE data_pipelines SET
+ work_status=coalesce(sqlc.narg(work_status)::jsonb,work_status),
  evolution_change=CASE WHEN sqlc.arg(evolution_applied)::boolean AND evolution_change->>'state'='approved'
  THEN jsonb_set(evolution_change,'{state}','"applied"') ELSE evolution_change END,
  serving_config=CASE WHEN reader_change->>'State'='approved' AND reader_change->>'Tenant'='true'
@@ -432,7 +433,7 @@ RETURNING *;
 
 -- name: PipelineAlertLock :one
 SELECT a.* FROM data_pipeline_alerts a JOIN data_pipelines p ON p.id=a.pipeline_id AND p.account_id=a.account_id
-WHERE (p.freshness_target_seconds=0 OR current_setting('gregale.pipeline_worker_protocol',true) IN ('pipeline-operability-v1','pipeline-evolution-v1')) AND a.enabled AND a.check_at<=sqlc.arg(now_at) AND a.account_id=ANY(sqlc.arg(accounts)::uuid[])
+WHERE (p.freshness_target_seconds=0 OR current_setting('gregale.pipeline_worker_protocol',true) IN ('pipeline-operability-v1','pipeline-evolution-v1','pipeline-scheduled-v1')) AND (p.work_config='{}' OR current_setting('gregale.pipeline_worker_protocol',true)='pipeline-scheduled-v1') AND a.enabled AND a.check_at<=sqlc.arg(now_at) AND a.account_id=ANY(sqlc.arg(accounts)::uuid[])
 ORDER BY a.check_at,a.pipeline_id FOR UPDATE OF a SKIP LOCKED LIMIT 1;
 
 -- name: PipelineAlertObserve :exec
@@ -515,3 +516,14 @@ WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uui
  AND lease_token=sqlc.arg(lease_token) AND lease_until>clock_timestamp()
  AND coalesce(reader_change->>'State','') NOT IN ('approved','preview') AND desired_state<>'deleted'
  AND serving_config->'auth_organizations'=sqlc.arg(binding)::jsonb;
+
+-- name: PipelineOperationsSave :execrows
+UPDATE data_pipelines SET work_config=sqlc.arg(config)::jsonb,work_status=sqlc.arg(status)::jsonb,revision=revision+1,retry_at=clock_timestamp()
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND revision=sqlc.arg(revision) AND desired_state<>'deleted'
+ AND NOT verify_requested AND coalesce(reader_change->>'State','')<>'approved'
+ AND coalesce(schema_change->>'State','complete') IN ('complete','withdrawn');
+
+-- name: PipelineStageSnapshot :execrows
+UPDATE data_pipelines SET work_status=sqlc.arg(status)::jsonb
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND revision=sqlc.arg(revision)
+ AND lease_token=sqlc.arg(lease_token) AND lease_until>clock_timestamp() AND desired_state='running' AND work_config ? 'snapshot';

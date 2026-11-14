@@ -198,8 +198,23 @@ func alertCondition(p Pipeline, now time.Time) (code string, recovered bool) {
 			return "apply_unconfirmed", false
 		}
 	}
+	if snapshotStale(p.DataPipeline, now) {
+		return "snapshot_stale", false
+	}
 	if f := FreshnessStatus(p.DataPipeline, now); f != nil && f.State == "unconfirmed" {
 		return "freshness_unconfirmed", false
+	}
+	if p.Operations != nil && p.Operations.Quality != nil {
+		if p.OperationsStatus == nil || p.OperationsStatus.Quality == nil || p.OperationsStatus.Quality.Generation != p.Generation {
+			return "", false
+		}
+		q := p.OperationsStatus.Quality
+		if q.State == "failed" {
+			return "quality_failed", false
+		}
+		if q.State != "passed" {
+			return "", false
+		}
 	}
 	return "", p.State == "live"
 }

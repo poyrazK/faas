@@ -41,6 +41,10 @@ func verificationCancelled(p Pipeline, intent string) bool {
 	return schema == "" && v.Phase == "queued" && v.ManualAttempt > 0 && v.ManualAttempt == attempt && v.ID == queuedVerificationID(p, attempt)
 }
 func verifyResumable(ctx context.Context, p Pipeline, source *pgxpool.Pool, target *pgx.Conn, relations []relation, ob *Observation, current func(context.Context) error) (bool, error) {
+	if !workAllowed(p, time.Now()) {
+		ob.Reason = "maintenance_window"
+		return false, nil
+	}
 	relations, err := orderedVerificationRelations(ctx, source, relations)
 	if err != nil {
 		return false, err
@@ -100,7 +104,7 @@ func verifyResumable(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 	if err = checkVerificationTracking(ctx, p, target, relations, id); err != nil {
 		return false, err
 	}
-	for range api.DataPipelineVerificationChunksPerTick {
+	for range workBatches(p) {
 		var dirty *verificationRange
 		index := c.Table
 		if index >= len(relations) {
@@ -156,6 +160,10 @@ func sealVerification(ctx context.Context, p Pipeline, source *pgxpool.Pool, tar
 	}
 	if err := checkProofContinuity(ctx, p, source, target); err != nil {
 		return false, err
+	}
+	if !workAllowed(p, time.Now()) {
+		ob.Reason = "maintenance_window"
+		return false, nil
 	}
 	relations, err := orderedVerificationRelations(ctx, source, relations)
 	if err != nil {

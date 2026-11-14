@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -140,6 +141,10 @@ func reconcileSchema(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 	}
 	if p.SchemaApproval != plan.ID {
 		ob.State, ob.Reason = "blocked", "schema_change_pending"
+		return false, true, nil
+	}
+	if !workAllowed(p, time.Now()) {
+		ob.State, ob.Reason = "blocked", "maintenance_window"
 		return false, true, nil
 	}
 	if err = applySchema(ctx, p, source, target, owner, plan, current); err != nil {

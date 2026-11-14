@@ -19226,3 +19226,17 @@ const (
 	DataPipelineAuthSnapshotTTL         = time.Minute
 	DataPipelineAuthQueryTimeout        = 5 * time.Second
 )
+
+// Scheduled pipeline work remains bounded independently of owner-selected budgets.
+const (
+	DataPipelineScheduleMinSeconds       = int64(3600)
+	DataPipelineScheduleMaxSeconds       = int64(86400)
+	DataPipelineSnapshotRowsMax          = int64(100000)
+	DataPipelineSnapshotBytesMax         = int64(64 << 20)
+	DataPipelineSnapshotOperationTimeout = 45 * time.Second
+	DataPipelineQualityRulesMax          = 16
+	DataPipelineQualityBoundBytesMax     = 64
+	DataPipelineQualityScanRowsMax       = int64(10000)
+	DataPipelineWorkQueryMinMillis       = int64(50)
+	DataPipelineMinutesPerDay            = 24 * 60
+)

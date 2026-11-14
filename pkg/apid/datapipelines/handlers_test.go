@@ -50,6 +50,7 @@ func TestPipelineHTTPJourneyAndSecretRedaction(t *testing.T) {
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/control", wrap(h.Control))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/tenant-readers", wrap(h.TenantReaders))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/evolution", wrap(h.Evolve))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/operations", wrap(h.Operations))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/schema-approval", wrap(h.ApproveSchema))
 	server := httptest.NewServer(mux)
 	defer server.Close()
@@ -103,6 +104,17 @@ func TestPipelineHTTPJourneyAndSecretRedaction(t *testing.T) {
 	}
 	if _, err = client.ControlDataPipeline(ctx, p.ID, api.ControlDataPipelineRequest{ExpectedRevision: 1, Action: "resume"}); err == nil {
 		t.Fatal("stale HTTP control overwrote new intent")
+	}
+	work := api.DataPipelineOperationsRequest{ExpectedRevision: paused.Revision, Action: "configure", Config: &api.DataPipelineOperations{Version: 1, Workload: &api.DataPipelineWorkload{QueryTimeoutMillis: 500, BatchesPerTick: 1}}}
+	if _, err = other.ConfigureDataPipelineOperations(ctx, p.ID, work); err == nil {
+		t.Fatal("foreign account configured work")
+	}
+	configured, err := client.ConfigureDataPipelineOperations(ctx, p.ID, work)
+	if err != nil || configured.Operations.Workload.QueryTimeoutMillis != 500 {
+		t.Fatal("work policy HTTP round trip", configured, err)
+	}
+	if _, err = client.ConfigureDataPipelineOperations(ctx, p.ID, work); err == nil {
+		t.Fatal("stale work policy replaced current revision")
 	}
 	request := httptest.NewRequest("POST", "/v1/data/connections", strings.NewReader(`{"name":"bad","connection_url":"postgres://u:p@db/db?sslmode=verify-full","account_id":"forged"}`))
 	response := httptest.NewRecorder()

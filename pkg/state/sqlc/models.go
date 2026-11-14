@@ -3978,6 +3978,8 @@ type DataPipeline struct {
 	FreshnessTargetSeconds int64
 	IndexChange            []byte
 	EvolutionChange        []byte
+	WorkConfig             []byte
+	WorkStatus             []byte
 }
 
 type DataPipelineAlert struct {

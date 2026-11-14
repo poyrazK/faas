@@ -23,36 +23,38 @@ type RotateDataConnectionRequest struct {
 // DataPipeline is an eventually reconciled intent. State is an observation;
 // desired_state records the requested action and observed_at bounds freshness.
 type DataPipeline struct {
-	SchemaReview           *DataPipelineSchemaReview `json:"schema_review,omitempty"`
-	Evolution              *DataPipelineEvolution    `json:"evolution,omitempty"`
-	IndexAdvice            *DataPipelineIndexAdvice  `json:"index_advice,omitempty"`
-	Freshness              *DataPipelineFreshness    `json:"freshness,omitempty"`
-	FreshnessTargetSeconds int64                     `json:"freshness_target_seconds,omitempty"`
-	TenantChange           *DataPipelineTenantChange `json:"tenant_change,omitempty"`
-	Serving                *DataPipelineServing      `json:"serving,omitempty"`
-	WALRetention           *DataPipelineWALRetention `json:"wal_retention,omitempty"`
-	AppliedThroughAt       string                    `json:"applied_through_at,omitempty"`
-	Health                 *DataPipelineHealth       `json:"health,omitempty"`
-	Capacity               *DataPipelineCapacity     `json:"capacity,omitempty"`
-	ObservedRevision       int64                     `json:"observed_revision"`
-	ObservationFresh       bool                      `json:"observation_fresh"`
-	ID                     string                    `json:"id"`
-	Name                   string                    `json:"name"`
-	SourceConnectionID     string                    `json:"source_connection_id"`
-	DatabaseID             string                    `json:"database_id"`
-	Tables                 []string                  `json:"tables"`
-	ReadSubjects           []string                  `json:"read_subjects"`
-	DesiredState           string                    `json:"desired_state"`
-	State                  string                    `json:"state"`
-	Revision               int64                     `json:"revision"`
-	Generation             int64                     `json:"generation"`
-	Reason                 string                    `json:"reason,omitempty"`
-	TablesReady            int                       `json:"tables_ready"`
-	RetainedWALBytes       *int64                    `json:"retained_wal_bytes,omitempty"`
-	ObservedAt             string                    `json:"observed_at,omitempty"`
-	Verification           string                    `json:"verification"`
-	VerifiedAt             string                    `json:"verified_at,omitempty"`
-	CreatedAt              string                    `json:"created_at"`
+	Operations             *DataPipelineOperations       `json:"operations,omitempty"`
+	OperationsStatus       *DataPipelineOperationsStatus `json:"operations_status,omitempty"`
+	SchemaReview           *DataPipelineSchemaReview     `json:"schema_review,omitempty"`
+	Evolution              *DataPipelineEvolution        `json:"evolution,omitempty"`
+	IndexAdvice            *DataPipelineIndexAdvice      `json:"index_advice,omitempty"`
+	Freshness              *DataPipelineFreshness        `json:"freshness,omitempty"`
+	FreshnessTargetSeconds int64                         `json:"freshness_target_seconds,omitempty"`
+	TenantChange           *DataPipelineTenantChange     `json:"tenant_change,omitempty"`
+	Serving                *DataPipelineServing          `json:"serving,omitempty"`
+	WALRetention           *DataPipelineWALRetention     `json:"wal_retention,omitempty"`
+	AppliedThroughAt       string                        `json:"applied_through_at,omitempty"`
+	Health                 *DataPipelineHealth           `json:"health,omitempty"`
+	Capacity               *DataPipelineCapacity         `json:"capacity,omitempty"`
+	ObservedRevision       int64                         `json:"observed_revision"`
+	ObservationFresh       bool                          `json:"observation_fresh"`
+	ID                     string                        `json:"id"`
+	Name                   string                        `json:"name"`
+	SourceConnectionID     string                        `json:"source_connection_id"`
+	DatabaseID             string                        `json:"database_id"`
+	Tables                 []string                      `json:"tables"`
+	ReadSubjects           []string                      `json:"read_subjects"`
+	DesiredState           string                        `json:"desired_state"`
+	State                  string                        `json:"state"`
+	Revision               int64                         `json:"revision"`
+	Generation             int64                         `json:"generation"`
+	Reason                 string                        `json:"reason,omitempty"`
+	TablesReady            int                           `json:"tables_ready"`
+	RetainedWALBytes       *int64                        `json:"retained_wal_bytes,omitempty"`
+	ObservedAt             string                        `json:"observed_at,omitempty"`
+	Verification           string                        `json:"verification"`
+	VerifiedAt             string                        `json:"verified_at,omitempty"`
+	CreatedAt              string                        `json:"created_at"`
 }
 
 // DataPipelineWALRetention reports source-specific headroom. The estimate uses
@@ -66,13 +68,14 @@ type DataPipelineList struct {
 	Items []DataPipeline `json:"items"`
 }
 type CreateDataPipelineRequest struct {
-	FreshnessTargetSeconds int64                `json:"freshness_target_seconds,omitempty"`
-	Serving                *DataPipelineServing `json:"serving,omitempty"`
-	Name                   string               `json:"name"`
-	SourceConnectionID     string               `json:"source_connection_id"`
-	DatabaseID             string               `json:"database_id"`
-	Tables                 []string             `json:"tables"`
-	ReadSubjects           []string             `json:"read_subjects"`
+	Operations             *DataPipelineOperations `json:"operations,omitempty"`
+	FreshnessTargetSeconds int64                   `json:"freshness_target_seconds,omitempty"`
+	Serving                *DataPipelineServing    `json:"serving,omitempty"`
+	Name                   string                  `json:"name"`
+	SourceConnectionID     string                  `json:"source_connection_id"`
+	DatabaseID             string                  `json:"database_id"`
+	Tables                 []string                `json:"tables"`
+	ReadSubjects           []string                `json:"read_subjects"`
 }
 type ControlDataPipelineRequest struct {
 	ExpectedRevision int64  `json:"expected_revision"`

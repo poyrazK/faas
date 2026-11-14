@@ -248,3 +248,16 @@ func PipelineCapacityStatus(ctx context.Context, store *connectioncapacity.Store
 	}
 	return r, nil
 }
+
+func sourceDemand(snapshot bool) connectioncapacity.Limits {
+	if snapshot {
+		return connectioncapacity.Limits{Connections: api.DataPipelineControlConnections}
+	}
+	return connectioncapacity.PipelineSourceDemand()
+}
+func targetDemand(snapshot bool) connectioncapacity.Limits {
+	if snapshot {
+		return connectioncapacity.Limits{Connections: api.DataPipelineControlConnections}
+	}
+	return connectioncapacity.PipelineTargetDemand()
+}

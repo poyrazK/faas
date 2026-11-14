@@ -14,6 +14,7 @@ type DataPipeline struct {
 	SourceConnectionID pgtype.UUID
 	DatabaseID         pgtype.UUID
 	State              string
+	WorkConfig         []byte
 }
 
 type ManagedPostgresBinding struct {

@@ -1620,6 +1620,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/data/pipelines/{id}":                                                     "GetDataPipeline",
 	"POST /v1/data/pipelines/{id}/control":                                            "ControlDataPipeline",
 	"POST /v1/data/pipelines/{id}/schema-approval":                                    "ApproveDataPipelineSchema",
+	"POST /v1/data/pipelines/{id}/operations":                                         "ConfigureDataPipelineOperations",
 	"POST /v1/data/pipelines/{id}/evolution":                                          "EvolveDataPipeline",
 	"POST /v1/data/pipelines/{id}/tenant-readers":                                     "ChangeDataPipelineTenantReaders",
 	"POST /v1/data/pipeline-setups/plan":                                              "PlanDataPipelineSetup",

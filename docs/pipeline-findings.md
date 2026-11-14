@@ -38,8 +38,32 @@ Native checks cover projection/publication replay, projected new tables, Auth is
 
 PIPE-017–018 below record the empty-membership/regrant defect and automatic-grant/control race discovered during this batch. Live Neon qualification, broader recovery-surface parity and verification cost controls remain open.
 
-The other roadmap opportunities below remain future work. This batch does not
-enable production or imply that the source provider has passed the live drill.
+The next approved batch follows
+[ADR-20261114083000](adr/20261114083000-pipeline-scheduled-imports-quality-and-work-budgets.md):
+
+| Item | Customer problem | Implementation and remaining scope |
+| --- | --- | --- |
+| CUST-010 | Hourly/nightly reporting needs data without a continuously active replication subscriber, sometimes with SELECT-only credentials. | Creation-time scheduled snapshots, a distinct source check, connection-only reservations, bounded staging and verification, atomic publication preserving table identities, private run receipts, capture age and stale-refresh alerts. Existing empty destinations only; live Neon and other provider qualification remains separate. |
+| CUST-011 | A correctly replicated dataset can still contain invalid business data. | Scheduled required/unique/range/reference rules, bounded coverage, exact decimal bounds, tenant-equal references, count-only reports and debounced incidents/recoveries. Incomplete or unavailable checks cannot report a pass or clear a failure. No arbitrary SQL, automatic repair or failing-row export. |
+| CUST-012 | Customers need predictable source impact during verification and repairs. | Daily UTC windows, lower server query deadlines and per-tick verification/backfill batch budgets. Snapshot/quality manual requests respect the window. Native COPY bandwidth enforcement and larger resumable index builds remain future qualification work. |
+
+Validation and remaining rollout boundaries are recorded in
+[the scheduled-work evidence](ops/evidence/20261114-pipeline-scheduled-work/README.md).
+The implementation review caught and fixed the following issues **in this new
+batch**; these are not claims about production incidents:
+
+| Finding | Fix and durable regression evidence |
+| --- | --- |
+| A manual snapshot request reused a successful run ID and recovered the old receipt rather than importing fresh rows. | Manual requests clear the run identity; automatic lost-ack retries retain it. `TestScheduledSnapshotRetainsLastGoodCaptureAndRecoversAcknowledgement` checks both paths, exact numeric/JSON preservation, stable table identities and old repeatable-read readers. |
+| Snapshot mode could enter a CDC table-addition/removal workflow that its worker cannot reconcile. | Freeze snapshot schema/selection and reject CDC resync/repair workflows. Test the request boundary and retain the separate reviewed-pipeline recovery path. |
+| A quality aggregate checked read policies before acquiring its table locks. | Lock dependencies before validating shapes and owned/open policies; quarantined or changed tables yield unknown. `TestScheduledQualityCoverageUnknownAndTenantReferences` checks coverage, privacy and tenant-equal reference semantics. |
+| Removing a table used by a quality rule left an invalid saved configuration. | Exclude rule source/reference dependencies from removable choices until the owner removes those rules. |
+| Queueing a failed refresh could clear its stale incident before a new capture succeeded. | Preserve failure reason while queued/running and report the next allowed UTC run. The snapshot regression keeps the stale condition while the window defers work. |
+| Old workers/monitors could process unfamiliar scheduled intent or falsely recover a quality incident. | Database capability fences for pipelines, checks and monitors; preserve them on binary rollback. `TestScheduledWorkersFenceOlderClaims` and `TestQualityIncidentDoesNotRecoverFromUnknownOrIncompleteScan` cover these boundaries. |
+
+This batch does not enable production or imply that the source provider has
+passed the live drill. Simple views, one-to-many relationships, reviewed Auth
+detach, native COPY throttling and larger index work remain open follow-ups.
 
 The reviewed baseline is commit `46aad2a12e4d1be39d0948b6942cb18d8e71d0b2` **plus
 the existing, uncommitted first batch**: retention-aware alerts, explicit gated-read
@@ -610,10 +634,10 @@ is claimed.
 
 ## Customer roadmap
 
-Reviewed 2026-11-13 against the operability branch. CUST-007–009 are now the
-approved implementation batch summarized above. CUST-010–012 remain proposed
-product opportunities, not reproduced defects or implemented features. Priorities
-are code-review recommendations, not measured customer-demand rankings.
+Reviewed 2026-11-14 against the evolution branch. CUST-007–012 have approved
+implementations summarized above; the bounded scope and remaining qualification
+are explicit. These are product opportunities, not reproduced baseline defects.
+Priorities are code-review recommendations, not measured customer-demand rankings.
 
 | ID | Customer problem and example | Bounded first release |
 | --- | --- | --- |
@@ -642,12 +666,13 @@ Baseline evidence and reused components:
   relationships and views that respect caller permissions.
 - [Current source requirements](data-pipelines.md#source-and-destination-requirements) require
   a writable source and logical-replication privileges; the Neon onboarding
-  section documents continuous-subscriber compute implications. Snapshot mode
-  would need its own serving, recovery and qualification contract.
+  section documents continuous-subscriber compute implications. Scheduled mode
+  now has its own serving, recovery and qualification contract in the linked ADR.
 - [Verification](../pkg/datapipeline/verification_scan.go) proves bounded source/
   mirror consistency. Existing [Data API assertions](data-api.md#verify-reusable-data-integrity-checks)
   and the surrounding verification documentation are building blocks for
-  business-rule checks, not continuous pipeline quality monitoring today.
+  business-rule checks; scheduled pipeline quality monitoring extends them with
+  bounded coverage and count-only incident reporting.
 - [Pipeline limits](../pkg/api/limits.go) currently bound verification chunks and
   index builds. Scheduling and larger-workload support should preserve explicit
   source impact, storage and approval controls.

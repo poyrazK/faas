@@ -71481,6 +71481,35 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /v1/data/pipelines/{id}/operations:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Pipeline whose scheduled maintenance policy is updated.
+      schema: {type: string, format: uuid}
+    post:
+      summary: Configure scheduled pipeline work
+      operationId: configureDataPipelineOperations
+      tags: [data_pipelines]
+      description: Set bounded snapshot schedules, curated quality rules and UTC work budgets, or request the next snapshot or quality run. Import mode and serving selection remain immutable. Manual requests respect work windows.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DataPipelineOperationsRequest'}
+      responses:
+        '202':
+          description: Scheduled work policy or explicit run request accepted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DataPipeline'}
+        default:
+          description: Scheduled operations validation, ownership, admission or intent conflict.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+
   /v1/data/pipelines/{id}/evolution:
     parameters:
     - name: id
@@ -139461,6 +139490,10 @@ components:
       required:
       - expected_revision
       properties:
+        mode:
+          type: string
+          enum: [snapshot]
+          description: Select snapshot inspection for read-only scheduled imports; omit for continuous replication.
         tables:
           type: array
           maxItems: 16
@@ -139494,6 +139527,10 @@ components:
       - tables
       - created_at
       properties:
+        mode:
+          type: string
+          enum: [snapshot]
+          description: Snapshot-specific compatibility evidence, without native replication requirements.
         source_provider_hint:
           type: string
           description: Hostname-derived setup hint; never a qualification or admission grant.
@@ -139735,6 +139772,8 @@ components:
       - database_id
       - tables
       properties:
+        operations:
+          $ref: '#/components/schemas/DataPipelineOperations'
         freshness_target_seconds:
           type: integer
           format: int64
@@ -140019,6 +140058,10 @@ components:
       - verification
       - created_at
       properties:
+        operations:
+          $ref: '#/components/schemas/DataPipelineOperations'
+        operations_status:
+          $ref: '#/components/schemas/DataPipelineOperationsStatus'
         schema_review: {$ref: '#/components/schemas/DataPipelineSchemaReview'}
         evolution:
           $ref: '#/components/schemas/DataPipelineEvolution'
@@ -140177,6 +140220,278 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DataPipeline'
+
+    DataPipelineOperations:
+      description: Versioned policy for bounded scheduled snapshots, mirror quality checks and optional maintenance. Snapshot
+        mode is chosen at creation and cannot be changed later.
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        snapshot:
+          $ref: '#/components/schemas/DataPipelineSnapshotSchedule'
+        quality:
+          $ref: '#/components/schemas/DataPipelineQualitySchedule'
+        workload:
+          $ref: '#/components/schemas/DataPipelineWorkload'
+    DataPipelineSnapshotSchedule:
+      description: Read-only full snapshot cadence. Zero row/byte budgets select the pilot ceilings of 100000 rows and 64 MiB.
+        Runs are bounded to 45 seconds and retain the last successful capture on failure.
+      type: object
+      additionalProperties: false
+      required:
+      - every_seconds
+      properties:
+        every_seconds:
+          type: integer
+          format: int64
+          minimum: 3600
+          maximum: 86400
+        max_rows:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 100000
+        max_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 67108864
+    DataPipelineWorkload:
+      description: Owner maintenance budgets within hard pilot bounds. Query timeout is zero for the default or 50 through 2000
+        milliseconds; batch count is zero for default or one through four. Native COPY bandwidth is outside this policy.
+      type: object
+      additionalProperties: false
+      properties:
+        window:
+          $ref: '#/components/schemas/DataPipelineWorkWindow'
+        query_timeout_millis:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 2000
+        batches_per_tick:
+          type: integer
+          minimum: 0
+          maximum: 4
+    DataPipelineWorkWindow:
+      description: Daily UTC minute window with an inclusive start and exclusive end. Start and end differ; a start after end
+        crosses midnight. Omit the window for all-day work.
+      type: object
+      additionalProperties: false
+      required:
+      - start_minute_utc
+      - end_minute_utc
+      properties:
+        start_minute_utc:
+          type: integer
+          minimum: 0
+          maximum: 1439
+        end_minute_utc:
+          type: integer
+          minimum: 0
+          maximum: 1439
+    DataPipelineQualitySchedule:
+      description: Scheduled curated mirror checks, limited to 16 named rules and 10000 inspected source rows per rule. Incomplete
+        coverage cannot be reported as passed; only counts and status leave the private worker.
+      type: object
+      additionalProperties: false
+      required:
+      - every_seconds
+      - rules
+      properties:
+        every_seconds:
+          type: integer
+          format: int64
+          minimum: 3600
+          maximum: 86400
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineQualityRule'
+          minItems: 1
+          maxItems: 16
+    DataPipelineQualityRule:
+      description: Structured business-data assertion on selected columns. Numeric bounds are exact decimal strings; reference
+        rules match a complete selected target primary key and preserve tenant equality. SQL expressions are not accepted.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - kind
+      - table
+      - columns
+      properties:
+        name:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{0,62}$
+        kind:
+          type: string
+          enum:
+          - required
+          - unique
+          - range
+          - reference
+        table:
+          type: string
+          maxLength: 63
+        columns:
+          type: array
+          items:
+            type: string
+            maxLength: 63
+          minItems: 1
+          maxItems: 4
+        minimum:
+          type: string
+          maxLength: 64
+        maximum:
+          type: string
+          maxLength: 64
+        reference_table:
+          type: string
+          maxLength: 63
+        reference_columns:
+          type: array
+          items:
+            type: string
+            maxLength: 63
+          minItems: 1
+          maxItems: 4
+    DataPipelineOperationsRequest:
+      description: Revision-checked replacement maintenance configuration or an explicit snapshot/quality run request. Configure
+        supplies config; run actions omit it and still respect the saved UTC window.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_revision
+      - action
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        action:
+          type: string
+          enum:
+          - configure
+          - run_snapshot
+          - run_quality
+        config:
+          $ref: '#/components/schemas/DataPipelineOperations'
+    DataPipelineOperationsStatus:
+      description: Historical scheduled-work observations. Capture time bounds data age independently of the catalog worker observation
+        timestamp.
+      type: object
+      additionalProperties: false
+      properties:
+        snapshot:
+          $ref: '#/components/schemas/DataPipelineSnapshotStatus'
+        quality:
+          $ref: '#/components/schemas/DataPipelineQualityStatus'
+    DataPipelineSnapshotStatus:
+      description: Most recent snapshot attempt plus the last activated capture. Rows and bytes describe that successful capture
+        and remain unchanged after failed refreshes. A private target receipt preserves capture time through lost acknowledgements.
+      type: object
+      additionalProperties: false
+      required:
+      - run_id
+      - state
+      - rows
+      - bytes
+      properties:
+        run_id:
+          type: string
+        state:
+          type: string
+          enum:
+          - due
+          - running
+          - succeeded
+          - failed
+        reason:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        next_run_at:
+          type: string
+          format: date-time
+        captured_at:
+          type: string
+          format: date-time
+        rows:
+          type: integer
+          format: int64
+          minimum: 0
+        bytes:
+          type: integer
+          format: int64
+          minimum: 0
+    DataPipelineQualityStatus:
+      description: Last completed or attempted quality scan for the recorded generation. Unknown and inconclusive are separate
+        from passed; failing row values never appear in this observation.
+      type: object
+      additionalProperties: false
+      required:
+      - state
+      - checked_at
+      - next_run_at
+      - generation
+      - results
+      properties:
+        state:
+          type: string
+          enum:
+          - passed
+          - failed
+          - inconclusive
+          - unknown
+        checked_at:
+          type: string
+          format: date-time
+        next_run_at:
+          type: string
+          format: date-time
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineQualityResult'
+    DataPipelineQualityResult:
+      description: One curated rule outcome. A lower-bound count reflects limited coverage; zero violations with incomplete coverage
+        is inconclusive rather than passed.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - state
+      - violations
+      - count_is_lower_bound
+      properties:
+        name:
+          type: string
+        state:
+          type: string
+          enum:
+          - passed
+          - failed
+          - inconclusive
+          - unknown
+        violations:
+          type: integer
+          format: int64
+          minimum: 0
+        count_is_lower_bound:
+          type: boolean
 
   responses:
     SupportInvalid:

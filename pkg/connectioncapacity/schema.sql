@@ -38,7 +38,7 @@ CREATE TABLE postgres_capacity_reservations (
 CREATE INDEX postgres_capacity_reservations_resource ON postgres_capacity_reservations(resource_key);
 
 -- Minimal projections of migration-owned catalogs, used only for recovery.
-CREATE TABLE data_pipelines(id uuid PRIMARY KEY, account_id uuid NOT NULL, source_connection_id uuid NOT NULL, database_id uuid NOT NULL, state text NOT NULL);
+CREATE TABLE data_pipelines(id uuid PRIMARY KEY, account_id uuid NOT NULL, source_connection_id uuid NOT NULL, database_id uuid NOT NULL, state text NOT NULL,work_config jsonb NOT NULL DEFAULT '{}');
 CREATE TABLE managed_postgres_bindings(id uuid PRIMARY KEY, database_id uuid NOT NULL, state text NOT NULL, connection_limit bigint NOT NULL);
 
 CREATE TABLE managed_postgres_cutovers(id uuid PRIMARY KEY, source_database_id uuid NOT NULL, target_database_id uuid NOT NULL, state text NOT NULL);

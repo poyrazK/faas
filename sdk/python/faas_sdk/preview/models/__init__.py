@@ -1137,6 +1137,7 @@ from .data_api_usage_report_version import DataAPIUsageReportVersion
 from .data_api_user_auth import DataAPIUserAuth
 from .data_connection import DataConnection
 from .data_connection_check import DataConnectionCheck
+from .data_connection_check_mode import DataConnectionCheckMode
 from .data_connection_check_state import DataConnectionCheckState
 from .data_connection_issue import DataConnectionIssue
 from .data_connection_issue_state import DataConnectionIssueState
@@ -1167,7 +1168,19 @@ from .data_pipeline_index_order import DataPipelineIndexOrder
 from .data_pipeline_index_request import DataPipelineIndexRequest
 from .data_pipeline_index_request_action import DataPipelineIndexRequestAction
 from .data_pipeline_list import DataPipelineList
+from .data_pipeline_operations import DataPipelineOperations
+from .data_pipeline_operations_request import DataPipelineOperationsRequest
+from .data_pipeline_operations_request_action import DataPipelineOperationsRequestAction
+from .data_pipeline_operations_status import DataPipelineOperationsStatus
+from .data_pipeline_operations_version import DataPipelineOperationsVersion
 from .data_pipeline_organization_tenant import DataPipelineOrganizationTenant
+from .data_pipeline_quality_result import DataPipelineQualityResult
+from .data_pipeline_quality_result_state import DataPipelineQualityResultState
+from .data_pipeline_quality_rule import DataPipelineQualityRule
+from .data_pipeline_quality_rule_kind import DataPipelineQualityRuleKind
+from .data_pipeline_quality_schedule import DataPipelineQualitySchedule
+from .data_pipeline_quality_status import DataPipelineQualityStatus
+from .data_pipeline_quality_status_state import DataPipelineQualityStatusState
 from .data_pipeline_relationship import DataPipelineRelationship
 from .data_pipeline_schema_approval_request import DataPipelineSchemaApprovalRequest
 from .data_pipeline_schema_column_change import DataPipelineSchemaColumnChange
@@ -1181,6 +1194,9 @@ from .data_pipeline_setup_control_request_action import DataPipelineSetupControl
 from .data_pipeline_setup_list import DataPipelineSetupList
 from .data_pipeline_setup_plan import DataPipelineSetupPlan
 from .data_pipeline_setup_request import DataPipelineSetupRequest
+from .data_pipeline_snapshot_schedule import DataPipelineSnapshotSchedule
+from .data_pipeline_snapshot_status import DataPipelineSnapshotStatus
+from .data_pipeline_snapshot_status_state import DataPipelineSnapshotStatusState
 from .data_pipeline_state import DataPipelineState
 from .data_pipeline_tenant_access import DataPipelineTenantAccess
 from .data_pipeline_tenant_change import DataPipelineTenantChange
@@ -1190,6 +1206,8 @@ from .data_pipeline_tenant_readers_request import DataPipelineTenantReadersReque
 from .data_pipeline_tenant_readers_request_action import DataPipelineTenantReadersRequestAction
 from .data_pipeline_verification import DataPipelineVerification
 from .data_pipeline_wal_retention import DataPipelineWALRetention
+from .data_pipeline_work_window import DataPipelineWorkWindow
+from .data_pipeline_workload import DataPipelineWorkload
 from .data_repair_health import DataRepairHealth
 from .data_repair_health_item import DataRepairHealthItem
 from .data_repair_health_item_node_status import DataRepairHealthItemNodeStatus
@@ -5212,6 +5230,7 @@ from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseri
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
 from .request_data_connection_check import RequestDataConnectionCheck
+from .request_data_connection_check_mode import RequestDataConnectionCheckMode
 from .request_event_execution_lineage_case_backfill_request import RequestEventExecutionLineageCaseBackfillRequest
 from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
@@ -7629,6 +7648,7 @@ __all__ = (
     "DatabaseSwitchPhase",
     "DataConnection",
     "DataConnectionCheck",
+    "DataConnectionCheckMode",
     "DataConnectionCheckState",
     "DataConnectionIssue",
     "DataConnectionIssueState",
@@ -7659,7 +7679,19 @@ __all__ = (
     "DataPipelineIndexRequest",
     "DataPipelineIndexRequestAction",
     "DataPipelineList",
+    "DataPipelineOperations",
+    "DataPipelineOperationsRequest",
+    "DataPipelineOperationsRequestAction",
+    "DataPipelineOperationsStatus",
+    "DataPipelineOperationsVersion",
     "DataPipelineOrganizationTenant",
+    "DataPipelineQualityResult",
+    "DataPipelineQualityResultState",
+    "DataPipelineQualityRule",
+    "DataPipelineQualityRuleKind",
+    "DataPipelineQualitySchedule",
+    "DataPipelineQualityStatus",
+    "DataPipelineQualityStatusState",
     "DataPipelineRelationship",
     "DataPipelineSchemaApprovalRequest",
     "DataPipelineSchemaColumnChange",
@@ -7673,6 +7705,9 @@ __all__ = (
     "DataPipelineSetupList",
     "DataPipelineSetupPlan",
     "DataPipelineSetupRequest",
+    "DataPipelineSnapshotSchedule",
+    "DataPipelineSnapshotStatus",
+    "DataPipelineSnapshotStatusState",
     "DataPipelineState",
     "DataPipelineTenantAccess",
     "DataPipelineTenantChange",
@@ -7682,6 +7717,8 @@ __all__ = (
     "DataPipelineTenantReadersRequestAction",
     "DataPipelineVerification",
     "DataPipelineWALRetention",
+    "DataPipelineWorkload",
+    "DataPipelineWorkWindow",
     "DataRepairHealth",
     "DataRepairHealthItem",
     "DataRepairHealthItemNodeStatus",
@@ -11424,6 +11461,7 @@ __all__ = (
     "RequestAuditListResponse",
     "RequestAuditRecord",
     "RequestDataConnectionCheck",
+    "RequestDataConnectionCheckMode",
     "RequestEventExecutionLineageCaseBackfillRequest",
     "ResizeManagedPostgresDatabaseRequest",
     "ResizeManagedPostgresDatabaseRequestServiceClass",

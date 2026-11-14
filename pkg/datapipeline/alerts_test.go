@@ -47,7 +47,18 @@ func alertFixture(t *testing.T) (*Service, *PostgresStore, Pipeline, *AlertWorke
 
 func alertDue(t *testing.T, ctx context.Context, w *AlertWorker, p Pipeline, mature bool) {
 	t.Helper()
-	if _, err := w.Store.pool.Exec(ctx, `UPDATE data_pipeline_alerts SET check_at=clock_timestamp(),candidate_since=CASE WHEN $2 THEN clock_timestamp()-interval '3 minutes' ELSE candidate_since END WHERE pipeline_id=$1`, p.ID, mature); err != nil {
+	tx, err := w.Store.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err = w.Store.q.PipelineWorkerProtocol(ctx, tx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE data_pipeline_alerts SET check_at=clock_timestamp(),candidate_since=CASE WHEN $2 THEN clock_timestamp()-interval '3 minutes' ELSE candidate_since END WHERE pipeline_id=$1`, p.ID, mature); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if more, err := w.CheckTick(ctx); err != nil || !more {

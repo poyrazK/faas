@@ -143,6 +143,7 @@ func cmdPipelineConnectionCheck(action string, args []string) int {
 	fs := newFlagSet("pipeline connection "+action, flag.ContinueOnError)
 	var database string
 	tables := fs.String("tables", "", "inspect these comma-separated table names, including tables beyond the default discovery page")
+	mode := fs.String("mode", "", "snapshot for read-only scheduled import qualification; omit for CDC")
 	search := fs.String("search", "", "discover table names containing this lowercase text")
 	if action == "check" {
 		fs.StringVar(&database, "database", "", "also check an existing managed mirror ID")
@@ -166,14 +167,14 @@ func cmdPipelineConnectionCheck(action string, args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	var check api.DataConnectionCheck
-	selection := api.RequestDataConnectionCheck{Search: *search}
+	selection := api.RequestDataConnectionCheck{Mode: *mode, Search: *search}
 	if *tables != "" {
 		selection.Tables = strings.Split(*tables, ",")
 		for i := range selection.Tables {
 			selection.Tables[i] = strings.TrimSpace(selection.Tables[i])
 		}
 	}
-	if action == "tables" && *tables == "" && *search == "" {
+	if action == "tables" && *tables == "" && *search == "" && *mode == "" {
 		check, err = client.GetDataConnectionCheck(ctx, id)
 	} else {
 		check, err = requestConnectionCheck(ctx, client, id, database, selection)

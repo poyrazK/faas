@@ -11,6 +11,84 @@ environment. Its CLI shortcuts (`pipeline create --api/--auth` and
 `FAAS_APPLICATION_AUTH_ENABLED=1` in the local CLI environment. Mirror-only
 synchronization does not require application Auth.
 
+## Scheduled imports, quality checks and work windows
+
+For hourly or nightly reporting, select **Scheduled snapshot** during the source
+check or use `pipeline connection check CONNECTION_ID --mode snapshot`. This
+creation-time mode uses a PostgreSQL 16 role with SELECT access and supported
+table metadata. It does not require logical replication, ownership, publication
+privileges or a replication slot. Verified TLS, approved network access and
+separately qualified endpoint capacity still apply. Live Neon qualification is
+pending; this option does not itself qualify a provider or promise compute sleep.
+
+Create a private `operations.json` file, then use an existing, empty managed
+destination:
+
+```json
+{
+  "version": 1,
+  "snapshot": {"every_seconds": 3600},
+  "workload": {
+    "window": {"start_minute_utc": 60, "end_minute_utc": 180},
+    "query_timeout_millis": 1000,
+    "batches_per_tick": 2
+  },
+  "quality": {
+    "every_seconds": 3600,
+    "rules": [{"name": "positive_total", "kind": "range", "table": "orders",
+      "columns": ["total"], "minimum": "0"}]
+  }
+}
+```
+
+```sh
+gregale pipeline create reporting --connection CONNECTION_ID --database DATABASE_ID \
+  --tables orders --read-subjects alice --operations-file ./operations.json --wait
+gregale pipeline operations PIPELINE_ID --revision CURRENT_REVISION --run-snapshot
+gregale pipeline operations PIPELINE_ID --revision CURRENT_REVISION --run-quality
+# Replace the complete configuration, preserving the creation-time mode:
+gregale pipeline operations PIPELINE_ID --revision CURRENT_REVISION --file ./operations.json
+```
+
+Snapshot imports copy and verify a consistent source snapshot before atomically
+publishing all selected tables. Readers retain the last good capture after an
+outage, timeout or budget failure. `operations_status.snapshot` reports attempt
+state, last capture time, row/encoded-byte counts and next run. Failed or overdue
+refreshes produce `snapshot_stale` health/alert incidents. A failed attempt's
+row counts describe the retained successful capture. Source sessions close after
+each run. The first release allows 1–24 hour intervals, at most 100,000 rows and
+64 MiB of encoded data per capture, and 45 seconds per worker operation. Budgets
+can be lowered with `max_rows`/`max_bytes`; a single oversized row is rejected.
+Tables require primary keys and the supported builtin types. Source RLS,
+partitioned tables and views are unsupported. Selected columns and tenant access
+work as above; schema/projection/table selection changes require a newly reviewed
+snapshot pipeline. CDC resync and scoped repair workflows do not apply.
+
+Quality checks also work on continuous pipelines: omit `snapshot` from their
+operations configuration. Rules are `required`, `unique`, `range`, and
+`reference`. Required rules count rows with any listed NULL; unique rules count
+extra duplicate non-NULL tuples; range rules use exact decimal string bounds;
+reference rules require the target's complete primary key and matching types,
+and require equal tenant keys for tenant-scoped pipelines. NULL reference tuples
+are skipped. Rules must refer to selected columns; run a fresh source check before
+saving them. There are at most 16 rules, each examining at most 10,000 rows plus
+a coverage lookahead. `passed` requires complete coverage. A partial scan with no
+violations is `inconclusive`; observed failures report a lower-bound count.
+Unavailable, quarantined or changed tables yield `unknown`, which cannot clear a
+quality-failure incident. Reports contain counts/status, never failing row values.
+The existing opt-in signed health webhook delivers `quality_failed` incidents and
+recoveries. Checks neither rewrite rows nor change customer read access.
+
+Windows use UTC minutes after midnight, end-exclusive; a start after the end
+crosses midnight. Omit `window` for all-day work. Automatic and manual work starts
+inside the next allowed window; a started operation remains bounded by its query
+and operation deadlines. Missed runs coalesce. Query budgets are 50–2,000 ms and
+verification/backfill budgets are 1–4 batches per tick (zero/omission selects the
+existing default). Work windows defer verification/backfills, snapshots and
+quality checks. Access revocation, pause, disconnect, safety monitoring and native
+replication continue. Native COPY throughput and larger index builds still need
+separate mechanisms and qualification. Saved setup provisioning remains CDC-only.
+
 ## Neon source onboarding
 
 Run `gregale pipeline connection guide neon` without logging in, or open

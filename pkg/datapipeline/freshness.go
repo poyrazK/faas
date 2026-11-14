@@ -73,6 +73,10 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		h.State, h.Code, h.Message, h.Recovery = "unknown", "monitoring_stale", "Monitoring is stale; data freshness is unknown.", "Check worker availability and refresh status. Native replication may still be running."
 	case p.State == "live" && authProofExpired(p, now):
 		h.Code, h.Message, h.Recovery = "auth_membership_unconfirmed", "Auth organization membership could not be confirmed.", "Check the worker and approved Auth binding. Reads remain closed until a fresh membership proof is applied."
+	case p.State == "live" && snapshotStale(p, now):
+		h.State, h.Code, h.Message, h.Recovery = "attention", "snapshot_stale", "The last verified snapshot is retained; its refresh failed or is overdue.", "Check the saved run, source access and work window, then request a snapshot refresh."
+	case p.State == "live" && p.Operations != nil && p.Operations.Snapshot != nil:
+		h.State, h.Code, h.Message, h.Recovery = "healthy", "snapshot_current", "The last scheduled snapshot was verified. Its capture time reports data age.", ""
 	case p.Reason == "serving_contract_invalid":
 		h.Message, h.Recovery = "The saved access and column configuration could not be validated.", "Ask the operator to inspect the saved serving contract before retrying."
 	case p.Reason == "auth_membership_unconfirmed":

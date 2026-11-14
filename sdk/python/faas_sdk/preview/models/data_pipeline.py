@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from ..models.data_pipeline_freshness import DataPipelineFreshness
     from ..models.data_pipeline_health import DataPipelineHealth
     from ..models.data_pipeline_index_advice import DataPipelineIndexAdvice
+    from ..models.data_pipeline_operations import DataPipelineOperations
+    from ..models.data_pipeline_operations_status import DataPipelineOperationsStatus
     from ..models.data_pipeline_schema_review import DataPipelineSchemaReview
     from ..models.data_pipeline_serving import DataPipelineServing
     from ..models.data_pipeline_tenant_change import DataPipelineTenantChange
@@ -48,6 +50,12 @@ class DataPipeline:
     tables_ready: int
     verification: DataPipelineVerification
     created_at: datetime.datetime
+    operations: DataPipelineOperations | Unset = UNSET
+    """Versioned policy for bounded scheduled snapshots, mirror quality checks and optional maintenance. Snapshot
+    mode is chosen at creation and cannot be changed later."""
+    operations_status: DataPipelineOperationsStatus | Unset = UNSET
+    """Historical scheduled-work observations. Capture time bounds data age independently of the catalog worker
+    observation timestamp."""
     schema_review: DataPipelineSchemaReview | Unset = UNSET
     """Worker-generated exact source-definition review with column and table metadata only. Its ID binds the
     generation, recorded baseline and requested source schema."""
@@ -119,6 +127,14 @@ class DataPipeline:
         verification: str = self.verification
 
         created_at = self.created_at.isoformat()
+
+        operations: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.operations, Unset):
+            operations = self.operations.to_dict()
+
+        operations_status: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.operations_status, Unset):
+            operations_status = self.operations_status.to_dict()
 
         schema_review: dict[str, Any] | Unset = UNSET
         if not isinstance(self.schema_review, Unset):
@@ -195,6 +211,10 @@ class DataPipeline:
                 "created_at": created_at,
             }
         )
+        if operations is not UNSET:
+            field_dict["operations"] = operations
+        if operations_status is not UNSET:
+            field_dict["operations_status"] = operations_status
         if schema_review is not UNSET:
             field_dict["schema_review"] = schema_review
         if evolution is not UNSET:
@@ -235,6 +255,8 @@ class DataPipeline:
         from ..models.data_pipeline_freshness import DataPipelineFreshness
         from ..models.data_pipeline_health import DataPipelineHealth
         from ..models.data_pipeline_index_advice import DataPipelineIndexAdvice
+        from ..models.data_pipeline_operations import DataPipelineOperations
+        from ..models.data_pipeline_operations_status import DataPipelineOperationsStatus
         from ..models.data_pipeline_schema_review import DataPipelineSchemaReview
         from ..models.data_pipeline_serving import DataPipelineServing
         from ..models.data_pipeline_tenant_change import DataPipelineTenantChange
@@ -270,6 +292,20 @@ class DataPipeline:
         verification = check_data_pipeline_verification(d.pop("verification"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _operations = d.pop("operations", UNSET)
+        operations: DataPipelineOperations | Unset
+        if isinstance(_operations, Unset):
+            operations = UNSET
+        else:
+            operations = DataPipelineOperations.from_dict(_operations)
+
+        _operations_status = d.pop("operations_status", UNSET)
+        operations_status: DataPipelineOperationsStatus | Unset
+        if isinstance(_operations_status, Unset):
+            operations_status = UNSET
+        else:
+            operations_status = DataPipelineOperationsStatus.from_dict(_operations_status)
 
         _schema_review = d.pop("schema_review", UNSET)
         schema_review: DataPipelineSchemaReview | Unset
@@ -377,6 +413,8 @@ class DataPipeline:
             tables_ready=tables_ready,
             verification=verification,
             created_at=created_at,
+            operations=operations,
+            operations_status=operations_status,
             schema_review=schema_review,
             evolution=evolution,
             freshness_target_seconds=freshness_target_seconds,
