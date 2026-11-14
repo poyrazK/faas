@@ -228,8 +228,15 @@ type OverageBillerOptions struct {
 	// whether its egress overage election lifts the allowance, at the step's
 	// time (ADR-20261110160000 slice 3). Nil bills no database egress.
 	Egress EgressAllowanceFunc
-	Now    func() time.Time
-	Logger *slog.Logger
+	// CapRoom, when set, reads how much more a subject's spend cap lets the
+	// month be charged, in millicents, past everything already counted
+	// against it (compute, egress, object storage and the managed PostgreSQL
+	// charge delivered so far). capped is false when no cap binds. A live
+	// step never takes the month's charge past it (billing review
+	// 2026-11-13, R7-1: ADR-20261031110037 decision 7 amended).
+	CapRoom func(ctx context.Context, subjectID string, month, at time.Time) (roomMillicents int64, capped bool, err error)
+	Now     func() time.Time
+	Logger  *slog.Logger
 }
 
 // OverageBiller delivers managed PostgreSQL overage charges.
@@ -381,7 +388,7 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	var egressBilled int64
 	if egressOn {
 		var egressMillicents int64
-		egressBilled, egressMillicents = EgressOverageCharge(snapshot.DatabaseEgress, egress.CeilingBytes)
+		egressBilled, egressMillicents = EgressOverageCharge(snapshot.EgressByScope(), egress.CeilingBytes)
 		// A step never lowers what the month already billed for egress.
 		if egressBilled < delivered.BilledEgressBytes {
 			egressBilled, egressMillicents = delivered.BilledEgressBytes, egressOverageMillicents(delivered.BilledEgressBytes)
@@ -391,6 +398,21 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	billed, target, storageBilled := charge.billedUnitSeconds, charge.millicents, charge.billedStorageByteSeconds
 	if target <= baseline {
 		return nil
+	}
+	if live && b.options.CapRoom != nil {
+		// The spend cap bounds the charge: billed exactly up to it and no
+		// further, as for compute and egress. The step's usage terms stay
+		// as measured; only the charge is held to the cap.
+		room, capped, err := b.options.CapRoom(ctx, subject.SubjectID, month, at)
+		if err != nil {
+			return err
+		}
+		if capped && target > saturatingAdd(baseline, max(room, 0)) {
+			target = saturatingAdd(baseline, max(room, 0))
+		}
+		if target <= baseline {
+			return nil
+		}
 	}
 	// The provider de-duplicates on the step's starting point, not its
 	// target: after an ambiguous publish (a timeout, apid restarting) the

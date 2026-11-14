@@ -1601,6 +1601,12 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		} else {
 			overageCents = saturatingAddCents(overageCents, storageCents)
 		}
+		// And the managed PostgreSQL overage charge (billing review 2026-11-13).
+		if databaseCents, err := meter.SpendCapManagedPostgresCents(ctx, s.store, acct.ID, time.Now()); err != nil {
+			log.Warn("dashboard renderBilling: managed postgres charge", "account_id", acct.ID, "err", err)
+		} else {
+			overageCents = saturatingAddCents(overageCents, databaseCents)
+		}
 	}
 	var overageRatio float64
 	if capOK && capCents > 0 && overageCents > 0 {

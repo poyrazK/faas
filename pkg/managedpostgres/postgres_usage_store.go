@@ -218,6 +218,18 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 		}
 		snapshot.DatabaseEgress[databaseUUID(row.DatabaseID)] = row.EgressBytes
 	}
+	if len(egress) > 0 {
+		sources, err := sqlc.New().ManagedPostgresRestoreSources(ctx, tx, account)
+		if err != nil {
+			return UsageSnapshot{}, mapPostgresError(err)
+		}
+		for _, row := range sources {
+			if snapshot.RestoreSources == nil {
+				snapshot.RestoreSources = make(map[string]string, len(sources))
+			}
+			snapshot.RestoreSources[databaseUUID(row.ID)] = databaseUUID(row.RestoreSourceDatabaseID)
+		}
+	}
 	rows, err := sqlc.New().ListManagedPostgresAccountingCoverage(ctx, tx, sqlc.ListManagedPostgresAccountingCoverageParams{AccountID: account})
 	if err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)

@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -153,7 +154,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		if _, err := capEnforcer.Enforce(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("managed postgres compute cap sweep failed", "error", err)
 		}
-		deliverManagedPostgresOverage(ctx, store, hooks.charges(), billingAllowances, managedPostgresPlanSpans(accountStore), hooks.egress(), log)
+		deliverManagedPostgresOverage(ctx, store, hooks.charges(), billingAllowances, managedPostgresPlanSpans(accountStore), hooks.egress(), managedPostgresCapRoom(accountStore, hooks.charges()), log)
 		observeManagedPostgresFleet(ctx, fleet, metrics, log)
 	}
 	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, usageOptions)
@@ -516,11 +517,42 @@ func managedPostgresCapLimits(store managedpostgres.OverageStore, accountStore s
 		if err != nil {
 			return managedpostgres.CapLimits{}, err
 		}
+		spendCapReached, err := managedPostgresSpendCapReached(ctx, accountStore, subject, time.Now())
+		if err != nil {
+			return managedpostgres.CapLimits{}, err
+		}
 		return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
 			Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
 			StoragePool: managedPostgresStoragePool(limits, overageOn), StorageAllowance: limits.StorageLimitBytes,
-			Entitlement: limits, Inactive: !account.Active()}, nil
+			Entitlement: limits, Inactive: !account.Active(), SpendCapReached: spendCapReached}, nil
 	}
+}
+
+// managedPostgresSpendCapReached reports whether subject's month is at its
+// spend cap as meterd's hold records it: meterd prices every meter the cap
+// counts, the managed PostgreSQL charge included (billing review
+// 2026-11-13, R7-1). The hold applies only for the current month and the
+// subject's current cap; a store without holds or caps reports none.
+func managedPostgresSpendCapReached(ctx context.Context, store any, subject string, now time.Time) (bool, error) {
+	holds, ok := store.(state.SpendCapHoldStore)
+	if !ok {
+		return false, nil
+	}
+	caps, ok := store.(interface {
+		GetAccountOverageCapCents(context.Context, string) (int64, bool, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	capCents, capped, err := caps.GetAccountOverageCapCents(ctx, subject)
+	if err != nil || !capped {
+		return false, err
+	}
+	hold, found, err := holds.GetSpendCapHold(ctx, subject)
+	if err != nil {
+		return false, fmt.Errorf("managed postgres: read spend cap hold: %w", err)
+	}
+	return found && hold.Holds(capCents, now), nil
 }
 
 // managedPostgresPlanSpans splits a subject's month through at at its
@@ -555,7 +587,7 @@ func managedPostgresPlanSpans(accountStore state.AppOwnerReader) func(context.Co
 // deliverManagedPostgresOverage charges overage through the billing provider
 // after a cap sweep (ADR-20261031110037). Without a provider, or with its
 // managed PostgreSQL policy off, nothing is charged or recorded.
-func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.UsageStore, sink billing.ManagedPostgresChargeSink, limits managedpostgres.OverageAllowance, spans func(context.Context, string, time.Time, time.Time) ([]managedpostgres.AllowanceSpan, error), egress managedpostgres.EgressAllowanceFunc, log *slog.Logger) {
+func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.UsageStore, sink billing.ManagedPostgresChargeSink, limits managedpostgres.OverageAllowance, spans func(context.Context, string, time.Time, time.Time) ([]managedpostgres.AllowanceSpan, error), egress managedpostgres.EgressAllowanceFunc, capRoom func(context.Context, string, time.Time, time.Time) (int64, bool, error), log *slog.Logger) {
 	if sink == nil {
 		return
 	}
@@ -563,7 +595,7 @@ func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.Us
 	if !ok {
 		return
 	}
-	options := managedpostgres.OverageBillerOptions{Provider: policy.Provider, EffectiveFrom: policy.EffectiveFrom, Allowance: limits, PlanSpans: spans, Egress: egress, Logger: log}
+	options := managedpostgres.OverageBillerOptions{Provider: policy.Provider, EffectiveFrom: policy.EffectiveFrom, Allowance: limits, PlanSpans: spans, Egress: egress, CapRoom: capRoom, Logger: log}
 	if policy.Live {
 		options.Publish = func(ctx context.Context, step managedpostgres.OverageChargeStep) error {
 			return sink.PublishManagedPostgresCharge(ctx, billing.ManagedPostgresChargeStep(step))
@@ -578,6 +610,42 @@ func deliverManagedPostgresOverage(ctx context.Context, store managedpostgres.Us
 	if err != nil && ctx.Err() == nil {
 		log.Warn("managed postgres overage delivery failed", "error", err, "subjects", summary.Subjects, "failed", summary.Failed)
 	}
+}
+
+// managedPostgresCapRoom reads how much more a subject's spend cap lets its
+// current month be charged, in millicents: the cap less the month's spending
+// so far (meter.MonthToDateSpendCents: compute, live egress, object storage
+// and the managed PostgreSQL charge already delivered). Only the current
+// month is held: a closing month's last steps are what that month owed.
+func managedPostgresCapRoom(store state.Store, sink billing.ManagedPostgresChargeSink) func(context.Context, string, time.Time, time.Time) (int64, bool, error) {
+	provider, _ := sink.(billing.Provider)
+	return func(ctx context.Context, subjectID string, month, at time.Time) (int64, bool, error) {
+		now := at.UTC()
+		if !monthStartUTC(now).Equal(monthStartUTC(month)) {
+			return 0, false, nil
+		}
+		capCents, capped, err := store.GetAccountOverageCapCents(ctx, subjectID)
+		if err != nil || !capped {
+			return 0, false, err
+		}
+		account, err := state.BillingResourceAccount(ctx, store, subjectID)
+		if errors.Is(err, state.ErrNotFound) {
+			return 0, false, nil
+		}
+		if err != nil {
+			return 0, false, err
+		}
+		spent, err := meter.MonthToDateSpendCents(ctx, store, provider, account, now)
+		if err != nil {
+			return 0, false, err
+		}
+		return max(capCents-spent, 0) * api.MillicentsPerCent, true, nil
+	}
+}
+
+func monthStartUTC(t time.Time) time.Time {
+	t = t.UTC()
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
 }
 
 // managedPostgresChargesLive reports whether managed PostgreSQL overage

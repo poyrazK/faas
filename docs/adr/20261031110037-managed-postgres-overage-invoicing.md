@@ -172,3 +172,22 @@ shadow mode. A subject/month attempted in recovery is skipped during the normal
 monthly pass, so that pass neither resends it nor immediately charges growth
 above it. New usage outside the close window remains unbilled. A concurrent
 index on `(provider, period_start, subject_id)` supports the recovery cursor.
+
+## Amendment (2026-11-13): the spend cap counts managed PostgreSQL
+
+Decision 7 is reversed (owner, billing review 2026-11-13, R7-1). The docs
+called the spend cap a hard ceiling on the month's overage and never said
+that databases were outside it, and since ADR-20261110160000 slice 3 the app
+egress election also turned on database egress billing outside the cap.
+
+- meterd's spend-cap hold, the month-to-date spend and the cap reservations
+  of the compute and egress pushes count the live managed PostgreSQL charge
+  (`state.ManagedPostgresLiveChargeStore`: delivered, and pending in a step
+  apid has not finished), as they count object storage.
+- A live step is clamped to the room the cap leaves for the current month
+  (`OverageBillerOptions.CapRoom`: the cap less `meter.MonthToDateSpendCents`).
+  A closing month's last steps are not clamped.
+- While meterd's hold applies, the cap sweep holds the subject's databases as
+  at the compute ceiling (`CapLimits.SpendCapReached`, API `hold:
+  compute_ceiling`) without recording or mailing a compute threshold. A $0
+  cap therefore stops them at once, as it parks apps.

@@ -368,10 +368,16 @@ databases by up to two hours.
   then refuses connections until the 1st of next month; your other databases
   and apps keep running, and the account is emailed once that month. Data a
   database sends your app counts as database egress; private network
-  transfer (Private Link) does not.
+  transfer (Private Link) does not. A copy of a database (a restore, a branch
+  or a PR preview copy) shares its source's 500 GB: the source and its copies
+  are held once together they sent it.
 - With egress overage on (`gregale billing egress-overage`), each database's
-  egress past its own 500 GB is billed at $0.105 per GB. `egress_state` is
-  then `overage`, and a database is held only at twice its allowance.
+  egress past its own 500 GB (shared with its copies) is billed at $0.105 per
+  GB. `egress_state` is then `overage`, and a database is held only at twice
+  its allowance.
+- Database overage counts toward your [spend cap](billing.md#spend-cap) and
+  is billed only up to it; at the cap your databases are held with
+  `hold: compute_ceiling`.
 
 When the platform stops a database that is still `ready`, `get`, `list` and
 the API say why in `hold`: `compute_ceiling`, `egress`, `inactive` (the

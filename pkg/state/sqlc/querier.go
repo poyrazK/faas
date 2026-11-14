@@ -4934,6 +4934,11 @@ type Querier interface {
 	// count; the spend breaker sums the month through the usage primary key, one
 	// index range per database, so the ledger's growth never forces a full scan.
 	ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg ManagedPostgresFleetTotalsParams) (ManagedPostgresFleetTotalsRow, error)
+	// Billing review 2026-11-13 (R7-1): the subject's live managed PostgreSQL
+	// overage charge for the month, which the spend cap counts like compute,
+	// egress and object storage: delivered, and reserved in steps not yet
+	// finished (their target past their starting point).
+	ManagedPostgresLiveOverageMillicents(ctx context.Context, db DBTX, arg ManagedPostgresLiveOverageMillicentsParams) (ManagedPostgresLiveOverageMillicentsRow, error)
 	// ADR-20261112160000: neond refuses deleting a Neon project or branch that a
 	// live managed PostgreSQL database runs on. A provider resource is the
 	// project ID, or "<project>/<branch>" for a database on a branch.
@@ -4963,6 +4968,12 @@ type Querier interface {
 	// otherwise the account's usage subject, as in the reservation counts. Read
 	// under the owner's reservation lock.
 	ManagedPostgresRestoreSlotHeld(ctx context.Context, db DBTX, arg ManagedPostgresRestoreSlotHeldParams) (bool, error)
+	// Billing review 2026-11-13 (R6-1): every database of a subject that was made
+	// as a restore copy (a restore, branch or PR preview copy), with the database
+	// it was restored from, deleted rows included. A copy shares its root
+	// source's egress allowance: on Neon a copy is a branch of its source's
+	// project, and Neon's 500 GB transfer allowance is per project.
+	ManagedPostgresRestoreSources(ctx context.Context, db DBTX, subjectID pgtype.UUID) ([]ManagedPostgresRestoreSourcesRow, error)
 	ManagedPostgresRotationRuntime(ctx context.Context, db DBTX, arg ManagedPostgresRotationRuntimeParams) (ManagedPostgresRotationRuntimeRow, error)
 	// ADR-20261029174950 decision 6: a window wholly inside a scheduled delete is
 	// waived. The fleet spend breaker (ManagedPostgresFleetTotals) still counts it.

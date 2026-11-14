@@ -29070,6 +29070,17 @@ AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_i
   AND p.waived_from<w.waived_from AND p.waived_from>w.waived_from-interval '30 days'))
 GROUP BY u.database_id;
 
+-- name: ManagedPostgresRestoreSources :many
+-- Billing review 2026-11-13 (R6-1): every database of a subject that was made
+-- as a restore copy (a restore, branch or PR preview copy), with the database
+-- it was restored from, deleted rows included. A copy shares its root
+-- source's egress allowance: on Neon a copy is a branch of its source's
+-- project, and Neon's 500 GB transfer allowance is per project.
+SELECT d.id, d.restore_source_database_id
+FROM managed_postgres_databases d
+WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(subject_id)::uuid
+AND d.restore_source_database_id IS NOT NULL;
+
 -- name: ManagedPostgresFleetTotals :one
 -- ADR-20261028103115: the fleet database cap counts what reservation limits
 -- count; the spend breaker sums the month through the usage primary key, one
