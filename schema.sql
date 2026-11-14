@@ -26783,15 +26783,16 @@ END $$;
 
 CREATE FUNCTION public.retain_billing_plan_activation() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
-    SET search_path TO 'pg_catalog', 'public'
-    AS $$
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
 BEGIN
     IF NEW.plan IS DISTINCT FROM OLD.plan THEN
-        INSERT INTO public.billing_plan_activations(subject_id, from_plan, to_plan, effective_at)
-        VALUES (NEW.id, OLD.plan, NEW.plan, NEW.plan_changed_at);
+        EXECUTE format('INSERT INTO %I.billing_plan_activations(subject_id, from_plan, to_plan, effective_at) '
+                       'VALUES ($1, $2, $3, $4)', TG_TABLE_SCHEMA)
+            USING NEW.id, OLD.plan, NEW.plan, NEW.plan_changed_at;
     END IF;
     RETURN NEW;
-END $$;
+END $_$;
 
 
 --
@@ -60459,6 +60460,112 @@ CREATE TABLE public.tenant_surfaces (
 
 
 --
+-- Name: tool_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tool_grants (
+    account_id uuid NOT NULL,
+    id uuid NOT NULL,
+    key_id uuid NOT NULL,
+    version text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked_at timestamp with time zone,
+    payload jsonb NOT NULL,
+    CONSTRAINT tool_grants_check CHECK (((((payload ->> 'id'::text) = (id)::text) AND ((payload ->> 'account_id'::text) = (account_id)::text) AND (((payload -> 'intent'::text) ->> 'key_id'::text) = (key_id)::text) AND (((payload -> 'intent'::text) ->> 'version'::text) = version) AND ((((payload -> 'intent'::text) ->> 'expires_at'::text))::timestamp with time zone = expires_at) AND COALESCE((((payload ->> 'revoked_at'::text))::timestamp with time zone = revoked_at), (((payload ->> 'revoked_at'::text) IS NULL) AND (revoked_at IS NULL)))) IS TRUE)),
+    CONSTRAINT tool_grants_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT tool_grants_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT tool_grants_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 8192))),
+    CONSTRAINT tool_grants_revoked_at_check CHECK (((revoked_at IS NULL) OR isfinite(revoked_at)))
+);
+
+
+--
+-- Name: tool_invocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tool_invocations (
+    account_id uuid NOT NULL,
+    id uuid NOT NULL,
+    status text NOT NULL,
+    deadline timestamp with time zone NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT tool_invocations_check CHECK ((((payload ->> 'id'::text) = (id)::text) AND ((payload ->> 'account_id'::text) = (account_id)::text) AND ((payload ->> 'status'::text) = status))),
+    CONSTRAINT tool_invocations_deadline_check CHECK (isfinite(deadline)),
+    CONSTRAINT tool_invocations_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT tool_invocations_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 196608))),
+    CONSTRAINT tool_invocations_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'completed'::text, 'tool_error'::text, 'not_started'::text, 'cancelled'::text, 'outcome_unknown'::text])))
+);
+
+
+--
+-- Name: tool_oauth_authorizations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tool_oauth_authorizations (
+    account_id uuid NOT NULL,
+    connection_id uuid NOT NULL,
+    state_sha256 text NOT NULL,
+    phase text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    flow_ciphertext bytea,
+    CONSTRAINT tool_oauth_authorizations_check CHECK (((phase = 'pending'::text) = (flow_ciphertext IS NOT NULL))),
+    CONSTRAINT tool_oauth_authorizations_connection_id_check CHECK ((connection_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT tool_oauth_authorizations_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT tool_oauth_authorizations_flow_ciphertext_check CHECK (((flow_ciphertext IS NULL) OR ((octet_length(flow_ciphertext) >= 1) AND (octet_length(flow_ciphertext) <= 16384)))),
+    CONSTRAINT tool_oauth_authorizations_phase_check CHECK ((phase = ANY (ARRAY['pending'::text, 'exchanging'::text, 'completed'::text, 'failed'::text]))),
+    CONSTRAINT tool_oauth_authorizations_state_sha256_check CHECK ((state_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: tool_oauth_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tool_oauth_connections (
+    account_id uuid NOT NULL,
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    payload jsonb NOT NULL,
+    state text NOT NULL,
+    generation bigint DEFAULT 0 NOT NULL,
+    credentials_ciphertext bytea,
+    expires_at timestamp with time zone,
+    lease_id uuid,
+    lease_until timestamp with time zone,
+    revoked_at timestamp with time zone,
+    CONSTRAINT tool_oauth_connections_check CHECK (((state = 'refreshing'::text) = ((lease_id IS NOT NULL) AND (lease_until IS NOT NULL)))),
+    CONSTRAINT tool_oauth_connections_check1 CHECK (((state <> 'ready'::text) OR ((credentials_ciphertext IS NOT NULL) AND (expires_at IS NOT NULL)))),
+    CONSTRAINT tool_oauth_connections_check2 CHECK (((state = 'revoked'::text) = (revoked_at IS NOT NULL))),
+    CONSTRAINT tool_oauth_connections_check3 CHECK (((((payload ->> 'id'::text) = (id)::text) AND ((payload ->> 'account_id'::text) = (account_id)::text) AND ((payload ->> 'app_id'::text) = (app_id)::text)) IS TRUE)),
+    CONSTRAINT tool_oauth_connections_credentials_ciphertext_check CHECK (((credentials_ciphertext IS NULL) OR ((octet_length(credentials_ciphertext) >= 1) AND (octet_length(credentials_ciphertext) <= 131072)))),
+    CONSTRAINT tool_oauth_connections_expires_at_check CHECK (((expires_at IS NULL) OR isfinite(expires_at))),
+    CONSTRAINT tool_oauth_connections_generation_check CHECK ((generation >= 0)),
+    CONSTRAINT tool_oauth_connections_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT tool_oauth_connections_lease_id_check CHECK (((lease_id IS NULL) OR (lease_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT tool_oauth_connections_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
+    CONSTRAINT tool_oauth_connections_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 16384))),
+    CONSTRAINT tool_oauth_connections_revoked_at_check CHECK (((revoked_at IS NULL) OR isfinite(revoked_at))),
+    CONSTRAINT tool_oauth_connections_state_check CHECK ((state = ANY (ARRAY['authorization_pending'::text, 'refresh_required'::text, 'ready'::text, 'refreshing'::text, 'reconnect_required'::text, 'revoked'::text])))
+);
+
+
+--
+-- Name: tool_publications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tool_publications (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    status text NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT tool_publications_check CHECK ((((payload ->> 'id'::text) = id) AND ((payload ->> 'account_id'::text) = (account_id)::text) AND ((payload ->> 'status'::text) = status))),
+    CONSTRAINT tool_publications_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT tool_publications_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 786432))),
+    CONSTRAINT tool_publications_status_check CHECK ((status = ANY (ARRAY['running'::text, 'completed'::text, 'failed'::text, 'outcome_unknown'::text])))
+);
+
+
+--
 -- Name: traffic_retry_counters; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -75047,6 +75154,46 @@ ALTER TABLE ONLY public.tenant_surfaces
 
 
 --
+-- Name: tool_grants tool_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_grants
+    ADD CONSTRAINT tool_grants_pkey PRIMARY KEY (account_id, id);
+
+
+--
+-- Name: tool_invocations tool_invocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_invocations
+    ADD CONSTRAINT tool_invocations_pkey PRIMARY KEY (account_id, id);
+
+
+--
+-- Name: tool_oauth_authorizations tool_oauth_authorizations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_oauth_authorizations
+    ADD CONSTRAINT tool_oauth_authorizations_pkey PRIMARY KEY (account_id, connection_id);
+
+
+--
+-- Name: tool_oauth_connections tool_oauth_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_oauth_connections
+    ADD CONSTRAINT tool_oauth_connections_pkey PRIMARY KEY (account_id, id);
+
+
+--
+-- Name: tool_publications tool_publications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_publications
+    ADD CONSTRAINT tool_publications_pkey PRIMARY KEY (account_id, id);
+
+
+--
 -- Name: traffic_retry_counters traffic_retry_counters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86237,6 +86384,34 @@ CREATE INDEX tenant_surfaces_cert_expiry_idx ON public.tenant_surfaces USING btr
 --
 
 CREATE INDEX tenant_surfaces_platform_tenant_idx ON public.tenant_surfaces USING btree (platform_tenant_id) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: tool_grants_key_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tool_grants_key_idx ON public.tool_grants USING btree (account_id, key_id, version) WHERE (revoked_at IS NULL);
+
+
+--
+-- Name: tool_invocations_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tool_invocations_active_idx ON public.tool_invocations USING btree (account_id, deadline) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: tool_oauth_connections_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tool_oauth_connections_app_idx ON public.tool_oauth_connections USING btree (account_id, app_id, id);
+
+
+--
+-- Name: tool_publications_registry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tool_publications_registry_idx ON public.tool_publications USING btree (account_id, id) WHERE (status = 'completed'::text);
 
 
 --
@@ -110685,6 +110860,70 @@ ALTER TABLE ONLY public.tenant_surfaces
 
 ALTER TABLE ONLY public.tenant_surfaces
     ADD CONSTRAINT tenant_surfaces_platform_tenant_fkey FOREIGN KEY (account_id, platform_tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE SET NULL (platform_tenant_id);
+
+
+--
+-- Name: tool_grants tool_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_grants
+    ADD CONSTRAINT tool_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tool_grants tool_grants_account_id_version_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_grants
+    ADD CONSTRAINT tool_grants_account_id_version_fkey FOREIGN KEY (account_id, version) REFERENCES public.tool_publications(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: tool_grants tool_grants_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_grants
+    ADD CONSTRAINT tool_grants_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tool_invocations tool_invocations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_invocations
+    ADD CONSTRAINT tool_invocations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tool_oauth_authorizations tool_oauth_authorizations_account_id_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_oauth_authorizations
+    ADD CONSTRAINT tool_oauth_authorizations_account_id_connection_id_fkey FOREIGN KEY (account_id, connection_id) REFERENCES public.tool_oauth_connections(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: tool_oauth_connections tool_oauth_connections_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_oauth_connections
+    ADD CONSTRAINT tool_oauth_connections_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tool_oauth_connections tool_oauth_connections_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_oauth_connections
+    ADD CONSTRAINT tool_oauth_connections_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: tool_publications tool_publications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tool_publications
+    ADD CONSTRAINT tool_publications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

@@ -120,6 +120,16 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "    word=\"${words[i]}\"")
 	_, _ = fmt.Fprintln(w, "    if [ $after_separator -eq 0 ] && [[ \"$word\" = --json || \"$word\" = -j || \"$word\" == --json=* || \"$word\" == --non-interactive || \"$word\" == --non-interactive=* || \"$word\" == --wait-for-approval || \"$word\" == --wait-for-approval=* || \"$word\" == --debug-http || \"$word\" == --debug-http=* ]]; then continue; fi")
 	_, _ = fmt.Fprintln(w, "    if [ ${#normalized_words[@]} -eq 1 ]; then")
+	_, _ = fmt.Fprintln(w, "      if [ \"$word\" = --http-timeout ]; then")
+	_, _ = fmt.Fprintln(w, "        if [ $((i+1)) -ge $cword ]; then COMPREPLY=(); return 0; fi")
+	_, _ = fmt.Fprintln(w, "        i=$((i+1)); continue")
+	_, _ = fmt.Fprintln(w, "      fi")
+	_, _ = fmt.Fprintln(w, "      if [[ \"$word\" == --http-timeout=* ]]; then continue; fi")
+	_, _ = fmt.Fprintln(w, "      if [ \"$word\" = --http-retries ]; then")
+	_, _ = fmt.Fprintln(w, "        if [ $((i+1)) -ge $cword ]; then COMPREPLY=(); return 0; fi")
+	_, _ = fmt.Fprintln(w, "        i=$((i+1)); continue")
+	_, _ = fmt.Fprintln(w, "      fi")
+	_, _ = fmt.Fprintln(w, "      if [[ \"$word\" == --http-retries=* ]]; then continue; fi")
 	_, _ = fmt.Fprintln(w, "      if [ \"$word\" = --profile ]; then")
 	_, _ = fmt.Fprintln(w, "        if [ $((i+1)) -ge $cword ]; then COMPREPLY=( $(compgen -W \"$(gregale completion profile-names 2>/dev/null)\" -- \"${words[cword]}\") ); return 0; fi")
 
@@ -136,6 +146,8 @@ func renderBashHeader(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  words=(\"${normalized_words[@]}\")")
 	_, _ = fmt.Fprintln(w, "  cword=$normalized_cword")
 	_, _ = fmt.Fprintln(w, "  if [ $cword -gt 0 ]; then prev=\"${words[cword-1]}\"; else prev=\"\"; fi")
+	_, _ = fmt.Fprintln(w, "  if [ $cword -eq 1 ] && [[ \"$cur\" == --http-timeout=* ]]; then COMPREPLY=(); return 0; fi")
+	_, _ = fmt.Fprintln(w, "  if [ $cword -eq 1 ] && [[ \"$cur\" == --http-retries=* ]]; then COMPREPLY=(); return 0; fi")
 	_, _ = fmt.Fprintln(w, "  if [ $cword -eq 1 ] && [[ \"$cur\" == --profile=* ]]; then")
 	_, _ = fmt.Fprintln(w, "    local name; COMPREPLY=()")
 	_, _ = fmt.Fprintln(w, "    while IFS= read -r name; do COMPREPLY+=(\"--profile=$name\"); done < <(compgen -W \"$(gregale completion profile-names 2>/dev/null)\" -- \"${cur#*=}\")")
@@ -563,7 +575,7 @@ func renderBashFooter(w io.Writer) {
 	_, _ = fmt.Fprintln(w, "  # Top-level: complete all known commands.")
 	_, _ = fmt.Fprintln(w, "  if [ $cword -eq 1 ]; then")
 	commands := completionCliCommands()
-	allCmds := []string{"--non-interactive", "--wait-for-approval", "--debug-http"}
+	allCmds := []string{"--non-interactive", "--wait-for-approval", "--debug-http", "--http-timeout", "--http-retries"}
 	for _, c := range commands {
 		allCmds = append(allCmds, c.Name)
 	}

@@ -8,6 +8,8 @@ against the login that made it: members of `faas_owner_authority` (the
 control plane's `faas_schedd`, and the schema owner `faas`) are authorized,
 and every compute login (`faas_compute`, `faas_node_schedd`, ...) is not.
 
+## Symptom
+
 The alert fires when the last 15 minutes hold an unauthorized owner change
 recorded in `app_owner_writes` (mode `observe`).
 

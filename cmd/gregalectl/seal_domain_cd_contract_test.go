@@ -39,11 +39,16 @@ func TestSealDomainCDContract(t *testing.T) {
 		},
 		{
 			workflow: ".github/workflows/cd-compute.yml",
-			// ADR-20261110210000 slice 3e: the runtime identity reaches
-			// cd-compute only until compute is retired from it.
-			tokens: append(secrets("BUILD", "EDGE", "EDGE_TLS", "CONTROL", "DELIVERY"),
+			// ADR-20261110210000 slices 3e and 3g-2: the runtime, edge and
+			// delivery identities reach cd-compute only until compute is
+			// retired from them.
+			tokens: append(secrets("BUILD", "EDGE_TLS", "CONTROL"),
 				"SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT }}",
-				"SEAL_DOMAIN_RUNTIME_AGE_KEY: ${{ vars.SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE != 'true' && secrets.SEAL_DOMAIN_RUNTIME_AGE_KEY || '' }}"),
+				"SEAL_DOMAIN_RUNTIME_AGE_KEY: ${{ vars.SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE != 'true' && secrets.SEAL_DOMAIN_RUNTIME_AGE_KEY || '' }}",
+				"SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}",
+				"SEAL_DOMAIN_EDGE_AGE_KEY: ${{ vars.SEAL_DOMAIN_EDGE_RETIRED_ON_COMPUTE != 'true' && secrets.SEAL_DOMAIN_EDGE_AGE_KEY || '' }}",
+				"SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT }}",
+				"SEAL_DOMAIN_DELIVERY_AGE_KEY: ${{ vars.SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE != 'true' && secrets.SEAL_DOMAIN_DELIVERY_AGE_KEY || '' }}"),
 			call:  `scripts/ci/seal_domain_vars.sh compute "$ARTIFACT_DIR/seal-domains" "$ARTIFACT_DIR/ansible-vars.yml"`,
 			count: 1,
 		},

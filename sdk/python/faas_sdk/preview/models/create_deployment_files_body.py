@@ -37,8 +37,9 @@ class CreateDeploymentFilesBody:
     """JSON object of non-secret environment overrides applied to this deployment revision only; values follow the
     plan's deployment override limits."""
     source_root: str | Unset = UNSET
-    """Optional repository-relative build directory. Empty or omitted uses the app's configured root; '.'
-    explicitly selects the archive root."""
+    """Optional repository-relative build directory. Empty or omitted uses the app's configured root; when the
+    archive does not contain that directory and its own root holds a Dockerfile, package.json, requirements.txt,
+    pyproject.toml, go.mod or gregale.yaml, the archive root is used. '.' explicitly selects the archive root."""
     scope: str | Unset = UNSET
     """Named environment scope read by the developer deployment; omitted uses default."""
     source_url: str | Unset = UNSET

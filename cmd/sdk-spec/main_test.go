@@ -33,7 +33,12 @@ func TestSDKSpecKeepsGAAndDropsPreviewAndOperatorPaths(t *testing.T) {
 			t.Errorf("GA path %q missing from the SDK spec", strings.TrimSpace(path))
 		}
 	}
-	for _, prefix := range []string{"\n  /v1/realtime/", "\n  /v1/admin/", "\n  /v1/service-map"} {
+	for _, prefix := range []string{
+		"\n  /v1/realtime/", "\n  /v1/admin/", "\n  /v1/service-map",
+		"\n  /v1/tool-publications", "\n  /v1/tool-registry", "\n  /v1/tool-grants",
+		"\n  /v1/tool-invocations", "\n  /v1/delegated-tool-invocations",
+		"\n  /v1/delegated-tool-connections", "\n  /v1/tool-oauth-connections",
+	} {
 		if strings.Contains(text, prefix) {
 			t.Errorf("preview, internal or operator path %q is in the SDK spec", strings.TrimSpace(prefix))
 		}

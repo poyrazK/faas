@@ -135,8 +135,9 @@ func TestMigrations_00059_GitHubInstallations(t *testing.T) {
 		t.Errorf("expected 23503 FK violation, got %v", err)
 	}
 
-	// (5) ON DELETE CASCADE — deleting the account removes the row.
-	if _, err := pool.Exec(ctx, `delete from accounts where id = $1`, seedAcct); err != nil {
+	// (5) ON DELETE CASCADE — deleting the account removes the row. The row
+	// references the account's resource namespace since 20261110164822932.
+	if _, err := pool.Exec(ctx, deleteAccountSQL, seedAcct); err != nil {
 		t.Fatalf("delete account: %v", err)
 	}
 	var rowCount int
