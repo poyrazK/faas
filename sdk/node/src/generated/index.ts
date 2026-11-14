@@ -2140,6 +2140,7 @@ export type { OrgProjectSyncConfig } from './models/OrgProjectSyncConfig.js';
 export type { OrgProjectWorkload } from './models/OrgProjectWorkload.js';
 export type { OrgQueueUsageResponse } from './models/OrgQueueUsageResponse.js';
 export type { OrgResponse } from './models/OrgResponse.js';
+export type { OrgSecurityPolicy } from './models/OrgSecurityPolicy.js';
 export type { OrgSlug } from './models/OrgSlug.js';
 export type { OrgWithRole } from './models/OrgWithRole.js';
 export type { OutboundAIAccessToken } from './models/OutboundAIAccessToken.js';

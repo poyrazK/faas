@@ -131,6 +131,45 @@ func (s *server) endComplimentary(ctx context.Context, store state.Complimentary
 
 // parseComplimentaryRequest reads the account, plan (none clears), the audit
 // reason and the optional end date, which must be in the future.
+// endComplimentaryForSubscription ends acct's complimentary plan once a
+// provider subscription is stamped on it: from then on the subscription
+// bills the account, so meterd must bill and hold its usage again and its
+// spend cap must stop being the complimentary $0. The cap becomes the current
+// plan's default, which the plan change the same webhook applies moves to
+// the new plan's default (state.PlanChangeOverageCap). An account that is not
+// complimentary, or an empty subscription (a revoke), is left as it is.
+func (s *server) endComplimentaryForSubscription(ctx context.Context, acct state.Account, subscriptionID string) error {
+	if subscriptionID == "" {
+		return nil
+	}
+	store, ok := s.store.(state.ComplimentaryAccountStore)
+	if !ok {
+		return nil
+	}
+	current, err := store.ComplimentaryAccount(ctx, acct.ID)
+	if err != nil {
+		return fmt.Errorf("read complimentary account: %w", err)
+	}
+	if current == nil {
+		return nil
+	}
+	if cap, ok := current.Plan.DefaultOverageCapCents(); ok {
+		if err := s.store.UpdateAccountOverageCapCents(ctx, acct.ID, &cap); err != nil {
+			return fmt.Errorf("restore default spend cap: %w", err)
+		}
+	}
+	if err := store.ClearComplimentaryAccount(ctx, acct.ID); err != nil {
+		return fmt.Errorf("end complimentary account: %w", err)
+	}
+	if s.audit != nil {
+		subject := acct.ID
+		s.audit.Emit(ctx, "account.complimentary_subscribed", &subject, map[string]any{
+			"from_plan": string(current.Plan), "reason": current.Reason, "subscription_id": subscriptionID,
+		})
+	}
+	return nil
+}
+
 func parseComplimentaryRequest(r *http.Request, now time.Time) (complimentaryRequest, *api.Problem) {
 	q := r.URL.Query()
 	bad := func(title, detail string) (complimentaryRequest, *api.Problem) {

@@ -21,6 +21,23 @@
     "kind": "operational"
   },
   {
+    "table": "account_signup_facts",
+    "columns": [
+      "account_id",
+      "asn",
+      "asn_org",
+      "country",
+      "created_at",
+      "disposable_email",
+      "email_domain",
+      "method",
+      "reduced_at",
+      "signup_ip",
+      "user_agent"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "account_billing_connections",
     "columns": [
       "account_id",
@@ -12881,6 +12898,7 @@
   {
     "table": "object_inventory_schedule",
     "columns": [
+      "active_since",
       "attempt_at",
       "bucket_id",
       "mutated_at",
@@ -14070,6 +14088,16 @@
       "org_id",
       "updated_at",
       "updated_by"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "org_security_policies",
+    "columns": [
+      "org_id",
+      "require_mfa",
+      "updated_at",
+      "updated_by_account_id"
     ],
     "kind": "account_identity"
   },

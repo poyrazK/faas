@@ -358,12 +358,15 @@ VALUES (gen_random_uuid(), $1, 'global', '', '"on"', '"on"', 1, 'hot', 'applied'
 	}
 }
 
-// testInventoryDueQueryScale measures the sweep's due query alone
-// (ADR-20261111152144) at 22,000 and 200,000 buckets in quiet-200ms's mix:
-// one in 22 active (written after its listing ten minutes ago), one in 22
-// due for its daily verification, the rest quiet. It logs the median of
-// several runs with object_inventory_quiet on and off and the plan, and fails
-// if the plan reads a whole bucket, usage, activity or schedule table.
+// testInventoryDueQueryScale measures the sweep's due query and the backlog
+// gauges' query alone (ADR-20261111152144) at 22,000 and 200,000 buckets in
+// quiet-200ms's mix: one in 22 active (written after its listing ten minutes
+// ago), one in 22 due for its daily verification, the rest quiet. It logs the
+// median of several runs of each with object_inventory_quiet on and off and
+// the plan, and fails if a plan reads a whole bucket, usage or activity
+// table, or the due query reads the whole schedule. (The backlog's due count
+// counts every due bucket with quiet buckets off, so the planner may read the
+// narrow schedule table whole for it.)
 func testInventoryDueQueryScale(t *testing.T) {
 	for _, n := range []int{22000, 200000} {
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
@@ -414,40 +417,65 @@ VALUES (gen_random_uuid(), $1, 'global', '', '"on"', '"on"', 1, 'hot', 'applied'
 	}
 }
 
-// measureInventoryDue logs the due query's median of seven runs and its plan
-// with object_inventory_quiet on and off.
+// measureInventoryDue logs the median of seven runs and the plan of the due
+// query and of the backlog query with object_inventory_quiet on and off.
 func measureInventoryDue(t *testing.T, pool *pgxpool.Pool, st *state.PgStore, n int, vacuumed bool) {
 	t.Helper()
 	ctx := t.Context()
+	// Quiet mode on: one in 22 buckets is active and one in 22 due for
+	// verification. Off: every bucket's attempt is over 5 minutes old.
+	part := int64(n / 22)
 	for _, quiet := range []bool{true, false} {
-		var took []time.Duration
-		var rows int
-		for range 7 {
-			start := time.Now()
+		queries := []struct {
+			name  string
+			whole []string // tables the plan must not read whole
+			run   func(*state.PgStore) (string, error)
+		}{{"due query", []string{"object_buckets", "object_storage_bucket_usage", "object_bucket_activity", "object_inventory_schedule"}, func(st *state.PgStore) (string, error) {
 			due, err := st.DueObjectInventoryQueue(ctx, 100, nil, quiet)
-			if err != nil {
-				t.Fatal(err)
+			if err == nil && len(due) != 100 {
+				err = fmt.Errorf("%d due rows, want 100", len(due))
 			}
-			took, rows = append(took, time.Since(start)), len(due)
-		}
-		slices.Sort(took)
-		t.Logf("due query over %d buckets, quiet %v, vacuumed %v: median %s, max %s (%d rows)", n, quiet, vacuumed, took[len(took)/2].Round(time.Microsecond), took[len(took)-1].Round(time.Microsecond), rows)
-		if want := 100; rows != want {
-			t.Fatalf("%d due rows, want %d", rows, want)
-		}
-		plan := explainInventoryDue(t, pool, quiet)
-		t.Logf("plan, quiet %v, vacuumed %v:\n%s", quiet, vacuumed, plan)
-		for _, table := range []string{"object_buckets", "object_storage_bucket_usage", "object_bucket_activity", "object_inventory_schedule"} {
-			if strings.Contains(plan, "Seq Scan on "+table+" ") {
-				t.Errorf("the due query reads all of %s", table)
+			return fmt.Sprintf("%d rows", len(due)), err
+		}}, {"backlog", []string{"object_buckets", "object_storage_bucket_usage", "object_bucket_activity"}, func(st *state.PgStore) (string, error) {
+			b, err := st.ObjectInventoryBacklog(ctx, quiet)
+			want := int64(n)
+			if quiet {
+				want = 2 * part
+			}
+			if err == nil && b.DueBuckets != want {
+				err = fmt.Errorf("backlog %+v, want %d due", b, want)
+			}
+			return fmt.Sprintf("%+v", b), err
+		}}}
+		for _, q := range queries {
+			var took []time.Duration
+			var result string
+			for range 7 {
+				start := time.Now()
+				r, err := q.run(st)
+				if err != nil {
+					t.Fatal(q.name, err)
+				}
+				took, result = append(took, time.Since(start)), r
+			}
+			slices.Sort(took)
+			t.Logf("%s over %d buckets, quiet %v, vacuumed %v: median %s, max %s (%s)", q.name, n, quiet, vacuumed, took[len(took)/2].Round(time.Microsecond), took[len(took)-1].Round(time.Microsecond), result)
+			plan := explainInventoryQuery(t, pool, func(st *state.PgStore) error { _, err := q.run(st); return err })
+			t.Logf("%s plan, quiet %v, vacuumed %v:\n%s", q.name, quiet, vacuumed, plan)
+			for line := range strings.Lines(plan) {
+				for _, table := range q.whole {
+					if strings.Contains(line, "Seq Scan on "+table+" ") && !strings.Contains(line, "(never executed)") {
+						t.Errorf("the %s reads all of %s", q.name, table)
+					}
+				}
 			}
 		}
 	}
 }
 
-// explainInventoryDue runs the due query once through a one-connection pool
-// whose session has auto_explain send each plan back as a notice.
-func explainInventoryDue(t *testing.T, pool *pgxpool.Pool, quiet bool) string {
+// explainInventoryQuery runs a query once through a one-connection pool whose
+// session has auto_explain send each plan back as a notice.
+func explainInventoryQuery(t *testing.T, pool *pgxpool.Pool, run func(*state.PgStore) error) string {
 	t.Helper()
 	ctx := t.Context()
 	var mu sync.Mutex
@@ -473,7 +501,7 @@ func explainInventoryDue(t *testing.T, pool *pgxpool.Pool, quiet bool) string {
 		t.Fatal(err)
 	}
 	defer explain.Close()
-	if _, err = state.NewPgStore(explain).DueObjectInventoryQueue(ctx, 100, nil, quiet); err != nil {
+	if err = run(state.NewPgStore(explain)); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()
