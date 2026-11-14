@@ -149,7 +149,7 @@ func TestCodeWorkflowCallToUnknownFunctionFails(t *testing.T) {
 		run, _ := callWorkflowRun(t, store)
 		executor := &codeTestExecutor{run: func(wf *codeTestWF, _ int) (any, error) {
 			if _, err := wf.Call("billing", "billing", nil); err != nil {
-				return map[string]string{"handled": err.Error()}, nil
+				return map[string]string{"handled": err.Error()}, nil //nolint:nilerr // the workflow handles the failed call
 			}
 			return nil, errors.New("the call should have failed")
 		}}

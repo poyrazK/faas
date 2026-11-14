@@ -8,9 +8,17 @@ SET LOCAL lock_timeout = '5s';
 ALTER TABLE invocation_sends ADD COLUMN IF NOT EXISTS workflow_run_id uuid;
 ALTER TABLE invocation_sends ADD COLUMN IF NOT EXISTS workflow_op text;
 -- NOT VALID: new writes are checked at once; 20261113165639200 validates.
-ALTER TABLE invocation_sends ADD CONSTRAINT invocation_sends_workflow_call_check
- CHECK ((workflow_run_id IS NULL) = (workflow_op IS NULL)
-  AND (workflow_op IS NULL OR length(workflow_op) BETWEEN 1 AND 160)) NOT VALID;
+-- +goose StatementBegin
+DO $$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'invocation_sends_workflow_call_check'
+   AND conrelid = 'invocation_sends'::regclass) THEN
+  ALTER TABLE invocation_sends ADD CONSTRAINT invocation_sends_workflow_call_check
+   CHECK ((workflow_run_id IS NULL) = (workflow_op IS NULL)
+    AND (workflow_op IS NULL OR length(workflow_op) BETWEEN 1 AND 160)) NOT VALID;
+ END IF;
+END $$;
+-- +goose StatementEnd
 
 -- ADR-20261113120824 §3: a run a function started with start() records the
 -- starting app, which alone may read it or send it events from its VM.

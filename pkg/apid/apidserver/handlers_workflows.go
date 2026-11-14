@@ -263,10 +263,6 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusCreated, workflowRunResponse(result.Run))
 }
 
-func workflowRunCreateRequestFingerprint(input json.RawMessage) []byte {
-	return workflowstart.Fingerprint(input)
-}
-
 // listWorkflowRuns handles GET /v1/apps/{slug}/workflows/runs
 func (s *server) listWorkflowRuns(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	slug := r.PathValue("slug")

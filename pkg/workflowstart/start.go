@@ -106,7 +106,9 @@ func Start(ctx context.Context, store Store, req Request) (Result, error) {
 	// never changes a run in flight and a name never deployed is refused.
 	dep, err := store.LiveDeploymentForScope(ctx, req.App.ID, scope)
 	if err != nil {
-		return Result{Problem: api.ErrWorkflowDefinitionNotFound()}, nil
+		// As apid always has: no live deployment in this scope (whatever the
+		// lookup's error) means no definition to run.
+		return Result{Problem: api.ErrWorkflowDefinitionNotFound()}, nil //nolint:nilerr // a refusal, not a failure
 	}
 	if stored, ok := store.(state.StoredWorkflowStore); ok {
 		if dep.Workflows, err = stored.EffectiveWorkflowDefinitions(ctx, req.App.ID, dep.Workflows); err != nil {
