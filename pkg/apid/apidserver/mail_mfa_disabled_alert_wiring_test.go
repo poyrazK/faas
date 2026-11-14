@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 	"github.com/google/uuid"
@@ -97,6 +98,17 @@ func TestMFADisabledAlertPublicPathsAndFailureBoundaries(t *testing.T) {
 				cookie, err := manager.IssueWithSession(sid, id, method != "password" || mode == "pending_password")
 				if err != nil {
 					t.Fatal(err)
+				}
+				if method == "password" {
+					// Turning MFA off with the password needs a code verified
+					// within the step-up window (#7009).
+					envelope, err := manager.Verify(cookie)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if cookie, err = manager.IssueWithSessionAndBindingHashAndStepUp(envelope.Sid, envelope.AccountID, envelope.BindingHash, time.Now(), envelope.MfaPending); err != nil {
+						t.Fatal(err)
+					}
 				}
 				identity, err := age.GenerateX25519Identity()
 				if err != nil {

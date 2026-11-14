@@ -91,6 +91,8 @@ type memAccountFlow struct {
 	mailSlots map[string]*memMailSlot
 	// loginFailures: keyed email hash → failed password checks.
 	loginFailures map[string]*memLoginFailures
+	// orgPolicies: org ID → security policy.
+	orgPolicies map[string]OrgSecurityPolicy
 }
 
 func (m *MemStore) IssueEmailChange(_ context.Context, tokenHash []byte, accountID, newEmail string, expiresAt time.Time) error {

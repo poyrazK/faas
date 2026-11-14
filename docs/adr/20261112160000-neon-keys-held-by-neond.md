@@ -230,6 +230,22 @@ neond, for each request:
   broker and a Neon key configured; deploy drops the key from apid's
   credentials; alerts on refusals, rate limits and neond being down; a
   runbook. Before this slice ships, the owner creates the Neon service user.
+  - Built as slice 3. As built:
+    - The Neon backend refuses to load when `FAAS_MANAGED_POSTGRES_NEON_BROKER`
+      is set and the variable its `secret_env` names still holds a key; the
+      error names the variable, never the key.
+    - The key lives in `/etc/faas/sealed.env`, which operators write, so
+      deploy cannot drop it itself. Instead `neond_service` refuses to turn
+      the broker on while `sealed.env` still sets
+      `faas_neond_apid_key_env` (default `FAAS_NEON_API_KEY`), and the
+      runbook (`docs/runbooks/FaasNeond.md`) removes it before converging.
+      A converge that fails this check leaves apid running on its key.
+    - neond's metrics are served on `127.0.0.1:9114` and scraped as job
+      `neond`. Alerts: `FaasNeondDown` and `FaasNeondRateLimited` page;
+      `FaasNeondRefusing`, `FaasNeondProjectKeysFailing` and
+      `FaasNeondBackfillStalled` warn.
+    - Turning the broker on stays the owner's step, after creating the Neon
+      service user and moving its key to neond.
 
 ## Consequences
 

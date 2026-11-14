@@ -29,26 +29,31 @@ import (
 
 const ManagedPostgresCapTemplate = "managed_postgres_cap"
 
-// ManagedPostgresCapEvent is one recorded threshold, as apid passes it.
+// ManagedPostgresCapEvent is one recorded threshold, as apid passes it. An
+// egress hold names its database (ADR-20261110160000 amendment 2026-11-13):
+// its email links to the database's notice, not the subject's event.
 type ManagedPostgresCapEvent struct {
-	SubjectID   string
-	PeriodStart time.Time
-	Threshold   string
-	ReachedAt   time.Time
-	Used        int64
-	Allowance   int64
-	Ceiling     int64
-	Overage     bool
+	DatabaseID   string
+	DatabaseName string
+	SubjectID    string
+	PeriodStart  time.Time
+	Threshold    string
+	ReachedAt    time.Time
+	Used         int64
+	Allowance    int64
+	Ceiling      int64
+	Overage      bool
 }
 
 type managedPostgresCapPayload struct {
-	Threshold   string    `json:"threshold"`
-	PeriodStart time.Time `json:"period_start"`
-	ReachedAt   time.Time `json:"reached_at"`
-	Used        int64     `json:"used_unit_seconds"`
-	Allowance   int64     `json:"allowance_unit_seconds"`
-	Ceiling     int64     `json:"ceiling_unit_seconds"`
-	Overage     bool      `json:"overage_enabled"`
+	DatabaseName string    `json:"database_name,omitempty"`
+	Threshold    string    `json:"threshold"`
+	PeriodStart  time.Time `json:"period_start"`
+	ReachedAt    time.Time `json:"reached_at"`
+	Used         int64     `json:"used_unit_seconds"`
+	Allowance    int64     `json:"allowance_unit_seconds"`
+	Ceiling      int64     `json:"ceiling_unit_seconds"`
+	Overage      bool      `json:"overage_enabled"`
 }
 
 func (s *Service) managedPostgresCapEnabled() bool {
@@ -102,15 +107,16 @@ func (s *Service) NoticeManagedPostgresCap(ctx context.Context, accountID string
 	if !s.managedPostgresCapEnabled() {
 		return internalmail.ErrDisabled
 	}
-	payload := managedPostgresCapPayload{Threshold: event.Threshold, PeriodStart: event.PeriodStart.UTC(), ReachedAt: event.ReachedAt.UTC(),
-		Used: event.Used, Allowance: event.Allowance, Ceiling: event.Ceiling, Overage: event.Overage}
+	payload := managedPostgresCapPayload{DatabaseName: event.DatabaseName, Threshold: event.Threshold, PeriodStart: event.PeriodStart.UTC(),
+		ReachedAt: event.ReachedAt.UTC(), Used: event.Used, Allowance: event.Allowance, Ceiling: event.Ceiling, Overage: event.Overage}
 	if _, _, ok := mail.ManagedPostgresCapBodyV1("", managedPostgresCapNotice(payload)); !ok {
 		return nil
 	}
 	if !payload.ReachedAt.Add(api.InternalMailManagedPostgresCapTTL).After(time.Now()) {
 		return nil
 	}
-	if !validID(accountID) || !validID(event.SubjectID) {
+	perDatabase := event.DatabaseID != ""
+	if !validID(accountID) || !validID(event.SubjectID) || perDatabase && (!validID(event.DatabaseID) || event.Threshold != mail.ManagedPostgresCapEgressHeld) {
 		return internalmail.ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -142,8 +148,14 @@ func (s *Service) NoticeManagedPostgresCap(ctx context.Context, accountID string
 	if err != nil {
 		return err
 	}
-	linked, err := s.queries.LinkManagedPostgresCapEvent(ctx, tx, q.LinkManagedPostgresCapEventParams{IntentID: intent.ID, SubjectID: pgID(event.SubjectID),
-		PeriodStart: pgtype.Timestamptz{Time: payload.PeriodStart, Valid: true}, Threshold: payload.Threshold})
+	var linked int64
+	if perDatabase {
+		linked, err = s.queries.LinkManagedPostgresEgressHoldNotice(ctx, tx, q.LinkManagedPostgresEgressHoldNoticeParams{IntentID: intent.ID,
+			DatabaseID: pgID(event.DatabaseID), PeriodStart: pgtype.Timestamptz{Time: payload.PeriodStart, Valid: true}, SubjectID: pgID(event.SubjectID)})
+	} else {
+		linked, err = s.queries.LinkManagedPostgresCapEvent(ctx, tx, q.LinkManagedPostgresCapEventParams{IntentID: intent.ID, SubjectID: pgID(event.SubjectID),
+			PeriodStart: pgtype.Timestamptz{Time: payload.PeriodStart, Valid: true}, Threshold: payload.Threshold})
+	}
 	if err != nil || linked != 1 {
 		return err // already mailed, or the event is gone: roll the intent back
 	}
@@ -226,5 +238,5 @@ func (s *Service) managedPostgresCapMessage(r q.PlatformMailProducerOutbox) (mai
 }
 
 func managedPostgresCapNotice(p managedPostgresCapPayload) mail.ManagedPostgresCapNotice {
-	return mail.ManagedPostgresCapNotice{Threshold: p.Threshold, UsedSeconds: p.Used, Allowance: p.Allowance, Ceiling: p.Ceiling, Overage: p.Overage, ReachedAt: p.ReachedAt}
+	return mail.ManagedPostgresCapNotice{DatabaseName: p.DatabaseName, Threshold: p.Threshold, UsedSeconds: p.Used, Allowance: p.Allowance, Ceiling: p.Ceiling, Overage: p.Overage, ReachedAt: p.ReachedAt}
 }

@@ -6,11 +6,10 @@
 // helpers for those capabilities. Preview and internal capabilities are in
 // '@gregale/sdk-node/preview' (src/preview.ts), which re-exports everything.
 //
-// The generated services call `OpenAPI.BASE/TOKEN/HEADERS` from the shared
-// runtime core in `src/generated/core/` — the `FaaSClient` constructor sets
-// these once at construction time. Mutating methods receive a fresh
-// `Idempotency-Key` per logical call, preserved across retries, via the
-// fetch wrapper stack installed on `globalThis.fetch` (see `client.ts`).
+// createClient binds these services to private configuration and transport.
+// Static service exports and FaaSClient retain their legacy shared state.
+
+export { createClient, type GregaleClient } from './isolated-client.js';
 
 // Generated runtime core, shared with the preview entry.
 export {

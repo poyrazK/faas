@@ -17,9 +17,13 @@ on:
       - "sdk/python/**"
       - "sdk/mirror/**"
       - "sdk/mirror.json"
+      - "sdk/install-tests/**"
+      - "sdk/fakeapid/**"
       - "docs/customer-pages.json"
       - "scripts/sdk_mirror.py"
       - "scripts/sdk_mirror_test.py"
+      - "scripts/sdk_install_check.py"
+      - "scripts/sdk_install_check_test.py"
       - ".github/workflows/sdk-mirror.yml"
   push:
     branches: [main]
@@ -29,8 +33,12 @@ on:
       - "sdk/python/**"
       - "sdk/mirror/**"
       - "sdk/mirror.json"
+      - "sdk/install-tests/**"
+      - "sdk/fakeapid/**"
       - "docs/customer-pages.json"
       - "scripts/sdk_mirror.py"
+      - "scripts/sdk_install_check.py"
+      - "scripts/sdk_install_check_test.py"
       - ".github/workflows/sdk-mirror.yml"
   workflow_dispatch:
 
@@ -60,37 +68,40 @@ jobs:
           persist-credentials: false
       - name: Unit tests
         if: matrix.repo == 'gregale-go'
-        run: python3 scripts/sdk_mirror_test.py
+        run: |
+          python3 scripts/sdk_mirror_test.py
+          python3 scripts/sdk_install_check_test.py
       - name: Build the public tree
         run: python3 scripts/sdk_mirror.py build --repo "${{ matrix.repo }}" --out "$RUNNER_TEMP/tree"
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        if: matrix.repo == 'gregale-go'
         with:
-          go-version-file: sdk/go/go.mod
+          # Install checks also build the platform's API fixture, whose Go
+          # requirement is newer than the public Go SDK's minimum version.
+          go-version-file: go.mod
           cache: false
-      - name: Build the Go module as published
-        if: matrix.repo == 'gregale-go'
-        working-directory: ${{ runner.temp }}/tree
-        run: go build ./... && go vet ./...
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: matrix.repo == 'gregale-js'
         with:
           node-version: "22"
-      - name: Build the Node package as published
-        if: matrix.repo == 'gregale-js'
-        working-directory: ${{ runner.temp }}/tree/packages/sdk-node
-        run: npm ci --ignore-scripts --no-audit --no-fund && npm run build && npm pack --dry-run >/dev/null
-
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: matrix.repo == 'gregale-python'
         with:
           python-version: "3.12"
-      - name: Build the Python wheel as published
-        if: matrix.repo == 'gregale-python'
-        working-directory: ${{ runner.temp }}/tree
-        run: python -m pip wheel --quiet --no-deps --wheel-dir "$RUNNER_TEMP/wheel" .
+      - name: Install and exercise the SDK from an independent consumer
+        run: >-
+          python3 scripts/sdk_install_check.py
+          --repo "${{ matrix.repo }}"
+          --tree "$RUNNER_TEMP/tree"
+          --out "$RUNNER_TEMP/sdk-install"
+      - name: Retain verified packages and install report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sdk-install-${{ matrix.repo }}
+          path: ${{ runner.temp }}/sdk-install/*
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Skip the push (no GitHub App configured)
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.SDK_MIRROR_APP_CLIENT_ID == ''

@@ -29,6 +29,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ObservabilityService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Search an app's log events.
    * Internal preview, enabled by
@@ -121,7 +122,7 @@ export class ObservabilityService {
      */
     cursor?: string,
   }): CancelablePromise<LogEventsResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-events',
       path: {
@@ -218,7 +219,7 @@ export class ObservabilityService {
      */
     saved?: string,
   }): CancelablePromise<LogEventFacetsResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-events/facets',
       path: {
@@ -249,7 +250,7 @@ export class ObservabilityService {
    * @throws ApiError
    */
   public static listDashboards(): CancelablePromise<DashboardsResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dashboards',
     });
@@ -269,7 +270,7 @@ export class ObservabilityService {
   }: {
     requestBody: DashboardRequest,
   }): CancelablePromise<Problem | Dashboard> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dashboards',
       body: requestBody,
@@ -291,7 +292,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<Dashboard | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dashboards/{id}',
       path: {
@@ -316,7 +317,7 @@ export class ObservabilityService {
     id: string,
     requestBody: DashboardRequest,
   }): CancelablePromise<Dashboard | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/dashboards/{id}',
       path: {
@@ -340,7 +341,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dashboards/{id}',
       path: {
@@ -369,7 +370,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<DashboardData | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dashboards/{id}/data',
       path: {
@@ -409,7 +410,7 @@ export class ObservabilityService {
      */
     since?: string,
   }): CancelablePromise<IncidentsResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/incidents',
       query: {
@@ -439,7 +440,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<IncidentDetail | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/incidents/{id}',
       path: {
@@ -466,7 +467,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<IncidentNote | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/incidents/{id}/acknowledge',
       path: {
@@ -495,7 +496,7 @@ export class ObservabilityService {
     id: string,
     requestBody: IncidentNoteRequest,
   }): CancelablePromise<Problem | IncidentNote> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/incidents/{id}/notes',
       path: {
@@ -523,7 +524,7 @@ export class ObservabilityService {
      */
     slug: string,
   }): CancelablePromise<LogSavedSearchesResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-searches',
       path: {
@@ -556,7 +557,7 @@ export class ObservabilityService {
     name: string,
     requestBody: LogSavedSearchRequest,
   }): CancelablePromise<LogSavedSearch | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/log-searches/{name}',
       path: {
@@ -586,7 +587,7 @@ export class ObservabilityService {
      */
     name: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/log-searches/{name}',
       path: {
@@ -608,7 +609,7 @@ export class ObservabilityService {
      */
     slug: string,
   }): CancelablePromise<Array<AppLogDrainResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-drains',
       path: {
@@ -647,7 +648,7 @@ export class ObservabilityService {
     slug: string,
     requestBody: CreateAppLogDrainRequest,
   }): CancelablePromise<AppLogDrainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/log-drains',
       path: {
@@ -688,7 +689,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<AppLogDrainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-drains/{id}',
       path: {
@@ -727,7 +728,7 @@ export class ObservabilityService {
     id: string,
     requestBody: UpdateAppLogDrainRequest,
   }): CancelablePromise<AppLogDrainResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/log-drains/{id}',
       path: {
@@ -768,7 +769,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/log-drains/{id}',
       path: {
@@ -809,7 +810,7 @@ export class ObservabilityService {
      */
     id: string,
   }): CancelablePromise<AppLogDrainHealthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-drains/{id}/health',
       path: {
@@ -857,7 +858,7 @@ export class ObservabilityService {
      */
     window?: '1h' | '24h' | '7d' | '30d',
   }): CancelablePromise<AppLogDrainAnalyticsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/log-drains/{id}/analytics',
       path: {
@@ -903,7 +904,7 @@ export class ObservabilityService {
      */
     range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
   }): CancelablePromise<ServiceMapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/service-map',
       query: {
@@ -1002,7 +1003,7 @@ export class ObservabilityService {
      */
     cursor?: string,
   }): CancelablePromise<WakeTimelineResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/wakes/{wake_id}/timeline',
       path: {
@@ -1066,7 +1067,7 @@ export class ObservabilityService {
      */
     limit?: number,
   }): CancelablePromise<SidecarTimelineResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/sidecars/{sidecar_name}/timeline',
       path: {
@@ -1116,7 +1117,7 @@ export class ObservabilityService {
      */
     traceId: string,
   }): CancelablePromise<Trace> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/traces/{trace_id}',
       path: {

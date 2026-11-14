@@ -45,6 +45,7 @@ import type { OrgListResponse } from '../models/OrgListResponse.js';
 import type { OrgMemberResponse } from '../models/OrgMemberResponse.js';
 import type { OrgPlanResponse } from '../models/OrgPlanResponse.js';
 import type { OrgResponse } from '../models/OrgResponse.js';
+import type { OrgSecurityPolicy } from '../models/OrgSecurityPolicy.js';
 import type { PatchOrgRequest } from '../models/PatchOrgRequest.js';
 import type { Preview } from '../models/Preview.js';
 import type { PreviewList } from '../models/PreviewList.js';
@@ -59,6 +60,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class OrgsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List the agents acting in an organization.
    * Hosted MCP connections bound to the organization and its API keys
@@ -76,7 +78,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<AgentConnectionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/agent-connections',
       path: {
@@ -110,7 +112,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<AgentConnectionsRevokeAllResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/agent-connections/revoke_all',
       path: {
@@ -150,7 +152,7 @@ export class OrgsService {
     id: string,
     requestBody: AgentUndoRequest,
   }): CancelablePromise<AgentUndoPlan> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/agent-connections/{id}/undo/plan',
       path: {
@@ -196,7 +198,7 @@ export class OrgsService {
     id: string,
     requestBody: AgentUndoRequest,
   }): CancelablePromise<AgentUndoResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/agent-connections/{id}/undo',
       path: {
@@ -252,7 +254,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<AgentActivityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/agent-connections/{id}/activity',
       path: {
@@ -298,7 +300,7 @@ export class OrgsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/agent-connections/{id}',
       path: {
@@ -333,7 +335,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<OrgAgentPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/agent-policy',
       path: {
@@ -370,7 +372,7 @@ export class OrgsService {
     slug: string,
     requestBody: OrgAgentPolicyRequest,
   }): CancelablePromise<OrgAgentPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{slug}/agent-policy',
       path: {
@@ -408,7 +410,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<ListOrgAPIKeysResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/keys',
       path: {
@@ -446,7 +448,7 @@ export class OrgsService {
     slug: string,
     requestBody: CreateOrgAPIKeyRequest,
   }): CancelablePromise<APIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/keys',
       path: {
@@ -485,7 +487,7 @@ export class OrgsService {
      */
     id: string,
   }): CancelablePromise<APIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/keys/{id}',
       path: {
@@ -526,7 +528,7 @@ export class OrgsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/keys/{id}',
       path: {
@@ -571,7 +573,7 @@ export class OrgsService {
     id: string,
     requestBody?: RotateOrgAPIKeyRequest,
   }): CancelablePromise<RotateOrgAPIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/keys/{id}/rotate',
       path: {
@@ -602,7 +604,7 @@ export class OrgsService {
    * @throws ApiError
    */
   public static listOrgs(): CancelablePromise<OrgListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs',
       errors: {
@@ -640,7 +642,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<OrgResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs',
       headers: {
@@ -692,7 +694,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<OrgResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}',
       path: {
@@ -738,7 +740,7 @@ export class OrgsService {
     slug: string,
     requestBody: PatchOrgRequest,
   }): CancelablePromise<OrgResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/orgs/{slug}',
       path: {
@@ -776,7 +778,9 @@ export class OrgsService {
    * Soft-delete the org.
    * Marks the company organization as deleted_pending. Live managed
    * PostgreSQL databases must complete deletion first. Owner-only
-   * (`org.delete`); personal organizations are immutable.
+   * (`org.delete`); personal organizations are immutable. Needs a
+   * signed-in browser session with a fresh step-up; an API key cannot
+   * delete an organization. Owners and admins are emailed.
    *
    * @returns void
    * @throws ApiError
@@ -792,7 +796,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}',
       path: {
@@ -802,7 +806,9 @@ export class OrgsService {
         401: `code: unauthorized`,
         403: `\`403 Forbidden\` — caller is authenticated but lacks the
         \`org.delete\` action. Owner-only. Stable code
-        \`org_role_forbidden\`.
+        \`org_role_forbidden\`. An API key gets
+        \`browser_session_required\`; a stale sign-in gets
+        \`step_up_required\`.
         `,
         404: `code: not_found`,
         409: `Personal organizations cannot be deleted (\`org_personal_immutable\`).
@@ -868,7 +874,7 @@ export class OrgsService {
      */
     appId?: string,
   }): CancelablePromise<ListOrgActivityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/activity',
       path: {
@@ -916,7 +922,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<OrgAppListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/apps',
       path: {
@@ -969,7 +975,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/apps',
       path: {
@@ -1018,7 +1024,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<MemberListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/members',
       path: {
@@ -1071,7 +1077,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<InvitationWithTokenResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/members',
       path: {
@@ -1124,7 +1130,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<PreviewList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/previews',
       path: {
@@ -1167,7 +1173,7 @@ export class OrgsService {
      */
     key: string,
   }): CancelablePromise<Preview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{slug}/previews/{key}',
       path: {
@@ -1209,7 +1215,7 @@ export class OrgsService {
      */
     key: string,
   }): CancelablePromise<Preview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/previews/{key}',
       path: {
@@ -1261,7 +1267,7 @@ export class OrgsService {
     userId: string,
     requestBody: ChangeMemberRoleRequest,
   }): CancelablePromise<OrgMemberResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/orgs/{slug}/members/{user_id}',
       path: {
@@ -1331,7 +1337,7 @@ export class OrgsService {
      */
     userId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/members/{user_id}',
       path: {
@@ -1389,7 +1395,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/leave',
       path: {
@@ -1414,9 +1420,10 @@ export class OrgsService {
    * (a single PostgreSQL tx with `FOR UPDATE` locks on both
    * rows). The exactly-one-owner invariant is enforced by the
    * partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-   * member of the org. For a Free organization, the recipient must have
+   * member of the org whose account is active. For a Free organization, the recipient must have
    * available Free-organization ownership capacity; admission is serialized
-   * with organization creation and other incoming transfers.
+   * with organization creation and other incoming transfers. Needs a
+   * signed-in browser session; an API key gets `browser_session_required`.
    *
    * @returns OrgResponse The org (post-transfer).
    * @throws ApiError
@@ -1434,7 +1441,7 @@ export class OrgsService {
     slug: string,
     requestBody: TransferOwnershipRequest,
   }): CancelablePromise<OrgResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/transfer_ownership',
       path: {
@@ -1451,7 +1458,91 @@ export class OrgsService {
         (\`org_free_limit_exceeded\`, with limit and observed count).
         `,
         404: `code: NotFound (new owner is not a member)`,
-        409: `code: org_last_owner (caller not the active owner OR new owner already owner)`,
+        409: `code: org_last_owner (caller not the active owner OR new owner already owner), or conflict (new owner's account is suspended or pending deletion)`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the organization's security policy.
+   * Any member can read whether the organization requires two-factor
+   * authentication.
+   *
+   * @returns OrgSecurityPolicy The organization's security policy.
+   * @throws ApiError
+   */
+  public static getOrgSecurityPolicy({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<OrgSecurityPolicy> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/security-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `\`org_mfa_required\` when the organization requires two-factor authentication and the caller has none.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Require or stop requiring two-factor authentication for members.
+   * Owner-only (`org.manage_security`) and needs a fresh step-up. While
+   * `require_mfa` is on, a member without two-factor authentication is
+   * refused on the organization's routes with `org_mfa_required`, by
+   * sessions and API keys alike, until they enrol. Turning it on needs
+   * the caller to have two-factor authentication. Owners and admins
+   * are emailed when the policy changes.
+   *
+   * @returns OrgSecurityPolicy The organization's security policy with the requested two-factor requirement applied.
+   * @throws ApiError
+   */
+  public static putOrgSecurityPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: OrgSecurityPolicy,
+  }): CancelablePromise<OrgSecurityPolicy> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/security-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `\`org_role_forbidden\` for a non-owner; \`step_up_required\` for a stale sign-in.`,
+        404: `code: not_found`,
+        409: `\`conflict\` when the caller turning the requirement on has no two-factor authentication.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -1483,7 +1574,7 @@ export class OrgsService {
      */
     token: string,
   }): CancelablePromise<OrgInvitationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/invitations/{token}',
       path: {
@@ -1531,7 +1622,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<OrgMemberResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/invitations/{token}/accept',
       path: {
@@ -1598,7 +1689,7 @@ export class OrgsService {
      */
     invitationId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/invitations/{invitation_id}',
       path: {
@@ -1645,7 +1736,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<SeatUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/seat_usage',
       path: {
@@ -1712,7 +1803,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<InvitationListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/invitations',
       path: {
@@ -1756,7 +1847,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<BillingStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/status',
       path: {
@@ -1796,7 +1887,7 @@ export class OrgsService {
      */
     month?: string,
   }): CancelablePromise<Array<UsageResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/usage',
       path: {
@@ -1849,7 +1940,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<InvoiceListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/invoices',
       path: {
@@ -1889,7 +1980,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<BillingPortalResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/portal',
       path: {
@@ -1946,7 +2037,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<OrgPlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/orgs/{slug}/plan',
       path: {
@@ -1989,7 +2080,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<AccountOverageCapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/overage-cap',
       path: {
@@ -2039,7 +2130,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AccountOverageCapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/overage-cap',
       path: {
@@ -2080,7 +2171,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<EgressOverageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/egress-overage',
       path: {
@@ -2127,7 +2218,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<EgressOverageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{slug}/egress-overage',
       path: {
@@ -2178,7 +2269,7 @@ export class OrgsService {
      */
     month?: string,
   }): CancelablePromise<FinancialCostsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/costs',
       path: {
@@ -2217,7 +2308,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<FinancialBudgetListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/budgets',
       path: {
@@ -2266,7 +2357,7 @@ export class OrgsService {
     idempotencyKey: string,
     requestBody: CreateFinancialBudgetRequest,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/billing/budgets',
       path: {
@@ -2310,7 +2401,7 @@ export class OrgsService {
     slug: string,
     requestBody: FinancialBudgetPreviewRequest,
   }): CancelablePromise<FinancialBudgetPreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/billing/budgets/preview',
       path: {
@@ -2353,7 +2444,7 @@ export class OrgsService {
      */
     id: string,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/budgets/{id}',
       path: {
@@ -2401,7 +2492,7 @@ export class OrgsService {
     idempotencyKey: string,
     requestBody: UpdateFinancialBudgetRequest,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{slug}/billing/budgets/{id}',
       path: {
@@ -2456,7 +2547,7 @@ export class OrgsService {
     idempotencyKey: string,
     requestBody: DeleteFinancialBudgetRequest,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/billing/budgets/{id}',
       path: {
@@ -2513,7 +2604,7 @@ export class OrgsService {
      */
     limit?: number,
   }): CancelablePromise<FinancialBudgetHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/billing/budgets/{id}/revisions',
       path: {
@@ -2574,7 +2665,7 @@ export class OrgsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<OrgBillingEmailResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{slug}/billing/email',
       path: {

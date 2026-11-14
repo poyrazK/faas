@@ -22,6 +22,58 @@ import (
 	"time"
 )
 
+// Private tool publication journals retain bounded metadata, never source or
+// credentials. The deadline fences abandoned publishers; it never grants a retry.
+const (
+	ToolPublicationIntentMaxBytes            = 64 << 10
+	ToolPublicationOutcomeMaxBytes           = 512 << 10
+	ToolPublicationCatalogMaxBytes           = 256 << 10
+	ToolPublicationMaxTools                  = 64
+	ToolPublicationMaxCases                  = 64
+	ToolPublicationsPerAccount               = 256
+	ToolPublicationDeadline                  = 35 * time.Minute
+	ToolRegistryPageMax                      = 20
+	ToolRegistryQueryMaxBytes                = 128
+	ToolPrivateInvocationWorkers             = 4
+	ToolPrivateInvocationRequestMaxBytes     = 256 << 10 // bounded JSON escaping of 32-KiB canonical arguments
+	ToolInvocationArgsMaxBytes               = 32 << 10
+	ToolInvocationResultMaxBytes             = 64 << 10
+	ToolInvocationRequestMaxBytes            = 4 << 10
+	ToolInvocationOutcomeMaxBytes            = 128 << 10
+	ToolInvocationEndpointMaxBytes           = 512
+	ToolInvocationsPerAccount                = 1024
+	ToolInvocationsActiveMax                 = 4
+	ToolInvocationDefaultTimeout             = 60
+	ToolInvocationMaxTimeout                 = 600
+	ToolInvocationReportGrace                = 30 * time.Second
+	ToolInvocationCancelPoll                 = time.Second
+	ToolGrantIntentMaxBytes                  = 4 << 10
+	ToolGrantsPerAccount                     = 1024
+	ToolGrantsPerKey                         = 64
+	ToolGrantPageMax                         = 20
+	ToolGrantMaxLifetime                     = 30 * 24 * time.Hour
+	ToolOAuthConnectionIntentMaxBytes        = 8 << 10
+	ToolOAuthConnectionRecordMaxBytes        = 16 << 10
+	ToolOAuthConnectionsPerAccount           = 128
+	ToolOAuthConnectionsPerApp               = 32
+	ToolOAuthConnectionPageMax               = 20
+	ToolOAuthURLMaxBytes                     = 2048
+	ToolOAuthClientIDMaxBytes                = 512
+	ToolOAuthScopesMax                       = 64
+	ToolOAuthScopeMaxBytes                   = 128
+	ToolOAuthRefreshTimeout                  = 15 * time.Second
+	ToolOAuthPersistTimeout                  = 5 * time.Second
+	ToolOAuthRenewalLease                    = 45 * time.Second
+	ToolOAuthRefreshSkew                     = 30 * time.Second
+	ToolOAuthProviderResponseMaxBytes        = 64 << 10
+	ToolOAuthCiphertextMaxBytes              = 128 << 10
+	ToolOAuthMaxTokenLifetimeSeconds         = 365 * 24 * 60 * 60
+	ToolOAuthAuthorizationLifetime           = 5 * time.Minute
+	ToolOAuthAuthorizationRequestMaxBytes    = 24 << 10
+	ToolOAuthAuthorizationCiphertextMaxBytes = 16 << 10
+	ToolOAuthCallbackTimeout                 = 5 * time.Second
+)
+
 // Referral program bounds. Rewards are estimates only; payout execution is
 // deliberately unavailable until a separately reviewed payment integration.
 const (
@@ -125,6 +177,33 @@ const (
 	AttentionResolvedRetention = 30 * 24 * time.Hour
 	AttentionListMax           = 200
 	AttentionDismissReasonMax  = 200
+)
+
+// Customer attention signals, round 2 (ADR-20261113180000).
+const (
+	// AttentionOOMKills runtime OOM kills of one app within
+	// AttentionOOMWindow open an app_oom signal.
+	AttentionOOMKills  = 3
+	AttentionOOMWindow = 24 * time.Hour
+	// AttentionBootFailures failed boots of one app within
+	// AttentionBootWindow open a boot_failing signal.
+	AttentionBootFailures = 5
+	AttentionBootWindow   = time.Hour
+	// The last AttentionJobFailures finished scheduled runs of one job, all
+	// failed or dead-lettered within AttentionJobWindow, open a jobs_failing
+	// signal.
+	AttentionJobFailures = 3
+	AttentionJobWindow   = 7 * 24 * time.Hour
+	// A payment failure within AttentionPaymentWindow with no recovery
+	// since opens a payment_failing signal.
+	AttentionPaymentWindow = 14 * 24 * time.Hour
+	// Plan-limit refusals on AttentionLimitDays distinct days within
+	// AttentionLimitWindow open a limit_pressure signal.
+	AttentionLimitDays   = 3
+	AttentionLimitWindow = 7 * 24 * time.Hour
+	// AttentionSummaryWindow is the period the staff page summarises
+	// signal outcomes over.
+	AttentionSummaryWindow = 30 * 24 * time.Hour
 )
 
 // Management MCP history is connection-local metadata, not an account audit log.
@@ -320,6 +399,11 @@ const (
 	SignupAccountsPerNetworkPerDay = 50
 	SignupAccountsPerDay           = 2_000
 )
+
+// SignupFactsPersonalRetention is how long an account's sign-up address and
+// user agent are kept (ADR-20261113160000). Afterwards meterd clears them;
+// the method, country, network owner and email domain stay with the account.
+const SignupFactsPersonalRetention = 90 * 24 * time.Hour
 
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
 // extends it to MCPLoginKeyIdle from now, never past MCPLoginKeyMaxAge after
@@ -2635,6 +2719,13 @@ const (
 	OutboundAIToolUsesPerCallMax                 = 1_000
 	MaxOutboundAIPriceMillicentsPerToolUse int64 = 10_000_000
 	OutboundAIPriceEntriesMax                    = 64
+	// Long-context price tiers (ADR 20261027132936 amendment 3): the prompt
+	// size, in input tokens, a tier starts above, and the bounds of the
+	// percentages it scales input-side and output prices by.
+	OutboundAILongContextAboveTokensMin int64 = 1_000
+	OutboundAILongContextAboveTokensMax int64 = 2_000_000
+	OutboundAILongContextPercentMin     int64 = 100
+	OutboundAILongContextPercentMax     int64 = 1_000
 	// Semantic response cache (ADR 20261112194947): the similarity a hit
 	// needs, in basis points of cosine similarity (bounds and default); the
 	// entries one integration keeps per outboundd process and how many
@@ -3519,6 +3610,27 @@ const (
 	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
 	// the filesystem has less than this free.
 	ArtifactCacheMinFreeBytes int64 = 8 << 30
+	// ArtifactCacheReservePercent is the share of the cache filesystem kept
+	// free when the cache budget is derived from the disk
+	// (ADR-20261114120000): the free-space floor is this percentage of the
+	// disk, never below ArtifactCacheMinFreeBytes, and the budget is the rest.
+	// A capture of the largest plan (2 GiB of memory plus its drive), a
+	// writable layer clone and a build drive all fit in 15 GB of a 100 GB disk.
+	ArtifactCacheReservePercent int64 = 15
+	// SnapshotCacheOrphanGrace is how long a node keeps a cached snapshot
+	// capture that no database row references (ADR-20261114120000). A capture
+	// is cached before schedd records its row, so a younger one may still be
+	// in flight; after this it belongs to a snapshot that was deleted.
+	SnapshotCacheOrphanGrace = 6 * time.Hour
+	// RuntimeReleaseCacheGrace keeps a runtime release base cached on a node
+	// for this long after the release is created, before any deployment binds
+	// to it (ADR-20261114120000). After that a node keeps only releases bound
+	// to a deployment that is not failed or cancelled, or that a runtime
+	// upgrade targets.
+	RuntimeReleaseCacheGrace = 24 * time.Hour
+	// NodeCacheSweepInterval is how often a compute node removes cached
+	// snapshot captures and runtime release bases nothing needs any more.
+	NodeCacheSweepInterval = 10 * time.Minute
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
@@ -4740,10 +4852,15 @@ type Limits struct {
 	// one table" rule.
 	DefaultStopGracePeriodS int // seconds; per-app StopGracePeriod default
 	DefaultStartupDeadlineS int // seconds; per-app StartupDeadlineS default
-	DefaultMaxRetries       int // per-app MaxRetries default
-	WorkerReplicasMax       int // per-account running worker instances
-	ServiceReplicasMax      int // per-deployment desired replicas
-	JobMaxRuntimeS          int // seconds; per-job max runtime
+	// MaxStartupDeadlineS is the plan's startup window: the most
+	// AppManifest.StartupDeadlineS may ask for, and how long every cold boot
+	// of such an app may take to become ready (ADR-20261114120000, amending
+	// ADR-138). Free/Hobby 30 s, Pro 60 s, Scale 120 s.
+	MaxStartupDeadlineS int
+	DefaultMaxRetries   int // per-app MaxRetries default
+	WorkerReplicasMax   int // per-account running worker instances
+	ServiceReplicasMax  int // per-deployment desired replicas
+	JobMaxRuntimeS      int // seconds; per-job max runtime
 
 	// CertExpiryWarningDays (issue #961 / Mega-A PR-3) is the threshold
 	// below which the cert engine emits a `cert.expiring_soon` audit
@@ -6432,6 +6549,7 @@ var planLimits = map[Plan]Limits{
 		// before the store is touched.
 		DefaultStopGracePeriodS: 15,
 		DefaultStartupDeadlineS: 15,
+		MaxStartupDeadlineS:     ColdBootReadyWindowS,
 		DefaultMaxRetries:       3,
 		WorkerReplicasMax:       0, // Free disallows worker
 		ServiceReplicasMax:      0, // Free disallows service
@@ -6881,6 +6999,7 @@ var planLimits = map[Plan]Limits{
 		// production fan-out.
 		DefaultStopGracePeriodS: 30,
 		DefaultStartupDeadlineS: 30,
+		MaxStartupDeadlineS:     ColdBootReadyWindowS,
 		DefaultMaxRetries:       5,
 		WorkerReplicasMax:       1,
 		ServiceReplicasMax:      3,
@@ -7327,9 +7446,11 @@ var planLimits = map[Plan]Limits{
 		// scale to a meaningful production fan-out (3 workers,
 		// 5 service replicas, 30 min job runtimes).
 		DefaultStopGracePeriodS: 60,
-		// ADR-138 amendment (2026-10-22): capped at the cold-boot
-		// window, ColdBootReadyWindowS.
+		// The default stays the spec cold-boot window; an app opts into
+		// the plan's longer window with startup_deadline_s
+		// (ADR-20261114120000).
 		DefaultStartupDeadlineS: ColdBootReadyWindowS,
+		MaxStartupDeadlineS:     60,
 		DefaultMaxRetries:       10,
 		WorkerReplicasMax:       3,
 		ServiceReplicasMax:      5,
@@ -7749,9 +7870,11 @@ var planLimits = map[Plan]Limits{
 		// a single Scale customer can host a small SaaS
 		// (10 workers, 20 service replicas, 1 h jobs).
 		DefaultStopGracePeriodS: 120,
-		// ADR-138 amendment (2026-10-22): capped at the cold-boot
-		// window, ColdBootReadyWindowS.
+		// The default stays the spec cold-boot window; an app opts into
+		// the plan's longer window with startup_deadline_s
+		// (ADR-20261114120000).
 		DefaultStartupDeadlineS: ColdBootReadyWindowS,
+		MaxStartupDeadlineS:     120,
 		DefaultMaxRetries:       20,
 		WorkerReplicasMax:       10,
 		ServiceReplicasMax:      20,
@@ -8495,6 +8618,14 @@ const (
 	// a momentarily full fleet failed a finished build, and the customer had
 	// to rebuild to retry.
 	SnapshotPrimeCapacityMaxWait = 5 * time.Minute
+	// SupersededInstanceDrainGrace is how long a superseded release's running
+	// request instance keeps serving the requests it already has after a new
+	// release goes live, before it is parked anyway. It waits only while the
+	// guest reports requests in flight and the app has a free instance slot,
+	// so it never holds an app at its concurrency cap and an idle instance
+	// parks at once. Without it every deploy cut in-flight long requests,
+	// streams and uploads on the old release (deploy-path review P16).
+	SupersededInstanceDrainGrace = 30 * time.Second
 	// AppTaskCapacityMaxWait is how long after node budgets first refused it
 	// a release command keeps waiting for a compute node with room for its
 	// environment (ADR-20261029103512 amendment 3). Inside the window schedd
@@ -8775,7 +8906,10 @@ const (
 	// default so one app cannot reserve the entire gateway's single-flight
 	// waiter budget. A zero value means "use the plan default".
 	WakeQueueMaxDepthMultiplier = 8
-	WakeQueueMaxWaitSeconds     = 60
+	// WakeQueueMaxWaitSeconds covers the largest startup window
+	// (MaxAppManifestStartupDeadlineS) so an app with a long startup can
+	// hold its first request through a cold boot (ADR-20261114120000).
+	WakeQueueMaxWaitSeconds = MaxAppManifestStartupDeadlineS
 	// Warm concurrency-overflow queues are intentionally much shorter than
 	// cold-wake queues. A running API that is saturated should get a brief
 	// chance to reuse a released slot or a newly-scaled sibling, not inherit the
@@ -9390,8 +9524,11 @@ const (
 	GuestOpenFilesHardLimit = 1 << 20
 
 	// ColdBootReadyWindowS is how long an app may take to become ready
-	// on any cold boot: the spec §6.1 COLD_BOOTING budget the scheduler's
-	// watchdog enforces on every wake (sched.ColdBootSweepBudget).
+	// on a cold boot by default: the spec §6.1 COLD_BOOTING budget the
+	// scheduler's watchdog enforces (sched.ColdBootSweepBudget). An app on a
+	// plan with a longer startup window (Limits.MaxStartupDeadlineS) that sets
+	// startup_deadline_s above it gets that window on every cold boot
+	// (ADR-20261114120000).
 	ColdBootReadyWindowS = 30
 
 	// MaxAppManifestStartupDeadlineS is the gross upper bound on
@@ -9401,7 +9538,10 @@ const (
 	// to 120 s on Scale while every later cold boot (after a release, a
 	// secret change, a fresh restart or a snapshot miss) was killed at
 	// 30 s, so such an app deployed fine and then never came back.
-	MaxAppManifestStartupDeadlineS = ColdBootReadyWindowS
+	// ADR-20261114120000 (deploy-path review P1): every cold boot now gets
+	// the app's startup deadline, so the cap is the largest plan window
+	// (Scale, 120 s); each plan's own cap is Limits.MaxStartupDeadlineS.
+	MaxAppManifestStartupDeadlineS = 120
 
 	// MaxAppManifestMaxRetries is the gross upper bound on
 	// AppManifest.MaxRetries (issue #1186 §D.3, ADR-137/138). Per-plan

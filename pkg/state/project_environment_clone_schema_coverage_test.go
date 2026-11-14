@@ -24,6 +24,13 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// Tool authority and durable execution history stay with their source.
+		"tool_grants":               state.CloneSchemaIdentity,
+		"tool_oauth_connections":    state.CloneSchemaIdentity,
+		"tool_oauth_authorizations": state.CloneSchemaIdentity,
+		"tool_invocations":          state.CloneSchemaOperational,
+		"tool_publications":         state.CloneSchemaOperational,
+
 		// adr:1660,1662,1665,1666 — saved authority stays with its source;
 		// public compile inputs require an isolated configuration strategy.
 		"deployment_build_dependency_gates": state.CloneSchemaOperational,

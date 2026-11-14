@@ -39,6 +39,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class QueuesService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Replay a failed event from the dashboard.
    * Resets the source event to pending and redirects to the Failed Events inbox.
@@ -62,7 +63,7 @@ export class QueuesService {
       csrf_token: string;
     },
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/dashboard/failed-events/{slug}/{id}/replay',
       path: {
@@ -101,7 +102,7 @@ export class QueuesService {
       csrf_token: string;
     },
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/dashboard/failed-events/{slug}/{id}/discard',
       path: {
@@ -135,7 +136,7 @@ export class QueuesService {
       csrf_token: string;
     },
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/dashboard/failed-events/account/{id}/replay',
       path: {
@@ -168,7 +169,7 @@ export class QueuesService {
       csrf_token: string;
     },
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/dashboard/failed-events/account/{id}/discard',
       path: {
@@ -219,7 +220,7 @@ export class QueuesService {
      */
     xGregaleRelease?: string,
   }): CancelablePromise<QueueSendResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/queues/send',
       path: {
@@ -272,7 +273,7 @@ export class QueuesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<QueueSendBatchResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/queues/send-batch',
       path: {
@@ -310,7 +311,7 @@ export class QueuesService {
     slug: string,
     requestBody: CreateCommitSourceRequest,
   }): CancelablePromise<CommitSourceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/commit-sources',
       path: {
@@ -348,7 +349,7 @@ export class QueuesService {
      */
     source: string,
   }): CancelablePromise<CommitSourceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/commit-sources/{source}',
       path: {
@@ -381,7 +382,7 @@ export class QueuesService {
       enabled: boolean;
     },
   }): CancelablePromise<CommitSourceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/commit-sources/{source}',
       path: {
@@ -423,7 +424,7 @@ export class QueuesService {
       connection_url: string;
     },
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/commit-sources/{source}/connection',
       path: {
@@ -463,7 +464,7 @@ export class QueuesService {
     source: string,
     requestBody: CommitEventRequest,
   }): CancelablePromise<CommitReceiptResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/commit-sources/{source}/events',
       path: {
@@ -512,7 +513,7 @@ export class QueuesService {
      */
     limit?: number,
   }): CancelablePromise<CommitPublicationHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/commit-sources/{source}/publications',
       path: {
@@ -551,7 +552,7 @@ export class QueuesService {
      */
     source: string,
   }): CancelablePromise<CommitBlockedEventsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/commit-sources/{source}/blocked-events',
       path: {
@@ -592,7 +593,7 @@ export class QueuesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<any> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/commit-sources/{source}/events/{event}/replay',
       path: {
@@ -630,7 +631,7 @@ export class QueuesService {
      */
     event: string,
   }): CancelablePromise<CommitReceiptResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/commit-sources/{source}/events/{event}',
       path: {
@@ -693,7 +694,7 @@ export class QueuesService {
      */
     xGregaleRelease?: string,
   }): CancelablePromise<SendAppMessageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/inbox',
       path: {
@@ -741,7 +742,7 @@ export class QueuesService {
     slug: string,
     requestBody?: QueueWorkloadProfileRequest,
   }): CancelablePromise<QueueWorkloadProfileResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/queue-workload',
       path: {
@@ -787,7 +788,7 @@ export class QueuesService {
      */
     includeRetired?: boolean,
   }): CancelablePromise<Array<QueueBindingResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/queue-bindings',
       path: {
@@ -830,7 +831,7 @@ export class QueuesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<QueueBindingResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/queue-bindings',
       path: {
@@ -872,7 +873,7 @@ export class QueuesService {
      */
     id: string,
   }): CancelablePromise<QueueBindingResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/queue-bindings/{id}',
       path: {
@@ -911,7 +912,7 @@ export class QueuesService {
     id: string,
     requestBody: UpdateQueueBindingRequest,
   }): CancelablePromise<QueueBindingResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/queue-bindings/{id}',
       path: {
@@ -951,7 +952,7 @@ export class QueuesService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/queue-bindings/{id}',
       path: {
@@ -995,7 +996,7 @@ export class QueuesService {
      */
     id: string,
   }): CancelablePromise<QueueBindingStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/queue-bindings/{id}/status',
       path: {
@@ -1031,7 +1032,7 @@ export class QueuesService {
      */
     slug: string,
   }): CancelablePromise<QueueReceiveResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/queues/receive',
       path: {
@@ -1073,7 +1074,7 @@ export class QueuesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/queues/{id}/ack',
       path: {
@@ -1124,7 +1125,7 @@ export class QueuesService {
     queue: string,
     requestBody?: QueueLeaseRequest,
   }): CancelablePromise<QueueLeaseResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/queues/{queue}/leases',
       path: {
@@ -1166,7 +1167,7 @@ export class QueuesService {
     queue: string,
     requestBody: QueueLeaseReceiptsRequest,
   }): CancelablePromise<QueueLeaseReceiptsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/queues/{queue}/leases:ack',
       path: {
@@ -1212,7 +1213,7 @@ export class QueuesService {
     queue: string,
     requestBody: QueueLeaseReceiptsRequest,
   }): CancelablePromise<QueueLeaseReceiptsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/queues/{queue}/leases:nack',
       path: {
@@ -1253,7 +1254,7 @@ export class QueuesService {
     queue: string,
     requestBody: QueueLeaseReceiptsRequest,
   }): CancelablePromise<QueueLeaseReceiptsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/queues/{queue}/leases:extend',
       path: {
@@ -1292,7 +1293,7 @@ export class QueuesService {
      */
     slug: string,
   }): CancelablePromise<QueueStateResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/queues/state',
       path: {
@@ -1339,7 +1340,7 @@ export class QueuesService {
      */
     before?: string,
   }): CancelablePromise<QueuePeekResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/queues/peek',
       path: {
@@ -1390,7 +1391,7 @@ export class QueuesService {
      */
     before?: string,
   }): CancelablePromise<QueueDeadLetterResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/queues/dead_letter',
       path: {
@@ -1442,7 +1443,7 @@ export class QueuesService {
      */
     id: string,
   }): CancelablePromise<AsyncInvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/queues/dead_letter/{id}/replay',
       path: {
@@ -1487,7 +1488,7 @@ export class QueuesService {
      */
     before?: string,
   }): CancelablePromise<DeadLetterEventsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/dlq',
       path: {
@@ -1534,7 +1535,7 @@ export class QueuesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<DeadLetterPurgeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/dlq',
       path: {
@@ -1588,7 +1589,7 @@ export class QueuesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<DeadLetterReplayAllResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/dlq:replay_all',
       path: {
@@ -1630,7 +1631,7 @@ export class QueuesService {
      */
     id: string,
   }): CancelablePromise<DeadLetterEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/dlq/{id}',
       path: {
@@ -1674,7 +1675,7 @@ export class QueuesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/dlq/{id}',
       path: {
@@ -1726,7 +1727,7 @@ export class QueuesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<DeadLetterEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/dlq/{id}/replay',
       path: {
@@ -1788,7 +1789,7 @@ export class QueuesService {
      */
     xGregaleRelease?: string,
   }): CancelablePromise<QueueSendResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/send',
       path: {
@@ -1841,7 +1842,7 @@ export class QueuesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<QueueSendBatchResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/send-batch',
       path: {
@@ -1893,7 +1894,7 @@ export class QueuesService {
      */
     includeRetired?: boolean,
   }): CancelablePromise<Array<QueueBindingResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/apps/{slug}/queue-bindings',
       path: {
@@ -1943,7 +1944,7 @@ export class QueuesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<QueueBindingResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/queue-bindings',
       path: {
@@ -1992,7 +1993,7 @@ export class QueuesService {
      */
     id: string,
   }): CancelablePromise<QueueBindingResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/apps/{slug}/queue-bindings/{id}',
       path: {
@@ -2038,7 +2039,7 @@ export class QueuesService {
     id: string,
     requestBody: UpdateQueueBindingRequest,
   }): CancelablePromise<QueueBindingResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/orgs/{organization}/apps/{slug}/queue-bindings/{id}',
       path: {
@@ -2085,7 +2086,7 @@ export class QueuesService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/apps/{slug}/queue-bindings/{id}',
       path: {
@@ -2134,7 +2135,7 @@ export class QueuesService {
      */
     id: string,
   }): CancelablePromise<QueueBindingStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/apps/{slug}/queue-bindings/{id}/status',
       path: {
@@ -2175,7 +2176,7 @@ export class QueuesService {
      */
     slug: string,
   }): CancelablePromise<QueueReceiveResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/receive',
       path: {
@@ -2224,7 +2225,7 @@ export class QueuesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/{id}/ack',
       path: {
@@ -2280,7 +2281,7 @@ export class QueuesService {
     queue: string,
     requestBody?: QueueLeaseRequest,
   }): CancelablePromise<QueueLeaseResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/{queue}/leases',
       path: {
@@ -2329,7 +2330,7 @@ export class QueuesService {
     queue: string,
     requestBody: QueueLeaseReceiptsRequest,
   }): CancelablePromise<QueueLeaseReceiptsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/{queue}/leases:ack',
       path: {
@@ -2380,7 +2381,7 @@ export class QueuesService {
     queue: string,
     requestBody: QueueLeaseReceiptsRequest,
   }): CancelablePromise<QueueLeaseReceiptsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/{queue}/leases:nack',
       path: {
@@ -2428,7 +2429,7 @@ export class QueuesService {
     queue: string,
     requestBody: QueueLeaseReceiptsRequest,
   }): CancelablePromise<QueueLeaseReceiptsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/{queue}/leases:extend',
       path: {
@@ -2472,7 +2473,7 @@ export class QueuesService {
      */
     slug: string,
   }): CancelablePromise<QueueStateResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/state',
       path: {
@@ -2524,7 +2525,7 @@ export class QueuesService {
      */
     before?: string,
   }): CancelablePromise<QueuePeekResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/peek',
       path: {
@@ -2580,7 +2581,7 @@ export class QueuesService {
      */
     before?: string,
   }): CancelablePromise<QueueDeadLetterResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/dead_letter',
       path: {
@@ -2637,7 +2638,7 @@ export class QueuesService {
      */
     id: string,
   }): CancelablePromise<AsyncInvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/queues/dead_letter/{id}/replay',
       path: {
@@ -2671,7 +2672,7 @@ export class QueuesService {
      */
     organization: string,
   }): CancelablePromise<OrgQueueUsageResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/queue-usage',
       path: {

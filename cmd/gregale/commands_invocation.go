@@ -3,7 +3,7 @@
 // reachable?"): POST /v1/apps/{slug}/invoke synchronously drains
 // the request through the same handler the dashboard's "Test"
 // button uses. `--async` flips to /invoke/async and returns the
-// status_url so the operator can poll via `gregale invocations get`.
+// status_url, or polls the accepted ID to a terminal result with `--wait`.
 //
 // Auth: authLimited → requireMFA → requireScope(ScopesDeployWriteSurface).
 // Surface the server's APIError verbatim; no --no-mfa escape.
@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -27,24 +29,36 @@ import (
 
 func cmdInvoke(args []string) int {
 	fs := newFlagSet("invoke", flag.ContinueOnError)
-	async := fs.Bool("async", false, "fire-and-forget via /invoke/async; returns the status_url")
+	async := fs.Bool("async", false, "enqueue via /invoke/async; returns the status_url unless --wait")
+	wait := fs.Bool("wait", false, "wait for the invocation to finish (implies --async)")
+	timeout := fs.Duration("timeout", 0, "stop waiting after this duration (0 waits indefinitely; requires --wait)")
+	interval := fs.Duration("interval", time.Second, "time between status checks (requires --wait)")
+	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying the same async submission (requires --async or --wait)")
 	payload := fs.String("payload", "", "JSON payload (or @file for file body, - for stdin)")
 	method := fs.String("method", "", "HTTP method override (defaults to handler's)")
 	path := fs.String("path", "", "URL path override (defaults to handler's)")
 	onSuccess := fs.String("on-success-webhook", "", "app webhook id for completed invocation callbacks")
 	onFailure := fs.String("on-failure-webhook", "", "app webhook id for failed or dead-lettered callbacks")
-	workPolicy := fs.String("work-policy", "", "named app work policy (requires --async and --work-key)")
+	workPolicy := fs.String("work-policy", "", "named app work policy (requires --async or --wait, and --work-key)")
 	workKey := fs.String("work-key", "", "JSON string, number, or boolean application key")
 	workFairnessKey := fs.String("work-fairness-key", "", "JSON scalar shared by related work keys, such as a tenant ID")
 	// Go's flag parser stops at the first positional token. Reorder the
 	// documented `<slug> [flags]` form before parsing so flags-first and
 	// positional-first invocations share the same validation path.
-	flags, positional := splitArgsForFlags(args, "async")
+	flags, positional := splitArgsForFlags(args, "async", "wait")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
-	if len(positional) > 1 {
-		PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>]", "invoke")
+	asyncMode, err := resolveInvokeWaitFlags(fs, *async, *wait, *timeout, *interval)
+	if err != nil {
+		return printErr("Invalid invocation wait options", err)
+	}
+	key, err := invokeIdempotencyKey(fs, asyncMode, *idempotencyKey)
+	if err != nil {
+		return printErr("Invalid --idempotency-key", err)
+	}
+	if len(positional) > 1 || fs.NArg() != 0 {
+		PrintUsage(os.Stderr, "usage: gregale invocation run [--async] [--idempotency-key KEY] [--wait [--timeout D] [--interval D]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>]", "invoke")
 		return 1
 	}
 	slug := ""
@@ -55,7 +69,7 @@ func cmdInvoke(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, "usage: gregale invoke [--async] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
+				PrintUsage(os.Stderr, "usage: gregale invocation run [--async] [--idempotency-key KEY] [--wait [--timeout D] [--interval D]] [--payload <json>|@file|-] [--method M] [--path P] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--on-success-webhook ID] [--on-failure-webhook ID] [<slug>] (or run `gregale link <project-slug>`)", "invoke")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)
@@ -77,8 +91,8 @@ func cmdInvoke(args []string) int {
 		}
 	}
 	if *workPolicy != "" || *workKey != "" || *workFairnessKey != "" {
-		if !*async || *workPolicy == "" || *workKey == "" {
-			return printErr("Invalid work policy", errors.New("--work-policy and --work-key must be used together with --async"))
+		if !asyncMode || *workPolicy == "" || *workKey == "" {
+			return printErr("Invalid work policy", errors.New("--work-policy and --work-key must be used together with --async or --wait"))
 		}
 		if _, err := workpolicy.CanonicalScalar(json.RawMessage(*workKey)); err != nil {
 			return printErr("Invalid work key", err)
@@ -95,10 +109,19 @@ func cmdInvoke(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	if *async {
-		resp, err := client.InvokeAppAsync(context.Background(), slug, req)
+	ctx := context.Background()
+	if *wait {
+		var stop context.CancelFunc
+		ctx, stop = signal.NotifyContext(ctx, os.Interrupt)
+		defer stop()
+	}
+	if asyncMode {
+		resp, err := client.InvokeAppAsync(api.ContextWithIdempotencyKey(ctx, key), slug, req)
 		if err != nil {
 			return printErr("Invoke (async) failed", err)
+		}
+		if *wait {
+			return waitForAcceptedInvocation(ctx, client, resp.ID, *timeout, *interval)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(resp))
@@ -174,14 +197,17 @@ func resolveJSONFlag(flag, s string) ([]byte, error) {
 		return nil, nil
 	}
 	var b []byte
+	source := "inline"
 	switch {
 	case s[0] == '@':
+		source = s[1:]
 		read, err := os.ReadFile(s[1:])
 		if err != nil {
 			return nil, fmt.Errorf("read payload file %q: %w", s[1:], err)
 		}
 		b = read
 	case s == "-":
+		source = "stdin"
 		read, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return nil, fmt.Errorf("read stdin: %w", err)
@@ -194,7 +220,7 @@ func resolveJSONFlag(flag, s string) ([]byte, error) {
 	// payload surfaced as "marshal request: json: error calling MarshalJSON
 	// for type json.RawMessage: invalid character ...".
 	if len(bytes.TrimSpace(b)) > 0 && !json.Valid(b) {
-		return nil, fmt.Errorf("%s must be valid JSON (inline, @file, or - for stdin)", flag)
+		return nil, jsonFlagSyntaxError(flag, source, b)
 	}
 	return b, nil
 }

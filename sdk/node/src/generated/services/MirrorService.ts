@@ -13,6 +13,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class MirrorService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List every mirror rule for an app.
    * Per-app listing. At most
@@ -31,7 +32,7 @@ export class MirrorService {
      */
     slug: string,
   }): CancelablePromise<MirrorRuleListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mirrors',
       path: {
@@ -73,7 +74,7 @@ export class MirrorService {
     slug: string,
     requestBody: CreateMirrorRuleRequest,
   }): CancelablePromise<MirrorRuleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/mirrors',
       path: {
@@ -125,7 +126,7 @@ export class MirrorService {
      */
     id: string,
   }): CancelablePromise<MirrorRuleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mirrors/{id}',
       path: {
@@ -171,7 +172,7 @@ export class MirrorService {
     id: string,
     requestBody: UpdateMirrorRuleRequest,
   }): CancelablePromise<MirrorRuleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/mirrors/{id}',
       path: {
@@ -218,7 +219,7 @@ export class MirrorService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/mirrors/{id}',
       path: {
@@ -266,7 +267,7 @@ export class MirrorService {
      */
     window?: '1h' | '24h' | '7d',
   }): CancelablePromise<MirrorSummaryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mirrors/{id}/summary',
       path: {
@@ -317,7 +318,7 @@ export class MirrorService {
     id: string,
     requestBody: MirrorReplayBatchRequest,
   }): CancelablePromise<MirrorReplayBatchResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/mirrors/{id}/replay',
       path: {
