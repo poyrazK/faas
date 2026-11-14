@@ -233,7 +233,7 @@ func TestBringUpScanCheck(t *testing.T) {
 			}
 			m := &Manager{}
 			m.WithStorage(s)
-			err := m.bringUpScanCheck(context.Background(), baseKey)
+			_, err := m.bringUpScanCheck(context.Background(), baseKey)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("bringUpScanCheck err = %v, wantErr = %v", err, tc.wantErr)
 			}
@@ -260,7 +260,7 @@ func TestBringUpScanCheck(t *testing.T) {
 // manager_test.go take this path; the gate is purely additive).
 func TestBringUpScanCheck_NilStorageIsNoop(t *testing.T) {
 	m := &Manager{}
-	if err := m.bringUpScanCheck(context.Background(), "base/anything.ext4"); err != nil {
+	if _, err := m.bringUpScanCheck(context.Background(), "base/anything.ext4"); err != nil {
 		t.Errorf("nil storage must skip scan check, got %v", err)
 	}
 }
@@ -276,7 +276,7 @@ func TestBringUpScanCheck_GetErrorSurfacesAsProblem(t *testing.T) {
 	s := &memStorage{getErr: errors.New("permission denied")}
 	m := &Manager{}
 	m.WithStorage(s)
-	err := m.bringUpScanCheck(context.Background(), "base/anything.ext4")
+	_, err := m.bringUpScanCheck(context.Background(), "base/anything.ext4")
 	if err == nil {
 		t.Fatal("expected error from getErr")
 	}
@@ -330,7 +330,7 @@ func TestBringUpScanCheck_RefreshesStaleRuntimeBaseGeneration(t *testing.T) {
 	m := &Manager{}
 	m.WithStorage(cache)
 	m.WithBaseGenerations(map[string]string{baseKey: newRef})
-	if err := m.bringUpScanCheck(ctx, baseKey); err != nil {
+	if _, err := m.bringUpScanCheck(ctx, baseKey); err != nil {
 		t.Fatalf("bringUpScanCheck: %v", err)
 	}
 	rc, err := cache.Get(ctx, baseKey)
@@ -356,7 +356,7 @@ func TestBringUpScanCheck_RejectsMismatchedScanGeneration(t *testing.T) {
 	m := &Manager{}
 	m.WithStorage(be)
 	m.WithBaseGenerations(map[string]string{baseKey: "ghcr.io/example/go124@sha256:new"})
-	err := m.bringUpScanCheck(context.Background(), baseKey)
+	_, err := m.bringUpScanCheck(context.Background(), baseKey)
 	if err == nil || !strings.Contains(err.Error(), "want configured runtime base") {
 		t.Fatalf("bringUpScanCheck error = %v, want configured generation rejection", err)
 	}
@@ -401,7 +401,7 @@ func TestBringUpScanCheck_WaitsForGenerationCommitBeforeRefreshingBase(t *testin
 	m := &Manager{}
 	m.WithStorage(cache)
 	m.WithBaseGenerations(map[string]string{baseKey: newRef})
-	if err := m.bringUpScanCheck(ctx, baseKey); err == nil {
+	if _, err := m.bringUpScanCheck(ctx, baseKey); err == nil {
 		t.Fatal("bringUpScanCheck succeeded before the new scan sidecar was published")
 	}
 	rc, err := cache.Get(ctx, baseKey)

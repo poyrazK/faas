@@ -56,7 +56,7 @@ import (
 // allowlist; bearer principals are unaffected.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
 	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next))))))
-	return s.authMw.RequireSession(pkgNext)
+	return s.recordCredentialRefusals(s.authMw.RequireSession(pkgNext))
 }
 
 // authLimited wraps s.auth in pkg/middleware.AuthLimit with the
@@ -67,14 +67,14 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
 	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next))))))))
-	return s.authMw.RequireLimited(pkgNext)
+	return s.recordCredentialRefusals(s.authMw.RequireLimited(pkgNext))
 }
 
 // Project publishing checks the human's verification before resolving the
 // project, so a missing resource cannot bypass the verification response.
 func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
 	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.requireVerifiedEmail(s.authorizeAppResource(next)))))))))
-	return s.authMw.RequireLimited(pkgNext)
+	return s.recordCredentialRefusals(s.authMw.RequireLimited(pkgNext))
 }
 
 // The handler account remains the storage/quota subject, while the request
