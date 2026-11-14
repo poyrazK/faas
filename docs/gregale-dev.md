@@ -307,7 +307,7 @@ developer app without copying its slug. Put `--path` and `--name` (source
 selection) before the verb; everything after the verb belongs to the
 delegated command, so `invoke --path` still means the URL path:
 
-- `gregale dev trigger invoke [invoke flags]` runs `gregale invoke` against
+- `gregale dev trigger invoke [invoke flags]` runs `gregale invocation run` against
   the developer app, including `--async`.
 - `gregale dev trigger cron [ROUTE]` fires a cron trigger declared for this
   app in `gregale.yaml`. Manifest crons are keyed to the production app slug,
