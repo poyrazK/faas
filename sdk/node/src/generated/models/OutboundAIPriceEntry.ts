@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OutboundAILongContextTier } from './OutboundAILongContextTier.js';
 /**
  * Price for model names starting with model_prefix ("*" matches any model; the longest prefix wins). Token prices are millicents per million tokens; absent cached, cache-write and input-image prices use the input price and an absent output-image price uses the output price. Media prices are per image, per minute of input audio and per million input characters, and are zero when absent.
  */
@@ -53,5 +54,10 @@ export type OutboundAIPriceEntry = {
    * Charged per million audio output tokens; the output price when absent.
    */
   output_audio_millicents_per_mtok?: number;
+  /**
+   * Charged per million tokens of cache writes kept for one hour. When absent they cost the higher of the cache-write price and twice the input price.
+   */
+  cache_write_1h_millicents_per_mtok?: number;
+  long_context?: OutboundAILongContextTier;
 };
 

@@ -2714,6 +2714,13 @@ const (
 	OutboundAIToolUsesPerCallMax                 = 1_000
 	MaxOutboundAIPriceMillicentsPerToolUse int64 = 10_000_000
 	OutboundAIPriceEntriesMax                    = 64
+	// Long-context price tiers (ADR 20261027132936 amendment 3): the prompt
+	// size, in input tokens, a tier starts above, and the bounds of the
+	// percentages it scales input-side and output prices by.
+	OutboundAILongContextAboveTokensMin int64 = 1_000
+	OutboundAILongContextAboveTokensMax int64 = 2_000_000
+	OutboundAILongContextPercentMin     int64 = 100
+	OutboundAILongContextPercentMax     int64 = 1_000
 	// Semantic response cache (ADR 20261112194947): the similarity a hit
 	// needs, in basis points of cosine similarity (bounds and default); the
 	// entries one integration keeps per outboundd process and how many
