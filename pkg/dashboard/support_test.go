@@ -225,7 +225,9 @@ func TestAccountHealthPageRendersCustomerView(t *testing.T) {
 		return w.Body.String()
 	}
 	body := render(api.AccountHealth{GeneratedAt: now, Attention: 3,
-		Restrictions:      []api.AccountHealthRestriction{{Kind: api.RestrictionAccountPastDue, Title: "A payment failed", Detail: "Update it.", Action: "Update payment method", ActionURL: "/dashboard/billing", Since: &now}},
+		Restrictions: []api.AccountHealthRestriction{{Kind: api.RestrictionAccountPastDue, Title: "A payment failed", Detail: "Update it.", Action: "Update payment method", ActionURL: "/dashboard/billing", Since: &now}},
+		Signals: []api.AccountHealthSignal{{Kind: api.AttentionKindAppOOM, Subject: "shop", Title: "shop keeps running out of memory",
+			Detail: "It was stopped <3 times>.", Action: "Compare plans", ActionURL: "/dashboard/billing", Since: now}},
 		FailedDeployments: []api.AccountHealthDeployment{{DeploymentID: "dep-1", AppID: "app-1", AppSlug: "shop", ErrorCode: "build_failed", Error: "<b>npm</b>", Hint: "Pin node", CreatedAt: now}},
 		DomainIssues:      []api.AccountHealthDomain{{Domain: "www.shop.example", AppSlug: "shop", Problem: "certificate issuance failed", CertError: "CAA"}},
 		RefusedRequests: api.AccountHealthRequests{WindowHours: 24, Total: 1, ByCode: []api.AccountHealthCode{{Code: "plan_excess", Count: 1, LastAt: now}},
@@ -234,7 +236,8 @@ func TestAccountHealthPageRendersCustomerView(t *testing.T) {
 	for _, want := range []string{"A payment failed", `href="/dashboard/billing"`, "Update payment method →", "&lt;b&gt;npm&lt;/b&gt;", "How to fix:</strong> Pin node",
 		`href="/dashboard/apps/shop/deployments/dep-1"`, "/dashboard/support?app_id=app-1&amp;deployment_id=dep-1#new-ticket",
 		`href="/dashboard/apps/shop/domains/www.shop.example/doctor"`, "<code>plan_excess</code> × 1", "/dashboard/support?request_id=req-1#new-ticket",
-		"could not be loaded right now (domains)"} {
+		"could not be loaded right now (domains)", "Keeps going wrong", "shop keeps running out of memory",
+		"stopped &lt;3 times&gt;.", "Since 12 Nov 2026, 11:00 UTC"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}

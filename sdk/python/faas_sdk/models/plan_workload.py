@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.compose_process import ComposeProcess
     from ..models.compose_resources import ComposeResources
     from ..models.plan_detected_by import PlanDetectedBy
+    from ..models.plan_source_host import PlanSourceHost
     from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
     from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
     from ..models.secret_file import SecretFile
@@ -116,6 +117,9 @@ class PlanWorkload:
     configured on the app and not provided by the platform. Names only, never values."""
     unset_env_key_reasons: PlanWorkloadUnsetEnvKeyReasons | Unset = UNSET
     """For an unset_env_keys name with a Compose value, why that value is not imported. Never values."""
+    source_hosts: list[PlanSourceHost] | Unset = UNSET
+    """String literals in the workload's source that dial another service by its Compose name, which does not
+    resolve on Gregale. At most a few per workload."""
     imported_env_keys: list[str] | Unset = UNSET
     """Compose environment names whose plain values apply will write, because the project sets x-gregale-env-
     import: true and they are unset. Names only."""
@@ -244,6 +248,13 @@ class PlanWorkload:
         if not isinstance(self.unset_env_key_reasons, Unset):
             unset_env_key_reasons = self.unset_env_key_reasons.to_dict()
 
+        source_hosts: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.source_hosts, Unset):
+            source_hosts = []
+            for source_hosts_item_data in self.source_hosts:
+                source_hosts_item = source_hosts_item_data.to_dict()
+                source_hosts.append(source_hosts_item)
+
         imported_env_keys: list[str] | Unset = UNSET
         if not isinstance(self.imported_env_keys, Unset):
             imported_env_keys = self.imported_env_keys
@@ -330,6 +341,8 @@ class PlanWorkload:
             field_dict["unset_env_keys"] = unset_env_keys
         if unset_env_key_reasons is not UNSET:
             field_dict["unset_env_key_reasons"] = unset_env_key_reasons
+        if source_hosts is not UNSET:
+            field_dict["source_hosts"] = source_hosts
         if imported_env_keys is not UNSET:
             field_dict["imported_env_keys"] = imported_env_keys
         if source is not UNSET:
@@ -351,6 +364,7 @@ class PlanWorkload:
         from ..models.compose_process import ComposeProcess
         from ..models.compose_resources import ComposeResources
         from ..models.plan_detected_by import PlanDetectedBy
+        from ..models.plan_source_host import PlanSourceHost
         from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
         from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
         from ..models.secret_file import SecretFile
@@ -489,6 +503,15 @@ class PlanWorkload:
         else:
             unset_env_key_reasons = PlanWorkloadUnsetEnvKeyReasons.from_dict(_unset_env_key_reasons)
 
+        _source_hosts = d.pop("source_hosts", UNSET)
+        source_hosts: list[PlanSourceHost] | Unset = UNSET
+        if _source_hosts is not UNSET:
+            source_hosts = []
+            for source_hosts_item_data in _source_hosts:
+                source_hosts_item = PlanSourceHost.from_dict(source_hosts_item_data)
+
+                source_hosts.append(source_hosts_item)
+
         imported_env_keys = cast(list[str], d.pop("imported_env_keys", UNSET))
 
         source = d.pop("source", UNSET)
@@ -549,6 +572,7 @@ class PlanWorkload:
             required_env_keys=required_env_keys,
             unset_env_keys=unset_env_keys,
             unset_env_key_reasons=unset_env_key_reasons,
+            source_hosts=source_hosts,
             imported_env_keys=imported_env_keys,
             source=source,
             tier=tier,

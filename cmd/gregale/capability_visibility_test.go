@@ -26,6 +26,7 @@ var ungatedCommands = map[string]string{
 	"capabilities": "reports what is released",
 	"dashboard":    "opens the dashboard",
 	"doctor":       "local source checks",
+	"guide":        "offline task pages that name commands",
 	"deploy":       "core deploy",
 	"deploys":      "core deploy",
 	"deployment":   "core deploy",
