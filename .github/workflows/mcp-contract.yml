@@ -13,6 +13,8 @@ on:
       - 'cmd/gregale/templates/mcp-python/**'
       - 'pkg/mcphosting/**'
       - 'pkg/mcpmanagement/**'
+      - 'pkg/mcpopenapi/**'
+      - 'scripts/ci/mcp-openapi-contract.mjs'
       - 'pkg/apphealth/**'
       - 'pkg/apid/apidserver/handlers_app_health*'
       - 'pkg/apid/apidserver/binding_release_traffic*'
@@ -315,6 +317,13 @@ jobs:
           cd "$RUNNER_TEMP/mcp-starter"
           npm ci --ignore-scripts
           MCP_TASKS_TEST_DATABASE_URL='postgres://mcp:mcp-ci-only@127.0.0.1:5432/mcp' MCP_TASKS_REQUIRE_POSTGRES=1 npm test
+      - name: Generate and qualify public OpenAPI tools
+        run: |
+          "$RUNNER_TEMP/gregale" mcp server import --spec pkg/mcpopenapi/testdata/reports.json --path "$RUNNER_TEMP/mcp-api-tools" --server-url https://api.example.com/v1 --operations getReport,createReport
+          ln -s "$RUNNER_TEMP/mcp-starter/node_modules" "$RUNNER_TEMP/mcp-api-tools/node_modules"
+          npm test --prefix "$RUNNER_TEMP/mcp-api-tools"
+          node --test pkg/mcpopenapi/runtime/transport.test.mjs
+          node scripts/ci/mcp-openapi-contract.mjs "$RUNNER_TEMP/mcp-api-tools"
       - name: Qualify task restart and replica recovery
         env:
           MCP_TASKS_TEST_DATABASE_URL: postgres://mcp:mcp-ci-only@127.0.0.1:5432/mcp

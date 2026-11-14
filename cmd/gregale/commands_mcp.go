@@ -44,6 +44,8 @@ func cmdMCP(args []string) int {
 		return cmdMCPServe(args[1:])
 	case "init":
 		return cmdMCPInit(args[1:])
+	case "import":
+		return cmdMCPImportOpenAPI(args[1:])
 	case "capabilities":
 		return cmdMCPCapabilities(args[1:])
 	case "test":

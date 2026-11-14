@@ -552,6 +552,7 @@ gregale mcp serve --transport stdio --tools core,build-tools --allow-writes
 | Tool | Behavior |
 |---|---|
 | `gregale_get_tool_template` | List the CLI's Node, Go or Python starter files and template SHA-256. Select `file` to receive base64 chunks of at most 16 KiB; continue with `next_offset`, ending at `-1`. Decode the chunks to recover exact source bytes, including generated Go module files. No customer directory is modified. |
+| `gregale_generate_tools_from_openapi` | Generate a Node adapter for explicitly selected public OpenAPI operations and an explicit HTTPS server. Returns project/document digests and a file manifest or base64 file chunks. Makes no calls to the described API and executes no generated code. Behavioral assertions must be completed before publication. |
 | `gregale_test_tool` | Execute the project's declared behavioral smoke fixtures once against an exact app/deployment's live zero-traffic preview. Requires writes and `allow_tool_execution: true`; no arbitrary endpoint or serving-release target is accepted. |
 | `gregale_plan_tool_deploy` | Read-only review of source bytes, access policy, fixture summaries and account/app/serving identities. Requires explicit approval of the fixture execution that apply will perform. Creates no deployment and executes no tool. |
 | `gregale_apply_tool_deploy` | Start one asynchronous publication attempt from the unchanged reviewed project, using a private source snapshot. Repeated calls return the same receipt without repeating builds or fixtures. |
@@ -622,6 +623,57 @@ receipt cache lasts 24 hours after completion; the native journal retains up to
 256 identities per account, including failures, until account deletion. Reaching
 that preview bound refuses new publications rather than deleting retry fences.
 Native publication endpoints must be deployed before using this client flow.
+
+### Generate tools from an OpenAPI document (preview)
+
+Import selected public operations from an OpenAPI 3.0/3.1 JSON or YAML file:
+
+```sh
+gregale mcp server import --spec api.yaml --operations getReport,createReport \
+  --server-url https://api.example.com/v1 --path ./report-tools
+```
+
+Generation is offline. The explicit server overrides document server declarations;
+no server URL, remote reference, example or default is fetched or executed.
+The generated Node project retains `openapi-tools.json` with the document digest,
+selected operations, server, schemas and transport bounds. The hosting policy
+exposes only the selected tools, with open access.
+
+An agent in `build-tools` can instead call `gregale_generate_tools_from_openapi`:
+
+```json
+{"document":"<OpenAPI JSON or YAML text>","operation_ids":["getReport","createReport"],"server_url":"https://api.example.com/v1"}
+```
+
+The result includes `project_sha256`, `document_sha256`, `files` and
+`fixtures_require_review: true`. Repeat with the same document, selections and
+server plus a selected `file` and optional `offset`. Decode base64 `content`,
+continue at `next_offset` until `-1`, and check that `project_sha256` stays the
+same. This uses the existing local/hosted publishing consent boundary and accepts
+no host path. Upload the reconstructed project through the normal source flow.
+
+Read the generated README and complete `gregale-mcp.tests.example.json`, saving
+real arguments and expected MCP results as `gregale-mcp.tests.json`. The example
+has null expectations and cannot pass fixture validation. `npm test` checks
+catalog wiring and invalid-input refusal; it does not certify API behavior.
+Continue with the existing plan/apply/status publication tools and separate
+owner-issued exact invocation grants.
+
+Arguments are grouped as `path`, `query` and optional `body`. Successful calls
+return `structuredContent.result`, validated against the selected response
+schema. Adapters make one bounded HTTPS request, send no ambient credentials,
+refuse private/reserved DNS results and redirects, and return errors without
+upstream response bodies. Failed or uncertain calls require reconciliation;
+there is no automatic retry.
+
+The first slice supports public GET/POST/PUT/PATCH/DELETE operations, scalar
+path/query parameters, JSON bodies, one concrete JSON success response, local
+acyclic schema references, and typed scalar/object/array schemas with enum and
+common size/numeric bounds. Unsupported contracts fail with an explanation.
+Documents are bounded to 256 KiB, selections to 16 operations, schemas/documents
+to 16 nesting levels and 4,096 nodes, and normalized manifests to 64 KiB.
+Requests/responses are bounded to 32 KiB, URLs to 8 KiB, and the complete
+request to 15 seconds. Existing native publication and invocation limits apply.
 
 ## Private delegated invocation (preview)
 

@@ -170,6 +170,12 @@ func mcpCLICommand() cliCommand {
 			{Name: "tasks", Short: "scaffold separate web, worker and observer task projects", Bool: true},
 			{Name: "name", Short: "app slug prefix and task namespace (required with --tasks)", Value: "SLUG"},
 		}, Examples: []string{"gregale mcp server init --path ./my-mcp", "gregale mcp server init --path ./my-mcp --runtime go", "gregale mcp server init --path ./my-mcp --runtime python", "gregale mcp server init --path ./private-mcp --auth external-oauth --issuer https://identity.example.com --jwks-url https://identity.example.com/jwks --resource https://mcp.example.com/mcp --scopes mcp:tools", "gregale mcp server init --path ./reports --tasks --name reports"}},
+		{Name: "import", Short: "Generate Node MCP tools from selected public API operations", Flags: []cliFlag{
+			{Name: "spec", Short: "OpenAPI JSON/YAML file, or - for stdin", Value: "FILE", Req: true},
+			{Name: "path", Short: "empty destination directory", Value: "DIR", Req: true},
+			{Name: "server-url", Short: "explicit public HTTPS API base URL", Value: "URL", Req: true},
+			{Name: "operations", Short: "comma-separated exact operation IDs", Value: "IDS", Req: true},
+		}, Examples: []string{"gregale mcp server import --spec api.yaml --operations listReports,getReport --server-url https://api.example.com/v1 --path ./report-tools"}},
 		{Name: "capabilities", Short: "Show the built-in starter contract and runtime differences", Flags: []cliFlag{
 			{Name: "runtime", Short: "filter to one starter runtime", Value: "RUNTIME", ClosedSet: []string{"node", "go", "python"}},
 			{Name: "markdown", Short: "render the generated starter capability reference", Bool: true},
