@@ -20,20 +20,20 @@ func TestQueueGroupKeyOrdersPullDelivery(t *testing.T) {
 	}
 	e := apidserver.Setup(t, api.PlanPro)
 	queueLeaseApp(t, e, "group-worker", 0)
-	send := func(payload, key string) *http.Response {
+	send := func(payload, key string) int {
 		t.Helper()
 		rec := e.Do(t, http.MethodPost, "/v1/apps/group-worker/queues/send",
 			api.QueueSendRequest{QueueName: "jobs", Payload: json.RawMessage(payload), GroupKey: key}, nil)
-		return rec.Result()
+		return rec.Code
 	}
-	if res := send(`{"n":1}`, "order-42"); res.StatusCode != http.StatusForbidden {
-		t.Fatalf("unreleased group_key = %d", res.StatusCode)
+	if code := send(`{"n":1}`, "order-42"); code != http.StatusForbidden {
+		t.Fatalf("unreleased group_key = %d", code)
 	}
 	(*e.S()).EnablePlatformFlagForAll(platformflags.QueueMessageGroups)
 
 	for _, tc := range []struct{ payload, key string }{{`{"n":1}`, "order-42"}, {`{"n":2}`, "order-42"}, {`{"n":3}`, "order-7"}} {
-		if res := send(tc.payload, tc.key); res.StatusCode != http.StatusCreated {
-			t.Fatalf("send %s = %d", tc.payload, res.StatusCode)
+		if code := send(tc.payload, tc.key); code != http.StatusCreated {
+			t.Fatalf("send %s = %d", tc.payload, code)
 		}
 	}
 	batch := e.Do(t, http.MethodPost, "/v1/apps/group-worker/queues/send-batch", api.QueueSendBatchRequest{QueueName: "jobs",
