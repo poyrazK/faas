@@ -65,14 +65,22 @@ func EnqueueAsyncRoute(ctx context.Context, store AsyncRouteInvocationStore, req
 	}
 	invocationID := asyncRouteInvocationID(req.AppID, version.Scope, req.PlatformTenantID, req.IdempotencyKey)
 	prepared.ID = invocationID
+	prepared.AdmissionMaxPending, prepared.AdmissionMaxBacklogBytes = req.MaxPending, req.MaxBacklogBytes
+	prepared.AdmissionUnlocked = true
 	inv, err := store.EnqueueInvocation(ctx, prepared)
 	if err == nil {
 		return AsyncRouteAccepted{ID: inv.ID, ReleaseID: version.ReleaseID, DeploymentID: version.DeploymentID}, nil
 	}
-	if !errors.Is(err, state.ErrConflict) || invocationID == "" {
+	// A full backlog checks before the insert, so an idempotent retry of an
+	// accepted request would be refused; answer it with the accepted one.
+	atCap := errors.Is(err, state.ErrQuotaExceeded)
+	if !errors.Is(err, state.ErrConflict) && !atCap || invocationID == "" {
 		return AsyncRouteAccepted{}, err
 	}
 	existing, lookupErr := store.InvocationByID(ctx, invocationID)
+	if atCap && lookupErr != nil {
+		return AsyncRouteAccepted{}, err
+	}
 	if lookupErr != nil || existing.AppID != req.AppID || existing.AccountID != req.AccountID || existing.PlatformTenantID != req.PlatformTenantID {
 		if lookupErr != nil {
 			return AsyncRouteAccepted{}, lookupErr

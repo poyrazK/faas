@@ -6810,6 +6810,34 @@ Print the Data Processing Agreement template
 
 Placeholders are filled when the agreement is signed.
 
+### account health
+
+Show what may stop your account from working
+
+Examples:
+
+```sh
+gregale account health get
+gregale account health get --json
+```
+
+Lists restrictions, problems that keep recurring, failed deployments, custom-domain problems and refused API requests, like the dashboard&#39;s account health page.
+
+#### account health get
+
+Show what may stop your account from working
+
+`gregale account health get`
+
+Examples:
+
+```sh
+gregale account health get
+gregale account health get --json
+```
+
+Lists restrictions, problems that keep recurring, failed deployments, custom-domain problems and refused API requests, like the dashboard&#39;s account health page.
+
 ### account export
 
 Export account data (GDPR)
