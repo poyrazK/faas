@@ -1,5 +1,5 @@
 -- A member without two-factor authentication is not admitted to an
--- organization that requires it (ADR-20261113180000).
+-- organization that requires it (ADR-20261114170352).
 -- name: Snapshot :one
 SELECT m.role, m.access_revision FROM org_memberships m
 WHERE m.org_id = $1 AND m.account_id = $2 AND m.removed_at IS NULL

@@ -40,7 +40,13 @@ func (s *server) getDevPatchStatus(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrCapacity("load developer live patch"))
 		return
 	}
-	writeJSON(w, http.StatusOK, devPatchStatusResponse(status))
+	response := devPatchStatusResponse(status)
+	if response.State == api.DevPatchStateFailed {
+		// ADR-20261021221906: the edit did not reach the instance, so a build held
+		// back behind it must not wait for the coalescing window.
+		s.startDeferredDevBuilds(r.Context(), app)
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func devPatchStatusResponse(status state.DevSourcePatchStatus) api.DevPatchStatusResponse {

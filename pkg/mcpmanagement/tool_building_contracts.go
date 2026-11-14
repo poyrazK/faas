@@ -9,6 +9,13 @@ func toolBuildingOutputSchema(name string) map[string]any {
 		}
 	}
 	switch name {
+	case "gregale_generate_tools_from_openapi":
+		required = append(required, "runtime", "document_sha256", "project_sha256", "server_url", "operation_ids", "fixtures_require_review")
+		add("string", "runtime", "document_sha256", "project_sha256", "server_url", "file", "content", "encoding")
+		add("integer", "offset", "next_offset")
+		add("boolean", "fixtures_require_review")
+		props["files"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+		props["operation_ids"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	case "gregale_get_tool_template":
 		required = append(required, "runtime", "template_sha256")
 		add("string", "runtime", "template_sha256", "file", "content", "encoding")

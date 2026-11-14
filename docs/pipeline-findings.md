@@ -16,6 +16,18 @@ The next agreed customer batch is tracked separately under
 | CUST-002 | Mirrors copy source columns customers do not want to serve or store. | Implemented immutable per-table publication/mirror projection, required key retention, projected checks/verification/repair/resync. Local core/native checks passed; full CI tracked in PR #7219. |
 | CUST-003 | Generic source setup leaves Neon users with pooled-connection errors and unclear operational costs. | Offline CLI/dashboard guide, direct-endpoint diagnostics and source-aware qualification runner. Actual Neon source qualification remains pending configured staging credentials and reviewed fault controls; the finite WAL byte-cap requirement still applies. |
 
+The next approved batch follows [ADR-20261113181050](adr/20261113181050-pipeline-freshness-durable-cli-and-index-advice.md):
+
+| Item | Customer problem | Implementation and qualification |
+| --- | --- | --- |
+| CUST-004 | Customers cannot set their own freshness confirmation target. | Optional 15s–24h targets, truthful confirmed/unconfirmed/unknown/inactive status, debounced alerts and monitor version fences. No inferred time lag or automatic read-policy change. |
+| CUST-005 | Terminal loss and partial provisioning make setup hard to resume or budget. | Public durable setup API/CLI, resource/billing preview, immutable retry identities, safe recovery IDs and explicit retry/cancel. Temporary discovery refusals no longer freeze idempotency receipts. |
+| CUST-006 | Tenant-filtered read queries need mirror indexes without granting application write access. | Structured metadata advice, exact tenant policy expression, frozen approval, bounded transactional DDL and generation receipts. Source-independent work preserves reader priority and replication evidence. |
+
+Local validation and its limits are recorded in [the operability evidence](ops/evidence/20261113-pipeline-operability/README.md). These features remain in the approved staging pilot.
+
+Future opportunities retained for later implementation: safely evolve column projections, synchronize approved Auth organization memberships, and build related-table read models. Live Neon qualification, broader recovery-surface parity and verification cost controls also remain open.
+
 The other roadmap opportunities below remain future work. This batch does not
 enable production or imply that the source provider has passed the live drill.
 
@@ -554,7 +566,7 @@ Keep recovery explicit; a stall must not trigger automatic destructive resync.
 Keep these enhancement tracks alongside the concrete findings; their absence
 alone is not a reproduced bug:
 
-- Use durable setup and preflight consistently from CLI, including retained
+- Durable CLI setup and preflight are implemented in CUST-005, including retained
   resource IDs and resumable API deployment (related to PIPE-006–008).
 - Expose advanced table/schema/reader recovery workflows consistently across
   dashboard, API, CLI, and SDK surfaces.
@@ -562,8 +574,8 @@ alone is not a reproduced bug:
   controllable within the existing bounded verification model.
 - Tenant access beyond trusted whole-dataset subjects is implemented in CUST-001,
   with fail-closed RLS and explicit membership approval (related to PIPE-009).
-- Offer destination index/query advice for read workloads, with explicit storage
-  and replication-write cost tradeoffs.
+- Destination index/query advice with explicit storage and replication-write
+  tradeoffs is implemented in CUST-006; larger concurrent builds remain future work.
 
 ## Reproduction and follow-up
 

@@ -50,3 +50,5 @@ Review and the complete CI results are tracked in
 [PR #7219](https://github.com/poyrazK/faas/pull/7219). The race-enabled native
 acceptance check must pass before this draft is ready for review. No merge or
 deployment is performed by the provider runner.
+
+Follow-up (2026-11-13 UTC): the complete native PostgreSQL acceptance job passed in CI for commit `fcc489993f0614ece741daee81328fc4f9273942`. The separate spec gate then reported two duplicated tenant-reader descriptions. Commit `c1717e33f3dfbcb034db8772f00c31954bf85908` fixes those descriptions and the generated Node documentation; local OpenAPI lint passed.
