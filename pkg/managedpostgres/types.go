@@ -757,6 +757,13 @@ type UsageSnapshot struct {
 	// project, so a database's egress allowance is its own
 	// (ADR-20261110160000 amendment 2026-11-11).
 	DatabaseEgress map[string]int64
+	// RestoreSources maps each of the subject's restore copies (a restore,
+	// branch or PR preview copy) to the database it was restored from. A copy
+	// shares its root source's egress allowance: on Neon it is a branch of the
+	// source's project, whose 500 GB transfer allowance is per project
+	// (billing review 2026-11-13, R6-1). Use EgressScopes rather than
+	// DatabaseEgress to compare egress with an allowance.
+	RestoreSources map[string]string
 	CostMillicents int64
 	// Databases carries completeness for ready databases and every known
 	// provider resource, including deletion tombstones. Restores whose
