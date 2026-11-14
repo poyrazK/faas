@@ -171,8 +171,8 @@ cap: egress in hours the election does not cover, or on Free, never does.
 Only egress sent while the election is on is billed: egress above the
 allowance before you turned it on is never billed, and turning it off keeps
 the hours it covered billable, so turning it off cannot undo egress already
-sent. Turning it back on keeps the original start. The hour in which you turn
-it on is not billed.
+sent. Turning it back on starts a new window, so the hours it was off are
+never billed. The hour in which you turn it on is not billed.
 
 An organization that owns its resources elects for itself:
 `PUT /v1/orgs/{slug}/egress-overage` (owner) or

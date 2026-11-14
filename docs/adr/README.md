@@ -2325,3 +2325,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261113220000: Managed OAuth connections for private tool execution](20261113220000-managed-tool-oauth.md) — accepted; immutable execution authority, encrypted rotating credentials, durable renewal leases and credential-free agent status
 
 - [ADR-20261113230000: Guided OAuth for execution connections](20261113230000-guided-tool-oauth.md) — accepted; owner-only browser PKCE, direct encrypted credentials, consumed authorization attempts and new identities for reconnects
+- [ADR-20261114100000: Bill only public-bound app egress](20261114100000-bill-only-public-app-egress.md) — proposed; per-netns nftables counters split internal from public egress, meterd bills a new public_tx_bytes column; the egress meter stays off/shadow until then (billing review R8-2)

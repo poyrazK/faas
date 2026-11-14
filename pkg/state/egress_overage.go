@@ -16,10 +16,12 @@ import (
 //
 // The election covers [EnabledAt, DisabledAt). Turning it off stamps
 // DisabledAt, so egress already sent while it was on is still billed when
-// meterd delivers that hour later. Turning it back on clears DisabledAt and
-// keeps EnabledAt: an hour from the gap that is still undelivered is billed
-// too, but the ceiling held during the gap, so at most the overshoot before
-// the stop is in it.
+// meterd delivers that hour later. Turning it back on starts a new window:
+// EnabledAt moves to the re-enable and DisabledAt clears, so no hour from the
+// gap the customer opted out of is billed (billing review R9-2). The price is
+// that an hour of the earlier window still undelivered at the re-enable is
+// not billed either; delivery runs hourly, so that is at most a few hours of
+// overage, and it errs toward the customer.
 type EgressOverageElection struct {
 	EnabledAt  *time.Time
 	DisabledAt *time.Time
@@ -162,11 +164,15 @@ func (s *PgStore) SetEgressOverage(ctx context.Context, subjectID string, on boo
 func egressOverageQueries(on bool) [2]string {
 	if on {
 		return [2]string{
-			`update accounts set egress_overage_enabled_at = coalesce(egress_overage_enabled_at, $2),
+			`update accounts set egress_overage_enabled_at = case
+			        when egress_overage_enabled_at is null or egress_overage_disabled_at is not null then $2
+			        else egress_overage_enabled_at end,
 			        egress_overage_disabled_at = null
 			  where id = $1::uuid
 			 returning egress_overage_enabled_at, egress_overage_disabled_at`,
-			`update orgs set egress_overage_enabled_at = coalesce(egress_overage_enabled_at, $2),
+			`update orgs set egress_overage_enabled_at = case
+			        when egress_overage_enabled_at is null or egress_overage_disabled_at is not null then $2
+			        else egress_overage_enabled_at end,
 			        egress_overage_disabled_at = null
 			  where id = $1::uuid and not personal_org
 			 returning egress_overage_enabled_at, egress_overage_disabled_at`,
@@ -222,7 +228,7 @@ func (m *MemStore) SetEgressOverage(_ context.Context, subjectID string, on bool
 	now = now.UTC()
 	switch {
 	case on:
-		if e.EnabledAt == nil {
+		if e.EnabledAt == nil || e.DisabledAt != nil {
 			e.EnabledAt = &now
 		}
 		e.DisabledAt = nil

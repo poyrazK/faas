@@ -41,6 +41,15 @@ production deployment.
   delivered well before its period end and confirm that Polar's final order
   bills that usage (the open go-live check in ADR-20261029094512); if it
   does not, stop and plan the settlement cycle that ADR describes.
+- **Credits:** with a card checkout, walk the credit-as-discount flow of
+  ADR-20261104212028: attach a credit, let a renewal draw it, replace and
+  detach it, and do a prorated upgrade while it is attached. Confirm each
+  order's discount matches the credit ledger (billing review R11-2).
+- **Refunds:** confirm the endpoint is subscribed to `refund.created` and
+  `refund.updated` as well as `order.refunded`. Only the `refund.*`
+  deliveries record a refund against the invoice; `order.refunded` names no
+  refund and only audits the order (R7-4). Refund one order and confirm one
+  refund row on its invoice.
 - **Pass criterion:** the account is bound to the Polar customer and
   subscription IDs, usage is visible in the Polar meter, the local plan stays
   unchanged until the subscription update webhook, and invoice history is
@@ -60,6 +69,13 @@ production deployment.
   still grants a paid plan. `FAAS_BILLING_MODE` is `live` for apid and
   meterd, and `[meter] billing_usage_source` is `ledger_shadow` until a clean
   closed month in shadow (ADR-20261107105126).
+- **Webhook endpoint:** while `FAAS_BILLING_MODE` is `disabled`, apid answers
+  every Polar delivery `503`, and Polar disables an endpoint after repeated
+  failures. Register the production endpoint only once billing is live, or,
+  if it was registered earlier, re-enable it in the Polar dashboard after
+  flipping to `live` and confirm the next delivery is acknowledged (billing
+  review R11-1). A disabled endpoint drops plan changes and payment failures
+  until the 30-minute reconciliation repairs them.
 - **Accounts:** list paid accounts and organizations without a Polar
   subscription (`gregalectl accounts list --plan hobby|pro|scale`).
   - Each keeps paid limits without paying.
@@ -89,6 +105,31 @@ production deployment.
   after recovery.
 - **Signed:** ____________________  date: _________
 
+### 5. Hosting and egress gate
+
+- **Verify:** paid billing goes live only on the OVH bare-metal deployment,
+  not on GCP (owner decision, billing review R8-1). On GCP, internet egress
+  costs more per GiB than the $0.03/GiB egress overage price, so every billed
+  GiB above the allowance loses money.
+- **Verify:** the egress meter (`faas_egress_usage`) stays `off` or `shadow`
+  until app egress excludes Gregale-internal traffic (R8-2; see
+  ADR-20261114100000). Until then object-storage uploads, app-to-app calls,
+  database traffic and realtime publishes are counted as app egress.
+- **Signed:** ____________________  date: _________
+
+## Known limits at launch
+
+- **Undelivered paid hours after a downgrade (R8-3).** meterd skips usage
+  windows by the subject's current plan, so paid hours still undelivered when
+  an account moves to Free or becomes complimentary are not billed. Once the
+  subscription has ended they cannot be delivered anyway; this folds into the
+  final-order check in gate 2. `FaasMeterdHeldUsageExpiring` reports held
+  hours before they lapse.
+- **Cost breakdown and forecast (R7-5).** The GA cost breakdown, forecast and
+  budgets leave out managed PostgreSQL and database egress. The API names them
+  in `missing_bill_components` (CC-004); the invoice and the spend cap include
+  them.
+
 ## Legacy-provider compatibility
 
 Paddle remains an explicit compatibility option for existing deployments and
@@ -109,7 +150,7 @@ explicit legacy opt-in through `FAAS_BILLING_PROVIDER=stripe`.
 
 ## Final sign-off
 
-All four gates green. The maintainer signs the v1.0.0 tag push.
+All five gates green. The maintainer signs the v1.0.0 tag push.
 
 - **Maintainer:** ____________________
 - **Date:** ____________________
