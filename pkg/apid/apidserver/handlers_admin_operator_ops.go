@@ -111,6 +111,12 @@ func (s *server) postObsAccountRevertEmail(w http.ResponseWriter, r *http.Reques
 	s.postObsAccountMutation(w, r, acct, "revert-email")
 }
 
+// postObsAccountMakeOrgOwner makes the account the owner of ?org=<slug> when
+// the organization's owner cannot act (ADR 20261113180000).
+func (s *server) postObsAccountMakeOrgOwner(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.postObsAccountMutation(w, r, acct, "make-org-owner")
+}
+
 func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, acct state.Account, action string) {
 	if allowed, prob := s.adminAllows(acct); !allowed {
 		api.WriteProblem(w, prob)
@@ -176,6 +182,11 @@ func (s *server) postObsAccountMutation(w http.ResponseWriter, r *http.Request, 
 		revokedSessions, err = s.operatorResetMFA(r.Context(), targetID)
 		if err == nil {
 			s.revokeTargetSignInKeys(r, targetID, "operator_mfa_reset")
+		}
+	case "make-org-owner":
+		if problem := s.operatorMakeOrgOwner(r, targetID); problem != nil {
+			api.WriteProblem(w, problem)
+			return
 		}
 	case "revert-email":
 		var problem *api.Problem

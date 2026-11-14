@@ -446,9 +446,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_WAKE_FAILOVER` | gatewayd-public | `default` |  | 0 | `` | ADR-20261022184531 step 5; 1 retries a response gatewayd-internal marked not dispatched (no request byte reached a guest) on another compute node, within api.GatewayFailover* limits; default off; needs a node-choosing dialer (compute pool or compute edge) |
 | `FAAS_GCS_BUCKET` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | private regional bucket used when `FAAS_STORAGE_BACKEND=gcs`; authenticated with ADC |
 | `FAAS_GC_INTERVAL` | imaged | `default` |  |  | `` |  |
-| `FAAS_GEOIP_ASN_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it |
+| `FAAS_GEOIP_ASN_DB_PATH` | apid, gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it, and apid leaves the sign-up network owner empty (ADR-20261113160000) |
 | `FAAS_GEOIP_AUTO_REFRESH` | gatewayd-internal | `default` |  |  | `` | 0; the geoip role owns refresh through re-bootstrap |
-| `FAAS_GEOIP_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it |
+| `FAAS_GEOIP_DB_PATH` | apid, gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it, and apid leaves the sign-up country empty (ADR-20261113160000) |
 | `FAAS_GITHUBD_AUTOMATION_EVENTS` | githubd | `default` |  |  | `` | ADR-20261027090010 §9: 1 forwards pull_request deliveries to apid's bridge (FAAS_APID_GITHUBD_BRIDGE_SOCK) as gregale.github events; apid publishes them only for accounts the agents capability is released to; unset forwards none |
 | `FAAS_GITHUBD_LISTEN_ADDR` | githubd | `dropin` |  |  | `` | private mTLS gRPC listener for source-ref verification on compute-only hosts |
 | `FAAS_GITHUBD_LOOPBACK` | apid, gatewayd-internal, gatewayd-public | `default` |  |  | `` |  |
@@ -677,6 +677,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NEOND_ORG_ID` | neond | `dropin` |  |  | `` | ADR-20261112160000 decision 3: the Neon organization the admin key's service user administers; with FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH (the neon seal domain) it turns on project keys (minted on project create, revoked on delete). Unset, every call uses the admin key |
 | `FAAS_NEOND_PROJECT_KEY_MAX_AGE` | neond | `default` |  | 2160h | `` | ADR-20261112160000 decision 3: neond's key sweep re-mints a project key once it is this old (Go duration, at least 1h). Lower it and restart neond to rotate every key on the next passes |
 | `FAAS_NEOND_ROLE` | neond | `dropin` |  |  | `` | ADR-20261112160000: the box role neond checks it runs on (control-plane or single-box) |
+| `FAAS_NODE_CACHE_SWEEP` | vmmd | `default` |  |  | `` | ADR-20261114120000: the node cache drops snapshot captures no row references and runtime release bases nothing uses, and evicts live snapshots last; on by default, `off` leaves the cache to oldest-first eviction |
 | `FAAS_NODE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |

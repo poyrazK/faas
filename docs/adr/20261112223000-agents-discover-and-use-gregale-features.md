@@ -179,9 +179,47 @@ change against it.
 
 0. Eval agents, foreign-repo tasks and graders; record the baseline.
 1. Feature hints in project plans (done: `pkg/featurehints`).
-2. Failure `fix` fields and parked-status display.
+2. Failure `fix` fields and parked-status display (done; see "As built" below).
 3. Parity gate with the frozen exemption list.
-4. `gregale guide` and agent-marker hints.
+4. `gregale guide` and agent-marker hints (done; see "As built" below).
+
+### As built (2026-11-14)
+
+The voting-app re-run of 2026-11-13 used the plan hints, then spent ten
+commands guessing how to expose a TCP port and hand-edited every hardcoded
+service host. This round answers those:
+
+- **Source hosts (§1).** reposcan reads each source-built workload's code,
+  bounded (400 files, 256 KiB each, tests and vendored trees skipped), for
+  string literals that dial another service by its Compose name
+  (`host="redis"`, `postgres://…@db/`, `Server=db;`, `"redis:6379"`,
+  `Connect("redis")`). Lines that read the environment are skipped: a
+  literal there is a fallback. The plan carries them as
+  `workloads[].source_hosts`, and the `source-hosts` hint names, per host, the
+  variable to read: the managed binding (`DATABASE_URL`), a URL to set for a
+  datastore Gregale does not run, or `$GREGALE_SERVICE_<NAME>_HOST`/`_URL`.
+- **Fix commands (§2).** `TestEveryFixCommandExists` resolves every
+  backticked `gregale …` command in the failure surfaces (`pkg/api/errors.go`,
+  whycopy, presetwhy, featurehints, preflight, frameworkprofile) against the
+  manifest; `TestEveryFailureCodeHasAFix` requires a fix on every catalog row.
+  It found `gregale certs …` (no such command) in the certificate alert and
+  the operator-only `rollouts recover` in a customer error; both now name real
+  commands. A `tcp add` against a declared internal port says why it is
+  refused and how same-account apps reach it.
+- **Guessed words.** An unknown subcommand that is a known concept
+  (listener, port, expose, private, public, redis, healthcheck, memory,
+  tunnel, shell, …) prints the real verbs and flags that do it, only those
+  the command declares; `app listener <verb> --help --all` prints the verb's
+  help instead of today's `app` help.
+- **Guide (§4).** `gregale guide [<task>] [--json]`, seven pages, each under
+  4 KiB, every command resolved by a test; `docs/agent-guide/` is generated
+  from the same pages.
+- **Agent markers (§5).** `CLAUDECODE`, `GEMINI_CLI`, `CODEX_THREAD_ID`,
+  `CODEX_SANDBOX`, `CURSOR_AGENT`, each found in that agent's installed
+  release on 2026-11-14. The pointer is printed once, on stderr, with help,
+  usage errors and errors; `GREGALE_NO_AGENT_HINT=1` turns it off, and the
+  CLI's test binary sets it so stderr comparisons do not depend on where the
+  tests run.
 
 Fixing the gaps the parity gate freezes (the liveness flag first) is
 separate work, tracked by the exemption list shrinking.

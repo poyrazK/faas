@@ -42,6 +42,10 @@ func TestMain(m *testing.M) {
 	// developer's real OS credentials. Explicit test doubles still take
 	// precedence through effectiveKeyring.
 	keyring.MockInit()
+	// Tests that compare stderr must not depend on whether they run inside a
+	// coding agent (CLAUDECODE=1 and the like): the agent pointer is off
+	// unless a test turns it on (ADR-20261112223000 §5).
+	_ = os.Setenv("GREGALE_NO_AGENT_HINT", "1")
 	// Likewise for the CLI's files. On macOS os.UserConfigDir follows HOME,
 	// not XDG_CONFIG_HOME, so tests that isolate only XDG wrote a fake
 	// api_base, session, token and completion caches into the developer's

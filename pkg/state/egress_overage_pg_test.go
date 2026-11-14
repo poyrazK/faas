@@ -18,7 +18,8 @@ import (
 )
 
 // TestPg_EgressOverageElection pins the election's storage
-// (ADR-20261104204500): turning it on keeps an earlier start, turning it off
+// (ADR-20261104204500): turning it on twice keeps the start, turning it back
+// on after it was off starts a new window, turning it off
 // stamps the end once, and the bulk read returns only subjects that elected.
 func TestPg_EgressOverageElection(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
@@ -57,8 +58,10 @@ func TestPg_EgressOverageElection(t *testing.T) {
 		t.Fatalf("covers wrong for %+v", off)
 	}
 	back, err := s.SetEgressOverage(ctx, acct.ID, true, t0.Add(4*time.Hour))
-	if err != nil || !back.On() || !back.EnabledAt.Equal(t0) {
-		t.Fatalf("back on = %+v, %v, want the first start kept", back, err)
+	// Billing review R9-2: back on starts a new window, so the hours it was
+	// off are not covered.
+	if err != nil || !back.On() || !back.EnabledAt.Equal(t0.Add(4*time.Hour)) || back.Covers(t0.Add(3*time.Hour)) {
+		t.Fatalf("back on = %+v, %v, want a new start that leaves the gap uncovered", back, err)
 	}
 	if never, err := s.SetEgressOverage(ctx, other.ID, false, t0); err != nil || never.EnabledAt != nil || never.DisabledAt != nil {
 		t.Fatalf("off without an election = %+v, %v", never, err)

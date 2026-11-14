@@ -178,6 +178,20 @@ type AccountPassword struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type AccountSignupFact struct {
+	AccountID       pgtype.UUID
+	Method          string
+	SignupIp        *netip.Addr
+	UserAgent       pgtype.Text
+	Country         pgtype.Text
+	Asn             pgtype.Int8
+	AsnOrg          pgtype.Text
+	EmailDomain     string
+	DisposableEmail bool
+	CreatedAt       pgtype.Timestamptz
+	ReducedAt       pgtype.Timestamptz
+}
+
 // Accounts whose combined billable overage (compute plus live secondary meters) reached overage_cap_cents this UTC month. Written by meterd, read by schedd (ADR-20261026120843).
 type AccountSpendCapHold struct {
 	AccountID     pgtype.UUID
@@ -3976,6 +3990,7 @@ type DataPipeline struct {
 	VerificationProgress []byte
 	ReaderChange         []byte
 	WalRetention         []byte
+	ServingConfig        []byte
 }
 
 type DataPipelineAlert struct {
@@ -10453,11 +10468,12 @@ type ObjectDeletion struct {
 }
 
 type ObjectInventorySchedule struct {
-	BucketID   pgtype.UUID
-	AttemptAt  pgtype.Timestamptz
-	ObservedAt pgtype.Timestamptz
-	QuietAfter pgtype.Timestamptz
-	MutatedAt  pgtype.Timestamptz
+	BucketID    pgtype.UUID
+	AttemptAt   pgtype.Timestamptz
+	ObservedAt  pgtype.Timestamptz
+	QuietAfter  pgtype.Timestamptz
+	MutatedAt   pgtype.Timestamptz
+	ActiveSince pgtype.Timestamptz
 }
 
 type ObjectLifecycleScan struct {
@@ -11218,6 +11234,13 @@ type OrgMembership struct {
 	JoinedAt           pgtype.Timestamptz
 	RemovedAt          pgtype.Timestamptz
 	AccessRevision     int64
+}
+
+type OrgSecurityPolicy struct {
+	OrgID              pgtype.UUID
+	RequireMfa         bool
+	UpdatedByAccountID pgtype.UUID
+	UpdatedAt          pgtype.Timestamptz
 }
 
 type OutboundAdmissionLease struct {

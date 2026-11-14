@@ -309,7 +309,7 @@ func compareVerificationRange(ctx context.Context, p Pipeline, source *pgxpool.P
 		c.Progress.Reason = "waiting_for_replication"
 		return false, nil
 	}
-	actual, _, err := inspectSourceTable(ctx, source, r.Name)
+	actual, _, err := inspectPipelineTable(ctx, p, source, r.Name)
 	if err != nil {
 		return false, err
 	}

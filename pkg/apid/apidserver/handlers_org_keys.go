@@ -235,6 +235,7 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	}
 	s.audit.Emit(r.Context(), "api_key.created", &acct.ID, auditPayload)
 	s.noticeCredentialCreated(r, acct, credentialAPIKey, k.Label)
+	s.mailOrgCredentialCreated(r.Context(), k.OrgID, acct.ID, credentialAPIKey, k.Label)
 	resp := orgAPIKeyResponse(k)
 	resp.Prefix = keyPrefix(plaintext)
 	resp.Plaintext = plaintext
@@ -461,6 +462,7 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		"old_key", oldKey.ID, "new_key", newKey.ID,
 		"account", acct.ID, "org", mem.OrgID, "grace_window_days", graceWindowDays)
 	s.noticeCredentialCreated(r, acct, credentialRotatedKey, newKey.Label)
+	s.mailOrgCredentialCreated(r.Context(), mem.OrgID, acct.ID, credentialRotatedKey, newKey.Label)
 
 	resp := api.RotateOrgAPIKeyResponse{
 		Key:          orgAPIKeyResponse(newKey),

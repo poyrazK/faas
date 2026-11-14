@@ -1,10 +1,11 @@
+- [ADR-20261114120000: Per-plan startup window on every cold boot](20261114120000-per-plan-startup-window.md) — accepted; amends ADR-138 (2026-10-22): `startup_deadline_s` may reach the plan window (Free/Hobby 30 s, Pro 60 s, Scale 120 s; defaults unchanged) and every cold boot, not only the deploy prime, gets it in its RPC budget and watchdog reprieve; `wake_max_queue_wait_seconds` may reach 120 s (deploy-path review P1)
 - [ADR-20261112200001: Agent tool authoring and verified publication over MCP](20261112200001-management-mcp-tool-publication.md) — accepted; local build-tools catalog, reviewed source snapshots, staged behavioral tests and single-attempt asynchronous publication
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
 - [ADR-20261113180307: Bind execution workflows to independent Node clients](20261113180307-node-sdk-bound-execution-workflows.md) — accepted; preview helpers retain one client snapshot across submission, resumed event streams, and terminal receipt reads, with per-caller cancellation and legacy compatibility.
 - [ADR-20261113173610: Independent Node SDK clients](20261113173610-node-sdk-client-isolation.md) — accepted; per-client generated service namespaces and transports, immutable request configuration, and migration from shared FaaSClient/static services.
-
 - [ADR-20261113133500: Abuse strikes are stored, not counted in memory](20261113133500-persisted-abuse-strikes.md) — accepted; abuse recycles are rows in `account_abuse_strikes`, so the account abuse hold counts across schedds and restarts
 - [ADR-20261112194947: AI gateway semantic response cache](20261112194947-ai-gateway-semantic-cache.md) — accepted; Pro and Scale AI integrations with a response cache can answer a call whose last user turn embeds within a cosine threshold (default 0.95) of a cached call's, matching everything else exactly; per-process index pointing at response-cache entries, embedding through the customer's OpenAI or Gemini integration under the `semantic_cache` caller, fail-open
 - [ADR-20261112120603: Sustained CPU abuse detection](20261112120603-sustained-cpu-abuse.md) — accepted; an instance at 90% of its CPU quota for 15 minutes is recycled on Free (enforce mode) and counts toward the ADR-361 account abuse hold (`cpu_sustained`), flagged on paid plans; ships behind `cpu_abuse_mode` defaulting to shadow
@@ -2119,6 +2120,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR-1591: Managed Postgres data pipelines](1591-managed-postgres-data-pipelines.md)
+- [ADR-20261113160716: Tenant-scoped pipeline serving and column projection](20261113160716-pipeline-tenant-serving-and-projections.md) — local/staging implementation, production disabled
 - [ADR-20261112220000: Pipeline findings remediation](20261112220000-pipeline-findings-remediation.md) — implemented and locally verified; atomic read-hook grants and runtime refresh, pause and copy monitoring, final-reader revocation, queued cancellation, ordered verification and CLI recovery safeguards; production disabled
 - [ADR-20261112202000: Pipeline retention, read availability and selected discovery](20261112202000-pipeline-retention-read-availability-and-discovery.md) — source-specific WAL warning windows, explicit unavailable mirror reads and bounded discovery of exact table selections; production disabled
 - [ADR-20261105103642: Pipeline health and verification pause handling](20261105103642-pipeline-health-and-verification-pause.md) — local/staging; catch-up health stays pending, verification admission honors pause intent, and key-limit recovery is actionable
@@ -2325,5 +2327,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261113220000: Managed OAuth connections for private tool execution](20261113220000-managed-tool-oauth.md) — accepted; immutable execution authority, encrypted rotating credentials, durable renewal leases and credential-free agent status
 
 - [ADR-20261113230000: Guided OAuth for execution connections](20261113230000-guided-tool-oauth.md) — accepted; owner-only browser PKCE, direct encrypted credentials, consumed authorization attempts and new identities for reconnects
+- [ADR-20261114100000: Bill only public-bound app egress](20261114100000-bill-only-public-app-egress.md) — proposed; per-netns nftables counters split internal from public egress, meterd bills a new public_tx_bytes column; the egress meter stays off/shadow until then (billing review R8-2)
 
 - [ADR-20261114162429: Hosted tool publication for Node, Go and Python](20261114162429-hosted-tool-runtime-selection.md) — accepted; source-derived runtime review using shared native markers, all three hosted starters and the existing verified publication workflow

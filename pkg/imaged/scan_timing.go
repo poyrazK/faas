@@ -59,6 +59,13 @@ func markPreparationPhase(ctx context.Context, name string) {
 	markPhase(ctx, preparationTimingKey{}, name)
 }
 
+// phaseAttrs returns the recorded phases without the total.
+func (t *phaseTimer) phaseAttrs() []any {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]any(nil), t.phases...)
+}
+
 // attrs returns the recorded phases and the total, as slog key/value pairs.
 func (t *phaseTimer) attrs() []any {
 	t.mu.Lock()
