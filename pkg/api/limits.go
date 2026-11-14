@@ -17133,10 +17133,15 @@ const (
 	RealtimeConsumerGroupLeaseDefaultSeconds   = 30
 	RealtimeConsumerGroupLeaseMaxSeconds       = 300
 	RealtimeConsumerGroupAttemptsDefault       = 5
-	RealtimeConsumerGroupAttemptsMax           = 10
-	RealtimeConsumerGroupRetryMaxSeconds       = 300
-	RealtimeConsumerGroupFailureMaxBytes       = 64
-	RealtimeConsumerGroupBodyMaxBytes          = 4096
+	// RealtimeConsumerGroupReleasesMax: a release hands its attempt back,
+	// so a worker that always releases would loop on one message forever;
+	// at this many releases the message dead-letters as release_limit
+	// (event-driven hunt #7).
+	RealtimeConsumerGroupReleasesMax     = 100
+	RealtimeConsumerGroupAttemptsMax     = 10
+	RealtimeConsumerGroupRetryMaxSeconds = 300
+	RealtimeConsumerGroupFailureMaxBytes = 64
+	RealtimeConsumerGroupBodyMaxBytes    = 4096
 
 	// RealtimeConsumerGroupWaitersPerAccount is one account's share of an
 	// apid's RealtimeConsumerGroupWaitersMax long-poll claims. SDK workers

@@ -50,7 +50,9 @@ func (g *guestEventRate) allow(ctx context.Context, store any, accountID string)
 	if !ok {
 		return nil
 	}
-	if wait, ok := g.limiter.Allow(accountID, limits.EventPublish, 1); !ok {
+	// The store's shared counter holds the plan rate across nodes and apid
+	// replicas, not per node (event-driven hunt #16).
+	if wait, ok := g.limiter.AllowShared(ctx, store, accountID, plan, limits.EventPublish, 1); !ok {
 		return guestEventRateLimitedError{perSecond: int(limits.EventPublish.PerSecond), wait: wait}
 	}
 	return nil

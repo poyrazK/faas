@@ -10913,6 +10913,64 @@ func (q *Queries) ConsumeCustomerOperationWorkflowGuest(ctx context.Context, db 
 	return result.RowsAffected(), nil
 }
 
+const consumeEventPublishTokens = `-- name: ConsumeEventPublishTokens :one
+WITH cur AS (
+    SELECT LEAST(FLOOR($1::double precision)::bigint,
+               tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+                   * $2::double precision)::bigint) AS avail,
+           tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * $2::double precision)::bigint AS refilled,
+           FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * $2::double precision) AS whole
+    FROM pg_ratelimit_counters
+    WHERE scope = 'event_publish' AND subject_id = $3::uuid
+      AND plan = $4::text
+    FOR UPDATE
+), upd AS (
+    UPDATE pg_ratelimit_counters c
+    SET tokens = cur.avail - $5::bigint,
+        last_refill = CASE
+            WHEN cur.refilled >= FLOOR($1::double precision)::bigint
+            THEN GREATEST(now(), c.last_refill)
+            ELSE c.last_refill + (cur.whole / $2::double precision) * interval '1 second'
+        END
+    FROM cur
+    WHERE c.scope = 'event_publish' AND c.subject_id = $3::uuid
+      AND c.plan = $4::text AND cur.avail >= $5::bigint
+    RETURNING 1
+)
+SELECT EXISTS (SELECT 1 FROM cur) AS found, EXISTS (SELECT 1 FROM upd) AS granted
+`
+
+type ConsumeEventPublishTokensParams struct {
+	Burst     float64
+	Rps       float64
+	SubjectID pgtype.UUID
+	Plan      string
+	N         int64
+}
+
+type ConsumeEventPublishTokensRow struct {
+	Found   bool
+	Granted bool
+}
+
+// Event-driven hunt #16: the shared per-account event publish counter. Refill
+// follows ConsumeTrafficRateTokens exactly, but the grant is all or nothing:
+// a batch of n events takes n tokens or none.
+func (q *Queries) ConsumeEventPublishTokens(ctx context.Context, db DBTX, arg ConsumeEventPublishTokensParams) (ConsumeEventPublishTokensRow, error) {
+	row := db.QueryRow(ctx, consumeEventPublishTokens,
+		arg.Burst,
+		arg.Rps,
+		arg.SubjectID,
+		arg.Plan,
+		arg.N,
+	)
+	var i ConsumeEventPublishTokensRow
+	err := row.Scan(&i.Found, &i.Granted)
+	return i, err
+}
+
 const consumeTrafficRateToken = `-- name: ConsumeTrafficRateToken :one
 INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
 VALUES ($1::text, $2::uuid, $3::text,
@@ -13077,6 +13135,35 @@ func (q *Queries) CreateEnvironmentWorkloadQualification(ctx context.Context, db
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const createEventPublishCounter = `-- name: CreateEventPublishCounter :one
+INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
+VALUES ('event_publish', $1::uuid, $2::text,
+    FLOOR($3::double precision)::bigint - $4::bigint, now())
+ON CONFLICT (scope, subject_id, plan) DO NOTHING
+RETURNING tokens
+`
+
+type CreateEventPublishCounterParams struct {
+	SubjectID pgtype.UUID
+	Plan      string
+	Burst     float64
+	N         int64
+}
+
+// The first publish creates the account's counter with its grant taken; the
+// caller never asks for more than the burst.
+func (q *Queries) CreateEventPublishCounter(ctx context.Context, db DBTX, arg CreateEventPublishCounterParams) (int64, error) {
+	row := db.QueryRow(ctx, createEventPublishCounter,
+		arg.SubjectID,
+		arg.Plan,
+		arg.Burst,
+		arg.N,
+	)
+	var tokens int64
+	err := row.Scan(&tokens)
+	return tokens, err
 }
 
 const createInstance = `-- name: CreateInstance :one

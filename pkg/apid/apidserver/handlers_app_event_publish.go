@@ -41,7 +41,7 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "app_event_identity_mismatch", "Application changed", "expected_app_id does not match the resolved application"))
 		return
 	}
-	if problem := s.appEvents.PublishRateProblem(acct, 1); problem != nil {
+	if problem := s.appEvents.PublishRateProblem(r.Context(), acct, 1); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}

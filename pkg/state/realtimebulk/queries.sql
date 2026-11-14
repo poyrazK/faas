@@ -14,7 +14,7 @@ SELECT status,ordering_key,dead_since,deadline_invalid,coalesce(delivery_deadlin
 SELECT EXISTS(SELECT 1 FROM managed_realtime_consumer_group_messages WHERE group_id=sqlc.arg(group_id)::text::uuid AND ordering_key=sqlc.arg(ordering_key)::text AND status='leased')::boolean;
 
 -- name: ReplayDeadLetter :exec
-UPDATE managed_realtime_consumer_group_messages SET status='ready',attempts=0,worker='',token_hash=NULL,lease_until=NULL,
+UPDATE managed_realtime_consumer_group_messages SET status='ready',attempts=0,release_count=0,worker='',token_hash=NULL,lease_until=NULL,
  failure_code='',credential_id=NULL,available_at=clock_timestamp() WHERE group_id=sqlc.arg(group_id)::text::uuid AND sequence=sqlc.arg(sequence)::bigint AND status='dead';
 
 -- name: FreezeDeadline :exec
@@ -190,10 +190,17 @@ WITH removed AS (DELETE FROM managed_realtime_group_delivery_history WHERE group
 UPDATE managed_realtime_consumer_groups SET history_pruned_events=history_pruned_events+(SELECT count(*) FROM removed) WHERE id=sqlc.arg(group_id)::text::uuid AND EXISTS(SELECT 1 FROM removed);
 
 -- name: ReleaseGroupMessage :one
-UPDATE managed_realtime_consumer_group_messages SET status='ready',attempts=greatest(0,attempts-1),release_count=release_count+1,
- worker='',token_hash=NULL,lease_until=NULL,credential_id=NULL,failure_code='',available_at=clock_timestamp()
+-- A release hands the attempt back; at max_releases it dead-letters as
+-- release_limit instead, so a worker that always releases cannot loop on
+-- one message forever.
+UPDATE managed_realtime_consumer_group_messages SET
+ status=CASE WHEN release_count+1>=sqlc.arg(max_releases)::integer THEN 'dead' ELSE 'ready' END,
+ attempts=greatest(0,attempts-1),release_count=release_count+1,
+ worker='',token_hash=NULL,lease_until=NULL,credential_id=NULL,
+ failure_code=CASE WHEN release_count+1>=sqlc.arg(max_releases)::integer THEN 'release_limit' ELSE '' END,
+ available_at=clock_timestamp()
  WHERE group_id=sqlc.arg(group_id)::text::uuid AND sequence=sqlc.arg(sequence)::bigint AND status='leased'
- AND token_hash=sqlc.arg(token_hash)::bytea AND lease_until>clock_timestamp() RETURNING available_at;
+ AND token_hash=sqlc.arg(token_hash)::bytea AND lease_until>clock_timestamp() RETURNING status, available_at;
 
 -- name: PruneSettlementReceipts :exec
 DELETE FROM managed_realtime_group_settlement_receipts WHERE group_id=sqlc.arg(group_id)::text::uuid AND expires_at<=clock_timestamp();

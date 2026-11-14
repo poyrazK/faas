@@ -126,7 +126,7 @@ func (s *server) publishPlatformTenantSelfEvent(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, appevents.AppSourceReservedProblem())
 		return
 	}
-	if problem := s.appEvents.PublishRateProblem(acct, 1); problem != nil {
+	if problem := s.appEvents.PublishRateProblem(r.Context(), acct, 1); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}

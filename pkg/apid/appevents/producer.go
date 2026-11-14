@@ -60,11 +60,12 @@ func AppSourceReservedProblem() *api.Problem {
 }
 
 // PublishRateProblem charges n events to the account's publish rate
-// (ADR-20261026140000).
-func (s *Service) PublishRateProblem(acct state.Account, n int) *api.Problem {
+// (ADR-20261026140000): this process's bucket, then the store's shared
+// counter that every apid replica and vmmd node charges.
+func (s *Service) PublishRateProblem(ctx context.Context, acct state.Account, n int) *api.Problem {
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok {
 		return nil
 	}
-	return s.Host.PublishLimiter().PublishRateProblem(acct.ID, limits.EventPublish, n)
+	return s.Host.PublishLimiter().PublishRateProblem(ctx, s.Host.Store(), acct.ID, acct.Plan, limits.EventPublish, n)
 }

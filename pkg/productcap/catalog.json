@@ -641,7 +641,6 @@
       "description": "Accept a request at the edge and run it asynchronously.",
       "maturity": "preview",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"

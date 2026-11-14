@@ -49,7 +49,7 @@ func (s *Service) PublishEvent(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	producer, problem := s.accountProducer(r.Context(), acct)
 	if problem == nil {
-		problem = s.PublishRateProblem(acct, 1)
+		problem = s.PublishRateProblem(r.Context(), acct, 1)
 	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
