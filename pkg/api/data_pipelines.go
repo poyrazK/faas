@@ -23,6 +23,8 @@ type RotateDataConnectionRequest struct {
 // DataPipeline is an eventually reconciled intent. State is an observation;
 // desired_state records the requested action and observed_at bounds freshness.
 type DataPipeline struct {
+	TenantChange       *DataPipelineTenantChange `json:"tenant_change,omitempty"`
+	Serving            *DataPipelineServing      `json:"serving,omitempty"`
 	WALRetention       *DataPipelineWALRetention `json:"wal_retention,omitempty"`
 	AppliedThroughAt   string                    `json:"applied_through_at,omitempty"`
 	Health             *DataPipelineHealth       `json:"health,omitempty"`
@@ -59,11 +61,12 @@ type DataPipelineList struct {
 	Items []DataPipeline `json:"items"`
 }
 type CreateDataPipelineRequest struct {
-	Name               string   `json:"name"`
-	SourceConnectionID string   `json:"source_connection_id"`
-	DatabaseID         string   `json:"database_id"`
-	Tables             []string `json:"tables"`
-	ReadSubjects       []string `json:"read_subjects"`
+	Serving            *DataPipelineServing `json:"serving,omitempty"`
+	Name               string               `json:"name"`
+	SourceConnectionID string               `json:"source_connection_id"`
+	DatabaseID         string               `json:"database_id"`
+	Tables             []string             `json:"tables"`
+	ReadSubjects       []string             `json:"read_subjects"`
 }
 type ControlDataPipelineRequest struct {
 	ExpectedRevision int64  `json:"expected_revision"`
