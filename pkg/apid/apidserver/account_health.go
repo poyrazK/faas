@@ -50,6 +50,7 @@ func customerAccountHealth(d api.ObsTenantDiagnosis) api.AccountHealth {
 	h := api.AccountHealth{
 		GeneratedAt:       d.GeneratedAt,
 		Restrictions:      []api.AccountHealthRestriction{},
+		Signals:           []api.AccountHealthSignal{},
 		FailedDeployments: []api.AccountHealthDeployment{},
 		DomainIssues:      []api.AccountHealthDomain{},
 		RefusedRequests: api.AccountHealthRequests{
@@ -91,9 +92,18 @@ func customerAccountHealth(d api.ObsTenantDiagnosis) api.AccountHealth {
 	return h
 }
 
+// withSignals adds the account's open signals in customer wording
+// (ADR-20261114190002) and counts them towards Attention.
+func withSignals(h api.AccountHealth, signals []api.AccountHealthSignal) api.AccountHealth {
+	h.Signals = append(h.Signals, signals...)
+	h.Attention += len(signals)
+	return h
+}
+
 // accountHealthFor builds the customer view for acct. Billing is needed
 // only for the overage-cap restriction; when it cannot be read the cap is
-// skipped and "billing" is listed as unavailable.
+// skipped and "billing" is listed as unavailable. Signals that cannot be
+// read are listed as unavailable the same way.
 func (s *server) accountHealthFor(ctx context.Context, r *http.Request, acct state.Account) api.AccountHealth {
 	now := time.Now().UTC()
 	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -102,7 +112,11 @@ func (s *server) accountHealthFor(ctx context.Context, r *http.Request, acct sta
 	if err != nil {
 		diagnosis.Unavailable = append(diagnosis.Unavailable, "billing")
 	}
-	return customerAccountHealth(diagnosis)
+	signals, err := s.attention.OpenForCustomer(ctx, acct.ID)
+	if err != nil {
+		diagnosis.Unavailable = append(diagnosis.Unavailable, "signals")
+	}
+	return withSignals(customerAccountHealth(diagnosis), signals)
 }
 
 // getAccountHealth handles GET /v1/account/health.

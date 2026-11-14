@@ -37,9 +37,19 @@
   - **A turn can overshoot slightly,** as an OpenAI response can: its admission follows the provider's first output, and output before a refusal closes the connection is not seen.
   - **A turn with no usage** settles as unknown usage at its reservation when the session ends (ADR-996), and a session with more than 16 turns waiting for usage ends as unreadable.
   - **Video frames price at the catalog's image price,** or the text price where the catalog has none. Google prices Live video with audio on some models, so such sessions read lower than their bill until the catalog carries that price.
-  - **Tool-use prompt tokens are not counted.** Gemini reports `toolUsePromptTokenCount` apart from the prompt, and Google does not say how it bills them; Gemini HTTP calls do not count them either. The measured sessions had none.
+  - **Tool-use prompt tokens are not counted.** Gemini reports `toolUsePromptTokenCount` apart from the prompt, and Google does not say how it bills them; Gemini HTTP calls do not count them either. The measured sessions had none. *(Superseded by amendment 1: they count as input.)*
   - **No new columns or metrics.** Sessions count in `outbound_ai_realtime_sessions_total` and turns in the usual request metrics.
 - **Rejected alternatives:**
   - **Treating `usageMetadata` as session-so-far totals and settling differences.** The measurement shows per-turn counts; differences would go negative.
   - **Pricing Live sessions at the integration's default model.** The caller chooses the model per session, and native-audio models cost several times text models.
   - **Settling on `turnComplete` without waiting for usage.** Usage arrives with it in practice, but nothing in the protocol promises the order, and an early settlement would bill the reservation.
+
+## Amendment 1 (2026-11-14): tool-use prompt tokens are input
+
+- **Measured** on Vertex AI (gregale-prod), 2026-11-14:
+  - `gemini-3-flash-preview` generateContent with code execution: prompt 23 + candidates 141 + thoughts 130 + `toolUsePromptTokenCount` 152 = `totalTokenCount` 446. The tool-use tokens (the code and its output fed back to the model) are part of the billed total; the gateway was leaving them out, under-reading that call by a third.
+  - The same model with Google Search: prompt 21 + candidates 47 + thoughts 252 = 320, no tool-use tokens. Search bills per grounding query, which ADR-1380 already charges.
+  - `gemini-live-2.5-flash-native-audio` Live session with Google Search (grounding metadata present on both turns): no tool-use tokens, total = prompt + response (21 + 128, 190 + 139).
+- **Decision:** `toolUsePromptTokenCount` counts as input tokens, at the input price, wherever Gemini usage is read: HTTP and streaming responses, Live turns, and the OpenAI-format usage the translator reports (`prompt_tokens`). The cached and modality splits are unchanged, so tool-use tokens price as uncached text.
+- **Why:** usage the gateway settles should equal what Google bills; `totalTokenCount`, which Google bills, includes the tool-use tokens, and they are tokens fed to the model, so they take the input rate.
+- **Consequences:** Gemini calls with code execution (and any other tool that reports tool-use tokens) read higher than before, matching the bill. Search-only and plain calls are unchanged.
