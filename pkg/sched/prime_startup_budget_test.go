@@ -21,7 +21,8 @@ func TestPrimeStartupExtension(t *testing.T) {
 		{31, 16 * time.Second},
 		{60, 45 * time.Second},
 		{120, 105 * time.Second},
-		{300, 285 * time.Second},
+		// Clamped at the largest plan window, MaxAppManifestStartupDeadlineS.
+		{300, 105 * time.Second},
 	} {
 		if got := sched.PrimeStartupExtension(tc.deadlineS); got != tc.want {
 			t.Errorf("primeStartupExtension(%d) = %s, want %s", tc.deadlineS, got, tc.want)

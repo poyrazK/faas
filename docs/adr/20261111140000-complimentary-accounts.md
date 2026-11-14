@@ -70,3 +70,21 @@ when parallel changes pick the next number.
   - overage allowed but unbilled, which is a direct cost with no ceiling
     except the overage ceilings;
   - a Product Control UI, which can come later on top of the same route.
+
+## Amendment 1 (2026-11-13): the $0 cap stops past the allowance; subscribing ends it
+
+The billing review of 2026-11-13 found two gaps:
+
+- R7-2: a $0 spend cap is a customer's pause switch, reached at once
+  (`observed >= cap`), so a complimentary account was parked entirely instead
+  of running within its allowances. `state.SpendCapReached` now treats a
+  complimentary account's cap as reached only past it (`observed > cap`), in
+  schedd's cap check, meterd's floor holders and its spend-cap hold. Only a
+  $0 cap reads the complimentary row.
+- R7-3: nothing ended the complimentary plan when the account later
+  subscribed, so meterd kept skipping a paying account and its cap stayed at
+  $0 with raises refused. Stamping a provider subscription on the account
+  (`stampActiveBillingSubscription`) now clears the row, audits
+  `account.complimentary_subscribed`, and sets the cap to the complimentary
+  plan's default, which the webhook's plan change then moves to the new
+  plan's default.

@@ -1030,6 +1030,23 @@ func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bo
 		 where id = $1 and status = 'active'`, AccountSuspended)
 }
 
+// QuotaSuspended reports whether the account or resource-owning organization
+// id is suspended by the plan's monthly quota stop (SuspendAccountForFreeQuota:
+// the Free compute allowance or an unbilled egress allowance), rather than for
+// payment, abuse or by an operator. That stop parks the subject's apps until
+// the month ends or the plan grows; it does not stop its other resources.
+func (s *PgStore) QuotaSuspended(ctx context.Context, id string) (bool, error) {
+	var suspended bool
+	err := s.pool.QueryRow(ctx, `
+		select exists(select 1 from accounts where id = $1::uuid and status = 'suspended' and suspended_reason = 'free_quota')
+		    or exists(select 1 from orgs where id = $1::uuid and not personal_org and status = 'suspended' and suspended_reason = 'free_quota')`,
+		id).Scan(&suspended)
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return suspended, nil
+}
+
 // RestoreFreeQuotaSuspension lifts only a suspension that
 // SuspendAccountForFreeQuota applied.
 func (s *PgStore) RestoreFreeQuotaSuspension(ctx context.Context, id string) (bool, error) {
@@ -7001,6 +7018,23 @@ func markInstallationPRPreviewsStaleTx(ctx context.Context, tx pgx.Tx, installat
 		      and parent.github_install_id = $1
 		      and ($5::text[] is null or parent.github_repo_full_name = any($5::text[])))`,
 		installationID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown, repos)
+	if err != nil {
+		return err
+	}
+	// Branch-backed previews of the same projects end with them
+	// (ADR-20261113121342); the branch sweeper deletes them.
+	_, err = tx.Exec(ctx, `
+		update project_environment_branches b
+		   set expires_at = greatest(b.created_at + interval '1 second', least(b.expires_at, now()))
+		  from apps parent
+		 where b.pull_request_number is not null
+		   and b.project_id = parent.project_id
+		   and b.account_id = parent.account_id
+		   and parent.preview_of_slug is null
+		   and parent.status <> 'deleted'
+		   and parent.github_install_id = $1
+		   and ($2::text[] is null or parent.github_repo_full_name = any($2::text[]))`,
+		installationID, repos)
 	return err
 }
 
@@ -7045,6 +7079,17 @@ func markAppPRPreviewsStaleTx(ctx context.Context, tx pgx.Tx, appID string) erro
 		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
 		      and coalesce(env.anchor, p.preview_of_slug) = parent.slug)`,
 		appID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		update project_environment_branches b
+		   set expires_at = greatest(b.created_at + interval '1 second', least(b.expires_at, now()))
+		  from apps parent
+		 where parent.id = $1
+		   and b.pull_request_number is not null
+		   and b.project_id = parent.project_id
+		   and b.account_id = parent.account_id`, appID)
 	return err
 }
 

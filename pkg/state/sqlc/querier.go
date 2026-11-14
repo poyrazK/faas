@@ -4210,6 +4210,12 @@ type Querier interface {
 	// per-account projections; the broader ?actor + ?subject filter
 	// shape lives on ListAllEventsPaged.
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
+	// ADR-20261114120000: every snapshot memory key a row still references, so
+	// a compute node can drop cached captures nothing references. use is 'live'
+	// for a non-stale snapshot (evicted last), 'stale' for a stale one (evicted
+	// first) and 'other' for branch captures, crash captures and in-flight live
+	// migrations, which reference captures outside the snapshots table.
+	ListReferencedSnapshotCaptureKeys(ctx context.Context, db DBTX) ([]ListReferencedSnapshotCaptureKeysRow, error)
 	// Approval policies whose only remaining approvals-capable channel is this
 	// one: deleting it would leave releases waiting for approval unannounced
 	// (ADR-20261020085706 amendment 7).
@@ -4270,6 +4276,10 @@ type Querier interface {
 	// time; the runner decides which are due. The public edge does not serve an
 	// internal app, so its checks wait until it is public (ADR-20261031144636).
 	ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error)
+	// ADR-20261114120000: every runtime release, and whether a compute node must
+	// keep its base cached: a deployment that is not failed or cancelled is
+	// bound to it, or a runtime upgrade targets it.
+	ListRuntimeReleaseRetention(ctx context.Context, db DBTX) ([]ListRuntimeReleaseRetentionRow, error)
 	ListRuntimeReleases(ctx context.Context, db DBTX, arg ListRuntimeReleasesParams) ([]RuntimeRelease, error)
 	ListRuntimeUpgradeGatewayDrainRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayDrainRepairAppsParams) ([]string, error)
 	ListRuntimeUpgradeGatewayRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayRepairAppsParams) ([]string, error)
@@ -5289,6 +5299,13 @@ type Querier interface {
 	// creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
 	// counts toward oldest_quiet_age_seconds instead, and an active bucket that
 	// was quiet on its observation counts from when it turned active.
+	//
+	// ADR-20261111152144 §4: answered from object_inventory_schedule without
+	// reading every bucket. due_buckets is the count of the schedule's due index
+	// ranges, corrected for the buckets they can count wrongly (x: not ready,
+	// held, holding a claim token, or with an open listing): for each, minus
+	// whether a range counted it, plus whether the due rule holds. Each oldest
+	// age is the first bucket in index order that the rule does not exempt.
 	ObjectInventoryBacklog(ctx context.Context, db DBTX, arg ObjectInventoryBacklogParams) (ObjectInventoryBacklogRow, error)
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)
 	ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error)
