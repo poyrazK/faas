@@ -50,15 +50,18 @@ func waitWorkflowRun(client *api.Client, runID string, timeout, interval time.Du
 	ctx, cancel := context.WithTimeout(signalCtx, timeout)
 	defer cancel()
 	last := initial
-	resume := recoveryCLI() + " workflow wait " + recoveryArgument(runID) + " --timeout " + recoveryArgument(timeout.String())
+	resume := workflowWaitResumeCommand(runID, timeout, interval)
 	stopWait := func(title string, err error) int {
-		if initial == nil {
+		if initial == nil && !jsonOutput {
 			return printErr(title, err)
 		}
 		if last != nil {
 			if code := renderWorkflowRunStatus(*last); code != 0 {
 				return code
 			}
+		}
+		if jsonOutput {
+			return printWorkflowWaitError(title, err, runID, timeout, interval)
 		}
 		var apiErr *api.APIError
 		if errors.As(err, &apiErr) {
@@ -106,13 +109,13 @@ func waitWorkflowRun(client *api.Client, runID string, timeout, interval time.Du
 				if run.Status == "succeeded" && run.CancelledAt == nil {
 					return 0
 				}
-				return printErr("Workflow did not succeed", fmt.Errorf("run %s finished with status %s (cancelled=%t); inspect its details before retrying", runID, compactInspectFailureText(run.Status), run.CancelledAt != nil))
+				return printWorkflowWaitError("Workflow did not succeed", fmt.Errorf("run %s finished with status %s (cancelled=%t); inspect its details before retrying", runID, compactInspectFailureText(run.Status), run.CancelledAt != nil), runID, timeout, interval)
 			}
 			if run.Status != "pending" && run.Status != "running" && run.Status != "awaiting_event" {
 				if code := renderWorkflowRunStatus(run); code != 0 {
 					return code
 				}
-				return printErr("Unknown workflow state", errors.New("the returned status is not recognized; success cannot be confirmed"))
+				return printWorkflowWaitError("Unknown workflow state", errors.New("the returned status is not recognized; success cannot be confirmed"), runID, timeout, interval)
 			}
 			step := ""
 			if run.CurrentStep != nil {
@@ -139,24 +142,23 @@ func waitWorkflowRun(client *api.Client, runID string, timeout, interval time.Du
 		}
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		if initial != nil {
-			if jsonOutput {
-				_ = writeJSONProblemWithExit(os.Stderr, api.Problem{Title: "Workflow wait canceled", Status: 499, Detail: "The run was accepted; stopping this wait does not cancel it.", Hint: "Resume waiting with: " + resume, DocsURL: cliDocsURL}, 130)
-			} else {
-				_, _ = fmt.Fprintf(osStderr, "Wait canceled; accepted run %s remains unchanged.\nResume waiting:\n  %s\n", runID, resume)
+		if jsonOutput {
+			detail := "Stopping this wait does not cancel the run."
+			if initial != nil {
+				detail = "The run was accepted; stopping this wait does not cancel it."
 			}
+			return renderWorkflowWaitProblem(api.Problem{Code: "workflow_wait_interrupted", Title: "Workflow wait canceled", Status: 499, Detail: detail, DocsURL: cliDocsURL}, 130, runID, timeout, interval)
+		}
+		if initial != nil {
+			_, _ = fmt.Fprintf(osStderr, "Wait canceled; accepted run %s remains unchanged.\nResume waiting:\n  %s\n", runID, resume)
 			return 130
 		}
-		if jsonOutput {
-			_ = writeJSONProblemWithExit(os.Stderr, api.Problem{Title: "Workflow wait canceled", Status: 499, Detail: "Stopping this wait does not cancel the run.", Hint: "Resume waiting with: " + resume, DocsURL: cliDocsURL}, 130)
-		} else {
-			_, _ = fmt.Fprintf(osStderr, "Wait canceled. Resume waiting:\n  %s\n", resume)
-		}
+		_, _ = fmt.Fprintf(osStderr, "Wait canceled. Resume waiting:\n  %s\n", resume)
 		return 130
 	}
 	message := "Workflow wait timed out; the run may still be active. Any returned status is the last observation."
 	if jsonOutput {
-		_ = writeJSONProblemWithExit(os.Stderr, api.Problem{Type: docsSiteURL + "/errors/invalid-request", Title: "Workflow wait timed out", Status: 408, Detail: message, Hint: "Resume this read with: " + resume, DocsURL: cliDocsURL}, 124)
+		return renderWorkflowWaitProblem(api.Problem{Type: docsSiteURL + "/errors/invalid-request", Code: "workflow_wait_timeout", Title: "Workflow wait timed out", Status: 408, Detail: message, DocsURL: cliDocsURL}, 124, runID, timeout, interval)
 	} else {
 		_, _ = fmt.Fprintf(osStderr, "%s\nResume waiting (POSIX shells):\n  %s\n", message, resume)
 	}

@@ -273,7 +273,7 @@ func TestCustomerSignalMetricsCountWithoutSink(t *testing.T) {
 }
 
 // TestRecordCredentialRefusalsAttributesAuthFailures pins
-// ADR-20261114090000: refusals the auth middleware returns before the
+// ADR-20261114190002: refusals the auth middleware returns before the
 // account handler runs are recorded for the credential's account once, and
 // a credential that names no account records nothing.
 func TestRecordCredentialRefusalsAttributesAuthFailures(t *testing.T) {

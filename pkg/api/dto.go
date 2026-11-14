@@ -4646,6 +4646,18 @@ type ListOrgAPIKeysResponse struct {
 // re-bound.
 type RotateOrgAPIKeyRequest struct {
 	Label string `json:"label,omitempty"`
+	// GraceWindowDays overrides, for this rotation only, how many days the
+	// old key keeps working (0 revokes it at once). Omitted uses the
+	// account setting or the plan default.
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
+}
+
+// RotateKeyRequest is the optional body of POST /v1/keys/{id}/rotate.
+// GraceWindowDays overrides, for this rotation only, how many days the old
+// key keeps working; 0 revokes it at once, which is what to do with a key
+// that leaked. Omitted uses the account setting or the plan default.
+type RotateKeyRequest struct {
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
 }
 
 // RotateOrgAPIKeyResponse is the body of
