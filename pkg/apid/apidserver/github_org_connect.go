@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -115,6 +116,32 @@ func (s *server) projectInstallOwner(ctx context.Context, acct state.Account, pr
 		return acct.ID, nil
 	}
 	return githubInstallOwner(org)
+}
+
+// requestInstallOwner is the namespace whose GitHub installations a project
+// request's source resolves through: the organization for a company-project
+// request (only an adopted, active organization owns installations), or the
+// caller's own account. A member's personal installation never serves a
+// company project (ADR-20261110200000, ADR-20261113090000).
+func (s *server) requestInstallOwner(r *http.Request, acct state.Account) (string, *api.Problem) {
+	if grant, shared := projectaccess.From(r.Context()); shared {
+		return githubInstallOwner(grant.Org)
+	}
+	return acct.ID, nil
+}
+
+// sharedScanInstallationProblem checks the installation a company-project
+// scan or deploy binds: it must belong to the organization.
+func (s *server) sharedScanInstallationProblem(r *http.Request, installID int64) *api.Problem {
+	if _, shared := projectaccess.From(r.Context()); !shared || installID == 0 {
+		return nil
+	}
+	owner, problem := s.requestInstallOwner(r, state.Account{})
+	if problem != nil {
+		return problem
+	}
+	_, problem = s.requireOwnedGitHubInstallation(r.Context(), owner, installID)
+	return problem
 }
 
 // listOrgGitHubInstallations lists the organization's GitHub installations

@@ -44,6 +44,11 @@ type PublishEventRequest struct {
 	Data            json.RawMessage `json:"data"`
 	AccountID       string          `json:"accountid,omitempty"`
 	SchemaVersion   string          `json:"schemaversion,omitempty"`
+	// EnvironmentID names the project environment the event belongs to
+	// (ADR-20261104120000); omitted is production. Only subscriptions of that
+	// environment receive the event, and only production events start
+	// workflows.
+	EnvironmentID string `json:"environmentid,omitempty"`
 }
 
 func (r *PublishEventRequest) UnmarshalJSON(data []byte) error {
@@ -357,8 +362,11 @@ type EventSubscriptionResponse struct {
 	WorkAction         string                   `json:"work_action,omitempty"`
 	Ordered            bool                     `json:"ordered,omitempty"`
 	Enabled            bool                     `json:"enabled"`
-	CreatedAt          time.Time                `json:"created_at"`
-	UpdatedAt          time.Time                `json:"updated_at"`
+	// Environment is the project environment slug whose events the
+	// subscription receives; omitted is production (ADR-20261104120000).
+	Environment string    `json:"environment,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // EventSubscriptionListResponse is the app-scoped, read-only subscription
@@ -2892,12 +2900,13 @@ func (h *DeploymentHealthcheck) Clone() *DeploymentHealthcheck {
 // DeploymentReadinessProbe is a reversible, steady-state traffic gate for
 // the primary app. It is distinct from Healthcheck (startup admission) and
 // LivenessProbe (which restarts a wedged VM).
+// The yaml tags let gregale.yaml hosting.readiness_probe use the same keys.
 type DeploymentReadinessProbe struct {
-	Path             string                     `json:"path,omitempty"`
-	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
-	PeriodS          int                        `json:"period_s,omitempty"`
-	TimeoutS         int                        `json:"timeout_s,omitempty"`
-	FailureThreshold int                        `json:"failure_threshold,omitempty"`
+	Path             string                     `json:"path,omitempty" yaml:"path,omitempty"`
+	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty" yaml:"grpc,omitempty"`
+	PeriodS          int                        `json:"period_s,omitempty" yaml:"period_s,omitempty"`
+	TimeoutS         int                        `json:"timeout_s,omitempty" yaml:"timeout_s,omitempty"`
+	FailureThreshold int                        `json:"failure_threshold,omitempty" yaml:"failure_threshold,omitempty"`
 }
 
 // DeploymentLivenessProbe is the liveness-probe shape on the
@@ -13941,6 +13950,9 @@ type AppPublishEventRequest struct {
 	Data          json.RawMessage `json:"data"`
 	Time          *time.Time      `json:"time,omitempty"`
 	SchemaVersion string          `json:"schemaversion,omitempty"`
+	// Environment is the slug of the app's project environment the event
+	// belongs to (ADR-20261104120000); omitted is production.
+	Environment string `json:"environment,omitempty"`
 }
 
 type AppPublishEventResponse struct {

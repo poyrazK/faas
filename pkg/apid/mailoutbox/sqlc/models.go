@@ -255,6 +255,19 @@ type ManagedPostgresDatabase struct {
 	ID pgtype.UUID
 }
 
+// Managed PostgreSQL databases held for sending their own monthly egress allowance, one row per database and UTC month; written only by apid (ADR-20261110160000).
+type ManagedPostgresEgressHoldNotice struct {
+	DatabaseID     pgtype.UUID
+	PeriodStart    pgtype.Timestamptz
+	SubjectID      pgtype.UUID
+	ReachedAt      pgtype.Timestamptz
+	UsedBytes      int64
+	AllowanceBytes int64
+	CeilingBytes   int64
+	OverageBilled  bool
+	MailIntentID   pgtype.UUID
+}
+
 // Notices for managed PostgreSQL databases suspended past their plan; written only by apid (ADR-20261102125208).
 type ManagedPostgresPlanExcessNotice struct {
 	DatabaseID           pgtype.UUID

@@ -3484,6 +3484,8 @@ type CustomerAttentionSignal struct {
 	DismissedAt   pgtype.Timestamptz
 	DismissedBy   pgtype.UUID
 	DismissReason string
+	Outcome       pgtype.Text
+	TicketID      pgtype.UUID
 }
 
 type CustomerOperation struct {
@@ -6075,6 +6077,8 @@ type EventSubscription struct {
 	RoutingRetryPolicy         []byte
 	SchemaVersions             []string
 	AcknowledgmentLeaseSeconds int32
+	DeploymentScope            string
+	EnvironmentID              pgtype.UUID
 }
 
 type EventSubscriptionCapacityCommand struct {
@@ -6758,6 +6762,7 @@ type GithubDeployPolicy struct {
 	ProductionTrigger    string
 	PreviewBotPrs        bool
 	PreviewDraftPrs      bool
+	PreviewMode          string
 }
 
 type GithubDeployment struct {
@@ -8897,6 +8902,19 @@ type ManagedPostgresDatabaseEndpoint struct {
 	Host       string
 	Port       int32
 	UpdatedAt  pgtype.Timestamptz
+}
+
+// Managed PostgreSQL databases held for sending their own monthly egress allowance, one row per database and UTC month; written only by apid (ADR-20261110160000).
+type ManagedPostgresEgressHoldNotice struct {
+	DatabaseID     pgtype.UUID
+	PeriodStart    pgtype.Timestamptz
+	SubjectID      pgtype.UUID
+	ReachedAt      pgtype.Timestamptz
+	UsedBytes      int64
+	AllowanceBytes int64
+	CeilingBytes   int64
+	OverageBilled  bool
+	MailIntentID   pgtype.UUID
 }
 
 type ManagedPostgresHealth struct {
@@ -11203,6 +11221,13 @@ type OrgMembership struct {
 	AccessRevision     int64
 }
 
+type OrgSecurityPolicy struct {
+	OrgID              pgtype.UUID
+	RequireMfa         bool
+	UpdatedByAccountID pgtype.UUID
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type OutboundAdmissionLease struct {
 	LeaseID                  pgtype.UUID
 	IntegrationID            pgtype.UUID
@@ -11384,6 +11409,10 @@ type OutboundAiPriceEntry struct {
 	InputAudioMillicentsPerMtok       pgtype.Int8
 	CachedInputAudioMillicentsPerMtok pgtype.Int8
 	OutputAudioMillicentsPerMtok      pgtype.Int8
+	CacheWrite1hMillicentsPerMtok     pgtype.Int8
+	LongContextAboveInputTokens       pgtype.Int8
+	LongContextInputPercent           pgtype.Int4
+	LongContextOutputPercent          pgtype.Int4
 }
 
 type OutboundAiPriceList struct {
@@ -12861,6 +12890,7 @@ type ProjectEnvironmentBranch struct {
 	CreatedAt           pgtype.Timestamptz
 	PrivateNetworks     string
 	SlotID              pgtype.UUID
+	PullRequestNumber   pgtype.Int4
 }
 
 // ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.
@@ -16446,6 +16476,54 @@ type TenantSurface struct {
 	UpdatedAt             pgtype.Timestamptz
 	PlatformTenantID      pgtype.UUID
 	PlatformTenantManaged bool
+}
+
+type ToolGrant struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+	KeyID     pgtype.UUID
+	Version   string
+	ExpiresAt pgtype.Timestamptz
+	RevokedAt pgtype.Timestamptz
+	Payload   []byte
+}
+
+type ToolInvocation struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+	Status    string
+	Deadline  pgtype.Timestamptz
+	Payload   []byte
+}
+
+type ToolOauthAuthorization struct {
+	AccountID      pgtype.UUID
+	ConnectionID   pgtype.UUID
+	StateSha256    string
+	Phase          string
+	ExpiresAt      pgtype.Timestamptz
+	FlowCiphertext []byte
+}
+
+type ToolOauthConnection struct {
+	AccountID             pgtype.UUID
+	ID                    pgtype.UUID
+	AppID                 pgtype.UUID
+	Payload               []byte
+	State                 string
+	Generation            int64
+	CredentialsCiphertext []byte
+	ExpiresAt             pgtype.Timestamptz
+	LeaseID               pgtype.UUID
+	LeaseUntil            pgtype.Timestamptz
+	RevokedAt             pgtype.Timestamptz
+}
+
+type ToolPublication struct {
+	AccountID pgtype.UUID
+	ID        string
+	Status    string
+	Payload   []byte
 }
 
 type TrafficRetryCounter struct {

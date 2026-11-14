@@ -18,6 +18,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DataPipelinesService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List sealed PostgreSQL pipeline source identities
    * @returns DataConnectionList Account-owned source identities with credentials omitted.
@@ -25,7 +26,7 @@ export class DataPipelinesService {
    * @throws ApiError
    */
   public static listDataConnections(): CancelablePromise<DataConnectionList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/data/connections',
     });
@@ -48,7 +49,7 @@ export class DataPipelinesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | DataConnection> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/connections',
       headers: {
@@ -74,7 +75,7 @@ export class DataPipelinesService {
     id: string,
     requestBody: RotateDataConnectionRequest,
   }): CancelablePromise<DataConnection | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/data/connections/{id}',
       path: {
@@ -97,7 +98,7 @@ export class DataPipelinesService {
      */
     id: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/data/connections/{id}',
       path: {
@@ -122,7 +123,7 @@ export class DataPipelinesService {
     id: string,
     requestBody: RequestDataConnectionCheck,
   }): CancelablePromise<Problem | DataConnectionCheck> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/connections/{id}/check',
       path: {
@@ -147,7 +148,7 @@ export class DataPipelinesService {
      */
     id: string,
   }): CancelablePromise<DataConnectionCheck | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/data/connections/{id}/check',
       path: {
@@ -162,7 +163,7 @@ export class DataPipelinesService {
    * @throws ApiError
    */
   public static listDataPipelines(): CancelablePromise<DataPipelineList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/data/pipelines',
     });
@@ -185,7 +186,7 @@ export class DataPipelinesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | DataPipeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines',
       headers: {
@@ -209,7 +210,7 @@ export class DataPipelinesService {
      */
     id: string,
   }): CancelablePromise<DataPipeline | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/data/pipelines/{id}',
       path: {
@@ -233,7 +234,7 @@ export class DataPipelinesService {
     id: string,
     requestBody: ControlDataPipelineRequest,
   }): CancelablePromise<Problem | DataPipeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines/{id}/control',
       path: {

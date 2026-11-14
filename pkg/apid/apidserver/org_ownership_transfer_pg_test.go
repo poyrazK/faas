@@ -35,7 +35,7 @@ func TestPGOwnershipTransferAnswersSuccess(t *testing.T) {
 	if err := store.AddOrgMember(ctx, org.ID, next.ID, state.OrgRoleAdmin, nil); err != nil {
 		t.Fatal(err)
 	}
-	rec := e.Do(t, http.MethodPost, "/v1/orgs/"+org.Slug+"/transfer_ownership",
+	rec := e.DoSession(t, "", http.MethodPost, "/v1/orgs/"+org.Slug+"/transfer_ownership",
 		api.TransferOwnershipRequest{NewOwnerAccountID: next.ID}, map[string]string{"X-Active-Org": org.Slug})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("transfer ownership: %d %s", rec.Code, rec.Body)
