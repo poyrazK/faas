@@ -6,6 +6,7 @@ import type { ComposeHealthcheck } from './ComposeHealthcheck.js';
 import type { ComposeProcess } from './ComposeProcess.js';
 import type { ComposeResources } from './ComposeResources.js';
 import type { PlanDetectedBy } from './PlanDetectedBy.js';
+import type { PlanSourceHost } from './PlanSourceHost.js';
 import type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
 import type { SecretFile } from './SecretFile.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
@@ -126,6 +127,10 @@ export type PlanWorkload = {
    * For an unset_env_keys name with a Compose value, why that value is not imported. Never values.
    */
   unset_env_key_reasons?: Record<string, 'not_opted_in' | 'secret' | 'service_address' | 'local_address' | 'interpolated' | 'host_value' | 'empty' | 'invalid'>;
+  /**
+   * String literals in the workload's source that dial another service by its Compose name, which does not resolve on Gregale. At most a few per workload.
+   */
+  source_hosts?: Array<PlanSourceHost>;
   /**
    * Compose environment names whose plain values apply will write, because the project sets x-gregale-env-import: true and they are unset. Names only.
    */

@@ -46,6 +46,10 @@
       {{range .Restrictions}}<article class="issue"><h3>{{.Title}}</h3><p>{{.Detail}}</p>{{with .Since}}<p><small>Since {{.UTC.Format "02 Jan 2006, 15:04 UTC"}}</small></p>{{end}}{{if .ActionURL}}<p><a href="{{.ActionURL}}">{{.Action}} →</a></p>{{end}}</article>{{end}}
     </section>{{end}}
 
+    {{if .Signals}}<section aria-labelledby="signals"><h2 id="signals">Keeps going wrong</h2>
+      {{range .Signals}}<article class="issue"><h3>{{.Title}}</h3><p>{{.Detail}}</p><p><small>Since {{.Since.UTC.Format "02 Jan 2006, 15:04 UTC"}}</small></p>{{if .ActionURL}}<p><a href="{{.ActionURL}}">{{.Action}} →</a></p>{{end}}</article>{{end}}
+    </section>{{end}}
+
     {{if .FailedDeployments}}<section aria-labelledby="deployments"><h2 id="deployments">Failed deployments, last 7 days</h2>
       {{range .FailedDeployments}}<article class="issue"><h3>{{if .AppSlug}}<a href="/dashboard/apps/{{.AppSlug}}/deployments/{{.DeploymentID}}">{{.AppSlug}}</a>{{else}}<code>{{.DeploymentID}}</code>{{end}}{{with .ErrorCode}} · <code>{{.}}</code>{{end}}</h3>
         {{with .Error}}<p>{{.}}</p>{{end}}{{with .Hint}}<p><strong>How to fix:</strong> {{.}}</p>{{end}}
