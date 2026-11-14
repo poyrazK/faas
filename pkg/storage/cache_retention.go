@@ -1,6 +1,6 @@
 package storage
 
-// adr: 20261114120000
+// adr: 20261114182830
 //
 // Node cache retention. The cache budget now comes from the disk, so the
 // budget rarely forces an eviction; what the node no longer needs has to be

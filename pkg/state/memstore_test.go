@@ -329,7 +329,7 @@ func TestAuthenticateKey_RejectsRevoked(t *testing.T) {
 	if !errors.Is(err, ErrAPIKeyRevoked) {
 		t.Errorf("post-revoke auth: want ErrAPIKeyRevoked, got %v", err)
 	}
-	// ADR-20261114090000: the refusal names the key and its account only.
+	// ADR-20261114190002: the refusal names the key and its account only.
 	if refused.ID != k.ID || refused.AccountID != a.ID || len(refused.Scopes) != 0 {
 		t.Errorf("post-revoke key = %+v, want only id %s and account %s", refused, k.ID, a.ID)
 	}

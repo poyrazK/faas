@@ -14,7 +14,7 @@ type AccountHealth struct {
 	Attention    int                        `json:"attention"`
 	Restrictions []AccountHealthRestriction `json:"restrictions"`
 	// Signals are the open stuck-customer signals Gregale detected for the
-	// account, in customer wording (ADR-20261114090000). Only kinds with
+	// account, in customer wording (ADR-20261114190002). Only kinds with
 	// customer wording appear; an apid release before it omits the key.
 	Signals           []AccountHealthSignal     `json:"signals"`
 	FailedDeployments []AccountHealthDeployment `json:"failed_deployments"`
