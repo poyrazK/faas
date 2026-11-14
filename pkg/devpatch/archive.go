@@ -37,7 +37,7 @@ func BuildArchive(source io.Reader, sourceRoot string, include map[string]bool, 
 	found := 0
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -137,7 +137,7 @@ func apply(dir string, archive []byte, deleted []string, maxBytes int64, inPlace
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
