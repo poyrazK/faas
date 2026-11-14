@@ -88,10 +88,25 @@ type Store interface {
 	JobMaterializationLease(ctx context.Context, jobID string) (owner string, until time.Time, err error)
 	// RecordJobOpen records an open of a job's credential.
 	RecordJobOpen(ctx context.Context, nodeID, jobID, via string) error
+	// BuildRunner returns the build's app, whether it is running, when it
+	// started, and the node that claimed it (builds.builder_node_name, empty
+	// when none was recorded), or ErrUnknownBuild.
+	BuildRunner(ctx context.Context, buildID string) (BuildRun, error)
+}
+
+// BuildRun is what secretd checks before it pulls for a builder VM.
+type BuildRun struct {
+	AppID     string
+	Running   bool
+	StartedAt time.Time
+	Node      string
 }
 
 // ErrUnknownJob is returned by Store.JobMaterializationLease.
 var ErrUnknownJob = errors.New("secretd: no such job")
+
+// ErrUnknownBuild is returned by Store.BuildRunner.
+var ErrUnknownBuild = errors.New("secretd: no such build")
 
 // ErrUnknownEdgeHeaderSecret is returned by Store.EdgeHeaderSecret.
 var ErrUnknownEdgeHeaderSecret = errors.New("secretd: the app has no referenced edge rule header value of that id")

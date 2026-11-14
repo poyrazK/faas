@@ -6376,6 +6376,42 @@ $$;
 
 
 --
+-- Name: builds_builder_node_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.builds_builder_node_scope() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    node text;
+BEGIN
+    -- Only a running build names a node; an insert never does.
+    IF TG_OP = 'INSERT' OR NEW.status IS DISTINCT FROM 'running' THEN
+        NEW.builder_node_name := NULL;
+        RETURN NEW;
+    END IF;
+    -- The login map is read only for a claim or a change of the node, not
+    -- for the many other updates of a running build.
+    IF OLD.status IS DISTINCT FROM 'queued' AND NEW.builder_node_name IS NOT DISTINCT FROM OLD.builder_node_name THEN
+        RETURN NEW;
+    END IF;
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node USING session_user::text;
+    IF OLD.status = 'queued' THEN
+        NEW.builder_node_name := node;
+        RETURN NEW;
+    END IF;
+    IF node IS NOT NULL THEN
+        RAISE EXCEPTION 'a compute node login records only its own claim of a build'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s build=%s', session_user, node, OLD.id);
+    END IF;
+    RETURN NEW;
+END;
+$_$;
+
+
+--
 -- Name: bump_app_scaling_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -34841,6 +34877,7 @@ CREATE TABLE public.builds (
     cache_status text,
     cache_key_sha256 text,
     coalesced_with uuid,
+    builder_node_name text,
     CONSTRAINT builds_cache_key_sha256_check CHECK (((cache_key_sha256 IS NULL) OR (cache_key_sha256 ~ '^[a-f0-9]{64}$'::text))),
     CONSTRAINT builds_cache_status_check CHECK (((cache_status IS NULL) OR (cache_status = ANY (ARRAY['hit'::text, 'miss'::text, 'invalidated'::text])))),
     CONSTRAINT builds_failure_class_check CHECK (((failure_class IS NULL) OR (failure_class = ANY (ARRAY['oom'::text, 'timeout'::text, 'user_error'::text, 'infra'::text])))),
@@ -63788,6 +63825,14 @@ ALTER TABLE ONLY public.builder_vm_cleanup
 
 
 --
+-- Name: builds builds_builder_node_name_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.builds
+    ADD CONSTRAINT builds_builder_node_name_check CHECK (((builder_node_name IS NULL) OR (builder_node_name ~ '^[A-Za-z0-9._-]{1,253}$'::text))) NOT VALID;
+
+
+--
 -- Name: builds builds_coalesced_with_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -88961,6 +89006,13 @@ CREATE TRIGGER binding_release_traffic BEFORE INSERT OR UPDATE OF traffic_percen
 --
 
 CREATE TRIGGER build_export_publication_immutable BEFORE INSERT OR DELETE OR UPDATE ON public.build_export_publications FOR EACH ROW EXECUTE FUNCTION public.build_export_publication_guard();
+
+
+--
+-- Name: builds builds_builder_node_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER builds_builder_node_scope BEFORE INSERT OR UPDATE ON public.builds FOR EACH ROW EXECUTE FUNCTION public.builds_builder_node_scope();
 
 
 --

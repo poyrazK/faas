@@ -38,6 +38,15 @@ type fakeStore struct {
 	jobCreds    map[[2]string]fakeRegistryCredential
 	jobLeases   map[string]fakeJobLease
 	jobOpens    []string
+	builds      map[string]secretd.BuildRun
+}
+
+func (f *fakeStore) BuildRunner(_ context.Context, buildID string) (secretd.BuildRun, error) {
+	run, ok := f.builds[buildID]
+	if !ok {
+		return secretd.BuildRun{}, secretd.ErrUnknownBuild
+	}
+	return run, nil
 }
 
 type fakeJobLease struct {

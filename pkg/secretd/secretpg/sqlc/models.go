@@ -28,6 +28,14 @@ type AppSecret struct {
 	Ciphertext []byte
 }
 
+type Build struct {
+	ID              pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Status          string
+	StartedAt       pgtype.Timestamptz
+	BuilderNodeName pgtype.Text
+}
+
 type CrashCapture struct {
 	ID        pgtype.UUID
 	AppID     pgtype.UUID

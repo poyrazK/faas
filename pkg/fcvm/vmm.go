@@ -1481,6 +1481,13 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
 		}
 	}
+	// ADR-20261110210000 slice 3j-3: a builder's private registries are
+	// served on vsock, through secretd.
+	if l.IsBuilder && cfg.VsockDevice != nil && len(l.buildMirrors.list()) > 0 {
+		if err = v.serveBuildMirrors(l); err != nil {
+			return fmt.Errorf("vmm: %w", err)
+		}
+	}
 	if jobManifest != nil {
 		if err = v.prepareJobExitListener(l); err != nil {
 			return fmt.Errorf("vmm: prepare job-exit listener: %w", err)

@@ -138,6 +138,12 @@ type Lease struct {
 	// ephemeral builder VM. Builder memory must not be charged to vmmd's
 	// supervisor cgroup or to tenant RAM.
 	IsBuilder bool
+	// buildMirrors are the registry mirrors a builder VM's guest dials over
+	// vsock (ADR-20261110210000 slice 3j-3). Unexported, so neither
+	// journal's lease record carries them; the boot path binds and serves
+	// them, and Destroy closes them with the VM's other vsock listeners. A
+	// pointer to a set built once, so Lease stays comparable.
+	buildMirrors *leaseBuildMirrors
 	// AccountID is the owning account of an app VM. A pmem base is cloned
 	// per account so that no two accounts map the same pages (ADR-908).
 	AccountID string

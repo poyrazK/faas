@@ -1407,6 +1407,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if opener != nil {
 		mgr.SetRuntimeSecretOpener(opener)
 	}
+	// ADR-20261110210000 slice 3j-3: builders pull private registries
+	// through secretd, and no registry password opens here.
+	buildMirror, closeBuildMirror, err := buildRegistryMirrorFromEnv(ctx, os.Getenv, log)
+	if err != nil {
+		return err
+	}
+	defer closeBuildMirror()
+	if buildMirror != nil {
+		mgr.SetBuildRegistryMirror(buildMirror)
+	}
 	var signatureStore any
 	if store != nil {
 		signatureStore = store

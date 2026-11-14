@@ -1206,6 +1206,9 @@ type Manager struct {
 	// base images with (ADR-20261026091500): the build seal domain, then
 	// the fleet and host identities. nil leaves builders anonymous.
 	registryIdentities []*age.X25519Identity
+	// buildRegistryMirror, when set, serves builders their private
+	// registries through secretd instead (ADR-20261110210000 slice 3j-3).
+	buildRegistryMirror BuildRegistryMirror
 	// requireSecretBinding refuses runtime envelopes that carry no account
 	// binding (ADR-20261023173624, contract step). Off until every stored
 	// envelope is bound.
@@ -3684,8 +3687,19 @@ func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secret
 	}
 	// ADR-20261026091500: a builder's Docker config rides in its
 	// secrets.env, written after the build's own secrets.
+	// ADR-20261110210000 slice 3j-3: with a build registry mirror the
+	// builder gets only the mirror plan, and no password is opened here.
 	if req.ExportDir != "" {
-		if config, ok := m.buildRegistryAuth(req.BuildRegistryCredentials); ok {
+		if plan := m.buildMirrorPlan(req); len(plan) > 0 {
+			config, err := buildMirrorConfig(plan)
+			if err != nil {
+				return nil, nil, err
+			}
+			if merged == nil {
+				merged = secretbox.Envelope{}
+			}
+			merged[api.BuildRegistryMirrorsKey] = config
+		} else if config, ok := m.buildRegistryAuth(req.BuildRegistryCredentials); ok {
 			if merged == nil {
 				merged = secretbox.Envelope{}
 			}
@@ -4105,6 +4119,11 @@ type WakeRequest struct {
 	// them into the builder's secrets.env as a Docker config. Ignored for
 	// every VM that is not a builder.
 	BuildRegistryCredentials []BuildRegistryCredential
+	// BuildID is the build a builder VM runs (ADR-20261110210000 slice
+	// 3j-3). With a build registry mirror set (SetBuildRegistryMirror), the
+	// builder pulls BuildRegistryCredentials' registries through the mirror
+	// by this id and is given no password. Empty from an older builderd.
+	BuildID string
 	// BuildKitSeedDrive is a builder VM's writable drive2: builderd's copy of
 	// the node's BuildKit seed, beside drive1 (ADR-20261030122204). Empty for
 	// a two-drive builder and for every VM that is not a builder.
@@ -5122,6 +5141,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		lease.restoreIdentity = newRestoreIdentityExpectation()
 	}
 	lease.IsBuilder = req.ExportDir != ""
+	lease.buildMirrors = m.leaseBuildMirrors(req)
 	m.stampCgroupParent(&lease)
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {

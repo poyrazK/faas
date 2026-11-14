@@ -156,6 +156,10 @@ func (ownedBy) JobMaterializationLease(context.Context, string) (string, time.Ti
 	return "", time.Time{}, secretd.ErrUnknownJob
 }
 
+func (ownedBy) BuildRunner(context.Context, string) (secretd.BuildRun, error) {
+	return secretd.BuildRun{}, secretd.ErrUnknownBuild
+}
+
 func (ownedBy) RecordJobOpen(context.Context, string, string, string) error { return nil }
 
 func (ownedBy) PreparesImage(context.Context, string, string, time.Time) (bool, error) {

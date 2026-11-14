@@ -75,6 +75,13 @@ SELECT coalesce(image_materialization_lease_owner, '')::text AS owner,
        coalesce(image_materialization_lease_until, '-infinity'::timestamptz)::timestamptz AS until
   FROM jobs WHERE id = sqlc.arg(id)::uuid;
 
+-- name: BuildRunner :one
+-- The build's app, status, start and claiming node (slice 3j-3).
+SELECT d.app_id, b.status, coalesce(b.started_at, '-infinity'::timestamptz)::timestamptz AS started_at,
+       coalesce(b.builder_node_name, '')::text AS builder_node_name
+  FROM builds b JOIN deployments d ON d.id = b.deployment_id
+ WHERE b.id = sqlc.arg(id)::uuid;
+
 -- name: InsertJobSecretOpenAudit :exec
 INSERT INTO secret_open_audit (node_id, job_id, via, entries)
 VALUES (sqlc.arg(node_id)::uuid, sqlc.arg(job_id)::uuid, sqlc.arg(via)::text, 1);

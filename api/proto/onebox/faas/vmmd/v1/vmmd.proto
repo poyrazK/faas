@@ -1585,6 +1585,12 @@ message BuildSpec {
   // .ext4 path in drive1's directory. Empty: two drives, as before. An older
   // vmmd ignores it and the guest keeps BuildKit on drive1.
   string buildkit_seed_drive = 4;
+  // The build's builds.id (ADR-20261110210000 slice 3j-3). A vmmd that
+  // serves builds a registry mirror (FAAS_VMMD_BUILD_REGISTRY_MIRROR=secretd)
+  // pulls the registry_credentials' hosts through secretd by this id and
+  // gives the builder no password. Empty from an older builderd: vmmd then
+  // opens the passwords as before.
+  string build_id = 5;
 }
 
 // BuildRegistryCredential is one app_registry_credentials row: the registry

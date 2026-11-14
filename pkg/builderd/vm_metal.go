@@ -414,6 +414,10 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 			// Docker config for its base-image pulls. A build that has
 			// them never uses a warm builder.
 			RegistryCredentials: registryCredentialsToProto(req.RegistryCredentials),
+			// ADR-20261110210000 slice 3j-3: a vmmd with a build registry
+			// mirror pulls those registries through secretd by this id and
+			// opens no password; an older vmmd ignores it.
+			BuildId: req.BuildID,
 			// ADR-20261030122204: the build's copy of the BuildKit seed, or a
 			// seed run's empty drive. An older vmmd ignores it and the guest
 			// keeps BuildKit on drive1.

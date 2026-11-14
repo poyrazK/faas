@@ -36,10 +36,18 @@ func (p *Proxy) ForJob(jobID string) http.RoundTripper {
 	return &transport{client: p.Client, jobID: jobID}
 }
 
+// ForBuild returns the transport a builder VM's registry mirror pulls
+// through: secretd uses the credential of the build's app and admits only
+// the node that claimed the running build (slice 3j-3).
+func (p *Proxy) ForBuild(buildID string) http.RoundTripper {
+	return &transport{client: p.Client, buildID: buildID}
+}
+
 type transport struct {
-	client secretdpb.SecretdClient
-	appID  string
-	jobID  string
+	client  secretdpb.SecretdClient
+	appID   string
+	jobID   string
+	buildID string
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -50,7 +58,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.Method != http.MethodGet && req.Method != http.MethodHead {
 		return nil, fmt.Errorf("registryproxy: %s is not a pull", req.Method)
 	}
-	in := &secretdpb.RegistryFetchRequest{AppId: t.appID, JobId: t.jobID, Method: req.Method, Url: req.URL.String()}
+	in := &secretdpb.RegistryFetchRequest{AppId: t.appID, JobId: t.jobID, BuildId: t.buildID, Method: req.Method, Url: req.URL.String()}
 	for _, name := range forwardHeaders {
 		for _, v := range req.Header.Values(name) {
 			in.Headers = append(in.Headers, &secretdpb.RegistryHeader{Name: name, Value: v})

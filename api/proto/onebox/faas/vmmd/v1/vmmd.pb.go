@@ -3746,8 +3746,14 @@ type BuildSpec struct {
 	// .ext4 path in drive1's directory. Empty: two drives, as before. An older
 	// vmmd ignores it and the guest keeps BuildKit on drive1.
 	BuildkitSeedDrive string `protobuf:"bytes,4,opt,name=buildkit_seed_drive,json=buildkitSeedDrive,proto3" json:"buildkit_seed_drive,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// The build's builds.id (ADR-20261110210000 slice 3j-3). A vmmd that
+	// serves builds a registry mirror (FAAS_VMMD_BUILD_REGISTRY_MIRROR=secretd)
+	// pulls the registry_credentials' hosts through secretd by this id and
+	// gives the builder no password. Empty from an older builderd: vmmd then
+	// opens the passwords as before.
+	BuildId       string `protobuf:"bytes,5,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *BuildSpec) Reset() {
@@ -3804,6 +3810,13 @@ func (x *BuildSpec) GetRegistryCredentials() []*BuildRegistryCredential {
 func (x *BuildSpec) GetBuildkitSeedDrive() string {
 	if x != nil {
 		return x.BuildkitSeedDrive
+	}
+	return ""
+}
+
+func (x *BuildSpec) GetBuildId() string {
+	if x != nil {
+		return x.BuildId
 	}
 	return ""
 }
@@ -22067,14 +22080,15 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x15finished_at_unix_nano\x18\x04 \x01(\x03R\x12finishedAtUnixNano\x12\x1f\n" +
 	"\vlease_token\x18\x05 \x01(\tR\n" +
 	"leaseToken\x120\n" +
-	"\x14output_manifest_json\x18\x06 \x01(\tR\x12outputManifestJson\"\xdc\x01\n" +
+	"\x14output_manifest_json\x18\x06 \x01(\tR\x12outputManifestJson\"\xf7\x01\n" +
 	"\tBuildSpec\x12\x1d\n" +
 	"\n" +
 	"export_dir\x18\x01 \x01(\tR\texportDir\x12\x1f\n" +
 	"\vtimeout_sec\x18\x02 \x01(\x05R\n" +
 	"timeoutSec\x12_\n" +
 	"\x14registry_credentials\x18\x03 \x03(\v2,.onebox.faas.vmmd.v1.BuildRegistryCredentialR\x13registryCredentials\x12.\n" +
-	"\x13buildkit_seed_drive\x18\x04 \x01(\tR\x11buildkitSeedDrive\"z\n" +
+	"\x13buildkit_seed_drive\x18\x04 \x01(\tR\x11buildkitSeedDrive\x12\x19\n" +
+	"\bbuild_id\x18\x05 \x01(\tR\abuildId\"z\n" +
 	"\x17BuildRegistryCredential\x12\x1a\n" +
 	"\bregistry\x18\x01 \x01(\tR\bregistry\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12'\n" +
