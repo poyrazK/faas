@@ -2,7 +2,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- ADR-20261113100001: only apid writes exact-version delegation intent.
-CREATE TABLE tool_grants (
+CREATE TABLE IF NOT EXISTS tool_grants (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     id uuid NOT NULL CHECK (id <> '00000000-0000-0000-0000-000000000000'),
     key_id uuid NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
@@ -17,7 +17,7 @@ CREATE TABLE tool_grants (
         AND (payload->'intent'->>'expires_at')::timestamptz = expires_at
         AND COALESCE((payload->>'revoked_at')::timestamptz = revoked_at, payload->>'revoked_at' IS NULL AND revoked_at IS NULL)) IS TRUE)
 );
-CREATE INDEX tool_grants_key_idx ON tool_grants (account_id,key_id,version) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS tool_grants_key_idx ON tool_grants (account_id,key_id,version) WHERE revoked_at IS NULL;
 
 -- +goose Down
 DROP TABLE tool_grants;

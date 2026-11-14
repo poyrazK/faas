@@ -2,12 +2,12 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- ADR-20261113230000: new connection identities own one PKCE authorization.
-ALTER TABLE tool_oauth_connections DROP CONSTRAINT tool_oauth_connections_state_check;
+ALTER TABLE tool_oauth_connections DROP CONSTRAINT IF EXISTS tool_oauth_connections_state_check;
 ALTER TABLE tool_oauth_connections ADD CONSTRAINT tool_oauth_connections_state_check
     CHECK(state IN ('authorization_pending','refresh_required','ready','refreshing','reconnect_required','revoked')) NOT VALID;
 ALTER TABLE tool_oauth_connections VALIDATE CONSTRAINT tool_oauth_connections_state_check;
 
-CREATE TABLE tool_oauth_authorizations (
+CREATE TABLE IF NOT EXISTS tool_oauth_authorizations (
     account_id uuid NOT NULL,
     connection_id uuid NOT NULL CHECK(connection_id <> '00000000-0000-0000-0000-000000000000'),
     state_sha256 text NOT NULL CHECK(state_sha256 ~ '^[0-9a-f]{64}$'),

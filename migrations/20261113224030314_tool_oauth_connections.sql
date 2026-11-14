@@ -2,7 +2,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- ADR-20261113220000: execution authorization is separate from monitoring.
-CREATE TABLE tool_oauth_connections (
+CREATE TABLE IF NOT EXISTS tool_oauth_connections (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     id uuid NOT NULL CHECK(id <> '00000000-0000-0000-0000-000000000000'),
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -20,7 +20,7 @@ CREATE TABLE tool_oauth_connections (
     CHECK((state='revoked')=(revoked_at IS NOT NULL)),
     CHECK((payload->>'id'=id::text AND payload->>'account_id'=account_id::text AND payload->>'app_id'=app_id::text) IS TRUE)
 );
-CREATE INDEX tool_oauth_connections_app_idx ON tool_oauth_connections(account_id,app_id,id);
+CREATE INDEX IF NOT EXISTS tool_oauth_connections_app_idx ON tool_oauth_connections(account_id,app_id,id);
 
 -- +goose Down
 DROP TABLE tool_oauth_connections;
