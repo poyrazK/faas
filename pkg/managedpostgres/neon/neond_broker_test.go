@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -32,6 +33,23 @@ func (l liveProjects) AccountsInProject(_ context.Context, project string) ([]st
 		return nil, nil
 	}
 	return []string{"acct-1"}, nil
+}
+
+// With the broker configured, apid holds no Neon key: a key left in its
+// environment stops the backend from loading (ADR-20261112160000 slice 3).
+func TestBrokerRefusesAKeyBesideIt(t *testing.T) {
+	t.Setenv(neond.BrokerEnv, "unix:///run/faas/neond-test.sock")
+	_, err := New(testBackend(), func(string) string { return "napi_left_behind" })
+	if err == nil || !strings.Contains(err.Error(), "TEST_NEON_API_KEY") || strings.Contains(err.Error(), "napi_left_behind") {
+		t.Fatalf("key beside the broker = %v; want a refusal naming the variable, never the key", err)
+	}
+	provider, err := New(testBackend(), func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("broker without a key = %v", err)
+	}
+	if p := provider.(*Provider); p.apiKey != "" || p.broker == nil {
+		t.Fatalf("provider holds key %q, broker %v", p.apiKey, p.broker)
+	}
 }
 
 func TestBrokerCallsNeonWithNeondsKey(t *testing.T) {

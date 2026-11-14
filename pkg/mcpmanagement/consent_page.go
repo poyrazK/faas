@@ -38,7 +38,7 @@ func consentPage(v consentView) string {
 <body><main><h1>Connect to Gregale</h1><p>Client: <strong>`, e(v.Client), `</strong></p>`)
 	if v.Account == "" && v.LoginURL == "" {
 		w(`<label>Agent tools <select name="toolsets" form="gregale-connect">`)
-		for _, choice := range []struct{ value, label string }{{"core", "Core tools (default)"}, {"core,release,provision,operate", "Deploy and operate"}, {"core,diagnose,operate", "Diagnose and recover"}, {"all", "All available tools"}} {
+		for _, choice := range []struct{ value, label string }{{"core", "Core tools (default)"}, {"core,release,provision,operate", "Deploy and operate"}, {"core,diagnose,operate", "Diagnose and recover"}, {"core,build-tools,registry", "Build and publish tools"}, {"core,registry", "Discover approved tools"}, {"core,registry,invoke", "Use approved tools"}, {"all", "All available tools"}} {
 			if _, err := connectionToolsets(choice.value, v.MaximumToolsets); err == nil {
 				w(`<option value="`, e(choice.value), `">`, e(choice.label), `</option>`)
 			}
@@ -72,6 +72,15 @@ func consentPage(v consentView) string {
 		w("\n", `<form id="gregale-connect" method="post" action="`, e(v.ConsentAction), `">`, hidden, "\n")
 		if v.Writes {
 			w(`<p><label><input type="checkbox" name="allow_writes" value="yes" required> Also allow reviewed deployments, production promotion, checked rollback, restarts, scaling, and domain/cron changes. These actions can change traffic and incur costs.</label></p>`)
+		}
+		if v.Publishing {
+			w(`<p><label><input type="checkbox" name="allow_tool_publishing" value="yes" required> Allow reviewed source builds, behavioral tool fixtures and publication with production promotion. Fixtures can change external data and incur costs. Requires all apps and default-environment writes below; invocation remains separately granted.</label></p>`)
+		}
+		if v.PrivateInvocations {
+			w(`<p><label><input type="checkbox" name="allow_private_tool_invocation" value="yes" required> Allow private tool calls using credentials the owner explicitly binds to this connection. Credentials stay with Gregale; calls can change external data and incur costs.</label></p>`)
+		}
+		if v.Invocations {
+			w(`<p><label><input type="checkbox" name="allow_tool_invocation" value="yes" required> Allow calls to open published tools that the owner explicitly grants to this connection. Calls can change external data and incur compute costs.</label></p>`)
 		}
 		w("\n", `<fieldset><legend>Apps this agent may access</legend><label><input type="radio" name="app_access" value="all" required> All apps in this account, including future apps</label><br><label><input type="radio" name="app_access" value="selected" required> Only selected apps</label>`)
 		for _, app := range v.Apps {

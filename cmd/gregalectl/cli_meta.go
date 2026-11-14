@@ -731,7 +731,7 @@ var cliCommands = []cliCommand{
 				Name:  "attention",
 				Short: "List customers who are probably stuck (failed deploys, refused bursts, stuck domains)",
 				Flags: []cliFlag{
-					{Name: "kind", Short: "signal kind", ClosedSet: []string{"deploy_failing", "refused_burst", "domain_stuck"}},
+					{Name: "kind", Short: "signal kind", ClosedSet: []string{"deploy_failing", "app_oom", "boot_failing", "jobs_failing", "domain_stuck", "refused_burst", "limit_pressure", "payment_failing"}},
 					{Name: "state", Short: "signal state", ClosedSet: []string{"active", "open", "dismissed", "resolved"}},
 					{Name: "account-id", Short: "only this account (uuid)"},
 					{Name: "limit", Short: "maximum signals (1..200)"},
@@ -786,6 +786,11 @@ var cliCommands = []cliCommand{
 				Name:  "revert-email",
 				Short: "Move a customer back to the email address their last confirmed change replaced",
 				Flags: accountMutationCLIFlags(),
+			},
+			{
+				Name:  "make-org-owner",
+				Short: "Make an active member the owner of an organization whose owner cannot act",
+				Flags: append(accountMutationCLIFlags(), cliFlag{Name: "org", Short: "organization slug", Req: true}),
 			},
 			{
 				Name:  "complimentary",

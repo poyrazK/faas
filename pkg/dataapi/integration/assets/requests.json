@@ -1,0 +1,188 @@
+{
+  "version": 2,
+  "scenarios": [
+    {
+      "name": "notes-rls",
+      "requests": [
+        {
+          "name": "Alice creates her note",
+          "method": "POST",
+          "path": "/rest/v1/notes",
+          "identity": "alice",
+          "expect": {
+            "status": 201
+          },
+          "body": {
+            "subject": "alice",
+            "body": "Alice private note"
+          },
+          "capture": {
+            "alice_note": "/0/id"
+          }
+        },
+        {
+          "name": "Bob cannot read Alice's note",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{alice_note}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Bob cannot update Alice's note",
+          "method": "PATCH",
+          "path": "/rest/v1/notes?id=eq.{{alice_note}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          },
+          "body": {
+            "body": "Forbidden change"
+          }
+        },
+        {
+          "name": "Bob cannot delete Alice's note",
+          "method": "DELETE",
+          "path": "/rest/v1/notes?id=eq.{{alice_note}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Alice cannot impersonate Bob on insert",
+          "method": "POST",
+          "path": "/rest/v1/notes",
+          "identity": "alice",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "subject": "bob",
+            "body": "Forbidden owner"
+          }
+        },
+        {
+          "name": "Alice cannot transfer ownership to Bob",
+          "method": "PATCH",
+          "path": "/rest/v1/notes?id=eq.{{alice_note}}",
+          "identity": "alice",
+          "expect": {
+            "status": 403
+          },
+          "body": {
+            "subject": "bob"
+          }
+        },
+        {
+          "name": "Alice still sees the unchanged note",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{alice_note}}&select=id,body",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{alice_note}}",
+                "body": "Alice private note"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Bob creates his own note",
+          "method": "POST",
+          "path": "/rest/v1/notes",
+          "identity": "bob",
+          "expect": {
+            "status": 201
+          },
+          "body": {
+            "subject": "bob",
+            "body": "Bob private note"
+          },
+          "capture": {
+            "bob_note": "/0/id"
+          }
+        },
+        {
+          "name": "Bob can read his own note",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{bob_note}}&select=id,body",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{bob_note}}",
+                "body": "Bob private note"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Alice cannot read Bob's note",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{bob_note}}",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Alice removes her note",
+          "method": "DELETE",
+          "path": "/rest/v1/notes?id=eq.{{alice_note}}&select=id",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{alice_note}}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Bob removes his note",
+          "method": "DELETE",
+          "path": "/rest/v1/notes?id=eq.{{bob_note}}&select=id",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "id": "{{bob_note}}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Alice confirms cleanup",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{alice_note}}",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Bob confirms cleanup",
+          "method": "GET",
+          "path": "/rest/v1/notes?id=eq.{{bob_note}}",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        }
+      ]
+    }
+  ]
+}

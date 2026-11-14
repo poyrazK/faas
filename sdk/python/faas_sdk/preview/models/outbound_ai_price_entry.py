@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.outbound_ai_long_context_tier import OutboundAILongContextTier
+
 
 T = TypeVar("T", bound="OutboundAIPriceEntry")
 
@@ -48,6 +52,13 @@ class OutboundAIPriceEntry:
     """Charged per million cached audio input tokens; the cached input price when absent."""
     output_audio_millicents_per_mtok: int | Unset = UNSET
     """Charged per million audio output tokens; the output price when absent."""
+    cache_write_1h_millicents_per_mtok: int | Unset = UNSET
+    """Charged per million tokens of cache writes kept for one hour. When absent they cost the higher of the cache-
+    write price and twice the input price."""
+    long_context: OutboundAILongContextTier | Unset = UNSET
+    """A higher price for a long prompt. When a call's input tokens (cached reads and cache writes included) exceed
+    above_input_tokens, its input-side prices are multiplied by input_percent/100 and its output prices by
+    output_percent/100."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -84,6 +95,12 @@ class OutboundAIPriceEntry:
         cached_input_audio_millicents_per_mtok = self.cached_input_audio_millicents_per_mtok
 
         output_audio_millicents_per_mtok = self.output_audio_millicents_per_mtok
+
+        cache_write_1h_millicents_per_mtok = self.cache_write_1h_millicents_per_mtok
+
+        long_context: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.long_context, Unset):
+            long_context = self.long_context.to_dict()
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -122,11 +139,17 @@ class OutboundAIPriceEntry:
             field_dict["cached_input_audio_millicents_per_mtok"] = cached_input_audio_millicents_per_mtok
         if output_audio_millicents_per_mtok is not UNSET:
             field_dict["output_audio_millicents_per_mtok"] = output_audio_millicents_per_mtok
+        if cache_write_1h_millicents_per_mtok is not UNSET:
+            field_dict["cache_write_1h_millicents_per_mtok"] = cache_write_1h_millicents_per_mtok
+        if long_context is not UNSET:
+            field_dict["long_context"] = long_context
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.outbound_ai_long_context_tier import OutboundAILongContextTier
+
         d = dict(src_dict)
         model_prefix = d.pop("model_prefix")
 
@@ -162,6 +185,15 @@ class OutboundAIPriceEntry:
 
         output_audio_millicents_per_mtok = d.pop("output_audio_millicents_per_mtok", UNSET)
 
+        cache_write_1h_millicents_per_mtok = d.pop("cache_write_1h_millicents_per_mtok", UNSET)
+
+        _long_context = d.pop("long_context", UNSET)
+        long_context: OutboundAILongContextTier | Unset
+        if isinstance(_long_context, Unset):
+            long_context = UNSET
+        else:
+            long_context = OutboundAILongContextTier.from_dict(_long_context)
+
         outbound_ai_price_entry = cls(
             model_prefix=model_prefix,
             input_millicents_per_mtok=input_millicents_per_mtok,
@@ -180,6 +212,8 @@ class OutboundAIPriceEntry:
             input_audio_millicents_per_mtok=input_audio_millicents_per_mtok,
             cached_input_audio_millicents_per_mtok=cached_input_audio_millicents_per_mtok,
             output_audio_millicents_per_mtok=output_audio_millicents_per_mtok,
+            cache_write_1h_millicents_per_mtok=cache_write_1h_millicents_per_mtok,
+            long_context=long_context,
         )
 
         outbound_ai_price_entry.additional_properties = d

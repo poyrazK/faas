@@ -18,8 +18,11 @@ trap 'rm -rf "${tmp_dir}"' EXIT
 gomods=$(git ls-files -- '*/go.mod')
 while IFS= read -r gomod; do
   [[ -n "${gomod}" ]] || continue
+  # sdk/install-tests holds consumer templates: scripts/sdk_install_check.py
+  # copies them into a scratch directory and points them at the built SDK
+  # with a replace directive, so in the repository they cannot resolve.
   case "/${gomod}" in
-    */testdata/*|*/vendor/*) continue ;;
+    */testdata/*|*/vendor/*|*/install-tests/*) continue ;;
   esac
   dir=$(dirname "${gomod}")
   (cd "${dir}" && "${script_dir}/run-govulncheck.sh" "${tmp_dir}/module.json" ./...)

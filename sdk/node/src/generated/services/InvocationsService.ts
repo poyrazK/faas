@@ -28,6 +28,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class InvocationsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Sync-invoke an app; long-poll for the result.
    * Enqueues an invocation row and waits for the drain to drive it
@@ -59,7 +60,7 @@ export class InvocationsService {
      */
     xGregaleRelease?: string,
   }): CancelablePromise<InvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/invoke',
       path: {
@@ -119,7 +120,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/quotas',
       path: {
@@ -162,7 +163,7 @@ export class InvocationsService {
      */
     slug: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/readiness',
       path: {
@@ -224,7 +225,7 @@ export class InvocationsService {
      */
     cursor?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/quota-migration/plan',
       path: {
@@ -288,7 +289,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/quota-migration',
       path: {
@@ -369,7 +370,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/quota-migration/start',
       path: {
@@ -448,7 +449,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/quota-migration/step',
       path: {
@@ -513,7 +514,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/quota-policy',
       path: {
@@ -627,7 +628,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/quota-policy/preview',
       path: {
@@ -743,7 +744,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/quota-policy/apply',
       path: {
@@ -813,7 +814,7 @@ export class InvocationsService {
      */
     cursor?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/registry',
       path: {
@@ -891,7 +892,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/registry/enable',
       path: {
@@ -956,7 +957,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/registry/cleanup',
       path: {
@@ -1033,7 +1034,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/registry/cleanup/start',
       path: {
@@ -1116,7 +1117,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/registry/cleanup/step',
       path: {
@@ -1181,7 +1182,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/retirement',
       path: {
@@ -1262,7 +1263,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/retirement/start',
       path: {
@@ -1345,7 +1346,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/retirement/step',
       path: {
@@ -1432,7 +1433,7 @@ export class InvocationsService {
       ttl_seconds: number;
     },
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/session-grants',
       path: {
@@ -1476,7 +1477,7 @@ export class InvocationsService {
      */
     grant: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/entities/session-grants/{grant}',
       path: {
@@ -1534,7 +1535,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/connect',
       path: {
@@ -1566,7 +1567,7 @@ export class InvocationsService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/session-connect',
       path: {
@@ -1628,7 +1629,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<DurableEntityInspectResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/inspect',
       path: {
@@ -1702,7 +1703,7 @@ export class InvocationsService {
      */
     cursor?: string,
   }): CancelablePromise<DurableEntityBackupPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/backups',
       path: {
@@ -1777,7 +1778,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<DurableEntityBackup> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/backups/get',
       path: {
@@ -1829,7 +1830,7 @@ export class InvocationsService {
     slug: string,
     requestBody: DurableEntityRestoreRequest,
   }): CancelablePromise<DurableEntityRestorePreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/restore/preview',
       path: {
@@ -1894,7 +1895,7 @@ export class InvocationsService {
      */
     platformTenantId?: string,
   }): CancelablePromise<DurableEntityStateExport> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/entities/export',
       path: {
@@ -1949,7 +1950,7 @@ export class InvocationsService {
     slug: string,
     requestBody: DurableEntityRestoreRequest,
   }): CancelablePromise<DurableEntityRestoreValidationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/restore/validate',
       path: {
@@ -2010,7 +2011,7 @@ export class InvocationsService {
     slug: string,
     requestBody: DurableEntityRestoreRequest,
   }): CancelablePromise<DurableEntityRestoreResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/restore',
       path: {
@@ -2067,7 +2068,7 @@ export class InvocationsService {
     slug: string,
     requestBody: DurableEntityRetryRequest,
   }): CancelablePromise<DurableEntityRetryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/retry',
       path: {
@@ -2143,7 +2144,7 @@ export class InvocationsService {
     slug: string,
     requestBody: DurableEntityInvokeRequest,
   }): CancelablePromise<DurableEntityInvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/entities/invoke',
       path: {
@@ -2207,7 +2208,7 @@ export class InvocationsService {
      */
     xGregaleRelease?: string,
   }): CancelablePromise<AsyncInvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/invoke/async',
       path: {
@@ -2251,7 +2252,7 @@ export class InvocationsService {
      */
     environment?: string,
   }): CancelablePromise<WorkPolicyListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/work-policies',
       path: {
@@ -2299,7 +2300,7 @@ export class InvocationsService {
      */
     ifWorkloadRevision?: number,
   }): CancelablePromise<WorkPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/work-policies/{name}',
       path: {
@@ -2351,7 +2352,7 @@ export class InvocationsService {
      */
     ifWorkloadRevision?: number,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/work-policies/{name}',
       path: {
@@ -2405,7 +2406,7 @@ export class InvocationsService {
      */
     environment?: string,
   }): CancelablePromise<CancelPendingWorkResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/work-policies/{name}/cancel-pending',
       path: {
@@ -2449,7 +2450,7 @@ export class InvocationsService {
      */
     limit?: number,
   }): CancelablePromise<ListInvocationsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/invocations',
       query: {
@@ -2479,7 +2480,7 @@ export class InvocationsService {
      */
     id: string,
   }): CancelablePromise<Invocation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/invocations/{id}',
       path: {
@@ -2530,7 +2531,7 @@ export class InvocationsService {
      */
     id: string,
   }): CancelablePromise<AsyncInvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/invocations/{id}/replay',
       path: {
@@ -2580,7 +2581,7 @@ export class InvocationsService {
      */
     id: string,
   }): CancelablePromise<AsyncInvokeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/invocations/{id}/replay-keyed',
       path: {

@@ -163,7 +163,8 @@ func (s *server) applyManifestWorkloads(
 		return nil, false, problem
 	}
 	dependencies := manifest.MainWorkloadDependencies()
-	if len(manifest.Companions) == 0 && len(manifest.Extensions) == 0 && len(dependencies) == 0 {
+	readiness := manifestReadinessProbe(manifest)
+	if len(manifest.Companions) == 0 && len(manifest.Extensions) == 0 && len(dependencies) == 0 && readiness == nil {
 		return nil, false, nil
 	}
 	if problem := req.NormalizeCompanions(); problem != nil {
@@ -183,6 +184,19 @@ func (s *server) applyManifestWorkloads(
 			req.Overrides = &api.CreateDeploymentOverrides{}
 		}
 		req.Overrides.MainDependsOn = dependencies
+	}
+	// gregale.yaml hosting.readiness_probe; a request override wins for that
+	// one deployment.
+	if readiness != nil && (req.Overrides == nil || req.Overrides.ReadinessProbe == nil) {
+		if req.Overrides == nil {
+			req.Overrides = &api.CreateDeploymentOverrides{}
+		}
+		probe := *readiness
+		if readiness.GRPC != nil {
+			grpc := *readiness.GRPC
+			probe.GRPC = &grpc
+		}
+		req.Overrides.ReadinessProbe = &probe
 	}
 	overrides, problem := validateOverrides(req, limits, acct.Plan)
 	if problem != nil {
@@ -462,7 +476,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	}
 	if len(m.Triggers) == 0 && len(m.EventTriggers) == 0 {
 		if sourceManifestReconcilesEvents(ctx) {
-			if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, &staged); problem != nil {
+			if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, deploymentScope, &staged); problem != nil {
 				return staged, problem
 			}
 		}
@@ -632,7 +646,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		})
 	}
 	if len(m.EventTriggers) > 0 || sourceManifestReconcilesEvents(ctx) {
-		if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, &staged); problem != nil {
+		if problem := s.applySourceRefEventTriggers(ctx, acct, app, m, deploymentScope, &staged); problem != nil {
 			return staged, problem
 		}
 	}
@@ -668,13 +682,25 @@ func eventSubscriptionManifestKey(source, typ string, filter json.RawMessage) (s
 // applySourceRefEventTriggers installs the manifest's event_triggers for the
 // app and, on a production deploy, makes them the app's whole set
 // (ADR-20261031130000).
-func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, staged *sourceRefManifestStaged) *api.Problem {
+func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Account, app state.App, m *gregalemanifest.Manifest, deploymentScope string, staged *sourceRefManifestStaged) *api.Problem {
 	eventStore, ok := s.store.(state.EventSubscriptionStore)
 	if !ok {
 		if len(m.EventTriggers) == 0 {
 			return nil
 		}
 		return api.ErrCapacity("event subscriptions are unavailable")
+	}
+	// A deploy installs into its own environment (ADR-20261104120000): a
+	// stage's subscriptions receive the stage's events, never production's.
+	scope := state.NormalizeCronDeploymentScope(deploymentScope)
+	if app.ProjectID == "" {
+		// A project-less app's legacy deployment scopes are not
+		// environments; its subscriptions stay app-wide, as before.
+		scope = ""
+	}
+	scoped, ok := s.store.(state.EventSubscriptionScopeStore)
+	if !ok && scope != "" {
+		return api.ErrCapacity("environment event subscriptions are unavailable")
 	}
 	workBindings, ok := s.store.(state.EventWorkBindingStore)
 	if !ok {
@@ -688,6 +714,9 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 	subscriptionKeys := make(map[string]state.EventSubscription, len(subscriptions))
 	ids := make([]string, 0, len(subscriptions))
 	for _, subscription := range subscriptions {
+		if subscription.DeploymentScope != scope {
+			continue
+		}
 		key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
 		if keyErr == nil {
 			subscriptionKeys[key] = subscription
@@ -706,6 +735,12 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 		if convertErr != nil {
 			return manifestValidationProblem(convertErr)
 		}
+		// Work policies are the app's production configuration; a stage's
+		// event deliveries run as plain stage invocations for now.
+		if scope != "" && (declaration.WorkPolicy != "" || declaration.Ordered) {
+			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest",
+				"triggers.event work_policy and ordered are not yet available in environment "+scope+"; deploy them to production")
+		}
 		key, keyErr := eventSubscriptionManifestKey(subscription.Source, subscription.Type, subscription.Filter)
 		if keyErr != nil {
 			return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", keyErr.Error())
@@ -717,7 +752,15 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 		if !exists || !row.Enabled {
 			wasDisabled := exists && !row.Enabled
 			var inserted bool
-			row, inserted, err = eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
+			if scope == "" {
+				row, inserted, err = eventStore.UpsertEventSubscription(ctx, acct.ID, app.ID, subscription.Source, subscription.Type, subscription.Filter)
+			} else {
+				row, inserted, err = scoped.UpsertEventSubscriptionInScope(ctx, acct.ID, app.ID, scope, subscription.Source, subscription.Type, subscription.Filter)
+				if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrInvalidArgument) {
+					return api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest",
+						"environment "+scope+" does not exist in the app's project")
+				}
+			}
 			if err != nil {
 				return sourceRefEventSubscriptionProblem(err)
 			}
@@ -780,7 +823,9 @@ func (s *server) applySourceRefEventTriggers(ctx context.Context, acct state.Acc
 			FairnessSelector: declaration.WorkFairnessKey,
 			Action:           declaration.EffectiveWorkAction(), Ordered: declaration.Ordered}
 	}
-	reconcile := sourceManifestReconcilesEvents(ctx) && s.manifestEventTriggersNameKnownApps(ctx, app, m)
+	// Only production records the app's declared set: the intent is applied
+	// to production subscriptions, never a stage's.
+	reconcile := scope == "" && sourceManifestReconcilesEvents(ctx) && s.manifestEventTriggersNameKnownApps(ctx, app, m)
 	if reconcile {
 		staged.eventSubscriptionIntent = make([]string, 0, len(declared))
 		for id := range declared {
@@ -1367,4 +1412,12 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 		_ = s.notif.Notify(ctx, db.NotifyCronChanged, `{"kind":"deleted","app_id":"`+staged.appID+`"}`)
 	}
 	return errors.Join(errs...)
+}
+
+// manifestReadinessProbe is gregale.yaml's hosting.readiness_probe, or nil.
+func manifestReadinessProbe(manifest *gregalemanifest.Manifest) *api.DeploymentReadinessProbe {
+	if manifest == nil || manifest.Hosting == nil {
+		return nil
+	}
+	return manifest.Hosting.ReadinessProbe
 }

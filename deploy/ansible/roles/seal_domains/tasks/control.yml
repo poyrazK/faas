@@ -68,12 +68,13 @@
     that:
       - (faas_seal_domain_control_contracted | bool) == (faas_seal_domain_delivery_contracted | bool)
       - not (faas_seal_domain_control_contracted | bool) or faas_seal_domain_delivery_writes == 'domain'
-      - not (faas_seal_domain_control_contracted | bool) or faas_seal_domain_delivery_identity_src | length > 0
+      - not (faas_seal_domain_control_contracted | bool) or faas_seal_domain_delivery_identity_src | length > 0 or (faas_seal_domain_delivery_retired_on_compute | bool)
     fail_msg: >-
       schedd contracts the control and delivery domains together: set
       faas_seal_domain_control_contracted and
       faas_seal_domain_delivery_contracted both or neither, with
-      faas_seal_domain_delivery_writes domain and the delivery identity staged.
+      faas_seal_domain_delivery_writes domain and the delivery identity staged
+      (or retired on this compute node, faas_seal_domain_delivery_retired_on_compute).
 
 - name: seal_domains — check schedd's values open with the domains alone before it drops the fleet identity
   ansible.builtin.command:
@@ -87,7 +88,9 @@
       - --db-env
       - "{{ faas_seal_domain_db_env }}"
       - --json
-  loop: [control, delivery]
+  # A node whose delivery identity is retired cannot open delivery values;
+  # the control plane's converge runs that check.
+  loop: "{{ ['control'] if (faas_seal_domain_delivery_retired_on_compute | bool) else ['control', 'delivery'] }}"
   changed_when: false
   when: faas_seal_domain_control_contracted | bool
 

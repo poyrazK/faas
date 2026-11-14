@@ -4627,6 +4627,9 @@ func (s *PgStore) CompareAndSetAppStatus(ctx context.Context, id string, from, t
 	if from != to && (from == AppDeleted || to == AppDeleted) {
 		return s.compareAndSetAppTrafficStatus(ctx, id, from, to)
 	}
+	if from == AppEvictedCold && to == AppActive {
+		return s.wakeAppStatus(ctx, id)
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update apps
 		    set status = $3,
@@ -4639,6 +4642,36 @@ func (s *PgStore) CompareAndSetAppStatus(ctx context.Context, id string, from, t
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// wakeAppStatus is the parked -> active claim. In the same statement it
+// clears the app's recoverable deployment parks (liveness_exhausted,
+// lifecycle_park, admin_park): parked_reason was stamped once and never
+// cleared, so a release that recovered from a liveness park read "parked:
+// liveness failed" after any later park, and the build and deployment
+// dependency gates kept treating it as parked (2026-11-13). A security park
+// stays until its own release flow.
+func (s *PgStore) wakeAppStatus(ctx context.Context, id string) (bool, error) {
+	var woke int
+	err := s.pool.QueryRow(ctx,
+		`with woke as (
+		     update apps
+		        set status = 'active', park_transition_id = null
+		      where id = $1 and status = 'evicted_cold'
+		  returning id
+		 ), cleared as (
+		     update deployments
+		        set parked_reason = null, parked_at = null
+		      where app_id in (select id from woke)
+		        and parked_reason in ('liveness_exhausted', 'lifecycle_park', 'admin_park')
+		 )
+		 select count(*) from woke`,
+		id,
+	).Scan(&woke)
+	if err != nil {
+		return false, err
+	}
+	return woke == 1, nil
 }
 
 // nilOrBytes returns p.PublicAuth.Sealed when SetPublicAuth is
@@ -6038,6 +6071,13 @@ func deleteProjectEnvironmentRowsTx(ctx context.Context, tx pgx.Tx, accountID, p
 	if _, err := tx.Exec(ctx, `
 		delete from crons c using apps a
 		 where c.app_id = a.id and a.account_id = $1 and a.project_id = $2 and c.deployment_scope = $3
+	`, accountID, projectID, slug); err != nil {
+		return mapErr(err)
+	}
+	// So do its event subscriptions; their work bindings cascade.
+	if _, err := tx.Exec(ctx, `
+		delete from event_subscriptions s using apps a
+		 where s.app_id = a.id and a.account_id = $1 and a.project_id = $2 and s.deployment_scope = $3
 	`, accountID, projectID, slug); err != nil {
 		return mapErr(err)
 	}
@@ -27766,12 +27806,15 @@ func mapErr(err error) error {
 		case "environment_recovery_budget":
 			observed, _ := strconv.ParseInt(admission.Detail, 10, 64)
 			return &EnvironmentRecoveryQuotaError{Observed: observed}
-		case "environment_recovery_retained":
+		case "environment_recovery_retained",
+			"event_subscription_environment_membership", "event_subscription_scope_identity":
 			return ErrConflict
 		case "environment_recovery_artifact_unavailable":
 			return ErrLayerArtifactRetired
 		case "account_shared_app_ownership_pending":
 			return ErrOrgAppOwnershipPending
+		case "org_owner_account_inactive":
+			return ErrOrgOwnerInactive
 		case accountManagedPostgresDatabasesConstraint:
 			return accountManagedPostgresDatabasesError(admission.Detail)
 		case "migration_admission_current", "migration_source_current", "function_migration_node_pending":

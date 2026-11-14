@@ -1145,6 +1145,13 @@ UPDATE managed_postgres_cap_events SET mail_intent_id=sqlc.arg(intent_id)::uuid
 WHERE subject_id=sqlc.arg(subject_id)::uuid AND period_start=sqlc.arg(period_start)::timestamptz
   AND threshold=sqlc.arg(threshold)::text AND mail_intent_id IS NULL;
 
+-- name: LinkManagedPostgresEgressHoldNotice :execrows
+-- ADR-20261110160000 amendment 2026-11-13: the egress hold email is per
+-- database; its intent claims that database's row for the month.
+UPDATE managed_postgres_egress_hold_notices SET mail_intent_id=sqlc.arg(intent_id)::uuid
+WHERE database_id=sqlc.arg(database_id)::uuid AND period_start=sqlc.arg(period_start)::timestamptz
+  AND subject_id=sqlc.arg(subject_id)::uuid AND mail_intent_id IS NULL;
+
 -- name: ShareManagedPostgresCapSubmissionAccount :one
 SELECT a.email,a.status,a.deletion_requested_at,o.from_address,m.sender_address
 FROM internal_mail_messages m JOIN platform_mail_producer_outbox o

@@ -174,8 +174,13 @@ the next push deploys them.
 
 - `condition: service_healthy` on another service holds this service's new
   release until that service's deployment is live: the one being deployed
-  with it, or the one already serving. A failed or rolled-back release of the
-  dependency does not block it.
+  with it, or the one already serving. If the dependency's release from the
+  same deploy fails, this service's release fails too (`dependency_failed`)
+  and its current release keeps serving, so the two never run mixed versions.
+  An earlier failed or rolled-back release of the dependency is not waited
+  for: the gate waits on the release deployed with it, or the one serving.
+  Services without `depends_on` release independently; use environment
+  release sets ([preview](env.md)) to switch them together.
 - `condition: service_healthy` on a datastore (`db: postgres:16`) is accepted as
   a plain dependency, because Gregale does not run the datastore as a service.
   The plan says so; have the service retry its connection until the database

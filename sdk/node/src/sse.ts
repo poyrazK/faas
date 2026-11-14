@@ -134,6 +134,11 @@ export async function* streamSse(
     throw new Error('streamSse: response has no body');
   }
   const reader = resp.body.getReader();
+  // Custom transports may not wire the signal into their response body. Wake
+  // a pending read on abort as well as checking between chunks.
+  const onAbort = () => { void reader.cancel(signal?.reason).catch(() => undefined); };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  if (signal?.aborted) onAbort();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
   try {
@@ -155,6 +160,7 @@ export async function* streamSse(
       }
     }
   } finally {
+    signal?.removeEventListener('abort', onAbort);
     // Always release the reader; cancelled calls must not leak.
     try { reader.releaseLock(); } catch { /* already released */ }
   }
