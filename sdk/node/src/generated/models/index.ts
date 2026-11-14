@@ -2147,6 +2147,7 @@ export type { OutboundAIEvaluation } from './OutboundAIEvaluation.js';
 export type { OutboundAIEvaluationItem } from './OutboundAIEvaluationItem.js';
 export type { OutboundAIEvaluationList } from './OutboundAIEvaluationList.js';
 export type { OutboundAIEvaluationTargetStats } from './OutboundAIEvaluationTargetStats.js';
+export type { OutboundAILongContextTier } from './OutboundAILongContextTier.js';
 export type { OutboundAIModeration } from './OutboundAIModeration.js';
 export type { OutboundAIOnlineEvaluation } from './OutboundAIOnlineEvaluation.js';
 export type { OutboundAIPriceCatalogResponse } from './OutboundAIPriceCatalogResponse.js';

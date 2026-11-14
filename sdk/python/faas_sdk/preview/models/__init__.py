@@ -4154,6 +4154,7 @@ from .outbound_ai_evaluation_list import OutboundAIEvaluationList
 from .outbound_ai_evaluation_state import OutboundAIEvaluationState
 from .outbound_ai_evaluation_target_stats import OutboundAIEvaluationTargetStats
 from .outbound_ai_evaluation_verdict_type_0 import OutboundAIEvaluationVerdictType0
+from .outbound_ai_long_context_tier import OutboundAILongContextTier
 from .outbound_ai_moderation import OutboundAIModeration
 from .outbound_ai_moderation_action import OutboundAIModerationAction
 from .outbound_ai_moderation_categories_item import OutboundAIModerationCategoriesItem
@@ -10439,6 +10440,7 @@ __all__ = (
     "OutboundAIEvaluationState",
     "OutboundAIEvaluationTargetStats",
     "OutboundAIEvaluationVerdictType0",
+    "OutboundAILongContextTier",
     "OutboundAIModeration",
     "OutboundAIModerationAction",
     "OutboundAIModerationCategoriesItem",
