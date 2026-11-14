@@ -127,6 +127,11 @@ gregale github setup --preview-mode branch
 - Each push moves the branch's expiry to the preview TTL from now, up to the
   branch's longest lifetime. Closing the pull request deletes the branch
   24 hours later.
+- A push rebuilds only the workloads whose files changed; the others keep
+  serving their last build. A change to a shared file rebuilds them all.
+- Turning previews off, disconnecting the repository or uninstalling the
+  GitHub App deletes the project's pull request branches within a minute.
+  Branches you made yourself are not touched.
 - Previews count against the branch limit below. Past it, or when Gregale
   cannot make the branch, the pull request gets an app preview and its check
   run says why.
