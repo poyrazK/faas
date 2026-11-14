@@ -18,6 +18,7 @@ from ..models.project_environment_branch_response_private_networks import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.project_environment_branch_bucket import ProjectEnvironmentBranchBucket
     from ..models.project_environment_branch_database import ProjectEnvironmentBranchDatabase
     from ..models.project_environment_branch_workload import ProjectEnvironmentBranchWorkload
 
@@ -50,6 +51,8 @@ class ProjectEnvironmentBranchResponse:
     """When the branch was created. Reported by the branch's own view."""
     databases: list[ProjectEnvironmentBranchDatabase] | Unset = UNSET
     """The managed PostgreSQL copies the branch owns. Reported by the branch's own view."""
+    buckets: list[ProjectEnvironmentBranchBucket] | Unset = UNSET
+    """The overlay buckets the branch owns on its parent's buckets. Reported by the branch's own view."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -87,6 +90,13 @@ class ProjectEnvironmentBranchResponse:
                 databases_item = databases_item_data.to_dict()
                 databases.append(databases_item)
 
+        buckets: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.buckets, Unset):
+            buckets = []
+            for buckets_item_data in self.buckets:
+                buckets_item = buckets_item_data.to_dict()
+                buckets.append(buckets_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -108,11 +118,14 @@ class ProjectEnvironmentBranchResponse:
             field_dict["created_at"] = created_at
         if databases is not UNSET:
             field_dict["databases"] = databases
+        if buckets is not UNSET:
+            field_dict["buckets"] = buckets
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_environment_branch_bucket import ProjectEnvironmentBranchBucket
         from ..models.project_environment_branch_database import ProjectEnvironmentBranchDatabase
         from ..models.project_environment_branch_workload import ProjectEnvironmentBranchWorkload
 
@@ -158,6 +171,15 @@ class ProjectEnvironmentBranchResponse:
 
                 databases.append(databases_item)
 
+        _buckets = d.pop("buckets", UNSET)
+        buckets: list[ProjectEnvironmentBranchBucket] | Unset = UNSET
+        if _buckets is not UNSET:
+            buckets = []
+            for buckets_item_data in _buckets:
+                buckets_item = ProjectEnvironmentBranchBucket.from_dict(buckets_item_data)
+
+                buckets.append(buckets_item)
+
         project_environment_branch_response = cls(
             parent=parent,
             branch_point=branch_point,
@@ -170,6 +192,7 @@ class ProjectEnvironmentBranchResponse:
             workloads=workloads,
             created_at=created_at,
             databases=databases,
+            buckets=buckets,
         )
 
         project_environment_branch_response.additional_properties = d
