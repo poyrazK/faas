@@ -22,7 +22,7 @@ var deployRequestCLISurfaces = map[string]updateAppCLISurface{
 	"sidecars":                    {KnownGap: "legacy sidecar list; gregale deploy sends companions instead"},
 	"workflows":                   {Path: "gregale.yaml workflows (loaded by gregale deploy)"},
 	"traffic_percent":             {Path: "gregale deploy --traffic-percent / --no-traffic", AppFlags: []string{"traffic-percent", "no-traffic"}},
-	"scope":                       {Path: "gregale deploy --env (environment scope)", AppFlags: []string{"env"}},
+	"scope":                       {Path: "gregale deploy --env (environment scope)"},
 	"environment":                 {Path: "gregale deploy --environment", AppFlags: []string{"environment"}},
 	"reason":                      {Path: "gregale deploy --reason", AppFlags: []string{"reason"}},
 	"tag":                         {Path: "gregale deploy --tag", AppFlags: []string{"tag"}},
@@ -46,5 +46,5 @@ var deployOverridesCLISurfaces = map[string]updateAppCLISurface{
 	"healthcheck":     {Path: "gregale deploy --healthcheck-path / --healthcheck-grpc", AppFlags: []string{"healthcheck-path", "healthcheck-grpc"}},
 	"readiness_probe": {Path: "gregale deploy --readiness-path / gregale.yaml hosting.readiness_probe", AppFlags: []string{"readiness-path"}},
 	"liveness_probe":  {KnownGap: "no CLI flag or gregale.yaml key; API-only today"},
-	"scope":           {Path: "gregale deploy --env", AppFlags: []string{"env"}},
+	"scope":           {Path: "gregale deploy --env"},
 }

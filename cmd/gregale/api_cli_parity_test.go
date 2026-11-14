@@ -3,7 +3,6 @@
 package main_test
 
 import (
-	"bufio"
 	"os"
 	"reflect"
 	"sort"
@@ -90,15 +89,13 @@ func TestCLIAPIParityExemptionsAreFrozen(t *testing.T) {
 			}
 		}
 	}
-	file, err := os.Open(parityExemptionsFile)
+	body, err := os.ReadFile(parityExemptionsFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = file.Close() }()
 	listed := map[string]bool{}
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for _, raw := range strings.Split(string(body), "\n") {
+		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
