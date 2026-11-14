@@ -19,6 +19,16 @@ type debugRegressionComparison struct {
 	cur, prev          sqlc.ListDeploymentsForCompareRow
 	curStart, curEnd   time.Time
 	prevStart, prevEnd time.Time
+	// ownStart and ownEnd are the predecessor's own last window of traffic.
+	// They differ from prevStart/prevEnd only side by side, where a route
+	// the predecessor did not serve in the shared window is judged against
+	// this window instead.
+	ownStart, ownEnd time.Time
+}
+
+// sideBySide reports whether the comparison uses one shared window.
+func (c debugRegressionComparison) sideBySide() bool {
+	return !c.ownStart.Equal(c.prevStart) || !c.ownEnd.Equal(c.prevEnd)
 }
 
 // chooseRegressionComparison picks what the regression detector compares.
@@ -84,6 +94,7 @@ func chooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now ti
 		// half an hour after every ordinary rollout.
 		out.prev = serving[1].row
 		out.prevStart, out.prevEnd = out.curStart, out.curEnd
+		out.ownStart, out.ownEnd = ownRegressionWindow(serving[1].last)
 		return out, true
 	}
 	others = append(others, serving[1:]...)
@@ -93,11 +104,16 @@ func chooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now ti
 	sort.SliceStable(others, func(i, j int) bool { return others[i].last.After(others[j].last) })
 	prev := others[0]
 	out.prev = prev.row
-	// The predecessor's last window of traffic; the end is exclusive in the
-	// queries, so step past its last row.
-	out.prevEnd = prev.last.Add(time.Millisecond)
-	out.prevStart = out.prevEnd.Add(-debugRegressionBaselineWindow)
+	out.prevStart, out.prevEnd = ownRegressionWindow(prev.last)
+	out.ownStart, out.ownEnd = out.prevStart, out.prevEnd
 	return out, true
+}
+
+// ownRegressionWindow is a deployment's last window of traffic ending at its
+// last row; the end is exclusive in the queries, so it steps past that row.
+func ownRegressionWindow(last time.Time) (time.Time, time.Time) {
+	end := last.Add(time.Millisecond)
+	return end.Add(-debugRegressionBaselineWindow), end
 }
 
 // regressionTime reads a MIN/MAX(received_at) column, which sqlc types as

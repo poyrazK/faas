@@ -169,10 +169,13 @@ func defaultProfileQuery(client *Client, slug string, deployment, runtime, start
 		if err != nil {
 			return fmt.Errorf("look up the app's runtime: %w", err)
 		}
-		if app.Runtime == "" {
-			return fmt.Errorf("the app has no recorded runtime; pass --runtime (e.g. node22, python312, go124)")
-		}
+		// Samples carry the app's runtime, or "custom" for an app that
+		// records none (source-built HTTP apps), as vmmd labels them and
+		// the dashboard queries them.
 		*runtime = app.Runtime
+		if *runtime == "" {
+			*runtime = "custom"
+		}
 	}
 	if *deployment == "" {
 		status, err := client.GetAppDebugStatus(ctx, slug, "1h")
