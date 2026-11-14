@@ -97,7 +97,15 @@ startup rather than being ignored. `gregale auth config` and
 and CSRF-bound forms, write those secrets from typed settings validated by one
 shared package (`pkg/authsettings`): sign-up, email confirmation, site and
 redirect URLs, minimum password length and required character classes,
-leaked-password checks, TOTP enrolment and nineteen OAuth providers. Turning
+leaked-password checks, TOTP enrolment and nineteen OAuth providers. Two
+defaults are Gregale's rather than GoTrue's: a minimum password length of
+eight characters (NIST SP 800-63B; GoTrue's six is also below the floor the
+settings accept, and a lower value an app still holds is raised at start
+rather than stopping it) and the leaked-password check on. That check sends
+Have I Been Pwned only a five-character SHA-1 prefix, from sign-up and
+password changes, and lets the password through if the service cannot be
+reached. `gregale auth status` and `auth config` warn while sign-up is open
+without CAPTCHA or the check is off. Turning
 MFA off stops new TOTP enrolments only, so users who enrolled keep verifying.
 The front sets every enabled provider's callback to its own `/auth/v1/callback`.
 `/settings/v1` reports the running configuration without credentials, since the

@@ -1,5 +1,5 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, customClaimsBytes: 1000, signupDomains: 100, waitlistPending: 10000, signupApproveBatch: 100, impersonationDefaultMinutes: 30, impersonationMaxMinutes: 60, reauthenticationSeconds: 600, sessionMinMinutes: 15, sessionMaxMinutes: 525600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000, serviceAccountsPerOrg: 50, serviceAccountSecrets: 2, serviceAccountSecretMaxDays: 3650, serviceAccountTokensPerMinute: 60 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, customClaimsBytes: 1000, signupDomains: 100, waitlistPending: 10000, signupApproveBatch: 100, impersonationDefaultMinutes: 30, impersonationMaxMinutes: 60, reauthenticationSeconds: 600, sessionMinMinutes: 15, sessionMaxMinutes: 525600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000, serviceAccountsPerOrg: 50, serviceAccountSecrets: 2, serviceAccountSecretMaxDays: 3650, serviceAccountTokensPerMinute: 60, passwordMinLength: 8 })
 
 import { createECDH, createPrivateKey } from 'node:crypto'
 import { totalmem } from 'node:os'
@@ -219,6 +219,27 @@ export function signupPolicy(env) {
   return { allowed: allowed.length ? new Set(allowed) : null, blocked: new Set(blocked), disposable: disposable === '1', access }
 }
 
+// passwordDefaults replace GoTrue's: at least passwordMinLength characters
+// (NIST SP 800-63B) and Have I Been Pwned's k-anonymity check on sign-up and
+// password changes. GoTrue sends only a five-character hash prefix and lets
+// the password through if the service cannot be reached.
+export const passwordDefaults = Object.freeze({
+  GOTRUE_PASSWORD_MIN_LENGTH: String(limits.passwordMinLength),
+  GOTRUE_PASSWORD_HIBP_ENABLED: 'true',
+})
+
+// passwordPolicyEnv raises a minimum length below the floor, which an app
+// configured before the floor rose may still hold, rather than refusing to
+// start; status reports the length GoTrue enforces.
+export function passwordPolicyEnv(passthrough) {
+  const configured = passthrough.GOTRUE_PASSWORD_MIN_LENGTH
+  if (configured === undefined) return {}
+  if (!/^[0-9]{1,3}$/.test(configured)) throw new Error('GOTRUE_PASSWORD_MIN_LENGTH must be a number')
+  if (Number(configured) >= limits.passwordMinLength) return {}
+  console.error(JSON.stringify({ level: 'warning', event: 'password_min_length_raised', configured: Number(configured), enforced: limits.passwordMinLength }))
+  return { GOTRUE_PASSWORD_MIN_LENGTH: String(limits.passwordMinLength) }
+}
+
 export function runtimeConfig(env) {
   const external = httpsOrigin(env.AUTH_EXTERNAL_URL, 'AUTH_EXTERNAL_URL')
   const site = redirectURL(env.AUTH_SITE_URL, 'AUTH_SITE_URL')
@@ -246,7 +267,11 @@ export function runtimeConfig(env) {
   const gotrueEnv = {
     ...callbacks,
     ...webauthnEnv(env, external, site, redirects),
+    // Secure defaults that the owner's typed settings override: GoTrue's own
+    // are six characters and no leaked-password check (passwordPolicyEnv).
+    ...passwordDefaults,
     ...passthrough,
+    ...passwordPolicyEnv(passthrough),
     GOTRUE_API_HOST: gotrue.host,
     PORT: String(gotrue.port),
     API_EXTERNAL_URL: api,
@@ -335,9 +360,10 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     signup: { enabled: g.GOTRUE_DISABLE_SIGNUP !== 'true', autoconfirm: g.GOTRUE_MAILER_AUTOCONFIRM === 'true', access: signups?.access ?? 'open',
       allowed_domains: signups?.allowed ? [...signups.allowed] : null, block_disposable: signups?.disposable === true, blocked_domains: signups?.blocked.size ?? 0 },
     providers: providers.filter(provider => g[`GOTRUE_EXTERNAL_${provider.toUpperCase()}_ENABLED`] === 'true'),
-    // GoTrue's defaults: six characters, no classes, TOTP enrolment on.
-    // `--mfa off` stops enrolment only; enrolled users keep verifying.
-    password: { min_length: Number(g.GOTRUE_PASSWORD_MIN_LENGTH ?? 6), required, leaked_password_check: flag(g.GOTRUE_PASSWORD_HIBP_ENABLED, false) },
+    // Gregale's defaults (passwordDefaults): eight characters, no classes,
+    // leaked-password check on. `--mfa off` stops enrolment only; enrolled
+    // users keep verifying.
+    password: { min_length: Number(g.GOTRUE_PASSWORD_MIN_LENGTH), required, leaked_password_check: flag(g.GOTRUE_PASSWORD_HIBP_ENABLED, false) },
     // GoTrue's defaults: TOTP on, SMS codes and recovery codes off.
     mfa: { totp: flag(g.GOTRUE_MFA_TOTP_ENROLL_ENABLED, true), phone: flag(g.GOTRUE_MFA_PHONE_ENROLL_ENABLED, false), recovery_codes: flag(g.GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED, false) },
     email: { configured: email !== null, provider: email?.provider ?? null, from: email?.from ?? null },

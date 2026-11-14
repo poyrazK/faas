@@ -16821,8 +16821,10 @@ const (
 	// restarted Auth app to publish a key change.
 	AuthKeyChangeWait = 5 * time.Minute
 	// AuthPasswordMinLength bounds the configurable minimum password length:
-	// GoTrue's own default is the floor, and bcrypt reads 72 bytes at most.
-	AuthPasswordMinLengthFloor   = 6
+	// the floor is NIST SP 800-63B's eight characters (GoTrue's own default
+	// of six is below it) and is also an Auth app's default; bcrypt reads 72
+	// bytes at most. The template mirrors the floor as passwordMinLength.
+	AuthPasswordMinLengthFloor   = 8
 	AuthPasswordMinLengthCeiling = 72
 	// AuthProviderClientIDMaxBytes and AuthProviderSecretMaxBytes bound OAuth
 	// provider credentials; Apple's client secret is a signed JWT.

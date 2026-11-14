@@ -217,7 +217,7 @@ providers and email delivery, and rotates signing keys.
 
 ```sh
 gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit
-gregale auth config shop-auth --signup off --mfa on --leaked-password-check on
+gregale auth config shop-auth --signup off --mfa on
 gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@shop.example.com>' --email-api-key-stdin
 ```
 
@@ -226,9 +226,9 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--site-url`, `--redirect-urls` | Where users return after sign-in; `--redirect-urls none` clears the list. |
 | `--signup on\|off` | Whether anyone may sign up, or only invited and administrator-created users. |
 | `--autoconfirm on\|off` | Skip email confirmation. Development only. |
-| `--password-min-length N` | Minimum password length, 6 to 72. |
+| `--password-min-length N` | Minimum password length, 8 (the default) to 72. |
 | `--password-require CLASSES` | `lower`, `upper`, `digit` and `symbol`, comma-separated, or `none`. |
-| `--leaked-password-check on\|off` | Refuse passwords found in known breaches (Have I Been Pwned). |
+| `--leaked-password-check on\|off` | Refuse passwords found in known breaches (Have I Been Pwned). On by default; only the first five characters of the password's SHA-1 hash leave the app, and a password is accepted if the service cannot be reached. |
 | `--mfa on\|off` | Let users enrol an authenticator app (TOTP). `off` stops new enrolments; enrolled users keep verifying. |
 | `--mfa-phone on\|off`, `--recovery-codes on\|off` | SMS codes as a second factor, and one-time recovery codes (see Two-step verification). |
 | `--email-provider`, `--email-from`, `--email-api-key-stdin` | HTTPS email delivery (see Email); `--email-provider none` removes it. |
