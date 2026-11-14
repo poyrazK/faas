@@ -1298,12 +1298,6 @@ func (s *server) retireOldLoginKeys(r *http.Request, acct state.Account, label s
 	}
 }
 
-// liveSignInKeys returns the unrevoked, unexpired keys a password sign-in
-// minted, newest first.
-func liveSignInKeys(keys []state.APIKey, now time.Time) []state.APIKey {
-	return liveLoginKeys(keys, signInKeyLabel, now)
-}
-
 // liveLoginKeys returns the unrevoked, unexpired keys labelled label, newest
 // first.
 func liveLoginKeys(keys []state.APIKey, label string, now time.Time) []state.APIKey {

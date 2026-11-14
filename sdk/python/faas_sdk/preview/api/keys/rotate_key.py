@@ -96,8 +96,7 @@ def sync_detailed(
     `accounts.key_grace_window_days = 0` makes rotation atomic
     (old key revoked immediately). The optional body's
     `grace_window_days` overrides the window for this rotation
-    only; send `0` to revoke a leaked key at once
-    (ADR-20261114120000).
+    only; send `0` to revoke a leaked key at once.
 
     Returns the new plaintext exactly once — the old plaintext
     is not re-issued (we only store the SHA-256 hash). The
@@ -156,8 +155,7 @@ def sync(
     `accounts.key_grace_window_days = 0` makes rotation atomic
     (old key revoked immediately). The optional body's
     `grace_window_days` overrides the window for this rotation
-    only; send `0` to revoke a leaked key at once
-    (ADR-20261114120000).
+    only; send `0` to revoke a leaked key at once.
 
     Returns the new plaintext exactly once — the old plaintext
     is not re-issued (we only store the SHA-256 hash). The
@@ -211,8 +209,7 @@ async def asyncio_detailed(
     `accounts.key_grace_window_days = 0` makes rotation atomic
     (old key revoked immediately). The optional body's
     `grace_window_days` overrides the window for this rotation
-    only; send `0` to revoke a leaked key at once
-    (ADR-20261114120000).
+    only; send `0` to revoke a leaked key at once.
 
     Returns the new plaintext exactly once — the old plaintext
     is not re-issued (we only store the SHA-256 hash). The
@@ -269,8 +266,7 @@ async def asyncio(
     `accounts.key_grace_window_days = 0` makes rotation atomic
     (old key revoked immediately). The optional body's
     `grace_window_days` overrides the window for this rotation
-    only; send `0` to revoke a leaked key at once
-    (ADR-20261114120000).
+    only; send `0` to revoke a leaked key at once.
 
     Returns the new plaintext exactly once — the old plaintext
     is not re-issued (we only store the SHA-256 hash). The
