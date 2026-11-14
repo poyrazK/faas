@@ -41,7 +41,11 @@ func TestDeployScanReusesAnUnchangedArtifactsResult(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			appsRoot := t.TempDir()
 			grypeRuns := 0
-			stubGrype := func(context.Context, string) (*ScanResult, error) {
+			stubGrype := func(ctx context.Context, _ string) (*ScanResult, error) {
+				// Grype starts beside the artifact hash; a reuse hit cancels it.
+				if err := grypeStubDelay(ctx); err != nil {
+					return nil, err
+				}
 				grypeRuns++
 				return &ScanResult{
 					ScannerVersion: "0.116.0", ScannerDBStatus: "valid",

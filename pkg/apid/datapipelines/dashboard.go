@@ -15,7 +15,7 @@ import (
 )
 
 func (h *Handler) Workspace(ctx context.Context, account, connection string) (dashboard.DataPipelinesData, error) {
-	data := dashboard.DataPipelinesData{ConnectionID: connection}
+	data := dashboard.DataPipelinesData{ConnectionID: connection, MembershipLimit: api.DataPipelineTenantMembershipsMax, FreshnessMin: api.DataPipelineFreshnessTargetMinSeconds, FreshnessMax: api.DataPipelineFreshnessTargetMaxSeconds, IndexBudgetMax: api.DataPipelineIndexBuildMaxBytes, NeonSteps: datapipeline.NeonSourceGuide().Steps}
 	if h == nil || h.Service == nil || h.Service.Store == nil {
 		return data, nil
 	}
@@ -123,6 +123,8 @@ func (h *Handler) applyDashboardAction(r *http.Request, account string) (string,
 	ctx := r.Context()
 	id := r.FormValue("connection_id")
 	switch r.FormValue("action") {
+	case "freshness", "indexes":
+		return h.manageDashboardOperability(r, account)
 	case "alerts_enable", "alerts_disable":
 		return h.manageDashboardAlerts(r, account)
 	case "connection":
@@ -161,11 +163,18 @@ func (h *Handler) applyDashboardAction(r *http.Request, account string) (string,
 		_, err = h.Service.RequestCheck(ctx, account, id, selection)
 		return id, err
 	case "create":
-		subjects := strings.Split(r.FormValue("read_subjects"), ",")
+		serving, err := dashboardServing(r)
+		if err != nil {
+			return "", err
+		}
+		subjects := []string{}
+		if r.FormValue("read_subjects") != "" {
+			subjects = strings.Split(r.FormValue("read_subjects"), ",")
+		}
 		for i := range subjects {
 			subjects[i] = strings.TrimSpace(subjects[i])
 		}
-		_, err := h.Service.Create(ctx, account, api.CreateDataPipelineRequest{Name: r.FormValue("name"), SourceConnectionID: id, DatabaseID: r.FormValue("database_id"), Tables: r.Form["tables"], ReadSubjects: subjects})
+		_, err = h.Service.Create(ctx, account, api.CreateDataPipelineRequest{Serving: serving, Name: r.FormValue("name"), SourceConnectionID: id, DatabaseID: r.FormValue("database_id"), Tables: r.Form["tables"], ReadSubjects: subjects})
 		return id, err
 	case "control":
 		if r.FormValue("control") == "delete" && r.FormValue("confirm_delete") != "yes" {

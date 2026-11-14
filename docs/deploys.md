@@ -1071,6 +1071,12 @@ they finish. If you start another deploy before an earlier one goes live, the
 earlier one never goes live: it is superseded when it reaches the cutover,
 whether or not the newer deploy succeeds.
 
+When a revision goes live, the previous one stops taking new requests at once.
+Its instances that are still answering requests keep running for up to
+30 seconds so those requests can finish, then park. An instance with nothing
+in flight parks immediately, and an app already at its instance limit parks
+the old instances at once so the new revision can start.
+
 Use a revision anywhere a deployment ID is accepted:
 
 ```bash

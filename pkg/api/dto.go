@@ -44,6 +44,11 @@ type PublishEventRequest struct {
 	Data            json.RawMessage `json:"data"`
 	AccountID       string          `json:"accountid,omitempty"`
 	SchemaVersion   string          `json:"schemaversion,omitempty"`
+	// EnvironmentID names the project environment the event belongs to
+	// (ADR-20261104120000); omitted is production. Only subscriptions of that
+	// environment receive the event, and only production events start
+	// workflows.
+	EnvironmentID string `json:"environmentid,omitempty"`
 }
 
 func (r *PublishEventRequest) UnmarshalJSON(data []byte) error {
@@ -357,8 +362,11 @@ type EventSubscriptionResponse struct {
 	WorkAction         string                   `json:"work_action,omitempty"`
 	Ordered            bool                     `json:"ordered,omitempty"`
 	Enabled            bool                     `json:"enabled"`
-	CreatedAt          time.Time                `json:"created_at"`
-	UpdatedAt          time.Time                `json:"updated_at"`
+	// Environment is the project environment slug whose events the
+	// subscription receives; omitted is production (ADR-20261104120000).
+	Environment string    `json:"environment,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // EventSubscriptionListResponse is the app-scoped, read-only subscription
@@ -860,6 +868,10 @@ type DevPatchPreview struct {
 	// Generation is set when this sync published a live patch; poll
 	// GET /v1/dev/sessions/{project}/patches/{generation} for delivery.
 	Generation int64 `json:"generation,omitempty"`
+	// BuildDeferredUntil is set when the sync's convergence build waits
+	// for the developer to stop saving (ADR-20261021221906): the live patch is the
+	// sync, and a later sync supersedes this build before it starts.
+	BuildDeferredUntil *time.Time `json:"build_deferred_until,omitempty"`
 }
 
 // DevPatchStatusResponse reports whether a published live patch reached the
@@ -4634,6 +4646,18 @@ type ListOrgAPIKeysResponse struct {
 // re-bound.
 type RotateOrgAPIKeyRequest struct {
 	Label string `json:"label,omitempty"`
+	// GraceWindowDays overrides, for this rotation only, how many days the
+	// old key keeps working (0 revokes it at once). Omitted uses the
+	// account setting or the plan default.
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
+}
+
+// RotateKeyRequest is the optional body of POST /v1/keys/{id}/rotate.
+// GraceWindowDays overrides, for this rotation only, how many days the old
+// key keeps working; 0 revokes it at once, which is what to do with a key
+// that leaked. Omitted uses the account setting or the plan default.
+type RotateKeyRequest struct {
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
 }
 
 // RotateOrgAPIKeyResponse is the body of
@@ -7783,6 +7807,10 @@ type PlanWorkload struct {
 	// have no value in the selected environment: not configured on the app
 	// and not provided by the platform. Names only, never values.
 	UnsetEnvKeys []string `json:"unset_env_keys,omitempty"`
+	// SourceHosts are string literals in the workload's source that dial
+	// another service by its Compose name, which does not resolve on Gregale
+	// (ADR-20261112223000). At most a few per workload.
+	SourceHosts []PlanSourceHost `json:"source_hosts,omitempty"`
 	// UnsetEnvKeyReasons says why a Compose value for an UnsetEnvKeys name
 	// is not imported (ADR-20261023085230): not_opted_in, secret,
 	// service_address, local_address, interpolated, host_value, empty or
@@ -7964,6 +7992,14 @@ type QuotaBlock struct {
 // FeatureHint is one Gregale behavior or feature that applies to the scanned
 // source: what the plan will do, how to change it, and the exact commands
 // (ADR-20261112223000 §1). IDs are stable.
+// PlanSourceHost is one place source code dials a service by its Compose
+// name: the name, and the file and line that spell it.
+type PlanSourceHost struct {
+	Host string `json:"host"`
+	File string `json:"file"`
+	Line int    `json:"line"`
+}
+
 type FeatureHint struct {
 	ID        string   `json:"id"`
 	Workloads []string `json:"workloads,omitempty"`
@@ -13942,6 +13978,9 @@ type AppPublishEventRequest struct {
 	Data          json.RawMessage `json:"data"`
 	Time          *time.Time      `json:"time,omitempty"`
 	SchemaVersion string          `json:"schemaversion,omitempty"`
+	// Environment is the slug of the app's project environment the event
+	// belongs to (ADR-20261104120000); omitted is production.
+	Environment string `json:"environment,omitempty"`
 }
 
 type AppPublishEventResponse struct {

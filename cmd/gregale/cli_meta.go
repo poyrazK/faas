@@ -1142,7 +1142,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-output-tokens", Short: "per-request output-token ceiling, or none", Value: "N"},
 			}},
 			{Name: "prices", Short: "Show the price list, or replace it with prices set", Notes: []string{"Replace with: prices set <integration-id> --price ..."}, Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
-				{Name: "price", Short: "model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD][,input-image=USD][,output-image=USD] per million tokens, [,image=USD] per image, [,audio-minute=USD] per minute, [,characters=USD] per million characters, [,video-second=USD] per second of video, with model=<model>@<resolution> for one resolution, [,web-search=USD] [,file-search=USD] per use, [,code-session-gb=USD] per GB container session, [,input-audio=USD][,cached-audio=USD][,output-audio=USD] per million audio tokens (repeat; none clears)", Value: "SPEC"},
+				{Name: "price", Short: "model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD][,input-image=USD][,output-image=USD] per million tokens, [,image=USD] per image, [,audio-minute=USD] per minute, [,characters=USD] per million characters, [,video-second=USD] per second of video, with model=<model>@<resolution> for one resolution, [,web-search=USD] [,file-search=USD] per use, [,code-session-gb=USD] per GB container session, [,input-audio=USD][,cached-audio=USD][,output-audio=USD] per million audio tokens, [,cache-write-1h=USD] per million one-hour cache-write tokens, [,long-context=TOKENS:IN%:OUT%] to scale prices above a prompt size, such as 200000:200:150 (repeat; none clears)", Value: "SPEC"},
 			}},
 			{Name: "catalog", Short: "Show built-in prices for models missing from a price list", Positionals: []string{"<provider>"}, Flags: []cliFlag{
 				{Name: "model", Short: "show only the entry that prices this model", Value: "NAME"},
@@ -5086,7 +5086,10 @@ var cliCommands = []cliCommand{
 				{Name: "approvals", Short: "kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all)", Value: "LIST"},
 			}, Examples: []string{"gregale key create agent-runner --scopes runs:write", "gregale key create ci-agent --scopes agent,deploy:write --projects api,web", "gregale key create sandbox-agent --scopes agent,deploy:write --approvals none"}},
 			{Name: "rm", Short: "Revoke an API key", Positionals: []string{"<id>"}},
-			{Name: subRotate, Short: "Rotate an API key", Positionals: []string{"<key-id>"}, Examples: []string{"gregale key rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a"}},
+			{Name: subRotate, Short: "Rotate an API key", Positionals: []string{"<key-id>"}, Flags: []cliFlag{
+				{Name: "revoke-old", Short: "revoke the old key now instead of after the grace window (use when the key leaked)", Bool: true},
+				{Name: "grace-days", Short: "days the old key keeps working, for this rotation only (0 to 30)", Value: "N"},
+			}, Examples: []string{"gregale key rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a", "gregale key rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a --revoke-old"}},
 			{Name: "grace-window", Short: "Read or update the rotation grace window", Flags: []cliFlag{
 				{Name: "reset", Short: "clear the account override and use the plan default", Bool: true},
 				{Name: "days", Short: "new grace window in days (0 to 30)", Value: "N"},
@@ -5749,6 +5752,7 @@ var cliCommands = []cliCommand{
 		Name: "pipeline", DocSlug: "data-pipelines", Short: "Sync PostgreSQL sources into read-only mirrors",
 		Subcommands: []cliSub{
 			{Name: "connection", Short: "Register and manage encrypted source connections", Subcommands: []cliSub{
+				{Name: "guide", Short: "Read source-provider setup guidance offline", Positionals: []string{"neon"}},
 				{Name: "add", Short: "Register a PostgreSQL source", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "url-file", Value: "FILE", Req: true, Short: "private file containing a verified-TLS source URL"}}},
 				{Name: "list", Short: "List sources without credentials"},
 				{Name: "check", Short: "Check source compatibility and discover public tables", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "search", Value: "TEXT", Short: "discover table names containing this text; mutually exclusive with --tables"}, {Name: "tables", Value: "TABLES", Short: "check exact comma-separated table names beyond the default discovery page"}, {Name: "database", Value: "ID", Short: "also check an existing empty managed mirror"}, {Name: "wait", Short: "wait for a fresh result (default true; use --wait=false to queue only)"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 2m; maximum 1h)"}}},
@@ -5757,8 +5761,21 @@ var cliCommands = []cliCommand{
 				{Name: "delete", Short: "Delete an unused source credential", Positionals: []string{"<id>"}},
 			}},
 			{Name: "create", Short: "Create a managed mirror and begin initial copying", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "connection", Value: "ID", Short: "registered source connection (or use --url-file)"}, {Name: "url-file", Value: "FILE", Short: "register a source from a private URL file"}, {Name: "database", Value: "DATABASE", Short: "existing empty managed database; otherwise create NAME-mirror"}, {Name: "region", Value: "REGION", Short: "placement of an automatically created mirror"}, {Name: "tables", Value: "TABLES", Req: true, Short: "comma-separated public table names"}, {Name: "read-subjects", Value: "SUBJECTS", Req: true, Short: "application identities allowed to read the mirror"}, {Name: "wait", Short: "wait for initial copying and catch-up"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}, {Name: "api", Value: "NAME", Short: "deploy a read-only Data API after initial sync", Unreleased: true}, {Name: "auth", Value: "AUTH_APP", Short: "Auth app used by --api", Unreleased: true},
+				{Name: "durable", Short: "save setup as a resumable server job; requires --connection"}, {Name: "plan", Short: "preview resources and billing without allocation"}, {Name: "freshness-target", Value: "DURATION", Short: "checkpoint confirmation target; 0 or 15s to 24h"},
+				{Name: "connection", Value: "ID", Short: "registered source connection (or use --url-file)"}, {Name: "url-file", Value: "FILE", Short: "register a source from a private URL file"}, {Name: "database", Value: "DATABASE", Short: "existing empty managed database; otherwise create NAME-mirror"}, {Name: "region", Value: "REGION", Short: "placement of an automatically created mirror"}, {Name: "tables", Value: "TABLES", Req: true, Short: "comma-separated public table names"}, {Name: "read-subjects", Value: "SUBJECTS", Short: "identities with whole-table access; omit for tenant access"}, {Name: "serving-file", Value: "FILE", Short: "version 1 column selection and tenant membership JSON contract"}, {Name: "wait", Short: "wait for initial copying and catch-up"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}, {Name: "api", Value: "NAME", Short: "deploy a read-only Data API after initial sync", Unreleased: true}, {Name: "auth", Value: "AUTH_APP", Short: "Auth app used by --api", Unreleased: true},
 			}},
+			{Name: "setup", Short: "Plan and resume server-owned provisioning", Subcommands: []cliSub{
+				{Name: "plan", Short: "Preview resources and billing without creating a mirror or app", Positionals: []string{"<name>"}, Flags: pipelineSetupCLIFlags()},
+				{Name: "create", Short: "Save immutable setup and recovery IDs", Positionals: []string{"<name>"}, Flags: pipelineSetupCLIFlags()},
+				{Name: "list", Short: "List saved setup", Flags: []cliFlag{{Name: "timeout", Value: "DURATION", Short: "maximum wait up to 1h"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}, {Name: "yes", Short: "confirm cancellation; resources are retained"}}},
+				{Name: "status", Short: "Status saved setup", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "timeout", Value: "DURATION", Short: "maximum wait up to 1h"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}, {Name: "yes", Short: "confirm cancellation; resources are retained"}}},
+				{Name: "wait", Short: "Wait saved setup", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "timeout", Value: "DURATION", Short: "maximum wait up to 1h"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}, {Name: "yes", Short: "confirm cancellation; resources are retained"}}},
+				{Name: "retry", Short: "Retry saved setup", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "timeout", Value: "DURATION", Short: "maximum wait up to 1h"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}, {Name: "yes", Short: "confirm cancellation; resources are retained"}}},
+				{Name: "cancel", Short: "Cancel saved setup", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "timeout", Value: "DURATION", Short: "maximum wait up to 1h"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}, {Name: "yes", Short: "confirm cancellation; resources are retained"}}},
+			}},
+			{Name: "freshness", Short: "Inspect or configure checkpoint confirmation", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "target", Value: "DURATION", Short: "0 disables; otherwise 15s to 24h"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}}},
+			{Name: "indexes", Short: "Preview and approve bounded mirror indexes", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "table", Value: "TABLE", Short: "preview a selected table"}, {Name: "filters", Value: "COLUMNS", Short: "equality filter column names without values"}, {Name: "order-by", Value: "COLUMNS", Short: "ordered columns; prefix descending columns with -"}, {Name: "max-index-bytes", Value: "BYTES", Short: "index budget, maximum 32 MiB"}, {Name: "approve", Value: "ADVICE_ID", Short: "approve the exact frozen preview"}, {Name: "discard", Short: "discard unapproved advice"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}, {Name: "wait", Short: "wait for advice or build acknowledgement"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait up to 1h"}}},
+			{Name: "access", Short: "Preview and approve tenant membership changes", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "members-file", Value: "FILE", Short: "preview the complete subject/tenant JSON array; [] revokes all access"}, {Name: "approve", Value: "CHANGE_ID", Short: "approve the exact saved preview"}, {Name: "discard", Short: "discard an unapproved preview"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}, {Name: "wait", Short: "wait for approval acknowledgement"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 5m; maximum 1h)"}}},
 			{Name: "list", Short: "List pipeline intent and observations"},
 			{Name: "status", Short: "Read pipeline intent and observed progress", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "wait", Short: "wait for the requested observation"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}}},
 			{Name: "wait", Short: "Wait for the pipeline to become live", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "wait", Short: "wait for the requested observation"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}}},
@@ -7303,6 +7320,15 @@ var cliCommands = []cliCommand{
 		Short:       "Print the CLI manual page, or one command's page",
 		Positionals: []string{"<command>"},
 	},
+	{
+		// ADR-20261112223000 §4: short task pages for agents and people.
+		Name:        "guide",
+		DocSlug:     "guide",
+		Short:       "Short task pages: deploy, health checks, private services, rollouts",
+		Positionals: []string{"[<task>]"},
+		Examples:    []string{"gregale guide", "gregale guide private-services"},
+		Flags:       []cliFlag{{Name: "json", Short: "print the pages as JSON", Bool: true}},
+	},
 }
 
 // issueModeSubs lists the mode words of an issue command that takes its mode
@@ -7320,3 +7346,7 @@ func issueModeSubs(flags []cliFlag, pairs ...string) []cliSub {
 var issueLifecycleAlertFlags = []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "environments", Value: "ENVS", Short: "comma-separated exact names; empty means all"}, {Name: "cooldown-seconds", Value: "N", Short: "shared cooldown; zero disables throttling"}, {Name: "expected-revision", Value: "N", Short: "required when saving"}, {Name: "issue", Value: "UUID", Short: "existing issue for draft preview"}, {Name: "event", Value: "EVENT", Short: "created or regressed for preview"}}
 var issueCompoundAlertFlags = []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "key", Value: "KEY", Short: "stable rule key"}, {Name: "environment", Value: "NAME", Short: "exact environment; empty matches all"}, {Name: "minimum-events", Value: "N", Short: "event threshold in the shared window"}, {Name: "minimum-customers", Value: "N", Short: "verified distinct customer threshold in the shared window"}, {Name: "window-seconds", Value: "N"}, {Name: "cooldown-seconds", Value: "N"}, {Name: "enabled", Bool: true, ClosedSet: []string{"true", "false"}, Short: "use --enabled=false to disable a saved rule"}, {Name: "expected-revision", Value: "N", Short: "required for save/remove"}, {Name: "issue", Value: "UUID", Short: "existing issue for an unsaved preview"}}
 var issueSourceMapFlags = []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "deployment", Value: "UUID", Req: true}, {Name: "directory", Value: "PATH", Short: "deployed directory corresponding to the build scan root"}, {Name: "manifest-file", Value: "PATH", Short: "portable source-map manifest file"}}
+
+func pipelineSetupCLIFlags() []cliFlag {
+	return []cliFlag{{Name: "connection", Value: "UUID", Req: true, Short: "registered source connection"}, {Name: "tables", Value: "TABLES", Req: true, Short: "selected public tables"}, {Name: "read-subjects", Value: "SUBJECTS", Short: "trusted whole-table readers"}, {Name: "serving-file", Value: "FILE", Short: "column and tenant access contract"}, {Name: "database", Value: "UUID", Short: "existing empty managed mirror"}, {Name: "region", Value: "REGION", Short: "placement for a new mirror"}, {Name: "freshness-target", Value: "DURATION", Short: "0 disables; otherwise 15s to 24h"}, {Name: "wait", Short: "wait for the saved setup"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait up to 1h"}, {Name: "api", Value: "NAME", Short: "optional read-only API app", Unreleased: true}, {Name: "auth", Value: "AUTH_APP", Short: "Auth app used by --api", Unreleased: true}, {Name: "durable", Short: "save server-owned setup"}, {Name: "plan", Short: "preview resources only"}, {Name: "url-file", Value: "FILE", Short: "unsupported for durable setup; register the source first"}}
+}

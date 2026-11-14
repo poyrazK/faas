@@ -93,6 +93,8 @@ func (s *server) createProjectEnvironmentBranch(w http.ResponseWriter, r *http.R
 type environmentBranchSpec struct {
 	parent, slug, egress, privateNetworks string
 	ttl                                   time.Duration
+	// pullRequest marks a branch githubd asked for (ADR-20261113121342).
+	pullRequest int
 }
 
 // branchProjectEnvironment creates a branch and publishes its workloads. A
@@ -102,7 +104,8 @@ func (s *server) branchProjectEnvironment(ctx context.Context, store state.Proje
 	env, branch, _, err := store.CreateProjectEnvironmentBranch(ctx, state.ProjectEnvironmentBranchCreate{
 		AccountID: acct.ID, ProjectID: project.ID, ParentSlug: spec.parent, Slug: spec.slug,
 		ExpiresAt: time.Now().UTC().Add(spec.ttl), EgressMode: spec.egress, PrivateNetworks: spec.privateNetworks,
-		MaxDepth: api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
+		PullRequestNumber: spec.pullRequest,
+		MaxDepth:          api.EnvironmentBranchMaxDepth, MaxBranches: limits.EnvironmentBranches,
 		ContainedObjects: s.environmentBranchContainedObjectsEnabled,
 	}, limits)
 	if err != nil {

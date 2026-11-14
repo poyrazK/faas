@@ -11,6 +11,89 @@ environment. Its CLI shortcuts (`pipeline create --api/--auth` and
 `FAAS_APPLICATION_AUTH_ENABLED=1` in the local CLI environment. Mirror-only
 synchronization does not require application Auth.
 
+## Neon source onboarding
+
+Run `gregale pipeline connection guide neon` without logging in, or open
+**Connect a Neon source** in the dashboard. Use a direct PostgreSQL 16 endpoint;
+`-pooler` URLs are rejected before connecting. Keep `sslmode=verify-full`.
+Enable logical replication in Neon project settings only after reviewing its
+compute restart and irreversible setting. Verify the dedicated source role's
+replication/publication privileges and permit both worker and subscriber egress
+if IP Allow is enabled. See [Neon's logical replication guide](https://neon.com/docs/guides/logical-replication-neon).
+
+An active subscriber keeps Neon source compute awake and can increase compute
+usage. Inactive-slot expiry and branch restore can remove replication slots.
+Gregale requires a positive native `max_slot_wal_keep_size` no greater than 1 GiB;
+a time-based inactive-slot expiry does not meet that requirement. If the provider
+cannot expose this cap, admission stays blocked pending operator/provider review.
+Provider hints do not establish compatibility or capacity. Actual Neon source
+qualification remains pending the [isolated provider drill](data-pipeline-provider-qualification.md).
+
+## Customer tenant access and selected columns
+
+Use the dashboard's **Tenant-specific customer access** mode, or create a private
+`serving.json` file:
+
+```json
+{
+  "version": 1,
+  "columns": {"orders": ["id", "tenant_id", "status"]},
+  "tenant_access": {
+    "column": "tenant_id",
+    "memberships": [
+      {"subject": "customer-alice", "tenant": "acme"},
+      {"subject": "customer-bob", "tenant": "bravo"}
+    ]
+  }
+}
+```
+
+```sh
+chmod 600 serving.json
+gregale pipeline create portal-orders --connection CONNECTION_ID \
+  --tables orders --serving-file ./serving.json --wait
+```
+
+Alice can read only `tenant_id = 'acme'` rows; Bob can read only `bravo` rows.
+One subject may have several memberships. Null/unmatched tenant values are
+hidden. Memberships match the verified JWT `sub` exactly; a JWT's tenant or role
+claims do not grant membership. The account owner controls this mapping. Omit
+`--read-subjects` in tenant mode; combining the two access modes is rejected.
+A read-only Data API backed by the mirror enforces these row policies and keeps
+the existing availability errors while reads are gated.
+
+Explicit columns cover every selected table and retain all primary-key columns
+and the tenant column. Tenant columns must be text, varchar or UUID on every
+table. Excluded fields are absent from publication, initial copy, CDC, mirror
+schema, verification and resync. This reduces replicated data; PostgreSQL column
+lists are not a security boundary against someone who holds privileged source
+replication credentials. Omit `columns` for the existing schema-approval behavior.
+To change an explicit projection or add another table to it, create a newly
+reviewed pipeline. Scoped repair/removal and resync preserve its saved projection.
+
+To change tenant memberships, save the complete replacement array in a private
+`members.json` file, preview the diff, then approve its returned `tenant_change.id`:
+
+```sh
+gregale pipeline access PIPELINE_ID --members-file ./members.json
+gregale pipeline access PIPELINE_ID --approve SAVED_CHANGE_ID --wait
+# Or discard an unapproved preview:
+gregale pipeline access PIPELINE_ID --discard
+```
+
+The public API is `POST /v1/data/pipelines/{id}/tenant-readers` with
+`expected_revision`, `action` (`preview`, `approve`, `discard`), and either the
+complete `memberships` array or the saved `change_id`. Approvals apply atomically
+at the mirror and survive worker retries. Revocation works while the source is
+unavailable or replication is paused. In past-due grace, only strict reductions
+of existing subject/tenant pairs are allowed. An empty array `[]` revokes all
+memberships. Whole-table reader controls cannot widen a tenant pipeline.
+
+Contracts and request bodies are bounded to 2 MiB. Each tenant/subject value is
+bounded to 256 UTF-8 bytes; each identifier to 63 bytes. A pipeline permits at most
+128 distinct subjects and 256 memberships. These controls remain in the approved
+staging pilot; local acceptance does not enable production or qualify Neon.
+
 ## Connect and read
 
 Start in **Dashboard → Data connections**, or inspect a source with the CLI:
@@ -27,7 +110,7 @@ The private worker checks verified TLS/network access, PostgreSQL version,
 logical replication, retention, publication and replication permissions, and
 available slots/senders. Discovery lists public tables, columns, primary keys,
 and specific compatibility blockers. Unsupported tables remain visible with
-remediation; they cannot be selected. No customer rows are read by discovery.
+remediation. Tables with incompatible non-key columns may use an explicit column selection that omits those columns. Table-level blockers still prevent selection. No customer rows are read by discovery.
 
 Use `connection check CONNECTION_ID --database DATABASE_ID` to also inspect an
 existing empty mirror's native-subscription permission and replication worker
@@ -369,7 +452,7 @@ remain visible. Connection URLs and private worker credentials never appear in
 list/status responses.
 
 Limits per account are 10 source connections and 3 active pipelines, with at most
-32 read subjects per pipeline and 1,000 resync generations. A completed pipeline
+128 distinct read subjects and 256 subject/tenant memberships per pipeline and 1,000 resync generations. A completed pipeline
 check becomes due again after 15 seconds. The worker drains due jobs with eight
 concurrent pipeline reconciliations, two connection checks and two setup steps.
 These queues progress independently and poll once per second when empty. Slow
@@ -1251,8 +1334,9 @@ every 15 seconds, with a 90-second observation freshness allowance:
 | `sync_blocked` | A fresh, current-revision observation says blocked (including a failed pause), resync required, or initial-copy progress has stalled. |
 | `retention_pressure` | A fresh source-specific observation has at most 20% remaining headroom or an estimated remaining time of at most five minutes, including intentionally paused pipelines. Older workers fall back to the existing 80% of 1 GiB threshold. |
 | `apply_unconfirmed` | A live/catching-up pipeline retains at least 16 MiB of WAL and lacks an applied checkpoint from the last 90 seconds. This signals uncertain apply progress, not proven row lag. |
+| `freshness_unconfirmed` | A configured target lacks a recent enough confirmed checkpoint while monitoring is current. An idle source may already be caught up. |
 
-An old applied checkpoint on an idle source alone does not trigger an alert.
+Without an opted-in freshness target, an old applied checkpoint on an idle source alone does not trigger an alert.
 Advancing initial copy and ordinary in-progress controls are not blocked-sync incidents.
 One incident stays open through condition changes. A fresh, current-revision live
 observation with no alert condition must persist for 30 seconds before a recovery
@@ -1308,3 +1392,109 @@ the newest 100 shown. If the pending queue fills, monitoring defers the next
 transition until space is available. Replacing a destination starts a new alert
 baseline and does not replay history to the new endpoint. A still-active
 condition is eligible again after the ordinary debounce.
+
+## Resume setup from the CLI
+
+Approved staging accounts can save setup on the server. Register a source first;
+`pipeline setup` requires `--connection` rather than a credential file. Preview
+resources and billing implications before requesting allocation:
+
+```sh
+gregale pipeline setup plan customer-orders --connection SOURCE_UUID \
+  --tables orders --read-subjects alice --freshness-target 30s
+gregale pipeline setup create customer-orders --connection SOURCE_UUID \
+  --tables orders --read-subjects alice --freshness-target 30s
+# Reconnect from any authenticated terminal using the returned setup ID:
+gregale pipeline setup status SETUP_UUID
+gregale pipeline setup wait SETUP_UUID --timeout 20m
+gregale pipeline setup retry SETUP_UUID
+gregale pipeline setup cancel SETUP_UUID --yes
+```
+
+Use `--serving-file` instead of `--read-subjects` for a tenant access contract.
+Application Auth enabled environments also accept `--api APP --auth AUTH_APP`.
+`pipeline create --durable` uses the same saved workflow; `pipeline create --plan`
+previews it. The default `pipeline create` remains compatible with older servers.
+
+The initial response includes the durable job and recovery resource IDs before
+any optional `--wait`. Repeating the same name and immutable selections recovers
+that job, including after a lost response. Changing its selections conflicts.
+Retry continues its saved phase and resource identities. Cancellation retains
+allocated mirrors, apps and imported data; manage their lifecycle separately.
+A blocked setup reports recovery guidance and can resume after qualification,
+capacity or configuration is fixed. The worker refreshes connection and capacity
+proofs before creating resources.
+
+The preview endpoint is `POST /v1/data/pipeline-setups/plan`; it never creates a
+mirror or app or reserves capacity. It reports selected resources, new mirror
+storage/restore bounds and billing implications. Usage, account allowances and
+source-provider charges prevent a fixed dollar quote. A logical subscriber can
+keep source compute awake. Existing resources may already incur charges. For an `existing_setup_id`, the
+creation flags indicate that no extra resource IDs are allocated; resuming the
+saved job can still provision its pending mirror/API and incur planned usage.
+The setup form also offers this preview in a separate tab before starting.
+
+## Freshness confirmation targets
+
+```sh
+gregale pipeline freshness PIPELINE_UUID --target 30s
+gregale pipeline freshness PIPELINE_UUID
+gregale pipeline freshness PIPELINE_UUID --target 0
+```
+
+Targets are disabled by default; enabled targets range from 15 seconds to 24 hours
+in whole seconds. API clients use revision-fenced
+`POST /v1/data/pipelines/{id}/freshness`. `freshness.state` is `confirmed` when a
+recent applied source checkpoint supports the target, `unconfirmed` when its
+confirmation is missing or older, `unknown` when current monitoring cannot prove
+it, and `inactive` when replication is paused or disconnected.
+
+An old checkpoint is a conservative lower bound. An idle source may already be
+caught up; `unconfirmed` is not measured replication lag or a latency guarantee.
+A target does not change the read gate. Existing opted-in health webhooks send
+`freshness_unconfirmed` incidents through the usual persistent debounce (two
+minutes); monitoring, replication errors and WAL pressure keep priority. Deploy
+the capable monitor before configuring targets; the catalog fences previous
+monitors from evaluating targets they do not understand.
+
+## Mirror index advice
+
+Describe the filter and order columns used by a read query, without SQL or values:
+
+```sh
+gregale pipeline indexes PIPELINE_UUID --table orders \
+  --filters status --order-by=-created_at --max-index-bytes 16777216 --wait
+# Review the returned statement, limits and frozen advice ID, then approve it:
+gregale pipeline indexes PIPELINE_UUID --approve ADVICE_ID --wait
+gregale pipeline indexes PIPELINE_UUID
+```
+
+The dashboard offers the same preview and explicit approval. API/SDK clients use
+`POST /v1/data/pipelines/{id}/indexes` with `preview`, `approve` or `discard` and
+`expected_revision`. Approval sends the saved advice ID with no replacement
+columns or budget. A changed revision, stale baseline or changed table identity
+requires another preview. Selected mirror columns only are eligible; tenant
+access automatically prefixes the exact C-collated text expression used by RLS.
+There are at most four keys including that prefix.
+
+Preview reads ownership, column metadata and sizes, never customer rows or query
+values. Its conservative estimate is twice the table size, at least one page;
+it is not a performance measurement. Large or over-budget tables remain
+advice-only. The staging builder accepts tables up to 64 MiB, index budgets up to
+32 MiB and eight owned indexes per generation. It rechecks the configured mirror
+storage limit and uses a two-second transaction deadline, 250 ms lock timeout,
+16 MiB maintenance memory and 32 MiB temporary-file limit. It can briefly delay
+mirror writes while holding the build lock. Source writes and reader policies
+are unchanged. Timeouts, size/storage overruns or ownership conflicts roll the
+build back and save a blocked result; they do not repeatedly retry expensive DDL.
+
+The target service role must be allowed to enforce the temporary-file guard.
+Otherwise the preview remains advice-only with `index_guard_unavailable` until
+the operator qualifies that provider capability.
+
+A private generation receipt recovers a lost acknowledgement without rebuilding
+or adopting someone else's index. Reader revocation takes priority, and index
+work does not require source credentials. Index-only acknowledgements do not
+refresh replication observations. Full resync replaces owned tables and their
+indexes; request advice again for the new generation. Larger concurrent builds,
+automatic index tuning and query latency guarantees are future work.

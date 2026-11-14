@@ -1649,6 +1649,14 @@ var methodRouteMap = map[string]string{
 	"GET /v1/data/pipelines":                                                          "ListDataPipelines",
 	"GET /v1/data/pipelines/{id}":                                                     "GetDataPipeline",
 	"POST /v1/data/pipelines/{id}/control":                                            "ControlDataPipeline",
+	"POST /v1/data/pipelines/{id}/tenant-readers":                                     "ChangeDataPipelineTenantReaders",
+	"POST /v1/data/pipeline-setups/plan":                                              "PlanDataPipelineSetup",
+	"POST /v1/data/pipeline-setups":                                                   "CreateDataPipelineSetup",
+	"GET /v1/data/pipeline-setups":                                                    "ListDataPipelineSetups",
+	"GET /v1/data/pipeline-setups/{id}":                                               "GetDataPipelineSetup",
+	"POST /v1/data/pipeline-setups/{id}/control":                                      "ControlDataPipelineSetup",
+	"POST /v1/data/pipelines/{id}/freshness":                                          "ConfigureDataPipelineFreshness",
+	"POST /v1/data/pipelines/{id}/indexes":                                            "ChangeDataPipelineIndexes",
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/status":                                          "GetManagedPostgresDatabaseStatus", // ADR-20261030151810
@@ -2833,6 +2841,8 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/orgs/{slug}/members/{user_id}":    "ChangeOrgMemberRole",
 	"DELETE /v1/orgs/{slug}/members/{user_id}":   "RemoveOrgMember",
 	"POST /v1/orgs/{slug}/transfer_ownership":    "TransferOrgOwnership",
+	"GET /v1/orgs/{slug}/security-policy":        "GetOrgSecurityPolicy", // literal hyphen; follows operationId getOrgSecurityPolicy (ADR-20261114170352)
+	"PUT /v1/orgs/{slug}/security-policy":        "PutOrgSecurityPolicy", // follows operationId putOrgSecurityPolicy
 	"GET /v1/invitations/{token}":                "PeekInvitation",
 	"POST /v1/invitations/{token}/accept":        "AcceptInvitation",
 	"DELETE /v1/orgs/{slug}/invitations/{token}": "RevokeInvitation",
