@@ -9,6 +9,7 @@ import (
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/reconcile"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -126,8 +127,18 @@ func (s *Service) buildBranchPreview(ctx context.Context, ev PullRequestEvent, t
 		}
 	}
 	project := state.Project{AccountID: target.binding.AccountID, RepoFullName: repo, ProductionBranch: ev.PullRequest.HeadRef}
+	apps := append([]state.App{parent}, dependencies...)
+	workloads := make(map[string]reposcan.Workload, len(scan.Workloads))
+	for _, workload := range scan.Workloads {
+		workloads[strings.ToLower(workload.Name)] = workload
+	}
+	unchanged := s.branchPreviewUnchanged(ctx, ev, installationID, environment, target.policy, apps, workloads)
 	var result reconcile.Result
-	for _, app := range append([]state.App{parent}, dependencies...) {
+	for _, app := range apps {
+		if unchanged[app.ID] {
+			s.Log.Info("githubd: branch preview keeps an unchanged app's build", "app_id", app.ID, "environment", environment, "pr", ev.Number)
+			continue
+		}
 		sourcePath, sourceBytes, sourceURL, stageErr := s.stageAppSource(ctx, tree, app, project, sha, ev.PullRequest.HeadRef)
 		if stageErr != nil {
 			return result, fmt.Errorf("githubd: stage branch preview source for %q: %w", app.WorkloadName, stageErr)
