@@ -30151,6 +30151,9 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		if !ok || delivery.AccountID != accountID || delivery.AppID != appID || delivery.Status != AppWebhookDeliveryDead {
 			return DeadLetterEvent{}, ErrNotFound
 		}
+		if err := m.checkWebhookReplayAdmissionLocked(delivery); err != nil {
+			return DeadLetterEvent{}, err
+		}
 		delivery.Status = AppWebhookDeliveryPending
 		delivery.Attempt = 0
 		delivery.LastError = ""

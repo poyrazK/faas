@@ -3,6 +3,8 @@ package api
 // DataConnectionCheck contains catalog metadata only. Checks run in the private
 // worker, using the same connection policy and inspectors as replication.
 type DataConnectionCheck struct {
+	SourceProviderHint string                `json:"source_provider_hint,omitempty"`
+	SourceGuidanceURL  string                `json:"source_guidance_url,omitempty"`
 	RequestedTables    []string              `json:"requested_tables,omitempty"`
 	Search             string                `json:"search,omitempty"`
 	ID                 string                `json:"id"`
@@ -54,15 +56,17 @@ type DataConnectionIssue struct {
 }
 
 type DataSourceTable struct {
-	Name      string                `json:"name"`
-	Supported bool                  `json:"supported"`
-	Columns   []DataSourceColumn    `json:"columns"`
-	Issues    []DataConnectionIssue `json:"issues"`
+	ColumnSelectionSupported bool                  `json:"column_selection_supported,omitempty"`
+	Name                     string                `json:"name"`
+	Supported                bool                  `json:"supported"`
+	Columns                  []DataSourceColumn    `json:"columns"`
+	Issues                   []DataConnectionIssue `json:"issues"`
 }
 
 type DataSourceColumn struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	Nullable   bool   `json:"nullable"`
-	PrimaryKey bool   `json:"primary_key"`
+	Unsupported bool   `json:"unsupported,omitempty"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Nullable    bool   `json:"nullable"`
+	PrimaryKey  bool   `json:"primary_key"`
 }

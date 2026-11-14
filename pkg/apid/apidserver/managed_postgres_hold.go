@@ -38,10 +38,15 @@ func (s *server) managedPostgresHoldInputsFrom(ctx context.Context, acct state.A
 		return managedpostgres.HoldInputs{}, err
 	}
 	in := managedpostgres.HoldInputs{Mode: s.managedPostgresCapMode, Inactive: inactive,
-		ComputeUsed: summary.Snapshot.ComputeUnitSeconds, DatabaseEgress: summary.Snapshot.DatabaseEgress}
+		ComputeUsed: summary.Snapshot.ComputeUnitSeconds, DatabaseEgress: summary.Snapshot.ScopedDatabaseEgress()}
 	if summary.PolicyEnabled {
 		in.ComputeCeiling = summary.EffectivePolicy.MaxMonthlyComputeUnitSeconds
 	}
+	spendCapReached, err := managedPostgresSpendCapReached(ctx, s.store, subject, time.Now())
+	if err != nil {
+		return managedpostgres.HoldInputs{}, err
+	}
+	in.SpendCapReached = spendCapReached
 	egress, err := s.managedPostgresEgressAllowance(ctx, subject, time.Now().UTC())
 	if err != nil {
 		return managedpostgres.HoldInputs{}, err

@@ -29,5 +29,9 @@ func MonthToDateSpendCents(ctx context.Context, store state.Store, provider bill
 	if err != nil {
 		return 0, fmt.Errorf("month spend: object storage: %w", err)
 	}
-	return saturatedAdd(saturatedAdd(compute, egress), storage), nil
+	databases, err := SpendCapManagedPostgresCents(ctx, store, acct.ID, now)
+	if err != nil {
+		return 0, fmt.Errorf("month spend: managed postgres: %w", err)
+	}
+	return saturatedAdd(saturatedAdd(saturatedAdd(compute, egress), storage), databases), nil
 }

@@ -29,6 +29,10 @@ func tableSelectionView(p datapipeline.Pipeline, data dashboard.DataPipelinesDat
 		}
 	}
 	v.CanRequest = v.CanRequest && len(v.Choices) > 0
+	if p.Serving != nil && len(p.Serving.Columns) > 0 {
+		v.CanRequest = false
+		v.Choices = nil
+	}
 	return v
 }
 
