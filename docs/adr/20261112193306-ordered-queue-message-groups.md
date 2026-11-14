@@ -1,6 +1,6 @@
 # ADR-20261112193306: Ordered message groups for worker queues
 
-- Status: accepted (owner decisions 2026-11-12); slices 1–2 built, 2 dark
+- Status: accepted (owner decisions 2026-11-12); slices 1–3 built, 2–3 dark
 - Amends: ADR-374 (application keyed work policy), ADR-20261022105723 (pull
   leases), ADR-20261112140000 (Postgres change workers)
 - Related: ADR-795 (keyed event delivery ordering), ADR-972 (parallel push)
@@ -79,19 +79,29 @@ but kept out of help, completions and the reference while the
 `queue_message_groups` flag is dark; without the flag apid answers
 `queue_groups_unavailable`. Queue sends are not in the published SDK spec.
 
-### Slice 3: Postgres change workers
+### Slice 3: Postgres change workers (built)
 
-- Capture writes `group_key = <feed>:<canonical primary key JSON>` into a new
-  nullable `gregale_outbox.group_key` column (the install's idempotent
-  upgrade; generic Commit sources leave it NULL).
-- The relay keeps per-key order before enqueue: its candidate query skips an
-  event while an older unaccepted event with the same `group_key` exists
-  (pending, leased, retrying or blocked), ordered by `created_at, event_id`.
-  One row's changes are serialized by the row lock, so that order is commit
-  order. A permanently blocked change holds only its row, until
-  `gregale commit replay`.
-- `AcceptCommitChange` enqueues each change under the built-in `ordered`
-  policy with that key.
+- Capture writes `group_key = <feed>:<primary key JSON>` (jsonb's fixed key
+  order, e.g. `orders:{"id": 1}`) into a nullable `gregale_outbox.group_key`
+  column added by the changes install's idempotent upgrade, with a partial
+  index on unaccepted grouped rows. A key over 128 bytes or not printable
+  ASCII is stored as `<feed>:sha256:<hex>`, so capture never refuses a
+  write over the key's bound. Generic Commit outboxes leave it NULL; an
+  outbox without the column keeps the old claim query.
+- The relay claims a grouped change only when no older unaccepted change of
+  its key exists (pending, leased, retrying or blocked), by
+  `created_at, event_id`. One row's changes are serialized by the row lock,
+  so that order is commit order. A blocked change holds only its row, until
+  `gregale commit replay`. Because a claim round takes at most one change
+  per key, a tick repeats rounds while changes are accepted, within its
+  batch: a row changed several times between polls still drains in one
+  tick.
+- `AcceptCommitChange` enqueues each change under the built-in
+  `gregale-ordered` policy with that key, taking the work lane after the
+  account, source and app locks, as `EnqueueKeyedInvocation` does. A key
+  the API would refuse blocks the change as `invalid_group_key`; an app that
+  declared `gregale-ordered` itself blocks it as `work_policy_reserved`.
+  `state.OrderedWorkPolicy` is the one get-or-create both paths use.
 
 ### Slice 4: health and scaling
 
