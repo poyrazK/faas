@@ -354,6 +354,10 @@ type Querier interface {
 	// An activated cutover is final (ADR-20261023181931); cancelling it matches no row.
 	CancelManagedPostgresCutover(ctx context.Context, db DBTX, arg CancelManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	CancelManagedPostgresScheduledDelete(ctx context.Context, db DBTX, arg CancelManagedPostgresScheduledDeleteParams) (ManagedPostgresDatabase, error)
+	// A successful second-factor sign-in, or the owner pressing Cancel, ends every
+	// pending email-assisted disable (F14-1, ADR-20261115100000). Account lock
+	// first, then requests and tokens, matching issuance.
+	CancelPendingMFADisable(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	// ADR-20261021152201: scheduled releases.
 	// Ends the app's pending schedule before another one is recorded.
 	CancelPendingScheduledReleasesForApp(ctx context.Context, db DBTX, arg CancelPendingScheduledReleasesForAppParams) ([]ScheduledRelease, error)
@@ -5735,6 +5739,10 @@ type Querier interface {
 	PendingEnvironmentQualificationPostgresChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationPostgresChecksRow, error)
 	PendingLayerArtifactDeletions(ctx context.Context, db DBTX) ([]PendingLayerArtifactDeletionsRow, error)
 	PendingLogArchiveErasureInstances(ctx context.Context, db DBTX, arg PendingLogArchiveErasureInstancesParams) ([]pgtype.UUID, error)
+	// The earliest still-usable pending email-assisted disable, for the account
+	// page's banner. Legacy requests carry no expiry column; they stop working
+	// window_seconds after they were requested.
+	PendingMFADisableRequestedAt(ctx context.Context, db DBTX, arg PendingMFADisableRequestedAtParams) (pgtype.Timestamptz, error)
 	PendingManagedPostgresCutoverPreflights(ctx context.Context, db DBTX, batchSize int32) ([]ManagedPostgresCutover, error)
 	PendingPromotionHealth(ctx context.Context, db DBTX, batchSize int32) ([]PendingPromotionHealthRow, error)
 	PendingPromotionRecoveryQuiescence(ctx context.Context, db DBTX, batchSize int32) ([]PendingPromotionRecoveryQuiescenceRow, error)

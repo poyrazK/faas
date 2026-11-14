@@ -346,6 +346,7 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	s.resetTOTPAttempts(r.Context(), acct.ID)
+	s.cancelPendingMFADisable(r.Context(), acct, "authenticator")
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("mfa.verify.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
@@ -560,6 +561,7 @@ func (s *server) completeRecoveryCodeBurn(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.audit.Emit(r.Context(), "account.mfa_recovered", &acct.ID, nil)
+	s.cancelPendingMFADisable(r.Context(), acct, "recovery_code")
 	s.audit.Emit(r.Context(), "auth.step_up_verified", &acct.ID, map[string]any{
 		"path": r.URL.Path, "method": r.Method, "ttl_sec": 300, "factor": "recovery_code",
 	})

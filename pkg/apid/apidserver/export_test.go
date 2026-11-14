@@ -2392,7 +2392,9 @@ func (r *server) LinkOAuthByEmail(req *http.Request, acct state.Account, provide
 
 // Login failure limiter internals (bug hunt round 8: eviction when full).
 func NewLoginFailureLimiterForTest() *loginFailureLimiter { return newLoginFailureLimiter() }
-func (l *loginFailureLimiter) Record(key string) bool     { return l.record(key, api.LoginFailuresPerEmail) }
+func (l *loginFailureLimiter) Record(key string) bool {
+	return l.record(key, api.LoginFailuresPerEmail)
+}
 func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 	return l.retryAfter(key, api.LoginFailuresPerEmail)
 }

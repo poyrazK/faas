@@ -1421,6 +1421,8 @@ export type { MCPTaskHandlerCompatibility } from './MCPTaskHandlerCompatibility.
 export type { MCPTaskHandlerDeploymentWorkers } from './MCPTaskHandlerDeploymentWorkers.js';
 export type { MFAConfirmRequest } from './MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './MFAConfirmResponse.js';
+export type { MFADisableEmailCancelRequest } from './MFADisableEmailCancelRequest.js';
+export type { MFADisableEmailCancelResponse } from './MFADisableEmailCancelResponse.js';
 export type { MFADisableEmailConfirmRequest } from './MFADisableEmailConfirmRequest.js';
 export type { MFADisableEmailConfirmResponse } from './MFADisableEmailConfirmResponse.js';
 export type { MFADisableEmailRequest } from './MFADisableEmailRequest.js';
