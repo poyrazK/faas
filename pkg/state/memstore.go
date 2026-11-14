@@ -4510,6 +4510,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 			delete(m.crons, cronID)
 		}
 	}
+	for key, subscription := range m.eventSubscriptions {
+		if app, ok := m.eventSubscriptionAppLocked(subscription.AppID); ok && app.ProjectID == projectID && subscription.DeploymentScope == slug {
+			delete(m.eventSubscriptions, key)
+		}
+	}
 	m.deleteProjectEnvironmentBranchLocked(environmentID)
 	delete(m.projectEnvironments, environmentID)
 	for sourceID, memory := range m.environmentGitOps {

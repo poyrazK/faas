@@ -220,6 +220,9 @@ func prepareEventAdmission(ctx context.Context, store eventAdmissionLookup, rece
 	if !p.deliveryDeadline.IsZero() && !p.deliveryDeadline.After(time.Now().UTC()) {
 		return ErrEventDeliveryExpired
 	}
+	if p.recipient.DeploymentScope != "" {
+		return prepareEnvironmentEventAdmission(ctx, store, p)
+	}
 	binding := p.recipient.Work
 	if !p.recipient.WorkSnapshotCaptured {
 		byID, err := store.EventWorkBindingsByIDs(ctx, []string{p.recipient.ID})
@@ -317,4 +320,35 @@ func eventAdmissionPrepareError(err error) error {
 		return err
 	}
 	return admissionError(EventFanoutFailureCodeInvocationEnqueueFailed, true, fmt.Errorf("prepare event admission: %w", err))
+}
+
+// prepareEnvironmentEventAdmission makes a stage recipient's delivery the
+// stage's own work (ADR-20261104120000): it carries the environment and is
+// pinned to the stage's live release, as the stage's ingress is. Work
+// policies are production's for now, so a stage recipient never has one.
+func prepareEnvironmentEventAdmission(ctx context.Context, store eventAdmissionLookup, p *eventAdmissionPlan) error {
+	if p.recipient.Work != nil {
+		return admissionError(EventFanoutFailureCodeInvalidSubscription, false, errors.New("work policies are not available for environment event subscriptions"))
+	}
+	reader, ok := any(store).(invocationAppReader)
+	if !ok {
+		return admissionError(EventFanoutFailureCodeTargetUnavailable, true, errors.New("environment event delivery is unavailable"))
+	}
+	// Resolve as new ingress, as the gateway does, then keep the delivery's
+	// deterministic identity.
+	// The recipient's account is canonical and its app belongs to it (the
+	// subscription binds them), so the app's own spelling is checked here.
+	app, err := reader.AppByID(ctx, p.invocation.AppID)
+	if err != nil || !sameMemUUID(app.AccountID, p.invocation.AccountID) {
+		return admissionError(EventFanoutFailureCodeTargetUnavailable, err != nil && !errors.Is(err, ErrNotFound), ErrNotFound)
+	}
+	unidentified := p.invocation
+	unidentified.ID, unidentified.AccountID = "", app.AccountID
+	prepared, _, err := ResolveInvocationVersionForEnvironment(ctx, reader, unidentified, p.recipient.DeploymentScope)
+	if err != nil {
+		return admissionError(EventFanoutFailureCodeTargetUnavailable, !errors.Is(err, ErrNotFound), err)
+	}
+	prepared.ID, prepared.AccountID = p.invocation.ID, p.invocation.AccountID
+	p.invocation = prepared
+	return nil
 }

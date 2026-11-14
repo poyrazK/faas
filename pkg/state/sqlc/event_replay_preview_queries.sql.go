@@ -23,7 +23,9 @@ WHERE o.account_id=$3::uuid
   AND o.created_at >= $4::timestamptz AND o.created_at < $5::timestamptz
   AND (o.created_at,o.id) > ($6::timestamptz,$7::bigint)
   AND event_app_in_producer_reach(o.account_id, o.payload->>'producer', $2::text)
-ORDER BY o.created_at, o.id LIMIT $8::integer
+  -- ADR-20261104120000: a subscription replays only its environment's events.
+  AND coalesce(o.payload->>'environmentid','') = $8::text
+ORDER BY o.created_at, o.id LIMIT $9::integer
 `
 
 type EventReplayPreviewCandidatesParams struct {
@@ -34,6 +36,7 @@ type EventReplayPreviewCandidatesParams struct {
 	CutoffAt       pgtype.Timestamptz
 	AfterAt        pgtype.Timestamptz
 	AfterID        int64
+	EnvironmentID  string
 	PageLimit      int32
 }
 
@@ -53,6 +56,7 @@ func (q *Queries) EventReplayPreviewCandidates(ctx context.Context, db DBTX, arg
 		arg.CutoffAt,
 		arg.AfterAt,
 		arg.AfterID,
+		arg.EnvironmentID,
 		arg.PageLimit,
 	)
 	if err != nil {
@@ -91,7 +95,7 @@ func (q *Queries) EventReplayPreviewEarliestRetained(ctx context.Context, db DBT
 }
 
 const eventReplayPreviewTarget = `-- name: EventReplayPreviewTarget :one
-SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, a.slug AS app_slug,
+SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id, a.slug AS app_slug,
        EXISTS (SELECT 1 FROM event_subscription_work_bindings b WHERE b.subscription_id=s.id) AS work_bound
 FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
 WHERE s.id=$1::uuid AND s.app_id=$2::uuid
@@ -117,6 +121,8 @@ type EventReplayPreviewTargetRow struct {
 	RoutingRetryPolicy         []byte
 	SchemaVersions             []string
 	AcknowledgmentLeaseSeconds int32
+	DeploymentScope            string
+	EnvironmentID              pgtype.UUID
 	AppSlug                    string
 	WorkBound                  bool
 }
@@ -137,6 +143,8 @@ func (q *Queries) EventReplayPreviewTarget(ctx context.Context, db DBTX, arg Eve
 		&i.RoutingRetryPolicy,
 		&i.SchemaVersions,
 		&i.AcknowledgmentLeaseSeconds,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
 		&i.AppSlug,
 		&i.WorkBound,
 	)
@@ -193,6 +201,8 @@ WHERE o.account_id=$3::uuid
   AND o.created_at >= $4::timestamptz AND o.created_at < $5::timestamptz
   AND (o.created_at,o.id) > ($6::timestamptz,$7::bigint)
   AND event_app_in_producer_reach(o.account_id, o.payload->>'producer', $1::text)
+  -- Workflows are production's (ADR-20261104120000).
+  AND coalesce(o.payload->>'environmentid','') = ''
 ORDER BY o.created_at, o.id LIMIT $8::integer
 `
 
