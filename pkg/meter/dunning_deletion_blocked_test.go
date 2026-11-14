@@ -23,7 +23,9 @@ func (f *countingDeletionCommands) Schedule(context.Context, string, time.Time) 
 	return api.InternalMailNonpaymentDeletionResponse{}, nil
 }
 
-func (f *countingDeletionCommands) Complete(context.Context, string, string, string) error { return nil }
+func (f *countingDeletionCommands) Complete(context.Context, string, string, string) error {
+	return nil
+}
 
 // Billing review 2026-11-13 (R9-1, ADR-20261114093000): an account the
 // retired ladder suspended for non-payment, past the old 21-day deletion
