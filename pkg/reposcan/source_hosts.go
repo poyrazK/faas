@@ -102,7 +102,7 @@ func scanSourceHosts(fsys fs.FS, root string, other func(string) bool, patterns 
 	files := 0
 	_ = fs.WalkDir(fsys, root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // an unreadable entry is skipped, not a scan failure
 		}
 		if d.IsDir() {
 			if p != root && (sourceHostSkipDirs[d.Name()] || strings.HasPrefix(d.Name(), ".")) {
@@ -118,11 +118,11 @@ func scanSourceHosts(fsys fs.FS, root string, other func(string) bool, patterns 
 		}
 		info, err := d.Info()
 		if err != nil || info.Size() > sourceHostMaxFileBytes {
-			return nil
+			return nil //nolint:nilerr // unreadable or large files are skipped
 		}
 		body, err := fs.ReadFile(fsys, p)
 		if err != nil {
-			return nil
+			return nil //nolint:nilerr // an unreadable file is skipped
 		}
 		scanner := bufio.NewScanner(bytes.NewReader(body))
 		scanner.Buffer(make([]byte, 0, 64<<10), sourceHostMaxFileBytes)
