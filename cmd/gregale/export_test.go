@@ -1250,6 +1250,8 @@ var DefaultProjectSlug = defaultProjectSlug
 var DeployContextDirectory = deployContextDirectory
 var DeployDeveloperSource = deployDeveloperSource
 var DeployIdempotencyKey = deployIdempotencyKey
+
+var MissingRequiredSecretNames = missingRequiredSecretNames
 var DeployManifestObjectStorageBindings = deployManifestObjectStorageBindings
 var DeployManifestPostgresBindings = deployManifestPostgresBindings
 var DeployManifestQueueBindings = deployManifestQueueBindings

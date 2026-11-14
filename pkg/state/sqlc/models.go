@@ -6076,6 +6076,8 @@ type EventSubscription struct {
 	RoutingRetryPolicy         []byte
 	SchemaVersions             []string
 	AcknowledgmentLeaseSeconds int32
+	DeploymentScope            string
+	EnvironmentID              pgtype.UUID
 }
 
 type EventSubscriptionCapacityCommand struct {
@@ -6759,6 +6761,7 @@ type GithubDeployPolicy struct {
 	ProductionTrigger    string
 	PreviewBotPrs        bool
 	PreviewDraftPrs      bool
+	PreviewMode          string
 }
 
 type GithubDeployment struct {
@@ -11217,6 +11220,13 @@ type OrgMembership struct {
 	AccessRevision     int64
 }
 
+type OrgSecurityPolicy struct {
+	OrgID              pgtype.UUID
+	RequireMfa         bool
+	UpdatedByAccountID pgtype.UUID
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type OutboundAdmissionLease struct {
 	LeaseID                  pgtype.UUID
 	IntegrationID            pgtype.UUID
@@ -12879,6 +12889,7 @@ type ProjectEnvironmentBranch struct {
 	CreatedAt           pgtype.Timestamptz
 	PrivateNetworks     string
 	SlotID              pgtype.UUID
+	PullRequestNumber   pgtype.Int4
 }
 
 // ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.

@@ -7608,7 +7608,9 @@
       "acknowledgment_lease_seconds",
       "app_id",
       "created_at",
+      "deployment_scope",
       "enabled",
+      "environment_id",
       "filter",
       "id",
       "routing_retry_policy",
@@ -7620,7 +7622,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "deployment_scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -8189,6 +8197,7 @@
       "preview_bot_prs",
       "preview_draft_prs",
       "preview_enabled",
+      "preview_mode",
       "preview_service_policy",
       "preview_ttl_hours",
       "production_trigger",
@@ -14065,6 +14074,16 @@
     "kind": "account_identity"
   },
   {
+    "table": "org_security_policies",
+    "columns": [
+      "org_id",
+      "require_mfa",
+      "updated_at",
+      "updated_by_account_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "org_memberships",
     "columns": [
       "access_revision",
@@ -16149,6 +16168,7 @@
       "parent_environment_id",
       "private_networks",
       "project_id",
+      "pull_request_number",
       "slot_id"
     ],
     "kind": "operational"

@@ -1282,10 +1282,10 @@ from deployments where id = $1;
 
 -- name: ClearProjectPromotionDeployment :execrows
 UPDATE deployments d
-SET status = 'failed', error = 'environment promotion rollback', traffic_percent = 0,
+SET status = 'failed', error = sqlc.arg(message)::text, error_code = 'promotion_rolled_back', traffic_percent = 0,
     rollout_state = 'aborted', rollout_completed_at = NULL,
     rollout_aborted_at = coalesce(rollout_aborted_at, now()),
-    rollout_aborted_reason = 'environment promotion rollback',
+    rollout_aborted_reason = sqlc.arg(message)::text,
     stage_state = sqlc.arg(stage_state)
 WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid
   AND d.reason = sqlc.arg(reason)::text AND d.status = 'live' AND d.deleted_at IS NULL
@@ -1649,13 +1649,16 @@ limit sqlc.arg('limit')::int;
 -- name: UpsertEventSubscription :one
 -- (xmax = 0) distinguishes a declaration first installed by this deploy from
 -- an idempotent replay of the same manifest row.
-insert into event_subscriptions (account_id, app_id, source, type, filter)
-values ($1, $2, $3, $4, $5::jsonb)
-on conflict (app_id, source, type, filter) do update
+-- The identity is unique within one environment of the app
+-- (ADR-20261104120000); production is the empty scope.
+insert into event_subscriptions (account_id, app_id, source, type, filter, deployment_scope)
+values ($1, $2, $3, $4, $5::jsonb, sqlc.arg(deployment_scope)::text)
+on conflict (app_id, deployment_scope, source, type, filter) do update
 set enabled = true,
     updated_at = now()
 returning id, account_id, app_id, source, type, filter, enabled,
-          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, (xmax = 0) as inserted;
+          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds,
+          deployment_scope, environment_id, (xmax = 0) as inserted;
 
 -- name: DeleteEventSubscription :exec
 delete from event_subscriptions
@@ -1689,9 +1692,12 @@ WHERE i.deployment_id = sqlc.arg(deployment_id)::uuid AND i.status = 'prepared'
 FOR UPDATE OF i;
 
 -- name: ApplyEventSubscriptionIntent :many
--- Enable exactly the declared subscriptions of the app.
+-- Enable exactly the declared production subscriptions of the app; another
+-- environment's subscriptions are not production's to reconcile
+-- (ADR-20261104120000).
 UPDATE event_subscriptions SET enabled = (id = ANY(sqlc.arg(declared)::uuid[])), updated_at = now()
-WHERE app_id = sqlc.arg(app_id)::uuid AND enabled IS DISTINCT FROM (id = ANY(sqlc.arg(declared)::uuid[]))
+WHERE app_id = sqlc.arg(app_id)::uuid AND deployment_scope = ''
+  AND enabled IS DISTINCT FROM (id = ANY(sqlc.arg(declared)::uuid[]))
 RETURNING id::text AS id, enabled;
 
 -- name: SettleEventSubscriptionIntent :exec
@@ -30253,6 +30259,29 @@ WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
   AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key;
+
+-- ADR-20261104120000: the project environment a published event belongs to.
+-- Production is the empty environment, so its row reports production = true.
+-- name: EventEnvironmentForAccount :one
+SELECT e.id::text AS id, e.slug
+FROM project_environments e
+WHERE e.account_id = sqlc.arg(account_id)::uuid AND e.id = sqlc.arg(environment_id)::uuid;
+
+-- name: EventEnvironmentForApp :one
+SELECT e.id::text AS id
+FROM apps a JOIN project_environments e ON e.project_id = a.project_id
+WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.id = sqlc.arg(app_id)::uuid
+  AND e.slug = sqlc.arg(slug)::text;
+
+-- The environment an in-guest publish belongs to: the publishing
+-- deployment's stage, or '' for production and project-less apps.
+-- name: DeploymentEventEnvironment :one
+SELECT COALESCE((SELECT e.id::text FROM project_environments e
+                 WHERE e.project_id = a.project_id AND e.slug = d.scope
+                   AND d.scope NOT IN ('default', 'production')), '')::text AS environment_id
+FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.id = sqlc.arg(app_id)::uuid
+  AND d.id = sqlc.arg(deployment_id)::uuid;
 
 -- name: InsertInvocationSend :exec
 -- ADR-20261112160000: the app that sent this invocation with send(), and the

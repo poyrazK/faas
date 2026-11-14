@@ -244,7 +244,7 @@ func (s *PgStore) PreviewEventReplay(ctx context.Context, accountID string, quer
 	if err != nil {
 		return api.EventReplayPreviewResponse{}, fmt.Errorf("read replay preview target: %w", err)
 	}
-	sub := EventSubscription{AcknowledgmentLeaseSeconds: int(row.AcknowledgmentLeaseSeconds), SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy), ID: uuidFromPgtype(row.ID).String(), AccountID: uuidFromPgtype(row.AccountID).String(), AppID: uuidFromPgtype(row.AppID).String(), Source: row.Source, Type: row.Type, Filter: row.Filter, Enabled: row.Enabled, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt)}
+	sub := EventSubscription{AcknowledgmentLeaseSeconds: int(row.AcknowledgmentLeaseSeconds), SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy), ID: uuidFromPgtype(row.ID).String(), AccountID: uuidFromPgtype(row.AccountID).String(), AppID: uuidFromPgtype(row.AppID).String(), Source: row.Source, Type: row.Type, Filter: row.Filter, Enabled: row.Enabled, DeploymentScope: row.DeploymentScope, EnvironmentID: uuidString(row.EnvironmentID), CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt)}
 	now := time.Now().UTC()
 	c, err := eventReplayPreviewWindow(accountID, query, sub, row.WorkBound, now)
 	if err != nil {
@@ -263,7 +263,7 @@ func (s *PgStore) PreviewEventReplay(ctx context.Context, accountID string, quer
 	if afterAt.IsZero() {
 		afterAt = query.From
 	}
-	rows, err := q.EventReplayPreviewCandidates(ctx, tx, sqlc.EventReplayPreviewCandidatesParams{AccountID: mustPgUUID(accountID), AppID: query.AppID, SubscriptionID: query.SubscriptionID, FromAt: eventReplayPreviewPgBoundary(query.From), CutoffAt: eventReplayPreviewPgBoundary(c.CutoffAt), AfterAt: pgtype.Timestamptz{Time: afterAt, Valid: true}, AfterID: c.OutboxID, PageLimit: int32(query.Limit + 1)})
+	rows, err := q.EventReplayPreviewCandidates(ctx, tx, sqlc.EventReplayPreviewCandidatesParams{AccountID: mustPgUUID(accountID), AppID: query.AppID, SubscriptionID: query.SubscriptionID, EnvironmentID: sub.EnvironmentID, FromAt: eventReplayPreviewPgBoundary(query.From), CutoffAt: eventReplayPreviewPgBoundary(c.CutoffAt), AfterAt: pgtype.Timestamptz{Time: afterAt, Valid: true}, AfterID: c.OutboxID, PageLimit: int32(query.Limit + 1)})
 	if err != nil {
 		return api.EventReplayPreviewResponse{}, fmt.Errorf("read retained event candidates: %w", err)
 	}
@@ -329,7 +329,8 @@ func (m *MemStore) PreviewEventReplay(ctx context.Context, accountID string, que
 		if work.CreatedAt.Before(query.From) || !work.CreatedAt.Before(c.CutoffAt) || (!c.AcceptedAt.IsZero() && (work.CreatedAt.Before(c.AcceptedAt) || work.CreatedAt.Equal(c.AcceptedAt) && work.ID <= c.OutboxID)) {
 			continue
 		}
-		if !m.eventAppInProducerReachLocked(accountID, work.Payload, sub.AppID) {
+		if !m.eventAppInProducerReachLocked(accountID, work.Payload, sub.AppID) ||
+			!memEventInEnvironment(work.Payload, sub.EnvironmentID) {
 			continue
 		}
 		original := "unknown"

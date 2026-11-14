@@ -2264,8 +2264,10 @@ from .git_hub_connection_verification import GitHubConnectionVerification
 from .git_hub_connection_verification_permissions import GitHubConnectionVerificationPermissions
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
+from .git_hub_deployment_policy_patch_preview_mode import GitHubDeploymentPolicyPatchPreviewMode
 from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
 from .git_hub_deployment_policy_patch_production_trigger import GitHubDeploymentPolicyPatchProductionTrigger
+from .git_hub_deployment_policy_preview_mode import GitHubDeploymentPolicyPreviewMode
 from .git_hub_deployment_policy_preview_service_policy import GitHubDeploymentPolicyPreviewServicePolicy
 from .git_hub_deployment_policy_production_trigger import GitHubDeploymentPolicyProductionTrigger
 from .git_hub_install_activity import GitHubInstallActivity
@@ -4126,6 +4128,7 @@ from .org_queue_usage_response_plan import OrgQueueUsageResponsePlan
 from .org_response import OrgResponse
 from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
+from .org_security_policy import OrgSecurityPolicy
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
 from .organization_support_list_status import OrganizationSupportListStatus
@@ -8728,8 +8731,10 @@ __all__ = (
     "GitHubConnectionVerificationPermissions",
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
+    "GitHubDeploymentPolicyPatchPreviewMode",
     "GitHubDeploymentPolicyPatchPreviewServicePolicy",
     "GitHubDeploymentPolicyPatchProductionTrigger",
+    "GitHubDeploymentPolicyPreviewMode",
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
@@ -10415,6 +10420,7 @@ __all__ = (
     "OrgResponse",
     "OrgResponsePlan",
     "OrgResponseStatus",
+    "OrgSecurityPolicy",
     "OrgWithRole",
     "OrgWithRoleRole",
     "OutboundAIAccessToken",

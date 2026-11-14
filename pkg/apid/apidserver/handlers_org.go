@@ -225,6 +225,10 @@ func (s *server) softDeleteOrg(w http.ResponseWriter, r *http.Request, acct stat
 	if !s.requireOrgAction(w, r, authz.OrgActionDelete) {
 		return
 	}
+	if !requireBrowserSession(w, r, "Deleting an organization") ||
+		!s.sessionPresenceForIrreversible(w, r, acct, "org_delete") {
+		return
+	}
 	mem, ok := s.requireMembership(w, r)
 	if !ok {
 		return
@@ -274,6 +278,8 @@ func (s *server) softDeleteOrg(w http.ResponseWriter, r *http.Request, acct stat
 		"slug":   org.Slug,
 		"soft":   true,
 	})
+	s.mailOrgSecurityEvent(r.Context(), "org_deleted", org.ID,
+		s.orgMemberLabel(r.Context(), acct.ID)+" deleted the organization and ended its subscription", s.orgAdminIDs(r.Context(), org.ID)...)
 	w.WriteHeader(http.StatusNoContent)
 }
 
