@@ -18,7 +18,8 @@ import (
 //     branch mode;
 //   - opening a pull request makes branch pr-<N>, which serves the pull
 //     request's code while production keeps serving the base;
-//   - a push to the pull request reaches the same branch URL;
+//   - a push to the pull request reaches the same branch URL, and rebuilds
+//     only the service whose files changed (slice 2);
 //   - closing the pull request starts the branch's 24 hour grace.
 //
 // It needs the fixture repository (GREGALE_E2E_GITHUB_REPO) and skips while
@@ -42,7 +43,7 @@ func TestEnvironmentBranchPRPreviews(t *testing.T) {
 	case res.exit != 0 && res.problemCode() == "":
 		t.Skipf("this CLI cannot branch environments: %s", tg.redact(tail(res.problem(), 300)))
 	}
-	app := tg.app(t, "brpr")
+	app, api := tg.app(t, "brpr"), tg.app(t, "brprapi")
 	base, head := "e2ej-brpr-base-"+tg.runID, "e2ej-brpr-head-"+tg.runID
 	var number int
 	environment := func() string { return "pr-" + strconv.Itoa(number) }
@@ -68,10 +69,14 @@ func TestEnvironmentBranchPRPreviews(t *testing.T) {
 	s := newStory(t)
 
 	s.step("base_branch", func(t *testing.T) {
-		// The base branch holds only the probe as a one-service project.
+		// The base branch holds the probe as a two-service project: web calls
+		// api, so a preview of web brings api along, each in its own
+		// directory so a change to one leaves the other's build alone.
 		files := map[string]string{
-			"compose.yaml": "services:\n  " + app + ":\n    build: .\n    ports: [\"8080:8080\"]\n",
-			"version.txt":  "brpr-base\n",
+			"compose.yaml": "services:\n  " + app + ":\n    build: ./web\n    ports: [\"8080:8080\"]\n    depends_on: [" + api + "]\n" +
+				"  " + api + ":\n    build: ./api\n    ports: [\"8080:8080\"]\n",
+			"web/version.txt": "brpr-base\n",
+			"api/version.txt": "brpr-api\n",
 		}
 		src := filepath.Join("testdata", "probe-node")
 		entries, err := os.ReadDir(src)
@@ -83,7 +88,7 @@ func TestEnvironmentBranchPRPreviews(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read probe source: %v", err)
 			}
-			files[e.Name()] = string(b)
+			files["web/"+e.Name()], files["api/"+e.Name()] = string(b), string(b)
 		}
 		ghBranchWithFiles(t, repo, "main", base, files, "e2e journeys branch previews "+tg.runID)
 	})
@@ -98,7 +103,9 @@ func TestEnvironmentBranchPRPreviews(t *testing.T) {
 			t.Fatalf("repository deploy failed (exit %d): %s\noutput: %s", res.exit, tg.redact(res.problem()),
 				tg.redact(tail(string(res.stdout), 2000)))
 		}
-		tg.ok(t, time.Minute, "app", app, "--no-require-authn")
+		for _, slug := range []string{app, api} {
+			tg.ok(t, time.Minute, "app", slug, "--no-require-authn")
+		}
 		expectVersion(t, production, "brpr-base", 5*time.Minute)
 	})
 
@@ -123,7 +130,7 @@ func TestEnvironmentBranchPRPreviews(t *testing.T) {
 	s.step("open_pull_request", func(t *testing.T) {
 		commit := strings.TrimSpace(gh(t, "api", "repos/"+repo+"/git/ref/heads/"+base, "--jq", ".object.sha"))
 		gh(t, "api", "repos/"+repo+"/git/refs", "-f", "ref=refs/heads/"+head, "-f", "sha="+commit)
-		ghPutFile(t, repo, head, "version.txt", "brpr-one\n", "e2e journeys branch preview "+tg.runID)
+		ghPutFile(t, repo, head, "web/version.txt", "brpr-one\n", "e2e journeys branch preview "+tg.runID)
 		prURL := strings.TrimSpace(gh(t, "pr", "create", "--repo", repo, "--head", head, "--base", base,
 			"--title", "e2e journeys branch preview "+tg.runID, "--body", "Opened and closed by the Gregale journey suite."))
 		n, err := strconv.Atoi(prURL[strings.LastIndex(prURL, "/")+1:])
@@ -140,9 +147,7 @@ func TestEnvironmentBranchPRPreviews(t *testing.T) {
 				return false, res.problem()
 			}
 			doc := object(t, res.stdout)
-			if workloads := asSlice(field(doc, "branch.workloads")); len(workloads) == 1 {
-				branchURL = strings.TrimSuffix(str(workloads[0], "url"), "/")
-			}
+			branchURL = strings.TrimSuffix(branchWorkload(doc, app, "url"), "/")
 			return str(doc, "branch.parent") == "production" && branchURL != "", compact(doc)
 		})
 		if branchURL == production {
@@ -152,18 +157,44 @@ func TestEnvironmentBranchPRPreviews(t *testing.T) {
 		expectVersion(t, production, "brpr-base", time.Minute)
 	})
 
-	s.step("push_reaches_the_same_branch", func(t *testing.T) {
-		ghPutFile(t, repo, head, "version.txt", "brpr-two\n", "e2e journeys branch preview push "+tg.runID)
+	status := func(t *testing.T) map[string]any {
+		t.Helper()
+		return object(t, tg.runWithEnvOK(t, branchesCLI, time.Minute, "environment", "branch", project, environment(), "--status").stdout)
+	}
+	s.step("push_rebuilds_only_the_changed_service", func(t *testing.T) {
+		// The first push built both services into the branch; api's build
+		// must be live before the second push can keep it.
+		var apiDeployment string
+		eventually(t, "api's branch build is live", 15*time.Minute, 10*time.Second, func() (bool, string) {
+			doc := status(t)
+			apiDeployment = branchWorkload(doc, api, "deployment_id")
+			return branchWorkload(doc, api, "status") == "live" && apiDeployment != "", compact(doc)
+		})
+		ghPutFile(t, repo, head, "web/version.txt", "brpr-two\n", "e2e journeys branch preview push "+tg.runID)
 		expectVersion(t, branchURL, "brpr-two", 15*time.Minute)
 		expectVersion(t, production, "brpr-base", time.Minute)
+		if got := branchWorkload(status(t), api, "deployment_id"); got != apiDeployment {
+			t.Fatalf("a web-only push replaced api's branch deployment %s with %s; want it kept", apiDeployment, got)
+		}
 	})
 
 	s.step("close_starts_the_grace", func(t *testing.T) {
 		gh(t, "pr", "close", strconv.Itoa(number), "--repo", repo)
 		eventually(t, environment()+" expires within the grace", 3*time.Minute, 10*time.Second, func() (bool, string) {
-			doc := object(t, tg.runWithEnvOK(t, branchesCLI, time.Minute, "environment", "branch", project, environment(), "--status").stdout)
+			doc := status(t)
 			expires, err := time.Parse(time.RFC3339, str(doc, "branch.expires_at"))
 			return err == nil && expires.Before(time.Now().Add(25*time.Hour)), compact(doc)
 		})
 	})
+}
+
+// branchWorkload is one field of the branch status's workload named slug,
+// or "".
+func branchWorkload(doc map[string]any, slug, key string) string {
+	for _, workload := range asSlice(field(doc, "branch.workloads")) {
+		if str(workload, "workload") == slug {
+			return str(workload, key)
+		}
+	}
+	return ""
 }
