@@ -13,7 +13,7 @@ import (
 // managedPostgresChargeStore is a MemStore with a live managed PostgreSQL
 // overage charge.
 type managedPostgresChargeStore struct {
-	*state.MemStore
+	*state.MemStore // teststorecheck:allow implements the optional state.ManagedPostgresLiveChargeStore a statetest wrapper would hide
 	delivered, pending int64
 }
 
