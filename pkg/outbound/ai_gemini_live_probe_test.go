@@ -41,6 +41,8 @@ type liveProbeMessage struct {
 	SetupComplete *json.RawMessage `json:"setupComplete"`
 	ServerContent *struct {
 		TurnComplete bool `json:"turnComplete"`
+		// GroundingMetadata shows that Google Search ran for the turn.
+		GroundingMetadata json.RawMessage `json:"groundingMetadata"`
 	} `json:"serverContent"`
 	UsageMetadata *struct {
 		PromptTokenCount     int64 `json:"promptTokenCount"`
@@ -48,6 +50,9 @@ type liveProbeMessage struct {
 		CandidatesTokenCount int64 `json:"candidatesTokenCount"`
 		TotalTokenCount      int64 `json:"totalTokenCount"`
 		ThoughtsTokenCount   int64 `json:"thoughtsTokenCount"`
+		// ToolUsePromptTokenCount counts what built-in tools (Google
+		// Search) fed back to the model.
+		ToolUsePromptTokenCount int64 `json:"toolUsePromptTokenCount"`
 	} `json:"usageMetadata"`
 	// rawUsage keeps the whole usageMetadata, including the per-modality
 	// token details, because audio and text tokens are priced apart.
@@ -67,6 +72,25 @@ func TestGeminiLiveUsageProbe(t *testing.T) {
 		t.Logf("VERDICT: responseTokenCount fell between messages, so usageMetadata is per turn (or per message), not a session total")
 	} else {
 		t.Logf("VERDICT: responseTokenCount never fell; with turns of very different lengths this means session-so-far totals")
+	}
+}
+
+// adr: 20261020161811 — whether a Live turn that uses Google Search reports
+// toolUsePromptTokenCount, and whether Google's totalTokenCount, which is
+// what it bills, includes it. Set FAAS_LIVE_PROBE_TOOLS=search.
+func TestGeminiLiveToolUseProbe(t *testing.T) {
+	if os.Getenv("FAAS_GEMINI_LIVE_PROBE") != "1" || os.Getenv("FAAS_LIVE_PROBE_TOOLS") != "search" {
+		t.Skip("set FAAS_GEMINI_LIVE_PROBE=1, FAAS_LIVE_PROBE_TOOLS=search and a key to run a Live session with Google Search")
+	}
+	target, header, model := liveProbeTarget(t)
+	totals := runLiveProbe(t, target, header, model)
+	switch {
+	case totals.toolUse == 0:
+		t.Logf("VERDICT: no toolUsePromptTokenCount reported (%d turns); nothing to bill apart", totals.turns)
+	case totals.totalIncludesToolUse:
+		t.Logf("VERDICT: toolUsePromptTokenCount=%d is inside totalTokenCount; it is billed and must be metered as input", totals.toolUse)
+	default:
+		t.Logf("VERDICT: toolUsePromptTokenCount=%d is outside totalTokenCount", totals.toolUse)
 	}
 }
 
@@ -124,6 +148,10 @@ func TestGeminiLiveThroughTheGatewayProbe(t *testing.T) {
 type liveProbeTotals struct {
 	turns, prompt, response int64
 	shrank                  bool
+	// toolUse sums toolUsePromptTokenCount; totalIncludesToolUse records
+	// that some turn's totalTokenCount counted it.
+	toolUse              int64
+	totalIncludesToolUse bool
 }
 
 // runLiveProbe runs the three-turn session and logs every usage message.
@@ -138,8 +166,20 @@ func runLiveProbe(t *testing.T, target string, header http.Header, model string)
 		t.Fatalf("dial: %v", err)
 	}
 	defer func() { _ = conn.Close() }()
-	setup := map[string]any{"setup": map[string]any{"model": model,
-		"generationConfig": map[string]any{"responseModalities": []string{modality}}}}
+	setupBody := map[string]any{"model": model, "generationConfig": map[string]any{"responseModalities": []string{modality}}}
+	prompts := []string{
+		"Answer with exactly one word: what colour is the sky on a clear day?",
+		"In about fifty words, describe how a rainbow forms.",
+		"Answer with exactly one word: what is frozen water called?",
+	}
+	if os.Getenv("FAAS_LIVE_PROBE_TOOLS") == "search" {
+		setupBody["tools"] = []any{map[string]any{"googleSearch": map[string]any{}}}
+		prompts = []string{
+			"Search the web: what is the latest stable release of the Go programming language? Answer in one sentence.",
+			"Search the web: who won the most recent Formula 1 world drivers' championship? Answer in one sentence.",
+		}
+	}
+	setup := map[string]any{"setup": setupBody}
 	if err := conn.WriteJSON(setup); err != nil {
 		t.Fatal(err)
 	}
@@ -148,11 +188,6 @@ func runLiveProbe(t *testing.T, target string, header http.Header, model string)
 		t.Fatalf("no setupComplete")
 	}
 	t.Logf("setupComplete binary=%v", first.binary)
-	prompts := []string{
-		"Answer with exactly one word: what colour is the sky on a clear day?",
-		"In about fifty words, describe how a rainbow forms.",
-		"Answer with exactly one word: what is frozen water called?",
-	}
 	var previousResponse int64 = -1
 	var totals liveProbeTotals
 	for turn, prompt := range prompts {
@@ -167,6 +202,9 @@ func runLiveProbe(t *testing.T, target string, header http.Header, model string)
 			complete := event.ServerContent != nil && event.ServerContent.TurnComplete
 			if event.ServerContent != nil {
 				contents++
+				if len(event.ServerContent.GroundingMetadata) > 0 {
+					t.Logf("turn %d groundingMetadata: %.300s", turn+1, event.ServerContent.GroundingMetadata)
+				}
 			}
 			if usage := event.UsageMetadata; usage != nil {
 				usages++
@@ -204,8 +242,15 @@ func runLiveProbe(t *testing.T, target string, header http.Header, model string)
 func (totals *liveProbeTotals) add(event liveProbeMessage) {
 	usage := event.UsageMetadata
 	totals.turns++
-	totals.prompt += usage.PromptTokenCount
+	totals.prompt += usage.PromptTokenCount + usage.ToolUsePromptTokenCount
 	totals.response += usage.ResponseTokenCount + usage.CandidatesTokenCount + usage.ThoughtsTokenCount
+	if usage.ToolUsePromptTokenCount > 0 {
+		totals.toolUse += usage.ToolUsePromptTokenCount
+		counted := usage.PromptTokenCount + usage.ResponseTokenCount + usage.CandidatesTokenCount + usage.ThoughtsTokenCount
+		if usage.TotalTokenCount >= counted+usage.ToolUsePromptTokenCount {
+			totals.totalIncludesToolUse = true
+		}
+	}
 }
 
 func liveProbeTarget(t *testing.T) (string, http.Header, string) {

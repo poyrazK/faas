@@ -393,6 +393,10 @@ type aiUsageFields struct {
 	CandidatesTokenCount    *int64 `json:"candidatesTokenCount"`
 	CachedContentTokenCount *int64 `json:"cachedContentTokenCount"`
 	ThoughtsTokenCount      *int64 `json:"thoughtsTokenCount"`
+	// ToolUsePromptTokenCount counts what built-in tools, such as code
+	// execution, fed back to the model; Google bills it as input (ADR
+	// 20261020161811 amendment 1).
+	ToolUsePromptTokenCount *int64 `json:"toolUsePromptTokenCount"`
 	// Gemini token counts by modality (ADR-997).
 	PromptTokensByModality     []geminiModalityCount `json:"promptTokensDetails"`
 	CandidatesTokensByModality []geminiModalityCount `json:"candidatesTokensDetails"`
@@ -553,6 +557,7 @@ type aiRawUsage struct {
 	seenPrompt, seenCompletion, seen                                    bool
 	// Gemini, Bedrock Converse and Bedrock invocation metrics counts.
 	geminiPrompt, geminiCandidates, geminiCached, geminiThoughts     int64
+	geminiToolUse                                                    int64
 	bedrockInput, bedrockOutput, bedrockCacheRead, bedrockCacheWrite int64
 	metricInput, metricOutput, metricCacheRead, metricCacheWrite     int64
 	seenMetrics                                                      bool
@@ -642,6 +647,7 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	take(&r.geminiCandidates, fields.ResponseTokenCount)
 	take(&r.geminiCached, fields.CachedContentTokenCount)
 	take(&r.geminiThoughts, fields.ThoughtsTokenCount)
+	take(&r.geminiToolUse, fields.ToolUsePromptTokenCount)
 	take(&r.bedrockInput, fields.BedrockInputTokens)
 	take(&r.bedrockOutput, fields.BedrockOutputTokens)
 	take(&r.bedrockCacheRead, fields.BedrockCacheReadTokens)
@@ -821,9 +827,9 @@ func (r aiRawUsage) normalizeTokens(format aiWireFormat, media aiMediaKind) AIUs
 		usage.CacheWrite1hTokens = min(r.cacheCreation1h, r.cacheCreation)
 		usage.OutputTokens = r.output
 	case format == aiFormatGemini:
-		// promptTokenCount includes cached content; thinking is billed as
-		// output.
-		usage.InputTokens = r.geminiPrompt
+		// promptTokenCount includes cached content; tool-use prompt tokens
+		// are billed as input and thinking as output.
+		usage.InputTokens = min(r.geminiPrompt+r.geminiToolUse, api.OutboundAIMaxTokensPerResponse)
 		usage.CachedInputTokens = min(r.geminiCached, r.geminiPrompt)
 		usage.OutputTokens = r.geminiCandidates + r.geminiThoughts
 		usage.InputImageTokens = min(r.geminiPromptImage, usage.InputTokens)

@@ -314,10 +314,13 @@ type geminiUsageFields struct {
 	CandidatesTokenCount    int64 `json:"candidatesTokenCount"`
 	CachedContentTokenCount int64 `json:"cachedContentTokenCount"`
 	ThoughtsTokenCount      int64 `json:"thoughtsTokenCount"`
+	ToolUsePromptTokenCount int64 `json:"toolUsePromptTokenCount"`
 }
 
+// openAI reports the tokens Google bills: tool-use prompt tokens as
+// prompt tokens, thinking as completion tokens.
 func (u geminiUsageFields) openAI() openAIUsage {
-	return newOpenAIUsage(u.PromptTokenCount, u.CandidatesTokenCount+u.ThoughtsTokenCount, u.CachedContentTokenCount)
+	return newOpenAIUsage(u.PromptTokenCount+u.ToolUsePromptTokenCount, u.CandidatesTokenCount+u.ThoughtsTokenCount, u.CachedContentTokenCount)
 }
 
 type geminiResponse struct {
