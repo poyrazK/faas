@@ -265,6 +265,23 @@ ai_gateway_feedback(integration=id, call_id=call_id, rating="bad", label="wrong_
 `opaqueAIUserId` / `opaque_ai_user_id` turns an e-mail address into an
 end-user ID that is not personal data.
 
+`aiPrompt` / `ai_prompt` calls a managed prompt by name. The result carries
+the answer text, the version that served it and the call ID for feedback:
+
+```ts
+import { aiPrompt } from '@gregale/sdk-node/preview';
+
+const { text, version, callId } = await aiPrompt('support-reply').run({ question }, { caller: { user } });
+const stream = await aiPrompt('support-reply').stream({ question }); // OpenAI chat completions SSE
+```
+
+```python
+from faas_sdk.preview import ai_prompt
+
+result = ai_prompt("support-reply").run({"question": question}, user=user)
+print(result.text, result.version)
+```
+
 ### Outside Gregale
 
 To call the gateway from your laptop, CI or a notebook as one of your apps,
