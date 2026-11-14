@@ -175,8 +175,8 @@ func TestAnalyzeDockerfileWarnsForRawTCPServer(t *testing.T) {
 			if (found != nil) != tt.want {
 				t.Fatalf("non_http_service = %v, want %v (warnings %+v)", found != nil, tt.want, got.Warnings)
 			}
-			if found != nil && (!strings.Contains(found.Message, tt.mention) || !strings.Contains(found.Message, "gregale deploy --image")) {
-				t.Fatalf("message = %q, want %q and the image deploy", found.Message, tt.mention)
+			if found != nil && (!strings.Contains(found.Message, tt.mention) || !strings.Contains(found.Message, "--visibility internal") || strings.Contains(found.Message, "app_startup_timeout")) {
+				t.Fatalf("message = %q, want %q and the internal TCP port", found.Message, tt.mention)
 			}
 		})
 	}
@@ -215,6 +215,34 @@ func TestAnalyzeNodeUsesDeclaredPackageManagerAndHealthRoute(t *testing.T) {
 	}
 	if got.HealthPath != "/readyz" {
 		t.Fatalf("health path = %q, want /readyz", got.HealthPath)
+	}
+}
+
+// ADR-079 amendment 2: /healthz is marked defaulted, and so TCP readiness,
+// only when neither the source nor gregale.yaml names a health route.
+func TestAnalyzeMarksADefaultedHealthPath(t *testing.T) {
+	express := `{"dependencies":{"express":"^5"},"scripts":{"start":"node server.js"}}`
+	for _, tc := range []struct {
+		name      string
+		files     fstest.MapFS
+		path      string
+		defaulted bool
+	}{
+		{"plain express app", fstest.MapFS{"package.json": {Data: []byte(express)}, "server.js": {Data: []byte("app.listen(process.env.PORT);\n")}}, "/healthz", true},
+		{"route in the source", fstest.MapFS{"package.json": {Data: []byte(express)}, "server.js": {Data: []byte(`app.get("/healthz", ok); app.listen(3000);`)}}, "/healthz", false},
+		{"gregale.yaml health", fstest.MapFS{"package.json": {Data: []byte(express)}, "server.js": {Data: []byte("app.listen(3000);\n")},
+			"gregale.yaml": {Data: []byte("hosting:\n  health: /healthz\n")}}, "/healthz", false},
+		{"dockerfile", fstest.MapFS{"Dockerfile": {Data: []byte("FROM redis:7\n")}}, "/healthz", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := Analyze(tc.files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.HealthPath != tc.path || got.HealthDefaulted != tc.defaulted {
+				t.Fatalf("health %q defaulted %v; want %q %v", got.HealthPath, got.HealthDefaulted, tc.path, tc.defaulted)
+			}
+		})
 	}
 }
 

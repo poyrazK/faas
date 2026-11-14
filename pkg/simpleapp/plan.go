@@ -72,7 +72,6 @@ func (p Plan) CreateRequest() api.CreateAppRequest {
 
 const (
 	DefaultPort           = api.DefaultAppPort
-	DefaultHealthPath     = "/healthz"
 	LocalStorageEphemeral = "ephemeral"
 	DurableStateExternal  = "external"
 )
@@ -118,16 +117,11 @@ func Resolve(spec Spec) (Plan, error) {
 		return Plan{}, fmt.Errorf("execution mode must be %q for a simple app", api.ExecutionModeRequest)
 	}
 	if health == "" {
-		if source == SourceDirectory {
-			health = DefaultHealthPath
-			defaults = append(defaults, "health_path="+health)
-		} else {
-			// Direct OCI images use the listener as their readiness
-			// contract unless the operator supplies an explicit path.
-			// Inventing /healthz here makes previews disagree with the
-			// image hosting receipt and scheduler.
-			defaults = append(defaults, "readiness=tcp-listener")
-		}
+		// Without a health route the source or gregale.yaml names, a source
+		// build readies on its listener, as a direct OCI image does
+		// (ADR-079 amendment 2). Inventing /healthz here makes previews
+		// disagree with the hosting receipt and scheduler.
+		defaults = append(defaults, "readiness=tcp-listener")
 	}
 	if health != "" {
 		if !strings.HasPrefix(health, "/") || strings.ContainsAny(health, "\x00\r\n") {

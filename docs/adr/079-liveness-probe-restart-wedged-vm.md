@@ -226,3 +226,16 @@ last HTTP status), `guest/init/liveness_redirect.go`,
 `pkg/fcvm/resource_adoption.go`. Tests: `pkg/fcvm/worker_liveness_test.go`,
 `cmd/vmmd/liveness_recv_test.go`, `guest/init/liveness_redirect_test.go`,
 `pkg/sched/raw_tcp_readiness_test.go`.
+
+## Amendment 2 (2026-11-13): a defaulted readiness path is TCP readiness
+
+A source build whose health path is the platform's `/healthz` default
+(neither the source nor `gregale.yaml` names a health route) marks its
+profile `health_defaulted`. sched then gives it TCP-accept readiness, as a
+direct OCI image has, and the hosting smoke checks route connectivity; the
+plan-default liveness probe treats `/healthz` as unpromised (any answer
+below 500 is alive). A plain Express or Flask app answered `/healthz` with
+404 and every deploy ended `app_startup_timeout`. A declared path (deploy
+override, manifest, `gregale.yaml`, or a route found in the source) keeps
+strict HTTP readiness. Profiles written before this lack the mark and keep
+HTTP readiness until redeployed.

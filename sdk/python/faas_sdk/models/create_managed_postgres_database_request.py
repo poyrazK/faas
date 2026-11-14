@@ -28,7 +28,7 @@ class CreateManagedPostgresDatabaseRequest:
     request_id: UUID | Unset = UNSET
     """Optional reserved database identity for durable workflows. Identical retries recover the same resource
     independently of the HTTP response cache. A different reservation cannot adopt an existing name."""
-    postgres_major: int | Unset = 16
+    postgres_major: int | Unset = 17
     service_class: CreateManagedPostgresDatabaseRequestServiceClass | Unset = "development"
     availability: CreateManagedPostgresDatabaseRequestAvailability | Unset = "single_zone"
     scale_to_zero: bool | Unset = True

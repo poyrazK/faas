@@ -142,7 +142,7 @@ func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest
 	}
 	spec := managedpostgres.Spec{Region: req.Region, PostgresMajor: req.PostgresMajor, Class: class, Availability: availability, ScaleToZero: scaleToZero, StorageLimitBytes: storage, RestoreWindowSeconds: restoreWindow}
 	if spec.PostgresMajor == 0 {
-		spec.PostgresMajor = 16
+		spec.PostgresMajor = api.ManagedPostgresDefaultMajor
 	}
 	// Name the entitlement that refused the request; a bare "quota exceeded"
 	// read like usage and sent customers to check credentials (hunt #10).

@@ -32,6 +32,31 @@ func TestBuildHostingReceiptUsesPersistedProfileAndURL(t *testing.T) {
 	}
 }
 
+// ADR-079 amendment 2: a source build whose /healthz is the platform default
+// readies on its listener, so its smoke checks route connectivity, not
+// GET /healthz; a declared path keeps the HTTP smoke.
+func TestHostingSmokeOfADefaultedHealthPathIsRouteConnectivity(t *testing.T) {
+	raw, err := json.Marshal(frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: "node", Port: 3000,
+		HealthPath: "/healthz", HealthDefaulted: true, Inferred: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := state.App{Manifest: state.AppManifest{Healthz: "/healthz"}}
+	dep := state.Deployment{Kind: state.DeploymentKindTarball, InferredProfile: raw}
+	if !routeConnectivitySmoke(app, dep) {
+		t.Fatal("defaulted /healthz smoke is HTTP")
+	}
+	app.Manifest.Healthz = "/ready"
+	if routeConnectivitySmoke(app, dep) {
+		t.Fatal("a declared manifest health path lost its HTTP smoke")
+	}
+	app.Manifest.Healthz = "/healthz"
+	dep.OverrideHealthcheck = json.RawMessage(`{"path":"/healthz"}`)
+	if routeConnectivitySmoke(app, dep) {
+		t.Fatal("a declared health override lost its HTTP smoke")
+	}
+}
+
 func TestHostingAppURLEmptySlug(t *testing.T) {
 	if got := hostingAppURL(""); got != "" {
 		t.Fatalf("hostingAppURL(\"\") = %q, want empty", got)
