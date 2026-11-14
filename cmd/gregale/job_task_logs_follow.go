@@ -4,6 +4,7 @@ package main
 // GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream.
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,38 +22,56 @@ type jobTaskLogFollow struct {
 	Lines int
 	// Reason is the server's end reason; empty when the stream broke.
 	Reason string
-	// Gaps counts gap frames: output the VM's ring had already dropped.
+	// Gaps counts evidence of missing output, including unresolved gap frames.
 	Gaps int
+	// AttemptChanges counts changes of VM across a disconnected stream.
+	AttemptChanges int
+	// UnverifiedResume means a reopened stream ended before identifying its VM.
+	UnverifiedResume bool
+	replay           jobTaskLogReplay
+	localErr         error
 }
 
 // Complete reports whether every line the task wrote was relayed.
 func (f jobTaskLogFollow) Complete() bool {
-	return f.Reason == api.JobTaskLogsEndFinished && f.Gaps == 0
+	return f.Reason == api.JobTaskLogsEndFinished && f.Gaps == 0 && f.AttemptChanges == 0 && !f.UnverifiedResume
 }
 
 // followJobTaskLogs relays one task's output until the server ends the
 // stream. Lines tagged stderr go to stderr. An error before any frame means
 // the stream could not be used at all.
 func followJobTaskLogs(ctx context.Context, client *api.Client, job, runID string, taskIndex int, stdout, stderr io.Writer) (jobTaskLogFollow, error) {
+	return followJobTaskLogsWithRetry(ctx, client, job, runID, taskIndex, stdout, stderr, jobTaskLogReconnectDelays())
+}
+
+func readJobTaskLogStream(ctx context.Context, client *api.Client, job, runID string, taskIndex int, stdout, stderr io.Writer, res *jobTaskLogFollow) error {
+	// A numeric cursor belongs to the VM that emitted it. Replaying the
+	// retained window and deduplicating by instance is safe across attempts
+	// and also works with gateways that cannot bind a cursor to a VM.
 	body, err := client.StreamJobTaskLogs(ctx, job, runID, taskIndex, 0)
 	if err != nil {
-		return jobTaskLogFollow{}, err
+		return err
 	}
 	dec := api.NewDecoder(body)
 	dec.SetCloseFn(body.Close)
-	defer func() { _ = dec.Close() }()
-	var res jobTaskLogFollow
+	defer func() {
+		_ = dec.Close()
+		// Closing the reader also releases a parser blocked on its buffered
+		// event channel. Do not render or advance cursors while draining.
+		for range dec.Events() {
+		}
+	}()
 	for {
 		select {
 		case ev, ok := <-dec.Events():
 			if !ok {
-				return res, streamEndError(dec)
+				return streamEndError(dec)
 			}
 			if done := res.apply(ev, stdout, stderr); done {
-				return res, nil
+				return res.localErr
 			}
 		case <-ctx.Done():
-			return res, ctx.Err()
+			return ctx.Err()
 		}
 	}
 }
@@ -63,21 +82,26 @@ func (f *jobTaskLogFollow) apply(ev api.Event, stdout, stderr io.Writer) bool {
 	case "log":
 		var line api.LogEvent
 		if json.Unmarshal([]byte(ev.Data), &line) != nil {
+			f.Gaps++
+			f.replay.unsafe = true
 			return false
 		}
-		w := stdout
-		if line.Stream == "stderr" {
-			w = stderr
-		}
-		_, _ = fmt.Fprintln(w, line.Line)
-		f.Lines++
+		return f.applyLogLine(line, stdout, stderr)
 	case "gap":
-		f.Gaps++
+		var gap api.LogGapEvent
+		if json.Unmarshal([]byte(ev.Data), &gap) == nil && gap.Reason == "seq_below_retained" {
+			f.replay.gapPending = true
+		} else {
+			f.Gaps++
+		}
 	case "end":
 		var end struct {
 			Reason string `json:"reason"`
 		}
-		_ = json.Unmarshal([]byte(ev.Data), &end)
+		if json.Unmarshal([]byte(ev.Data), &end) != nil {
+			f.localErr = errors.New("invalid task log end frame")
+			return true
+		}
 		f.Reason = end.Reason
 		return true
 	}
@@ -122,8 +146,11 @@ func followJobTaskLogsCommand(client *api.Client, job, runID string, taskIndex i
 }
 
 func streamEndError(dec *api.Decoder) error {
-	if err, ok := <-dec.Errors(); ok && err != nil {
-		return err
+	if err, ok := <-dec.Errors(); ok && err != nil && !errors.Is(err, io.EOF) {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return err
+		}
+		return &jobTaskLogReadError{err}
 	}
-	return errors.New("the log stream closed before the task finished")
+	return fmt.Errorf("the log stream closed before the task finished: %w", io.ErrUnexpectedEOF)
 }

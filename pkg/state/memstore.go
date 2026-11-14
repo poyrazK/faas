@@ -150,6 +150,10 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	toolInvocations      map[string]api.ToolInvocationRecord
+	toolPublications     map[string]api.ToolPublicationRecord
+	toolGrants           map[string]api.ToolGrantRecord
+	toolOAuthConnections map[string]ToolOAuthConnection
 	// ownerReleaseRequests are app_owner_release_requests by app id
 	// (ADR-20261110210000 §4); allocated on first use under mu.
 	ownerReleaseRequests map[string]AppOwnerReleaseRequest
@@ -163,6 +167,8 @@ type MemStore struct {
 	// abuseStrikes is each resource owner's abuse recycle times inside the
 	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
 	abuseStrikes map[string][]time.Time
+	// signupFacts is each account's sign-up record (ADR-20261113160000).
+	signupFacts map[string]AccountSignupFacts
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
@@ -4512,6 +4518,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 			delete(m.crons, cronID)
 		}
 	}
+	for key, subscription := range m.eventSubscriptions {
+		if app, ok := m.eventSubscriptionAppLocked(subscription.AppID); ok && app.ProjectID == projectID && subscription.DeploymentScope == slug {
+			delete(m.eventSubscriptions, key)
+		}
+	}
 	m.deleteProjectEnvironmentBranchLocked(environmentID)
 	delete(m.projectEnvironments, environmentID)
 	for sourceID, memory := range m.environmentGitOps {
@@ -7849,6 +7860,11 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	m.publishMemTrafficAppPurgeLocked(id)
 	m.forgetOwnedOperationsLocked("", id)
+	for key, connection := range m.toolOAuthConnections {
+		if connection.Record.AppID == id {
+			delete(m.toolOAuthConnections, key)
+		}
+	}
 	delete(m.appDeletionClaims, id)
 
 	m.deleteAppStandardSnapshotCapturesLocked(id)
@@ -8354,6 +8370,7 @@ func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
 			m.apps[id] = preview
 		}
 	}
+	m.expirePullRequestBranchesLocked(parent.AccountID, parent.ProjectID, now)
 }
 
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch
@@ -25155,7 +25172,28 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 			delete(m.orgs, orgID)
 		}
 	}
+	for key, record := range m.toolPublications {
+		if record.AccountID == id {
+			delete(m.toolPublications, key)
+		}
+	}
+	for key, record := range m.toolInvocations {
+		if record.AccountID == id {
+			delete(m.toolInvocations, key)
+		}
+	}
+	for key, record := range m.toolGrants {
+		if record.AccountID == id {
+			delete(m.toolGrants, key)
+		}
+	}
+	for key, record := range m.toolOAuthConnections {
+		if record.Record.AccountID == id {
+			delete(m.toolOAuthConnections, key)
+		}
+	}
 	delete(m.legalAcceptances, id) // ON DELETE CASCADE
+	delete(m.signupFacts, id)      // ON DELETE CASCADE
 	delete(m.accounts, id)
 	for promotionID := range m.environmentPromotionReceipts {
 		if m.projectEnvironmentPromotions[promotionID].AccountID == id {

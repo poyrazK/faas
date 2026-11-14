@@ -419,6 +419,24 @@ func (q *Queries) LoginFailureRetryAfter(ctx context.Context, db DBTX, arg Login
 	return wait_seconds, err
 }
 
+const orgSecurityPolicy = `-- name: OrgSecurityPolicy :one
+SELECT org_id, require_mfa, updated_by_account_id, updated_at
+FROM org_security_policies WHERE org_id = $1
+`
+
+// Organization security policy (ADR 20261113180000).
+func (q *Queries) OrgSecurityPolicy(ctx context.Context, db DBTX, orgID pgtype.UUID) (OrgSecurityPolicy, error) {
+	row := db.QueryRow(ctx, orgSecurityPolicy, orgID)
+	var i OrgSecurityPolicy
+	err := row.Scan(
+		&i.OrgID,
+		&i.RequireMfa,
+		&i.UpdatedByAccountID,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const recentAccountSessions = `-- name: RecentAccountSessions :many
 SELECT coalesce(host(issued_ip),'')::text AS issued_ip, coalesce(issued_ua,'')::text AS issued_ua, issued_at
 FROM sessions WHERE account_id=$1 AND issued_at>=$2
@@ -609,6 +627,24 @@ func (q *Queries) SetAccountDisplayName(ctx context.Context, db DBTX, arg SetAcc
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setOrgRequireMFA = `-- name: SetOrgRequireMFA :exec
+INSERT INTO org_security_policies (org_id, require_mfa, updated_by_account_id, updated_at)
+VALUES ($1, $2, $3, clock_timestamp())
+ON CONFLICT (org_id) DO UPDATE SET require_mfa = EXCLUDED.require_mfa,
+    updated_by_account_id = EXCLUDED.updated_by_account_id, updated_at = EXCLUDED.updated_at
+`
+
+type SetOrgRequireMFAParams struct {
+	OrgID      pgtype.UUID
+	RequireMfa bool
+	UpdatedBy  pgtype.UUID
+}
+
+func (q *Queries) SetOrgRequireMFA(ctx context.Context, db DBTX, arg SetOrgRequireMFAParams) error {
+	_, err := db.Exec(ctx, setOrgRequireMFA, arg.OrgID, arg.RequireMfa, arg.UpdatedBy)
+	return err
 }
 
 const sweepLoginFailures = `-- name: SweepLoginFailures :execrows

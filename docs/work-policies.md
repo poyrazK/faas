@@ -25,7 +25,7 @@ declaration. The API also offers `GET /v1/apps/{slug}/work-policies` and
 Use the policy with an async invocation:
 
 ```bash
-gregale invoke my-app --async --payload '{"document_id":"d1"}' \
+gregale invocation run my-app --async --payload '{"document_id":"d1"}' \
   --work-policy document-index --work-key '"d1"' \
   --work-fairness-key '"tenant-42"'
 ```

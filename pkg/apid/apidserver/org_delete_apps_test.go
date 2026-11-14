@@ -24,7 +24,7 @@ func TestOrganizationWithAppsCannotBeDeleted(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	rec := e.Do(t, http.MethodDelete, "/v1/orgs/"+org.Slug, nil, map[string]string{"X-Active-Org": org.Slug})
+	rec := e.DoSession(t, "", http.MethodDelete, "/v1/orgs/"+org.Slug, nil, map[string]string{"X-Active-Org": org.Slug})
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "apps") {
 		t.Fatalf("DELETE org with an app = %d %s, want 409 naming its apps", rec.Code, rec.Body.String())
 	}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,9 +28,12 @@ type refreshCheckVMM struct {
 	verdicts map[string]sched.SnapshotBackingVerdict // by storage key
 	err      error
 	asked    []string // node|storage key
+	mu       sync.Mutex
 }
 
 func (v *refreshCheckVMM) SnapshotBackingCurrent(_ context.Context, nodeID string, snap sched.SnapshotRef, baseKey string) (sched.SnapshotBackingVerdict, string, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.asked = append(v.asked, nodeID+"|"+snap.StorageKey)
 	if v.err != nil {
 		return sched.SnapshotBackingUnknown, "", v.err

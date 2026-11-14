@@ -5,6 +5,7 @@ package apidserver_test
 import (
 	"context"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -13,9 +14,26 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type outboxInlineRecorder struct{ calls int }
+type outboxInlineRecorder struct {
+	mu       sync.Mutex
+	calls    int
+	subjects []string
+}
 
-func (r *outboxInlineRecorder) Send(context.Context, apidserver.Message) error { r.calls++; return nil }
+func (r *outboxInlineRecorder) Send(_ context.Context, m apidserver.Message) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	r.subjects = append(r.subjects, m.Subject)
+	return nil
+}
+
+// sent returns the subjects sent so far; a reset also mails asynchronously.
+func (r *outboxInlineRecorder) sent() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.subjects...)
+}
 
 func TestProducerOutboxAccountDeletionWiringPreservesDefaultAndAvoidsInlineDuplicate(t *testing.T) {
 	for _, enabled := range []bool{false, true} {

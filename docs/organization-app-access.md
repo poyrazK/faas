@@ -221,9 +221,12 @@ protected promotion is approved by an owner or admin in the browser and
 exchanged only by the member whose credential asked for it; the approval
 records the approving member, so release approval policies judge them.
 
-Async-route manifest bindings and other unreviewed integrations remain
-outside the reviewed project surface. Shared uploads reject async-route bindings
-before resolving personal services. Managed PostgreSQL bindings use the company
+A company manifest may declare `async_routes`, which write async edge rules on
+the project's apps; deploying one (including `async_routes: []`, which clears
+them) needs owner or admin, as writing edge rules directly does, and a
+developer gets 403
+([ADR-20261114090000](adr/20261114090000-company-project-manifest-async-routes.md)).
+Managed PostgreSQL bindings use the company
 ownership rules below. Other data services and GitHub/GitOps references still
 prevent creator erasure.
 
@@ -290,6 +293,33 @@ Go clients expose methods including `ListOrgManagedPostgresDatabases`,
 `GetOrgManagedPostgresUsage`. Generated Node/Python clients expose the same
 organization routes. See [ADR-202610171906](adr/202610171906-organization-managed-postgres-ownership.md)
 for backfill, rollout and acceptance requirements.
+
+## Ownership and organization security
+
+Only an owner can invite an admin. Transferring ownership and deleting the
+organization need a signed-in browser session; an API key gets
+`browser_session_required`, and deletion also asks you to confirm your
+sign-in. The new owner must be an active member whose account is not
+suspended or pending deletion. Creating or rotating an organization API key
+emails the owners; deleting the organization emails owners and admins.
+
+### Require two-factor authentication
+
+An owner can require every member to use two-factor authentication:
+
+```
+PUT /v1/orgs/{slug}/security-policy  {"require_mfa": true}
+```
+
+You need two-factor authentication yourself to turn it on. While it is on,
+a member without it is refused on the organization's routes with
+`org_mfa_required`, from the dashboard and with API keys alike, until they
+enrol. Their personal apps and keys are not affected. Owners and admins are
+emailed whenever the policy changes. See ADR-20261113180000.
+
+If an organization's owner can no longer act (suspended or leaving), support
+can make another active member the owner; see
+[the runbook](runbooks/org-owner-recovery.md).
 
 ## Removing a member
 

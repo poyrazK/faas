@@ -51,9 +51,11 @@ func (d *Dunning) moveToFreeForNonpayment(ctx context.Context, acct state.Accoun
 	if acct.PastDueAt != nil {
 		pastDueAt = *acct.PastDueAt
 	}
-	if acct.Email != "" {
-		subject, body := mail.MovedToFreeForNonPaymentBody(acct.Email, string(previous), pastDueAt, now)
-		msg := mail.Message{To: []string{acct.Email}, Subject: subject, TextBody: body,
+	// An organization without a billing email is told through its owner
+	// (billing review R10-3).
+	if to := billingMailTo(ctx, d.p.Store, acct); to != "" {
+		subject, body := mail.MovedToFreeForNonPaymentBody(to, string(previous), pastDueAt, now)
+		msg := mail.Message{To: []string{to}, Subject: subject, TextBody: body,
 			MessageID: fmt.Sprintf("%s:moved_to_free:%s", acct.ID, pastDueAt.UTC().Format(time.RFC3339))}
 		if err := d.p.Mailer.Send(ctx, msg); err != nil {
 			d.p.Log.Warn("meter: dunning moved-to-free mail", "account", acct.ID, "err", err)

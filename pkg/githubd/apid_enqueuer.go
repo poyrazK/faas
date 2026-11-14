@@ -103,7 +103,8 @@ func (a *apidEnqueuer) Enqueue(ctx context.Context, spec BuildSpec) (state.Build
 		// DeploymentKindPreview. Zero (UNSPECIFIED) is the legacy
 		// fallback that keeps stamping DeploymentKindGitHub so
 		// older dispatchers / test fixtures stay binary-compatible.
-		EventKind: spec.EventKind,
+		EventKind:         spec.EventKind,
+		EnvironmentBranch: spec.EnvironmentBranch,
 	}
 
 	resp, err := a.client.EnqueueBuild(ctx, req)

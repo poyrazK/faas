@@ -76,10 +76,9 @@ type ReplayDevBridgeWebhookRequest struct {
 
 func (c *Client) ReplayDevBridgeWebhook(ctx context.Context, id string, request ReplayDevBridgeWebhookRequest) (devbridge.WebhookReplay, error) {
 	var out devbridge.WebhookReplay
-	client := *c.http
+	client := c.operationHTTP(DevBridgeWebhookReplayTimeout + 5*time.Second)
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	client.Timeout = DevBridgeWebhookReplayTimeout + 5*time.Second
-	err := c.doWithClientAndIdempotencyKey(ctx, &client, "POST", "/v1/dev/bridges/"+url.PathEscape(id)+"/webhook-replays", request, &out, "")
+	err := c.doWithClientAndIdempotencyKey(ctx, client, "POST", "/v1/dev/bridges/"+url.PathEscape(id)+"/webhook-replays", request, &out, "")
 	return out, err
 }
 

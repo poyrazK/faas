@@ -174,7 +174,10 @@ func TestSourceDeploymentRejectsMissingConfiguredRoot(t *testing.T) {
 			if _, err := (*f.env.Store()).UpdateApp(t.Context(), *f.env.AppID(), state.UpdateAppParams{RootDir: &root}); err != nil {
 				t.Fatal(err)
 			}
-			_, err := f.deploy(t, transport, sourceAdmissionArchive(t, "schema_version: 1\n"), api.DeployAnnotations{})
+			// No app marker at the archive root, so the cropped-archive
+			// fallback (#7245) does not apply.
+			markerless := apidserver.BuildTestTarGz(t, []tar.Header{{Name: "index.js"}}, map[string][]byte{"index.js": []byte("console.log(1)\n")})
+			_, err := f.deploy(t, transport, markerless, api.DeployAnnotations{})
 			var remote *api.APIError
 			if !errors.As(err, &remote) || remote.Problem.Status != http.StatusBadRequest || remote.Problem.Code != api.CodeSourceInvalid {
 				t.Fatalf("missing root error=%v; want source_invalid 400", err)

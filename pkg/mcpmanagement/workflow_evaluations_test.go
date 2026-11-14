@@ -56,11 +56,13 @@ func (a *workflowDriver) call(tool string, args map[string]any, wantError bool) 
 	if err != nil {
 		a.t.Fatal(err)
 	}
-	validateWorkflowSchema(a.t, a.tools[tool].OutputSchema, raw)
 	if result.IsError {
-		// Also reject an error that accidentally matched an additive success
-		// branch without satisfying the error contract.
+		// An error follows the error contract, served once as
+		// gregale://contracts/errors; a tool's output schema describes its
+		// successes only (ADR-20261103193000, amendment 2026-11-13).
 		validateWorkflowSchema(a.t, map[string]any{"$defs": map[string]any{"recovery": recoverySchema()}, "anyOf": []any{toolErrorSchema()}}, raw)
+	} else {
+		validateWorkflowSchema(a.t, a.tools[tool].OutputSchema, raw)
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
