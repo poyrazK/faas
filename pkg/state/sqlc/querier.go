@@ -5289,6 +5289,13 @@ type Querier interface {
 	// creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
 	// counts toward oldest_quiet_age_seconds instead, and an active bucket that
 	// was quiet on its observation counts from when it turned active.
+	//
+	// ADR-20261111152144 §4: answered from object_inventory_schedule without
+	// reading every bucket. due_buckets is the count of the schedule's due index
+	// ranges, corrected for the buckets they can count wrongly (x: not ready,
+	// held, holding a claim token, or with an open listing): for each, minus
+	// whether a range counted it, plus whether the due rule holds. Each oldest
+	// age is the first bucket in index order that the rule does not exempt.
 	ObjectInventoryBacklog(ctx context.Context, db DBTX, arg ObjectInventoryBacklogParams) (ObjectInventoryBacklogRow, error)
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)
 	ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error)
