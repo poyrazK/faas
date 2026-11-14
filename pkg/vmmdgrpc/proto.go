@@ -898,6 +898,7 @@ func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.
 	resp := &vmmdpb.WakeResponse{
 		RehearsalRunId:                     inst.Net.RehearsalRunID,
 		EnvironmentBranchContained:         inst.Net.EnvironmentBranchContained,
+		BaseScanGrace:                      inst.BaseScanGrace,
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,

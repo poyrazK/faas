@@ -288,7 +288,7 @@ func TestPipelineDeleteRetryRecoversExistingIntent(t *testing.T) {
 
 // Lifecycle tests start with a worker-approved catalog fixture. Native acceptance
 // exercises the actual metadata inspector before creating the pipeline.
-func fixturePassingCheck(t *testing.T, store *PostgresStore, account string, c api.DataConnection) {
+func fixturePassingCheck(t *testing.T, store *PostgresStore, account string, c api.DataConnection, metadata ...api.DataSourceTable) {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := store.RequestCheck(ctx, account, c.ID, c.Revision, ""); err != nil {
@@ -298,7 +298,10 @@ func fixturePassingCheck(t *testing.T, store *PostgresStore, account string, c a
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.FinishCheck(ctx, job, api.DataConnectionCheck{State: "passed", Checks: []api.DataConnectionIssue{}, Tables: []api.DataSourceTable{{Name: "orders", Supported: true, Columns: []api.DataSourceColumn{}, Issues: []api.DataConnectionIssue{}}}}); err != nil {
+	if len(metadata) == 0 {
+		metadata = []api.DataSourceTable{{Name: "orders", Supported: true, Columns: []api.DataSourceColumn{}, Issues: []api.DataConnectionIssue{}}}
+	}
+	if err = store.FinishCheck(ctx, job, api.DataConnectionCheck{State: "passed", Checks: []api.DataConnectionIssue{}, Tables: metadata}); err != nil {
 		t.Fatal(err)
 	}
 }

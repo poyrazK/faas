@@ -209,6 +209,11 @@
       when:
         - not (faas_image_seed | default(false) | bool)
         - faas_cp_converge_roles | default(none) is none or 'audit_anchor' in faas_cp_converge_roles
+    # ADR-20261113160000: apid resolves the signup country and network
+    # owner from the same DB-IP databases as gatewayd-internal; stage them
+    # before control_plane_service so apid's first start finds them.
+    - role: geoip
+      when: faas_cp_converge_roles | default(none) is none or 'geoip' in faas_cp_converge_roles
     - role: control_plane_service
       when: faas_cp_converge_roles | default(none) is none or 'control_plane_service' in faas_cp_converge_roles
     - role: seal_domains

@@ -108,6 +108,11 @@ func TestAccountHealthAPIAndDashboard(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
 		t.Fatal(err)
 	}
+	// ADR-20261114090000: without an evaluator the signal list is empty,
+	// not null.
+	if !strings.Contains(rec.Body.String(), `"signals":[]`) {
+		t.Fatalf("signals missing or null: %s", rec.Body.String())
+	}
 	if len(health.Restrictions) != 1 || health.Restrictions[0].Kind != api.RestrictionAccountPastDue {
 		t.Fatalf("restrictions = %+v", health.Restrictions)
 	}
@@ -201,5 +206,13 @@ func TestCreateReceiptWriterPassesThroughAndKeepsReceipt(t *testing.T) {
 	}
 	if w.status != http.StatusCreated || w.body.Len() != 4096 || !strings.HasPrefix(w.body.String(), `{"ticket_id":"t-1","revision":1}`) {
 		t.Fatalf("receipt not kept: %d %d", w.status, w.body.Len())
+	}
+}
+
+func TestWithSignalsCountsTowardsAttention(t *testing.T) {
+	h := customerAccountHealth(api.ObsTenantDiagnosis{Restrictions: []api.ObsTenantRestriction{{Kind: api.RestrictionAccountPastDue}}})
+	h = withSignals(h, []api.AccountHealthSignal{{Kind: api.AttentionKindAppOOM, Subject: "shop"}, {Kind: api.AttentionKindJobsFailing, Subject: "nightly"}})
+	if h.Attention != 3 || len(h.Signals) != 2 {
+		t.Fatalf("attention=%d signals=%+v, want 3 and 2", h.Attention, h.Signals)
 	}
 }
