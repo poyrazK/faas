@@ -21,6 +21,23 @@
     "kind": "operational"
   },
   {
+    "table": "account_signup_facts",
+    "columns": [
+      "account_id",
+      "asn",
+      "asn_org",
+      "country",
+      "created_at",
+      "disposable_email",
+      "email_domain",
+      "method",
+      "reduced_at",
+      "signup_ip",
+      "user_agent"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "account_billing_connections",
     "columns": [
       "account_id",

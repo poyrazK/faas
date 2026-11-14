@@ -1358,6 +1358,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go meter.QuietPauseRetentionLoop(ctx, store, mc.RetentionInterval, log)
 	// ADR-371: egress flow log rows are kept api.EgressFlowLogRetentionDays.
 	go meter.RetentionLoopEgressFlowLog(ctx, poolAdapter{pool}, time.Hour, log)
+	// ADR-20261113160000: sign-up addresses and user agents are kept
+	// api.SignupFactsPersonalRetention.
+	go meter.SignupFactsRetentionLoop(ctx, store, time.Hour, log)
 
 	// ADR-127: per-request telemetry retention sweep. Runs on a
 	// shorter cadence (hourly default) than the usage_minutes

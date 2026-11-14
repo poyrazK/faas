@@ -516,11 +516,45 @@ func managedPostgresCapLimits(store managedpostgres.OverageStore, accountStore s
 		if err != nil {
 			return managedpostgres.CapLimits{}, err
 		}
+		inactive, err := managedPostgresSubjectInactive(ctx, accountStore, account)
+		if err != nil {
+			return managedpostgres.CapLimits{}, err
+		}
 		return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
 			Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
 			StoragePool: managedPostgresStoragePool(limits, overageOn), StorageAllowance: limits.StorageLimitBytes,
-			Entitlement: limits, Inactive: !account.Active()}, nil
+			Entitlement: limits, Inactive: inactive}, nil
 	}
+}
+
+// quotaSuspensionReader reports a suspension that is only the plan's monthly
+// quota stop (state.PgStore.QuotaSuspended).
+type quotaSuspensionReader interface {
+	QuotaSuspended(ctx context.Context, id string) (bool, error)
+}
+
+// managedPostgresSubjectInactive reports whether account's databases stop
+// because the account is not active. The monthly quota stop (the Free
+// compute allowance, or an app egress allowance a paid plan does not bill)
+// parks the account's apps only: its databases keep their own allowances and
+// keep running (ADR-20261103131742 amendment 2026-11-13). Payment, abuse and
+// operator suspensions still stop them.
+func managedPostgresSubjectInactive(ctx context.Context, store any, account state.Account) (bool, error) {
+	if account.Active() {
+		return false, nil
+	}
+	if account.Status != state.AccountSuspended || account.AbuseHeld() {
+		return true, nil
+	}
+	reader, ok := store.(quotaSuspensionReader)
+	if !ok {
+		return true, nil
+	}
+	quota, err := reader.QuotaSuspended(ctx, account.ID)
+	if err != nil {
+		return true, fmt.Errorf("managed postgres: read quota suspension: %w", err)
+	}
+	return !quota, nil
 }
 
 // managedPostgresPlanSpans splits a subject's month through at at its
