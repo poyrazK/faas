@@ -72065,6 +72065,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /v1/data/pipelines/{id}/tenant-readers:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Pipeline whose tenant membership preview or approval is being managed.
+    post:
+      summary: Preview or approve an exact tenant membership change
+      operationId: changeDataPipelineTenantReaders
+      tags:
+      - data_pipelines
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineTenantReadersRequest'
+      responses:
+        '202':
+          description: Tenant membership preview saved or approved for atomic mirror policy reconciliation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Problem returned by changeDataPipelineTenantReaders after account, credential or pipeline validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
   /v1/sales/inquiries/challenge:
     get:
       x-internal: true
@@ -91410,16 +91444,20 @@ components:
           description: Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
 
     AccountHealth:
-      description: "What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain problems and refused API requests."
+      description: "What may stop the calling account from working: restrictions with the next step, problems that keep recurring, failed deployments, custom-domain problems and refused API requests."
       type: object
       required: [generated_at, attention, restrictions, failed_deployments, domain_issues, refused_requests]
       properties:
         generated_at: { type: string, format: date-time, description: When the checks ran. }
-        attention: { type: integer, description: "Number of restrictions, failed deployments and domain issues; zero means nothing needs action." }
+        attention: { type: integer, description: "Number of restrictions, signals, failed deployments and domain issues; zero means nothing needs action." }
         restrictions:
           type: array
           description: Restrictions currently applied to the account, one per kind.
           items: { $ref: '#/components/schemas/AccountHealthRestriction' }
+        signals:
+          type: array
+          description: "Problems that keep recurring on the account, such as repeated failed deployments or out-of-memory stops, with the next step. Absent from older servers."
+          items: { $ref: '#/components/schemas/AccountHealthSignal' }
         failed_deployments:
           type: array
           description: Failed deployments from the last 7 days, newest first, at most 10.
@@ -91447,6 +91485,21 @@ components:
         action: { type: string, description: Label of the next step. }
         action_url: { type: string, description: Dashboard path for the next step. }
         since: { type: string, format: date-time, description: "When the restriction started, when known." }
+    AccountHealthSignal:
+      description: "A problem that keeps recurring, in customer wording, with the next step when there is one."
+      type: object
+      required: [kind, subject, title, detail, since]
+      properties:
+        kind:
+          type: string
+          enum: [deploy_failing, app_oom, jobs_failing, limit_pressure]
+          description: Stable signal identifier.
+        subject: { type: string, description: "What the signal is about: an app slug, a scheduled job name or a problem code." }
+        title: { type: string, description: Short headline for the signal. }
+        detail: { type: string, description: What keeps happening and how to fix it. }
+        action: { type: string, description: Label of the link that fixes the signal. }
+        action_url: { type: string, description: Dashboard path of the page that fixes the signal. }
+        since: { type: string, format: date-time, description: When Gregale first detected the problem. }
     AccountHealthDeployment:
       description: A failed deployment with the error and fix hint the build or rollout reported.
       type: object
@@ -114105,6 +114158,10 @@ components:
             type: string
             enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
           description: "For an unset_env_keys name with a Compose value, why that value is not imported. Never values."
+        source_hosts:
+          type: array
+          items: { $ref: '#/components/schemas/PlanSourceHost' }
+          description: "String literals in the workload's source that dial another service by its Compose name, which does not resolve on Gregale. At most a few per workload."
         imported_env_keys:
           type: array
           items: { type: string }
@@ -114317,6 +114374,14 @@ components:
         observed: { type: integer, format: int64 }
         docs_url: { type: string }
 
+    PlanSourceHost:
+      type: object
+      description: "One place source code dials a service by its Compose name."
+      required: [host, file, line]
+      properties:
+        host: { type: string, description: "The Compose service name the code uses as a host." }
+        file: { type: string, description: "Repository-relative path of the file." }
+        line: { type: integer, description: "1-based line number." }
     FeatureHint:
       description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable."
       type: object
@@ -139849,6 +139914,12 @@ components:
       - tables
       - created_at
       properties:
+        source_provider_hint:
+          type: string
+          description: Hostname-derived setup hint; never a qualification or admission grant.
+        source_guidance_url:
+          type: string
+          format: uri
         requested_tables:
           type: array
           maxItems: 16
@@ -139963,6 +140034,9 @@ components:
       - columns
       - issues
       properties:
+        column_selection_supported:
+          type: boolean
+          description: A valid explicit column selection may omit incompatible non-key columns; all table-level checks still apply.
         name:
           type: string
           maxLength: 63
@@ -139988,6 +140062,8 @@ components:
       - nullable
       - primary_key
       properties:
+        unsupported:
+          type: boolean
         name:
           type: string
           maxLength: 63
@@ -140070,7 +140146,7 @@ components:
           description: Replacement verified-TLS URL with an explicit password for the existing source host, database and username.
             addresses must be operator-qualified.
     CreateDataPipelineRequest:
-      description: Selected public tables, dedicated destination and explicitly authorized JWT readers. A fresh passing connection check for the current source credential and all selected tables is required; otherwise returns data_connection_check_required.
+      description: Selected public tables, dedicated destination and explicitly authorized JWT readers. Supply read_subjects for whole-table access, or serving.tenant_access with owner-managed memberships and no read_subjects. Explicit columns must cover every table and retain all primary-key and tenant columns. A fresh passing connection check for the current source credential and all selected tables is required; otherwise returns data_connection_check_required.
       type: object
       additionalProperties: false
       required:
@@ -140078,8 +140154,9 @@ components:
       - source_connection_id
       - database_id
       - tables
-      - read_subjects
       properties:
+        serving:
+          $ref: '#/components/schemas/DataPipelineServing'
         name:
           type: string
           minLength: 3
@@ -140104,9 +140181,83 @@ components:
             type: string
             minLength: 1
             maxLength: 256
-          minItems: 1
-          maxItems: 32
+          minItems: 0
+          maxItems: 128
           uniqueItems: true
+    DataPipelineServing:
+      description: Versioned serving contract. Columns are immutable and affect publication, mirror schema and recovery. Omit columns for all-column replication. Tenant access uses owner-managed subject memberships; JWT tenant claims grant nothing. At least columns or tenant_access is required. A missing version defaults to 1 at creation.
+      type: object
+      additionalProperties: false
+      properties:
+        version:
+          type: integer
+          enum: [1]
+          default: 1
+        columns:
+          type: object
+          description: Every selected table maps to 1–128 unique columns, including all primary keys and the tenant column. Names are bounded to 63 UTF-8 bytes.
+          maxProperties: 16
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 128
+            uniqueItems: true
+            items: {type: string, minLength: 1, maxLength: 63}
+        tenant_access:
+          $ref: '#/components/schemas/DataPipelineTenantAccess'
+    DataPipelineTenantAccess:
+      description: Row access through a text, varchar or UUID column present on every selected table. Memberships match verified JWT sub values exactly. Empty memberships revoke every reader.
+      type: object
+      additionalProperties: false
+      required: [column, memberships]
+      properties:
+        column: {type: string, minLength: 1, maxLength: 63}
+        memberships:
+          type: array
+          maxItems: 256
+          uniqueItems: true
+          description: At most 128 distinct subjects. Tenant and subject values are bounded to 256 UTF-8 bytes.
+          items:
+            $ref: '#/components/schemas/DataPipelineTenantMembership'
+    DataPipelineTenantMembership:
+      description: One account-owner-authorized subject and tenant pair.
+      type: object
+      additionalProperties: false
+      required: [subject, tenant]
+      properties:
+        subject: {type: string, minLength: 1, maxLength: 256}
+        tenant: {type: string, minLength: 1, maxLength: 256}
+    DataPipelineTenantChange:
+      description: Frozen membership preview. Approval applies this exact after set atomically at the mirror before catalog acknowledgement.
+      type: object
+      additionalProperties: false
+      required: [id, state, preview_revision, before, after]
+      properties:
+        id: {type: string}
+        state: {type: string, enum: [preview, approved, applied]}
+        preview_revision: {type: integer, format: int64, minimum: 1}
+        before:
+          type: array
+          maxItems: 256
+          items: {$ref: '#/components/schemas/DataPipelineTenantMembership'}
+        after:
+          type: array
+          maxItems: 256
+          items: {$ref: '#/components/schemas/DataPipelineTenantMembership'}
+    DataPipelineTenantReadersRequest:
+      description: Account-owner-only, revision-fenced membership preview, approval or discard. Preview supplies the complete replacement membership array. Approve supplies only the saved change_id; grace permits strict membership reductions only.
+      type: object
+      additionalProperties: false
+      required: [expected_revision, action]
+      properties:
+        expected_revision: {type: integer, format: int64, minimum: 1}
+        action: {type: string, enum: [preview, approve, discard]}
+        change_id: {type: string}
+        memberships:
+          type: array
+          maxItems: 256
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/DataPipelineTenantMembership'}
     ControlDataPipelineRequest:
       description: Optimistic revision fence and requested pipeline lifecycle action.
       type: object
@@ -140148,6 +140299,10 @@ components:
       - verification
       - created_at
       properties:
+        serving:
+          $ref: '#/components/schemas/DataPipelineServing'
+        tenant_change:
+          $ref: '#/components/schemas/DataPipelineTenantChange'
         wal_retention:
           $ref: '#/components/schemas/DataPipelineWALRetention'
         applied_through_at:
@@ -140194,7 +140349,7 @@ components:
             minLength: 1
             maxLength: 256
           minItems: 0
-          maxItems: 32
+          maxItems: 128
           uniqueItems: true
         desired_state:
           type: string

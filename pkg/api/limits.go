@@ -914,6 +914,18 @@ const (
 	// blocking findings still refuse at once.
 	SharedBaseScanFailureGrace = 24 * time.Hour
 
+	// BaseScanCriticalBootGrace is how long after a scan of an unchanged
+	// shared runtime base first finds a fixable CRITICAL vulnerability vmmd
+	// keeps booting it for apps already serving on it. A new Grype database
+	// marking a CRITICAL in, say, the node22 base refused every cold boot and
+	// restore on it, so every app on that runtime stopped waking until a
+	// patched base shipped (Hunt 12 H12-1; deploy-path review P5). New
+	// deployments on the base are still refused at once (schedd's prime
+	// refuses a boot vmmd admitted under this grace), and vmmd alerts while
+	// it lasts. Scanner failures and missing or stale scan records still
+	// refuse at once.
+	BaseScanCriticalBootGrace = 72 * time.Hour
+
 	// Safety bounds for a complete filesystem projection handed to Grype.
 	// These are separate from the tenant's rootfs/disk entitlements.
 	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30
@@ -18867,10 +18879,15 @@ const (
 	DataPipelineTablesMax                  = 16
 	DataPipelineRetainedTablesMax          = 32
 	DataPipelineColumnsMax                 = 128
-	DataPipelineSubjectsMax                = 32
+	DataPipelineSubjectsMax                = 128
+	DataPipelineTenantMembershipsMax       = 256
+	DataPipelineTenantMaxBytes             = 256
 	DataPipelineSubjectMaxBytes            = 256
 	DataPipelineCredentialMaxBytes         = 8192
-	DataPipelineRequestMaxBytes            = 32768
+	DataPipelineRequestMaxBytes            = 2 << 20
+	DataPipelineServingMaxBytes            = 2 << 20
+	DataPipelineReaderChangeMaxBytes       = 2 << 20
+	DataPipelineSetupRequestMaxBytes       = 2 << 20
 	DataPipelineLease                      = 60 * time.Second
 	DataPipelineOperationTimeout           = 20 * time.Second
 	DataPipelineNativeConnectTimeout       = 5 * time.Second

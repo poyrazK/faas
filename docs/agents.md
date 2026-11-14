@@ -247,8 +247,9 @@ whether a person would be asked first. Sending a request with the header
 it as the real request and changes nothing. Previews work on every change
 the budget prices: app settings, scaling, prewarm, creating an app, a
 deployment's `min_instances`, managed Postgres create, compute policy,
-resize and restore, and creating, cloning or branching a project
-environment. Other routes refuse the header. An organization can cap every agent acting in it; the lower
+resize and restore, creating, cloning or branching a project
+environment, and a Git source deploy (Gregale fetches the ref and prices its
+`gregale.yaml`). Other routes refuse the header. An organization can cap every agent acting in it; the lower
 of the agent's budget and the ceiling applies:
 
 ```sh

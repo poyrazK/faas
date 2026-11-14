@@ -367,6 +367,11 @@ func newKafkaPoller(t sqlc.Trigger) (triggerSource, error) {
 // Kind returns the trigger kind this poller handles.
 func (k *kafkaPoller) Kind() string { return "kafka" }
 
+// kafkaSettledBacklogBatches bounds settled-but-uncommitted records, in
+// batches: 100 batches of 100 is 10,000 offsets (well under 1 MiB) per
+// trigger, and at most that many records run again after a restart.
+const kafkaSettledBacklogBatches = 100
+
 // Poll fetches up to batchMax messages. We use FetchMessage
 // (non-committing) so we can hold the messages across the
 // dispatch tick and only commit them after the function returns
@@ -391,14 +396,24 @@ func (k *kafkaPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		k.mu.Unlock()
 		return k.pollHealth(PollResult{Error: err})
 	}
-	buffered := 0
-	for _, open := range k.open {
-		buffered += len(open)
+	// Open records carry payloads (in flight or waiting to retry), so they
+	// stay within one batch. Settled records waiting for a lower offset of
+	// their partition to settle keep only topic/partition/offset; they get a
+	// separate, larger bound, so one record cooling in retry (or held by
+	// seek-to-offset) does not stop every other partition after one batch
+	// (ADR-20261101093512 amendment 2026-11-13). kafka-go's group reader
+	// cannot pause a single partition, so the settled bound is the backstop.
+	open, settled := 0, 0
+	for _, offsets := range k.open {
+		open += len(offsets)
 	}
 	for _, done := range k.settled {
-		buffered += len(done)
+		settled += len(done)
 	}
-	fetchBudget := max(0, limit-buffered)
+	fetchBudget := max(0, limit-open)
+	if settled >= limit*kafkaSettledBacklogBatches {
+		fetchBudget = 0
+	}
 	now := time.Now()
 	held := k.retry[:0]
 	for _, msg := range k.retry {
