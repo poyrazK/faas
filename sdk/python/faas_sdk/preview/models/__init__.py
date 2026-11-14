@@ -1155,13 +1155,26 @@ from .data_pipeline import DataPipeline
 from .data_pipeline_capacity import DataPipelineCapacity
 from .data_pipeline_capacity_state import DataPipelineCapacityState
 from .data_pipeline_desired_state import DataPipelineDesiredState
+from .data_pipeline_freshness import DataPipelineFreshness
+from .data_pipeline_freshness_request import DataPipelineFreshnessRequest
 from .data_pipeline_health import DataPipelineHealth
 from .data_pipeline_health_action import DataPipelineHealthAction
 from .data_pipeline_health_state import DataPipelineHealthState
+from .data_pipeline_index_advice import DataPipelineIndexAdvice
+from .data_pipeline_index_key import DataPipelineIndexKey
+from .data_pipeline_index_order import DataPipelineIndexOrder
+from .data_pipeline_index_request import DataPipelineIndexRequest
+from .data_pipeline_index_request_action import DataPipelineIndexRequestAction
 from .data_pipeline_list import DataPipelineList
 from .data_pipeline_serving import DataPipelineServing
 from .data_pipeline_serving_columns import DataPipelineServingColumns
 from .data_pipeline_serving_version import DataPipelineServingVersion
+from .data_pipeline_setup import DataPipelineSetup
+from .data_pipeline_setup_control_request import DataPipelineSetupControlRequest
+from .data_pipeline_setup_control_request_action import DataPipelineSetupControlRequestAction
+from .data_pipeline_setup_list import DataPipelineSetupList
+from .data_pipeline_setup_plan import DataPipelineSetupPlan
+from .data_pipeline_setup_request import DataPipelineSetupRequest
 from .data_pipeline_state import DataPipelineState
 from .data_pipeline_tenant_access import DataPipelineTenantAccess
 from .data_pipeline_tenant_change import DataPipelineTenantChange
@@ -5269,6 +5282,7 @@ from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
 from .rotate_data_connection_request import RotateDataConnectionRequest
 from .rotate_deploy_token_request import RotateDeployTokenRequest
 from .rotate_deploy_token_response import RotateDeployTokenResponse
+from .rotate_key_request import RotateKeyRequest
 from .rotate_key_response import RotateKeyResponse
 from .rotate_managed_realtime_auth_request import RotateManagedRealtimeAuthRequest
 from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResponse
@@ -7693,13 +7707,26 @@ __all__ = (
     "DataPipelineCapacity",
     "DataPipelineCapacityState",
     "DataPipelineDesiredState",
+    "DataPipelineFreshness",
+    "DataPipelineFreshnessRequest",
     "DataPipelineHealth",
     "DataPipelineHealthAction",
     "DataPipelineHealthState",
+    "DataPipelineIndexAdvice",
+    "DataPipelineIndexKey",
+    "DataPipelineIndexOrder",
+    "DataPipelineIndexRequest",
+    "DataPipelineIndexRequestAction",
     "DataPipelineList",
     "DataPipelineServing",
     "DataPipelineServingColumns",
     "DataPipelineServingVersion",
+    "DataPipelineSetup",
+    "DataPipelineSetupControlRequest",
+    "DataPipelineSetupControlRequestAction",
+    "DataPipelineSetupList",
+    "DataPipelineSetupPlan",
+    "DataPipelineSetupRequest",
     "DataPipelineState",
     "DataPipelineTenantAccess",
     "DataPipelineTenantChange",
@@ -11521,6 +11548,7 @@ __all__ = (
     "RotateDataConnectionRequest",
     "RotateDeployTokenRequest",
     "RotateDeployTokenResponse",
+    "RotateKeyRequest",
     "RotateKeyResponse",
     "RotateManagedRealtimeAuthRequest",
     "RotateManagedRealtimeAuthResponse",

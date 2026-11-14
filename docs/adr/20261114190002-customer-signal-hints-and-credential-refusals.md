@@ -1,4 +1,7 @@
-# ADR-20261114090000: Customers see their own attention signals; sign-in refusals are recorded
+# ADR-20261114190002: Customers see their own attention signals; sign-in refusals are recorded
+
+Identifier note: renumbered from ADR-20261114090000 to distinguish the earlier
+company-project manifest decision; the accepted behavior is unchanged.
 
 Status: Accepted
 

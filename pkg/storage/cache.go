@@ -1199,7 +1199,7 @@ func (c *LocalCacheBackend) enforceBudgetLocked(protect string) error {
 		return nil
 	}
 	// Sort by eviction tier, then oldest-first; evict until budget restored
-	// (ADR-20261114120000: entries nothing references go first, live
+	// (ADR-20261114182830: entries nothing references go first, live
 	// snapshot captures last).
 	tiers := make(map[string]int, len(entries))
 	for _, e := range entries {
