@@ -14899,6 +14899,16 @@
     "kind": "operational"
   },
   {
+    "table": "plan_fit_notices",
+    "columns": [
+      "subject_id",
+      "plan",
+      "apps_digest",
+      "noticed_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "platform_mail_deployment_capture",
     "columns": [
       "namespace",
