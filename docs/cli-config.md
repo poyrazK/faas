@@ -110,6 +110,41 @@ retries, persist configuration or change successful stdout.
 
 ## Command output and forwarded arguments
 
+Use the explicit `help` command with JSON mode to discover the installed CLI:
+
+```sh
+gregale --json help
+gregale --json help invocation run
+gregale --json help invoke
+```
+
+Each request writes one JSON object to stdout with `schema_version: 1`.
+`command` is the canonical command path; `requested_command` preserves the
+requested topic, and `aliases` lists known compatibility paths. Root help lists
+all visible commands. A topic includes its immediate `subcommands`, positional
+argument markers, examples, notes, docs URL, and every visible local flag.
+Flags describe accepted spellings, whether they take a value, required and
+repeatable markers, and any documented closed choices. Collections are arrays,
+including when empty. Global prefix options retain their existing placement;
+the topic's `flags` describe its local options.
+
+JSON help uses the same command manifest and canonical names as completion and
+the reference. It describes documented argument contracts, without inferring
+types, defaults, output schemas or validation rules from prose. `--all` is
+accepted and has no additional effect because JSON already includes every local
+option. `gregale --json help --operator` additionally lists operator and
+compatibility roots; an explicitly named operator topic remains inspectable.
+
+Discovery reads the selected connection's cached capabilities, falling back to
+GA/beta tier visibility when none are cached. It never refreshes capabilities
+or calls the API, and works without login or a valid saved connection. Preview
+and unreleased options retain their existing visibility rules. The cache can
+be stale; discovery is guidance, and the server still decides authorization.
+
+Unknown topics or help options exit `1`, leave stdout empty, and write one
+Problem JSON object to stderr. Human help and command-local `--help` keep their
+formatted usage output, including when `FAAS_JSON=1` is set.
+
 `gregale deploy --help` and `gregale app --help` show common options and examples.
 Add `--all` to see every option grouped by purpose:
 
