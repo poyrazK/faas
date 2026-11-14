@@ -45,10 +45,11 @@ func renderInvocationWaitProblem(problem api.Problem, code int, id string) int {
 	if jsonOutput {
 		_ = json.NewEncoder(osStderr).Encode(struct {
 			api.Problem
-			Recovery *invocationWaitRecovery `json:"recovery,omitempty"`
-			Category string                  `json:"category"`
-			ExitCode int                     `json:"exit_code"`
-		}{problem, newInvocationWaitRecovery(id), exitCategory(code), code})
+			Recovery  *invocationWaitRecovery `json:"recovery,omitempty"`
+			Category  string                  `json:"category"`
+			ExitCode  int                     `json:"exit_code"`
+			RequestID string                  `json:"request_id,omitempty"`
+		}{Problem: problem, Recovery: newInvocationWaitRecovery(id), Category: exitCategory(code), ExitCode: code, RequestID: safeProblemRequestID(problem)})
 	} else {
 		renderAPIError(osStderr, &APIError{Problem: problem})
 	}

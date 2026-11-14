@@ -203,6 +203,21 @@ prove that it exists or is still running. No recovery ID is invented for a
 missing or invalid submission receipt. Agents should read these fields instead
 of parsing the human hint. The CLI never executes the recovery command itself.
 
+## Request IDs on API errors
+
+When an API failure includes one valid `X-Faas-Request-Id`, normal text errors
+print `Request ID: <id>`. With `--json`, the error object includes optional
+`request_id` alongside its existing code, category and exit code. Include the
+ID when reporting the failure so its server logs can be found; `--debug-http`
+is not required.
+
+Only the header supplies this metadata, including for JSON, HTML and plain-text
+API error responses. Accepted IDs are 32 hex characters or hyphenated UUIDs;
+malformed, duplicate or credential-matching values are omitted. An exhausted
+retry reports the final failed attempt's ID. If that response has no valid ID,
+the CLI does not reuse one from an earlier attempt. Local errors and failures
+before any API response carry no invented ID. Successful stdout is unchanged.
+
 ## Retrying async invocation submissions
 
 Supply a stable key when a script may need to retry an uncertain submission:

@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -87,9 +86,7 @@ func (r *httpDebugRecorder) finish(ticket httpDebugTicket, resp *http.Response, 
 		record.Status = resp.StatusCode
 		// Only recognized opaque identifier shapes are copied. Arbitrary header
 		// text, including error bodies and credential-like values, stays out.
-		if values := resp.Header.Values(api.RequestIDHeader); len(values) == 1 && httpDebugRequestID.MatchString(values[0]) {
-			record.RequestID = values[0]
-		}
+		record.RequestID = api.ResponseRequestID(resp.Header)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -110,8 +107,6 @@ func (r *httpDebugRecorder) close() {
 	r.closed = true
 	r.mu.Unlock()
 }
-
-var httpDebugRequestID = regexp.MustCompile(`^(?:[A-Fa-f0-9]{32}|[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12})$`)
 
 func httpDebugMethod(method string) string {
 	switch method {
