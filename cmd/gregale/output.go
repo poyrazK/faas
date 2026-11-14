@@ -350,6 +350,7 @@ func printSubcommandChoices(w io.Writer, path string, command cliCommand, got st
 	if listApp != "" && api.ValidAppSlug(got) && !commonVerbWord(got) {
 		_, _ = fmt.Fprintf(w, "  If %s is an app, the subcommand comes first: gregale %s %s\n", got, cliTreeSpellPath(path+" list"), listApp)
 	}
+	printConceptHints(w, path, command, got)
 }
 
 // listAppForm spells slug the way a `list` verb takes an app: positionally
@@ -411,6 +412,7 @@ func printUsage(w io.Writer, usage, topic string) {
 	if flagHelpPrinted {
 		return
 	}
+	printAgentHint(osStderr) // ADR-20261112223000 §5; stderr only
 	usage = spellUsageForTree(usage)
 	if jsonOutput && !jsonUsageHelp {
 		_ = writeJSONProblemWithExit(w, api.Problem{

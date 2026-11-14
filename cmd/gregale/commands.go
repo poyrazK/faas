@@ -481,6 +481,9 @@ func printErr(title string, err error) int {
 		// The parse failure that carried --help already answered it.
 		return 1
 	}
+	// ADR-20261112223000 §5: after the error, point a coding agent at the
+	// guide. Stderr only; nothing for people or JSON.
+	defer printAgentHint(osStderr)
 	if errors.Is(err, context.Canceled) {
 		var recovery *deployRecoveryError
 		if !errors.As(err, &recovery) {

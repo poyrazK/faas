@@ -157,13 +157,13 @@ var catalog = map[string]row{
 			Title:   "TLS certificate expires within 14 days",
 			Hint:    "your custom-domain certificate will expire in less than 14 days",
 			Why:     "apid inspects the certificate on every custom-domain renewal scan; the notAfter timestamp is less than 14 days (1209600 seconds) away. Renewals normally run automatically via the cert engine (ADR-099) — this alert fires when auto-renew failed for 7+ days",
-			Fix:     "• check the renewal log: `gregale certs status <hostname>` shows the last attempt + ACME challenge outcome\n• if the ACME challenge is failing, the most common cause is a CAA record blocking issuance or a DNS propagation delay\n• if renewal is genuinely blocked, replace the cert manually (`gregale certs rotate <hostname>`)",
+			Fix:     "• check the certificate: `gregale domain status <hostname>` shows its Ready, Verified and CertificateReady conditions\n• if the ACME challenge is failing, the most common cause is a CAA record blocking issuance or a DNS propagation delay\n• if renewal is genuinely blocked, `gregale domain doctor <hostname>` names the failing check; fix it and run `gregale domain verify <hostname> --wait`",
 			DocsURL: "/docs/runbooks/FaasTLSCertExpiryPage",
 		},
 		Observed: func(observed float64) (why, fix string) {
 			days := observed / 86400
 			return fmt.Sprintf("apid inspected the certificate and the notAfter timestamp is %.0f seconds (%.1f days) away, under the 14-day threshold", observed, days),
-				fmt.Sprintf("• check the renewal log: `gregale certs status <hostname>` shows the last attempt + ACME challenge outcome (cert has %.1f days left)\n• if the ACME challenge is failing, the most common cause is a CAA record blocking issuance or a DNS propagation delay\n• if renewal is genuinely blocked, replace the cert manually (`gregale certs rotate <hostname>`)", days)
+				fmt.Sprintf("• check the certificate: `gregale domain status <hostname>` shows its Ready, Verified and CertificateReady conditions (cert has %.1f days left)\n• if the ACME challenge is failing, the most common cause is a CAA record blocking issuance or a DNS propagation delay\n• if renewal is genuinely blocked, `gregale domain doctor <hostname>` names the failing check; fix it and run `gregale domain verify <hostname> --wait`", days)
 		},
 	},
 	"queue_backlog_growing": {

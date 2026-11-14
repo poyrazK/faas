@@ -399,6 +399,7 @@ var AnnotateRouteDeploymentCPURegressions = annotateRouteDeploymentCPURegression
 var ApiManifestFromState = apiManifestFromState
 var ApidListener = apidListener
 var AppDeclaresTCPListener = appDeclaresTCPListener
+var AppInternalTCPPort = appInternalTCPPort
 var AppDeclaresUDPListener = appDeclaresUDPListener
 var AppHostForDomain = appHostForDomain
 var AppIDFromPayload = appIDFromPayload
