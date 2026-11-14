@@ -66,7 +66,7 @@ import (
 //	                                Unset, it is the cache disk less a 15%
 //	                                reserve, or the MemTotal-derived budget
 //	                                when that is larger (ResolveCacheBudget,
-//	                                ADR-20261114120000). Set, it caps the
+//	                                ADR-20261114182830). Set, it caps the
 //	                                budget; the free-space floor stays.
 //	FAAS_OCI_REGISTRY             oci-only — full URL incl. scheme (e.g. https://ghcr.io/org)
 //	FAAS_OCI_REPO_PREFIX          oci-only — repo namespace (default "faas")
@@ -190,7 +190,7 @@ func wrapWithCache(parent StorageBackend, kind string) (StorageBackend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage: cache backend: %w", err)
 	}
-	// ADR-20261114120000: the budget is the cache disk less a reserve kept
+	// ADR-20261114182830: the budget is the cache disk less a reserve kept
 	// free for captures, layer clones and build drives; the reserve is also
 	// the free-space floor eviction defends. An explicit
 	// FAAS_STORAGE_CACHE_MAX_BYTES still caps the budget.

@@ -9,13 +9,13 @@ import (
 )
 
 // ErrOrgOwnerInactive refuses to make an account an organization's owner
-// while it is suspended or pending deletion (ADR 20261113180000): its
+// while it is suspended or pending deletion (ADR 20261114170352): its
 // deletion could never complete and nobody could use the organization.
 var ErrOrgOwnerInactive = errors.New("state: only an active account can own an organization")
 
 // OrgOwnerAssigner lets an operator give an organization a new owner when
 // its owner cannot act: suspended, pending deletion or locked out (ADR
-// 20261113180000). The new owner must be an active member with an active
+// 20261114170352). The new owner must be an active member with an active
 // account; any current owner becomes an admin.
 type OrgOwnerAssigner interface {
 	AssignOrgOwner(ctx context.Context, orgID, accountID string) (previousOwner string, err error)
