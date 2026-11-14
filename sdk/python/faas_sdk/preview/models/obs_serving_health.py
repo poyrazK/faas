@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.obs_serving_probe import ObsServingProbe
     from ..models.obs_serving_probe_counts import ObsServingProbeCounts
     from ..models.obs_serving_probe_inventory import ObsServingProbeInventory
+    from ..models.obs_serving_probe_notification_health import ObsServingProbeNotificationHealth
 
 
 T = TypeVar("T", bound="ObsServingHealth")
@@ -37,6 +38,15 @@ class ObsServingHealth:
     probes: list[ObsServingProbe]
     limitations: list[str]
     reason: str | Unset = UNSET
+    probe_notifications: ObsServingProbeNotificationHealth | Unset = UNSET
+    """Optional, independent evidence for direct compute-node webhook and
+    heartbeat submissions. Counts cover every expected node/channel; the
+    bounded preview orders failures first, then unknowns, successes and
+    disabled channels. Available describes evidence completeness and may
+    include failed submissions. Historical success does not establish
+    current reachability, provider processing or human receipt. This
+    section does not change serving or deployment qualification results.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -67,6 +77,10 @@ class ObsServingHealth:
 
         reason = self.reason
 
+        probe_notifications: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.probe_notifications, Unset):
+            probe_notifications = self.probe_notifications.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -83,6 +97,8 @@ class ObsServingHealth:
         )
         if reason is not UNSET:
             field_dict["reason"] = reason
+        if probe_notifications is not UNSET:
+            field_dict["probe_notifications"] = probe_notifications
 
         return field_dict
 
@@ -91,6 +107,7 @@ class ObsServingHealth:
         from ..models.obs_serving_probe import ObsServingProbe
         from ..models.obs_serving_probe_counts import ObsServingProbeCounts
         from ..models.obs_serving_probe_inventory import ObsServingProbeInventory
+        from ..models.obs_serving_probe_notification_health import ObsServingProbeNotificationHealth
 
         d = dict(src_dict)
         generated_at = datetime.datetime.fromisoformat(d.pop("generated_at"))
@@ -133,6 +150,13 @@ class ObsServingHealth:
 
         reason = d.pop("reason", UNSET)
 
+        _probe_notifications = d.pop("probe_notifications", UNSET)
+        probe_notifications: ObsServingProbeNotificationHealth | Unset
+        if isinstance(_probe_notifications, Unset):
+            probe_notifications = UNSET
+        else:
+            probe_notifications = ObsServingProbeNotificationHealth.from_dict(_probe_notifications)
+
         obs_serving_health = cls(
             generated_at=generated_at,
             scope=scope,
@@ -143,6 +167,7 @@ class ObsServingHealth:
             probes=probes,
             limitations=limitations,
             reason=reason,
+            probe_notifications=probe_notifications,
         )
 
         obs_serving_health.additional_properties = d

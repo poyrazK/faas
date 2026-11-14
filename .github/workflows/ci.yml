@@ -1897,6 +1897,9 @@ jobs:
       - name: synthetic-canary missing-run heartbeat tests
         run: make canary-heartbeat-test
 
+      - name: synthetic-canary SSH and notification fallback tests
+        run: make canary-transport-test
+
       - name: post-deployment monitoring transport and workflow tests
         run: make post-deployment-monitoring-test
 

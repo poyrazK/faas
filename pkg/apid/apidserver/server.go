@@ -4678,6 +4678,8 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireOperatorSessionRead(s.obsNodeDetail)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
+	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",
+		s.authLimited(s.requireOperatorRead(s.obsNodeProbeNotifications)))
 	// PR #4 (ADR-092 §3.6) — per-node wake-latency quantiles.
 	// Literal path /wake-latency sits before the SSE /events
 	// route; Go 1.22+ mux disambiguates by exact match.
