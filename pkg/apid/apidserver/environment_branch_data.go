@@ -225,23 +225,34 @@ func (s *server) environmentBranchOwner(ctx context.Context, branch state.Projec
 	if err != nil {
 		return ctx, state.Account{}, state.Project{}, err
 	}
-	acct, err := state.ProjectResourceAccount(ctx, s.store, project)
+	ctx, acct, err := s.environmentProjectOwner(ctx, project)
 	if err != nil {
 		return ctx, state.Account{}, state.Project{}, err
 	}
 	if acct.ID != branch.AccountID {
 		return ctx, state.Account{}, state.Project{}, state.ErrConflict
 	}
+	return ctx, acct, project, nil
+}
+
+// environmentProjectOwner is the account a project's environment work runs
+// as, with the organization's managed PostgreSQL ownership on ctx for a
+// company project.
+func (s *server) environmentProjectOwner(ctx context.Context, project state.Project) (context.Context, state.Account, error) {
+	acct, err := state.ProjectResourceAccount(ctx, s.store, project)
+	if err != nil {
+		return ctx, state.Account{}, err
+	}
 	if project.OrgID != "" {
 		org, err := s.store.OrgByID(ctx, project.OrgID)
 		if err != nil {
-			return ctx, state.Account{}, state.Project{}, err
+			return ctx, state.Account{}, err
 		}
 		if !org.Personal {
 			ctx = managedpostgres.WithOwnership(ctx, org.ID, acct.ResourceOwnerID())
 		}
 	}
-	return ctx, acct, project, nil
+	return ctx, acct, nil
 }
 
 // copyEnvironmentBranchDatabases restores each database the parent binds as
