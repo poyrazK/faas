@@ -24,7 +24,7 @@ tests:
               event: ssh_root_login
             exp_annotations:
               summary: "Host security event ssh_root_login on fsn-2"
-              description: "fsn-2 logged ssh_root_login, which host_hardening's settings forbid: a root or password SSH login, or the kernel audit switched off. Treat the host as compromised until shown otherwise. The lines are in Loki under {job=\"faas-security\", host=\"fsn-2\", event=\"ssh_root_login\"}."
+              description: "fsn-2 logged ssh_root_login, which host_hardening's settings forbid: a root or password SSH login, the kernel audit switched off, or a Firecracker jailer uid asking for root or opening a node secret. Treat the host as compromised until shown otherwise. The lines are in Loki under {job=\"faas-security\", host=\"fsn-2\", event=\"ssh_root_login\"}."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostSecurityEvent.md"
       - eval_time: 12m
         alertname: FaasHostSecurityEvent

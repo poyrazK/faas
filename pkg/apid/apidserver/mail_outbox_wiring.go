@@ -152,7 +152,7 @@ func (s *server) noticeManagedPostgresCap(ctx context.Context, event managedpost
 		return nil
 	}
 	err := s.deletionMailOutbox.NoticeManagedPostgresCap(ctx, event.SubjectID, mailoutbox.ManagedPostgresCapEvent{
-		SubjectID: event.SubjectID, PeriodStart: event.PeriodStart, Threshold: event.Threshold, ReachedAt: event.ReachedAt,
+		DatabaseID: event.DatabaseID, DatabaseName: event.DatabaseName, SubjectID: event.SubjectID, PeriodStart: event.PeriodStart, Threshold: event.Threshold, ReachedAt: event.ReachedAt,
 		Used: event.Used, Allowance: event.Allowance, Ceiling: event.Ceiling, Overage: event.Overage,
 	})
 	if errors.Is(err, internalmail.ErrDisabled) {

@@ -31,7 +31,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -228,15 +227,18 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if app.RootDir != "" {
-		present, rootErr := archiveHasSourceRoot(spoolPath, app.RootDir)
+		resolved, present, rootErr := resolveArchiveSourceRoot(spoolPath, app.RootDir, false)
 		if rootErr != nil {
 			api.WriteProblem(w, api.ErrSourceInvalid(rootErr.Error()))
 			return
 		}
 		if !present {
-			api.WriteProblem(w, api.ErrSourceInvalid(fmt.Sprintf("source_root %q is not present in the source archive", app.RootDir)))
+			api.WriteProblem(w, sourceRootMissingProblem(app.RootDir, false))
 			return
 		}
+		// The build reads the root from the app; a cropped archive builds
+		// from its own root.
+		app.RootDir = resolved
 	}
 	if prob := scanForStatefulShapeAtRoot(spoolPath, false, app.RootDir); prob != nil {
 		api.WriteProblem(w, prob)

@@ -1,0 +1,357 @@
+# ObjectInventoryBacklog at 22,000 buckets (ADR-20261111152144 §4), from
+# FAAS_INVENTORY_CAPACITY=1 go test -run 'TestInventorySweepCapacity/due-query' -v ./pkg/apid/object
+# after VACUUM ANALYZE; auto_explain (analyze, buffers). Query text omitted.
+
+## object_inventory_quiet on
+
+duration: 1.791 ms  plan:
+Query Parameters: $1 = 't', $2 = '82800', $3 = '3600', $4 = '30', $5 = '86400', $6 = '300'
+Nested Loop  (cost=2617.30..2625.69 rows=1 width=24) (actual time=1.785..1.790 rows=1 loops=1)
+  Buffers: shared hit=140
+  CTE q
+    ->  Result  (cost=0.00..0.26 rows=1 width=1) (actual time=0.201..0.201 rows=1 loops=1)
+          Buffers: shared hit=77
+  InitPlan 2 (returns $1)
+    ->  Aggregate  (cost=691.44..691.45 rows=1 width=8) (actual time=0.076..0.076 rows=1 loops=1)
+          Buffers: shared hit=7
+          ->  Index Only Scan using object_inventory_schedule_active on object_inventory_schedule s_1  (cost=0.28..673.11 rows=7333 width=0) (actual time=0.010..0.051 rows=1000 loops=1)
+                Index Cond: (attempt_at < (now() - '00:05:00'::interval))
+                Heap Fetches: 0
+                Buffers: shared hit=7
+  InitPlan 3 (returns $2)
+    ->  Aggregate  (cost=596.49..596.50 rows=1 width=8) (actual time=0.121..0.121 rows=1 loops=1)
+          Buffers: shared hit=22
+          ->  Bitmap Heap Scan on object_inventory_schedule s_2  (cost=18.87..595.66 rows=333 width=0) (actual time=0.037..0.098 rows=1000 loops=1)
+                Recheck Cond: ((observed_at <= (now() - '23:00:00'::interval)) AND (mutated_at < quiet_after))
+                Filter: (attempt_at < (now() - '00:05:00'::interval))
+                Heap Blocks: exact=12
+                Buffers: shared hit=22
+                ->  Bitmap Index Scan on object_inventory_schedule_quiet  (cost=0.00..18.79 rows=333 width=0) (actual time=0.034..0.034 rows=1000 loops=1)
+                      Index Cond: (observed_at <= (now() - '23:00:00'::interval))
+                      Buffers: shared hit=10
+  InitPlan 4 (returns $3)
+    ->  Aggregate  (cost=1121.00..1121.01 rows=1 width=8) (never executed)
+          ->  Seq Scan on object_inventory_schedule s_3  (cost=0.00..1066.00 rows=22000 width=0) (never executed)
+                Filter: (attempt_at < (now() - '00:05:00'::interval))
+  InitPlan 5 (returns $5)
+    ->  Aggregate  (cost=12.60..12.61 rows=1 width=8) (actual time=0.009..0.009 rows=1 loops=1)
+          Buffers: shared hit=2
+          ->  Nested Loop  (cost=0.56..12.60 rows=1 width=8) (actual time=0.009..0.009 rows=0 loops=1)
+                Buffers: shared hit=2
+                ->  Index Only Scan using object_inventory_schedule_active_observed on object_inventory_schedule s_4  (cost=0.28..4.29 rows=1 width=16) (actual time=0.009..0.009 rows=0 loops=1)
+                      Index Cond: (observed_at = '-infinity'::timestamp with time zone)
+                      Heap Fetches: 0
+                      Buffers: shared hit=2
+                ->  Index Scan using object_buckets_pkey on object_buckets b_1  (cost=0.29..8.31 rows=1 width=24) (never executed)
+                      Index Cond: (id = s_4.bucket_id)
+                      Filter: (state = 'ready'::text)
+  InitPlan 21 (returns $25)
+    ->  Limit  (cost=0.57..4.47 rows=1 width=8) (never executed)
+          ->  Nested Loop  (cost=0.57..3488.80 rows=896 width=8) (never executed)
+                ->  Index Only Scan using object_inventory_schedule_quiet on object_inventory_schedule s_6  (cost=0.29..437.28 rows=896 width=24) (never executed)
+                      Filter: ((NOT (SubPlan 14)) AND (NOT (SubPlan 16)) AND (NOT (SubPlan 18)) AND ((observed_at <= (now() - '01:00:00'::interval)) OR (NOT (SubPlan 20))))
+                      Heap Fetches: 0
+                      SubPlan 14
+                        ->  Seq Scan on object_bucket_versioning v_1  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_6.bucket_id))
+                      SubPlan 16
+                        ->  Seq Scan on object_bucket_object_lock lk_1  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_6.bucket_id))
+                      SubPlan 18
+                        ->  Seq Scan on object_storage_capacity_reconciliations rc_1  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                              Filter: ((state = ANY ('{waiting,scanning}'::text[])) AND (bucket_id = s_6.bucket_id))
+                      SubPlan 20
+                        ->  Seq Scan on object_storage_inventory_scans i_1  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                              Filter: ((pages > 0) AND (started_at > s_6.observed_at) AND (bucket_id = s_6.bucket_id) AND (progress_at <= now()) AND (progress_at >= (now() - '00:05:00'::interval)))
+                ->  Index Scan using object_buckets_pkey on object_buckets b_3  (cost=0.29..3.41 rows=1 width=16) (never executed)
+                      Index Cond: (id = s_6.bucket_id)
+                      Filter: (state = 'ready'::text)
+  InitPlan 29 (returns $35)
+    ->  Limit  (cost=0.56..13.00 rows=1 width=8) (actual time=0.015..0.015 rows=1 loops=1)
+          Buffers: shared hit=6
+          ->  Nested Loop  (cost=0.56..3718.68 rows=299 width=8) (actual time=0.015..0.015 rows=1 loops=1)
+                Buffers: shared hit=6
+                ->  Index Scan using object_inventory_schedule_activated on object_inventory_schedule s_7  (cost=0.28..2154.74 rows=299 width=24) (actual time=0.010..0.010 rows=1 loops=1)
+                      Filter: ((NOT (SubPlan 22)) AND (NOT (SubPlan 24)) AND (NOT (SubPlan 26)) AND (active_since < (observed_at + '24:00:00'::interval)) AND ((observed_at <= (now() - '01:00:00'::interval)) OR (NOT (SubPlan 28))))
+                      Buffers: shared hit=3
+                      SubPlan 22
+                        ->  Seq Scan on object_bucket_versioning v_2  (cost=0.00..0.00 rows=1 width=0) (actual time=0.001..0.001 rows=0 loops=1)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_7.bucket_id))
+                      SubPlan 24
+                        ->  Seq Scan on object_bucket_object_lock lk_2  (cost=0.00..0.00 rows=1 width=0) (actual time=0.001..0.001 rows=0 loops=1)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_7.bucket_id))
+                      SubPlan 26
+                        ->  Seq Scan on object_storage_capacity_reconciliations rc_2  (cost=0.00..0.00 rows=1 width=0) (actual time=0.001..0.001 rows=0 loops=1)
+                              Filter: ((state = ANY ('{waiting,scanning}'::text[])) AND (bucket_id = s_7.bucket_id))
+                      SubPlan 28
+                        ->  Seq Scan on object_storage_inventory_scans i_2  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=1)
+                              Filter: ((pages > 0) AND (started_at > s_7.observed_at) AND (bucket_id = s_7.bucket_id) AND (progress_at <= now()) AND (progress_at >= (now() - '00:05:00'::interval)))
+                ->  Index Scan using object_buckets_pkey on object_buckets b_4  (cost=0.29..5.23 rows=1 width=16) (actual time=0.005..0.005 rows=1 loops=1)
+                      Index Cond: (id = s_7.bucket_id)
+                      Filter: (state = 'ready'::text)
+                      Buffers: shared hit=3
+  InitPlan 30 (returns $37)
+    ->  Limit  (cost=0.57..1.44 rows=1 width=8) (actual time=0.013..0.013 rows=1 loops=1)
+          Buffers: shared hit=6
+          ->  Nested Loop  (cost=0.57..6357.18 rows=7333 width=8) (actual time=0.013..0.013 rows=1 loops=1)
+                Buffers: shared hit=6
+                ->  Index Only Scan using object_inventory_schedule_quiet on object_inventory_schedule s_8  (cost=0.29..382.28 rows=7333 width=24) (actual time=0.005..0.005 rows=1 loops=1)
+                      Heap Fetches: 0
+                      Buffers: shared hit=3
+                ->  Index Scan using object_buckets_pkey on object_buckets b_5  (cost=0.29..0.81 rows=1 width=16) (actual time=0.008..0.008 rows=1 loops=1)
+                      Index Cond: (id = s_8.bucket_id)
+                      Filter: (state = 'ready'::text)
+                      Buffers: shared hit=3
+  ->  Nested Loop  (cost=176.55..176.59 rows=1 width=17) (actual time=0.214..0.216 rows=1 loops=1)
+        Buffers: shared hit=79
+        ->  CTE Scan on q  (cost=0.00..0.02 rows=1 width=1) (actual time=0.202..0.202 rows=1 loops=1)
+              Buffers: shared hit=77
+        ->  Aggregate  (cost=176.55..176.56 rows=1 width=16) (actual time=0.011..0.013 rows=1 loops=1)
+              Buffers: shared hit=2
+              ->  Nested Loop  (cost=11.22..176.29 rows=5 width=111) (actual time=0.010..0.012 rows=0 loops=1)
+                    Buffers: shared hit=2
+                    ->  CTE Scan on q q_2  (cost=0.00..0.02 rows=1 width=1) (actual time=0.000..0.000 rows=1 loops=1)
+                    ->  Nested Loop Left Join  (cost=11.22..176.22 rows=5 width=110) (actual time=0.010..0.011 rows=0 loops=1)
+                          Buffers: shared hit=2
+                          ->  Nested Loop Left Join  (cost=10.93..134.69 rows=5 width=102) (actual time=0.010..0.011 rows=0 loops=1)
+                                Buffers: shared hit=2
+                                ->  Nested Loop Left Join  (cost=10.64..93.17 rows=5 width=70) (actual time=0.010..0.011 rows=0 loops=1)
+                                      Buffers: shared hit=2
+                                      ->  Nested Loop  (cost=10.35..51.64 rows=5 width=38) (actual time=0.010..0.010 rows=0 loops=1)
+                                            Buffers: shared hit=2
+                                            ->  HashAggregate  (cost=10.07..10.12 rows=5 width=16) (actual time=0.010..0.010 rows=0 loops=1)
+                                                  Group Key: object_buckets.id
+                                                  Batches: 1  Memory Usage: 24kB
+                                                  Buffers: shared hit=2
+                                                  ->  Append  (cost=0.12..10.05 rows=5 width=16) (actual time=0.009..0.010 rows=0 loops=1)
+                                                        Buffers: shared hit=2
+                                                        ->  Index Only Scan using object_buckets_recovery_idx on object_buckets  (cost=0.12..5.89 rows=1 width=16) (actual time=0.003..0.003 rows=0 loops=1)
+                                                              Heap Fetches: 0
+                                                              Buffers: shared hit=1
+                                                        ->  Seq Scan on object_bucket_versioning  (cost=0.00..0.00 rows=1 width=16) (actual time=0.001..0.001 rows=0 loops=1)
+                                                              Filter: (state <> 'ready'::text)
+                                                        ->  Seq Scan on object_storage_capacity_reconciliations  (cost=0.00..0.00 rows=1 width=16) (actual time=0.001..0.001 rows=0 loops=1)
+                                                              Filter: (state = ANY ('{waiting,scanning}'::text[]))
+                                                        ->  Index Only Scan using object_storage_bucket_usage_leased on object_storage_bucket_usage  (cost=0.12..4.14 rows=1 width=16) (actual time=0.004..0.004 rows=0 loops=1)
+                                                              Heap Fetches: 0
+                                                              Buffers: shared hit=1
+                                                        ->  Seq Scan on object_storage_inventory_scans  (cost=0.00..0.00 rows=1 width=16) (actual time=0.001..0.001 rows=0 loops=1)
+                                                              Filter: ((NOT complete) AND (pages > 0))
+                                            ->  Index Scan using object_buckets_pkey on object_buckets b  (cost=0.29..8.30 rows=1 width=22) (never executed)
+                                                  Index Cond: (id = object_buckets.id)
+                                      ->  Index Scan using object_inventory_schedule_pkey on object_inventory_schedule s  (cost=0.29..8.30 rows=1 width=48) (never executed)
+                                            Index Cond: (bucket_id = object_buckets.id)
+                                ->  Index Scan using object_storage_bucket_usage_pkey on object_storage_bucket_usage u  (cost=0.29..8.30 rows=1 width=48) (never executed)
+                                      Index Cond: (bucket_id = object_buckets.id)
+                          ->  Index Scan using object_bucket_activity_pkey on object_bucket_activity a  (cost=0.29..8.30 rows=1 width=24) (never executed)
+                                Index Cond: (bucket_id = object_buckets.id)
+              SubPlan 31
+                ->  Seq Scan on object_bucket_versioning v_3  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                      Filter: ((state <> 'ready'::text) AND (bucket_id = b.id))
+              SubPlan 33
+                ->  Seq Scan on object_storage_capacity_reconciliations rc_3  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                      Filter: ((state = ANY ('{waiting,scanning}'::text[])) AND (bucket_id = b.id))
+              SubPlan 35
+                ->  Seq Scan on object_storage_inventory_scans i_3  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                      Filter: ((NOT complete) AND (pages > 0) AND (started_at > COALESCE(u.observed_at, '-infinity'::timestamp with time zone)) AND (bucket_id = object_buckets.id) AND (started_at > (now() - '01:00:00'::interval)))
+              SubPlan 36
+                ->  Seq Scan on object_storage_inventory_scans i_4  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                      Filter: ((NOT complete) AND (pages > 0) AND (started_at > COALESCE(u.observed_at, '-infinity'::timestamp with time zone)) AND (bucket_id = object_buckets.id) AND (started_at > (now() - '01:00:00'::interval)))
+  ->  CTE Scan on q q_1  (cost=0.00..0.02 rows=1 width=1) (actual time=0.000..0.000 rows=1 loops=1)
+  SubPlan 13
+    ->  Limit  (cost=0.56..8.29 rows=1 width=8) (actual time=1.326..1.327 rows=0 loops=1)
+          Buffers: shared hit=18
+          ->  Nested Loop  (cost=0.56..5388.23 rows=697 width=8) (actual time=1.326..1.326 rows=0 loops=1)
+                Buffers: shared hit=18
+                ->  Index Scan using object_inventory_schedule_active_observed on object_inventory_schedule s_5  (cost=0.28..2757.90 rows=697 width=24) (actual time=1.326..1.326 rows=0 loops=1)
+                      Index Cond: (observed_at > '-infinity'::timestamp with time zone)
+                      Filter: ((NOT (SubPlan 6)) AND (NOT (SubPlan 8)) AND (NOT (SubPlan 10)) AND ((observed_at <= (now() - '01:00:00'::interval)) OR (NOT (SubPlan 12))) AND ((NOT q_1.quiet_on) OR (quiet_after <= '-infinity'::timestamp with time zone) OR (active_since <= observed_at) OR (active_since >= (observed_at + '24:00:00'::interval))))
+                      Rows Removed by Filter: 1000
+                      Buffers: shared hit=18
+                      SubPlan 6
+                        ->  Seq Scan on object_bucket_versioning v  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=1000)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_5.bucket_id))
+                      SubPlan 8
+                        ->  Seq Scan on object_bucket_object_lock lk  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=1000)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_5.bucket_id))
+                      SubPlan 10
+                        ->  Seq Scan on object_storage_capacity_reconciliations rc  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=1000)
+                              Filter: ((state = ANY ('{waiting,scanning}'::text[])) AND (bucket_id = s_5.bucket_id))
+                      SubPlan 12
+                        ->  Seq Scan on object_storage_inventory_scans i  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=1000)
+                              Filter: ((pages > 0) AND (started_at > s_5.observed_at) AND (bucket_id = s_5.bucket_id) AND (progress_at <= now()) AND (progress_at >= (now() - '00:05:00'::interval)))
+                ->  Index Scan using object_buckets_pkey on object_buckets b_2  (cost=0.29..3.77 rows=1 width=16) (never executed)
+                      Index Cond: (id = s_5.bucket_id)
+                      Filter: (state = 'ready'::text)
+
+## object_inventory_quiet off
+
+duration: 2.373 ms  plan:
+Query Parameters: $1 = 'f', $2 = '82800', $3 = '3600', $4 = '30', $5 = '86400', $6 = '300'
+Nested Loop  (cost=2617.05..2625.44 rows=1 width=24) (actual time=2.363..2.370 rows=1 loops=1)
+  Buffers: shared hit=697
+  CTE q
+    ->  Result  (cost=0.00..0.01 rows=1 width=1) (actual time=0.000..0.000 rows=1 loops=1)
+  InitPlan 2 (returns $1)
+    ->  Aggregate  (cost=691.44..691.45 rows=1 width=8) (never executed)
+          ->  Index Only Scan using object_inventory_schedule_active on object_inventory_schedule s_1  (cost=0.28..673.11 rows=7333 width=0) (never executed)
+                Index Cond: (attempt_at < (now() - '00:05:00'::interval))
+                Heap Fetches: 0
+  InitPlan 3 (returns $2)
+    ->  Aggregate  (cost=596.49..596.50 rows=1 width=8) (never executed)
+          ->  Bitmap Heap Scan on object_inventory_schedule s_2  (cost=18.87..595.66 rows=333 width=0) (never executed)
+                Recheck Cond: ((observed_at <= (now() - '23:00:00'::interval)) AND (mutated_at < quiet_after))
+                Filter: (attempt_at < (now() - '00:05:00'::interval))
+                ->  Bitmap Index Scan on object_inventory_schedule_quiet  (cost=0.00..18.79 rows=333 width=0) (never executed)
+                      Index Cond: (observed_at <= (now() - '23:00:00'::interval))
+  InitPlan 4 (returns $3)
+    ->  Aggregate  (cost=1121.00..1121.01 rows=1 width=8) (actual time=2.290..2.290 rows=1 loops=1)
+          Buffers: shared hit=681
+          ->  Seq Scan on object_inventory_schedule s_3  (cost=0.00..1066.00 rows=22000 width=0) (actual time=0.293..1.792 rows=22000 loops=1)
+                Filter: (attempt_at < (now() - '00:05:00'::interval))
+                Buffers: shared hit=681
+  InitPlan 5 (returns $5)
+    ->  Aggregate  (cost=12.60..12.61 rows=1 width=8) (actual time=0.012..0.012 rows=1 loops=1)
+          Buffers: shared hit=2
+          ->  Nested Loop  (cost=0.56..12.60 rows=1 width=8) (actual time=0.012..0.012 rows=0 loops=1)
+                Buffers: shared hit=2
+                ->  Index Only Scan using object_inventory_schedule_active_observed on object_inventory_schedule s_4  (cost=0.28..4.29 rows=1 width=16) (actual time=0.011..0.011 rows=0 loops=1)
+                      Index Cond: (observed_at = '-infinity'::timestamp with time zone)
+                      Heap Fetches: 0
+                      Buffers: shared hit=2
+                ->  Index Scan using object_buckets_pkey on object_buckets b_1  (cost=0.29..8.31 rows=1 width=24) (never executed)
+                      Index Cond: (id = s_4.bucket_id)
+                      Filter: (state = 'ready'::text)
+  InitPlan 21 (returns $25)
+    ->  Limit  (cost=0.57..4.47 rows=1 width=8) (actual time=0.015..0.015 rows=1 loops=1)
+          Buffers: shared hit=6
+          ->  Nested Loop  (cost=0.57..3488.80 rows=896 width=8) (actual time=0.015..0.015 rows=1 loops=1)
+                Buffers: shared hit=6
+                ->  Index Only Scan using object_inventory_schedule_quiet on object_inventory_schedule s_6  (cost=0.29..437.28 rows=896 width=24) (actual time=0.008..0.009 rows=1 loops=1)
+                      Filter: ((NOT (SubPlan 14)) AND (NOT (SubPlan 16)) AND (NOT (SubPlan 18)) AND ((observed_at <= (now() - '01:00:00'::interval)) OR (NOT (SubPlan 20))))
+                      Heap Fetches: 0
+                      Buffers: shared hit=3
+                      SubPlan 14
+                        ->  Seq Scan on object_bucket_versioning v_1  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=1)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_6.bucket_id))
+                      SubPlan 16
+                        ->  Seq Scan on object_bucket_object_lock lk_1  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=1)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_6.bucket_id))
+                      SubPlan 18
+                        ->  Seq Scan on object_storage_capacity_reconciliations rc_1  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=1)
+                              Filter: ((state = ANY ('{waiting,scanning}'::text[])) AND (bucket_id = s_6.bucket_id))
+                      SubPlan 20
+                        ->  Seq Scan on object_storage_inventory_scans i_1  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                              Filter: ((pages > 0) AND (started_at > s_6.observed_at) AND (bucket_id = s_6.bucket_id) AND (progress_at <= now()) AND (progress_at >= (now() - '00:05:00'::interval)))
+                ->  Index Scan using object_buckets_pkey on object_buckets b_3  (cost=0.29..3.41 rows=1 width=16) (actual time=0.006..0.006 rows=1 loops=1)
+                      Index Cond: (id = s_6.bucket_id)
+                      Filter: (state = 'ready'::text)
+                      Buffers: shared hit=3
+  InitPlan 29 (returns $35)
+    ->  Limit  (cost=0.56..13.00 rows=1 width=8) (never executed)
+          ->  Nested Loop  (cost=0.56..3718.68 rows=299 width=8) (never executed)
+                ->  Index Scan using object_inventory_schedule_activated on object_inventory_schedule s_7  (cost=0.28..2154.74 rows=299 width=24) (never executed)
+                      Filter: ((NOT (SubPlan 22)) AND (NOT (SubPlan 24)) AND (NOT (SubPlan 26)) AND (active_since < (observed_at + '24:00:00'::interval)) AND ((observed_at <= (now() - '01:00:00'::interval)) OR (NOT (SubPlan 28))))
+                      SubPlan 22
+                        ->  Seq Scan on object_bucket_versioning v_2  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_7.bucket_id))
+                      SubPlan 24
+                        ->  Seq Scan on object_bucket_object_lock lk_2  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_7.bucket_id))
+                      SubPlan 26
+                        ->  Seq Scan on object_storage_capacity_reconciliations rc_2  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                              Filter: ((state = ANY ('{waiting,scanning}'::text[])) AND (bucket_id = s_7.bucket_id))
+                      SubPlan 28
+                        ->  Seq Scan on object_storage_inventory_scans i_2  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                              Filter: ((pages > 0) AND (started_at > s_7.observed_at) AND (bucket_id = s_7.bucket_id) AND (progress_at <= now()) AND (progress_at >= (now() - '00:05:00'::interval)))
+                ->  Index Scan using object_buckets_pkey on object_buckets b_4  (cost=0.29..5.23 rows=1 width=16) (never executed)
+                      Index Cond: (id = s_7.bucket_id)
+                      Filter: (state = 'ready'::text)
+  InitPlan 30 (returns $37)
+    ->  Limit  (cost=0.57..1.44 rows=1 width=8) (never executed)
+          ->  Nested Loop  (cost=0.57..6357.18 rows=7333 width=8) (never executed)
+                ->  Index Only Scan using object_inventory_schedule_quiet on object_inventory_schedule s_8  (cost=0.29..382.28 rows=7333 width=24) (never executed)
+                      Heap Fetches: 0
+                ->  Index Scan using object_buckets_pkey on object_buckets b_5  (cost=0.29..0.81 rows=1 width=16) (never executed)
+                      Index Cond: (id = s_8.bucket_id)
+                      Filter: (state = 'ready'::text)
+  ->  Nested Loop  (cost=176.55..176.59 rows=1 width=17) (actual time=0.014..0.016 rows=1 loops=1)
+        Buffers: shared hit=2
+        ->  CTE Scan on q  (cost=0.00..0.02 rows=1 width=1) (actual time=0.001..0.001 rows=1 loops=1)
+        ->  Aggregate  (cost=176.55..176.56 rows=1 width=16) (actual time=0.012..0.013 rows=1 loops=1)
+              Buffers: shared hit=2
+              ->  Nested Loop  (cost=11.22..176.29 rows=5 width=111) (actual time=0.011..0.012 rows=0 loops=1)
+                    Buffers: shared hit=2
+                    ->  CTE Scan on q q_2  (cost=0.00..0.02 rows=1 width=1) (actual time=0.000..0.000 rows=1 loops=1)
+                    ->  Nested Loop Left Join  (cost=11.22..176.22 rows=5 width=110) (actual time=0.011..0.012 rows=0 loops=1)
+                          Buffers: shared hit=2
+                          ->  Nested Loop Left Join  (cost=10.93..134.69 rows=5 width=102) (actual time=0.011..0.011 rows=0 loops=1)
+                                Buffers: shared hit=2
+                                ->  Nested Loop Left Join  (cost=10.64..93.17 rows=5 width=70) (actual time=0.011..0.011 rows=0 loops=1)
+                                      Buffers: shared hit=2
+                                      ->  Nested Loop  (cost=10.35..51.64 rows=5 width=38) (actual time=0.011..0.011 rows=0 loops=1)
+                                            Buffers: shared hit=2
+                                            ->  HashAggregate  (cost=10.07..10.12 rows=5 width=16) (actual time=0.010..0.011 rows=0 loops=1)
+                                                  Group Key: object_buckets.id
+                                                  Batches: 1  Memory Usage: 24kB
+                                                  Buffers: shared hit=2
+                                                  ->  Append  (cost=0.12..10.05 rows=5 width=16) (actual time=0.010..0.010 rows=0 loops=1)
+                                                        Buffers: shared hit=2
+                                                        ->  Index Only Scan using object_buckets_recovery_idx on object_buckets  (cost=0.12..5.89 rows=1 width=16) (actual time=0.004..0.004 rows=0 loops=1)
+                                                              Heap Fetches: 0
+                                                              Buffers: shared hit=1
+                                                        ->  Seq Scan on object_bucket_versioning  (cost=0.00..0.00 rows=1 width=16) (actual time=0.001..0.001 rows=0 loops=1)
+                                                              Filter: (state <> 'ready'::text)
+                                                        ->  Seq Scan on object_storage_capacity_reconciliations  (cost=0.00..0.00 rows=1 width=16) (actual time=0.001..0.001 rows=0 loops=1)
+                                                              Filter: (state = ANY ('{waiting,scanning}'::text[]))
+                                                        ->  Index Only Scan using object_storage_bucket_usage_leased on object_storage_bucket_usage  (cost=0.12..4.14 rows=1 width=16) (actual time=0.003..0.004 rows=0 loops=1)
+                                                              Heap Fetches: 0
+                                                              Buffers: shared hit=1
+                                                        ->  Seq Scan on object_storage_inventory_scans  (cost=0.00..0.00 rows=1 width=16) (actual time=0.001..0.001 rows=0 loops=1)
+                                                              Filter: ((NOT complete) AND (pages > 0))
+                                            ->  Index Scan using object_buckets_pkey on object_buckets b  (cost=0.29..8.30 rows=1 width=22) (never executed)
+                                                  Index Cond: (id = object_buckets.id)
+                                      ->  Index Scan using object_inventory_schedule_pkey on object_inventory_schedule s  (cost=0.29..8.30 rows=1 width=48) (never executed)
+                                            Index Cond: (bucket_id = object_buckets.id)
+                                ->  Index Scan using object_storage_bucket_usage_pkey on object_storage_bucket_usage u  (cost=0.29..8.30 rows=1 width=48) (never executed)
+                                      Index Cond: (bucket_id = object_buckets.id)
+                          ->  Index Scan using object_bucket_activity_pkey on object_bucket_activity a  (cost=0.29..8.30 rows=1 width=24) (never executed)
+                                Index Cond: (bucket_id = object_buckets.id)
+              SubPlan 31
+                ->  Seq Scan on object_bucket_versioning v_3  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                      Filter: ((state <> 'ready'::text) AND (bucket_id = b.id))
+              SubPlan 33
+                ->  Seq Scan on object_storage_capacity_reconciliations rc_3  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                      Filter: ((state = ANY ('{waiting,scanning}'::text[])) AND (bucket_id = b.id))
+              SubPlan 35
+                ->  Seq Scan on object_storage_inventory_scans i_3  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                      Filter: ((NOT complete) AND (pages > 0) AND (started_at > COALESCE(u.observed_at, '-infinity'::timestamp with time zone)) AND (bucket_id = object_buckets.id) AND (started_at > (now() - '01:00:00'::interval)))
+              SubPlan 36
+                ->  Seq Scan on object_storage_inventory_scans i_4  (cost=0.00..0.00 rows=1 width=0) (never executed)
+                      Filter: ((NOT complete) AND (pages > 0) AND (started_at > COALESCE(u.observed_at, '-infinity'::timestamp with time zone)) AND (bucket_id = object_buckets.id) AND (started_at > (now() - '01:00:00'::interval)))
+  ->  CTE Scan on q q_1  (cost=0.00..0.02 rows=1 width=1) (actual time=0.000..0.001 rows=1 loops=1)
+  SubPlan 13
+    ->  Limit  (cost=0.56..8.29 rows=1 width=8) (actual time=0.020..0.020 rows=1 loops=1)
+          Buffers: shared hit=6
+          ->  Nested Loop  (cost=0.56..5388.23 rows=697 width=8) (actual time=0.019..0.019 rows=1 loops=1)
+                Buffers: shared hit=6
+                ->  Index Scan using object_inventory_schedule_active_observed on object_inventory_schedule s_5  (cost=0.28..2757.90 rows=697 width=24) (actual time=0.012..0.013 rows=1 loops=1)
+                      Index Cond: (observed_at > '-infinity'::timestamp with time zone)
+                      Filter: ((NOT (SubPlan 6)) AND (NOT (SubPlan 8)) AND (NOT (SubPlan 10)) AND ((observed_at <= (now() - '01:00:00'::interval)) OR (NOT (SubPlan 12))) AND ((NOT q_1.quiet_on) OR (quiet_after <= '-infinity'::timestamp with time zone) OR (active_since <= observed_at) OR (active_since >= (observed_at + '24:00:00'::interval))))
+                      Buffers: shared hit=3
+                      SubPlan 6
+                        ->  Seq Scan on object_bucket_versioning v  (cost=0.00..0.00 rows=1 width=0) (actual time=0.002..0.002 rows=0 loops=1)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_5.bucket_id))
+                      SubPlan 8
+                        ->  Seq Scan on object_bucket_object_lock lk  (cost=0.00..0.00 rows=1 width=0) (actual time=0.002..0.002 rows=0 loops=1)
+                              Filter: ((state <> 'ready'::text) AND (bucket_id = s_5.bucket_id))
+                      SubPlan 10
+                        ->  Seq Scan on object_storage_capacity_reconciliations rc  (cost=0.00..0.00 rows=1 width=0) (actual time=0.001..0.001 rows=0 loops=1)
+                              Filter: ((state = ANY ('{waiting,scanning}'::text[])) AND (bucket_id = s_5.bucket_id))
+                      SubPlan 12
+                        ->  Seq Scan on object_storage_inventory_scans i  (cost=0.00..0.00 rows=1 width=0) (actual time=0.000..0.000 rows=0 loops=1)
+                              Filter: ((pages > 0) AND (started_at > s_5.observed_at) AND (bucket_id = s_5.bucket_id) AND (progress_at <= now()) AND (progress_at >= (now() - '00:05:00'::interval)))
+                ->  Index Scan using object_buckets_pkey on object_buckets b_2  (cost=0.29..3.77 rows=1 width=16) (actual time=0.006..0.006 rows=1 loops=1)
+                      Index Cond: (id = s_5.bucket_id)
+                      Filter: (state = 'ready'::text)
+                      Buffers: shared hit=3

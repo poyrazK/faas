@@ -150,6 +150,10 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	toolInvocations      map[string]api.ToolInvocationRecord
+	toolPublications     map[string]api.ToolPublicationRecord
+	toolGrants           map[string]api.ToolGrantRecord
+	toolOAuthConnections map[string]ToolOAuthConnection
 	// ownerReleaseRequests are app_owner_release_requests by app id
 	// (ADR-20261110210000 §4); allocated on first use under mu.
 	ownerReleaseRequests map[string]AppOwnerReleaseRequest
@@ -2795,6 +2799,13 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 	return true, nil
 }
 
+// QuotaSuspended mirrors PgStore.QuotaSuspended.
+func (m *MemStore) QuotaSuspended(_ context.Context, id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.freeQuotaSuspended[id], nil
+}
+
 // RestoreFreeQuotaSuspension mirrors PgStore.RestoreFreeQuotaSuspension.
 func (m *MemStore) RestoreFreeQuotaSuspension(_ context.Context, id string) (bool, error) {
 	m.mu.Lock()
@@ -4504,6 +4515,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	for cronID, cron := range m.crons {
 		if app, ok := m.apps[cron.AppID]; ok && app.ProjectID == projectID && cron.DeploymentScope == slug {
 			delete(m.crons, cronID)
+		}
+	}
+	for key, subscription := range m.eventSubscriptions {
+		if app, ok := m.eventSubscriptionAppLocked(subscription.AppID); ok && app.ProjectID == projectID && subscription.DeploymentScope == slug {
+			delete(m.eventSubscriptions, key)
 		}
 	}
 	m.deleteProjectEnvironmentBranchLocked(environmentID)
@@ -7542,8 +7558,26 @@ func (m *MemStore) CompareAndSetAppStatus(ctx context.Context, id string, from, 
 	if to != AppActive {
 		m.clearCurrentAppWakeTransitionLocked(id)
 	}
+	if from == AppEvictedCold && to == AppActive {
+		m.clearRecoverableDeploymentParksLocked(id)
+	}
 	m.apps[id] = a
 	return true, nil
+}
+
+// clearRecoverableDeploymentParksLocked mirrors PgStore.wakeAppStatus: a
+// wake clears the app's liveness and lifecycle parks, never a security park.
+func (m *MemStore) clearRecoverableDeploymentParksLocked(appID string) {
+	for id, d := range m.deployments {
+		if d.AppID != appID {
+			continue
+		}
+		switch ParkReason(d.ParkedReason) {
+		case ParkReasonLivenessExhausted, ParkReasonLifecyclePark, ParkReasonAdminPark:
+			d.ParkedReason, d.ParkedAt = "", nil
+			m.deployments[id] = d
+		}
+	}
 }
 
 // RenameApp atomically swaps an app's slug (issue #63). Scans the
@@ -7825,6 +7859,11 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	m.publishMemTrafficAppPurgeLocked(id)
 	m.forgetOwnedOperationsLocked("", id)
+	for key, connection := range m.toolOAuthConnections {
+		if connection.Record.AppID == id {
+			delete(m.toolOAuthConnections, key)
+		}
+	}
 	delete(m.appDeletionClaims, id)
 
 	m.deleteAppStandardSnapshotCapturesLocked(id)
@@ -8330,6 +8369,7 @@ func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
 			m.apps[id] = preview
 		}
 	}
+	m.expirePullRequestBranchesLocked(parent.AccountID, parent.ProjectID, now)
 }
 
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch
@@ -25129,6 +25169,26 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
 			delete(m.orgsBySlug, org.Slug)
 			delete(m.orgs, orgID)
+		}
+	}
+	for key, record := range m.toolPublications {
+		if record.AccountID == id {
+			delete(m.toolPublications, key)
+		}
+	}
+	for key, record := range m.toolInvocations {
+		if record.AccountID == id {
+			delete(m.toolInvocations, key)
+		}
+	}
+	for key, record := range m.toolGrants {
+		if record.AccountID == id {
+			delete(m.toolGrants, key)
+		}
+	}
+	for key, record := range m.toolOAuthConnections {
+		if record.Record.AccountID == id {
+			delete(m.toolOAuthConnections, key)
 		}
 	}
 	delete(m.legalAcceptances, id) // ON DELETE CASCADE

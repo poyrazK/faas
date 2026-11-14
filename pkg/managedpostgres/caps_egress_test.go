@@ -1,6 +1,7 @@
 // adr: 20261110160000 — amendment 2026-11-11: each database has its own
 // monthly egress allowance, as Neon's is per project; the cap sweep holds a
-// database that sent it, and only that one.
+// database that sent it, and only that one. Amendment 2026-11-13: each held
+// database is recorded and mailed on its own, naming it.
 package managedpostgres
 
 import (
@@ -14,26 +15,40 @@ import (
 type capEgressTestStore struct {
 	*capReportTestStore
 	egress map[string]int64
-	// held is the month's egress hold event, as CapEventReader reads it.
-	held *CapEvent
+	// held are the month's egress hold notices by database, as
+	// EgressHoldNoticeStore reads them.
+	held map[string]*CapEvent
 }
 
 func (s *capEgressTestStore) RecordCapEvent(ctx context.Context, event CapEvent) (bool, error) {
 	if event.Threshold == CapThresholdEgressHeld {
-		if s.held != nil {
-			return false, nil
-		}
-		s.held = &event
+		return false, errors.New("egress hold recorded per subject")
 	}
 	return s.capReportTestStore.RecordCapEvent(ctx, event)
 }
 
-func (s *capEgressTestStore) CapEvent(_ context.Context, _ string, _ time.Time, threshold string) (*CapEvent, error) {
-	if threshold != CapThresholdEgressHeld || s.held == nil {
+func (s *capEgressTestStore) RecordEgressHoldNotice(_ context.Context, event CapEvent) (bool, error) {
+	if !validEgressHoldNotice(event) {
+		return false, ErrInvalid
+	}
+	if s.held == nil {
+		s.held = map[string]*CapEvent{}
+	}
+	if s.held[event.DatabaseID] != nil {
+		return false, nil
+	}
+	event.DatabaseName = ""
+	s.held[event.DatabaseID] = &event
+	return true, nil
+}
+
+func (s *capEgressTestStore) EgressHoldNotice(_ context.Context, databaseID string, _ time.Time) (*CapEvent, error) {
+	held := s.held[databaseID]
+	if held == nil {
 		return nil, nil
 	}
-	held := *s.held
-	return &held, nil
+	copied := *held
+	return &copied, nil
 }
 
 func (s *capEgressTestStore) UsageSnapshot(ctx context.Context, accountID string, periodStart time.Time) (UsageSnapshot, error) {
@@ -108,7 +123,7 @@ func TestCapEnforcerHoldsSpentEgress(t *testing.T) {
 				t.Fatal(err)
 			}
 			database := func(id, resource string, created time.Time) Database {
-				return Database{ID: id, AccountID: "acct-a", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+				return Database{ID: id, Name: "name-" + id, AccountID: "acct-a", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
 					ProviderResourceID: resource, State: StateReady, Spec: testSpec(), CreatedAt: created}
 			}
 			store := &capEgressTestStore{capReportTestStore: &capReportTestStore{capTestStore: &capTestStore{
@@ -119,8 +134,8 @@ func TestCapEnforcerHoldsSpentEgress(t *testing.T) {
 			enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{
 				Notify: func(_ context.Context, event CapEvent) error {
 					mailed = append(mailed, event)
-					if store.held != nil {
-						store.held.Mailed = true
+					if held := store.held[event.DatabaseID]; held != nil {
+						held.Mailed = true
 					}
 					return nil
 				},
@@ -150,31 +165,31 @@ func TestCapEnforcerHoldsSpentEgress(t *testing.T) {
 			if !maps.Equal(provider.changes, tc.wantChanges) && (len(provider.changes) != 0 || len(tc.wantChanges) != 0) {
 				t.Fatalf("changes %v; want %v", provider.changes, tc.wantChanges)
 			}
-			// The egress hold is recorded and mailed once, with the most egress
-			// a held database sent and the hold ceiling it was held at.
+			// Each held database is recorded and mailed once, naming it, with
+			// the egress it sent and the hold ceiling it was held at.
 			if _, err := enforcer.Enforce(context.Background()); err != nil {
 				t.Fatal(err)
-			}
-			held := tc.wantChanges["proj-a"]
-			if !held {
-				if store.held != nil || len(mailed) != 0 {
-					t.Fatalf("egress hold %+v, mailed %+v; want none", store.held, mailed)
-				}
-				return
 			}
 			want := tc.allowance.CeilingBytes
 			if tc.billingLive && tc.allowance.OverageLifted {
 				want *= 2
 			}
-			var used int64
+			wantMailed := map[string]bool{}
 			for id, proj := range map[string]string{"db-a": "proj-a", "db-b": "proj-b"} {
 				if tc.wantChanges[proj] {
-					used = max(used, tc.dbEgress[id])
+					wantMailed[id] = true
 				}
 			}
-			if len(mailed) != 1 || mailed[0].Threshold != CapThresholdEgressHeld || mailed[0].Used != used ||
-				mailed[0].Allowance != tc.allowance.CeilingBytes || mailed[0].Ceiling != want || mailed[0].Overage != (want != tc.allowance.CeilingBytes) {
-				t.Fatalf("mailed %+v; want one egress hold email at %d of %d", mailed, used, want)
+			if len(mailed) != len(wantMailed) || len(store.held) != len(wantMailed) {
+				t.Fatalf("mailed %+v, notices %v; want one email for each of %v", mailed, store.held, wantMailed)
+			}
+			for _, event := range mailed {
+				if !wantMailed[event.DatabaseID] || event.DatabaseName != "name-"+event.DatabaseID || event.SubjectID != "acct-a" ||
+					event.Threshold != CapThresholdEgressHeld || event.Used != tc.dbEgress[event.DatabaseID] ||
+					event.Allowance != tc.allowance.CeilingBytes || event.Ceiling != want || event.Overage != (want != tc.allowance.CeilingBytes) {
+					t.Fatalf("mailed %+v; want %s's egress hold at %d of %d", event, event.DatabaseID, tc.dbEgress[event.DatabaseID], want)
+				}
+				delete(wantMailed, event.DatabaseID)
 			}
 		})
 	}

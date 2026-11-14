@@ -81,3 +81,28 @@ Neither cache includes consent, credentials or connection data. Contract
 equivalence and concurrent reuse are checked under the race detector. Reusing
 wiring avoids parsing and resolving the entire tool catalog on every connection
 without changing tool selection, output validation or integer precision.
+
+## Amendment 2026-11-13: error variant served once
+
+Every tool's output schema described both the success and the error variant,
+so the error and recovery contract (about 950 bytes) was repeated in each
+tool: about 33 KB of the 76 KB core catalog an agent loads on every turn.
+Clients validate structured content against `outputSchema` for successful
+results; an `isError` result is read for its recovery, not validated (the
+TypeScript SDK, used by Claude Code, skips it).
+
+- A tool's output schema now describes its successful result only, with the
+  `recovery` and `verification` definitions only where that result uses
+  them.
+- Errors are unchanged: `isError`, structured content with
+  `schema_version`, `code`, `message` and `recovery`, and the same text. The
+  contract they follow is served once as the read-only resource
+  `gregale://contracts/errors` and documented in `docs/mcp.md`.
+- The core catalog drops from about 76 KB to about 47.6 KB; its budget test
+  falls from 76 to 52 KB.
+
+Tests validate successful results against the tool's output schema and
+errors against the error contract. A client that validated `isError`
+results against `outputSchema` would now reject them. The TypeScript SDK
+does not; other clients (Codex, Cursor) are checked by the agent eval
+baseline and the editor live checks before this is relied on more widely.

@@ -103,6 +103,17 @@ func (l *liveApidBridgeClient) EnqueueBuild(ctx context.Context, in *githubdpb.E
 	return l.c.EnqueueBuild(ctx, in)
 }
 
+// EnsurePullRequestBranch asks apid for a pull request's environment
+// branch (ADR-20261113121342).
+func (l *liveApidBridgeClient) EnsurePullRequestBranch(ctx context.Context, in *githubdpb.EnsurePullRequestBranchRequest) (*githubdpb.EnsurePullRequestBranchResponse, error) {
+	return l.c.EnsurePullRequestBranch(ctx, in)
+}
+
+// ClosePullRequestBranch starts a closed pull request's branch grace.
+func (l *liveApidBridgeClient) ClosePullRequestBranch(ctx context.Context, in *githubdpb.ClosePullRequestBranchRequest) (*githubdpb.ClosePullRequestBranchResponse, error) {
+	return l.c.ClosePullRequestBranch(ctx, in)
+}
+
 // newApidBridgeClient is the dial constructor. Returns the stub
 // when sock is empty (matches the apid-side githubd_client.go
 // pattern). Production wires defaultDeps.getenv to os.Getenv; the

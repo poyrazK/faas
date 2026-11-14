@@ -188,7 +188,7 @@ func TestOrganizationDeletionEndsItsBillingSubscription(t *testing.T) {
 		if err := store.UpsertBillingIdentity(t.Context(), state.BillingIdentity{AccountID: org.ID, Provider: "polar", CustomerID: "polar-org-" + org.ID, SubscriptionID: "sub-org"}); err != nil {
 			t.Fatal(err)
 		}
-		rec := e.Do(t, http.MethodDelete, "/v1/orgs/"+org.Slug, nil, map[string]string{"X-Active-Org": org.Slug})
+		rec := e.DoSession(t, "", http.MethodDelete, "/v1/orgs/"+org.Slug, nil, map[string]string{"X-Active-Org": org.Slug})
 		after, err := store.OrgByID(t.Context(), org.ID)
 		if err != nil {
 			t.Fatal(err)
@@ -200,7 +200,7 @@ func TestOrganizationDeletionEndsItsBillingSubscription(t *testing.T) {
 			fake.mu.Lock()
 			fake.failPatch = false
 			fake.mu.Unlock()
-			rec = e.Do(t, http.MethodDelete, "/v1/orgs/"+org.Slug, nil, map[string]string{"X-Active-Org": org.Slug})
+			rec = e.DoSession(t, "", http.MethodDelete, "/v1/orgs/"+org.Slug, nil, map[string]string{"X-Active-Org": org.Slug})
 		}
 		if rec.Code != http.StatusNoContent || !after.DeletedPending {
 			t.Fatalf("DELETE = %d %s, deleted_pending=%v", rec.Code, rec.Body.String(), after.DeletedPending)

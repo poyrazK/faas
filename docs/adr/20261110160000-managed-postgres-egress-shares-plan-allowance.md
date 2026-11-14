@@ -221,14 +221,38 @@ period ends.
   it also counts private transfer, a project using Private Link reaches the
   quota before the sweep's hold.
 
+## Amendment 2026-11-13: one hold email per database
+
+Since databases are held one at a time (amendment 2026-11-11), the
+subject-level `egress_held` event mailed only the first database held in a
+month, and the email could not say which one. The hold is now recorded and
+mailed per database:
+
+- **Notice.** `managed_postgres_egress_hold_notices` (migration
+  `20261113170412214`) holds one row per database and UTC month: the egress
+  the database had sent, its allowance and the hold ceiling in bytes,
+  whether overage is billed, and the email's intent. The first enforced
+  sweep that holds a database records it; later sweeps leave it.
+- **Email.** Each notice is mailed once through the same
+  `managed_postgres_cap` path and 24-hour window, linked to its row instead
+  of the subject's event. The subject line and body name the database
+  ("Managed PostgreSQL database orders is paused until next month"); a
+  second database held later in the month gets its own email.
+- **Skew.** The sweep no longer writes subject `egress_held` events; rows
+  already written stay and are never read again. While an apid of the
+  previous release runs beside this one, a held database can be mailed by
+  both, once each. The sealed email payload gains an optional
+  `database_name`; the previous release cannot open a payload that carries
+  it, so roll apid out in one step, as for the 2026-11-11 email.
+
 ## Consequences
 
 - Before 2026-11-11, a Free account's databases stopped after 10 GiB of
   combined egress a month. Since then each database stops at its own
   500 GB; the sweep interval bounds the overshoot.
 - Egress counts and stops are visible as `managed postgres compute held`
-  logs with reason `egress`, and the owner is mailed once per month (amendment
-  2026-11-11).
+  logs with reason `egress`, and the owner is mailed once per held database
+  and month (amendments 2026-11-11 and 2026-11-13).
 - Rejected: a separate database ceiling (two allowances to explain, and it
   doubles what a plan gives away), and the operator ceiling alone (not
   plan-aware, and never checked while a database runs).

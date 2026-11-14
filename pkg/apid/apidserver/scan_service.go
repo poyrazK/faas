@@ -932,7 +932,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	selected, accepted := reconcile.ProjectDeploymentSelection(touched), make(map[string]bool, len(touched))
 	// The whole selection deploys or none of it: a budget that runs out
 	// part-way left the project on mixed releases.
-	rateShortfall := s.projectDeployRateShortfall(ctx, acct, len(touched), timeNow().UTC())
+	rateShortfall, rateReserved := s.reserveProjectDeployRate(ctx, acct, len(touched), timeNow().UTC())
 	for _, app := range touched {
 		res := appliedBuild{Slug: app.Slug, AppID: app.ID}
 		if rateShortfall != "" {
@@ -1045,7 +1045,10 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
-		rate, rateErr := s.consumeAccountDeployRate(ctx, acct, timeNow().UTC())
+		rate, rateErr := state.AccountDeployRateSnapshot{Allowed: true}, error(nil)
+		if !rateReserved {
+			rate, rateErr = s.consumeAccountDeployRate(ctx, acct, timeNow().UTC())
+		}
 		if rateErr != nil {
 			_ = os.Remove(staged)
 			s.log.Warn("apid: apply deploy-rate admission failed", "app_id", app.ID, "account_id", acct.ID, "err", rateErr)
@@ -1862,8 +1865,13 @@ func (s *server) scanService(
 		if routeWarning := projectPathRoutePlanWarning(resolvedManifest.Routes, resolvedManifest.RoutesPresent, req.NoTriggers); routeWarning != "" {
 			warnings = append(warnings, routeWarning)
 		}
-	} else if resolvedManifest.AsyncRoutesPresent || resolvedManifest.RoutesPresent || len(crons) > 0 {
-		warnings = append(warnings, "environment deployment leaves production routes and triggers unchanged")
+	} else {
+		if resolvedManifest.AsyncRoutesPresent || resolvedManifest.RoutesPresent || len(crons) > 0 {
+			warnings = append(warnings, "environment deployment leaves production routes and triggers unchanged")
+		}
+		if releaseWarning := s.environmentReleaseSetWarning(r.Context(), acct.ID, req.ProjectSlug, req.Environment); releaseWarning != "" {
+			warnings = append(warnings, releaseWarning)
+		}
 	}
 	if noTriggers {
 		if len(crons) > 0 && req.NoTriggers {

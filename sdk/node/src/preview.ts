@@ -100,6 +100,7 @@ export {
   type ExecutionEvent,
   type ExecutionEventData,
   type ExecutionEventType,
+  type ExecutionHelpers,
   type RunExecutionOptions,
   type WatchExecutionOptions,
 } from './executions.js';

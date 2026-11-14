@@ -883,6 +883,7 @@ export type { OrgProjectSlug } from './models/OrgProjectSlug.js';
 export type { OrgProjectSlug2 } from './models/OrgProjectSlug2.js';
 export type { OrgProjectSlugb08370 } from './models/OrgProjectSlugb08370.js';
 export type { OrgResponse } from './models/OrgResponse.js';
+export type { OrgSecurityPolicy } from './models/OrgSecurityPolicy.js';
 export type { OrgSlug } from './models/OrgSlug.js';
 export type { OrgWithRole } from './models/OrgWithRole.js';
 export type { OutboundAIBudgetThresholdWebhookPayload } from './models/OutboundAIBudgetThresholdWebhookPayload.js';
