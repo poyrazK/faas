@@ -101,6 +101,7 @@ func (s *server) createSignupAccount(r *http.Request, method, source string, par
 	if err == nil {
 		s.signups.record(ip)
 		s.recordSignup(r.Context(), res.Account.ID, method, source)
+		s.recordSignupFacts(r.Context(), r, res.Account.ID, res.Account.Email, method)
 	}
 	return res, err
 }

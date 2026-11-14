@@ -2524,6 +2524,12 @@ var FinancialBudgetProblem = financialBudgetProblem
 // AppOOMRecommendation is the operational-summary OOM recommendation (2026-11-13).
 var AppOOMRecommendation = appOOMRecommendation
 
+// SetSignupGeoForTest replaces the sign-up country and network-owner lookups
+// (ADR-20261113160000); nil lookups leave the facts empty.
+func (s *server) SetSignupGeoForTest(country func(net.IP) string, asn func(net.IP) (uint32, string)) {
+	s.signupGeo = &signupGeo{country: country, asn: asn}
+}
+
 func (r pgHandlerEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map[string]string) *httptest.ResponseRecorder {
 	return r.doSession(p0, p1, p2, p3, p4, p5)
 }

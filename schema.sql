@@ -30381,6 +30381,34 @@ CREATE TABLE public.account_passwords (
 
 
 --
+-- Name: account_signup_facts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_signup_facts (
+    account_id uuid NOT NULL,
+    method text NOT NULL,
+    signup_ip inet,
+    user_agent text,
+    country text,
+    asn bigint,
+    asn_org text,
+    email_domain text NOT NULL,
+    disposable_email boolean NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    reduced_at timestamp with time zone,
+    CONSTRAINT account_signup_facts_asn_check CHECK (((asn > 0) AND (asn <= '4294967295'::bigint))),
+    CONSTRAINT account_signup_facts_asn_org_check CHECK ((char_length(asn_org) <= 200)),
+    CONSTRAINT account_signup_facts_check CHECK (((reduced_at IS NULL) OR ((signup_ip IS NULL) AND (user_agent IS NULL)))),
+    CONSTRAINT account_signup_facts_country_check CHECK ((country ~ '^[A-Z]{2}$'::text)),
+    CONSTRAINT account_signup_facts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT account_signup_facts_email_domain_check CHECK ((char_length(email_domain) <= 253)),
+    CONSTRAINT account_signup_facts_method_check CHECK ((method ~ '^[a-z][a-z0-9_]{0,31}$'::text)),
+    CONSTRAINT account_signup_facts_reduced_at_check CHECK (isfinite(reduced_at)),
+    CONSTRAINT account_signup_facts_user_agent_check CHECK ((char_length(user_agent) <= 512))
+);
+
+
+--
 -- Name: account_spend_cap_holds; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -61913,6 +61941,14 @@ ALTER TABLE ONLY public.account_passwords
 
 
 --
+-- Name: account_signup_facts account_signup_facts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_signup_facts
+    ADD CONSTRAINT account_signup_facts_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: account_spend_cap_holds account_spend_cap_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75778,6 +75814,20 @@ CREATE INDEX account_credits_account_active_idx ON public.account_credits USING 
 --
 
 CREATE UNIQUE INDEX account_email_changes_one_pending_idx ON public.account_email_changes USING btree (account_id) WHERE (consumed_at IS NULL);
+
+
+--
+-- Name: account_signup_facts_ip_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_signup_facts_ip_idx ON public.account_signup_facts USING gist (signup_ip inet_ops) WHERE (signup_ip IS NOT NULL);
+
+
+--
+-- Name: account_signup_facts_unreduced_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_signup_facts_unreduced_idx ON public.account_signup_facts USING btree (created_at) WHERE (reduced_at IS NULL);
 
 
 --
@@ -94823,6 +94873,14 @@ ALTER TABLE ONLY public.account_oauth_unlinks
 
 ALTER TABLE ONLY public.account_passwords
     ADD CONSTRAINT account_passwords_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_signup_facts account_signup_facts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_signup_facts
+    ADD CONSTRAINT account_signup_facts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

@@ -30,6 +30,9 @@ type signupMetrics struct {
 	// capped counts sign-ups refused by the daily caps, by scope: one
 	// address or network, or the whole platform (ADR 20261110120000).
 	capped *prometheus.CounterVec
+	// factsFailed counts sign-ups whose ADR-20261113160000 sign-up record
+	// could not be stored; the account is created either way.
+	factsFailed *prometheus.CounterVec
 }
 
 const (
@@ -53,6 +56,11 @@ func newSignupMetrics(reg prometheus.Registerer, prefix string) *signupMetrics {
 		Name: prefix + "_signups_capped_total",
 		Help: "Sign-ups refused by the daily caps, by scope: network (one address or network) or fleet (the platform's daily total).",
 	}, []string{"scope"})
+	m.factsFailed = registerCounterVec(reg, prometheus.CounterOpts{
+		Name: prefix + "_signup_facts_failed_total",
+		Help: "Sign-ups whose sign-up record (address, country, network owner, email domain) could not be stored; the account was created.",
+	}, nil)
+	m.factsFailed.WithLabelValues().Add(0)
 	for _, scope := range []string{signupCapNetwork, signupCapFleet} {
 		m.capped.WithLabelValues(scope).Add(0)
 	}
@@ -62,6 +70,12 @@ func newSignupMetrics(reg prometheus.Registerer, prefix string) *signupMetrics {
 		}
 	}
 	return m
+}
+
+func (m *signupMetrics) observeFactsFailed() {
+	if m != nil {
+		m.factsFailed.WithLabelValues().Inc()
+	}
 }
 
 func (m *signupMetrics) observeCapped(scope string) {
