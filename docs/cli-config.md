@@ -246,6 +246,38 @@ its current state. Missing or invalid acceptance identity does not invent a
 recovery ID. Condition waits and artifact-collection receipts retain their
 documented formats.
 
+## Job image-readiness recovery
+
+`gregale --json job get nightly --wait-ready` and `gregale --json job run nightly
+--tasks 1 --wait-ready` emit one Problem on stderr if image preparation cannot
+be followed. The existing stdout receipt and exit codes remain: overall timeout
+is `124`, interruption is `130`, and polling or preparation failure is `1`.
+An individual HTTP-request timeout remains a polling failure. Problem codes
+`job_image_wait_timeout`, `job_image_wait_interrupted`,
+`job_image_preparation_failed` and `job_image_changed` describe local outcomes;
+API failures retain their server code, status, remediation and valid request ID.
+Before a standalone readiness wait starts, its initial read keeps the normal
+API exit classification (`2` for authentication and `3` for platform failures)
+and emits no stdout receipt when that read fails.
+
+The Problem's `recovery` includes `job`, `phase: "image_wait"`, `submitted:
+false` and `inspect_command`. A verified selection also carries `job_id`,
+`image_ref` and, when known, `image_resolved_digest`. A pending verified image
+includes a `resume_command` using `job get --wait-ready`, the selected profile
+and the original timing options. A failed or changed image has inspection
+guidance without an automatic resume command. An unverified initial response
+does not invent an image identity or a resume command. The stdout pre-submission
+receipt retains its existing `phase` and `submitted: false` fields.
+
+Recovery only reads readiness, including when the interrupted command was
+`job run --wait-ready`. It never submits the deferred run. Resuming performs a
+fresh readiness check of the named Job; verify its current image against the
+recorded selection first, and retain the same endpoint and credential overrides.
+Within one wait, a changed Job identity, image reference or selected digest stops
+polling, retains the last verified snapshot, and prevents submission. Recovery
+does not promise that the image is still selected between CLI invocations.
+Credential redaction applies to diagnostic text, recovery metadata and commands.
+
 ## Request IDs on API errors
 
 When an API failure includes one valid `X-Faas-Request-Id`, normal text errors

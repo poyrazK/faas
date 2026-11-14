@@ -37,8 +37,28 @@ the existing process exit contract, including exit 1 for polling refusals.
 
 The new diagnostic is emitted after writing the stdout receipt successfully,
 so an output-write failure keeps its existing diagnostic priority. Human output,
-condition waits, image waits and artifact collection retain their current
+condition waits and artifact collection retain their current
 contracts. Job submission, server retry policies and cancellation are unchanged.
+
+### Image-readiness waits
+
+Apply the same stderr envelope to `job get --wait-ready` and the preparation
+phase of `job run --wait-ready`. Preserve their stdout receipt fields and exit
+codes. The local codes are `job_image_wait_timeout`,
+`job_image_wait_interrupted`, `job_image_preparation_failed` and
+`job_image_changed`; API causes retain their code, status and correlation.
+Recovery records `phase: "image_wait"`, `submitted: false`, the Job and
+read-only inspection. Only a verified selection supplies Job/image identity;
+a pending selection supplies a read-only `job get --wait-ready` resume command
+with the selected profile and timing options. It never submits a deferred run.
+
+A response for a different Job, account, image reference or resolved digest
+cannot replace the last verified snapshot. Changed or failed selections omit
+automatic resumption. Resuming starts a fresh readiness check of the named Job;
+recorded image metadata must be compared with the current selection. Existing
+commands do not pin an image across CLI invocations. Unverified selection never
+gains a fabricated identity. Error text and recovery fields apply the shared
+credential redaction rules; stdout schema and write-failure priority remain.
 
 ## Verification
 
@@ -51,3 +71,9 @@ A built-CLI journey executes the emitted inspection/resume commands after a
 timeout, proving they retain the original run when latest has advanced and
 never submit or cancel work. Existing invocation recovery regressions protect
 the shared writer's wire shape and correlation fields.
+
+Image-readiness tests cover the same failure classes, learned/changed digests,
+identity and account changes, zero run submissions on every preparation failure,
+and real SIGINT cancellation. A built-CLI journey executes both emitted commands
+after preparation succeeds and requires that no run is submitted, including
+after stopping a pre-submission wait.

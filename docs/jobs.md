@@ -312,6 +312,13 @@ or continue waiting for that exact run; a `latest` selection is pinned to its
 UUID. See [Job wait recovery](cli-config.md#job-wait-recovery) for fields and
 polling-error exit codes.
 
+Image preparation has the same structured diagnostics for `job get JOB
+--wait-ready` and `job run JOB --tasks 1 --wait-ready`. Its recovery identifies
+the image-wait phase and reports `submitted: false`; following its commands
+only reads readiness and never submits the deferred run. Compare the recorded
+image selection with the current Job before starting a fresh readiness wait.
+See [image-readiness recovery](cli-config.md#job-image-readiness-recovery).
+
 `jobs logs` returns a 64 KiB tail by default. Pass `--max-bytes N` (up to
 1 MiB) to retrieve a larger tail when the response is truncated. Pass
 `--follow` (`-f`) to stream a task's output while it runs: the stream waits
