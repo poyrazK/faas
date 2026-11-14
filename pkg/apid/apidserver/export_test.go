@@ -1639,6 +1639,9 @@ func (r *server) KeysLeftAfterReset(p0 context.Context, p1 state.Account) []stat
 func (r *server) RemoveForeignProviderLinks(p0 context.Context, p1 string, p2 string) {
 	r.removeForeignProviderLinks(p0, p1, p2)
 }
+func (r *server) RemoveOldAddressProviderLinks(p0 context.Context, p1 state.Account, p2 string) {
+	r.removeOldAddressProviderLinks(p0, p1, p2)
+}
 func (r *server) VmmdMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.vmmdMetricsDiscovery(p0, p1)
 }
