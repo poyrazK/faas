@@ -22,7 +22,16 @@
 #                  every compute node opens runtime secrets through secretd
 #                  (SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE=true,
 #                  ADR-20261110210000 slice 3e; needs
-#                  SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true)
+#                  SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true); nothing of
+#                  edge, and faas_seal_domain_edge_retired_on_compute: true,
+#                  once every compute node's gateway opens edge values
+#                  through secretd and verifiers
+#                  (SEAL_DOMAIN_EDGE_RETIRED_ON_COMPUTE=true; needs
+#                  SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true); nothing of
+#                  delivery, and faas_seal_domain_delivery_retired_on_compute:
+#                  true, once every compute node's schedd opens delivery
+#                  values through secretd
+#                  (SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE=true)
 #
 # --identities ROLE prints, one per line, the domains whose private identity
 # ROLE's hosts get, so CD fetches only those from the key escrow.
@@ -73,6 +82,34 @@ case "${SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE:-}" in
     ;;
   *)
     echo "::error::SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE is '${SEAL_DOMAIN_RUNTIME_RETIRED_ON_COMPUTE}'; want true or false" >&2
+    exit 1
+    ;;
+esac
+
+# ADR-20261110210000 (retire compute identities): the compute nodes get
+# nothing of the edge or delivery domain once their daemons open those values
+# through the control plane's secretd.
+edge_retired=false
+case "${SEAL_DOMAIN_EDGE_RETIRED_ON_COMPUTE:-}" in
+  "" | false) ;;
+  true)
+    edge_retired=true
+    if [[ "${SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE:-}" != true ]]; then
+      echo "::error::SEAL_DOMAIN_EDGE_RETIRED_ON_COMPUTE=true needs SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true: secretd on the control plane is then the only opener of edge values" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "::error::SEAL_DOMAIN_EDGE_RETIRED_ON_COMPUTE is '${SEAL_DOMAIN_EDGE_RETIRED_ON_COMPUTE}'; want true or false" >&2
+    exit 1
+    ;;
+esac
+delivery_retired=false
+case "${SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE:-}" in
+  "" | false) ;;
+  true) delivery_retired=true ;;
+  *)
+    echo "::error::SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE is '${SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE}'; want true or false" >&2
     exit 1
     ;;
 esac
@@ -129,14 +166,18 @@ staged() { # ROLE DOMAIN
       # ADR-20261110210000 slice 3e: retired compute nodes seal capture keys
       # to the recipient and never hold the identity.
       if $runtime_retired; then echo recipient; else echo identity; fi ;;
-    compute/build | compute/edge | compute/edge_tls | compute/control | compute/delivery | control-plane/control | control-plane/account | control-plane/neon)
+    compute/edge)
+      if ! $edge_retired; then echo identity; fi ;;
+    compute/delivery)
+      if ! $delivery_retired; then echo identity; fi ;;
+    compute/build | compute/edge_tls | compute/control | control-plane/control | control-plane/account | control-plane/neon)
       echo identity ;;
     compute/storage)
       if [[ "${SEAL_DOMAIN_STORAGE_ON_COMPUTE:-}" == true ]]; then echo identity; fi ;;
   esac
 }
 
-if ! $list_only && [[ -f "$vars" ]] && grep -qE '^(faas_seal_domains_managed|faas_seal_domain_runtime_retired_on_compute|faas_seal_domain_[a-z_]+_(identity|recipient)_src):' "$vars"; then
+if ! $list_only && [[ -f "$vars" ]] && grep -qE '^(faas_seal_domains_managed|faas_seal_domain_(runtime|edge|delivery)_retired_on_compute|faas_seal_domain_[a-z_]+_(identity|recipient)_src):' "$vars"; then
   echo "::error::$vars sets seal-domain key variables; CD stages them from the SEAL_DOMAIN_* secrets, so remove them from the environment's Ansible variables" >&2
   exit 1
 fi
@@ -202,10 +243,10 @@ for domain in "${domains[@]}"; do
     continue
   fi
   what=$(staged "$role" "$domain")
-  # A host that gets only the recipient needs no identity: a retired compute
-  # node's CD job is not handed the runtime key at all.
+  # A host that gets only the recipient, or nothing, needs no identity: a
+  # retired compute node's CD job is not handed the key at all.
   if [[ "$source_kind" == secrets && -z "$pub" ]] ||
-    [[ "$source_kind" == secrets && -z "$key" && "$what" != recipient ]]; then
+    [[ "$source_kind" == secrets && -z "$key" && ("$what" == both || "$what" == identity) ]]; then
     echo "::error::set both $key_var and $pub_var, or neither" >&2
     exit 1
   fi
@@ -249,6 +290,12 @@ if [[ -n "$added" ]]; then
     printf 'faas_seal_domains_managed: true\n'
     if [[ "$role" == compute ]] && $runtime_retired; then
       printf 'faas_seal_domain_runtime_retired_on_compute: true\n'
+    fi
+    if [[ "$role" == compute ]] && $edge_retired; then
+      printf 'faas_seal_domain_edge_retired_on_compute: true\n'
+    fi
+    if [[ "$role" == compute ]] && $delivery_retired; then
+      printf 'faas_seal_domain_delivery_retired_on_compute: true\n'
     fi
     printf '%s' "$added"
   } >> "$vars"

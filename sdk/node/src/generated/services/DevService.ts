@@ -36,6 +36,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DevService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List active development sessions owned by the account.
    * Bounded inventory. Returns at most 100 active leases, newest expiry first. Connection state is informational and unknown after observer restart or eviction. No credentials are returned.
@@ -43,7 +44,7 @@ export class DevService {
    * @throws ApiError
    */
   public static listDevBridges(): CancelablePromise<ListDevBridgesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/bridges',
       errors: {
@@ -64,7 +65,7 @@ export class DevService {
   }: {
     requestBody: CreateDevBridgeRequest,
   }): CancelablePromise<CreateDevBridgeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/bridges',
       body: requestBody,
@@ -95,7 +96,7 @@ export class DevService {
      */
     id: string,
   }): CancelablePromise<DevBridgeSession> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/bridges/{id}',
       path: {
@@ -120,7 +121,7 @@ export class DevService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/bridges/{id}',
       path: {
@@ -146,7 +147,7 @@ export class DevService {
      */
     id: string,
   }): CancelablePromise<DevBridgeActivity> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/bridges/{id}/activity',
       path: {
@@ -176,7 +177,7 @@ export class DevService {
     id: string,
     requestBody: ReplayDevBridgeWebhookRequest,
   }): CancelablePromise<DevBridgeWebhookReplay> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/bridges/{id}/webhook-replays',
       path: {
@@ -211,7 +212,7 @@ export class DevService {
      */
     replay: string,
   }): CancelablePromise<DevBridgeWebhookReplay> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/bridges/{id}/webhook-replays/{replay}',
       path: {
@@ -248,7 +249,7 @@ export class DevService {
      */
     workspaceId?: string,
   }): CancelablePromise<DevPatchStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/sessions/{project}/patches/{generation}',
       path: {
@@ -286,7 +287,7 @@ export class DevService {
     project: string,
     requestBody: UpsertDevSessionRequest,
   }): CancelablePromise<DevSessionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/dev/sessions/{project}',
       path: {
@@ -330,7 +331,7 @@ export class DevService {
      */
     workspaceId?: string,
   }): CancelablePromise<DevSessionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/sessions/{project}',
       path: {
@@ -373,7 +374,7 @@ export class DevService {
      */
     workspaceId?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/sessions/{project}',
       path: {
@@ -414,7 +415,7 @@ export class DevService {
     runId: string,
     requestBody: RegisterScenarioTestRequest,
   }): CancelablePromise<RegisterScenarioTestResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/dev/test-runs/{run_id}',
       path: {
@@ -444,7 +445,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/test-runs/{run_id}',
       path: {
@@ -471,7 +472,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<ScenarioSuspendResumeEvidence> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/suspend-resume',
       path: {
@@ -503,7 +504,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<ScenarioSuspendResumeEvidence> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/test-runs/{run_id}/suspend-resume',
       path: {
@@ -535,7 +536,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<ScenarioActionSnapshot> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/actions/seal',
       path: {
@@ -573,7 +574,7 @@ export class DevService {
     runId: string,
     requestBody: CreateScenarioObjectsRequest,
   }): CancelablePromise<ScenarioObjectsReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/objects',
       path: {
@@ -607,7 +608,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/test-runs/{run_id}/objects',
       path: {
@@ -638,7 +639,7 @@ export class DevService {
     runId: string,
     requestBody: SealScenarioObjectsRequest,
   }): CancelablePromise<ScenarioObjectsEvidence> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/objects/seal',
       path: {
@@ -673,7 +674,7 @@ export class DevService {
     runId: string,
     requestBody: CreateScenarioPostgresRequest,
   }): CancelablePromise<ScenarioPostgresReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/postgres',
       path: {
@@ -707,7 +708,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/test-runs/{run_id}/postgres',
       path: {
@@ -738,7 +739,7 @@ export class DevService {
     runId: string,
     requestBody: SealScenarioPostgresRequest,
   }): CancelablePromise<ScenarioPostgresEvidence> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/test-runs/{run_id}/postgres/seal',
       path: {
@@ -773,7 +774,7 @@ export class DevService {
     runId: string,
     requestBody: InjectScenarioTestChaosRequest,
   }): CancelablePromise<InjectScenarioTestChaosResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/dev/test-runs/{run_id}/chaos',
       path: {
@@ -802,7 +803,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/dev/test-runs/{run_id}/chaos',
       path: {
@@ -829,7 +830,7 @@ export class DevService {
      */
     runId: string,
   }): CancelablePromise<ScenarioTestChaosMatchesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/test-runs/{run_id}/chaos/matches',
       path: {
@@ -858,7 +859,7 @@ export class DevService {
     project: string,
     requestBody: RecordDevSyncRequest,
   }): CancelablePromise<DevSyncHistoryItem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/sessions/{project}/syncs',
       path: {
@@ -894,7 +895,7 @@ export class DevService {
     project: string,
     requestBody: SeedDevSessionFromEnvironmentBranchRequest,
   }): CancelablePromise<SeedDevSessionFromEnvironmentBranchResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/dev/sessions/{project}/seed',
       path: {
@@ -938,7 +939,7 @@ export class DevService {
      */
     limit?: number,
   }): CancelablePromise<DevSyncHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/dev/sessions/{project}/history',
       path: {

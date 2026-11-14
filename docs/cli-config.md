@@ -25,6 +25,39 @@ to see the effective value and its source without exposing credentials;
 `config list`, `config get` and `context` drop any `user:password@` part of a
 `FAAS_API` URL before printing it.
 
+### Read request retries
+
+```bash
+gregale --http-retries 3 billing usage summary
+gregale --http-retries=2 app list
+```
+
+Put the prefix before the command. `N` is the number of **additional** attempts
+(0–5): `3` permits at most four attempts for an eligible read. The default is zero;
+the last prefix wins. No setting or environment variable persists the choice.
+Invalid counts fail before contacting the API.
+
+The initial route set covers JSON app listing, detail, status and usage;
+app deployment listing, latest deployment and deployment summary; deployment
+detail and stages; and `billing usage summary`. Other paths, streams, uploads
+and mutations retain their existing policies. Individual commands can perform
+several requests; eligibility and the retry budget apply to each request.
+
+Eligible reads retry selected connection interruptions and per-attempt timeouts,
+generic transient 502/503/504 responses with known error codes, and recognized
+429 rate limits with `Retry-After`. Authentication, authorization, validation,
+quota, TLS verification, invalid JSON and unknown problem codes fail normally.
+Backoff uses jitter (250 ms base, 5 s cap). A valid `Retry-After` in seconds or
+HTTP-date format sets a minimum wait. If it requires more than 30 seconds, is
+malformed, or appears more than once, the original error is returned rather
+than retrying early. A 429 without `Retry-After` is also returned immediately.
+
+Cancellation stops backoff and further attempts. Each attempt uses its HTTP
+client deadline; retries do not create a separate overall command deadline.
+Successful stdout is unchanged. Add `--debug-http` to see `attempt`,
+`max_attempts` and `retry_delay_ms` on the usual metadata records; zero delays
+are omitted and arbitrary response content is never copied into diagnostics.
+
 ### Plain-HTTP API addresses
 
 Every request carries your API key, and `gregale login` receives a new one in
@@ -45,6 +78,35 @@ gregale config set api-base http://gregale.internal:8080
 With the opt-in, each command prints one warning on stderr. Anyone on the
 network path can read and reuse the key, so prefer TLS even on private
 networks.
+
+## HTTP request timeout
+
+Select a timeout for this invocation by placing a positive duration before
+its command:
+
+```bash
+gregale --http-timeout 90s billing usage summary
+gregale --http-timeout=2m deploy
+```
+
+Durations use Go syntax, such as `500ms`, `90s` or `2m`. Empty, zero, negative
+and invalid durations fail before contacting the API. The last prefix wins.
+There is no environment variable or saved setting; later invocations use
+their usual defaults (30 seconds for ordinary JSON calls, with existing
+operation-specific and upload budgets).
+
+An explicit value bounds each API request, including reading its response
+body and uploading source. It replaces operation-specific defaults, including
+rollback and hosting finalization budgets. Existing retries can still make
+more than one request; the flag does not set an overall retry, polling or
+command deadline. Caller context deadlines, dial and TLS limits can finish
+sooner. Private operator and external OIDC clients retain their own policies.
+
+For streaming logs, the value bounds the wait for response headers. Once
+connected, the body can remain open beyond that duration until the stream
+ends or you cancel it. Server-side app execution limits and command-local
+`--timeout` options retain their documented meaning. This flag does not add
+retries, persist configuration or change successful stdout.
 
 ## Command output and forwarded arguments
 
@@ -78,12 +140,111 @@ as `--help` and `--json`:
 gregale --json app demo exec --detach -- python --help
 ```
 
-`gregale invocations wait <id> --json` writes the invocation status to stdout
+`gregale invocation wait <id> --json` writes the invocation status to stdout
 and API errors as a single Problem JSON object to stderr. A wait timeout exits
 with `124`, writes the last known status to stdout when available, and writes
 an `invocation_wait_timeout` Problem to stderr. Ctrl-C exits with `130`.
 Stopping the CLI wait leaves the invocation running; inspect it later with
-`gregale invocations get <id>`.
+`gregale invocation get <id>`.
+
+Use one command family to submit and inspect a call:
+
+```sh
+gregale invocation run api --payload @request.json
+gregale invocation list
+gregale invocation get INVOCATION_ID
+gregale invocation wait INVOCATION_ID --timeout 2m
+```
+
+`invoke APP` and the earlier plural `invocations` spelling remain compatibility
+aliases. Help, completion and agent examples use `invocation`.
+
+To submit asynchronously and wait in one command:
+
+```sh
+gregale invocation run api --wait --timeout 2m --payload @request.json
+```
+
+`--wait` selects async submission automatically; `--timeout` and `--interval`
+require `--wait`. An explicit `--async=false` conflicts with `--wait` and is
+rejected before submission. Use `--async` alone to queue and return immediately.
+The default timeout is `0` (wait until completion or Ctrl-C), and the default
+polling interval is `1s`. The timeout starts after acceptance and only limits
+local polling. The command submits once, then reads that accepted invocation.
+Completed exits `0`; failed, cancelled or dead-lettered exits `1`. JSON mode
+prints one final invocation record to stdout. On timeout it prints the latest
+known status when available, and an error to stderr. A timeout (`124`), Ctrl-C
+(`130`) or polling error preserves the accepted ID and a resume command in the
+diagnostic. Use that `invocation wait` command to resume; submitting again
+creates new work.
+
+In JSON mode, timeout, Ctrl-C and polling failures from both run-and-wait and
+standalone wait include a `recovery` object when there is a valid invocation ID.
+They keep the existing Problem fields, category and exit code:
+
+```json
+{
+  "code": "invocation_wait_timeout",
+  "exit_code": 124,
+  "recovery": {
+    "invocation_id": "INVOCATION_ID",
+    "inspect_command": "gregale --profile staging invocation get INVOCATION_ID",
+    "resume_command": "gregale --profile staging invocation wait INVOCATION_ID"
+  }
+}
+```
+
+These read-only commands use POSIX shell quoting, retain the selected profile
+and redact credentials. They use the current credentials and endpoint on the
+next CLI invocation; keep the same connection overrides when resuming. Follow
+the Problem's remediation for authentication or polling errors before resuming.
+For standalone wait, the ID identifies the requested target; recovery does not
+prove that it exists or is still running. No recovery ID is invented for a
+missing or invalid submission receipt. Agents should read these fields instead
+of parsing the human hint. The CLI never executes the recovery command itself.
+
+## Request IDs on API errors
+
+When an API failure includes one valid `X-Faas-Request-Id`, normal text errors
+print `Request ID: <id>`. With `--json`, the error object includes optional
+`request_id` alongside its existing code, category and exit code. Include the
+ID when reporting the failure so its server logs can be found; `--debug-http`
+is not required.
+
+Only the header supplies this metadata, including for JSON, HTML and plain-text
+API error responses. Accepted IDs are 32 hex characters or hyphenated UUIDs;
+malformed, duplicate or credential-matching values are omitted. An exhausted
+retry reports the final failed attempt's ID. If that response has no valid ID,
+the CLI does not reuse one from an earlier attempt. Local errors and failures
+before any API response carry no invented ID. Successful stdout is unchanged.
+
+## Retrying async invocation submissions
+
+Supply a stable key when a script may need to retry an uncertain submission:
+
+```sh
+gregale invocation run billing --async --idempotency-key invoice-4821 --payload @invoice.json
+```
+
+`--idempotency-key` requires `--async` or `--wait`; the synchronous endpoint has no receipt
+cache. Surrounding whitespace is trimmed; an explicitly empty key, a key over
+255 bytes, or a key with internal spaces or ASCII controls fails before payload
+reading or network access. Without the flag, each command keeps its fresh
+SDK-generated key. The selected key is sent as request metadata, outside the
+invocation payload.
+
+After a lost response, rerun the same command with the original key and unchanged
+payload, method, path and other invocation options, using the same API, profile
+and credentials. The server's existing receipt window is **24 hours**. A completed
+receipt replays the original invocation ID; concurrent use returns `409`, and a
+request fingerprint mismatch returns `422 idempotency_key_reused`. These server
+responses are preserved. The CLI adds no submission retry loop.
+
+Use a new key for new work. Replay follows the existing server receipt policy;
+it does not extend past retention or survive every receipt-store failure.
+Some legacy receipts and requests beyond the server's 1 MiB fingerprint cap lack
+request comparison, so keep retry input unchanged even when a mismatch is not
+rejected. See ADR-20261022204036 for the full receipt policy.
 
 ## HTTP diagnostics
 
@@ -280,6 +441,15 @@ shape across releases:
 Decide success from the exit code, not from whether stdout is empty: an empty
 JSON Lines list exits 0 with no output, and a failure writes its Problem to
 stderr. To read a JSON Lines list as one array, use `jq -s .`.
+
+JSON input flags such as `invoke --payload`, `send --data` and trigger
+`--config` report a location when their input is malformed. For example,
+`request.json:12:9: --payload must be valid JSON` identifies the selected file;
+`stdin` and `inline` identify those input forms. Lines and columns start at 1,
+columns count Unicode characters, and a tab counts as one character. LF and
+CRLF files are supported. Truncated JSON points at the end of the input.
+The same location appears in JSON error details. Diagnostics omit payload
+contents, and valid input keeps its original bytes and numeric precision.
 
 Shared command errors use these exit codes. JSON error objects on stderr
 include `category` and `exit_code` alongside the server's unchanged `code`:

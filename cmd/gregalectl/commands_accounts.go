@@ -232,7 +232,7 @@ func printAccountDiagnosis(d api.ObsTenantDiagnosis) {
 func cmdAccountsAttention(args []string) int {
 	fs := flag.NewFlagSet("attention", flag.ContinueOnError)
 	fs.SetOutput(osStderr)
-	kind := fs.String("kind", "", "deploy_failing, refused_burst or domain_stuck")
+	kind := fs.String("kind", "", strings.Join(api.AttentionKinds(), ", "))
 	stateFlag := fs.String("state", "", "active (default), open, dismissed or resolved")
 	accountID := fs.String("account-id", "", "only this account (uuid)")
 	limit := fs.Int("limit", api.AttentionListMax, "maximum signals (1..200)")
@@ -273,8 +273,15 @@ func cmdAccountsAttention(args []string) int {
 		return 0
 	}
 	for _, s := range response.Items {
-		_, _ = fmt.Fprintf(osStdout, "signal id=%d account_id=%s kind=%s subject=%s state=%s observed=%d since=%s last=%s detail=%q\n",
+		_, _ = fmt.Fprintf(osStdout, "signal id=%d account_id=%s kind=%s subject=%s state=%s observed=%d since=%s last=%s detail=%q",
 			s.ID, s.AccountID, s.Kind, s.Subject, s.State, s.Observed, s.FirstSeenAt.Format(time.RFC3339), s.LastSeenAt.Format(time.RFC3339), s.Detail)
+		if s.Outcome != "" {
+			_, _ = fmt.Fprintf(osStdout, " outcome=%s", s.Outcome)
+		}
+		if s.TicketID != "" {
+			_, _ = fmt.Fprintf(osStdout, " ticket_id=%s", s.TicketID)
+		}
+		_, _ = fmt.Fprintln(osStdout)
 	}
 	return 0
 }

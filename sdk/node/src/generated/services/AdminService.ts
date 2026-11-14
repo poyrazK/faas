@@ -44,6 +44,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AdminService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List public status events (admin-only).
    * Requires admin scope, operator allowlist membership, and MFA.
@@ -73,7 +74,7 @@ export class AdminService {
      */
     active?: boolean,
   }): CancelablePromise<Array<PublicStatusEvent>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/status/incidents',
       cookies: {
@@ -120,7 +121,7 @@ export class AdminService {
      */
     faasSid?: string,
   }): CancelablePromise<PublicStatusEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/status/incidents',
       cookies: {
@@ -175,7 +176,7 @@ export class AdminService {
      */
     faasSid?: string,
   }): CancelablePromise<PublicStatusEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/status/incidents/{public_id}/updates',
       path: {
@@ -229,7 +230,7 @@ export class AdminService {
      */
     faasSid?: string,
   }): CancelablePromise<PublicStatusEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/admin/status/incidents/{public_id}',
       path: {
@@ -284,7 +285,7 @@ export class AdminService {
      */
     faasSid?: string,
   }): CancelablePromise<PublicStatusEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/admin/status/incidents/{public_id}/updates/{update_id}',
       path: {
@@ -333,7 +334,7 @@ export class AdminService {
       reason: string;
     },
   }): CancelablePromise<AccountCreditResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/accounts/{id}/credits',
       path: {
@@ -369,7 +370,7 @@ export class AdminService {
     id: string,
     requestBody: AccountAbuseHoldAction,
   }): CancelablePromise<AccountAbuseHoldActionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/accounts/{id}/abuse-hold',
       path: {
@@ -400,7 +401,7 @@ export class AdminService {
     id: string,
     requestBody: AccountAbuseHoldAction,
   }): CancelablePromise<AccountAbuseHoldActionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/admin/accounts/{id}/abuse-hold',
       path: {
@@ -454,7 +455,7 @@ export class AdminService {
      */
     limit?: number,
   }): CancelablePromise<EgressFlowLogResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/egress-flows',
       query: {
@@ -509,7 +510,7 @@ export class AdminService {
       reason: string;
     },
   }): CancelablePromise<AdminRefundResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/accounts/{id}/refunds',
       path: {
@@ -547,7 +548,7 @@ export class AdminService {
   }: {
     requestBody: AdminSetGithubWebhookSecretRequest,
   }): CancelablePromise<AdminSetGithubWebhookSecretResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/github-webhook-secrets',
       body: requestBody,
@@ -577,7 +578,7 @@ export class AdminService {
      */
     id: string,
   }): CancelablePromise<ConsumeInvoiceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/invoices/{id}/consume-credits',
       path: {
@@ -610,7 +611,7 @@ export class AdminService {
    * @throws ApiError
    */
   public static listPaddleCatalog(): CancelablePromise<BillingCatalogResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/billing-paddle-catalog',
       errors: {
@@ -639,7 +640,7 @@ export class AdminService {
    * @throws ApiError
    */
   public static resetPaddleCatalog(): CancelablePromise<BillingCatalogResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/admin/billing-paddle-catalog',
       errors: {
@@ -666,7 +667,7 @@ export class AdminService {
    * @throws ApiError
    */
   public static syncPaddleCatalog(): CancelablePromise<BillingCatalogResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/billing-paddle-catalog/sync',
       errors: {
@@ -703,7 +704,7 @@ export class AdminService {
    * @throws ApiError
    */
   public static getBillingPaddleOveragePreflight(): CancelablePromise<BillingPaddleOveragePreflightResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/billing-paddle-overage/preflight',
       errors: {
@@ -737,7 +738,7 @@ export class AdminService {
      */
     id: string,
   }): CancelablePromise<BillingReconcileResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/billing-reconcile/{id}',
       path: {
@@ -794,7 +795,7 @@ export class AdminService {
    * @throws ApiError
    */
   public static getRekeyProgress(): CancelablePromise<RekeyProgress> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/secrets/rekey-progress',
       errors: {
@@ -878,7 +879,7 @@ export class AdminService {
      */
     reason?: string,
   }): CancelablePromise<OperatorIntentAcceptedResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/instances/{id}/force-park',
       path: {
@@ -970,7 +971,7 @@ export class AdminService {
      */
     reason?: string,
   }): CancelablePromise<OperatorIntentAcceptedResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/apps/{slug}/force-cold-boot',
       path: {
@@ -1077,7 +1078,7 @@ export class AdminService {
      */
     reason?: string,
   }): CancelablePromise<OperatorIntentAcceptedResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/instances/{id}/force-restart',
       path: {
@@ -1127,7 +1128,7 @@ export class AdminService {
      */
     id: string,
   }): CancelablePromise<OperatorIntentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/operator-intents/{id}',
       path: {
@@ -1194,7 +1195,7 @@ export class AdminService {
      */
     details?: boolean,
   }): CancelablePromise<ObsAlertCollectionHistory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/collection-history',
       query: {
@@ -1236,7 +1237,7 @@ export class AdminService {
    * @throws ApiError
    */
   public static getObsRuleHealth(): CancelablePromise<ObsRuleHealthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/rule-health',
       errors: {
@@ -1287,7 +1288,7 @@ export class AdminService {
      */
     expectedSet?: 'gregale-core-v1' | 'gregale-full-v1',
   }): CancelablePromise<ObsRuleCoverage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/rule-coverage',
       query: {
@@ -1329,7 +1330,7 @@ export class AdminService {
    * @throws ApiError
    */
   public static getObsServingHealth(): CancelablePromise<ObsServingHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/serving-health',
       errors: {
@@ -1380,7 +1381,7 @@ export class AdminService {
      */
     expectedRole?: 'single-box-v1' | 'control-plane-v1',
   }): CancelablePromise<ObsInputHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/input-health',
       query: {
@@ -1441,7 +1442,7 @@ export class AdminService {
      */
     expectedSet?: 'gregale-core-v1' | 'gregale-full-v1',
   }): CancelablePromise<ObsRecordingCoverage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/recording-coverage',
       query: {
@@ -1486,7 +1487,7 @@ export class AdminService {
    * @throws ApiError
    */
   public static getObsNotificationHealth(): CancelablePromise<ObsNotificationHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/notification-health',
       errors: {
@@ -1536,7 +1537,7 @@ export class AdminService {
      */
     since?: string,
   }): CancelablePromise<ObsAlertRecurrence> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/incidents/platform_alert/recurrence',
       query: {
@@ -1582,7 +1583,7 @@ export class AdminService {
      */
     since?: string,
   }): CancelablePromise<ObsAlertResponseTimes> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/incidents/platform_alert/response-times',
       query: {
@@ -1621,7 +1622,7 @@ export class AdminService {
      */
     wakeId: string,
   }): CancelablePromise<ObsWakeTimeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/wakes/{wake_id}',
       path: {
@@ -1659,7 +1660,7 @@ export class AdminService {
    * @throws ApiError
    */
   public static getObsAlertWorkloadSummary(): CancelablePromise<ObsAlertWorkloadSummary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/incidents/platform_alert/summary',
       errors: {
@@ -1708,7 +1709,7 @@ export class AdminService {
      */
     cursor?: string,
   }): CancelablePromise<ObsAlertTriageHistory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/incidents/platform_alert/{id}/triage-history',
       path: {
@@ -1760,7 +1761,7 @@ export class AdminService {
     idempotencyKey: string,
     requestBody: ObsAlertTriageRequest,
   }): CancelablePromise<ObsAlertTriageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/obs/incidents/platform_alert/{id}/triage',
       path: {
@@ -1816,7 +1817,7 @@ export class AdminService {
    * @throws ApiError
    */
   public static getObsHealth(): CancelablePromise<ObsHealthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/health',
       errors: {
@@ -1868,7 +1869,7 @@ export class AdminService {
      */
     reason?: string,
   }): CancelablePromise<SweepStuckBuildsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/builds/sweep-stuck',
       query: {
@@ -1914,7 +1915,7 @@ export class AdminService {
      */
     cursor?: string,
   }): CancelablePromise<DataRepairHealth> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/ops/data-repairs',
       query: {
@@ -1959,7 +1960,7 @@ export class AdminService {
      */
     limit?: number,
   }): CancelablePromise<GithubRecoveryStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/ops/github/recovery',
       query: {
@@ -2010,7 +2011,7 @@ export class AdminService {
      */
     reason: string,
   }): CancelablePromise<GithubRecoveryRetryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/ops/github/deliveries/{id}/retry',
       path: {
@@ -2065,7 +2066,7 @@ export class AdminService {
      */
     reason: string,
   }): CancelablePromise<GithubRecoveryRetryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/ops/github/check-updates/{id}/retry',
       path: {

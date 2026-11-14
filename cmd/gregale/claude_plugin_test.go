@@ -124,7 +124,8 @@ func TestAgentFacingMCPToolsExist(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, name := range mcpToolNameRE.FindAllString(string(content), -1) {
-			if !tools[name] {
+			// Hosted connections register a few tools a local server does not.
+			if _, hosted := mcpmanagement.ToolsetOf(name); !tools[name] && !hosted {
 				t.Errorf("%s names MCP tool %s, which the management server does not register", path, name)
 			}
 		}

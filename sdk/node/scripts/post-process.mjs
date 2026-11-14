@@ -10,7 +10,52 @@
 // These behaviours are tested by the post-process and download tests.
 
 import { readFile, readdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+
+/** Add an instance transport and fresh defaults without changing legacy callers. */
+export async function patchClientCore(dir) {
+  const replace = async (file, pairs) => {
+    const path = join(dir, 'core', file);
+    let source = await readFile(path, 'utf8');
+    for (const [before, after] of pairs) {
+      if (source.includes(after)) continue;
+      if (!source.includes(before)) throw new Error(`client isolation generator anchor missing: ${file}`);
+      source = source.replace(before, after);
+    }
+    await writeFile(path, source);
+  };
+  await replace('OpenAPI.ts', [
+    ['  BASE: string;', '  FETCH?: typeof fetch;\n  BASE: string;'],
+    ['export const OpenAPI: OpenAPIConfig = {', 'export const createOpenAPIConfig = (): OpenAPIConfig => ({'],
+    ["  ENCODE_PATH: undefined,\n};", "  ENCODE_PATH: undefined,\n});\n\nexport const OpenAPI: OpenAPIConfig = createOpenAPIConfig();"],
+  ]);
+  await replace('request.ts', [
+    ['return await fetch(url, request);', 'return await (config.FETCH ?? fetch)(url, request);'],
+  ]);
+}
+
+/** Bind generated static methods to a private config receiver when used by a
+ * client namespace. Unbound static calls retain the shared OpenAPI fallback.
+ * Run after binary service patches, which match the original request calls.
+ */
+export async function patchClientServices(dir) {
+  await walk(join(dir, 'services'), async path => {
+    if (!path.endsWith('.ts') || basename(path) === 'index.ts') return;
+    let source = await readFile(path, 'utf8');
+    const marker = '  protected static readonly clientConfig?: typeof OpenAPI;';
+    if (!source.includes(marker)) {
+      if (!/export class \w+ \{/.test(source)) throw new Error(`client isolation generator anchor missing: ${path}`);
+      source = source.replace(/(export class \w+ \{)/, `$1\n${marker}`);
+    }
+    source = source.replaceAll('__request(OpenAPI, {', '__request(this?.clientConfig ?? OpenAPI, {');
+    // Every generated operation must use the bound config. Fail on template drift.
+    if (!source.includes('__request(this?.clientConfig ?? OpenAPI, {') ||
+        /__request\((?!this\?\.clientConfig \?\? OpenAPI, \{)/.test(source)) {
+      throw new Error(`client isolation request anchor missing: ${path}`);
+    }
+    await writeFile(path, source);
+  });
+}
 
 /** Stored workflow names are single path segments, including names with reserved
  * characters. Keep the pinned generator's encoding for other route families.
@@ -71,7 +116,7 @@ export async function patchBinaryServices(dir) {
 /**
  * Point a core-less generated tree (the public GA and beta client,
  * ADR-20261023115741) at the full tree's runtime core, so both share one
- * OpenAPI configuration and one request implementation. Returns the number
+ * legacy OpenAPI singleton and one request implementation. Returns the number
  * of files rewritten.
  */
 export async function shareGeneratedCore(dir, coreImport) {

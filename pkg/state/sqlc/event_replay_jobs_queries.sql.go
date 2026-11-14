@@ -114,8 +114,10 @@ WHERE o.account_id=$3::uuid
   AND o.created_at < $5::timestamptz
   AND (o.created_at,o.id) > ($6::timestamptz,$7::bigint)
   AND event_app_in_producer_reach(o.account_id, o.payload->>'producer', $2::text)
+  -- ADR-20261104120000: a backfill replays only its target environment's events.
+  AND coalesce(o.payload->>'environmentid','') = $8::text
 ORDER BY o.created_at,o.id
-LIMIT $8::integer
+LIMIT $9::integer
 `
 
 type EventReplayBackfillCandidatesParams struct {
@@ -126,6 +128,7 @@ type EventReplayBackfillCandidatesParams struct {
 	CutoffAt       pgtype.Timestamptz
 	CursorAt       pgtype.Timestamptz
 	CursorOutboxID int64
+	EnvironmentID  string
 	PageLimit      int32
 }
 
@@ -153,6 +156,7 @@ func (q *Queries) EventReplayBackfillCandidates(ctx context.Context, db DBTX, ar
 		arg.CutoffAt,
 		arg.CursorAt,
 		arg.CursorOutboxID,
+		arg.EnvironmentID,
 		arg.PageLimit,
 	)
 	if err != nil {

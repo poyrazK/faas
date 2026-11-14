@@ -64,6 +64,11 @@ type PublishedEventRecipient struct {
 	WorkSnapshotCaptured bool                               `json:"work_snapshot_captured,omitempty"`
 	Work                 *PublishedEventWorkBindingSnapshot `json:"work,omitempty"`
 	ObjectNotification   *ObjectNotificationSnapshot        `json:"object_notification,omitempty"`
+	// DeploymentScope and EnvironmentID are the subscription's environment
+	// (ADR-20261104120000); empty is production. Delivery runs the work in
+	// that environment.
+	DeploymentScope string `json:"deployment_scope,omitempty"`
+	EnvironmentID   string `json:"environment_id,omitempty"`
 }
 
 // PublishedEventWorkBindingSnapshot keeps event routing stable when a binding
@@ -655,6 +660,7 @@ type publishedEventIdentity struct {
 	PlatformTenantID string          `json:"platformtenantid,omitempty"`
 	TenantEventID    string          `json:"tenanteventid,omitempty"`
 	Producer         string          `json:"producer,omitempty"`
+	EnvironmentID    string          `json:"environmentid,omitempty"`
 }
 
 // appendEventFanoutAttemptLocked mirrors the durable attempt-history insert.
@@ -704,11 +710,26 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	if (event.AppID == "") != (event.PlatformTenantID == "") {
 		return false, fmt.Errorf("tenant event requires both app and platform tenant identity")
 	}
+	// ADR-20261104120000: mirrors enqueue_event_fanout. An event's
+	// environment must be one of its account's; subscriptions receive only
+	// their own environment's events, and workflows only production's.
+	eventEnvironment := ""
+	if event.EnvironmentID != "" {
+		env, ok := m.projectEnvironments[event.EnvironmentID]
+		if !ok {
+			env, ok = m.projectEnvironments[canonicalMemUUID(event.EnvironmentID)]
+		}
+		if !ok || !sameMemUUID(env.AccountID, subject.String()) {
+			return false, fmt.Errorf("event environment is not a project environment of its account: %w", ErrConflict)
+		}
+		eventEnvironment = env.ID
+	}
 	candidates := make([]EventSubscription, 0)
 	if event.PlatformTenantID == "" {
 		for _, subscription := range m.eventSubscriptions {
 			app, exists := m.eventSubscriptionAppLocked(subscription.AppID)
-			if !sameMemUUID(subscription.AccountID, subject.String()) || !subscription.Enabled || !exists || app.Status == AppDeleted {
+			if !sameMemUUID(subscription.AccountID, subject.String()) || !subscription.Enabled || !exists || app.Status == AppDeleted ||
+				subscription.EnvironmentID != eventEnvironment {
 				continue
 			}
 			if eventSubscriptionPatternMatches(subscription.Source, event.Source) && eventSubscriptionPatternMatches(subscription.Type, event.Type) {
@@ -726,7 +747,8 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	for _, row := range candidates {
 		recipient := PublishedEventRecipient{ID: row.ID, AccountID: row.AccountID,
 			AppID: row.AppID, Source: row.Source, Type: row.Type, Filter: bytes.Clone(row.Filter),
-			AcknowledgmentLeaseSeconds: row.AcknowledgmentLeaseSeconds, SchemaVersions: append([]string(nil), row.SchemaVersions...), WorkSnapshotCaptured: true, RoutingRetryPolicy: cloneEventRoutingRetryPolicy(row.RoutingRetryPolicy)}
+			AcknowledgmentLeaseSeconds: row.AcknowledgmentLeaseSeconds, SchemaVersions: append([]string(nil), row.SchemaVersions...), WorkSnapshotCaptured: true, RoutingRetryPolicy: cloneEventRoutingRetryPolicy(row.RoutingRetryPolicy),
+			DeploymentScope: row.DeploymentScope, EnvironmentID: row.EnvironmentID}
 		if binding, ok := m.eventWorkBindings[row.ID]; ok {
 			recipient.Work = &PublishedEventWorkBindingSnapshot{
 				PolicyName: binding.PolicyName, KeySelector: binding.KeySelector,
@@ -741,7 +763,9 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	if event.PlatformTenantID != "" {
 		recipients = append(recipients, m.tenantWorkflowEventRecipientsLocked(subject.String(), event.AppID, event.PlatformTenantID, event.Source, event.Type)...)
 	} else {
-		recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
+		if eventEnvironment == "" {
+			recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
+		}
 		var err error
 		if recipients, err = m.recipientsInProducerReachLocked(subject.String(), event.Producer, recipients); err != nil {
 			return false, err

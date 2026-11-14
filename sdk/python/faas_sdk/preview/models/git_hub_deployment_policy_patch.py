@@ -5,6 +5,10 @@ from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 
+from ..models.git_hub_deployment_policy_patch_preview_mode import (
+    GitHubDeploymentPolicyPatchPreviewMode,
+    check_git_hub_deployment_policy_patch_preview_mode,
+)
 from ..models.git_hub_deployment_policy_patch_preview_service_policy import (
     GitHubDeploymentPolicyPatchPreviewServicePolicy,
     check_git_hub_deployment_policy_patch_preview_service_policy,
@@ -30,6 +34,7 @@ class GitHubDeploymentPolicyPatch:
     preview_draft_prs: bool | Unset = UNSET
     preview_service_policy: GitHubDeploymentPolicyPatchPreviewServicePolicy | Unset = UNSET
     production_trigger: GitHubDeploymentPolicyPatchProductionTrigger | Unset = UNSET
+    preview_mode: GitHubDeploymentPolicyPatchPreviewMode | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         root_dir = self.root_dir
@@ -54,6 +59,10 @@ class GitHubDeploymentPolicyPatch:
         if not isinstance(self.production_trigger, Unset):
             production_trigger = self.production_trigger
 
+        preview_mode: str | Unset = UNSET
+        if not isinstance(self.preview_mode, Unset):
+            preview_mode = self.preview_mode
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -73,6 +82,8 @@ class GitHubDeploymentPolicyPatch:
             field_dict["preview_service_policy"] = preview_service_policy
         if production_trigger is not UNSET:
             field_dict["production_trigger"] = production_trigger
+        if preview_mode is not UNSET:
+            field_dict["preview_mode"] = preview_mode
 
         return field_dict
 
@@ -107,6 +118,13 @@ class GitHubDeploymentPolicyPatch:
         else:
             production_trigger = check_git_hub_deployment_policy_patch_production_trigger(_production_trigger)
 
+        _preview_mode = d.pop("preview_mode", UNSET)
+        preview_mode: GitHubDeploymentPolicyPatchPreviewMode | Unset
+        if isinstance(_preview_mode, Unset):
+            preview_mode = UNSET
+        else:
+            preview_mode = check_git_hub_deployment_policy_patch_preview_mode(_preview_mode)
+
         git_hub_deployment_policy_patch = cls(
             root_dir=root_dir,
             ignored_paths=ignored_paths,
@@ -116,6 +134,7 @@ class GitHubDeploymentPolicyPatch:
             preview_draft_prs=preview_draft_prs,
             preview_service_policy=preview_service_policy,
             production_trigger=production_trigger,
+            preview_mode=preview_mode,
         )
 
         return git_hub_deployment_policy_patch

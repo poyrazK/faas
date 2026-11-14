@@ -93,7 +93,7 @@ func TestSuggestCommand_TableDriven(t *testing.T) {
 		{"typo_app_returns_itself_at_distance_0", "app", "app", true},
 		{"typo_deploy_returns_itself", "deploy", "deploy", true},
 		{"earlier_name_suggests_its_tree_noun", "apps", "app", true},
-		{"hyphenated_typo_within_threshold", "invok", "invoke", true},
+		{"truncated_typo_within_threshold", "invocatio", "invocation", true},
 		// Tie-suppression (the load-bearing branch).
 		{"typo_aps_is_three_way_tie_no_suggestion", "aps", "", false},
 		// Far-miss (above maxDist=2).

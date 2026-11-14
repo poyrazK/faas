@@ -9,6 +9,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class RegistryService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List sealed private-registry credentials on an app.
    * Returns every (registry, username, timestamps) triple on the app.
@@ -28,7 +29,7 @@ export class RegistryService {
      */
     slug: string,
   }): CancelablePromise<AppRegistryCredentialListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/registry-credentials',
       path: {
@@ -69,7 +70,7 @@ export class RegistryService {
      */
     requestBody: PutAppRegistryCredentialRequest,
   }): CancelablePromise<AppRegistryCredentialResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/registry-credentials',
       path: {
@@ -118,7 +119,7 @@ export class RegistryService {
      */
     registry: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/registry-credentials',
       path: {

@@ -25,6 +25,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class BillingService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Refresh provider facts for an existing account invoice.
    * Requires usage:read and the invoice-history session MFA gate. Fetches
@@ -50,7 +51,7 @@ export class BillingService {
      */
     id: string,
   }): CancelablePromise<InvoiceRefreshResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/invoices/{id}/refresh',
       path: {
@@ -105,7 +106,7 @@ export class BillingService {
      */
     limit?: number,
   }): CancelablePromise<InvoiceHistoryBackfillResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/invoices/backfill',
       query: {
@@ -156,7 +157,7 @@ export class BillingService {
      */
     month?: string,
   }): CancelablePromise<AppCostsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/costs',
       path: {
@@ -201,7 +202,7 @@ export class BillingService {
      */
     month?: string,
   }): CancelablePromise<FinancialCostsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/billing/costs',
       query: {
@@ -239,7 +240,7 @@ export class BillingService {
      */
     month?: string,
   }): CancelablePromise<FinancialForecastResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/billing/forecast',
       query: {
@@ -264,7 +265,7 @@ export class BillingService {
    * @throws ApiError
    */
   public static listFinancialBudgets(): CancelablePromise<FinancialBudgetListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/billing/budgets',
       errors: {
@@ -299,7 +300,7 @@ export class BillingService {
     idempotencyKey: string,
     requestBody: CreateFinancialBudgetRequest,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/billing/budgets',
       headers: {
@@ -335,7 +336,7 @@ export class BillingService {
      */
     id: string,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/billing/budgets/{id}',
       path: {
@@ -378,7 +379,7 @@ export class BillingService {
     idempotencyKey: string,
     requestBody: UpdateFinancialBudgetRequest,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/billing/budgets/{id}',
       path: {
@@ -424,7 +425,7 @@ export class BillingService {
     idempotencyKey: string,
     requestBody: DeleteFinancialBudgetRequest,
   }): CancelablePromise<FinancialBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/billing/budgets/{id}',
       path: {
@@ -472,7 +473,7 @@ export class BillingService {
      */
     limit?: number,
   }): CancelablePromise<FinancialBudgetHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/billing/budgets/{id}/revisions',
       path: {
@@ -512,7 +513,7 @@ export class BillingService {
      */
     id: string,
   }): CancelablePromise<FinancialBudgetChannelsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/billing/budgets/{id}/channels',
       path: {
@@ -558,7 +559,7 @@ export class BillingService {
     idempotencyKey: string,
     requestBody: SetFinancialBudgetChannelsRequest,
   }): CancelablePromise<FinancialBudgetChannelsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/billing/budgets/{id}/channels',
       path: {
@@ -604,7 +605,7 @@ export class BillingService {
   }: {
     requestBody: FinancialBudgetPreviewRequest,
   }): CancelablePromise<FinancialBudgetPreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/billing/budgets/preview',
       body: requestBody,
@@ -663,7 +664,7 @@ export class BillingService {
      */
     format?: 'zip' | 'csv' | 'metadata',
   }): CancelablePromise<Blob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       responseType: 'blob',
       method: 'GET',
       url: '/v1/billing/focus',
@@ -702,7 +703,7 @@ export class BillingService {
    * @throws ApiError
    */
   public static getBillingStatus(): CancelablePromise<BillingStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/billing/status',
       errors: {
@@ -737,7 +738,7 @@ export class BillingService {
    * @throws ApiError
    */
   public static getBillingPortal(): CancelablePromise<BillingPortalResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/billing/portal',
       errors: {
@@ -763,7 +764,7 @@ export class BillingService {
    * @throws ApiError
    */
   public static retryLatestCharge(): CancelablePromise<BillingRetryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/billing/retry',
       errors: {
@@ -790,7 +791,7 @@ export class BillingService {
    * @throws ApiError
    */
   public static cancelAtPeriodEnd(): CancelablePromise<BillingCancelResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/billing/cancel',
       errors: {

@@ -51,6 +51,7 @@ func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, s
 	return (sh == shapeApp || sh == shapeFunction) &&
 		len(ann.OverrideEnv) == 0 &&
 		ann.LivenessProbe == nil && // the resumable session carries no liveness probe
+		ann.ReadinessProbe == nil && // nor a readiness probe
 		!ann.MCPTaskMigrationOverride &&
 		trafficPercent < 0 &&
 		canaryPreset == "" &&

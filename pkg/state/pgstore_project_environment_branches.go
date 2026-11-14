@@ -20,7 +20,7 @@ const projectEnvironmentBranchSelect = `
 	       b.parent_environment_id::text, p.slug, b.branch_point, b.expires_at,
 	       b.egress_mode, b.private_networks, b.depth::int, b.created_at,
 	       b.data_state, b.data_error, b.data_attempts, coalesce(b.data_lease_token::text, ''),
-	       coalesce(b.slot_id::text, '')
+	       coalesce(b.slot_id::text, ''), coalesce(b.pull_request_number, 0)
 	  from project_environment_branches b
 	  join project_environments e on e.id = b.environment_id
 	  join project_environments p on p.id = b.parent_environment_id`
@@ -29,7 +29,7 @@ func scanProjectEnvironmentBranch(row pgx.Row) (ProjectEnvironmentBranch, error)
 	var b ProjectEnvironmentBranch
 	err := row.Scan(&b.EnvironmentID, &b.AccountID, &b.ProjectID, &b.Slug, &b.ParentEnvironmentID, &b.ParentSlug,
 		&b.BranchPoint, &b.ExpiresAt, &b.EgressMode, &b.PrivateNetworks, &b.Depth, &b.CreatedAt,
-		&b.DataState, &b.DataError, &b.DataAttempts, &b.DataLeaseToken, &b.SlotID)
+		&b.DataState, &b.DataError, &b.DataAttempts, &b.DataLeaseToken, &b.SlotID, &b.PullRequestNumber)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ProjectEnvironmentBranch{}, ErrNotFound
 	}
@@ -104,13 +104,13 @@ func insertProjectEnvironmentBranchTx(ctx context.Context, tx pgx.Tx, req Projec
 	}
 	branch := ProjectEnvironmentBranch{EnvironmentID: created.ID, AccountID: req.AccountID, ProjectID: req.ProjectID, Slug: created.Slug,
 		ParentEnvironmentID: parentID, ParentSlug: req.ParentSlug, EgressMode: req.EgressMode, PrivateNetworks: environmentBranchPrivateNetworks(req.PrivateNetworks),
-		Depth: parentDepth + 1, DataState: dataState, SlotID: EnvironmentBranchSlotID(req.ProjectID, created.Slug)}
+		Depth: parentDepth + 1, DataState: dataState, SlotID: EnvironmentBranchSlotID(req.ProjectID, created.Slug), PullRequestNumber: req.PullRequestNumber}
 	err = tx.QueryRow(ctx, `
 		insert into project_environment_branches
-		    (environment_id, account_id, project_id, parent_environment_id, branch_point, expires_at, egress_mode, private_networks, depth, data_state, slot_id)
-		values ($1, $2, $3, $4, coalesce($5::timestamptz, now()), $6, $7, $8, $9, $10, $11)
+		    (environment_id, account_id, project_id, parent_environment_id, branch_point, expires_at, egress_mode, private_networks, depth, data_state, slot_id, pull_request_number)
+		values ($1, $2, $3, $4, coalesce($5::timestamptz, now()), $6, $7, $8, $9, $10, $11, nullif($12::integer, 0))
 		returning branch_point, expires_at, created_at
-	`, created.ID, req.AccountID, req.ProjectID, parentID, point, req.ExpiresAt.UTC(), req.EgressMode, branch.PrivateNetworks, branch.Depth, dataState, branch.SlotID).Scan(
+	`, created.ID, req.AccountID, req.ProjectID, parentID, point, req.ExpiresAt.UTC(), req.EgressMode, branch.PrivateNetworks, branch.Depth, dataState, branch.SlotID, req.PullRequestNumber).Scan(
 		&branch.BranchPoint, &branch.ExpiresAt, &branch.CreatedAt)
 	if err != nil {
 		return ProjectEnvironmentBranch{}, mapErr(err)

@@ -77,22 +77,25 @@ import (
 // source bytes (hex). TS is informational — the hash is the load-
 // bearing field.
 type planTokenWire struct {
-	Selection              *projectselection.Filters `json:"selection,omitempty"`
-	SafeReleaseID          string                    `json:"safe_release_id,omitempty"`
-	PublicAppsDomain       string                    `json:"public_apps_domain,omitempty"`
-	AppSlugs               map[string]string         `json:"app_slugs,omitempty"`
-	Migration              bool                      `json:"migration,omitempty"`
-	Hash                   string                    `json:"hash"`
-	AccountID              string                    `json:"account_id"`
-	Slug                   string                    `json:"slug"`
-	RepoFullName           string                    `json:"repo_full_name,omitempty"`
-	ProductionBranch       string                    `json:"production_branch,omitempty"`
-	InstallID              int64                     `json:"install_id,omitempty"`
-	NoTriggers             bool                      `json:"no_triggers,omitempty"`
-	PlatformTenantRequired *bool                     `json:"platform_tenant_required,omitempty"`
-	Environment            string                    `json:"environment,omitempty"`
-	ConfigHash             string                    `json:"config_hash,omitempty"`
-	TSUnix                 int64                     `json:"ts_unix"`
+	Selection        *projectselection.Filters `json:"selection,omitempty"`
+	SafeReleaseID    string                    `json:"safe_release_id,omitempty"`
+	PublicAppsDomain string                    `json:"public_apps_domain,omitempty"`
+	AppSlugs         map[string]string         `json:"app_slugs,omitempty"`
+	Migration        bool                      `json:"migration,omitempty"`
+	Hash             string                    `json:"hash"`
+	AccountID        string                    `json:"account_id"`
+	// OrgID binds a company-project scan to its organization, so a plan
+	// reviewed in one context never applies in another (ADR-20261113090000).
+	OrgID                  string `json:"org_id,omitempty"`
+	Slug                   string `json:"slug"`
+	RepoFullName           string `json:"repo_full_name,omitempty"`
+	ProductionBranch       string `json:"production_branch,omitempty"`
+	InstallID              int64  `json:"install_id,omitempty"`
+	NoTriggers             bool   `json:"no_triggers,omitempty"`
+	PlatformTenantRequired *bool  `json:"platform_tenant_required,omitempty"`
+	Environment            string `json:"environment,omitempty"`
+	ConfigHash             string `json:"config_hash,omitempty"`
+	TSUnix                 int64  `json:"ts_unix"`
 }
 
 // scanPlanRequest is the parsed multipart body for both /scan and
@@ -1404,8 +1407,8 @@ func (s *server) scanService(
 	if prob := projectaccess.ValidateScan(r, s.store, acct, req.ProjectSlug); prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
-	if _, shared := projectaccess.From(r.Context()); shared && (req.InstallID != 0 || req.RepoFullName != "") {
-		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Repository ownership migration required", "upload project source without a personal GitHub installation binding")
+	if prob := s.sharedScanInstallationProblem(r, req.InstallID); prob != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
 	if prob := s.prepareSafeProjectRelease(r, acct, req, apply); prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
@@ -1500,7 +1503,7 @@ func (s *server) scanService(
 		if decErr == nil {
 			_ = json.Unmarshal(b, &pt)
 		}
-		if pt.AccountID != acct.ID || pt.Hash != req.SourceSHA256 {
+		if pt.AccountID != acct.ID || pt.OrgID != projectaccess.OrganizationID(r.Context()) || pt.Hash != req.SourceSHA256 {
 			return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict,
 				"plan_token_stale",
 				"plan_token does not match uploaded source",
@@ -2280,7 +2283,8 @@ func (s *server) scanService(
 				reviewedSlugs[workload.Name] = workload.AppSlug
 			}
 		}
-		names := planNameOptions{AppSlugs: reviewedSlugs, Migration: req.Migration, SafeReleaseID: safeProjectReleaseID(req.SafeRelease), Selection: selection}
+		names := planNameOptions{AppSlugs: reviewedSlugs, Migration: req.Migration, SafeReleaseID: safeProjectReleaseID(req.SafeRelease), Selection: selection,
+			OrgID: projectaccess.OrganizationID(r.Context())}
 		if req.Migration {
 			names.PublicAppsDomain = s.domain
 		}
@@ -3150,6 +3154,8 @@ type planNameOptions struct {
 	Migration        bool
 	// SafeReleaseID binds an atomic project release's baseline and policy.
 	SafeReleaseID string
+	// OrgID is the organization of a company-project scan.
+	OrgID string
 }
 
 // mintPlanToken produces the base64-JSON blob. The hash is the
@@ -3175,6 +3181,7 @@ func mintPlanToken(accountID, slug, repoFullName, productionBranch string, insta
 		pt.Migration = names[0].Migration
 		pt.PublicAppsDomain = names[0].PublicAppsDomain
 		pt.SafeReleaseID = names[0].SafeReleaseID
+		pt.OrgID = names[0].OrgID
 		if names[0].Selection != nil {
 			pt.Selection = names[0].Selection
 		}

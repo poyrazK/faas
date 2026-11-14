@@ -123,7 +123,7 @@ func (m *management) operationBase(ctx context.Context, a operationArgs, kind st
 	p := &releasePlan{Action: "operation_" + kind, App: a.App, AppID: app.ID, AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, Scope: normalizedScope(a.Environment), Project: a.Project, ProjectID: env.ProjectID, EnvironmentID: env.ID, Reason: a.Reason, ExpiresAt: time.Now().Add(releasePlanTTL), Operation: &operationPlan{Kind: kind, Request: data, AppHash: hex.EncodeToString(hash[:])}}
 	// Agent keys and hosted sign-ins (mcp-login keys) pay from an agent
 	// budget (ADR-20261111114059); a person's own key never does.
-	p.budgeted = slices.Contains(account.KeyScopes, api.ScopeAgent) || m.remote()
+	p.budgeted = m.budgeted(account)
 	if a.Environment != "" {
 		_, p.WorkloadRevision, err = m.client.GetAppInEnvironmentRevision(ctx, a.App, a.Environment)
 	}

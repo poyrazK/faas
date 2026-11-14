@@ -10,6 +10,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class PreviewsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Get a first-class preview resource.
    * Returns preview identity, public URL, expiration, latest preview and
@@ -28,7 +29,7 @@ export class PreviewsService {
      */
     slug: string,
   }): CancelablePromise<PreviewResourceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/preview/{slug}',
       path: {
@@ -65,7 +66,7 @@ export class PreviewsService {
      */
     slug: string,
   }): CancelablePromise<PreviewEnvironmentStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/preview/{slug}/environment',
       path: {
@@ -104,7 +105,7 @@ export class PreviewsService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/preview/{slug}/destroy',
       path: {
@@ -148,7 +149,7 @@ export class PreviewsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/previews',
       path: {
