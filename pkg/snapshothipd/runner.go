@@ -53,7 +53,7 @@ type Runner struct {
 	// memoryPeersOff keeps memory pages from being shared with other memory
 	// files (ADR-956 amendment 2026-10-31), which is on by default.
 	memoryPeersOff bool
-	// retention is what rows still reference (ADR-20261114120000); nil
+	// retention is what rows still reference (ADR-20261114182830); nil
 	// leaves the node cache to plain oldest-first eviction.
 	retention state.NodeCacheRetentionReader
 }

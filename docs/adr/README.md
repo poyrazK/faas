@@ -3,6 +3,8 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261114141449: Offline OpenAPI tool generation](20261114141449-openapi-tool-generation.md) — accepted; explicit public API operation selection, offline Node adapter source, completed behavioral assertions before existing publication and exact grants
+
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
 - [ADR-20261113180307: Bind execution workflows to independent Node clients](20261113180307-node-sdk-bound-execution-workflows.md) — accepted; preview helpers retain one client snapshot across submission, resumed event streams, and terminal receipt reads, with per-caller cancellation and legacy compatibility.
 - [ADR-20261113173610: Independent Node SDK clients](20261113173610-node-sdk-client-isolation.md) — accepted; per-client generated service namespaces and transports, immutable request configuration, and migration from shared FaaSClient/static services.
@@ -2332,3 +2334,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261114100000: Bill only public-bound app egress](20261114100000-bill-only-public-app-egress.md) — proposed; per-netns nftables counters split internal from public egress, meterd bills a new public_tx_bytes column; the egress meter stays off/shadow until then (billing review R8-2)
 
 - [ADR-20261114162429: Hosted tool publication for Node, Go and Python](20261114162429-hosted-tool-runtime-selection.md) — accepted; source-derived runtime review using shared native markers, all three hosted starters and the existing verified publication workflow
+- [ADR-20261114170352: Organization ownership guards and a require-2FA policy](20261114170352-org-ownership-and-security-policy.md) — accepted; ownership eligibility, browser-only transfer/deletion, organization two-factor policy and owner recovery. Renumbered from the colliding customer-attention identifier.
+- [ADR-20261114164404: Structured recovery for CLI Workflow waits](20261114164404-cli-workflow-wait-recovery.md) — accepted; exact-run read-only inspection/resumption for wait and accepted run/resume/retry waits, preserved timing options, snapshots, polling and exit contracts.
+- [ADR-20261114182830: Node cache disk budget and reference-based retention](20261114182830-node-cache-budget-from-disk-and-retention.md) — accepted; filesystem-sized budget, unreferenced capture/base retention and live snapshots evicted last. Renumbered from the startup-window identifier collision.
+
+- [ADR-20261114190002: Customers see their own attention signals; sign-in refusals are recorded](20261114190002-customer-signal-hints-and-credential-refusals.md)

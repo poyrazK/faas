@@ -49,7 +49,7 @@ func (s *server) recordCustomerErrors(next accountHandler) accountHandler {
 }
 
 // recordCredentialRefusals wraps an authenticated /v1 chain outside the auth
-// middleware (ADR-20261114090000). The middleware notes the account a
+// middleware (ADR-20261114190002). The middleware notes the account a
 // credential resolved to; when it then refuses the request itself (a revoked
 // or expired key, a suspended account, a key limited to other projects), the
 // request never reaches recordCustomerErrors, so this layer records the
