@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const accountHealthUsage = "usage: gregale account health [--json]"
+const accountHealthUsage = "usage: gregale account health get [--json]"
 
 // cmdAccountHealth prints GET /v1/account/health: what may stop the account
 // from working, the same checks as /dashboard/account/health

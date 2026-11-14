@@ -6817,8 +6817,8 @@ Show what may stop your account from working
 Examples:
 
 ```sh
-gregale account health
-gregale account health --json
+gregale account health get
+gregale account health get --json
 ```
 
 Lists restrictions, problems that keep recurring, failed deployments, custom-domain problems and refused API requests, like the dashboard&#39;s account health page.
