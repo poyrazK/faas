@@ -866,6 +866,10 @@ const (
 	// only proof is the browser session comes from a session older than
 	// RecentSignInWindow (ADR 20261110100000): sign in again, then retry.
 	CodeRecentSignInRequired = "recent_sign_in_required"
+	// CodeBrowserSessionRequired refuses an API key on an action only a
+	// person in a signed-in browser may take, such as transferring an
+	// organization's ownership (ADR 20261113180000).
+	CodeBrowserSessionRequired = "browser_session_required"
 	// CodeMFAInvalidCode is returned when /confirm, /verify, or
 	// /recover validate a presented TOTP code / recovery code and
 	// the comparison fails. The audit Emit fires regardless.
@@ -2084,12 +2088,15 @@ const (
 	CodeOrgMemberCapExceeded     = "org_member_cap_exceeded"
 	CodeOrgInvitationCapExceeded = "org_invitation_cap_exceeded"
 	CodeOrgRoleForbidden         = "org_role_forbidden"
-	CodeOrgAlreadyMember         = "org_already_member"
-	CodeOrgInvitationInvalid     = "org_invitation_invalid"
-	CodeOrgInvitationExpired     = "org_invitation_expired"
-	CodeOrgLastOwner             = "org_last_owner"
-	CodeOrgPersonalImmutable     = "org_personal_immutable"
-	CodeOrgAPIKeyRequiresOrg     = "org_api_key_requires_org"
+	// CodeOrgMFARequired refuses a member without two-factor authentication
+	// on an organization that requires it (ADR 20261113180000).
+	CodeOrgMFARequired       = "org_mfa_required"
+	CodeOrgAlreadyMember     = "org_already_member"
+	CodeOrgInvitationInvalid = "org_invitation_invalid"
+	CodeOrgInvitationExpired = "org_invitation_expired"
+	CodeOrgLastOwner         = "org_last_owner"
+	CodeOrgPersonalImmutable = "org_personal_immutable"
+	CodeOrgAPIKeyRequiresOrg = "org_api_key_requires_org"
 	// CodeOrgFreeLimitExceeded: the caller already owns
 	// FreeOrganizationsOwnedMax Free organizations (ADR-20261031090658).
 	CodeOrgFreeLimitExceeded = "org_free_limit_exceeded"
@@ -7499,6 +7506,15 @@ func ErrOrgRoleForbidden(action string) *Problem {
 		"Insufficient role for this action",
 		fmt.Sprintf("your role does not allow %s on this organization.", action)).
 		WithDocs(docsBase + "/orgs#roles")
+}
+
+// ErrOrgMFARequired is the 403 a member without two-factor authentication
+// gets on an organization that requires it (ADR 20261113180000).
+func ErrOrgMFARequired() *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgMFARequired,
+		"Two-factor authentication required",
+		"this organization requires two-factor authentication; turn it on for your account and try again.").
+		WithDocs(docsBase + "/orgs#require-two-factor-authentication")
 }
 
 // ErrOrgAlreadyMember is the 409 returned when the accepting

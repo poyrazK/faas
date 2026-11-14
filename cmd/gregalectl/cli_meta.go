@@ -788,6 +788,11 @@ var cliCommands = []cliCommand{
 				Flags: accountMutationCLIFlags(),
 			},
 			{
+				Name:  "make-org-owner",
+				Short: "Make an active member the owner of an organization whose owner cannot act",
+				Flags: append(accountMutationCLIFlags(), cliFlag{Name: "org", Short: "organization slug", Req: true}),
+			},
+			{
 				Name:  "complimentary",
 				Short: "Give an account a paid plan without a subscription, or end it",
 				Flags: []cliFlag{
