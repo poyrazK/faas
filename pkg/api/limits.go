@@ -914,6 +914,18 @@ const (
 	// blocking findings still refuse at once.
 	SharedBaseScanFailureGrace = 24 * time.Hour
 
+	// BaseScanCriticalBootGrace is how long after a scan of an unchanged
+	// shared runtime base first finds a fixable CRITICAL vulnerability vmmd
+	// keeps booting it for apps already serving on it. A new Grype database
+	// marking a CRITICAL in, say, the node22 base refused every cold boot and
+	// restore on it, so every app on that runtime stopped waking until a
+	// patched base shipped (Hunt 12 H12-1; deploy-path review P5). New
+	// deployments on the base are still refused at once (schedd's prime
+	// refuses a boot vmmd admitted under this grace), and vmmd alerts while
+	// it lasts. Scanner failures and missing or stale scan records still
+	// refuse at once.
+	BaseScanCriticalBootGrace = 72 * time.Hour
+
 	// Safety bounds for a complete filesystem projection handed to Grype.
 	// These are separate from the tenant's rootfs/disk entitlements.
 	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30
@@ -3610,6 +3622,27 @@ const (
 	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
 	// the filesystem has less than this free.
 	ArtifactCacheMinFreeBytes int64 = 8 << 30
+	// ArtifactCacheReservePercent is the share of the cache filesystem kept
+	// free when the cache budget is derived from the disk
+	// (ADR-20261114120000): the free-space floor is this percentage of the
+	// disk, never below ArtifactCacheMinFreeBytes, and the budget is the rest.
+	// A capture of the largest plan (2 GiB of memory plus its drive), a
+	// writable layer clone and a build drive all fit in 15 GB of a 100 GB disk.
+	ArtifactCacheReservePercent int64 = 15
+	// SnapshotCacheOrphanGrace is how long a node keeps a cached snapshot
+	// capture that no database row references (ADR-20261114120000). A capture
+	// is cached before schedd records its row, so a younger one may still be
+	// in flight; after this it belongs to a snapshot that was deleted.
+	SnapshotCacheOrphanGrace = 6 * time.Hour
+	// RuntimeReleaseCacheGrace keeps a runtime release base cached on a node
+	// for this long after the release is created, before any deployment binds
+	// to it (ADR-20261114120000). After that a node keeps only releases bound
+	// to a deployment that is not failed or cancelled, or that a runtime
+	// upgrade targets.
+	RuntimeReleaseCacheGrace = 24 * time.Hour
+	// NodeCacheSweepInterval is how often a compute node removes cached
+	// snapshot captures and runtime release bases nothing needs any more.
+	NodeCacheSweepInterval = 10 * time.Minute
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
@@ -18834,10 +18867,15 @@ const (
 	DataPipelineTablesMax                  = 16
 	DataPipelineRetainedTablesMax          = 32
 	DataPipelineColumnsMax                 = 128
-	DataPipelineSubjectsMax                = 32
+	DataPipelineSubjectsMax                = 128
+	DataPipelineTenantMembershipsMax       = 256
+	DataPipelineTenantMaxBytes             = 256
 	DataPipelineSubjectMaxBytes            = 256
 	DataPipelineCredentialMaxBytes         = 8192
-	DataPipelineRequestMaxBytes            = 32768
+	DataPipelineRequestMaxBytes            = 2 << 20
+	DataPipelineServingMaxBytes            = 2 << 20
+	DataPipelineReaderChangeMaxBytes       = 2 << 20
+	DataPipelineSetupRequestMaxBytes       = 2 << 20
 	DataPipelineLease                      = 60 * time.Second
 	DataPipelineOperationTimeout           = 20 * time.Second
 	DataPipelineNativeConnectTimeout       = 5 * time.Second

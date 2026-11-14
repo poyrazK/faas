@@ -48,6 +48,7 @@ func TestPipelineHTTPJourneyAndSecretRedaction(t *testing.T) {
 	mux.HandleFunc("GET /v1/data/connections/{id}/check", wrap(h.GetCheck))
 	mux.HandleFunc("GET /v1/data/pipelines/{id}", wrap(h.Get))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/control", wrap(h.Control))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/tenant-readers", wrap(h.TenantReaders))
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	client := api.NewClient(server.URL, "owner")
@@ -72,7 +73,7 @@ func TestPipelineHTTPJourneyAndSecretRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = checkStore.FinishCheck(ctx, job, api.DataConnectionCheck{State: "passed", Checks: []api.DataConnectionIssue{}, Tables: []api.DataSourceTable{{Name: "orders", Supported: true, Columns: []api.DataSourceColumn{}, Issues: []api.DataConnectionIssue{}}}}); err != nil {
+	if err = checkStore.FinishCheck(ctx, job, api.DataConnectionCheck{State: "passed", Checks: []api.DataConnectionIssue{}, Tables: []api.DataSourceTable{{Name: "orders", Supported: true, Columns: []api.DataSourceColumn{{Name: "id", Type: "integer", PrimaryKey: true}, {Name: "tenant_id", Type: "text"}}, Issues: []api.DataConnectionIssue{}}}}); err != nil {
 		t.Fatal(err)
 	}
 	check, err := client.GetDataConnectionCheck(ctx, c.ID)
@@ -106,6 +107,25 @@ func TestPipelineHTTPJourneyAndSecretRedaction(t *testing.T) {
 	h.CreateConnection(response, request, account)
 	if response.Code != 400 || strings.Contains(response.Body.String(), "postgres:") {
 		t.Fatal("unknown account field accepted or credential echoed")
+	}
+	tenant, err := client.CreateDataPipeline(ctx, api.CreateDataPipelineRequest{Name: "tenant-orders", SourceConnectionID: c.ID, DatabaseID: uuid.NewString(), Tables: []string{"orders"}, Serving: &api.DataPipelineServing{Version: 1, TenantAccess: &api.DataPipelineTenantAccess{Column: "tenant_id", Memberships: []api.DataPipelineTenantMembership{{Subject: "alice", Tenant: "a"}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE data_pipelines SET initialized=true,state='paused' WHERE id=$1`, tenant.ID); err != nil {
+		t.Fatal(err)
+	}
+	previewReq := api.DataPipelineTenantReadersRequest{ExpectedRevision: tenant.Revision, Action: "preview", Memberships: []api.DataPipelineTenantMembership{}}
+	if _, err = other.ChangeDataPipelineTenantReaders(ctx, tenant.ID, previewReq); err == nil {
+		t.Fatal("foreign account changed tenant memberships")
+	}
+	preview, err := client.ChangeDataPipelineTenantReaders(ctx, tenant.ID, previewReq)
+	if err != nil || preview.TenantChange == nil || preview.TenantChange.State != "preview" || len(preview.Serving.TenantAccess.Memberships) != 1 {
+		t.Fatal("preview applied or lost tenant access", preview, err)
+	}
+	approved, err := client.ChangeDataPipelineTenantReaders(ctx, tenant.ID, api.DataPipelineTenantReadersRequest{ExpectedRevision: preview.Revision, Action: "approve", ChangeID: preview.TenantChange.ID})
+	if err != nil || approved.TenantChange.State != "approved" {
+		t.Fatal("HTTP approval failed", approved, err)
 	}
 }
 

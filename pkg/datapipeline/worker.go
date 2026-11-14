@@ -39,6 +39,9 @@ func (w *Worker) tick(ctx context.Context) (bool, error) {
 }
 
 func (w *Worker) reconcilePipeline(ctx context.Context, p Pipeline) error {
+	if p.ServingInvalid || !validRuntimeServing(p) {
+		return w.Store.Finish(ctx, p, Observation{State: "blocked", Reason: "serving_contract_invalid"})
+	}
 	op, cancel := context.WithTimeout(ctx, api.DataPipelineOperationTimeout)
 	defer cancel()
 	intent := p
