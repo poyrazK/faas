@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -55,8 +56,10 @@ func TestExternalTriggerReplayGuards(t *testing.T) {
 	for _, backend := range []string{"memory", "postgres"} {
 		t.Run(backend, func(t *testing.T) {
 			var store state.Store = state.NewMemStore()
+			var pool *pgxpool.Pool
 			if backend == "postgres" {
-				store = state.NewPgStore(pgtest.OpenMigrated(t))
+				pool = pgtest.OpenMigrated(t)
+				store = state.NewPgStore(pool)
 			}
 			account, app, trigger := seedReplayReliability(t, store)
 			t.Run("active_claim", func(t *testing.T) {
@@ -94,7 +97,35 @@ func TestExternalTriggerReplayGuards(t *testing.T) {
 			if err != nil || len(ready) != 1 || ready[0].ID.String() != valid {
 				t.Fatalf("durable replays=%+v error=%v", ready, err)
 			}
+			// A dispatcher claims the replay and is lost before it settles:
+			// the claim hides it until it lapses, then the replay is due again
+			// (the broker settled the original delivery and never redelivers).
+			if claims, err := store.(state.TriggerBatchClaimer).ClaimTriggerRecordsByItems(t.Context(), trigger.ID.String(), []string{"orders/0/3"}); err != nil || len(claims) != 1 {
+				t.Fatalf("claim replay=%+v error=%v", claims, err)
+			}
+			if ready, err = store.(state.ExternalTriggerReplayStore).ListDueExternalTriggerReplays(t.Context(), trigger.ID.String(), 10); err != nil || len(ready) != 0 {
+				t.Fatalf("held replay listed while claimed: %+v error=%v", ready, err)
+			}
+			lapseTriggerRecordClaim(t, store, pool, valid)
+			ready, err = store.(state.ExternalTriggerReplayStore).ListDueExternalTriggerReplays(t.Context(), trigger.ID.String(), 10)
+			if err != nil || len(ready) != 1 || ready[0].ID.String() != valid {
+				t.Fatalf("lost replay claim not recovered: %+v error=%v", ready, err)
+			}
 		})
+	}
+}
+
+func lapseTriggerRecordClaim(t *testing.T, store state.Store, pool *pgxpool.Pool, id string) {
+	t.Helper()
+	switch s := store.(type) {
+	case *state.MemStore:
+		s.LapseTriggerRecordClaimForTest(id)
+	case *state.PgStore:
+		if _, err := pool.Exec(t.Context(), `UPDATE trigger_records SET claim_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, id); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatalf("unsupported store %T", store)
 	}
 }
 

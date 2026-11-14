@@ -824,7 +824,7 @@ func (s *pgCore) AuthenticateKey(ctx context.Context, hash []byte) (Account, API
 	// IAM-5 gate. Run before the success return so the
 	// middleware can translate the sentinel to the right 401.
 	if key.Status == string(APIKeyStatusRevoked) {
-		return Account{}, APIKey{}, ErrAPIKeyRevoked
+		return Account{}, refusedKey(key.ID, key.AccountID), ErrAPIKeyRevoked
 	}
 	if key.ExpiresAt != nil && !key.ExpiresAt.IsZero() && key.ExpiresAt.Before(time.Now()) {
 		// Lazy expiry: flip to revoked in a single UPDATE
@@ -839,7 +839,7 @@ func (s *pgCore) AuthenticateKey(ctx context.Context, hash []byte) (Account, API
 			    set status = 'revoked',
 			        revoked_at = coalesce(revoked_at, now())
 			  where id = $1 and status <> 'revoked'`, key.ID)
-		return Account{}, APIKey{}, ErrAPIKeyExpired
+		return Account{}, refusedKey(key.ID, key.AccountID), ErrAPIKeyExpired
 	}
 	return acct, key, nil
 }
@@ -1028,6 +1028,23 @@ func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bo
 		update accounts
 		   set status = 'suspended', suspended_reason = 'free_quota', past_due_at = null
 		 where id = $1 and status = 'active'`, AccountSuspended)
+}
+
+// QuotaSuspended reports whether the account or resource-owning organization
+// id is suspended by the plan's monthly quota stop (SuspendAccountForFreeQuota:
+// the Free compute allowance or an unbilled egress allowance), rather than for
+// payment, abuse or by an operator. That stop parks the subject's apps until
+// the month ends or the plan grows; it does not stop its other resources.
+func (s *PgStore) QuotaSuspended(ctx context.Context, id string) (bool, error) {
+	var suspended bool
+	err := s.pool.QueryRow(ctx, `
+		select exists(select 1 from accounts where id = $1::uuid and status = 'suspended' and suspended_reason = 'free_quota')
+		    or exists(select 1 from orgs where id = $1::uuid and not personal_org and status = 'suspended' and suspended_reason = 'free_quota')`,
+		id).Scan(&suspended)
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return suspended, nil
 }
 
 // RestoreFreeQuotaSuspension lifts only a suspension that
@@ -33313,6 +33330,9 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 			err = sqlc.New().DeleteExternalTriggerDeadLetterAudit(ctx, tx, mustPgUUID(ev.SourceID))
 		}
 	case "webhook_delivery":
+		if err = checkWebhookReplayAdmissionTx(ctx, tx, ev.SourceID); err != nil {
+			return time.Time{}, err
+		}
 		tag, err = tx.Exec(ctx, `
 			update app_webhook_deliveries
 			   set status = 'pending', attempt = 0, last_error = '',

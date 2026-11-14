@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/markers"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
 const (
@@ -403,9 +404,22 @@ func nonHTTPServiceWarning(dockerfile string) (Warning, bool) {
 	if server != "" {
 		what = fmt.Sprintf("this builds %s, which serves its own TCP protocol on port %d", server, port)
 	}
+	// A datastore is refused as an image too (stateless_only_violation): an
+	// app parks to a snapshot and keeps no data. Name the hosted service.
+	if hosted, stateful := statefuldenylist.Set[server]; stateful {
+		managed := hosted
+		if server == "postgres" {
+			managed = "use managed PostgreSQL: `gregale postgres create <name>`"
+		}
+		return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
+			"%s. Gregale does not run datastores, built or as an image: an app parks to a snapshot and keeps no data. "+
+				"%s, and read its URL from the environment: `gregale env set --app <app> %s_URL=<url>`.",
+			what, upperFirst(managed), strings.ToUpper(server))}, true
+	}
 	return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
 		"%s. The app's public URL speaks HTTP, which this server does not answer. "+
-			"Keep it private and let other apps reach it over TCP with "+
+			"Deploy this build or the published image (`gregale deploy --image <image>@sha256:<digest> --name <app>`); "+
+			"either is ready once the port accepts connections. Then keep it private and let other apps reach it over TCP with "+
 			"`gregale app <app> --visibility internal --ports <name>=tcp:%d:internal`.", what, port)}, true
 }
 
@@ -682,4 +696,11 @@ func readFile(fsys fs.FS, path string) string {
 		return ""
 	}
 	return string(data)
+}
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

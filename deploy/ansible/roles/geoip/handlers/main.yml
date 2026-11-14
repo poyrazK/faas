@@ -1,10 +1,19 @@
 ---
-# gatewayd-internal opens the database once at start-up
-# (cmd/gatewayd-internal/run.go, FAAS_GEOIP_AUTO_REFRESH=0), so a new
-# release only takes effect after a restart. try-restart keeps the first
-# bootstrap a no-op (the unit is not active yet).
+# gatewayd-internal and apid open the databases once at start-up
+# (cmd/gatewayd-internal/run.go, FAAS_GEOIP_AUTO_REFRESH=0; apid for
+# ADR-20261113160000 signup facts), so a new release only takes effect after a
+# restart. try-restart keeps the first bootstrap a no-op (the unit is not
+# active yet) and does nothing on a host that does not run the unit.
 - name: geoip — try-restart faas-gatewayd-internal
   ansible.builtin.command: systemctl try-restart faas-gatewayd-internal.service  # noqa: command-instead-of-module (systemd module has no try-restart)
   changed_when: true
-  listen: restart faas-gatewayd-internal
+  listen:
+    - restart faas-gatewayd-internal
+    - geoip databases changed
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: geoip — try-restart faas-apid
+  ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
+  listen: geoip databases changed
   when: not (faas_join_defer_service_handlers | default(false) | bool)

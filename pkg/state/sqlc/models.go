@@ -178,6 +178,20 @@ type AccountPassword struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type AccountSignupFact struct {
+	AccountID       pgtype.UUID
+	Method          string
+	SignupIp        *netip.Addr
+	UserAgent       pgtype.Text
+	Country         pgtype.Text
+	Asn             pgtype.Int8
+	AsnOrg          pgtype.Text
+	EmailDomain     string
+	DisposableEmail bool
+	CreatedAt       pgtype.Timestamptz
+	ReducedAt       pgtype.Timestamptz
+}
+
 // Accounts whose combined billable overage (compute plus live secondary meters) reached overage_cap_cents this UTC month. Written by meterd, read by schedd (ADR-20261026120843).
 type AccountSpendCapHold struct {
 	AccountID     pgtype.UUID
@@ -3946,36 +3960,39 @@ type DataConnectionCheck struct {
 }
 
 type DataPipeline struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	Name                 string
-	SourceConnectionID   pgtype.UUID
-	DatabaseID           pgtype.UUID
-	Tables               []byte
-	ReadSubjects         []byte
-	DesiredState         string
-	State                string
-	Revision             int64
-	ObservedRevision     int64
-	Generation           int64
-	Reason               string
-	TablesReady          int32
-	RetainedWalBytes     pgtype.Int8
-	ObservedAt           pgtype.Timestamptz
-	Verification         string
-	VerifiedAt           pgtype.Timestamptz
-	Initialized          bool
-	VerifyRequested      bool
-	LeaseToken           string
-	LeaseUntil           pgtype.Timestamptz
-	RetryAt              pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	AppliedThroughAt     pgtype.Timestamptz
-	SchemaApproval       string
-	SchemaChange         []byte
-	VerificationProgress []byte
-	ReaderChange         []byte
-	WalRetention         []byte
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	Name                   string
+	SourceConnectionID     pgtype.UUID
+	DatabaseID             pgtype.UUID
+	Tables                 []byte
+	ReadSubjects           []byte
+	DesiredState           string
+	State                  string
+	Revision               int64
+	ObservedRevision       int64
+	Generation             int64
+	Reason                 string
+	TablesReady            int32
+	RetainedWalBytes       pgtype.Int8
+	ObservedAt             pgtype.Timestamptz
+	Verification           string
+	VerifiedAt             pgtype.Timestamptz
+	Initialized            bool
+	VerifyRequested        bool
+	LeaseToken             string
+	LeaseUntil             pgtype.Timestamptz
+	RetryAt                pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+	AppliedThroughAt       pgtype.Timestamptz
+	SchemaApproval         string
+	SchemaChange           []byte
+	VerificationProgress   []byte
+	ReaderChange           []byte
+	WalRetention           []byte
+	ServingConfig          []byte
+	FreshnessTargetSeconds int64
+	IndexChange            []byte
 }
 
 type DataPipelineAlert struct {

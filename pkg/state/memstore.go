@@ -167,6 +167,8 @@ type MemStore struct {
 	// abuseStrikes is each resource owner's abuse recycle times inside the
 	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
 	abuseStrikes map[string][]time.Time
+	// signupFacts is each account's sign-up record (ADR-20261113160000).
+	signupFacts map[string]AccountSignupFacts
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
@@ -2659,7 +2661,7 @@ func (m *MemStore) AuthenticateKey(_ context.Context, hash []byte) (Account, API
 		return Account{}, APIKey{}, ErrNotFound
 	}
 	if k.Status == string(APIKeyStatusRevoked) {
-		return Account{}, APIKey{}, ErrAPIKeyRevoked
+		return Account{}, refusedKey(k.ID, k.AccountID), ErrAPIKeyRevoked
 	}
 	if k.ExpiresAt != nil && !k.ExpiresAt.IsZero() && k.ExpiresAt.Before(time.Now()) {
 		k.Status = string(APIKeyStatusRevoked)
@@ -2669,7 +2671,7 @@ func (m *MemStore) AuthenticateKey(_ context.Context, hash []byte) (Account, API
 		}
 		m.keys[k.ID] = k
 		m.keyByHash[hex.EncodeToString(k.Hash)] = k
-		return Account{}, APIKey{}, ErrAPIKeyExpired
+		return Account{}, refusedKey(k.ID, k.AccountID), ErrAPIKeyExpired
 	}
 	return acct, k, nil
 }
@@ -2797,6 +2799,13 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 	m.freeQuotaSuspended[id] = true
 	m.syncPersonalOrgStatusLocked(id, AccountSuspended)
 	return true, nil
+}
+
+// QuotaSuspended mirrors PgStore.QuotaSuspended.
+func (m *MemStore) QuotaSuspended(_ context.Context, id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.freeQuotaSuspended[id], nil
 }
 
 // RestoreFreeQuotaSuspension mirrors PgStore.RestoreFreeQuotaSuspension.
@@ -25185,6 +25194,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	delete(m.legalAcceptances, id) // ON DELETE CASCADE
+	delete(m.signupFacts, id)      // ON DELETE CASCADE
 	delete(m.accounts, id)
 	for promotionID := range m.environmentPromotionReceipts {
 		if m.projectEnvironmentPromotions[promotionID].AccountID == id {
@@ -30140,6 +30150,9 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		delivery, ok := m.appWebhookDeliveries[event.SourceID]
 		if !ok || delivery.AccountID != accountID || delivery.AppID != appID || delivery.Status != AppWebhookDeliveryDead {
 			return DeadLetterEvent{}, ErrNotFound
+		}
+		if err := m.checkWebhookReplayAdmissionLocked(delivery); err != nil {
+			return DeadLetterEvent{}, err
 		}
 		delivery.Status = AppWebhookDeliveryPending
 		delivery.Attempt = 0

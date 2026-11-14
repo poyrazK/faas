@@ -25,6 +25,8 @@ from .account_health_request import AccountHealthRequest
 from .account_health_requests import AccountHealthRequests
 from .account_health_restriction import AccountHealthRestriction
 from .account_health_restriction_kind import AccountHealthRestrictionKind
+from .account_health_signal import AccountHealthSignal
+from .account_health_signal_kind import AccountHealthSignalKind
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_overage_cap_response import AccountOverageCapResponse
@@ -1153,11 +1155,33 @@ from .data_pipeline import DataPipeline
 from .data_pipeline_capacity import DataPipelineCapacity
 from .data_pipeline_capacity_state import DataPipelineCapacityState
 from .data_pipeline_desired_state import DataPipelineDesiredState
+from .data_pipeline_freshness import DataPipelineFreshness
+from .data_pipeline_freshness_request import DataPipelineFreshnessRequest
 from .data_pipeline_health import DataPipelineHealth
 from .data_pipeline_health_action import DataPipelineHealthAction
 from .data_pipeline_health_state import DataPipelineHealthState
+from .data_pipeline_index_advice import DataPipelineIndexAdvice
+from .data_pipeline_index_key import DataPipelineIndexKey
+from .data_pipeline_index_order import DataPipelineIndexOrder
+from .data_pipeline_index_request import DataPipelineIndexRequest
+from .data_pipeline_index_request_action import DataPipelineIndexRequestAction
 from .data_pipeline_list import DataPipelineList
+from .data_pipeline_serving import DataPipelineServing
+from .data_pipeline_serving_columns import DataPipelineServingColumns
+from .data_pipeline_serving_version import DataPipelineServingVersion
+from .data_pipeline_setup import DataPipelineSetup
+from .data_pipeline_setup_control_request import DataPipelineSetupControlRequest
+from .data_pipeline_setup_control_request_action import DataPipelineSetupControlRequestAction
+from .data_pipeline_setup_list import DataPipelineSetupList
+from .data_pipeline_setup_plan import DataPipelineSetupPlan
+from .data_pipeline_setup_request import DataPipelineSetupRequest
 from .data_pipeline_state import DataPipelineState
+from .data_pipeline_tenant_access import DataPipelineTenantAccess
+from .data_pipeline_tenant_change import DataPipelineTenantChange
+from .data_pipeline_tenant_change_state import DataPipelineTenantChangeState
+from .data_pipeline_tenant_membership import DataPipelineTenantMembership
+from .data_pipeline_tenant_readers_request import DataPipelineTenantReadersRequest
+from .data_pipeline_tenant_readers_request_action import DataPipelineTenantReadersRequestAction
 from .data_pipeline_verification import DataPipelineVerification
 from .data_pipeline_wal_retention import DataPipelineWALRetention
 from .data_repair_health import DataRepairHealth
@@ -4268,6 +4292,7 @@ from .plan_managed_provision import PlanManagedProvision
 from .plan_platform_tenant_reconciliation_request import PlanPlatformTenantReconciliationRequest
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
+from .plan_source_host import PlanSourceHost
 from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
@@ -6568,6 +6593,8 @@ __all__ = (
     "AccountHealthRequests",
     "AccountHealthRestriction",
     "AccountHealthRestrictionKind",
+    "AccountHealthSignal",
+    "AccountHealthSignalKind",
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountOverageCapResponse",
@@ -7664,11 +7691,33 @@ __all__ = (
     "DataPipelineCapacity",
     "DataPipelineCapacityState",
     "DataPipelineDesiredState",
+    "DataPipelineFreshness",
+    "DataPipelineFreshnessRequest",
     "DataPipelineHealth",
     "DataPipelineHealthAction",
     "DataPipelineHealthState",
+    "DataPipelineIndexAdvice",
+    "DataPipelineIndexKey",
+    "DataPipelineIndexOrder",
+    "DataPipelineIndexRequest",
+    "DataPipelineIndexRequestAction",
     "DataPipelineList",
+    "DataPipelineServing",
+    "DataPipelineServingColumns",
+    "DataPipelineServingVersion",
+    "DataPipelineSetup",
+    "DataPipelineSetupControlRequest",
+    "DataPipelineSetupControlRequestAction",
+    "DataPipelineSetupList",
+    "DataPipelineSetupPlan",
+    "DataPipelineSetupRequest",
     "DataPipelineState",
+    "DataPipelineTenantAccess",
+    "DataPipelineTenantChange",
+    "DataPipelineTenantChangeState",
+    "DataPipelineTenantMembership",
+    "DataPipelineTenantReadersRequest",
+    "DataPipelineTenantReadersRequestAction",
     "DataPipelineVerification",
     "DataPipelineWALRetention",
     "DataRepairHealth",
@@ -10557,6 +10606,7 @@ __all__ = (
     "PlanPlatformTenantReconciliationRequest",
     "PlanResponse",
     "PlanResponseScanSource",
+    "PlanSourceHost",
     "PlanWorkload",
     "PlanWorkloadAction",
     "PlanWorkloadClass",

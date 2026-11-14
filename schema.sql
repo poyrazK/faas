@@ -23592,6 +23592,47 @@ $$;
 
 
 --
+-- Name: pipeline_freshness_alert_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pipeline_freshness_alert_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.enabled AND NEW.revision=OLD.revision AND current_setting('gregale.pipeline_worker_protocol',true) IS DISTINCT FROM 'pipeline-operability-v1'
+ AND EXISTS(SELECT 1 FROM data_pipelines WHERE id=NEW.pipeline_id AND freshness_target_seconds>0) THEN
+  RAISE EXCEPTION 'freshness-aware monitor required' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: pipeline_serving_worker_claim(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pipeline_serving_worker_claim() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE serving boolean; operability boolean; protocol text;
+BEGIN
+ protocol := current_setting('gregale.pipeline_worker_protocol',true);
+ IF TG_TABLE_NAME='data_pipelines' THEN
+  serving := NEW.serving_config<>'{}'::jsonb;
+  operability := NEW.index_change->>'state'='approved';
+ ELSE
+  serving := coalesce(NEW.request->'Serving','null'::jsonb)<>'null'::jsonb;
+  operability := coalesce((NEW.request->>'FreshnessTargetSeconds')::bigint,0)>0;
+ END IF;
+ IF NEW.lease_token<>'' AND NEW.lease_token IS DISTINCT FROM OLD.lease_token THEN
+  IF operability AND protocol IS DISTINCT FROM 'pipeline-operability-v1' THEN RETURN NULL; END IF;
+  IF serving AND (protocol IS NULL OR protocol NOT IN ('customer-serving-v1','pipeline-operability-v1')) THEN RETURN NULL; END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: populate_legacy_status_incident_public_fields(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -30377,6 +30418,34 @@ CREATE TABLE public.account_passwords (
     account_id uuid NOT NULL,
     hash text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: account_signup_facts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_signup_facts (
+    account_id uuid NOT NULL,
+    method text NOT NULL,
+    signup_ip inet,
+    user_agent text,
+    country text,
+    asn bigint,
+    asn_org text,
+    email_domain text NOT NULL,
+    disposable_email boolean NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    reduced_at timestamp with time zone,
+    CONSTRAINT account_signup_facts_asn_check CHECK (((asn > 0) AND (asn <= '4294967295'::bigint))),
+    CONSTRAINT account_signup_facts_asn_org_check CHECK ((char_length(asn_org) <= 200)),
+    CONSTRAINT account_signup_facts_check CHECK (((reduced_at IS NULL) OR ((signup_ip IS NULL) AND (user_agent IS NULL)))),
+    CONSTRAINT account_signup_facts_country_check CHECK ((country ~ '^[A-Z]{2}$'::text)),
+    CONSTRAINT account_signup_facts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT account_signup_facts_email_domain_check CHECK ((char_length(email_domain) <= 253)),
+    CONSTRAINT account_signup_facts_method_check CHECK ((method ~ '^[a-z][a-z0-9_]{0,31}$'::text)),
+    CONSTRAINT account_signup_facts_reduced_at_check CHECK (isfinite(reduced_at)),
+    CONSTRAINT account_signup_facts_user_agent_check CHECK ((char_length(user_agent) <= 512))
 );
 
 
@@ -37309,7 +37378,7 @@ CREATE TABLE public.data_pipeline_alert_deliveries (
     lease_until timestamp with time zone,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT data_pipeline_alert_deliveries_attempts_check CHECK (((attempts >= 0) AND (attempts <= 7))),
-    CONSTRAINT data_pipeline_alert_deliveries_code_check CHECK ((code = ANY (ARRAY['monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text]))),
+    CONSTRAINT data_pipeline_alert_deliveries_code_v2_check CHECK ((code = ANY (ARRAY['monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text, 'freshness_unconfirmed'::text]))),
     CONSTRAINT data_pipeline_alert_deliveries_config_revision_check CHECK ((config_revision > 0)),
     CONSTRAINT data_pipeline_alert_deliveries_kind_check CHECK ((kind = ANY (ARRAY['incident'::text, 'recovery'::text]))),
     CONSTRAINT data_pipeline_alert_deliveries_response_code_check CHECK (((response_code >= 0) AND (response_code <= 599))),
@@ -37348,10 +37417,10 @@ CREATE TABLE public.data_pipeline_alerts (
     incident_code text DEFAULT ''::text NOT NULL,
     check_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT data_pipeline_alerts_candidate_code_check CHECK ((candidate_code = ANY (ARRAY[''::text, 'monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text, 'recovered'::text]))),
+    CONSTRAINT data_pipeline_alerts_candidate_code_v2_check CHECK ((candidate_code = ANY (ARRAY[''::text, 'monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text, 'freshness_unconfirmed'::text, 'recovered'::text]))),
     CONSTRAINT data_pipeline_alerts_check CHECK (((NOT enabled) OR (octet_length(ciphertext) > 0))),
     CONSTRAINT data_pipeline_alerts_ciphertext_check CHECK ((octet_length(ciphertext) <= 16384)),
-    CONSTRAINT data_pipeline_alerts_incident_code_check CHECK ((incident_code = ANY (ARRAY[''::text, 'monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text]))),
+    CONSTRAINT data_pipeline_alerts_incident_code_v2_check CHECK ((incident_code = ANY (ARRAY[''::text, 'monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text, 'freshness_unconfirmed'::text]))),
     CONSTRAINT data_pipeline_alerts_incident_id_check CHECK (((incident_id = ''::text) OR (incident_id ~ '^[0-9a-f-]{36}$'::text))),
     CONSTRAINT data_pipeline_alerts_revision_check CHECK ((revision > 0))
 );
@@ -37422,7 +37491,7 @@ CREATE TABLE public.data_pipeline_setups (
     CONSTRAINT data_pipeline_setups_phase_check CHECK ((phase = ANY (ARRAY['checking_source'::text, 'provisioning'::text, 'checking_mirror'::text, 'starting'::text, 'syncing'::text, 'configuring_api'::text, 'deploying_api'::text, 'waiting_api'::text, 'api_failed'::text]))),
     CONSTRAINT data_pipeline_setups_pipeline_id_check CHECK (((pipeline_id = ''::text) OR (pipeline_id ~ '^[0-9a-f-]{36}$'::text))),
     CONSTRAINT data_pipeline_setups_reason_check CHECK ((reason ~ '^[a-z0-9_]{0,80}$'::text)),
-    CONSTRAINT data_pipeline_setups_request_check CHECK (((jsonb_typeof(request) = 'object'::text) AND (octet_length((request)::text) <= 32768))),
+    CONSTRAINT data_pipeline_setups_request_v2_check CHECK (((jsonb_typeof(request) = 'object'::text) AND (octet_length((request)::text) <= 2097152))),
     CONSTRAINT data_pipeline_setups_revision_check CHECK ((revision > 0)),
     CONSTRAINT data_pipeline_setups_state_check CHECK ((state = ANY (ARRAY['working'::text, 'blocked'::text, 'ready'::text, 'cancelled'::text])))
 );
@@ -37463,20 +37532,27 @@ CREATE TABLE public.data_pipelines (
     verification_progress jsonb DEFAULT '{}'::jsonb NOT NULL,
     reader_change jsonb DEFAULT '{}'::jsonb NOT NULL,
     wal_retention jsonb DEFAULT '{}'::jsonb NOT NULL,
+    serving_config jsonb DEFAULT '{}'::jsonb NOT NULL,
+    freshness_target_seconds bigint DEFAULT 0 NOT NULL,
+    index_change jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT data_pipelines_check CHECK (((observed_revision >= 0) AND (observed_revision <= revision))),
     CONSTRAINT data_pipelines_desired_state_check CHECK ((desired_state = ANY (ARRAY['running'::text, 'paused'::text, 'deleted'::text]))),
+    CONSTRAINT data_pipelines_freshness_target_check CHECK (((freshness_target_seconds = 0) OR ((freshness_target_seconds >= 15) AND (freshness_target_seconds <= 86400)))),
     CONSTRAINT data_pipelines_generation_check CHECK ((generation > 0)),
+    CONSTRAINT data_pipelines_index_change_check CHECK (((jsonb_typeof(index_change) = 'object'::text) AND (octet_length((index_change)::text) <= 65536) AND ((index_change = '{}'::jsonb) OR (COALESCE((index_change ->> 'state'::text), ''::text) = ANY (ARRAY['requested'::text, 'preview'::text, 'approved'::text, 'applied'::text, 'blocked'::text, 'cancelled'::text]))))),
     CONSTRAINT data_pipelines_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'::text)),
-    CONSTRAINT data_pipelines_read_subjects_v2_check CHECK (((jsonb_typeof(read_subjects) = 'array'::text) AND ((jsonb_array_length(read_subjects) >= 0) AND (jsonb_array_length(read_subjects) <= 32)))),
-    CONSTRAINT data_pipelines_reader_change_check CHECK (((jsonb_typeof(reader_change) = 'object'::text) AND (octet_length((reader_change)::text) <= 131072) AND ((reader_change = '{}'::jsonb) OR ((reader_change ->> 'State'::text) = ANY (ARRAY['preview'::text, 'approved'::text, 'applied'::text]))))),
+    CONSTRAINT data_pipelines_read_subjects_v3_check CHECK (((jsonb_typeof(read_subjects) = 'array'::text) AND ((jsonb_array_length(read_subjects) >= 0) AND (jsonb_array_length(read_subjects) <= 128)))),
+    CONSTRAINT data_pipelines_reader_change_v2_check CHECK (((jsonb_typeof(reader_change) = 'object'::text) AND (octet_length((reader_change)::text) <= 2097152) AND ((reader_change = '{}'::jsonb) OR ((reader_change ->> 'State'::text) = ANY (ARRAY['preview'::text, 'approved'::text, 'applied'::text]))))),
     CONSTRAINT data_pipelines_reason_check CHECK ((reason ~ '^[a-z0-9_]{0,80}$'::text)),
     CONSTRAINT data_pipelines_retained_wal_bytes_check CHECK ((retained_wal_bytes >= 0)),
     CONSTRAINT data_pipelines_revision_check CHECK ((revision > 0)),
     CONSTRAINT data_pipelines_schema_approval_check CHECK (((schema_approval = ''::text) OR (schema_approval ~ '^[a-f0-9]{64}$'::text))),
     CONSTRAINT data_pipelines_schema_change_check CHECK (((jsonb_typeof(schema_change) = 'object'::text) AND (octet_length((schema_change)::text) <= 4194304))),
+    CONSTRAINT data_pipelines_serving_config_check CHECK (((jsonb_typeof(serving_config) = 'object'::text) AND (octet_length((serving_config)::text) <= 2097152))),
     CONSTRAINT data_pipelines_state_check CHECK ((state = ANY (ARRAY['validating'::text, 'copying'::text, 'catching_up'::text, 'live'::text, 'paused'::text, 'blocked'::text, 'deleting'::text, 'deleted'::text, 'resync_required'::text]))),
     CONSTRAINT data_pipelines_tables_check CHECK (((jsonb_typeof(tables) = 'array'::text) AND ((jsonb_array_length(tables) >= 1) AND (jsonb_array_length(tables) <= 16)))),
     CONSTRAINT data_pipelines_tables_ready_check CHECK (((tables_ready >= 0) AND (tables_ready <= 16))),
+    CONSTRAINT data_pipelines_tenant_reader_change_check CHECK ((((serving_config -> 'tenant_access'::text) IS NULL) OR (reader_change = '{}'::jsonb) OR (COALESCE((reader_change ->> 'Tenant'::text), ''::text) = 'true'::text))),
     CONSTRAINT data_pipelines_verification_check CHECK ((verification = ANY (ARRAY['unknown'::text, 'pending'::text, 'passed'::text, 'mismatch'::text, 'inconclusive'::text]))),
     CONSTRAINT data_pipelines_verification_progress_check CHECK (((jsonb_typeof(verification_progress) = 'object'::text) AND (octet_length((verification_progress)::text) <= 4194304)))
 );
@@ -61913,6 +61989,14 @@ ALTER TABLE ONLY public.account_passwords
 
 
 --
+-- Name: account_signup_facts account_signup_facts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_signup_facts
+    ADD CONSTRAINT account_signup_facts_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: account_spend_cap_holds account_spend_cap_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75778,6 +75862,20 @@ CREATE INDEX account_credits_account_active_idx ON public.account_credits USING 
 --
 
 CREATE UNIQUE INDEX account_email_changes_one_pending_idx ON public.account_email_changes USING btree (account_id) WHERE (consumed_at IS NULL);
+
+
+--
+-- Name: account_signup_facts_ip_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_signup_facts_ip_idx ON public.account_signup_facts USING gist (signup_ip inet_ops) WHERE (signup_ip IS NOT NULL);
+
+
+--
+-- Name: account_signup_facts_unreduced_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_signup_facts_unreduced_idx ON public.account_signup_facts USING btree (created_at) WHERE (reduced_at IS NULL);
 
 
 --
@@ -89834,6 +89932,20 @@ CREATE TRIGGER data_pipeline_setup_target_guard BEFORE INSERT OR UPDATE OF accou
 
 
 --
+-- Name: data_pipeline_setups data_pipeline_setups_serving_claim; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_setups_serving_claim BEFORE UPDATE OF lease_token ON public.data_pipeline_setups FOR EACH ROW EXECUTE FUNCTION public.pipeline_serving_worker_claim();
+
+
+--
+-- Name: data_pipelines data_pipelines_serving_claim; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipelines_serving_claim BEFORE UPDATE OF lease_token ON public.data_pipelines FOR EACH ROW EXECUTE FUNCTION public.pipeline_serving_worker_claim();
+
+
+--
 -- Name: data_repair_rehearsals data_repair_rehearsals_require_cleanup; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -92984,6 +93096,13 @@ CREATE TRIGGER outbound_integration_owner_kind_guard BEFORE UPDATE OF owner_kind
 
 
 --
+-- Name: data_pipeline_alerts pipeline_freshness_alert_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER pipeline_freshness_alert_fence BEFORE UPDATE ON public.data_pipeline_alerts FOR EACH ROW EXECUTE FUNCTION public.pipeline_freshness_alert_fence();
+
+
+--
 -- Name: api_consumers platform_tenant_customer_lifecycle_webhooks; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -94823,6 +94942,14 @@ ALTER TABLE ONLY public.account_oauth_unlinks
 
 ALTER TABLE ONLY public.account_passwords
     ADD CONSTRAINT account_passwords_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_signup_facts account_signup_facts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_signup_facts
+    ADD CONSTRAINT account_signup_facts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

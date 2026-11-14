@@ -49786,11 +49786,19 @@ func (q *Queries) ListDueExclusiveWork(ctx context.Context, db DBTX, rowLimit in
 }
 
 const listDueExternalTriggerReplays = `-- name: ListDueExternalTriggerReplays :many
-SELECT r.id, r.trigger_id, r.item_identifier, r.payload, r.headers, r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at, r.last_error, r.last_dispatched_at, r.deadline_at, r.retry_policy, r.result_retention_until, r.claim_generation, r.claim_expires_at, r.work_policy_name, r.work_key_digest, r.work_sequence, r.work_policy_revision, r.work_fairness_digest, r.work_fairness_limit, r.work_expires_at, r.operator_replay FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
-WHERE r.trigger_id=$1::uuid AND r.operator_replay
- AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
- AND t.kind IN ('kafka','nats','redis_streams')
-ORDER BY r.next_fire_at,r.id LIMIT $2::integer
+SELECT d.id, d.trigger_id, d.item_identifier, d.payload, d.headers, d.metadata, d.state, d.attempts, d.next_fire_at, d.received_at, d.last_error, d.last_dispatched_at, d.deadline_at, d.retry_policy, d.result_retention_until, d.claim_generation, d.claim_expires_at, d.work_policy_name, d.work_key_digest, d.work_sequence, d.work_policy_revision, d.work_fairness_digest, d.work_fairness_limit, d.work_expires_at, d.operator_replay FROM (
+  (SELECT r.id, r.trigger_id, r.item_identifier, r.payload, r.headers, r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at, r.last_error, r.last_dispatched_at, r.deadline_at, r.retry_policy, r.result_retention_until, r.claim_generation, r.claim_expires_at, r.work_policy_name, r.work_key_digest, r.work_sequence, r.work_policy_revision, r.work_fairness_digest, r.work_fairness_limit, r.work_expires_at, r.operator_replay FROM trigger_records r
+    WHERE r.trigger_id=$1::uuid AND r.operator_replay
+      AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
+    ORDER BY r.next_fire_at,r.id LIMIT $2::integer)
+  UNION ALL
+  (SELECT r.id, r.trigger_id, r.item_identifier, r.payload, r.headers, r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at, r.last_error, r.last_dispatched_at, r.deadline_at, r.retry_policy, r.result_retention_until, r.claim_generation, r.claim_expires_at, r.work_policy_name, r.work_key_digest, r.work_sequence, r.work_policy_revision, r.work_fairness_digest, r.work_fairness_limit, r.work_expires_at, r.operator_replay FROM trigger_records r
+    WHERE r.trigger_id=$1::uuid AND r.operator_replay
+      AND r.state='claimed' AND r.claim_expires_at<=clock_timestamp()
+    ORDER BY r.claim_expires_at,r.id LIMIT $2::integer)
+) d
+WHERE EXISTS (SELECT 1 FROM triggers t WHERE t.id=d.trigger_id AND t.kind IN ('kafka','nats','redis_streams'))
+ORDER BY d.next_fire_at,d.id LIMIT $2::integer
 `
 
 type ListDueExternalTriggerReplaysParams struct {
@@ -49798,6 +49806,10 @@ type ListDueExternalTriggerReplaysParams struct {
 	BatchLimit int32
 }
 
+// Two branches so each keeps its partial index: due replays
+// (trigger_operator_replay_due_idx), and replays a dispatcher claimed and then
+// lost, which return once the claim lapses (trigger_records_claim_expiry_idx):
+// the broker already settled the original delivery and never hands it back.
 func (q *Queries) ListDueExternalTriggerReplays(ctx context.Context, db DBTX, arg ListDueExternalTriggerReplaysParams) ([]TriggerRecord, error) {
 	rows, err := db.Query(ctx, listDueExternalTriggerReplays, arg.TriggerID, arg.BatchLimit)
 	if err != nil {
@@ -66139,6 +66151,43 @@ func (q *Queries) ManagedPostgresRestoreSlotHeld(ctx context.Context, db DBTX, a
 	var held bool
 	err := row.Scan(&held)
 	return held, err
+}
+
+const managedPostgresRestoreSources = `-- name: ManagedPostgresRestoreSources :many
+SELECT d.id, d.restore_source_database_id
+FROM managed_postgres_databases d
+WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid
+AND d.restore_source_database_id IS NOT NULL
+`
+
+type ManagedPostgresRestoreSourcesRow struct {
+	ID                      pgtype.UUID
+	RestoreSourceDatabaseID pgtype.UUID
+}
+
+// Billing review 2026-11-13 (R6-1): every database of a subject that was made
+// as a restore copy (a restore, branch or PR preview copy), with the database
+// it was restored from, deleted rows included. A copy shares its root
+// source's egress allowance: on Neon a copy is a branch of its source's
+// project, and Neon's 500 GB transfer allowance is per project.
+func (q *Queries) ManagedPostgresRestoreSources(ctx context.Context, db DBTX, subjectID pgtype.UUID) ([]ManagedPostgresRestoreSourcesRow, error) {
+	rows, err := db.Query(ctx, managedPostgresRestoreSources, subjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresRestoreSourcesRow{}
+	for rows.Next() {
+		var i ManagedPostgresRestoreSourcesRow
+		if err := rows.Scan(&i.ID, &i.RestoreSourceDatabaseID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const managedPostgresRotationRuntime = `-- name: ManagedPostgresRotationRuntime :one
@@ -95774,6 +95823,29 @@ func (q *Queries) ReadValidRouteLifecycleApprovals(ctx context.Context, db DBTX,
 		return nil, err
 	}
 	return items, nil
+}
+
+const readWebhookReplayAdmission = `-- name: ReadWebhookReplayAdmission :one
+SELECT d.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM app_webhook_deliveries d
+LEFT JOIN accounts a ON a.id = d.account_id
+LEFT JOIN orgs o ON o.id = d.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE d.id = $1::uuid AND d.status = 'dead'
+`
+
+type ReadWebhookReplayAdmissionRow struct {
+	AccountID pgtype.UUID
+	Plan      string
+}
+
+// A dead webhook delivery replayed from the dead letter re-enters its
+// account's outbox under the caps an explicit delivery meets (event-driven
+// hunt #16). The plan resolves as ReadQueueReplayAdmission's does.
+func (q *Queries) ReadWebhookReplayAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (ReadWebhookReplayAdmissionRow, error) {
+	row := db.QueryRow(ctx, readWebhookReplayAdmission, id)
+	var i ReadWebhookReplayAdmissionRow
+	err := row.Scan(&i.AccountID, &i.Plan)
+	return i, err
 }
 
 const readWildcardCustomDomain = `-- name: ReadWildcardCustomDomain :one

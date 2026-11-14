@@ -185,6 +185,13 @@ func (w *Watchdog) sweepBucket(ctx context.Context, now time.Time, st state.Stat
 		if st == state.StateWaking && !ins.StartedAt.IsZero() && now.Sub(ins.StartedAt) < WakingSweepBudget+ColdBootSweepBudget {
 			continue
 		}
+		// The fallback cold boot gets the app's startup window, as the wake's
+		// RPC budget does (ADR-20261114120000).
+		if st == state.StateWaking && !ins.StartedAt.IsZero() {
+			if extra := w.startupWatchdogExtension(ctx, ins); extra > 0 && now.Sub(ins.StartedAt) < WakingSweepBudget+ColdBootSweepBudget+extra {
+				continue
+			}
+		}
 		// SNAPSHOTTING rows get a memory-scaled reprieve. The sweep
 		// query uses one flat SnapshotSweepBudget (20s) so it stays a
 		// single cheap index scan, but the engine gives each capture
@@ -203,11 +210,12 @@ func (w *Watchdog) sweepBucket(ctx context.Context, now time.Time, st state.Stat
 				continue
 			}
 		}
-		// A deploy prime for an app with an ADR-138 startup deadline beyond
-		// the spec window gets the matching reprieve, so the watchdog does not
-		// kill a slow-starting first boot that the prime RPC still allows.
+		// A cold boot of an app whose startup deadline exceeds the spec
+		// window (a deploy prime or any later wake, ADR-20261114120000) gets
+		// the matching reprieve, so the watchdog does not kill a slow-starting
+		// boot that its RPC budget still allows.
 		if st == state.StateColdBooting && !ins.StartedAt.IsZero() {
-			if extra := w.primeWatchdogExtension(ctx, ins); extra > 0 && now.Sub(ins.StartedAt) < budget+extra {
+			if extra := w.startupWatchdogExtension(ctx, ins); extra > 0 && now.Sub(ins.StartedAt) < budget+extra {
 				continue
 			}
 		}
