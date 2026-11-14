@@ -91088,6 +91088,16 @@ components:
           enum: [webhook, actions]
           default: webhook
           description: The single production deploy authority; GitHub App PR previews continue in either mode.
+        preview_mode:
+          type: string
+          enum: [app, branch]
+          default: app
+          description: |
+            How pull requests are previewed. `app` gives each previewed
+            workload its own preview app. `branch` makes environment branch
+            `pr-{N}` of production for each pull request and deploys the PR
+            head into it. Choosing `branch` needs the
+            platform to enable branch previews.
 
     GitHubDeploymentPolicyPatch:
       description: Partial replacement for a project's GitHub deployment policy.
@@ -91109,6 +91119,9 @@ components:
         production_trigger:
           type: string
           enum: [webhook, actions]
+        preview_mode:
+          type: string
+          enum: [app, branch]
 
     GitHubInstallMutationRequest:
       description: |

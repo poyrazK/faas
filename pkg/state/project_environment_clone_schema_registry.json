@@ -8189,6 +8189,7 @@
       "preview_bot_prs",
       "preview_draft_prs",
       "preview_enabled",
+      "preview_mode",
       "preview_service_policy",
       "preview_ttl_hours",
       "production_trigger",
@@ -16150,6 +16151,7 @@
       "parent_environment_id",
       "private_networks",
       "project_id",
+      "pull_request_number",
       "slot_id"
     ],
     "kind": "operational"

@@ -42545,6 +42545,7 @@ CREATE TABLE public.github_deploy_policies (
     production_trigger text DEFAULT 'webhook'::text NOT NULL,
     preview_bot_prs boolean DEFAULT false NOT NULL,
     preview_draft_prs boolean DEFAULT true NOT NULL,
+    preview_mode text DEFAULT 'app'::text NOT NULL,
     CONSTRAINT github_deploy_policies_ignored_paths_array_chk CHECK ((jsonb_typeof(ignored_paths) = 'array'::text)),
     CONSTRAINT github_deploy_policies_preview_service_policy_chk CHECK ((preview_service_policy = ANY (ARRAY['deny'::text, 'allow_marked'::text]))),
     CONSTRAINT github_deploy_policies_preview_ttl_chk CHECK (((preview_ttl_hours >= 1) AND (preview_ttl_hours <= 720))),
@@ -53613,6 +53614,7 @@ CREATE TABLE public.project_environment_branches (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     private_networks text DEFAULT 'off'::text NOT NULL,
     slot_id uuid,
+    pull_request_number integer,
     CONSTRAINT project_environment_branches_data_attempts CHECK ((data_attempts >= 0)),
     CONSTRAINT project_environment_branches_data_state CHECK ((data_state = ANY (ARRAY['pending'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT project_environment_branches_depth CHECK (((depth >= 1) AND (depth <= 8))),
@@ -67274,6 +67276,14 @@ ALTER TABLE ONLY public.github_deploy_policies
 
 
 --
+-- Name: github_deploy_policies github_deploy_policies_preview_mode_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.github_deploy_policies
+    ADD CONSTRAINT github_deploy_policies_preview_mode_chk CHECK ((preview_mode = ANY (ARRAY['app'::text, 'branch'::text]))) NOT VALID;
+
+
+--
 -- Name: github_deployments github_deployments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72055,6 +72065,14 @@ ALTER TABLE ONLY public.project_environment_branch_deployments
 
 ALTER TABLE ONLY public.project_environment_branches
     ADD CONSTRAINT project_environment_branches_pkey PRIMARY KEY (environment_id);
+
+
+--
+-- Name: project_environment_branches project_environment_branches_pull_request_number_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_pull_request_number_chk CHECK (((pull_request_number IS NULL) OR (pull_request_number > 0))) NOT VALID;
 
 
 --

@@ -70,6 +70,7 @@ func cmdGithubSetup(args []string) int {
 	previewDrafts := fs.Bool("preview-drafts", false, "preview draft pull requests (the default)")
 	noPreviewDrafts := fs.Bool("no-preview-drafts", false, "preview a draft pull request only once it is ready for review")
 	previewServicePolicy := fs.String("preview-service-policy", "", "preview-to-production service calls: deny|allow_marked")
+	previewMode := fs.String("preview-mode", "", "how pull requests are previewed: app (the default) or branch, an environment branch of production per pull request")
 	rootDir := fs.String("root-dir", "", "repository-relative source root for the root workload")
 	ignore := fs.String("ignore", "", "comma-separated ignored change paths")
 	rollout := fs.String("rollout", githubSetupRolloutStandard, "production rollout mode: standard|safe")
@@ -100,6 +101,9 @@ func cmdGithubSetup(args []string) int {
 	}
 	if *previewServicePolicy != "" && !validGithubSetupPreviewServicePolicy(*previewServicePolicy) {
 		return printErr("Invalid --preview-service-policy", errors.New("must be deny or allow_marked"))
+	}
+	if *previewMode != "" && *previewMode != "app" && *previewMode != "branch" {
+		return printErr("Invalid --preview-mode", errors.New("must be app or branch"))
 	}
 	if !validGithubSetupRollout(*rollout) {
 		return printErr("Invalid --rollout", errors.New("must be standard or safe"))
@@ -170,6 +174,9 @@ func cmdGithubSetup(args []string) int {
 	}
 	if *previewDrafts || *noPreviewDrafts {
 		policyPatch.PreviewDraftPRs = previewDrafts
+	}
+	if *previewMode != "" {
+		policyPatch.PreviewMode = previewMode
 	}
 	if *dryRun {
 		if repoName == "" {
@@ -825,6 +832,9 @@ func renderGithubSetupReceipt(receipt githubSetupReceipt, existing []byte, exist
 		_, _ = fmt.Fprintf(osStdout, "  production_trigger: %s\n", receipt.Policy.ProductionTrigger)
 		_, _ = fmt.Fprintf(osStdout, "  previews:          %t (%dh TTL)\n", receipt.Policy.PreviewEnabled, receipt.Policy.PreviewTTLHours)
 		_, _ = fmt.Fprintf(osStdout, "  preview_services:  %s\n", receipt.Policy.PreviewServicePolicy)
+		if receipt.Policy.PreviewMode != "" {
+			_, _ = fmt.Fprintf(osStdout, "  preview_mode:      %s\n", receipt.Policy.PreviewMode)
+		}
 		_, _ = fmt.Fprintf(osStdout, "  preview_bots:      %t\n  preview_drafts:    %t\n", receipt.Policy.PreviewBotPRs, receipt.Policy.PreviewDraftPRs)
 	}
 	switch {
