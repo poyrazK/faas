@@ -22,6 +22,58 @@ import (
 	"time"
 )
 
+// Private tool publication journals retain bounded metadata, never source or
+// credentials. The deadline fences abandoned publishers; it never grants a retry.
+const (
+	ToolPublicationIntentMaxBytes            = 64 << 10
+	ToolPublicationOutcomeMaxBytes           = 512 << 10
+	ToolPublicationCatalogMaxBytes           = 256 << 10
+	ToolPublicationMaxTools                  = 64
+	ToolPublicationMaxCases                  = 64
+	ToolPublicationsPerAccount               = 256
+	ToolPublicationDeadline                  = 35 * time.Minute
+	ToolRegistryPageMax                      = 20
+	ToolRegistryQueryMaxBytes                = 128
+	ToolPrivateInvocationWorkers             = 4
+	ToolPrivateInvocationRequestMaxBytes     = 256 << 10 // bounded JSON escaping of 32-KiB canonical arguments
+	ToolInvocationArgsMaxBytes               = 32 << 10
+	ToolInvocationResultMaxBytes             = 64 << 10
+	ToolInvocationRequestMaxBytes            = 4 << 10
+	ToolInvocationOutcomeMaxBytes            = 128 << 10
+	ToolInvocationEndpointMaxBytes           = 512
+	ToolInvocationsPerAccount                = 1024
+	ToolInvocationsActiveMax                 = 4
+	ToolInvocationDefaultTimeout             = 60
+	ToolInvocationMaxTimeout                 = 600
+	ToolInvocationReportGrace                = 30 * time.Second
+	ToolInvocationCancelPoll                 = time.Second
+	ToolGrantIntentMaxBytes                  = 4 << 10
+	ToolGrantsPerAccount                     = 1024
+	ToolGrantsPerKey                         = 64
+	ToolGrantPageMax                         = 20
+	ToolGrantMaxLifetime                     = 30 * 24 * time.Hour
+	ToolOAuthConnectionIntentMaxBytes        = 8 << 10
+	ToolOAuthConnectionRecordMaxBytes        = 16 << 10
+	ToolOAuthConnectionsPerAccount           = 128
+	ToolOAuthConnectionsPerApp               = 32
+	ToolOAuthConnectionPageMax               = 20
+	ToolOAuthURLMaxBytes                     = 2048
+	ToolOAuthClientIDMaxBytes                = 512
+	ToolOAuthScopesMax                       = 64
+	ToolOAuthScopeMaxBytes                   = 128
+	ToolOAuthRefreshTimeout                  = 15 * time.Second
+	ToolOAuthPersistTimeout                  = 5 * time.Second
+	ToolOAuthRenewalLease                    = 45 * time.Second
+	ToolOAuthRefreshSkew                     = 30 * time.Second
+	ToolOAuthProviderResponseMaxBytes        = 64 << 10
+	ToolOAuthCiphertextMaxBytes              = 128 << 10
+	ToolOAuthMaxTokenLifetimeSeconds         = 365 * 24 * 60 * 60
+	ToolOAuthAuthorizationLifetime           = 5 * time.Minute
+	ToolOAuthAuthorizationRequestMaxBytes    = 24 << 10
+	ToolOAuthAuthorizationCiphertextMaxBytes = 16 << 10
+	ToolOAuthCallbackTimeout                 = 5 * time.Second
+)
+
 // Referral program bounds. Rewards are estimates only; payout execution is
 // deliberately unavailable until a separately reviewed payment integration.
 const (
@@ -125,6 +177,33 @@ const (
 	AttentionResolvedRetention = 30 * 24 * time.Hour
 	AttentionListMax           = 200
 	AttentionDismissReasonMax  = 200
+)
+
+// Customer attention signals, round 2 (ADR-20261113180000).
+const (
+	// AttentionOOMKills runtime OOM kills of one app within
+	// AttentionOOMWindow open an app_oom signal.
+	AttentionOOMKills  = 3
+	AttentionOOMWindow = 24 * time.Hour
+	// AttentionBootFailures failed boots of one app within
+	// AttentionBootWindow open a boot_failing signal.
+	AttentionBootFailures = 5
+	AttentionBootWindow   = time.Hour
+	// The last AttentionJobFailures finished scheduled runs of one job, all
+	// failed or dead-lettered within AttentionJobWindow, open a jobs_failing
+	// signal.
+	AttentionJobFailures = 3
+	AttentionJobWindow   = 7 * 24 * time.Hour
+	// A payment failure within AttentionPaymentWindow with no recovery
+	// since opens a payment_failing signal.
+	AttentionPaymentWindow = 14 * 24 * time.Hour
+	// Plan-limit refusals on AttentionLimitDays distinct days within
+	// AttentionLimitWindow open a limit_pressure signal.
+	AttentionLimitDays   = 3
+	AttentionLimitWindow = 7 * 24 * time.Hour
+	// AttentionSummaryWindow is the period the staff page summarises
+	// signal outcomes over.
+	AttentionSummaryWindow = 30 * 24 * time.Hour
 )
 
 // Management MCP history is connection-local metadata, not an account audit log.
@@ -2635,6 +2714,13 @@ const (
 	OutboundAIToolUsesPerCallMax                 = 1_000
 	MaxOutboundAIPriceMillicentsPerToolUse int64 = 10_000_000
 	OutboundAIPriceEntriesMax                    = 64
+	// Long-context price tiers (ADR 20261027132936 amendment 3): the prompt
+	// size, in input tokens, a tier starts above, and the bounds of the
+	// percentages it scales input-side and output prices by.
+	OutboundAILongContextAboveTokensMin int64 = 1_000
+	OutboundAILongContextAboveTokensMax int64 = 2_000_000
+	OutboundAILongContextPercentMin     int64 = 100
+	OutboundAILongContextPercentMax     int64 = 1_000
 	// Semantic response cache (ADR 20261112194947): the similarity a hit
 	// needs, in basis points of cosine similarity (bounds and default); the
 	// entries one integration keeps per outboundd process and how many

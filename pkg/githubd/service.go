@@ -238,6 +238,9 @@ type Service struct {
 	// AutomationEvents forwards pull_request deliveries to apid as
 	// gregale.github events (ADR-20261027090010 §9); nil forwards none.
 	AutomationEvents AutomationEventPublisher
+	// PullRequestBranches asks apid for branch-backed PR previews
+	// (ADR-20261113121342); nil keeps every pull request on app previews.
+	PullRequestBranches PullRequestBranchClient
 	// CapabilityAllowed decides a product capability's platform flag for an
 	// account (ADR-20261023115741). nil releases every capability.
 	// The subject carries the resource's organization and plan
@@ -1698,6 +1701,9 @@ type pullRequestTarget struct {
 	// previewsOff, when set, says why previews are off for this PR's
 	// project or account.
 	previewsOff string
+	// branchFallback says why a project on branch previews gives this pull
+	// request an app preview (ADR-20261113121342).
+	branchFallback string
 }
 
 // resolvePullRequestTarget resolves the (repo) binding, its installation and
@@ -1935,6 +1941,11 @@ func previewableProductionApp(app state.App) bool {
 // current delivery. A *previewSetupError reports a failure the PR head or
 // account must fix; other errors retry the delivery.
 func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, target pullRequestTarget) (reconcile.Result, error) {
+	branchResult, branched, fallback, branchErr := s.branchPreview(ctx, ev, target)
+	if branched || branchErr != nil {
+		return branchResult, branchErr
+	}
+	target.branchFallback = fallback
 	binding, install, parentApp, policy := target.binding, target.install, target.parent, target.policy
 
 	// 5. Derive the preview slug + provision the preview apps row.
@@ -2271,6 +2282,9 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	if s.WritePreviewCommentForInstallation != nil {
 		marker := previewCommentMarker(previewSlugVal)
 		status, detail := "queued", previewCommentQueued
+		if target.branchFallback != "" {
+			detail += " " + target.branchFallback
+		}
 		if ev.Action == PullRequestActionClosed {
 			status, detail = "closed", previewCommentClosed
 		}
@@ -2321,8 +2335,8 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 		if werr := s.writePreviewCheck(ctx, install.InstallationID,
 			ev.Repository.FullName, ev.PullRequest.HeadSHA,
 			githubdgrpc.CheckPhaseQueued, previewURL,
-			fmt.Sprintf("Preview provisioned for PR #%d against %q",
-				ev.Number, parentApp.Slug)); werr != nil {
+			strings.TrimSpace(fmt.Sprintf("Preview provisioned for PR #%d against %q. %s",
+				ev.Number, parentApp.Slug, target.branchFallback))); werr != nil {
 			s.Log.Warn("githubd: write queued preview check", "err", werr,
 				"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA,
 				"preview_slug", previewSlugVal)

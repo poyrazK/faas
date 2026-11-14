@@ -36,6 +36,7 @@ type MemoryStore struct {
 	egressElected             map[string]bool
 	capEvents                 map[memoryCapEventKey]CapEvent
 	capEventsMailed           map[memoryCapEventKey]bool
+	egressHolds               map[memoryEgressHoldKey]CapEvent
 	restoreSlotNotices        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice
 	restoreSlotNoticesMailed  map[memoryRestoreSlotNoticeKey]bool
 	planExcessNotices         map[string]memoryPlanExcessNotice
@@ -68,6 +69,7 @@ func NewMemoryStore() *MemoryStore {
 		egressElected:             map[string]bool{},
 		capEvents:                 map[memoryCapEventKey]CapEvent{},
 		capEventsMailed:           map[memoryCapEventKey]bool{},
+		egressHolds:               map[memoryEgressHoldKey]CapEvent{},
 		restoreSlotNotices:        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice{},
 		restoreSlotNoticesMailed:  map[memoryRestoreSlotNoticeKey]bool{},
 		planExcessNotices:         map[string]memoryPlanExcessNotice{},

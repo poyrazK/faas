@@ -170,7 +170,9 @@ func TestRunSandboxStatusCodes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := stream.Send(sandboxRunStart()); err != nil {
+			// A server that refuses before reading ends the stream; Send then
+			// reports io.EOF and the refusal arrives on Recv.
+			if err := stream.Send(sandboxRunStart()); err != nil && !errors.Is(err, io.EOF) {
 				t.Fatal(err)
 			}
 			if _, err := stream.Recv(); status.Code(err) != tc.want {

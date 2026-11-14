@@ -256,11 +256,12 @@
 20261111140000
 20261111150000
 
-# Refresh from main 1c887771f (2026-11-13). These collisions predate
-# the pipeline operability branch; no new duplicate is grandfathered.
+# Independently duplicated on merged main 075abba1fe (2026-11-14), caught by
+# the full nightly CI run 43535595356:
 20261103180000
 20261103190000
 20261104120000
 20261111130000
 20261112160000
 20261112210000
+20261113090000
