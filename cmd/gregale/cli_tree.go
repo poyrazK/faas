@@ -208,6 +208,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"bucket inventory get", "bucket reconcile status"},
 	{"bucket inventory", "bucket reconcile"},
 	{"bucket", "bucket"},
+	{"pipeline reader update", "pipeline access"},
+	{"pipeline connection explain", "pipeline connection guide"},
 	{"pipeline", "pipeline"},
 	{"data-api", "data-api"},
 	{"ai", "ai"},
