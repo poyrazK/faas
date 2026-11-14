@@ -23599,7 +23599,8 @@ CREATE FUNCTION public.pipeline_freshness_alert_fence() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
- IF NEW.enabled AND NEW.revision=OLD.revision AND current_setting('gregale.pipeline_worker_protocol',true) IS DISTINCT FROM 'pipeline-operability-v1'
+ IF NEW.enabled AND NEW.revision=OLD.revision
+ AND coalesce(current_setting('gregale.pipeline_worker_protocol',true),'') NOT IN ('pipeline-operability-v1','pipeline-evolution-v1')
  AND EXISTS(SELECT 1 FROM data_pipelines WHERE id=NEW.pipeline_id AND freshness_target_seconds>0) THEN
   RAISE EXCEPTION 'freshness-aware monitor required' USING ERRCODE='55000';
  END IF;
@@ -23614,19 +23615,22 @@ END $$;
 CREATE FUNCTION public.pipeline_serving_worker_claim() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE serving boolean; operability boolean; protocol text;
+DECLARE serving boolean; operability boolean; evolution boolean; protocol text;
 BEGIN
- protocol := current_setting('gregale.pipeline_worker_protocol',true);
+ protocol:=current_setting('gregale.pipeline_worker_protocol',true);
  IF TG_TABLE_NAME='data_pipelines' THEN
-  serving := NEW.serving_config<>'{}'::jsonb;
-  operability := NEW.index_change->>'state'='approved';
+  serving:=NEW.serving_config<>'{}'::jsonb;
+  operability:=NEW.index_change->>'state'='approved';
+  evolution:=coalesce(NEW.serving_config->>'version','1')='2';
  ELSE
-  serving := coalesce(NEW.request->'Serving','null'::jsonb)<>'null'::jsonb;
-  operability := coalesce((NEW.request->>'FreshnessTargetSeconds')::bigint,0)>0;
+  serving:=coalesce(NEW.request->'Serving','null'::jsonb)<>'null'::jsonb;
+  operability:=coalesce((NEW.request->>'FreshnessTargetSeconds')::bigint,0)>0;
+  evolution:=false;
  END IF;
  IF NEW.lease_token<>'' AND NEW.lease_token IS DISTINCT FROM OLD.lease_token THEN
-  IF operability AND protocol IS DISTINCT FROM 'pipeline-operability-v1' THEN RETURN NULL; END IF;
-  IF serving AND (protocol IS NULL OR protocol NOT IN ('customer-serving-v1','pipeline-operability-v1')) THEN RETURN NULL; END IF;
+  IF evolution AND protocol IS DISTINCT FROM 'pipeline-evolution-v1' THEN RETURN NULL; END IF;
+  IF operability AND (protocol IS NULL OR protocol NOT IN ('pipeline-operability-v1','pipeline-evolution-v1')) THEN RETURN NULL; END IF;
+  IF serving AND (protocol IS NULL OR protocol NOT IN ('customer-serving-v1','pipeline-operability-v1','pipeline-evolution-v1')) THEN RETURN NULL; END IF;
  END IF;
  RETURN NEW;
 END $$;
@@ -37507,8 +37511,10 @@ CREATE TABLE public.data_pipelines (
     serving_config jsonb DEFAULT '{}'::jsonb NOT NULL,
     freshness_target_seconds bigint DEFAULT 0 NOT NULL,
     index_change jsonb DEFAULT '{}'::jsonb NOT NULL,
+    evolution_change jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT data_pipelines_check CHECK (((observed_revision >= 0) AND (observed_revision <= revision))),
     CONSTRAINT data_pipelines_desired_state_check CHECK ((desired_state = ANY (ARRAY['running'::text, 'paused'::text, 'deleted'::text]))),
+    CONSTRAINT data_pipelines_evolution_check CHECK (((jsonb_typeof(evolution_change) = 'object'::text) AND (octet_length((evolution_change)::text) <= 4194304) AND ((evolution_change = '{}'::jsonb) OR (COALESCE((evolution_change ->> 'state'::text), ''::text) = ANY (ARRAY['preview'::text, 'approved'::text, 'applied'::text, 'superseded'::text]))))),
     CONSTRAINT data_pipelines_freshness_target_check CHECK (((freshness_target_seconds = 0) OR ((freshness_target_seconds >= 15) AND (freshness_target_seconds <= 86400)))),
     CONSTRAINT data_pipelines_generation_check CHECK ((generation > 0)),
     CONSTRAINT data_pipelines_index_change_check CHECK (((jsonb_typeof(index_change) = 'object'::text) AND (octet_length((index_change)::text) <= 65536) AND ((index_change = '{}'::jsonb) OR (COALESCE((index_change ->> 'state'::text), ''::text) = ANY (ARRAY['requested'::text, 'preview'::text, 'approved'::text, 'applied'::text, 'blocked'::text, 'cancelled'::text]))))),

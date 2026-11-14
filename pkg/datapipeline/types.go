@@ -49,6 +49,7 @@ type Pipeline struct {
 	SourceRevision  int64
 }
 type Observation struct {
+	EvolutionApplied            bool
 	IndexOnly                   bool
 	IndexChange                 *IndexChange
 	WALSample                   *walRetentionSample
@@ -65,6 +66,13 @@ type Observation struct {
 }
 
 func ValidateCreate(r api.CreateDataPipelineRequest) error {
+	// Evolution requires an initialized mirror and owner approval.
+	if r.Serving != nil && (r.Serving.Version > 1 || r.Serving.AuthOrganizations != nil || len(r.Serving.Relationships) > 0) {
+		return ErrInvalid
+	}
+	if r.Serving != nil && r.Serving.TenantAccess != nil && r.Serving.TenantAccess.ValidUntil != "" {
+		return ErrInvalid
+	}
 	if !validFreshnessTarget(r.FreshnessTargetSeconds) {
 		return ErrInvalid
 	}

@@ -5093,6 +5093,7 @@
       "freshness_target_seconds",
       "generation",
       "id",
+      "evolution_change",
       "index_change",
       "initialized",
       "lease_token",

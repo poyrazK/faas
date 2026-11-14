@@ -64,6 +64,21 @@ func (s *PostgresStore) RefreshSchema(ctx context.Context, p Pipeline, c SchemaC
 	return s.refreshApps(ctx, tx, p, c, false)
 }
 
+// Membership/role inventory can change after the original evolution completed.
+// Refresh its observed private permission version under the same catalog lease,
+// without accepting another caller-authored DDL declaration.
+func (s *PostgresStore) RefreshRelationships(ctx context.Context, p Pipeline, c SchemaChange) ([]SchemaRefresh, bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, false, storeError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = s.q.PipelineReadGateRefreshLock(ctx, tx, sqlc.PipelineReadGateRefreshLockParams{AccountID: p.AccountID, ID: p.ID, Revision: p.Revision, LeaseToken: p.LeaseToken}); err != nil {
+		return nil, false, storeError(err)
+	}
+	return s.refreshApps(ctx, tx, p, c, false)
+}
+
 // RefreshReadGate uses the same freshness/outbox boundary as schema changes.
 // Its receipts are independent, so schema pruning cannot re-stamp a delivered
 // read-gate restart. Ordinary app restart recovery owns delivery failures.

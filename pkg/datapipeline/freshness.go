@@ -71,8 +71,16 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		}
 	case !p.ObservationFresh:
 		h.State, h.Code, h.Message, h.Recovery = "unknown", "monitoring_stale", "Monitoring is stale; data freshness is unknown.", "Check worker availability and refresh status. Native replication may still be running."
+	case p.State == "live" && authProofExpired(p, now):
+		h.Code, h.Message, h.Recovery = "auth_membership_unconfirmed", "Auth organization membership could not be confirmed.", "Check the worker and approved Auth binding. Reads remain closed until a fresh membership proof is applied."
 	case p.Reason == "serving_contract_invalid":
 		h.Message, h.Recovery = "The saved access and column configuration could not be validated.", "Ask the operator to inspect the saved serving contract before retrying."
+	case p.Reason == "auth_membership_unconfirmed":
+		h.Message, h.Recovery = "Auth organization membership could not be confirmed.", "Restore access to the approved Auth app and database binding, or review a replacement organization mapping. Reads stay closed until a fresh membership proof is applied."
+	case p.Reason == "relationship_contract_unavailable":
+		h.Message, h.Recovery = "A related read could not be prepared safely.", "Review its selected columns and target primary key. Restore the owned function or preview a corrected relationship declaration."
+	case p.Reason == "relationship_api_refresh_failed" || p.Reason == "relationship_api_refresh_pending" || p.Reason == "relationship_api_refresh_unavailable":
+		h.Message, h.Recovery = "The related-read API refresh is unconfirmed.", "Check API restart delivery. A failed refresh can be retried using the saved approved change."
 	case p.Reason == "source_serving_contract_changed":
 		h.Message, h.Recovery, h.Action, h.RequiresConfirmation = "Selected source columns or the tenant column changed.", "Restore the reviewed column definitions and confirm a resync, or create a pipeline with a newly reviewed serving contract.", "resync", true
 	case p.State == "resync_required":
@@ -160,4 +168,12 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		}
 	}
 	return h
+}
+
+func authProofExpired(p api.DataPipeline, now time.Time) bool {
+	if p.Serving == nil || p.Serving.AuthOrganizations == nil || p.Serving.TenantAccess == nil {
+		return false
+	}
+	until, err := time.Parse(time.RFC3339Nano, p.Serving.TenantAccess.ValidUntil)
+	return err != nil || !until.After(now)
 }

@@ -48,6 +48,9 @@ func (h *Handler) Workspace(ctx context.Context, account, connection string) (da
 		return data, err
 	}
 	for _, p := range pipelines {
+		if p.State != "deleted" {
+			data.Evolutions = append(data.Evolutions, evolutionView(p))
+		}
 		if err = h.appendAlerts(ctx, &data, p); err != nil {
 			return data, err
 		}
@@ -123,6 +126,8 @@ func (h *Handler) applyDashboardAction(r *http.Request, account string) (string,
 	ctx := r.Context()
 	id := r.FormValue("connection_id")
 	switch r.FormValue("action") {
+	case "evolution_preview", "evolution_approve", "evolution_discard", "evolution_retry":
+		return h.manageDashboardEvolution(r, account)
 	case "freshness", "indexes":
 		return h.manageDashboardOperability(r, account)
 	case "alerts_enable", "alerts_disable":

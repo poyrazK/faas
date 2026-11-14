@@ -3979,6 +3979,7 @@ type DataPipeline struct {
 	ServingConfig          []byte
 	FreshnessTargetSeconds int64
 	IndexChange            []byte
+	EvolutionChange        []byte
 }
 
 type DataPipelineAlert struct {

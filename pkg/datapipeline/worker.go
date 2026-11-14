@@ -12,11 +12,13 @@ import (
 )
 
 type Worker struct {
-	SetupTick  func(context.Context) (bool, error)
-	Store      Store
-	Engine     *Engine
-	Identities []*age.X25519Identity
-	Allowed    func(context.Context, string) bool
+	AuthCanGrant    func(context.Context, string) bool
+	AuthMemberships func(context.Context, Pipeline) (AuthMembershipSnapshot, error)
+	SetupTick       func(context.Context) (bool, error)
+	Store           Store
+	Engine          *Engine
+	Identities      []*age.X25519Identity
+	Allowed         func(context.Context, string) bool
 }
 
 // Tick reconciles one bounded source. Only metadata crosses the control API;
@@ -44,6 +46,9 @@ func (w *Worker) reconcilePipeline(ctx context.Context, p Pipeline) error {
 	}
 	op, cancel := context.WithTimeout(ctx, api.DataPipelineOperationTimeout)
 	defer cancel()
+	if err := w.syncAuthMemberships(op, &p); err != nil {
+		return err
+	}
 	intent := p
 	admitted := w.Allowed != nil && w.Allowed(op, p.AccountID)
 	intent.IndexWorkBlocked = !admitted

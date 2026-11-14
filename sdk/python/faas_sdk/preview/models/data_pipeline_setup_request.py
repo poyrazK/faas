@@ -30,9 +30,9 @@ class DataPipelineSetupRequest:
     region: str | Unset = UNSET
     read_subjects: list[str] | Unset = UNSET
     serving: DataPipelineServing | Unset = UNSET
-    """Versioned serving contract. Columns are immutable and affect publication, mirror schema and recovery. Omit
-    columns for all-column replication. Tenant access uses owner-managed subject memberships; JWT tenant claims
-    grant nothing. At least columns or tenant_access is required. A missing version defaults to 1 at creation."""
+    """Versioned serving contract affecting publication, mirror schema and recovery. Creation accepts version 1;
+    approved evolution installs version 2. Omit columns for all-column replication. Tenant claims grant no
+    memberships. Column expansion requires source-definition approval, backfill, verification and API refresh."""
     freshness_target_seconds: int | Unset = UNSET
     """DataPipelineSetupRequest uses zero to disable confirmation alerts; enabled targets must be at least 15
     seconds."""

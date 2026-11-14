@@ -17,7 +17,7 @@ import (
 
 func cmdPipeline(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale pipeline <connection|setup|create|freshness|indexes|access|list|status|wait|pause|resume|resync|verify|delete>", "pipeline")
+		PrintUsage(os.Stderr, "usage: gregale pipeline <connection|setup|create|freshness|indexes|evolve|access|list|status|wait|pause|resume|resync|verify|delete>", "pipeline")
 		return 1
 	}
 	switch args[0] {
@@ -27,6 +27,8 @@ func cmdPipeline(args []string) int {
 		return cmdPipelineFreshness(args[1:])
 	case "indexes":
 		return cmdPipelineIndexes(args[1:])
+	case "evolve":
+		return cmdPipelineEvolve(args[1:])
 	case "access":
 		return cmdPipelineTenantAccess(args[1:])
 	case "connection":
@@ -49,7 +51,7 @@ func cmdPipeline(args []string) int {
 	case "status", "wait", "pause", "resume", "resync", "verify", "delete":
 		return cmdPipelineControl(args[0], args[1:])
 	default:
-		return printErr("Unknown pipeline command", errors.New("use connection, create, access, list, status, wait, pause, resume, resync, verify or delete"))
+		return printErr("Unknown pipeline command", errors.New("use connection, setup, create, freshness, indexes, evolve, access, list, status, wait, pause, resume, resync, verify or delete"))
 	}
 }
 
@@ -385,7 +387,7 @@ func waitDataPipeline(ctx context.Context, client pipelineReader, p api.DataPipe
 			return p, errors.New("verification is paused; resume the pipeline to continue")
 		}
 		qualificationRunning := (p.Reason == "source_storage_verification" || p.Reason == "replication_continuity_verification") && p.Verification == "pending"
-		progressing := p.Reason == "database_unavailable" || p.Reason == "schema_api_refresh_pending" || qualificationRunning
+		progressing := p.Reason == "database_unavailable" || p.Reason == "schema_api_refresh_pending" || p.Reason == "relationship_api_refresh_pending" || qualificationRunning
 		currentResync := p.State == "resync_required" && (p.ObservationFresh || (p.Revision > 0 && p.ObservedRevision == p.Revision))
 		if (currentResync || (p.ObservationFresh && p.State == "blocked" && !progressing)) && expected != "deleted" && expected != "paused" {
 			return p, fmt.Errorf("pipeline %s: %s", p.State, p.Reason)

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -22,6 +23,24 @@ func normalizeServing(in *api.DataPipelineServing) *api.DataPipelineServing {
 		return nil
 	}
 	out := *in
+	out.Relationships = slices.Clone(in.Relationships)
+	for i := range out.Relationships {
+		out.Relationships[i].SourceColumns = slices.Clone(out.Relationships[i].SourceColumns)
+		out.Relationships[i].TargetColumns = slices.Clone(out.Relationships[i].TargetColumns)
+	}
+	slices.SortFunc(out.Relationships, func(a, b api.DataPipelineRelationship) int { return strings.Compare(a.Name, b.Name) })
+	if in.AuthOrganizations != nil {
+		a := *in.AuthOrganizations
+		a.AuthAppID, a.BindingID, a.DatabaseID = canonicalID(a.AuthAppID), canonicalID(a.BindingID), canonicalID(a.DatabaseID)
+		a.Mappings = slices.Clone(a.Mappings)
+		for i := range a.Mappings {
+			a.Mappings[i].OrganizationID = canonicalID(a.Mappings[i].OrganizationID)
+		}
+		slices.SortFunc(a.Mappings, func(a, b api.DataPipelineOrganizationTenant) int {
+			return strings.Compare(a.OrganizationID, b.OrganizationID)
+		})
+		out.AuthOrganizations = &a
+	}
 	if out.Version == 0 {
 		out.Version = 1
 	}
@@ -80,7 +99,15 @@ func validServing(s *api.DataPipelineServing, tables []string) bool {
 	if s == nil {
 		return true
 	}
-	if s.Version != 1 || len(s.Columns) == 0 && s.TenantAccess == nil {
+	if s.TenantAccess != nil && s.TenantAccess.ValidUntil != "" {
+		if s.AuthOrganizations == nil {
+			return false
+		}
+		if _, err := time.Parse(time.RFC3339Nano, s.TenantAccess.ValidUntil); err != nil {
+			return false
+		}
+	}
+	if !validEvolutionServing(s, tables) || s.Version == 1 && len(s.Columns) == 0 && s.TenantAccess == nil {
 		return false
 	}
 	if len(s.Columns) > 0 {
@@ -127,7 +154,7 @@ func tenantAccess(p Pipeline) *api.DataPipelineTenantAccess {
 }
 
 func validRuntimeServing(p Pipeline) bool {
-	if p.Serving != nil && p.Serving.Version != 1 {
+	if p.Serving != nil && p.Serving.Version != 1 && p.Serving.Version != 2 {
 		return false
 	}
 	s := normalizeServing(p.Serving)

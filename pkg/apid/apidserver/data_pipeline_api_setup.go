@@ -33,6 +33,10 @@ func (s *server) configurePipelineDataAPI(service *datapipeline.Service) {
 		return app, nil
 	}
 	setup.ConfigureApp = s.configurePipelineAPIApp
+	if s.managedPostgres != nil {
+		setup.SQL = s.managedPostgres.WithPipelineSQL
+	}
+	service.ResolveAuthOrganizations, service.AuthMemberships = setup.ResolveOrganizations, setup.OrganizationMembers
 	setup.AdmitDeploy = func(ctx context.Context, a state.Account, app state.App) error {
 		if problem := s.enforceSecurityPostureGate(ctx, app); problem != nil {
 			return datapipeline.ErrUnavailable

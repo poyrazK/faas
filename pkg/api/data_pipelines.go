@@ -23,6 +23,8 @@ type RotateDataConnectionRequest struct {
 // DataPipeline is an eventually reconciled intent. State is an observation;
 // desired_state records the requested action and observed_at bounds freshness.
 type DataPipeline struct {
+	SchemaReview           *DataPipelineSchemaReview `json:"schema_review,omitempty"`
+	Evolution              *DataPipelineEvolution    `json:"evolution,omitempty"`
 	IndexAdvice            *DataPipelineIndexAdvice  `json:"index_advice,omitempty"`
 	Freshness              *DataPipelineFreshness    `json:"freshness,omitempty"`
 	FreshnessTargetSeconds int64                     `json:"freshness_target_seconds,omitempty"`

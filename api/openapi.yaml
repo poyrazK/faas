@@ -72065,6 +72065,64 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /v1/data/pipelines/{id}/evolution:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Pipeline whose serving evolution is reviewed.
+      schema: {type: string, format: uuid}
+    post:
+      summary: Preview or approve pipeline serving evolution
+      operationId: evolveDataPipeline
+      tags: [data_pipelines]
+      description: Save an additive projection, Auth organization mapping, or declared relationship preview. Approval supplies only its saved ID and revision. Projection changes subsequently require the exact source schema or table approval before copying and exposure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DataPipelineEvolutionRequest'}
+      responses:
+        '202':
+          description: Serving evolution preview saved, discarded or approved for reconciliation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DataPipeline'}
+        default:
+          description: Evolution validation, ownership, admission or revision conflict.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+
+  /v1/data/pipelines/{id}/schema-approval:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Pipeline whose worker-generated source schema review is approved.
+      schema: {type: string, format: uuid}
+    post:
+      summary: Approve the exact pipeline source schema
+      operationId: approveDataPipelineSchema
+      tags: [data_pipelines]
+      description: Approve the saved schema_review.id after inspecting its exact column and table changes. Retry reuses the previously approved change and preserves bounded backfill and verification receipts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DataPipelineSchemaApprovalRequest'}
+      responses:
+        '202':
+          description: Exact source-definition approval saved for verified pipeline evolution.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DataPipeline'}
+        default:
+          description: Source-schema approval validation, ownership, freshness or revision conflict.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+
   /v1/data/pipelines/{id}/tenant-readers:
     parameters:
     - name: id
@@ -140685,13 +140743,13 @@ components:
           maxItems: 128
           uniqueItems: true
     DataPipelineServing:
-      description: Versioned serving contract. Columns are immutable and affect publication, mirror schema and recovery. Omit columns for all-column replication. Tenant access uses owner-managed subject memberships; JWT tenant claims grant nothing. At least columns or tenant_access is required. A missing version defaults to 1 at creation.
+      description: Versioned serving contract affecting publication, mirror schema and recovery. Creation accepts version 1; approved evolution installs version 2. Omit columns for all-column replication. Tenant claims grant no memberships. Column expansion requires source-definition approval, backfill, verification and API refresh.
       type: object
       additionalProperties: false
       properties:
         version:
           type: integer
-          enum: [1]
+          enum: [1, 2]
           default: 1
         columns:
           type: object
@@ -140703,6 +140761,12 @@ components:
             maxItems: 128
             uniqueItems: true
             items: {type: string, minLength: 1, maxLength: 63}
+        auth_organizations:
+          $ref: '#/components/schemas/DataPipelineAuthOrganizations'
+        relationships:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/DataPipelineRelationship'}
         tenant_access:
           $ref: '#/components/schemas/DataPipelineTenantAccess'
     DataPipelineTenantAccess:
@@ -140711,6 +140775,11 @@ components:
       additionalProperties: false
       required: [column, memberships]
       properties:
+        valid_until:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Worker-maintained expiry of the last authoritative Auth membership proof. Expired policies deny SQL reads and return HTTP 503.
         column: {type: string, minLength: 1, maxLength: 63}
         memberships:
           type: array
@@ -140744,6 +140813,129 @@ components:
           type: array
           maxItems: 256
           items: {$ref: '#/components/schemas/DataPipelineTenantMembership'}
+    DataPipelineSchemaReview:
+      description: Worker-generated exact source-definition review with column and table metadata only. Its ID binds the generation, recorded baseline and requested source schema.
+      type: object
+      additionalProperties: false
+      required: [id, state, supported, changes]
+      properties:
+        id: {type: string}
+        state: {type: string}
+        supported: {type: boolean}
+        changes:
+          type: array
+          items: {$ref: '#/components/schemas/DataPipelineSchemaColumnChange'}
+        requested_tables:
+          type: array
+          maxItems: 16
+          items: {type: string}
+    DataPipelineSchemaColumnChange:
+      description: One exact source column or table change and the worker's compatibility decision.
+      type: object
+      additionalProperties: false
+      required: [table, column, kind, reason, safe]
+      properties:
+        table: {type: string}
+        column: {type: string}
+        kind: {type: string}
+        before_type: {type: string}
+        after_type: {type: string}
+        reason: {type: string}
+        safe: {type: boolean}
+    DataPipelineSchemaApprovalRequest:
+      description: Owner approval of the exact saved source-definition review, or a bounded retry of the already approved backfill and refresh workflow.
+      type: object
+      additionalProperties: false
+      required: [expected_revision, change_id]
+      properties:
+        expected_revision: {type: integer, format: int64, minimum: 1}
+        change_id: {type: string, pattern: '^[a-f0-9]{64}$'}
+        retry: {type: boolean}
+    DataPipelineAuthOrganizations:
+      description: Owner-approved Auth organization mapping. Internal binding identifiers are resolved by the control plane and rechecked on every snapshot.
+      type: object
+      additionalProperties: false
+      required: [auth_app_id, mappings]
+      properties:
+        auth_app_id: {type: string, format: uuid}
+        binding_id: {type: string, format: uuid, readOnly: true}
+        database_id: {type: string, format: uuid, readOnly: true}
+        mappings:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: {$ref: '#/components/schemas/DataPipelineOrganizationTenant'}
+    DataPipelineOrganizationTenant:
+      description: One authoritative Auth organization mapped to an exact source tenant value.
+      type: object
+      additionalProperties: false
+      required: [organization_id, tenant]
+      properties:
+        organization_id: {type: string, format: uuid}
+        tenant: {type: string, minLength: 1, maxLength: 256}
+    DataPipelineRelationship:
+      description: Read-only computed relationship joining selected source columns to the target complete primary key. Both rows remain subject to RLS and exact tenant equality; forged RPC row attributes do not grant access.
+      type: object
+      additionalProperties: false
+      required: [name, source_table, target_table, source_columns, target_columns]
+      properties:
+        name: {type: string, pattern: '^[a-z][a-z0-9_]{0,62}$'}
+        source_table: {type: string, pattern: '^[a-z][a-z0-9_]{0,62}$'}
+        target_table: {type: string, pattern: '^[a-z][a-z0-9_]{0,62}$'}
+        source_columns:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 63}
+        target_columns:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 63}
+    DataPipelineEvolutionRequest:
+      description: Revision-fenced owner evolution action. Preview supplies one kind and its complete selection or mapping. Approve and discard supply only a saved change_id; approval never accepts replacement intent.
+      type: object
+      additionalProperties: false
+      required: [expected_revision, action]
+      properties:
+        expected_revision: {type: integer, format: int64, minimum: 1}
+        action: {type: string, enum: [preview, approve, discard, retry]}
+        change_id: {type: string}
+        kind: {type: string, enum: [projection, auth_organizations, relationships]}
+        columns:
+          type: object
+          maxProperties: 16
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 128
+            uniqueItems: true
+            items: {type: string, minLength: 1, maxLength: 63}
+        auth_organizations: {$ref: '#/components/schemas/DataPipelineAuthOrganizations'}
+        relationships:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/DataPipelineRelationship'}
+    DataPipelineEvolution:
+      description: Frozen account and generation-bound serving preview. Approved indicates owner intent; applied requires worker verification and any required API cache refresh.
+      type: object
+      additionalProperties: false
+      required: [id, state, kind, generation, preview_revision, after]
+      properties:
+        retry: {type: integer, minimum: 0, readOnly: true}
+        id: {type: string}
+        state: {type: string, enum: [preview, approved, applied, superseded]}
+        kind: {type: string, enum: [projection, auth_organizations, relationships]}
+        generation: {type: integer, format: int64, minimum: 1}
+        preview_revision: {type: integer, format: int64, minimum: 1}
+        before: {$ref: '#/components/schemas/DataPipelineServing'}
+        after: {$ref: '#/components/schemas/DataPipelineServing'}
+        added_tables:
+          type: array
+          maxItems: 16
+          items: {type: string}
     DataPipelineTenantReadersRequest:
       description: Account-owner-only, revision-fenced membership preview, approval or discard. Preview supplies the complete replacement membership array. Approve supplies only the saved change_id; grace permits strict membership reductions only.
       type: object
@@ -140799,6 +140991,9 @@ components:
       - verification
       - created_at
       properties:
+        schema_review: {$ref: '#/components/schemas/DataPipelineSchemaReview'}
+        evolution:
+          $ref: '#/components/schemas/DataPipelineEvolution'
         freshness_target_seconds:
           type: integer
           format: int64

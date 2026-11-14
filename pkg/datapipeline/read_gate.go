@@ -68,6 +68,15 @@ func ensurePipelineReadGate(ctx context.Context, p Pipeline, target *pgx.Conn) e
 	if _, _, _, err = readerAuthority(ctx, p, tx, false); err != nil {
 		return err
 	}
+	var evolutionReceipt bool
+	if err = tx.QueryRow(ctx, `SELECT count(*)=3 FROM pg_attribute WHERE attrelid='gregale_pipeline.mirrors'::regclass AND attname IN ('relationships','relationship_change','relationship_refresh') AND NOT attisdropped`).Scan(&evolutionReceipt); err != nil {
+		return err
+	}
+	if !evolutionReceipt {
+		if _, err = tx.Exec(ctx, `ALTER TABLE gregale_pipeline.mirrors ADD COLUMN IF NOT EXISTS relationships jsonb NOT NULL DEFAULT '[]', ADD COLUMN IF NOT EXISTS relationship_change text NOT NULL DEFAULT '', ADD COLUMN IF NOT EXISTS relationship_refresh text NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
 	definition, version := pipelineread.Definition, pipelineread.Version
 	var installed bool
 	if err = tx.QueryRow(ctx, `SELECT coalesce(bool_and(p.proowner=(SELECT nspowner FROM pg_namespace WHERE nspname='gregale_pipeline')),true)

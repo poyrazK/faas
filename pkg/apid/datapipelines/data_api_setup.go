@@ -25,6 +25,7 @@ import (
 // DataAPISetup adapts saved pipeline intent to the existing app, managed
 // binding and source-build owners. It never builds or executes customer code.
 type DataAPISetup struct {
+	SQL      datapipeline.TargetSQL
 	Store    state.Store
 	Bindings interface {
 		Create(context.Context, managedpostgres.CreateBindingRequest) (managedpostgres.Binding, error)
