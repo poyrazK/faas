@@ -120,8 +120,9 @@ func (e *Engine) HandleSustainedCPU(ctx context.Context, instanceID, appID strin
 		return action, nil
 	}
 	// The app lock is released: a hold parks every app of the account.
-	if !e.noteEgressAbuseRecycle(owner.ResourceOwnerID(), e.clock()) {
-		return action, nil
+	reached, err := e.noteAbuseStrike(ctx, owner.ResourceOwnerID(), state.AccountAbuseHoldCPUSustained, appID)
+	if err != nil || !reached {
+		return action, err
 	}
 	holdDetail := map[string]any{"app": appID, "signal": cpuAbuseKind, "used_millicores": usedMillicores, "quota_millicores": quotaMillicores,
 		"sustained_seconds": int64(sustained / time.Second), "recycles": api.EgressFanoutHoldRecycles, "window_seconds": api.EgressFanoutHoldWindowSeconds}

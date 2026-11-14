@@ -151,7 +151,14 @@ func (h *Handler) applyDashboardAction(r *http.Request, account string) (string,
 		if err != nil {
 			return "", datapipeline.ErrInvalid
 		}
-		_, err = h.Service.RequestCheck(ctx, account, id, api.RequestDataConnectionCheck{ExpectedRevision: revision, DatabaseID: r.FormValue("database_id")})
+		selection := api.RequestDataConnectionCheck{ExpectedRevision: revision, DatabaseID: r.FormValue("database_id"), Search: r.FormValue("search")}
+		if names := strings.TrimSpace(r.FormValue("discovery_tables")); names != "" {
+			selection.Tables = strings.Split(names, ",")
+			for i := range selection.Tables {
+				selection.Tables[i] = strings.TrimSpace(selection.Tables[i])
+			}
+		}
+		_, err = h.Service.RequestCheck(ctx, account, id, selection)
 		return id, err
 	case "create":
 		subjects := strings.Split(r.FormValue("read_subjects"), ",")

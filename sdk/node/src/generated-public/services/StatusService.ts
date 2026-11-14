@@ -9,6 +9,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class StatusService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read the current public platform status.
    * Unauthenticated single-region snapshot. Includes five public
@@ -22,7 +23,7 @@ export class StatusService {
    * @throws ApiError
    */
   public static getPublicStatus(): CancelablePromise<PublicStatusOverview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/status',
     });
@@ -40,7 +41,7 @@ export class StatusService {
      */
     publicId: string,
   }): CancelablePromise<PublicStatusEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/status/incidents/{public_id}',
       path: {
@@ -59,7 +60,7 @@ export class StatusService {
    * @throws ApiError
    */
   public static getLegacyStatusSlo(): CancelablePromise<StatusPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/status/slo.json',
     });

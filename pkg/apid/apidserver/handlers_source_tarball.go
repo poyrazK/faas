@@ -31,7 +31,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -48,20 +47,21 @@ import (
 // on the build row for audit/provenance, but the build pipeline does
 // NOT use them to fetch upstream.
 type sidecarPayload struct {
-	Repo                     string                     `json:"repo,omitempty"`
-	Ref                      string                     `json:"ref,omitempty"`
-	Environment              string                     `json:"environment,omitempty"`
-	Reason                   string                     `json:"reason,omitempty"`
-	Tag                      string                     `json:"tag,omitempty"`
-	DeployedBy               string                     `json:"deployed_by,omitempty"`
-	PRNumber                 int                        `json:"pr_number,omitempty"`
-	TrafficPercent           *int                       `json:"traffic_percent,omitempty"`
-	Canary                   *api.CanaryPresetSpec      `json:"canary,omitempty"`
-	RollbackOn5xx            *bool                      `json:"rollback_on_5xx,omitempty"`
-	DisableStartupCPUBoost   *bool                      `json:"disable_startup_cpu_boost,omitempty"`
-	MCPTaskMigrationOverride bool                       `json:"mcp_task_migration_override,omitempty"`
-	Healthcheck              *api.DeploymentHealthcheck `json:"healthcheck,omitempty"`
-	NoTriggers               bool                       `json:"no_triggers,omitempty"`
+	Repo                     string                        `json:"repo,omitempty"`
+	Ref                      string                        `json:"ref,omitempty"`
+	Environment              string                        `json:"environment,omitempty"`
+	Reason                   string                        `json:"reason,omitempty"`
+	Tag                      string                        `json:"tag,omitempty"`
+	DeployedBy               string                        `json:"deployed_by,omitempty"`
+	PRNumber                 int                           `json:"pr_number,omitempty"`
+	TrafficPercent           *int                          `json:"traffic_percent,omitempty"`
+	Canary                   *api.CanaryPresetSpec         `json:"canary,omitempty"`
+	RollbackOn5xx            *bool                         `json:"rollback_on_5xx,omitempty"`
+	DisableStartupCPUBoost   *bool                         `json:"disable_startup_cpu_boost,omitempty"`
+	MCPTaskMigrationOverride bool                          `json:"mcp_task_migration_override,omitempty"`
+	Healthcheck              *api.DeploymentHealthcheck    `json:"healthcheck,omitempty"`
+	ReadinessProbe           *api.DeploymentReadinessProbe `json:"readiness_probe,omitempty"`
+	NoTriggers               bool                          `json:"no_triggers,omitempty"`
 	// OverrideFreeze is api.CreateDeploymentRequest.OverrideFreeze.
 	OverrideFreeze string `json:"override_freeze,omitempty"`
 	// ReleaseAt and ReleaseNotify are api.CreateDeploymentRequest's.
@@ -160,6 +160,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 	}
 	rolloutReq := &api.CreateDeploymentRequest{Environment: sidecar.Environment, TrafficPercent: sidecar.TrafficPercent, Canary: sidecar.Canary, RollbackOn5xx: sidecar.RollbackOn5xx, DisableStartupCPUBoost: sidecar.DisableStartupCPUBoost, MCPTaskMigrationOverride: sidecar.MCPTaskMigrationOverride, OverrideFreeze: sidecar.OverrideFreeze, ReleaseAt: sidecar.ReleaseAt, ReleaseNotify: sidecar.ReleaseNotify}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(sidecar.Healthcheck)
+	rolloutReq.Overrides = sourceReadinessOverrides(rolloutReq.Overrides, sidecar.ReadinessProbe)
 	_, healthProblem := validateOverrides(rolloutReq, limits, acct.Plan)
 	if healthProblem != nil {
 		api.WriteProblem(w, healthProblem)
@@ -226,15 +227,18 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if app.RootDir != "" {
-		present, rootErr := archiveHasSourceRoot(spoolPath, app.RootDir)
+		resolved, present, rootErr := resolveArchiveSourceRoot(spoolPath, app.RootDir, false)
 		if rootErr != nil {
 			api.WriteProblem(w, api.ErrSourceInvalid(rootErr.Error()))
 			return
 		}
 		if !present {
-			api.WriteProblem(w, api.ErrSourceInvalid(fmt.Sprintf("source_root %q is not present in the source archive", app.RootDir)))
+			api.WriteProblem(w, sourceRootMissingProblem(app.RootDir, false))
 			return
 		}
+		// The build reads the root from the app; a cropped archive builds
+		// from its own root.
+		app.RootDir = resolved
 	}
 	if prob := scanForStatefulShapeAtRoot(spoolPath, false, app.RootDir); prob != nil {
 		api.WriteProblem(w, prob)
@@ -332,6 +336,7 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 		Workflows:                append(json.RawMessage(nil), rollout.Workflows...),
 		Sidecars:                 append(json.RawMessage(nil), rollout.Sidecars...),
 		OverrideHealthcheck:      append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideReadinessProbe:   append(json.RawMessage(nil), rollout.OverrideReadinessProbe...),
 		OverrideMainDependsOn:    append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		HostingObserver:          s.ops,
 		HostingFlow:              "first_deploy",

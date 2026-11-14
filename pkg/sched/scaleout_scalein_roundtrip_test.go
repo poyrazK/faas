@@ -77,7 +77,7 @@ func customMetricApp(id string) state.App {
 type staticCustomMetrics struct{ value float64 }
 
 func (s staticCustomMetrics) ListCustomMetrics(_ context.Context, _ string) ([]state.CustomMetric, error) {
-	return []state.CustomMetric{{Name: "orders_pending", Value: s.value, ObservedAt: time.Now()}}, nil
+	return []state.CustomMetric{{Name: "orders_pending", Value: s.value, ObservedAt: time.Now().Add(-time.Second)}}, nil
 }
 
 // TestScaleOutThenReapIdle_ParksWhatTheSignalJustAsked is the oscillation

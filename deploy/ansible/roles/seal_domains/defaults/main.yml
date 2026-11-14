@@ -93,6 +93,44 @@ faas_seal_domain_runtime_signatures_required: false
 # stays on the node: the join check and other units still load it.
 faas_seal_domain_runtime_contracted: false
 
+# ADR-20261110210000 slice 3e, per compute node, after
+# faas_vmmd_secretd_open has run on it: true takes the runtime identity off
+# the node. The role removes runtime.age (and its .previous twin), stages
+# the public runtime.age.pub instead, skips the domain probe (the node can
+# no longer open it), and tells vmmd it is retired: vmmd then refuses to
+# start while a runtime identity is left on disk, and seals crash-capture
+# keys to the recipient so only secretd opens them. Needs
+# faas_seal_domain_runtime_contracted (the fleet identity also opens runtime
+# secrets), faas_vmmd_secretd_open and faas_seal_domain_runtime_recipient_src.
+# vmmd keeps the identity it loaded until it restarts: drain and restart it
+# (docs/runbooks/secretd.md).
+faas_seal_domain_runtime_retired_on_compute: false
+
+# ADR-20261110210000 (retire compute identities), per compute node: true
+# takes the edge identity off the node. The role removes edge.age (and its
+# .previous twin), skips the domain probe, and tells gatewayd-internal it is
+# retired: it then refuses to start unless basic auth checks verifiers alone
+# (faas_gateway_basic_auth: verifier-only), log drain headers open through
+# secretd (faas_gateway_secretd_log_drains) and sealed edge-rule headers are
+# injected by vmmd (faas_gateway_edge_header_secrets: inject, after
+# faas_vmmd_edge_header_secrets on every node). Needs
+# faas_seal_domain_edge_contracted (the fleet identity also opens edge
+# values) and SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true in CD, so secretd holds
+# the identity instead (docs/runbooks/secretd.md).
+faas_seal_domain_edge_retired_on_compute: false
+
+# ADR-20261110210000 (retire compute identities), per compute node: true
+# takes the delivery identity off the node. The role removes delivery.age
+# (and its .previous twin), skips the domain probe, and tells schedd it is
+# retired: it then refuses to start unless trigger credentials open through
+# secretd (faas_schedd_secretd_delivery, which leaves webhooks, execution
+# dispatch and the commit relay to the control plane). Needs schedd's
+# contract step (faas_seal_domain_control_contracted and
+# faas_seal_domain_delivery_contracted), since the fleet identity also opens
+# delivery values. The control plane keeps the identity for its schedd and
+# secretd.
+faas_seal_domain_delivery_retired_on_compute: false
+
 # Operator-local files from `gregalectl seal-domain init --domain source`.
 # Control-plane hosts stage both: githubd reads the identity, apid seals to
 # the recipient.

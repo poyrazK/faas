@@ -4627,6 +4627,9 @@ func (s *PgStore) CompareAndSetAppStatus(ctx context.Context, id string, from, t
 	if from != to && (from == AppDeleted || to == AppDeleted) {
 		return s.compareAndSetAppTrafficStatus(ctx, id, from, to)
 	}
+	if from == AppEvictedCold && to == AppActive {
+		return s.wakeAppStatus(ctx, id)
+	}
 	tag, err := s.pool.Exec(ctx,
 		`update apps
 		    set status = $3,
@@ -4639,6 +4642,36 @@ func (s *PgStore) CompareAndSetAppStatus(ctx context.Context, id string, from, t
 		return false, err
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// wakeAppStatus is the parked -> active claim. In the same statement it
+// clears the app's recoverable deployment parks (liveness_exhausted,
+// lifecycle_park, admin_park): parked_reason was stamped once and never
+// cleared, so a release that recovered from a liveness park read "parked:
+// liveness failed" after any later park, and the build and deployment
+// dependency gates kept treating it as parked (2026-11-13). A security park
+// stays until its own release flow.
+func (s *PgStore) wakeAppStatus(ctx context.Context, id string) (bool, error) {
+	var woke int
+	err := s.pool.QueryRow(ctx,
+		`with woke as (
+		     update apps
+		        set status = 'active', park_transition_id = null
+		      where id = $1 and status = 'evicted_cold'
+		  returning id
+		 ), cleared as (
+		     update deployments
+		        set parked_reason = null, parked_at = null
+		      where app_id in (select id from woke)
+		        and parked_reason in ('liveness_exhausted', 'lifecycle_park', 'admin_park')
+		 )
+		 select count(*) from woke`,
+		id,
+	).Scan(&woke)
+	if err != nil {
+		return false, err
+	}
+	return woke == 1, nil
 }
 
 // nilOrBytes returns p.PublicAuth.Sealed when SetPublicAuth is
@@ -7806,7 +7839,33 @@ func (s *PgStore) CreateDeploymentWithActivity(ctx context.Context, d Deployment
 	return s.createDeployment(ctx, d, &activity, nil)
 }
 
+// createDeployment reruns the whole create when its traffic policy analysis
+// ran out of time, as app delete does: the analysis runs before COMMIT, so a
+// refused attempt saved nothing. Concurrent deploys of a project's services
+// tripped the 2 s analysis budget and a raw API caller got 422
+// traffic_policy_too_complex with Retry-After 2 (2026-11-12 agent feedback);
+// only the Go client resent it. Each attempt gets its own copy of activity,
+// which the create stamps with the new deployment.
 func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
+	var created Deployment
+	var outboxID int64
+	err := retryTrafficAnalysisTimeout(ctx, func() error {
+		var attemptActivity *OrgActivity
+		if activity != nil {
+			copied := *activity
+			attemptActivity = &copied
+		}
+		var err error
+		created, outboxID, err = s.createDeploymentOnce(ctx, d, attemptActivity, promotionInput, cloneInputs...)
+		if err == nil && activity != nil {
+			*activity = *attemptActivity
+		}
+		return err
+	})
+	return created, outboxID, err
+}
+
+func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activity *OrgActivity, promotionInput *ProjectEnvironmentPromotionWorkloadSpecInput, cloneInputs ...*projectEnvironmentCloneDeploymentInput) (Deployment, int64, error) {
 	if d.submissionAttemptID != "" && !api.ValidDeploymentAttemptID(d.submissionAttemptID) {
 		return Deployment{}, 0, ErrInvalidArgument
 	}

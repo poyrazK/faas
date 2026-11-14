@@ -32,45 +32,41 @@ a preview capability only to the accounts it is released to; elsewhere its
 calls answer `404 no such API route`.
 
 ## Usage
-First, create a client:
+Read the account through the default client. Supply your existing credential
+through `FAAS_TOKEN`, never a literal in source:
 
+<!-- sdk-install-quickstart:start -->
 ```python
-from faas_sdk import Client
+import os
 
-client = Client(base_url="https://api.example.com")
+from faas_sdk import FaaSClient
+from faas_sdk.api.account import get_account
+from faas_sdk.models.account_response import AccountResponse
+
+client = FaaSClient(
+    base_url=os.environ.get("FAAS_API", "https://api.gregale.dev"),
+    token=os.environ["FAAS_TOKEN"],
+)
+try:
+    account = get_account.sync(client=client.inner)
+    if not isinstance(account, AccountResponse):
+        raise RuntimeError("The API did not return an account")
+    print(account.plan)
+finally:
+    client.close()
 ```
+<!-- sdk-install-quickstart:end -->
 
-If the endpoints you're going to hit require authentication, use `AuthenticatedClient` instead:
-
-```python
-from faas_sdk import AuthenticatedClient
-
-client = AuthenticatedClient(base_url="https://api.example.com", token="SuperSecretToken")
-```
-
-Now call your endpoint and use your models:
+The generated service also offers `asyncio` and `asyncio_detailed`. Use the
+wrapper's async client and close it when finished:
 
 ```python
-from faas_sdk.models import MyDataModel
-from faas_sdk.api.my_tag import get_my_data_model
-from faas_sdk.types import Response
-
-with client as client:
-    my_data: MyDataModel = get_my_data_model.sync(client=client)
-    # or if you need more info (e.g. status_code)
-    response: Response[MyDataModel] = get_my_data_model.sync_detailed(client=client)
-```
-
-Or do the same thing with an async version:
-
-```python
-from faas_sdk.models import MyDataModel
-from faas_sdk.api.my_tag import get_my_data_model
-from faas_sdk.types import Response
-
-async with client as client:
-    my_data: MyDataModel = await get_my_data_model.asyncio(client=client)
-    response: Response[MyDataModel] = await get_my_data_model.asyncio_detailed(client=client)
+async def read_account():
+    client = FaaSClient(base_url="https://api.gregale.dev", token=os.environ["FAAS_TOKEN"])
+    try:
+        return await get_account.asyncio(client=client.inner)
+    finally:
+        await client.aclose()
 ```
 
 ## Managed realtime publish retries

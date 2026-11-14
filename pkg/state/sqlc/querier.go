@@ -129,6 +129,7 @@ type Querier interface {
 	// the same request again until the window closes.
 	AgentApprovalUsedWithin(ctx context.Context, db DBTX, arg AgentApprovalUsedWithinParams) (pgtype.UUID, error)
 	AlertRuleEpisodeOpen(ctx context.Context, db DBTX, ruleID pgtype.UUID) (bool, error)
+	AppBasicAuthVerifier(ctx context.Context, db DBTX, sealedSha256 []byte) (string, error)
 	AppBindingRefreshInventory(ctx context.Context, db DBTX, arg AppBindingRefreshInventoryParams) ([]AppBindingRefreshInventoryRow, error)
 	AppBindingRuntimeInventory(ctx context.Context, db DBTX, arg AppBindingRuntimeInventoryParams) ([]AppBindingRuntimeInventoryRow, error)
 	AppByID(ctx context.Context, db DBTX, id pgtype.UUID) (AppByIDRow, error)
@@ -4905,6 +4906,11 @@ type Querier interface {
 	MCPOAuthRetirementClientCiphertext(ctx context.Context, db DBTX, arg MCPOAuthRetirementClientCiphertextParams) ([]byte, error)
 	MCPOAuthRetirementFlowCurrent(ctx context.Context, db DBTX, arg MCPOAuthRetirementFlowCurrentParams) (bool, error)
 	ManagedPostgresAccountDeletionIncluded(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
+	// ADR-20261112160000 slice 2c: the accounts whose managed PostgreSQL
+	// databases, in any state, name a Neon project. neond counts a destructive
+	// call against each for the per-subject limit, and refuses quota writes and
+	// role deletes on a project no database names.
+	ManagedPostgresAccountsInProject(ctx context.Context, db DBTX, project string) ([]string, error)
 	ManagedPostgresActivationLiveDeployments(ctx context.Context, db DBTX, arg ManagedPostgresActivationLiveDeploymentsParams) ([]ManagedPostgresActivationLiveDeploymentsRow, error)
 	ManagedPostgresAdmissionFenced(ctx context.Context, db DBTX, appID string) (bool, error)
 	ManagedPostgresBindingDatabaseID(ctx context.Context, db DBTX, arg ManagedPostgresBindingDatabaseIDParams) (ManagedPostgresBindingDatabaseIDRow, error)
@@ -4923,6 +4929,7 @@ type Querier interface {
 	// under the same waivers as ManagedPostgresUsageForSubject. Neon's transfer
 	// allowance is per project, and every database is its own project.
 	ManagedPostgresEgressByDatabase(ctx context.Context, db DBTX, arg ManagedPostgresEgressByDatabaseParams) ([]ManagedPostgresEgressByDatabaseRow, error)
+	ManagedPostgresEgressHoldNotice(ctx context.Context, db DBTX, arg ManagedPostgresEgressHoldNoticeParams) (ManagedPostgresEgressHoldNoticeRow, error)
 	// ADR-20261028103115: the fleet database cap counts what reservation limits
 	// count; the spend breaker sums the month through the usage primary key, one
 	// index range per database, so the ledger's growth never forces a full scan.
@@ -6038,6 +6045,11 @@ type Querier interface {
 	PurgeDeletedRuleEpisodesBefore(ctx context.Context, db DBTX, arg PurgeDeletedRuleEpisodesBeforeParams) (int64, error)
 	PurgeSLOHoursBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PurgeSyntheticCheckRunsBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
+	// ADR-20261110210000 slice 3h: verify-only basic auth, keyed by the SHA-256
+	// of the sealed credential in apps.public_auth_basic.
+	// A key names one sealed blob, so its verifier never changes: a repeat
+	// write is a no-op.
+	PutAppBasicAuthVerifier(ctx context.Context, db DBTX, arg PutAppBasicAuthVerifierParams) error
 	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)
 	PutCustomMetricOfKind(ctx context.Context, db DBTX, arg PutCustomMetricOfKindParams) (bool, error)
 	PutCustomerOperationIdempotency(ctx context.Context, db DBTX, arg PutCustomerOperationIdempotencyParams) error
@@ -6963,6 +6975,9 @@ type Querier interface {
 	// is sealed, and the bound apps that may reach them.
 	RecordManagedPostgresDatabaseEndpoint(ctx context.Context, db DBTX, arg RecordManagedPostgresDatabaseEndpointParams) error
 	RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error)
+	// ADR-20261110160000 amendment 2026-11-13: the first sweep to hold a database
+	// for its own egress allowance in a month records it; later sweeps leave it.
+	RecordManagedPostgresEgressHoldNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresEgressHoldNoticeParams) (bool, error)
 	RecordManagedPostgresLifecycleResource(ctx context.Context, db DBTX, arg RecordManagedPostgresLifecycleResourceParams) (int64, error)
 	// Advances the cumulative charge only from the row as read (previous_millicents
 	// and previous_live; zero: no row yet), so a replica that lost the race records

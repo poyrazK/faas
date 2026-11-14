@@ -13,5 +13,9 @@
 # is no-op when the rendered file is byte-identical.
 Environment=FAAS_APID_ROLE={{ faas_box_role }}
 Environment=FAAS_SCHEDD_ROLE={{ faas_box_role }}
+{% if (faas_app_owner_authority | default('any')) != 'any' %}
+# ADR-20261110210000 §4: only schedd reads it; set the same value on compute.
+Environment=FAAS_APP_OWNER_AUTHORITY={{ faas_app_owner_authority }}
+{% endif %}
 Environment=FAAS_METERD_ROLE={{ faas_box_role }}
 Environment=FAAS_OUTBOUNDD_ROLE={{ faas_box_role }}

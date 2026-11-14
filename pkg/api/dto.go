@@ -2892,12 +2892,13 @@ func (h *DeploymentHealthcheck) Clone() *DeploymentHealthcheck {
 // DeploymentReadinessProbe is a reversible, steady-state traffic gate for
 // the primary app. It is distinct from Healthcheck (startup admission) and
 // LivenessProbe (which restarts a wedged VM).
+// The yaml tags let gregale.yaml hosting.readiness_probe use the same keys.
 type DeploymentReadinessProbe struct {
-	Path             string                     `json:"path,omitempty"`
-	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
-	PeriodS          int                        `json:"period_s,omitempty"`
-	TimeoutS         int                        `json:"timeout_s,omitempty"`
-	FailureThreshold int                        `json:"failure_threshold,omitempty"`
+	Path             string                     `json:"path,omitempty" yaml:"path,omitempty"`
+	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty" yaml:"grpc,omitempty"`
+	PeriodS          int                        `json:"period_s,omitempty" yaml:"period_s,omitempty"`
+	TimeoutS         int                        `json:"timeout_s,omitempty" yaml:"timeout_s,omitempty"`
+	FailureThreshold int                        `json:"failure_threshold,omitempty" yaml:"failure_threshold,omitempty"`
 }
 
 // DeploymentLivenessProbe is the liveness-probe shape on the

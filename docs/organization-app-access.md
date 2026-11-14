@@ -234,8 +234,15 @@ clients include the organization routes. Personal clients retain their URLs.
 `Client.WithProjectOrganization("acme")` sends every project call of an existing
 client to the company's routes. In the CLI, put `--org` before the command:
 `gregale --org acme deploy --project`, `gregale --org acme projects list`. The
-reviewed-plan (`apply-plan`), safe-release and source-ref scan entry points have
-no company form; with `--org` the CLI refuses them before sending a request.
+reviewed-plan (`apply-plan`), safe-release (`safe-deploy`) and connected-repository
+(`scan/source-ref`) entry points have company forms under
+`/v1/orgs/{organization}/projects/` and need the deploy role
+([ADR-20261113090000](adr/20261113090000-company-project-safe-deploys.md)).
+A company scan or deploy that names a repository resolves it through the
+organization's own GitHub installation only; an organization that does not yet
+own its resources answers 409 until billing adoption, and a member's personal
+installation answers 404. A plan reviewed for a personal project, or for
+another organization, is refused when applied as a company deploy.
 See [ADR-202610171905](adr/202610171905-organization-project-ownership.md) for migration and
 acceptance requirements.
 

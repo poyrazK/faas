@@ -131,8 +131,18 @@ func capturedClonePostgresBindingWorkerContract(t *testing.T, srv *server, store
 	request.CredentialRef, _ = managedPostgresCredentialRef(binding)
 	request.Secret = state.AppSecret{AccountID: reserved.AccountID, AppID: reserved.AppID, Scope: reserved.Scope, Key: reserved.EnvironmentKey, Ciphertext: []byte("fixture-sealed"), Kid: "fixture-key", ValueHash: "0123456789abcdef",
 		ManagedPostgresBindingID: reserved.ID, ManagedCredentialRef: request.CredentialRef, ManagedCredentialGeneration: 1}
+	// The managed value does not count toward the customer-secret cap; only
+	// an app already over it is refused (ADR-20261110120000, #6907).
+	for _, key := range []string{"CUSTOMER_ONE", "CUSTOMER_TWO"} {
+		if _, err := pool.Exec(ctx, "insert into app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash) values($1,$2,$3,$4,'\\x00'::bytea,'fixture-key','0123456789abcdef')", reserved.AccountID, reserved.AppID, reserved.Scope, key); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if _, err := store.PrepareProjectEnvironmentClonePostgresBinding(ctx, lease, request); !errors.Is(err, state.ErrQuotaExceeded) {
 		t.Fatalf("preparation bypassed secret quota: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "delete from app_secrets where app_id=$1 and key in ('CUSTOMER_ONE','CUSTOMER_TWO')", reserved.AppID); err != nil {
+		t.Fatal(err)
 	}
 	if target, p, err := store.ProjectEnvironmentClonePostgresBindingForLease(ctx, lease, first.ID); err != nil || p != nil || target.State != "provisioning" {
 		t.Fatalf("quota failure partially prepared binding: %+v, %v", target, err)

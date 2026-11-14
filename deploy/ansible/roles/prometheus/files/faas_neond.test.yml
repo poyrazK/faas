@@ -1,0 +1,108 @@
+# ADR-20261112160000 slice 3: neond down, rate limits, refusals and project
+# key failures alert.
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 30s
+tests:
+  - name: neond down pages after five minutes
+    interval: 1m
+    input_series:
+      - series: up{job="neond",instance="127.0.0.1:9114"}
+        values: 1 1 0 0 0 0 0 0 0 0
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasNeondDown
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasNeondDown
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: neond
+              family: managed_postgres
+              public_status: internal
+              job: neond
+              instance: 127.0.0.1:9114
+            exp_annotations:
+              summary: neond is down
+              description: Prometheus cannot scrape neond for 5m. With the broker on, every managed PostgreSQL create, delete, resize and cap write fails as unavailable and the cap sweep skips its pass; Neon keeps running the databases. Check systemctl status faas-neond and its journal.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNeond.md
+  - name: rate-limited destructive calls page, refusals warn
+    interval: 1m
+    input_series:
+      - series: neond_requests_total{job="neond",route="delete project",tier="admin",decision="rate_limited"}
+        values: 0 0 0 2 2 2 2 2 2 2
+      - series: neond_requests_total{job="neond",route="update project",tier="project",decision="refused"}
+        values: 0 0 0 0 1 1 1 1 1 1
+      - series: neond_requests_total{job="neond",route="read project",tier="project",decision="forwarded"}
+        values: 0+10x9
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasNeondRateLimited
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: FaasNeondRateLimited
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: neond
+              family: managed_postgres
+              public_status: internal
+            exp_annotations:
+              summary: neond refused destructive Neon calls over the rate limit
+              description: apid asked neond for more project, branch, endpoint, snapshot or role deletes than the hourly limit allows, fleet-wide or for one account. neond refused them. A loop or a compromised apid deletes in bulk; find the account in neond's 'destructive call rate limit reached' log lines before raising a limit.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNeond.md
+      - eval_time: 3m
+        alertname: FaasNeondRefusing
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: FaasNeondRefusing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: neond
+              family: managed_postgres
+              public_status: internal
+            exp_annotations:
+              summary: neond refused Neon calls apid made
+              description: apid asked neond for a call off the allow-list, a delete of what a live database runs on, or a quota write or role delete on a project no database names. Each one is a bug or an attempt; read neond's 'call refused' and 'call not on the allow-list' log lines.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNeond.md
+  - name: project key failures and a stalled backfill warn
+    interval: 5m
+    input_series:
+      - series: neond_project_keys_total{job="neond",op="backfill",outcome="error"}
+        values: 0+1x40
+      - series: neond_projects_without_key{job="neond"}
+        values: 3+0x40
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasNeondProjectKeysFailing
+        exp_alerts: []
+      - eval_time: 45m
+        alertname: FaasNeondProjectKeysFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: neond
+              family: managed_postgres
+              public_status: internal
+            exp_annotations:
+              summary: neond cannot mint, revoke or rotate Neon project keys
+              description: Project key operations have failed for 30m. Projects without a usable key fall back to the admin key and a revoked project keeps a key until the sweep retries. Check the admin key is an organization Admin's, the neon seal domain is loaded and Neon is reachable.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNeond.md
+      - eval_time: 90m
+        alertname: FaasNeondBackfillStalled
+        exp_alerts: []
+      - eval_time: 150m
+        alertname: FaasNeondBackfillStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: neond
+              family: managed_postgres
+              public_status: internal
+              job: neond
+            exp_annotations:
+              summary: Neon projects have been without a project key for over two hours
+              description: The key sweep mints up to 50 keys every 10 minutes, so the backfill should finish within hours. Projects still without a key are called with the admin key. Check FaasNeondProjectKeysFailing and neond's 'key sweep' log lines.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNeond.md

@@ -196,6 +196,12 @@ func (s *Set) Recover(ctx context.Context, host string) bool {
 			return true
 		}
 		s.mu.Lock()
+		// A load that finished since the check above stored its hosts
+		// before clearing s.loading; check again so it is not read twice.
+		if s.Has(host) {
+			s.mu.Unlock()
+			return true
+		}
 		load := s.loading
 		if load == nil {
 			load = &recentLoad{done: make(chan struct{})}

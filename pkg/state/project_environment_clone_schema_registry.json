@@ -10,6 +10,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_abuse_strikes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "id",
+      "reason",
+      "struck_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "account_billing_connections",
     "columns": [
       "account_id",
@@ -1254,6 +1265,15 @@
     }
   },
   {
+    "table": "app_basic_auth_verifiers",
+    "columns": [
+      "created_at",
+      "sealed_sha256",
+      "verifier"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_binding_promotion_revisions",
     "columns": [
       "app_id",
@@ -1951,6 +1971,39 @@
     "clone": {
       "owner": "app"
     }
+  },
+  {
+    "table": "app_owner_authority",
+    "columns": [
+      "mode",
+      "singleton",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_owner_release_requests",
+    "columns": [
+      "app_id",
+      "from_node_id",
+      "reason",
+      "requested_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_owner_writes",
+    "columns": [
+      "app_id",
+      "authorized",
+      "from_node_id",
+      "id",
+      "login_role",
+      "mode",
+      "to_node_id",
+      "written_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "app_park_transitions",
@@ -3962,6 +4015,15 @@
     }
   },
   {
+    "table": "compute_node_db_logins",
+    "columns": [
+      "created_at",
+      "login",
+      "node_name"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "compute_node_heartbeat_hourly",
     "columns": [
       "bucket_at",
@@ -4350,7 +4412,9 @@
       "resolved_at",
       "dismissed_at",
       "dismissed_by",
-      "dismiss_reason"
+      "dismiss_reason",
+      "outcome",
+      "ticket_id"
     ],
     "kind": "operational"
   },
@@ -4988,6 +5052,7 @@
       "change_id",
       "created_at",
       "pipeline_id",
+      "read_gate",
       "wake_id"
     ],
     "kind": "operational"
@@ -5048,7 +5113,8 @@
       "verification",
       "verification_progress",
       "verified_at",
-      "verify_requested"
+      "verify_requested",
+      "wal_retention"
     ],
     "kind": "configuration",
     "capabilities": [],
@@ -10788,6 +10854,21 @@
       "owner": "account",
       "strategy": "shared"
     }
+  },
+  {
+    "table": "managed_postgres_egress_hold_notices",
+    "columns": [
+      "allowance_bytes",
+      "ceiling_bytes",
+      "database_id",
+      "mail_intent_id",
+      "overage_billed",
+      "period_start",
+      "reached_at",
+      "subject_id",
+      "used_bytes"
+    ],
+    "kind": "operational"
   },
   {
     "table": "managed_postgres_health",
@@ -19343,6 +19424,30 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "secret_grants",
+    "columns": [
+      "app_id",
+      "expires_at",
+      "granted_at",
+      "granted_by_node_id",
+      "node_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "secret_open_audit",
+    "columns": [
+      "app_id",
+      "entries",
+      "id",
+      "job_id",
+      "node_id",
+      "opened_at",
+      "via"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "service_caller_key_history",
     "columns": [
       "key_id",
@@ -21513,6 +21618,69 @@
       "sender_app_id",
       "on_complete_app_id",
       "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "tool_grants",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "key_id",
+      "payload",
+      "revoked_at",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "tool_invocations",
+    "columns": [
+      "account_id",
+      "deadline",
+      "id",
+      "payload",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "tool_oauth_authorizations",
+    "columns": [
+      "account_id",
+      "connection_id",
+      "expires_at",
+      "flow_ciphertext",
+      "phase",
+      "state_sha256"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "tool_oauth_connections",
+    "columns": [
+      "account_id",
+      "app_id",
+      "credentials_ciphertext",
+      "expires_at",
+      "generation",
+      "id",
+      "lease_id",
+      "lease_until",
+      "payload",
+      "revoked_at",
+      "state"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "tool_publications",
+    "columns": [
+      "account_id",
+      "id",
+      "payload",
+      "status"
     ],
     "kind": "operational"
   }
