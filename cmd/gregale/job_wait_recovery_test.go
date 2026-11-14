@@ -331,6 +331,7 @@ func TestJobWaitRecoverySignalProcess(t *testing.T) {
 	if os.Getenv("GREGALE_JOB_WAIT_HELPER") != "1" {
 		t.Skip("signal process helper")
 	}
+	main.SetupConnectionProfiles(t)
 	_ = os.Setenv("FAAS_API", os.Getenv("GREGALE_JOB_WAIT_API"))
 	_ = os.Setenv("FAAS_TOKEN", os.Getenv("GREGALE_JOB_WAIT_TOKEN"))
 	_ = os.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "1")

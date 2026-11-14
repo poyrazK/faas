@@ -11,8 +11,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+func validJobWaitAcceptance(accepted api.JobRunResponse) bool {
+	return jobRunIDPattern.MatchString(accepted.ID) && accepted.JobID != "" && accepted.AccountID != ""
+}
+
 func waitAcceptedJobRun(client *api.Client, name string, accepted api.JobRunResponse, timeout, interval time.Duration) int {
-	if !jobRunIDPattern.MatchString(accepted.ID) || accepted.JobID == "" || accepted.AccountID == "" {
+	if !validJobWaitAcceptance(accepted) {
 		if jsonOutput {
 			if code := jsonOut(writeJSONSingle(accepted)); code != 0 {
 				return code
