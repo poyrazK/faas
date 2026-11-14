@@ -40,6 +40,9 @@ func setupView(s datapipeline.Setup) dashboard.DataPipelineSetupItem {
 		if s.Request.DataAPIName != "" {
 			v.Progress = "Your mirror and read-only Data API are ready"
 			v.Remediation = "Use a user JWT from the selected Auth app. Only the saved read subjects can query these tables."
+			if s.Request.Serving != nil && s.Request.Serving.TenantAccess != nil {
+				v.Remediation = "Use a user JWT from the selected Auth app. Each approved user/tenant mapping controls which rows that user can read."
+			}
 		}
 	case "cancelled":
 		v.Progress = "Setup stopped"
@@ -100,11 +103,18 @@ func (h *Handler) manageDashboardSetup(r *http.Request, account string) (string,
 	ctx, id := r.Context(), r.FormValue("connection_id")
 	switch r.FormValue("action") {
 	case "setup":
-		subjects := strings.Split(r.FormValue("read_subjects"), ",")
+		serving, err := dashboardServing(r)
+		if err != nil {
+			return "", err
+		}
+		subjects := []string{}
+		if r.FormValue("read_subjects") != "" {
+			subjects = strings.Split(r.FormValue("read_subjects"), ",")
+		}
 		for i := range subjects {
 			subjects[i] = strings.TrimSpace(subjects[i])
 		}
-		_, err := h.Service.StartSetup(ctx, account, datapipeline.SetupRequest{Name: r.FormValue("name"), SourceConnectionID: id, DatabaseID: r.FormValue("database_id"), Region: r.FormValue("region"), Tables: r.Form["tables"], ReadSubjects: subjects, DataAPIName: r.FormValue("data_api_name"), AuthAppID: r.FormValue("auth_app_id")})
+		_, err = h.Service.StartSetup(ctx, account, datapipeline.SetupRequest{Serving: serving, Name: r.FormValue("name"), SourceConnectionID: id, DatabaseID: r.FormValue("database_id"), Region: r.FormValue("region"), Tables: r.Form["tables"], ReadSubjects: subjects, DataAPIName: r.FormValue("data_api_name"), AuthAppID: r.FormValue("auth_app_id")})
 		return id, err
 	case "setup_control":
 		if r.FormValue("control") == "retry" && !h.Service.Available(ctx, account) {

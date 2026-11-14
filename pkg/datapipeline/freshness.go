@@ -71,6 +71,10 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		}
 	case !p.ObservationFresh:
 		h.State, h.Code, h.Message, h.Recovery = "unknown", "monitoring_stale", "Monitoring is stale; data freshness is unknown.", "Check worker availability and refresh status. Native replication may still be running."
+	case p.Reason == "serving_contract_invalid":
+		h.Message, h.Recovery = "The saved access and column configuration could not be validated.", "Ask the operator to inspect the saved serving contract before retrying."
+	case p.Reason == "source_serving_contract_changed":
+		h.Message, h.Recovery, h.Action, h.RequiresConfirmation = "Selected source columns or the tenant column changed.", "Restore the reviewed column definitions and confirm a resync, or create a pipeline with a newly reviewed serving contract.", "resync", true
 	case p.State == "resync_required":
 		h.Code, h.Message, h.Recovery, h.Action, h.RequiresConfirmation = p.Reason, "Replication requires a new copy.", "Resolve the reported source problem, then confirm replacement of the imported tables. Reads can be interrupted.", "resync", true
 	case p.Reason == "table_addition_pending":

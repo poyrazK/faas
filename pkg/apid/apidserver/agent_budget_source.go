@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -49,6 +50,25 @@ func (s *server) chargeSourceManifest(r *http.Request, acct state.Account, app s
 		}
 		return func() {}, rec.problem()
 	}
+}
+
+// answerSourceManifestPreview answers a budget preview of a Git source
+// deploy (amendment 2026-11-14) once the repository's gregale.yaml is read
+// and checked, and before the rollout is prepared or anything is written:
+// the cost is the warm capacity its deployment settings add, as for the
+// deploy itself. A source with no such settings (or a reviewed source, whose
+// gregale.yaml is not applied) is previewed as free. It reports whether it
+// answered.
+func (s *server) answerSourceManifestPreview(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, m *gregalemanifest.Manifest) bool {
+	if !authmw.Previewing(r) {
+		return false
+	}
+	if req, ok := sourceManifestSettingsRequest(m); ok {
+		_, _ = s.chargeAppUpdate(w, r, acct, app, req, app.RAMMB)
+		return true
+	}
+	_, _ = s.noCharge(w, r, acct.Plan)
+	return true
 }
 
 // problemRecorder keeps the Problem a budget check wrote, so a handler that
