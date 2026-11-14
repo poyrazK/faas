@@ -20,6 +20,7 @@ import type { CreateKeyRequest } from '../models/CreateKeyRequest.js';
 import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js';
 import type { GraceWindowResponse } from '../models/GraceWindowResponse.js';
 import type { ListOrgAPIKeysResponse } from '../models/ListOrgAPIKeysResponse.js';
+import type { RotateKeyRequest } from '../models/RotateKeyRequest.js';
 import type { RotateKeyResponse } from '../models/RotateKeyResponse.js';
 import type { RotateOrgAPIKeyRequest } from '../models/RotateOrgAPIKeyRequest.js';
 import type { RotateOrgAPIKeyResponse } from '../models/RotateOrgAPIKeyResponse.js';
@@ -724,7 +725,9 @@ export class KeysService {
    * default). Status flips to 'grace' for the window, then to
    * 'revoked' at the deadline. Setting
    * `accounts.key_grace_window_days = 0` makes rotation atomic
-   * (old key revoked immediately).
+   * (old key revoked immediately). The optional body's
+   * `grace_window_days` overrides the window for this rotation
+   * only; send `0` to revoke a leaked key at once.
    *
    * Returns the new plaintext exactly once — the old plaintext
    * is not re-issued (we only store the SHA-256 hash). The
@@ -740,11 +743,13 @@ export class KeysService {
    */
   public static rotateKey({
     id,
+    requestBody,
   }: {
     /**
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    requestBody?: RotateKeyRequest,
   }): CancelablePromise<RotateKeyResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
@@ -752,6 +757,8 @@ export class KeysService {
       path: {
         'id': id,
       },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         401: `code: unauthorized`,
         404: `No such key, or the key is already revoked.`,

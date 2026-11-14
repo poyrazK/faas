@@ -1,7 +1,8 @@
-# ADR-20261113180000 · Organization ownership guards and a require-2FA policy
+# ADR-20261114170352 · Organization ownership guards and a require-2FA policy
 
 - **Status:** accepted
 - **Date:** 2026-11-13
+- **Identifier:** Renumbered from ADR-20261113180000 to resolve a collision with the customer-attention decision. The append-only organization-owner migration retains its historical citation.
 - **Amends:** ADR-202610171901 (organization roles), ADR-20261110100000 (session-only proof), ADR-20261111130000 (organization security notices)
 - **Context:** The 2026-11-10 account-flow audit, passes 9–14, found these organization gaps:
   - Ownership could be transferred to a suspended account or one pending deletion. The organization was then left with an owner who cannot act, and support had no tool to fix it.

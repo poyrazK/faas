@@ -64,7 +64,7 @@ func (r *StoreBackedResolver) OrgMemberByAccount(ctx context.Context, orgID, acc
 
 // OrgMFAPolicyResolver is the optional resolver method LoadOrg uses to refuse
 // members without two-factor authentication on an organization that requires
-// it with a clear 403 (ADR 20261113180000). The org-access snapshot enforces
+// it with a clear 403 (ADR 20261114170352). The org-access snapshot enforces
 // the same rule for every other organization path.
 type OrgMFAPolicyResolver interface {
 	OrgRequiresMFA(ctx context.Context, orgID string) (bool, error)
