@@ -170,8 +170,8 @@ type AIRequestLog struct {
 	// prompt call (ADR 20261114180740).
 	PromptID      string
 	PromptVersion int
-	Status     int
-	DurationMS int64
+	Status        int
+	DurationMS    int64
 	// TTFBMS is nil when no response byte arrived.
 	TTFBMS   *int64
 	Attempts int
