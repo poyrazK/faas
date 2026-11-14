@@ -29,8 +29,8 @@ the sweep), and a btree index or its predicate covers one table.
 
 ### 1. One schedule row per bucket, kept by triggers
 
-`object_inventory_schedule` holds, per bucket, a copy of the four values
-the due rules sort and split on:
+`object_inventory_schedule` holds, per bucket, a copy of the values the
+due rules sort and split on:
 
 | column | copy of | when no source row |
 |---|---|---|
@@ -38,6 +38,7 @@ the due rules sort and split on:
 | `observed_at` | `object_storage_bucket_usage.observed_at` | `-infinity` |
 | `quiet_after` | `observed_at − 30 s` for a `current`-scope observation | `-infinity` |
 | `mutated_at` | `object_bucket_activity.mutated_at` | `-infinity` |
+| `active_since` | `object_bucket_activity.active_since` (§4) | `-infinity` |
 
 A bucket is quiet exactly when `mutated_at < quiet_after`, the rule
 ADR-20261110151628 §2 already applies (never observed, all-versions
@@ -52,7 +53,8 @@ source, so it is never behind what a reader of the source tables sees:
   becomes `deleted`;
 - `object_storage_bucket_usage` insert, or update of `attempt_at`,
   `observed_at` or `inventory_scope`, copies those;
-- `object_bucket_activity` insert, or update of `mutated_at`, copies it.
+- `object_bucket_activity` insert, or update of `mutated_at` or
+  `active_since`, copies them.
 
 The activity trigger adds one row write to a stamp, which happens at most
 once per 30 s per bucket, and locks only the schedule row after the
@@ -105,10 +107,41 @@ Otherwise every bucket is due on the 5-minute retry
 unfinished listing. In both modes a leased, skipped, held or not-`ready`
 bucket is left out, and a never-listed bucket sorts first.
 
-`ObjectInventoryBacklog` (once a minute) still reads every bucket; it is
-a gauge, not on the sweep's path.
+### 4. The backlog gauges read the schedule too (amended 2026-11-12)
 
-### 4. Rollout
+`ObjectInventoryBacklog` runs once a minute and read every bucket (230 ms
+at 22,000 buckets). It now answers from the schedule, with the rules of
+ADR-20261110151628 §3 unchanged:
+
+- **Due count.** It counts the index ranges of §3 (`attempt_at` before 5
+  minutes ago: every bucket with quiet buckets off; active buckets, plus
+  quiet buckets due for verification, with them on), then corrects for
+  the few buckets the ranges can count wrongly: not `ready`, held by
+  versioning or a capacity reconciliation, leased, or with an open
+  listing. For each of those it subtracts whether a range counted it and
+  adds whether the due rule holds. Counting reads the schedule alone,
+  never the bucket, usage or activity rows: an index range, or the narrow
+  table itself when the planner expects most of it in the range (with
+  quiet buckets off most buckets are due).
+- **Oldest observation.** The oldest anchor is the first bucket, in index
+  order, that the rule does not exempt (held with an observation, or a
+  listing that advanced within the progress window): the oldest
+  never-observed bucket by creation, the first active bucket by
+  observation whose anchor is its observation, and, with quiet buckets
+  on, the first bucket by `active_since` whose anchor is when it turned
+  active. The schedule copies `active_since` for that, and a bucket whose
+  anchor is `active_since` has `active_since > observed_at` on a
+  current-scope observation, which is an index predicate.
+- **Oldest quiet observation.** The first quiet bucket by observation.
+
+New indexes: `object_inventory_schedule_active_observed` (active buckets
+by observation), `object_inventory_schedule_activated` (buckets anchored
+at `active_since`) and `object_storage_bucket_usage_leased` (usage rows
+with a claim token). Off mode needs no index over every bucket by
+observation: the oldest is the earlier of the first quiet and the first
+active bucket.
+
+### 5. Rollout
 
 One expand migration creates the table, indexes and triggers, then fills
 the table: every bucket that is not `deleted` gets a row with
@@ -125,7 +158,9 @@ computing the same rules directly.
 ## Consequences
 
 - A refill's cost depends on `limit` and on how many buckets are leased,
-  skipped or held, not on how many buckets exist.
+  skipped or held, not on how many buckets exist. The backlog gauges, once
+  a minute, count the due buckets from the schedule alone (with quiet
+  buckets off, every due bucket) and read a handful of rows otherwise.
 - Every activity stamp writes one more row, and every claim, listing
   publish and rebase one more row. Each such write moves the bucket's index
   entries, so a due range starts behind the dead entries of buckets claimed
