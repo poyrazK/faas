@@ -274,7 +274,7 @@ Each surface reaches the same function:
 | Surface | Check |
 |---|---|
 | Database rows | RLS policies call the helpers through the Data API |
-| Object download or upload | `POST /authz/v1/storage/sign` checks `authorize('storage:read'/'storage:write', 'org/<org>/<bucket>/<path>')` and returns a SigV4 URL valid for 60 seconds, signed with a bucket bound to the Auth app |
+| Object download or upload | `POST /authz/v1/storage/sign` checks `authorize('storage:read'/'storage:write', 'org/<org>/<bucket>/<path>')` and returns a SigV4 URL valid for 60 seconds, signed with a bucket bound to the Auth app; an upload URL also signs the declared `content-length` (at most `AuthStorageUploadDefaultBytes`, or `AUTH_STORAGE_MAX_UPLOAD_BYTES` up to a single PUT's limit) and optional `content-type`, so it carries nothing larger |
 | Realtime channel | `/realtime/authorize-channel` checks `authorize_subject(subject, 'realtime:read', ...)` for channels named `org:<org>:<kind>:<name>` |
 | Workflow start | `POST /authz/v1/workflows/{name}/start` checks `authorize('workflow:start', 'org/<org>/workflow/<name>')` and publishes an app-scoped `auth.workflow.start` event |
 | Gateway route | An optional edge JWT rule gates routes coarsely, never as the only check on data |
@@ -438,8 +438,13 @@ that `session_active()` requires. The front then caps the session with
 and refreshes once so the access token hook adds `act` before the session is
 handed over. Account changes are refused at the front from tokens with
 `act`, by path, before GoTrue sees them; dropping `act` would break the
-token's signature, so reading the unverified payload there is safe. Admin
-keys now carry their IDs so the record names the key that acted.
+token's signature, so reading the unverified payload there is safe. Nor may
+such a token leave access that outlives the capped session in the person's
+organizations: issuing service-account secrets or invitations, changing
+roles, or changing the organization's second-factor rule, identity
+providers or domains is refused the same way; the operator does those with
+the admin key. Admin keys now carry their IDs so the record names the key
+that acted.
 
 ### Lifecycle events and activity
 

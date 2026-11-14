@@ -182,6 +182,10 @@ treat it like the user's own) and:
   passkeys or linked sign-ins, approve third-party apps, end their other
   sessions or delete the account (`403 impersonation_restricted`); signing
   itself out works;
+- cannot leave access behind in the user's organizations: no
+  service-account secrets or invitations, role changes, or changes to the
+  organization's second-factor rule, identity providers or domains (use the
+  admin key for those, so they are recorded as yours);
 - appears to the user on their account page as opened by support.
 
 Only users with a confirmed email address can be opened: GoTrue has no
@@ -1162,7 +1166,12 @@ gregale add bucket uploads --app shop-auth --permission read_write
 
 `POST /authz/v1/storage/sign` with `{"bucket": "uploads", "key": "org/<org id>/reports/q3.pdf", "operation": "read"}`
 returns a URL valid for 60 seconds (`GET`, or `PUT` for `write`). Keys must start
-with `org/<org id>/`; the bucket name is the policy resource.
+with `org/<org id>/`; the bucket name is the policy resource. A `write` names
+the object's `size` in bytes, and may name its `content_type`; the URL is
+signed for exactly those, the response lists them under `headers`, and the
+upload must send them. Uploads are at most 100 MiB unless the app sets
+`AUTH_STORAGE_MAX_UPLOAD_BYTES` (up to 5 GiB); a larger `size` answers
+`413 object_too_large`.
 
 **Realtime.** Create the endpoint through the Auth app; clients connect with
 their Auth access token:

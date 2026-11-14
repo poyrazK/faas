@@ -16837,6 +16837,11 @@ const (
 	AuthPasswordFailuresPerAccount = 50
 	AuthSecondStepFailuresPerUser  = 10
 	AuthAttemptWindowSeconds       = 900
+	// AuthStorageUploadDefaultBytes bounds an object uploaded through an Auth
+	// app's signed URL unless the app sets AUTH_STORAGE_MAX_UPLOAD_BYTES,
+	// which may rise to AuthStorageUploadMaxBytes (a single PUT).
+	AuthStorageUploadDefaultBytes       = 100 << 20
+	AuthStorageUploadMaxBytes     int64 = MaxObjectSinglePutBytes
 	// AuthProviderClientIDMaxBytes and AuthProviderSecretMaxBytes bound OAuth
 	// provider credentials; Apple's client secret is a signed JWT.
 	AuthProviderClientIDMaxBytes = 512
