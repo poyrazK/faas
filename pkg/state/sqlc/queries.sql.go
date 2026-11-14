@@ -8622,6 +8622,15 @@ func (q *Queries) ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
+const clearPlanFitNotice = `-- name: ClearPlanFitNotice :exec
+DELETE FROM plan_fit_notices WHERE subject_id = $1
+`
+
+func (q *Queries) ClearPlanFitNotice(ctx context.Context, db DBTX, subjectID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearPlanFitNotice, subjectID)
+	return err
+}
+
 const clearProjectPromotionDeployment = `-- name: ClearProjectPromotionDeployment :execrows
 UPDATE deployments d
 SET status = 'failed', error = $1::text, error_code = 'promotion_rolled_back', traffic_percent = 0,
@@ -29665,6 +29674,24 @@ func (q *Queries) GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, a
 		&i.CreateRequestFingerprint,
 		&i.DeploymentID,
 	)
+	return i, err
+}
+
+const getPlanFitNotice = `-- name: GetPlanFitNotice :one
+SELECT plan, apps_digest FROM plan_fit_notices WHERE subject_id = $1
+`
+
+type GetPlanFitNoticeRow struct {
+	Plan       string
+	AppsDigest string
+}
+
+// Plan-fit notices (billing review H17-4): the plan and over-plan app set a
+// billing subject was last emailed about.
+func (q *Queries) GetPlanFitNotice(ctx context.Context, db DBTX, subjectID pgtype.UUID) (GetPlanFitNoticeRow, error) {
+	row := db.QueryRow(ctx, getPlanFitNotice, subjectID)
+	var i GetPlanFitNoticeRow
+	err := row.Scan(&i.Plan, &i.AppsDigest)
 	return i, err
 }
 
@@ -81256,6 +81283,24 @@ func (q *Queries) PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg Put
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const putPlanFitNotice = `-- name: PutPlanFitNotice :exec
+INSERT INTO plan_fit_notices (subject_id, plan, apps_digest, noticed_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (subject_id) DO UPDATE
+   SET plan = EXCLUDED.plan, apps_digest = EXCLUDED.apps_digest, noticed_at = now()
+`
+
+type PutPlanFitNoticeParams struct {
+	SubjectID  pgtype.UUID
+	Plan       string
+	AppsDigest string
+}
+
+func (q *Queries) PutPlanFitNotice(ctx context.Context, db DBTX, arg PutPlanFitNoticeParams) error {
+	_, err := db.Exec(ctx, putPlanFitNotice, arg.SubjectID, arg.Plan, arg.AppsDigest)
+	return err
 }
 
 const putRuntimeSecretSignature = `-- name: PutRuntimeSecretSignature :exec
