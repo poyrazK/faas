@@ -42,11 +42,11 @@ func TestBringUpScanCheck_AcceptsTheDigestATagResolvedTo(t *testing.T) {
 	m := &Manager{}
 	m.WithStorage(be)
 	m.WithBaseGenerations(map[string]string{baseKey: "ghcr.io/p/base-minimal:latest"})
-	if err := m.bringUpScanCheck(context.Background(), baseKey); err != nil {
+	if _, err := m.bringUpScanCheck(context.Background(), baseKey); err != nil {
 		t.Fatalf("bringUpScanCheck = %v, want the resolved digest accepted for a tag configuration", err)
 	}
 	m.WithBaseGenerations(map[string]string{baseKey: "ghcr.io/p/other:latest"})
-	if err := m.bringUpScanCheck(context.Background(), baseKey); err == nil {
+	if _, err := m.bringUpScanCheck(context.Background(), baseKey); err == nil {
 		t.Fatal("a scan of another repository was accepted")
 	}
 }
