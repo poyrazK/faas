@@ -3,6 +3,8 @@ package dashboard
 import "github.com/onebox-faas/faas/pkg/api"
 
 type DataPipelinesData struct {
+	NeonSteps                 []string
+	MembershipLimit           int
 	Alerts                    []DataPipelineAlerts
 	Readers                   []DataPipelineReaders
 	DataAPIEnabled            bool
@@ -102,8 +104,11 @@ type DataPipelineVerificationItem struct {
 
 // Reader previews contain JWT subjects and table names, never credentials.
 type DataPipelineReaders struct {
-	PipelineID, Name, ID, State, CurrentInput string
-	Revision                                  int64
-	Current, Added, Removed, Tables           []string
-	CanRequest, CanApprove, CanDiscard        bool
+	Tenant                                            bool
+	TenantColumn                                      string
+	Memberships, AddedMemberships, RemovedMemberships []api.DataPipelineTenantMembership
+	PipelineID, Name, ID, State, CurrentInput         string
+	Revision                                          int64
+	Current, Added, Removed, Tables                   []string
+	CanRequest, CanApprove, CanDiscard                bool
 }

@@ -58,7 +58,7 @@ func (e *Engine) reconcileTables(ctx context.Context, p Pipeline, raw string, so
 	}
 	actual := make([]relation, 0, len(p.SchemaChange.RequestedTables))
 	for _, name := range p.SchemaChange.RequestedTables {
-		r, table, err := inspectSourceTable(ctx, source, name)
+		r, table, err := inspectPipelineTable(ctx, p, source, name)
 		if err != nil {
 			return err
 		}
