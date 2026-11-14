@@ -36,7 +36,7 @@ func (c *Client) ExtendProjectEnvironmentBranch(ctx context.Context, projectSlug
 }
 
 // ResetProjectEnvironmentBranch makes the branch again from its parent, with
-// its settings. Its workloads get new URLs.
+// its settings. Its workloads keep their URLs.
 func (c *Client) ResetProjectEnvironmentBranch(ctx context.Context, projectSlug, branchSlug string) (ProjectEnvironmentResponse, error) {
 	var out ProjectEnvironmentResponse
 	return out, c.do(ctx, http.MethodPost, projectEnvironmentBranchPath(projectSlug, branchSlug)+"/reset", struct{}{}, &out)

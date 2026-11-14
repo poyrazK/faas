@@ -266,8 +266,8 @@ func (s *server) moveEnvironmentBranchCopyExpiry(ctx context.Context, acct state
 // POST /v1/projects/{slug}/environments/{environment}/branch/reset makes the
 // branch again from its parent, with its settings and its lifetime: the
 // branch is deleted (its deployments retired, its copies left to the
-// reconciler) and created anew, so its workloads get new URLs. Work done in
-// the branch is discarded.
+// reconciler) and created anew with the same slot, so its workloads keep
+// their URLs. Work done in the branch is discarded.
 func (s *server) resetProjectEnvironmentBranch(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, project, branch, ok := s.environmentBranchTarget(w, r, acct)
 	if !ok {
