@@ -16826,6 +16826,17 @@ const (
 	// bytes at most. The template mirrors the floor as passwordMinLength.
 	AuthPasswordMinLengthFloor   = 8
 	AuthPasswordMinLengthCeiling = 72
+	// AuthPasswordFailuresPerAddress, AuthPasswordFailuresPerAccount and
+	// AuthSecondStepFailuresPerUser are an Auth app's failed-attempt budgets
+	// in each AuthAttemptWindowSeconds, kept in its database so every
+	// instance and wake shares them: wrong passwords for one account from one
+	// client address, for one account from any address, and wrong
+	// second-step codes for one user. A spent budget answers 429 until the
+	// window ends.
+	AuthPasswordFailuresPerAddress = 10
+	AuthPasswordFailuresPerAccount = 50
+	AuthSecondStepFailuresPerUser  = 10
+	AuthAttemptWindowSeconds       = 900
 	// AuthProviderClientIDMaxBytes and AuthProviderSecretMaxBytes bound OAuth
 	// provider credentials; Apple's client secret is a signed JWT.
 	AuthProviderClientIDMaxBytes = 512

@@ -284,3 +284,14 @@ test('a minimum password length below the floor is raised, not refused', () => {
   }
   assert.throws(() => runtimeConfig(env({ GOTRUE_PASSWORD_MIN_LENGTH: 'six' })), /GOTRUE_PASSWORD_MIN_LENGTH must be a number/)
 })
+
+test('owners may tune GoTrue rate limits but not the client address header or texts', () => {
+  const tuned = runtimeConfig(env({ GOTRUE_RATE_LIMIT_EMAIL_SENT: '60', GOTRUE_RATE_LIMIT_TOKEN_REFRESH: '300/5m', GOTRUE_RATE_LIMIT_VERIFY: '2.5' }))
+  assert.equal(tuned.gotrueEnv.GOTRUE_RATE_LIMIT_EMAIL_SENT, '60')
+  assert.equal(tuned.gotrueEnv.GOTRUE_RATE_LIMIT_TOKEN_REFRESH, '300/5m')
+  assert.equal(tuned.gotrueEnv.GOTRUE_RATE_LIMIT_HEADER, 'X-Real-IP')
+  assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_EMAIL_SENT: 'lots' })), /must be events per hour/)
+  assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_OTP: '10/5 minutes' })), /must be events per hour/)
+  assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_HEADER: 'X-Forwarded-For' })), /managed by Gregale/)
+  assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_SMS_SENT: '1000' })), /managed by Gregale/)
+})

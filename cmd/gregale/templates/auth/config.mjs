@@ -1,5 +1,5 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, customClaimsBytes: 1000, signupDomains: 100, waitlistPending: 10000, signupApproveBatch: 100, impersonationDefaultMinutes: 30, impersonationMaxMinutes: 60, reauthenticationSeconds: 600, sessionMinMinutes: 15, sessionMaxMinutes: 525600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000, serviceAccountsPerOrg: 50, serviceAccountSecrets: 2, serviceAccountSecretMaxDays: 3650, serviceAccountTokensPerMinute: 60, passwordMinLength: 8 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, customClaimsBytes: 1000, signupDomains: 100, waitlistPending: 10000, signupApproveBatch: 100, impersonationDefaultMinutes: 30, impersonationMaxMinutes: 60, reauthenticationSeconds: 600, sessionMinMinutes: 15, sessionMaxMinutes: 525600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000, serviceAccountsPerOrg: 50, serviceAccountSecrets: 2, serviceAccountSecretMaxDays: 3650, serviceAccountTokensPerMinute: 60, passwordMinLength: 8, passwordFailuresPerAddress: 10, passwordFailuresPerAccount: 50, secondStepFailuresPerUser: 10, attemptWindowSeconds: 900 })
 
 import { createECDH, createPrivateKey } from 'node:crypto'
 import { totalmem } from 'node:os'
@@ -31,7 +31,14 @@ function instanceMemory() {
 // SMS by setting these GoTrue variables as app secrets. Everything else is
 // owned by Gregale; any other GOTRUE_ variable fails startup instead of being
 // ignored.
-const passthroughPrefixes = ['GOTRUE_EXTERNAL_', 'GOTRUE_MFA_', 'GOTRUE_PASSWORD_', 'GOTRUE_SECURITY_CAPTCHA_', 'GOTRUE_PASSKEY_', 'GOTRUE_SMS_']
+const passthroughPrefixes = ['GOTRUE_EXTERNAL_', 'GOTRUE_MFA_', 'GOTRUE_PASSWORD_', 'GOTRUE_SECURITY_CAPTCHA_', 'GOTRUE_PASSKEY_', 'GOTRUE_SMS_', 'GOTRUE_RATE_LIMIT_']
+// GoTrue's rate limits are an owner's to tune, except the header that names
+// the client address, which the public gateway sets, and texts sent, which
+// stays at GoTrue's 30 an hour against SMS pumping. A limit is a number of
+// events per hour ("30", "2.5") or events over a duration ("10/5m");
+// anything else would stop GoTrue at start, so it is refused here first.
+const managedRateLimitKeys = new Set(['GOTRUE_RATE_LIMIT_HEADER', 'GOTRUE_RATE_LIMIT_SMS_SENT'])
+const rateLimitValue = /^([0-9]{1,9}(\.[0-9]{1,6})?|[0-9]{1,9}\/[0-9]{1,6}(ms|s|m|h))$/
 
 // SMS services GoTrue v2.197.0 sends phone sign-in codes through, with the
 // customer's own account. Mirrored by cmd/gregale
@@ -253,7 +260,8 @@ export function runtimeConfig(env) {
   const passthrough = {}
   for (const [key, value] of Object.entries(env)) {
     if (!key.startsWith('GOTRUE_')) continue
-    if (!passthroughPrefixes.some(prefix => key.startsWith(prefix))) throw new Error(`${key} is managed by Gregale; remove the app secret`)
+    if (!passthroughPrefixes.some(prefix => key.startsWith(prefix)) || managedRateLimitKeys.has(key)) throw new Error(`${key} is managed by Gregale; remove the app secret`)
+    if (key.startsWith('GOTRUE_RATE_LIMIT_') && !rateLimitValue.test(value)) throw new Error(`${key} must be events per hour such as 30, or events over a duration such as 10/5m`)
     passthrough[key] = value
   }
   const api = `${external}/auth/v1`

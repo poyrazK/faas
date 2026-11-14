@@ -475,12 +475,45 @@ next renewal, and an access token already issued keeps working until it
 expires, at most ten minutes later. The user then signs in again. The account
 page's list of sessions leaves out the ones past their limits.
 
+### Wrong passwords and codes
+
+The Auth app counts wrong passwords and wrong second-step codes in its
+database, so every instance shares the count and it survives the app
+parking and waking:
+
+| Budget | Limit in 15 minutes |
+| --- | --- |
+| Wrong passwords for one account from one client address | 10 |
+| Wrong passwords for one account from any address | 50 |
+| Wrong authenticator, SMS or recovery codes for one user | 10 |
+
+A spent budget answers `429` with `error_code` `too_many_attempts` and a
+`Retry-After` header until its window ends, before GoTrue checks the
+password; a correct password from the same address is held too. A correct
+password from another address still signs in and resets the account's
+count. Someone who spends an account's budget from many addresses pauses
+password sign-in for that account, not magic links, codes, providers or
+passkeys. Failed service-account secrets are counted the same way, per client
+address. Counts are kept as digests, never as addresses or numbers, and
+are deleted a day after their window.
+
+### Rate limits
+
+GoTrue's own limits per client address apply too. Tune them with
+`GOTRUE_RATE_LIMIT_*` app secrets (for example `GOTRUE_RATE_LIMIT_EMAIL_SENT`,
+`GOTRUE_RATE_LIMIT_TOKEN_REFRESH`, `GOTRUE_RATE_LIMIT_VERIFY`,
+`GOTRUE_RATE_LIMIT_OTP`), each a number of events per hour (`30`) or events
+over a duration (`10/5m`). `GOTRUE_RATE_LIMIT_SMS_SENT` stays at GoTrue's 30
+texts an hour, against SMS pumping, and `GOTRUE_RATE_LIMIT_HEADER` is set by
+Gregale. These limits are kept in each instance's memory, so they start again
+when the app wakes; the budgets above do not.
+
 ### Other GoTrue settings
 
 Other `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`, `GOTRUE_PASSWORD_*`,
-`GOTRUE_PASSKEY_*` and `GOTRUE_SECURITY_CAPTCHA_*` settings can still be set as
-app secrets. Any other `GOTRUE_*` secret stops startup, because Gregale owns
-that setting.
+`GOTRUE_PASSKEY_*`, `GOTRUE_SECURITY_CAPTCHA_*` and `GOTRUE_RATE_LIMIT_*`
+settings can still be set as app secrets. Any other `GOTRUE_*` secret stops
+startup, because Gregale owns that setting.
 
 ## Rotate signing keys
 
