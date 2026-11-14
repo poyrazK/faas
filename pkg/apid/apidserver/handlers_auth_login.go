@@ -1277,13 +1277,21 @@ func (s *server) refusePasswordOnlyKey(w http.ResponseWriter, r *http.Request, a
 // to be minted leaves at most api.SignInAPIKeysMax. Best-effort: a failure
 // is logged and the sign-in proceeds.
 func (s *server) retireOldSignInKeys(r *http.Request, acct state.Account) {
+	s.retireOldLoginKeys(r, acct, signInKeyLabel, api.SignInAPIKeysMax-1)
+}
+
+// retireOldLoginKeys keeps the newest keep live keys labelled label and
+// revokes the rest, so interactive sign-ins (a password sign-in, each
+// `gregale login`) cannot pile up live full-access keys. Best-effort: a
+// failure is logged and the sign-in proceeds.
+func (s *server) retireOldLoginKeys(r *http.Request, acct state.Account, label string, keep int) {
 	keys, err := s.store.ListAPIKeys(r.Context(), acct.ID)
 	if err != nil {
 		s.log.Warn("v1auth.sign_in_keys_list", "account", acct.ID, "err", err)
 		return
 	}
-	live := liveSignInKeys(keys, time.Now())
-	for i := api.SignInAPIKeysMax - 1; i < len(live); i++ {
+	live := liveLoginKeys(keys, label, time.Now())
+	for i := max(keep, 0); i < len(live); i++ {
 		if _, err := s.revokeAPIKeyWithReason(r, acct, live[i].ID, "sign_in_rotated"); err != nil {
 			s.log.Warn("v1auth.sign_in_key_retire", "account", acct.ID, "key", live[i].ID, "err", err)
 		}
@@ -1293,9 +1301,15 @@ func (s *server) retireOldSignInKeys(r *http.Request, acct state.Account) {
 // liveSignInKeys returns the unrevoked, unexpired keys a password sign-in
 // minted, newest first.
 func liveSignInKeys(keys []state.APIKey, now time.Time) []state.APIKey {
+	return liveLoginKeys(keys, signInKeyLabel, now)
+}
+
+// liveLoginKeys returns the unrevoked, unexpired keys labelled label, newest
+// first.
+func liveLoginKeys(keys []state.APIKey, label string, now time.Time) []state.APIKey {
 	var live []state.APIKey
 	for _, k := range keys {
-		if k.Label != signInKeyLabel || k.Status == "revoked" || (k.ExpiresAt != nil && !k.ExpiresAt.After(now)) {
+		if k.Label != label || k.Status == "revoked" || (k.ExpiresAt != nil && !k.ExpiresAt.After(now)) {
 			continue
 		}
 		live = append(live, k)

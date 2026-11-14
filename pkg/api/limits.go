@@ -222,6 +222,11 @@ const (
 	SignInAPIKeysMax = 5
 )
 
+// CLILoginKeysMax caps the live keys `gregale login` has minted for one
+// account: each login keeps the newest CLILoginKeysMax and revokes older
+// ones (ADR-20261114120000).
+const CLILoginKeysMax = 5
+
 // Request bodies one gateway holds at once. Uploads spooled to disk share
 // RequestBodySpoolNodeBytes, one app owner holds at most a quarter of it, and
 // one client IP (an IPv6 /56) holds at most RequestBodySpoolPerClient of
@@ -267,6 +272,10 @@ const EmailChangeRevertWindow = 30 * 24 * time.Hour
 const (
 	SecurityMailPerAccountInterval = time.Minute
 	SecurityMailPerAccountPerHour  = 5
+	// CredentialNoticeMailsPerHour caps "a new credential was created"
+	// notices to one account. They have no minimum gap, so each of several
+	// keys minted together gets its own mail (ADR-20261114120000).
+	CredentialNoticeMailsPerHour   = 20
 	SecurityMailTrackedAccountsMax = 100_000
 )
 
@@ -9358,16 +9367,13 @@ const (
 	// holding state about a target that no longer exists.
 	MaxEdgeRuleCircuitOpenSeconds = 3_600
 
-	// API-key lifetime (issue #189 / IAM-5). New non-admin keys
-	// minted by createKey get `expires_at = now + DefaultAPIKeyLifetimeDays`.
-	// 365 days is the issue-189 spec: long enough to be
-	// "set-and-forget" for a customer's CI rotation, short enough
-	// that an exfiltrated key expires within a year of theft even
-	// without rotation. Admin keys default to nil expiry (per
-	// existing admin semantics — never expire, must be explicitly
-	// revoked). Legacy admin keys (pre-IAM-5) keep null expiry
-	// forever; rotation is the migration path for customers who
-	// want a finite window on their admin keys.
+	// API-key lifetime (issue #189 / IAM-5). Every new key, admin
+	// keys included (ADR-20261114120000), gets `expires_at = now +
+	// DefaultAPIKeyLifetimeDays` (api.NewAPIKeyExpiry). 365 days is
+	// long enough to be "set-and-forget" for a customer's CI
+	// rotation, short enough that an exfiltrated key expires within
+	// a year of theft even without rotation. Admin keys minted
+	// before that ADR keep null expiry until rotated or revoked.
 	DefaultAPIKeyLifetimeDays = 365
 
 	// DefaultAPIKeyGraceWindowDays (issue #189 / IAM-5) is the
