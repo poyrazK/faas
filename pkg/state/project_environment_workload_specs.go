@@ -349,6 +349,7 @@ var workloadAppFieldPolicies = map[string]WorkloadFieldPolicy{
 	"WarmSnapshotMinMs":         WorkloadFieldCopy,
 	"WarmPoolSize":              WorkloadFieldCopy,
 	"EvictionPriority":          WorkloadFieldCopy,
+	"SandboxTemplate":           WorkloadFieldIdentity,
 	"PreviewOfSlug":             WorkloadFieldIdentity,
 	"PreviewPrNumber":           WorkloadFieldIdentity,
 	"PreviewPrState":            WorkloadFieldOperational,
