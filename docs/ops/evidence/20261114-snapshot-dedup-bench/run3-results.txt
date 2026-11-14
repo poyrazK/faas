@@ -1,0 +1,54 @@
+build start Sat Nov 14 19:39:03 UTC 2026 go version go1.26.11 linux/amd64
+build done Sat Nov 14 20:05:02 UTC 2026
+--- PASS: TestMetalSnapshotDedupBench (3306.98s)
+PASS
+RESULT today total: 405.5 MB memory objects for 7 snapshots (57.9 MB avg)
+RESULT chunk 4K total: 129.2 MB fastest / 127.5 MB default for 7 snapshots (today 405.5 MB, 69% saved); median unique per app after the runtime's first 16.7 MB (default)
+RESULT chunk 16K total: 244.3 MB fastest / 235.2 MB default for 7 snapshots (today 405.5 MB, 42% saved); median unique per app after the runtime's first 32.2 MB (default)
+RESULT chunk 64K total: 326.1 MB fastest / 312.2 MB default for 7 snapshots (today 405.5 MB, 23% saved); median unique per app after the runtime's first 43.8 MB (default)
+RESULT restore node-b captured cold: wake p50 1.078s min 1.002s max 3.21s; first request p50 1.067s (n=10, 0 fell back to cold boot)
+RESULT restore node-b captured warm: wake p50 284ms min 248ms max 311ms; first request p50 101ms (n=10, 0 fell back to cold boot)
+RESULT restore node-b today-images: 73.1 MB shared with images
+RESULT restore node-b today-images cold: wake p50 1.422s min 1.25s max 3.363s; first request p50 1.698s (n=10, 0 fell back to cold boot)
+RESULT restore node-b today-images warm: wake p50 261ms min 251ms max 421ms; first request p50 106ms (n=10, 0 fell back to cold boot)
+RESULT restore node-b today: 73.1 MB shared with images, 35.5 MB with peers
+RESULT restore node-b today-shared cold: wake p50 7.592s min 7.23s max 8.624s; first request p50 9.759s (n=10, 0 fell back to cold boot)
+RESULT restore node-b today-shared warm: wake p50 265ms min 245ms max 363ms; first request p50 109ms (n=10, 0 fell back to cold boot)
+RESULT restore node-b chunk 4K: assembled from the store in 896ms with 8460 clones (72.7 MB of its chunks were new to the store)
+RESULT restore node-b chunk-4K cold: wake p50 6.201s min 5.281s max 7.779s; first request p50 5.738s (n=10, 0 fell back to cold boot)
+RESULT restore node-b chunk-4K warm: wake p50 263ms min 240ms max 270ms; first request p50 102ms (n=10, 0 fell back to cold boot)
+RESULT miss node-b chunk 4K: today fetch 59.7 MB + decode 3.913s; chunked fetch 13.5 MB + decode/assemble 1.815s
+RESULT restore node-b chunk 16K: assembled from the store in 894ms with 1627 clones (121.9 MB of its chunks were new to the store)
+RESULT restore node-b chunk-16K cold: wake p50 6.959s min 6.035s max 7.499s; first request p50 8.276s (n=10, 0 fell back to cold boot)
+RESULT restore node-b chunk-16K warm: wake p50 258ms min 240ms max 268ms; first request p50 105ms (n=10, 0 fell back to cold boot)
+RESULT miss node-b chunk 16K: today fetch 59.7 MB + decode 2.64s; chunked fetch 28.4 MB + decode/assemble 2.259s
+RESULT restore node-b chunk 64K: assembled from the store in 414ms with 386 clones (172.6 MB of its chunks were new to the store)
+RESULT restore node-b chunk-64K cold: wake p50 1.226s min 1.095s max 1.312s; first request p50 1.033s (n=10, 0 fell back to cold boot)
+RESULT restore node-b chunk-64K warm: wake p50 259ms min 243ms max 740ms; first request p50 103ms (n=10, 0 fell back to cold boot)
+RESULT miss node-b chunk 64K: today fetch 59.7 MB + decode 2.586s; chunked fetch 45.2 MB + decode/assemble 2.68s
+RESULT restore node-b drive-delta: rebuilt drive from layer + 7 blocks in 3ms
+RESULT restore node-b drive-delta cold: wake p50 1.097s min 938ms max 2.605s; first request p50 1.007s (n=10, 0 fell back to cold boot)
+RESULT restore node-b drive-delta warm: wake p50 260ms min 252ms max 507ms; first request p50 107ms (n=10, 0 fell back to cold boot)
+RESULT restore node-c captured cold: wake p50 1.038s min 832ms max 3.034s; first request p50 1.67s (n=10, 0 fell back to cold boot)
+RESULT restore node-c captured warm: wake p50 217ms min 205ms max 418ms; first request p50 106ms (n=10, 0 fell back to cold boot)
+RESULT restore node-c today-images: 78.0 MB shared with images
+RESULT restore node-c today-images cold: wake p50 6.235s min 4.161s max 7.229s; first request p50 11.2s (n=10, 0 fell back to cold boot)
+RESULT restore node-c today-images warm: wake p50 221ms min 205ms max 265ms; first request p50 106ms (n=10, 0 fell back to cold boot)
+RESULT restore node-c today: 78.0 MB shared with images, 32.5 MB with peers
+RESULT restore node-c today-shared cold: wake p50 6.981s min 5.568s max 9.409s; first request p50 14.13s (n=10, 0 fell back to cold boot)
+RESULT restore node-c today-shared warm: wake p50 353ms min 307ms max 448ms; first request p50 156ms (n=10, 0 fell back to cold boot)
+RESULT restore node-c chunk 4K: assembled from the store in 1.283s with 9096 clones (101.7 MB of its chunks were new to the store)
+RESULT restore node-c chunk-4K cold: wake p50 7.543s min 6.076s max 9.285s; first request p50 9.918s (n=10, 0 fell back to cold boot)
+RESULT restore node-c chunk-4K warm: wake p50 262ms min 220ms max 408ms; first request p50 147ms (n=10, 0 fell back to cold boot)
+RESULT miss node-c chunk 4K: today fetch 65.7 MB + decode 3.666s; chunked fetch 17.9 MB + decode/assemble 2.677s
+RESULT restore node-c chunk 16K: assembled from the store in 1.053s with 2283 clones (158.0 MB of its chunks were new to the store)
+RESULT restore node-c chunk-16K cold: wake p50 7.352s min 5.939s max 8.795s; first request p50 12.778s (n=10, 0 fell back to cold boot)
+RESULT restore node-c chunk-16K warm: wake p50 471ms min 315ms max 654ms; first request p50 161ms (n=10, 0 fell back to cold boot)
+RESULT miss node-c chunk 16K: today fetch 65.7 MB + decode 3.464s; chunked fetch 33.6 MB + decode/assemble 3.625s
+RESULT restore node-c chunk 64K: assembled from the store in 702ms with 337 clones (227.0 MB of its chunks were new to the store)
+RESULT restore node-c chunk-64K cold: wake p50 4.013s min 1.792s max 4.769s; first request p50 5.512s (n=10, 0 fell back to cold boot)
+RESULT restore node-c chunk-64K warm: wake p50 226ms min 205ms max 440ms; first request p50 108ms (n=10, 0 fell back to cold boot)
+RESULT miss node-c chunk 64K: today fetch 65.7 MB + decode 3.664s; chunked fetch 50.2 MB + decode/assemble 3.793s
+RESULT restore node-c drive-delta: rebuilt drive from layer + 7 blocks in 55ms
+RESULT restore node-c drive-delta cold: wake p50 1.295s min 1.047s max 2.062s; first request p50 1.84s (n=10, 0 fell back to cold boot)
+RESULT restore node-c drive-delta warm: wake p50 212ms min 201ms max 322ms; first request p50 106ms (n=10, 0 fell back to cold boot)
