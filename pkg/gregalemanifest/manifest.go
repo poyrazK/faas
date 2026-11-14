@@ -1763,6 +1763,9 @@ type LifecycleConfig struct {
 	RestartPolicy    *string                   `yaml:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `yaml:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `yaml:"before_checkpoint,omitempty"`
+	// Warmup names the path init snapshot priming GETs (ADR-20261114153000);
+	// an empty path clears it.
+	Warmup *api.WarmupHook `yaml:"warmup,omitempty"`
 	// Pause declares when the platform may pause the VM (ADR-1151):
 	// between_requests, when_idle or never.
 	Pause            *string              `yaml:"pause,omitempty"`
@@ -1784,6 +1787,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		RestartPolicy:    c.RestartPolicy,
 		AfterRestore:     c.AfterRestore,
 		BeforeCheckpoint: c.BeforeCheckpoint,
+		Warmup:           c.Warmup,
 		Pause:            c.Pause,
 		Profiling:        c.Profiling,
 		Tracing:          c.Tracing,
@@ -1824,7 +1828,7 @@ func (m *Manifest) LifecycleRequest() (req api.UpdateAppRequest, ok bool) {
 
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
-	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Pause == nil && c.Profiling == nil && c.Tracing == nil &&
+	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Warmup == nil && c.Pause == nil && c.Profiling == nil && c.Tracing == nil &&
 		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
 		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
@@ -1847,6 +1851,9 @@ func (c *LifecycleConfig) Validate() error {
 	}
 	if c.BeforeCheckpoint != nil && (c.BeforeCheckpoint.Path != "" || c.BeforeCheckpoint.TimeoutMS != 0) {
 		m.BeforeCheckpoint = c.BeforeCheckpoint
+	}
+	if c.Warmup != nil && c.Warmup.Path != "" {
+		m.Warmup = c.Warmup
 	}
 	if c.Pause != nil {
 		m.Pause = *c.Pause

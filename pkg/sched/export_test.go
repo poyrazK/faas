@@ -1427,3 +1427,7 @@ func NodeBudgetRefusal(detail string, blockers ...api.WorkerAdmissionBlocker) er
 func (r *Loop) FinishFailedPrime(ctx context.Context, appID, deploymentID string, err error) {
 	r.finishFailedPrime(ctx, appID, deploymentID, 1, err)
 }
+
+// XInitPrimePath exposes the init snapshot priming path choice
+// (ADR-20261114153000).
+var XInitPrimePath = initPrimePath
