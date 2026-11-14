@@ -7,13 +7,17 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
+from ...models.rotate_key_request import RotateKeyRequest
 from ...models.rotate_key_response import RotateKeyResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     id: str,
+    *,
+    body: RotateKeyRequest | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -22,6 +26,12 @@ def _get_kwargs(
         ),
     }
 
+    if not isinstance(body, Unset):
+        _kwargs["json"] = body.to_dict()
+
+    headers["Content-Type"] = "application/json"
+
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -69,6 +79,7 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateKeyRequest | Unset = UNSET,
 ) -> Response[Problem | RotateKeyResponse]:
     """Rotate an API key.
 
@@ -83,7 +94,9 @@ def sync_detailed(
     default). Status flips to 'grace' for the window, then to
     'revoked' at the deadline. Setting
     `accounts.key_grace_window_days = 0` makes rotation atomic
-    (old key revoked immediately).
+    (old key revoked immediately). The optional body's
+    `grace_window_days` overrides the window for this rotation
+    only; send `0` to revoke a leaked key at once.
 
     Returns the new plaintext exactly once — the old plaintext
     is not re-issued (we only store the SHA-256 hash). The
@@ -96,6 +109,10 @@ def sync_detailed(
 
     Args:
         id (str):
+        body (RotateKeyRequest | Unset): Optional body of POST /v1/keys/{id}/rotate.
+            `grace_window_days` overrides, for this rotation only, how many days the old key keeps
+            working; `0` revokes it at once (use it for a leaked key). Omitted uses the account's
+            grace window or the plan default (7 days).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -107,6 +124,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+        body=body,
     )
 
     response = client.get_httpx_client().request(
@@ -120,6 +138,7 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateKeyRequest | Unset = UNSET,
 ) -> Problem | RotateKeyResponse | None:
     """Rotate an API key.
 
@@ -134,7 +153,9 @@ def sync(
     default). Status flips to 'grace' for the window, then to
     'revoked' at the deadline. Setting
     `accounts.key_grace_window_days = 0` makes rotation atomic
-    (old key revoked immediately).
+    (old key revoked immediately). The optional body's
+    `grace_window_days` overrides the window for this rotation
+    only; send `0` to revoke a leaked key at once.
 
     Returns the new plaintext exactly once — the old plaintext
     is not re-issued (we only store the SHA-256 hash). The
@@ -147,6 +168,10 @@ def sync(
 
     Args:
         id (str):
+        body (RotateKeyRequest | Unset): Optional body of POST /v1/keys/{id}/rotate.
+            `grace_window_days` overrides, for this rotation only, how many days the old key keeps
+            working; `0` revokes it at once (use it for a leaked key). Omitted uses the account's
+            grace window or the plan default (7 days).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -159,6 +184,7 @@ def sync(
     return sync_detailed(
         id=id,
         client=client,
+        body=body,
     ).parsed
 
 
@@ -166,6 +192,7 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateKeyRequest | Unset = UNSET,
 ) -> Response[Problem | RotateKeyResponse]:
     """Rotate an API key.
 
@@ -180,7 +207,9 @@ async def asyncio_detailed(
     default). Status flips to 'grace' for the window, then to
     'revoked' at the deadline. Setting
     `accounts.key_grace_window_days = 0` makes rotation atomic
-    (old key revoked immediately).
+    (old key revoked immediately). The optional body's
+    `grace_window_days` overrides the window for this rotation
+    only; send `0` to revoke a leaked key at once.
 
     Returns the new plaintext exactly once — the old plaintext
     is not re-issued (we only store the SHA-256 hash). The
@@ -193,6 +222,10 @@ async def asyncio_detailed(
 
     Args:
         id (str):
+        body (RotateKeyRequest | Unset): Optional body of POST /v1/keys/{id}/rotate.
+            `grace_window_days` overrides, for this rotation only, how many days the old key keeps
+            working; `0` revokes it at once (use it for a leaked key). Omitted uses the account's
+            grace window or the plan default (7 days).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -204,6 +237,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+        body=body,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -215,6 +249,7 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    body: RotateKeyRequest | Unset = UNSET,
 ) -> Problem | RotateKeyResponse | None:
     """Rotate an API key.
 
@@ -229,7 +264,9 @@ async def asyncio(
     default). Status flips to 'grace' for the window, then to
     'revoked' at the deadline. Setting
     `accounts.key_grace_window_days = 0` makes rotation atomic
-    (old key revoked immediately).
+    (old key revoked immediately). The optional body's
+    `grace_window_days` overrides the window for this rotation
+    only; send `0` to revoke a leaked key at once.
 
     Returns the new plaintext exactly once — the old plaintext
     is not re-issued (we only store the SHA-256 hash). The
@@ -242,6 +279,10 @@ async def asyncio(
 
     Args:
         id (str):
+        body (RotateKeyRequest | Unset): Optional body of POST /v1/keys/{id}/rotate.
+            `grace_window_days` overrides, for this rotation only, how many days the old key keeps
+            working; `0` revokes it at once (use it for a leaked key). Omitted uses the account's
+            grace window or the plan default (7 days).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -255,5 +296,6 @@ async def asyncio(
         await asyncio_detailed(
             id=id,
             client=client,
+            body=body,
         )
     ).parsed
