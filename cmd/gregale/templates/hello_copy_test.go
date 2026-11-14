@@ -80,7 +80,7 @@ func TestHelloTemplatesMatchRuntimeAndAccessDefaults(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, want := range []string{"gregale invoke <slug> --method GET --path /", "Authorization: Bearer <key>", "401 unauthorized", `"source":"edge"`, "--path /healthz"} {
+		for _, want := range []string{"gregale invocation run <slug> --method GET --path /", "Authorization: Bearer <key>", "401 unauthorized", `"source":"edge"`, "--path /healthz"} {
 			if !strings.Contains(string(readme), want) {
 				t.Errorf("%s README lacks %q", name, want)
 			}

@@ -113,7 +113,7 @@ func protectImageRunCommandArgs(args []string) []string {
 			i += 2
 			continue
 		}
-		if args[i] == "--profile" {
+		if args[i] == "--profile" || args[i] == "--http-timeout" {
 			i++
 		}
 		i++

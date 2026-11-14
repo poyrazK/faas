@@ -79,6 +79,35 @@ With the opt-in, each command prints one warning on stderr. Anyone on the
 network path can read and reuse the key, so prefer TLS even on private
 networks.
 
+## HTTP request timeout
+
+Select a timeout for this invocation by placing a positive duration before
+its command:
+
+```bash
+gregale --http-timeout 90s billing usage summary
+gregale --http-timeout=2m deploy
+```
+
+Durations use Go syntax, such as `500ms`, `90s` or `2m`. Empty, zero, negative
+and invalid durations fail before contacting the API. The last prefix wins.
+There is no environment variable or saved setting; later invocations use
+their usual defaults (30 seconds for ordinary JSON calls, with existing
+operation-specific and upload budgets).
+
+An explicit value bounds each API request, including reading its response
+body and uploading source. It replaces operation-specific defaults, including
+rollback and hosting finalization budgets. Existing retries can still make
+more than one request; the flag does not set an overall retry, polling or
+command deadline. Caller context deadlines, dial and TLS limits can finish
+sooner. Private operator and external OIDC clients retain their own policies.
+
+For streaming logs, the value bounds the wait for response headers. Once
+connected, the body can remain open beyond that duration until the stream
+ends or you cancel it. Server-side app execution limits and command-local
+`--timeout` options retain their documented meaning. This flag does not add
+retries, persist configuration or change successful stdout.
+
 ## Command output and forwarded arguments
 
 `gregale deploy --help` and `gregale app --help` show common options and examples.
@@ -111,22 +140,78 @@ as `--help` and `--json`:
 gregale --json app demo exec --detach -- python --help
 ```
 
-`gregale invocations wait <id> --json` writes the invocation status to stdout
+`gregale invocation wait <id> --json` writes the invocation status to stdout
 and API errors as a single Problem JSON object to stderr. A wait timeout exits
 with `124`, writes the last known status to stdout when available, and writes
 an `invocation_wait_timeout` Problem to stderr. Ctrl-C exits with `130`.
 Stopping the CLI wait leaves the invocation running; inspect it later with
-`gregale invocations get <id>`.
+`gregale invocation get <id>`.
+
+Use one command family to submit and inspect a call:
+
+```sh
+gregale invocation run api --payload @request.json
+gregale invocation list
+gregale invocation get INVOCATION_ID
+gregale invocation wait INVOCATION_ID --timeout 2m
+```
+
+`invoke APP` and the earlier plural `invocations` spelling remain compatibility
+aliases. Help, completion and agent examples use `invocation`.
+
+To submit asynchronously and wait in one command:
+
+```sh
+gregale invocation run api --wait --timeout 2m --payload @request.json
+```
+
+`--wait` selects async submission automatically; `--timeout` and `--interval`
+require `--wait`. An explicit `--async=false` conflicts with `--wait` and is
+rejected before submission. Use `--async` alone to queue and return immediately.
+The default timeout is `0` (wait until completion or Ctrl-C), and the default
+polling interval is `1s`. The timeout starts after acceptance and only limits
+local polling. The command submits once, then reads that accepted invocation.
+Completed exits `0`; failed, cancelled or dead-lettered exits `1`. JSON mode
+prints one final invocation record to stdout. On timeout it prints the latest
+known status when available, and an error to stderr. A timeout (`124`), Ctrl-C
+(`130`) or polling error preserves the accepted ID and a resume command in the
+diagnostic. Use that `invocation wait` command to resume; submitting again
+creates new work.
+
+In JSON mode, timeout, Ctrl-C and polling failures from both run-and-wait and
+standalone wait include a `recovery` object when there is a valid invocation ID.
+They keep the existing Problem fields, category and exit code:
+
+```json
+{
+  "code": "invocation_wait_timeout",
+  "exit_code": 124,
+  "recovery": {
+    "invocation_id": "INVOCATION_ID",
+    "inspect_command": "gregale --profile staging invocation get INVOCATION_ID",
+    "resume_command": "gregale --profile staging invocation wait INVOCATION_ID"
+  }
+}
+```
+
+These read-only commands use POSIX shell quoting, retain the selected profile
+and redact credentials. They use the current credentials and endpoint on the
+next CLI invocation; keep the same connection overrides when resuming. Follow
+the Problem's remediation for authentication or polling errors before resuming.
+For standalone wait, the ID identifies the requested target; recovery does not
+prove that it exists or is still running. No recovery ID is invented for a
+missing or invalid submission receipt. Agents should read these fields instead
+of parsing the human hint. The CLI never executes the recovery command itself.
 
 ## Retrying async invocation submissions
 
 Supply a stable key when a script may need to retry an uncertain submission:
 
 ```sh
-gregale invoke billing --async --idempotency-key invoice-4821 --payload @invoice.json
+gregale invocation run billing --async --idempotency-key invoice-4821 --payload @invoice.json
 ```
 
-`--idempotency-key` requires `--async`; the synchronous endpoint has no receipt
+`--idempotency-key` requires `--async` or `--wait`; the synchronous endpoint has no receipt
 cache. Surrounding whitespace is trimmed; an explicitly empty key, a key over
 255 bytes, or a key with internal spaces or ASCII controls fails before payload
 reading or network access. Without the flag, each command keeps its fresh
