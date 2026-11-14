@@ -100,6 +100,9 @@ func (s *server) enqueueProblem(ctx context.Context, inv state.Invocation, err e
 		if inv.Source == state.InvocationDelayedTask {
 			return api.ErrPlanDelayedTasksCap(depth.Limit, depth.Observed)
 		}
+		if inv.Source == state.InvocationAsyncInvoke {
+			return api.ErrPlanAsyncBacklog(depth.Limit, depth.Observed)
+		}
 		return api.ErrPlanQueueDepth(depth.Limit, depth.Observed)
 	}
 	var backlog *state.InvocationBacklogBytesError
