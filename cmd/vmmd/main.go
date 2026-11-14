@@ -953,6 +953,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// files): both on unless an operator switches them off.
 			WithMemoryPeerSharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_PEER_SHARING") != "off").
 			WithMemorySharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_SHARING") != "off")
+		// ADR-20261114120000: remove cached captures and runtime release
+		// bases nothing references, and order eviction by what is live.
+		// FAAS_NODE_CACHE_SWEEP=off leaves the cache to oldest-first eviction.
+		if os.Getenv("FAAS_NODE_CACHE_SWEEP") != "off" {
+			if reader, ok := store.(state.NodeCacheRetentionReader); ok {
+				fanout.WithCacheRetention(reader)
+			} else {
+				log.Warn("vmmd: node cache sweep disabled: the store cannot list what rows reference")
+			}
+		}
 		if raw := os.Getenv("FAAS_SNAPSHOT_FANOUT_INTERVAL"); raw != "" {
 			interval, parseErr := time.ParseDuration(raw)
 			if parseErr != nil || interval <= 0 {

@@ -243,6 +243,9 @@ type LocalCacheBackend struct {
 	// Both are guarded by mu.
 	minFreeBytes int64
 	diskSpace    func(string) (free, total int64, err error)
+	// evictionTier orders eviction (cache_retention.go); nil is plain
+	// oldest-first. Guarded by mu.
+	evictionTier func(key string) int
 	// routes maps a generation-routed key to its name in the parent
 	// (cache_generation.go, ADR-20261026181418). Guarded by routesMu.
 	routesMu sync.RWMutex
@@ -1195,8 +1198,17 @@ func (c *LocalCacheBackend) enforceBudgetLocked(protect string) error {
 		// under budget by that measure needs no extent scan.
 		return nil
 	}
-	// Sort oldest-first; evict until budget restored.
-	sort.Slice(entries, func(i, j int) bool {
+	// Sort by eviction tier, then oldest-first; evict until budget restored
+	// (ADR-20261114120000: entries nothing references go first, live
+	// snapshot captures last).
+	tiers := make(map[string]int, len(entries))
+	for _, e := range entries {
+		tiers[e.key] = c.tierLocked(e.key)
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if ti, tj := tiers[entries[i].key], tiers[entries[j].key]; ti != tj {
+			return ti < tj
+		}
 		return entries[i].modTime.Before(entries[j].modTime)
 	})
 	// ADR-633: count blocks shared between entries (a snapshot drive and
