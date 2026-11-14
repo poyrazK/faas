@@ -1103,6 +1103,8 @@ from .dev_bridge import (
 )
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
 from .flags import (
+    GREGALE_CLIENT_COUNTRY_HEADER,
+    GREGALE_CLIENT_UA_FAMILY_HEADER,
     GREGALE_FLAG_CONTEXT_HEADER,
     GREGALE_FLAG_EVIDENCE_HEADER,
     GREGALE_FLAG_PROPAGATION_HEADER,
@@ -1116,6 +1118,7 @@ from .flags import (
     flag_subject_bucket,
     flag_subject_variant_bucket,
     flag_variant_bucket,
+    match_conditions,
     validate_bundle,
 )
 from .issues import IssueReporter
@@ -1425,6 +1428,8 @@ __all__ = (
     "GREGALE_FLAG_CONTEXT_HEADER",
     "GREGALE_FLAG_EVIDENCE_HEADER",
     "GREGALE_FLAG_PROPAGATION_HEADER",
+    "GREGALE_CLIENT_COUNTRY_HEADER",
+    "GREGALE_CLIENT_UA_FAMILY_HEADER",
     "GregaleFlags",
     "GregaleFlagsMiddleware",
     "AsyncGregaleFlagsTransport",
@@ -1435,6 +1440,7 @@ __all__ = (
     "flag_subject_bucket",
     "flag_subject_variant_bucket",
     "flag_variant_bucket",
+    "match_conditions",
     "validate_bundle",
     "CRASH_SNAPSHOT_ENDPOINT",
     "CrashSnapshotResult",

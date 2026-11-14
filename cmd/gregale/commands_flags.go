@@ -46,6 +46,8 @@ func cmdFlags(args []string) int {
 	used := fs.String("used", "", "filter requests by true or false exposure")
 	since := fs.String("since", "24h", "request evidence lookback")
 	cursor := fs.String("cursor", "", "request evidence next-page cursor")
+	var attrs repeatedFlag
+	fs.Var(&attrs, "attr", "simulated request attribute NAME=VALUE for inspect (repeatable)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
@@ -92,7 +94,13 @@ func cmdFlags(args []string) int {
 			out, err = client.PublishProjectFlags(ctx, *project, *environment, raw)
 		}
 	case "inspect":
-		out, err = client.InspectProjectFlagForSubject(ctx, *project, *environment, *key, *customer, *subject, *version, *fallbackVariant)
+		var attributes map[string]string
+		attributes, err = parseFlagsInspectAttributes(attrs)
+		if err != nil {
+			printCommandValidation(os.Stderr, "gregale flags inspect: %v\n", err)
+			return 1
+		}
+		out, err = client.InspectProjectFlagWithContext(ctx, *project, *environment, *key, api.InspectFlagContext{Customer: *customer, Subject: *subject, Version: *version, FallbackVariant: *fallbackVariant, Attributes: attributes})
 	case "rollback":
 		out, err = client.RollbackProjectFlags(ctx, *project, *environment, *expected, *version)
 	case "requests":

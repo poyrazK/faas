@@ -23,6 +23,8 @@ func requestForTarget(ctx context.Context, request *http.Request, app App, targe
 func platformIdentityForTarget(ctx context.Context, request *http.Request, app App, target Target) api.PlatformIdentity {
 	identity := target.PlatformIdentity(app.AccountID, requestIDFrom(request))
 	identity.PlatformTenantID = authenticatedFrom(ctx).PlatformTenantID
+	attrs := flagRequestAttributesFrom(ctx)
+	identity.ClientCountry, identity.ClientUAFamily = attrs.country, attrs.uaFamily
 	if identity.AppID == "" {
 		identity.AppID = app.ID
 	}

@@ -20,12 +20,23 @@ import (
 
 func TestFeatureFlagCapabilityOnlyRequiredForEnabledSubjectRules(t *testing.T) {
 	config := flags.Config{Flags: []flags.Flag{{Key: "export", Rules: []flags.Rule{{ID: "pilot-user", Subjects: []string{"user-17"}}}}}}
-	if apidserver.FeatureFlagConfigRequiresSubjectTargeting(config) {
-		t.Fatal("disabled subject flag required a new SDK capability")
+	if got := apidserver.FeatureFlagRequiredCapabilities(config); len(got) != 0 {
+		t.Fatalf("disabled subject flag required SDK capabilities %v", got)
 	}
 	config.Flags[0].Enabled = true
-	if !apidserver.FeatureFlagConfigRequiresSubjectTargeting(config) {
-		t.Fatal("enabled subject flag did not require the SDK capability")
+	if got := apidserver.FeatureFlagRequiredCapabilities(config); len(got) != 1 || got[0] != api.FlagSDKSubjectTargetingCapability {
+		t.Fatalf("enabled subject flag required %v", got)
+	}
+}
+
+func TestFeatureFlagCapabilityRequiredForEnabledAttributeRules(t *testing.T) {
+	config := flags.Config{Flags: []flags.Flag{{Key: "eu", Enabled: true, Rules: []flags.Rule{{ID: "de", Attributes: []flags.Condition{{Attribute: flags.AttributeCountry, Op: flags.OpIn, Values: []string{"DE"}}}}}}}}
+	if got := apidserver.FeatureFlagRequiredCapabilities(config); len(got) != 1 || got[0] != api.FlagSDKAttributeTargetingCapability {
+		t.Fatalf("attribute flag required %v", got)
+	}
+	config.Flags[0].Enabled = false
+	if got := apidserver.FeatureFlagRequiredCapabilities(config); len(got) != 0 {
+		t.Fatalf("disabled attribute flag required %v", got)
 	}
 }
 

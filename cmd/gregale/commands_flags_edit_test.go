@@ -194,6 +194,36 @@ func TestFlagsEditCommandsVariants(t *testing.T) {
 	}
 }
 
+func TestFlagsRuleAddAttributeConditions(t *testing.T) {
+	api := &fakeFlagsAPI{}
+	if code, _ := runFlagsCLI(t, api, "create", "eu"); code != 0 {
+		t.Fatal("create")
+	}
+	if code, out := runFlagsCLI(t, api, "rule-add", "eu", "--id", "eu-pro", "--attr", "country=DE,FR", "--attr", "plan!=free", "--attr", "email$=@example.com"); code != 0 {
+		t.Fatalf("rule-add: %d %q", code, out)
+	}
+	r := api.flag(t, "eu").Rules[0]
+	want := []flags.Condition{
+		{Attribute: "gregale.country", Op: "in", Values: []string{"DE", "FR"}},
+		{Attribute: "app.plan", Op: "not_in", Values: []string{"free"}},
+		{Attribute: "app.email", Op: "ends_with", Values: []string{"@example.com"}},
+	}
+	if len(r.Attributes) != len(want) {
+		t.Fatalf("conditions %+v", r.Attributes)
+	}
+	for i, c := range want {
+		got := r.Attributes[i]
+		if got.Attribute != c.Attribute || got.Op != c.Op || strings.Join(got.Values, ",") != strings.Join(c.Values, ",") {
+			t.Errorf("condition %d = %+v, want %+v", i, got, c)
+		}
+	}
+	for _, bad := range []string{"country", "=DE", "Plan=pro", "country=de"} {
+		if code, _ := runFlagsCLI(t, api, "rule-add", "eu", "--id", "bad", "--attr", bad); code == 0 {
+			t.Errorf("--attr %q accepted", bad)
+		}
+	}
+}
+
 func TestFlagsEditRetriesAfterVersionConflict(t *testing.T) {
 	api := &fakeFlagsAPI{conflictOnce: true}
 	if code, _ := runFlagsCLI(t, api, "create", "retry-me"); code != 0 {

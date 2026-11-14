@@ -41,14 +41,33 @@ func (c *Client) InspectProjectFlag(ctx context.Context, project, environment, k
 // InspectProjectFlagForSubject simulates a decision for one authenticated
 // application subject inside a verified platform customer.
 func (c *Client) InspectProjectFlagForSubject(ctx context.Context, project, environment, key, customer, subject string, version int64, fallbackVariants ...string) (json.RawMessage, error) {
-	var out json.RawMessage
 	var fallbackVariant string
 	if len(fallbackVariants) > 0 {
 		fallbackVariant = fallbackVariants[0]
 	}
-	body := map[string]any{"customer_id": customer, "version": version, "fallback": false, "fallback_variant": fallbackVariant}
-	if subject != "" {
-		body["subject_id"] = subject
+	return c.InspectProjectFlagWithContext(ctx, project, environment, key, InspectFlagContext{Customer: customer, Subject: subject, Version: version, FallbackVariant: fallbackVariant})
+}
+
+// InspectFlagContext is a simulated request for InspectProjectFlagWithContext.
+type InspectFlagContext struct {
+	Customer        string
+	Subject         string
+	Version         int64
+	FallbackVariant string
+	// Attributes simulates gregale.* and app.* request attributes.
+	Attributes map[string]string
+}
+
+// InspectProjectFlagWithContext simulates a decision for a full request
+// context, including attribute-targeted rules (ADR 20261114150000 §2).
+func (c *Client) InspectProjectFlagWithContext(ctx context.Context, project, environment, key string, in InspectFlagContext) (json.RawMessage, error) {
+	var out json.RawMessage
+	body := map[string]any{"customer_id": in.Customer, "version": in.Version, "fallback": false, "fallback_variant": in.FallbackVariant}
+	if in.Subject != "" {
+		body["subject_id"] = in.Subject
+	}
+	if len(in.Attributes) > 0 {
+		body["attributes"] = in.Attributes
 	}
 	err := c.do(ctx, http.MethodPost, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/inspect", body, &out)
 	return out, err

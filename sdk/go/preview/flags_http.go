@@ -76,8 +76,15 @@ func (f *GregaleFlags) newRequestState(headers http.Header) *flagRequestState {
 	if inherited == nil {
 		inherited = map[string]flagPropagatedDecision{}
 	}
+	attributes := map[string]string{}
+	if country := singleFlagHeader(headers, GregaleClientCountryHeader); flagCountryPattern.MatchString(country) {
+		attributes[flagAttributeCountry] = country
+	}
+	if family := singleFlagHeader(headers, GregaleClientUAFamilyHeader); validFlagKey(family) {
+		attributes[flagAttributeUAFamily] = family
+	}
 	return &flagRequestState{
-		owner: f, customer: customer, bundle: bundle, fresh: fresh,
+		owner: f, customer: customer, attributes: attributes, bundle: bundle, fresh: fresh,
 		evidence: make(map[string]FlagEvidence), inherit: inherited,
 	}
 }

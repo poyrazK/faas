@@ -30,6 +30,11 @@ const (
 	// GregaleFlagContextHeader carries explicitly used decisions across managed
 	// service calls and durable work.
 	GregaleFlagContextHeader = "X-Faas-Flag-Context"
+	// GregaleClientCountryHeader and GregaleClientUAFamilyHeader carry the
+	// gateway-verified request attributes gregale.country and
+	// gregale.ua_family for attribute-targeted rules.
+	GregaleClientCountryHeader  = "X-Faas-Client-Country"
+	GregaleClientUAFamilyHeader = "X-Faas-Client-Ua-Family"
 
 	maxFlagEvidence          = 32
 	maxFlagEvidenceBytes     = 16 << 10
@@ -116,6 +121,7 @@ type runtimeFlagRule struct {
 	subjects    map[string]struct{}
 	rollout     *int
 	rolloutUnit string
+	conditions  []flagCondition
 	value       any
 	valueSet    bool
 }
@@ -128,11 +134,13 @@ type runtimeFlagVariant struct {
 type flagRequestState struct {
 	owner    *GregaleFlags
 	customer string
-	bundle   *runtimeFlagsBundle
-	fresh    bool
-	evidence map[string]FlagEvidence
-	inherit  map[string]flagPropagatedDecision
-	mu       sync.Mutex
+	// attributes are the gateway-verified gregale.* request attributes.
+	attributes map[string]string
+	bundle     *runtimeFlagsBundle
+	fresh      bool
+	evidence   map[string]FlagEvidence
+	inherit    map[string]flagPropagatedDecision
+	mu         sync.Mutex
 }
 
 type flagRequestContextKey struct{}
@@ -358,7 +366,7 @@ func (f *GregaleFlags) load(parent context.Context) error {
 	request.Header.Set("Authorization", "Bearer "+credentials.AccessToken)
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Cache-Control", "no-store")
-	request.Header.Set("X-Faas-Flags-Capabilities", "subject-targeting-v1")
+	request.Header.Set("X-Faas-Flags-Capabilities", "subject-targeting-v1, attribute-targeting-v1")
 	response, err := f.httpClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("faas: fetch runtime Flags: %w", err)
@@ -444,6 +452,7 @@ type wireFlagRule struct {
 	Subjects    json.RawMessage `json:"subjects"`
 	Rollout     json.RawMessage `json:"rollout"`
 	RolloutUnit json.RawMessage `json:"rollout_unit"`
+	Attributes  json.RawMessage `json:"attributes"`
 	Value       json.RawMessage `json:"value"`
 }
 
@@ -618,6 +627,13 @@ func validateWireFlagRule(wire wireFlagRule, flagType string, variants map[strin
 			return runtimeFlagRule{}, errors.New("invalid Flags rule rollout unit")
 		}
 	}
+	if len(wire.Attributes) != 0 {
+		conditions, err := decodeFlagConditions(wire.Attributes)
+		if err != nil {
+			return runtimeFlagRule{}, err
+		}
+		rule.conditions = conditions
+	}
 	if (len(rule.subjects) > 0 || rule.rolloutUnit == "subject") && len(rule.customers) == 0 && rule.group == "" {
 		return runtimeFlagRule{}, errors.New("subject targeting requires a customer or group constraint")
 	}
@@ -637,7 +653,7 @@ func validateWireFlagRule(wire wireFlagRule, flagType string, variants map[strin
 		}
 		rule.value, rule.valueSet = value, true
 	}
-	if len(rule.customers) == 0 && rule.group == "" && len(rule.subjects) == 0 && rule.rollout == nil {
+	if len(rule.customers) == 0 && rule.group == "" && len(rule.subjects) == 0 && len(rule.conditions) == 0 && rule.rollout == nil {
 		return runtimeFlagRule{}, errors.New("Flags rule has no targeting constraint")
 	}
 	return rule, nil
@@ -720,6 +736,10 @@ func evaluateRuntimeBoolean(bundle *runtimeFlagsBundle, key, customer string, fa
 }
 
 func evaluateRuntimeBooleanForSubject(bundle *runtimeFlagsBundle, key, customer, subject string, fallback bool) FlagDecision {
+	return evaluateRuntimeBooleanWithAttributes(bundle, key, customer, subject, nil, fallback)
+}
+
+func evaluateRuntimeBooleanWithAttributes(bundle *runtimeFlagsBundle, key, customer, subject string, attributes map[string]string, fallback bool) FlagDecision {
 	decision := FlagDecision{Flag: key, Value: fallback, ConfigVersion: bundleVersion(bundle), Reason: "flag_missing", Source: "fallback"}
 	flag, ok := bundle.flags[key]
 	if !ok {
@@ -752,6 +772,9 @@ func evaluateRuntimeBooleanForSubject(bundle *runtimeFlagsBundle, key, customer,
 			if _, matches := bundle.groups[rule.group][customer]; !matches {
 				continue
 			}
+		}
+		if len(rule.conditions) > 0 && !matchFlagConditions(rule.conditions, attributes) {
+			continue
 		}
 		subjectScoped := len(rule.subjects) > 0 || rule.rolloutUnit == "subject"
 		if subjectScoped && subject == "" {
@@ -787,6 +810,10 @@ func evaluateRuntimeVariant(bundle *runtimeFlagsBundle, key, customer, fallback 
 }
 
 func evaluateRuntimeVariantForSubject(bundle *runtimeFlagsBundle, key, customer, subject, fallback string) FlagDecision {
+	return evaluateRuntimeVariantWithAttributes(bundle, key, customer, subject, nil, fallback)
+}
+
+func evaluateRuntimeVariantWithAttributes(bundle *runtimeFlagsBundle, key, customer, subject string, attributes map[string]string, fallback string) FlagDecision {
 	decision := FlagDecision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: bundleVersion(bundle), Reason: "flag_missing", Source: "fallback"}
 	flag, ok := bundle.flags[key]
 	if !ok {
@@ -819,6 +846,9 @@ func evaluateRuntimeVariantForSubject(bundle *runtimeFlagsBundle, key, customer,
 			if _, matches := bundle.groups[rule.group][customer]; !matches {
 				continue
 			}
+		}
+		if len(rule.conditions) > 0 && !matchFlagConditions(rule.conditions, attributes) {
+			continue
 		}
 		subjectScoped := len(rule.subjects) > 0 || rule.rolloutUnit == "subject"
 		if subjectScoped && subject == "" {
@@ -923,7 +953,7 @@ func (f *GregaleFlags) Boolean(ctx context.Context, key string, fallback bool) (
 			decision = FlagDecision{Flag: key, Value: fallback, ConfigVersion: bundleVersion(state.bundle), Reason: "type_mismatch", Source: "fallback"}
 		}
 	} else if state.fresh && state.bundle != nil {
-		decision = evaluateRuntimeBooleanForSubject(state.bundle, key, state.customer, subject, fallback)
+		decision = evaluateRuntimeBooleanWithAttributes(state.bundle, key, state.customer, subject, requestFlagAttributes(ctx, state), fallback)
 	} else {
 		decision = FlagDecision{Flag: key, Value: fallback, ConfigVersion: bundleVersion(state.bundle), Reason: "configuration_stale", Source: "fallback"}
 	}
@@ -960,7 +990,7 @@ func (f *GregaleFlags) Variant(ctx context.Context, key, fallback string) (FlagD
 			decision = FlagDecision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: bundleVersion(state.bundle), Reason: "type_mismatch", Source: "fallback"}
 		}
 	} else if state.fresh && state.bundle != nil {
-		decision = evaluateRuntimeVariantForSubject(state.bundle, key, state.customer, subject, fallback)
+		decision = evaluateRuntimeVariantWithAttributes(state.bundle, key, state.customer, subject, requestFlagAttributes(ctx, state), fallback)
 	} else {
 		decision = FlagDecision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: bundleVersion(state.bundle), Reason: "configuration_stale", Source: "fallback"}
 	}

@@ -10,6 +10,27 @@ cohort evidence. Business
 logic must explicitly check a flag. Flags do not grant
 permissions or paid entitlements and are independent from deployment traffic splits.
 
+## Change one flag from the CLI
+
+The short commands read the current configuration, change one thing and
+publish it with the version they read. If someone else published in between,
+they apply the same change to the new configuration, at most three times.
+
+```bash
+gregale flags create new-export --project exports            # enabled, default false
+gregale flags percent new-export 10 --project exports        # 10% of customers get true
+gregale flags rule-add new-export --id pilot --group pilot-customers --project exports
+gregale flags off new-export --project exports               # also sets default false
+gregale flags list --project exports
+gregale flags create checkout --variants legacy,new --project exports
+gregale flags rm new-export --project exports
+```
+
+`percent` manages a rule named `everyone-percent` that always stays last;
+`rule-add` inserts new rules before it, so targeted rules win. `off` on a
+boolean flag also sets its default to `false`, because a disabled flag serves
+its default. Use `flags apply --file` for whole-configuration changes.
+
 ## Publish a customer release
 
 Flags are scoped to a project and named environment. A project app's `default`
@@ -144,6 +165,44 @@ variant consistently:
     "rollout": 1000
   }]
 }
+```
+
+## Target request attributes
+
+A rule's `attributes` lists conditions that must all hold, alongside its other
+constraints:
+
+```json
+{"id": "eu-pro", "attributes": [
+  {"attribute": "gregale.country", "op": "in", "values": ["DE", "FR"]},
+  {"attribute": "app.plan", "op": "in", "values": ["pro", "scale"]}
+], "value": true}
+```
+
+- `gregale.country` (ISO 3166-1 alpha-2) and `gregale.ua_family` (`chrome`,
+  `firefox`, `safari`, `bot`, ...) come from Gregale's gateway, which stamps
+  them on each request. Clients cannot set them; an unknown value is absent.
+- `app.<name>` attributes come from your application after it authenticates
+  the user: `flags.withAttributes({plan: 'pro'}, fn)` in Node,
+  `async with flags.for_attributes({"plan": "pro"})` in Python and
+  `flags.WithAttributes(ctx, map[string]string{"plan": "pro"})` in Go. Names
+  are lowercase identifiers, at most 16 per request; values are printable ASCII
+  up to 128 bytes, and an invalid value is dropped.
+- Operators are `in`, `not_in` and, for `app.*` only, `ends_with`. A condition
+  on a missing attribute never matches, including `not_in`.
+- A verified customer is still required: anonymous requests use the default.
+- Attribute values are not stored in request evidence or propagated to other
+  services.
+- Runtime SDKs need capability `attribute-targeting-v1`; older SDKs receive
+  `426 flags_sdk_capability_required` while an enabled flag uses attributes.
+
+From the CLI, `--attr country=DE,FR` means `in`, `--attr 'plan!=free'` means
+`not_in` and `--attr 'email$=@example.com'` means `ends_with`. `country` and
+`ua_family` are the gateway's attributes; any other bare name is `app.<name>`:
+
+```bash
+gregale flags rule-add new-export --id eu-pro --attr country=DE,FR --attr plan=pro --project exports
+gregale flags inspect --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111 --attr country=DE --attr plan=pro
 ```
 
 ## Check behavior in a Node application

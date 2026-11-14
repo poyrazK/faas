@@ -33,6 +33,7 @@ import (
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/agents"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
@@ -531,7 +532,13 @@ var ExecutionRequest = executionRequest
 var ExtractInputValue = extractInputValue
 var ExtractTarGzToDir = extractTarGzToDir
 var FailedStageFromJSON = failedStageFromJSON
-var FeatureFlagConfigRequiresSubjectTargeting = featureFlagConfigRequiresSubjectTargeting
+func FeatureFlagRequiredCapabilities(config flags.Config) []string {
+	var out []string
+	for _, c := range featureFlagRequiredCapabilities(config) {
+		out = append(out, c.capability)
+	}
+	return out
+}
 var FeatureFlagOutcomeQuery = featureFlagOutcomeQuery
 var FetchAccountMetricsSnapshot = fetchAccountMetricsSnapshot
 var FindDashboardCookie = findDashboardCookie

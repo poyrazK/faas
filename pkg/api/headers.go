@@ -23,6 +23,15 @@ const (
 	FlagSDKCapabilitiesHeader = "X-Faas-Flags-Capabilities"
 	// FlagSDKSubjectTargetingCapability advertises safe per-subject evaluation.
 	FlagSDKSubjectTargetingCapability = "subject-targeting-v1"
+	// FlagSDKAttributeTargetingCapability advertises rule attribute
+	// conditions (ADR 20261114150000 §2).
+	FlagSDKAttributeTargetingCapability = "attribute-targeting-v1"
+	// ClientCountryHeader and ClientUAFamilyHeader carry the gateway-verified
+	// request attributes Flags rules can target: the client's ISO 3166-1
+	// alpha-2 country and its request-analytics browser family. Omitted when
+	// unknown; clients cannot author them.
+	ClientCountryHeader  = "X-Faas-Client-Country"
+	ClientUAFamilyHeader = "X-Faas-Client-Ua-Family"
 	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
 	// RequestIDHeader, this value is always the 32-character lowercase OTel
 	// trace id when tracing is active.
@@ -143,6 +152,11 @@ type PlatformIdentity struct {
 	DeploymentTag       string
 	DeploymentCreatedAt string
 	ImageDigest         string
+	// ClientCountry and ClientUAFamily are gateway-verified request
+	// attributes for Flags targeting (ADR 20261114150000 §2). They describe
+	// the public caller, so only public-ingress paths set them.
+	ClientCountry  string
+	ClientUAFamily string
 }
 
 // ApplyGuestHeaders clears any inbound platform claims and stamps the
@@ -171,6 +185,8 @@ func (i PlatformIdentity) ApplyGuestHeaders(h http.Header) {
 	set(DeploymentTagHeader, i.DeploymentTag)
 	set(DeploymentCreatedAtHeader, i.DeploymentCreatedAt)
 	set(ImageDigestHeader, i.ImageDigest)
+	set(ClientCountryHeader, i.ClientCountry)
+	set(ClientUAFamilyHeader, i.ClientUAFamily)
 	set("X-Faas-App", i.AppID)
 	set("X-Faas-Instance", i.InstanceID)
 	set("X-Faas-Node", i.NodeID)
@@ -265,6 +281,7 @@ var guestIdentityHeaderNames = map[string]struct{}{
 	"x-faas-tenant-id": {}, "x-faas-platform-tenant-id": {}, "x-faas-instance-id": {}, "x-faas-node-id": {},
 	"x-faas-region": {}, "x-faas-commit-sha": {}, "x-faas-deployment-tag": {},
 	"x-faas-deployment-created-at": {}, "x-faas-image-digest": {}, "x-faas-flag-context": {},
+	"x-faas-client-country": {}, "x-faas-client-ua-family": {},
 	"x-gregale-operation-id": {}, "x-gregale-operation-generation": {}, "x-gregale-operation-result-version": {},
 	"x-gregale-customer-operation-id": {}, "x-gregale-operation-attempt": {}, "x-gregale-operation-capability": {},
 }

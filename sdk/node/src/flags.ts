@@ -5,8 +5,9 @@ export interface ProgressiveRollout {
   stages: number[]; current_stage: number; auto_advance?: boolean; minimum_used_requests: number;
   maximum_http_5xx_rate_basis_points: number; maximum_p95_latency_ms: number; window_seconds: number;
 }
-export interface FlagRule { id: string; customers?: string[]; group?: string; subjects?: string[]; rollout?: number; rollout_unit?: 'customer' | 'subject'; value: boolean; progression?: ProgressiveRollout }
-export interface VariantFlagRule { id: string; customers?: string[]; group?: string; subjects?: string[]; rollout?: number; rollout_unit?: 'customer' | 'subject'; value?: string }
+export interface FlagCondition { attribute: string; op: 'in' | 'not_in' | 'ends_with'; values: string[] }
+export interface FlagRule { id: string; customers?: string[]; group?: string; subjects?: string[]; attributes?: FlagCondition[]; rollout?: number; rollout_unit?: 'customer' | 'subject'; value: boolean; progression?: ProgressiveRollout }
+export interface VariantFlagRule { id: string; customers?: string[]; group?: string; subjects?: string[]; attributes?: FlagCondition[]; rollout?: number; rollout_unit?: 'customer' | 'subject'; value?: string }
 export interface WeightedVariant { key: string; weight: number }
 export interface FeatureFlag { key: string; description?: string; type?: 'boolean'; enabled: boolean; default: boolean; seed: string; rules: FlagRule[]; variants?: never }
 export type BooleanFeatureFlag = FeatureFlag;
@@ -31,6 +32,28 @@ export type FlagRequestHeaders = HeadersInit | Record<string, string | string[] 
 export const GREGALE_FLAG_EVIDENCE_HEADER = 'X-Faas-Flag-Evidence';
 export const GREGALE_FLAG_CONTEXT_HEADER = 'X-Faas-Platform-Tenant-Id';
 export const GREGALE_FLAG_PROPAGATION_HEADER = 'X-Faas-Flag-Context';
+export const GREGALE_CLIENT_COUNTRY_HEADER = 'X-Faas-Client-Country';
+export const GREGALE_CLIENT_UA_FAMILY_HEADER = 'X-Faas-Client-Ua-Family';
+/** Request attributes for rule conditions: gregale.* from the gateway, app.* from the application. */
+export type FlagAttributes = Record<string, string>;
+const APP_ATTRIBUTE_NAME = /^[a-z][a-z0-9_]{0,31}$/;
+const ATTRIBUTE_NAME = /^(gregale\.(country|ua_family)|app\.[a-z][a-z0-9_]{0,31})$/;
+const MAX_APP_ATTRIBUTES = 16;
+export function validFlagAttributeValue(value: unknown): value is string {
+  return typeof value === 'string' && /^[\x20-\x7e]{1,128}$/.test(value);
+}
+/** Every condition must hold; a missing or invalid attribute never matches. */
+export function matchFlagConditions(conditions: FlagCondition[] | undefined, attributes: FlagAttributes | undefined): boolean {
+  for (const c of conditions ?? []) {
+    const value = attributes?.[c.attribute];
+    if (!validFlagAttributeValue(value)) return false;
+    if (c.op === 'in') { if (!c.values.includes(value)) return false; }
+    else if (c.op === 'not_in') { if (c.values.includes(value)) return false; }
+    else if (c.op === 'ends_with') { if (!c.values.some(suffix => value.endsWith(suffix))) return false; }
+    else return false;
+  }
+  return true;
+}
 const CUSTOMER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const FLAG_KEY = /^[a-z][a-z0-9_-]{0,63}$/;
@@ -51,7 +74,7 @@ export function validFlagSubjectID(value: unknown): value is string {
   return typeof value === 'string' && /^[\x21-\x7e]{1,128}$/.test(value);
 }
 /** Pure evaluator. customer must come from trusted server-side middleware. */
-export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: boolean, subject?: string): FlagDecision {
+export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: boolean, subject?: string, attributes?: FlagAttributes): FlagDecision {
   const d: FlagDecision = { flag: key, value: fallback, config_version: bundle.version, reason: 'flag_missing', source: 'fallback' };
   const f = bundle.flags.find(flag => flag.key === key);
   if (!f) return d;
@@ -64,6 +87,7 @@ export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string 
   for (const rule of f.rules) {
     if (rule.customers?.length && !rule.customers.includes(customer)) continue;
     if (rule.group && !bundle.groups[rule.group]?.includes(customer)) continue;
+    if (rule.attributes?.length && !matchFlagConditions(rule.attributes, attributes)) continue;
     const subjectScoped = !!rule.subjects?.length || rule.rollout_unit === 'subject';
     if (subjectScoped && !subject) { subjectMissing = true; continue; }
     if (rule.subjects?.length && !rule.subjects.includes(subject!)) continue;
@@ -78,7 +102,7 @@ export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string 
   return d;
 }
 /** Pure named-variant evaluator with deterministic weighted allocation. */
-export function evaluateVariant(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: string, subject?: string): VariantFlagDecision {
+export function evaluateVariant(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: string, subject?: string, attributes?: FlagAttributes): VariantFlagDecision {
   const d: VariantFlagDecision = { flag: key, type: 'variant', value: fallback, config_version: bundle.version, reason: 'flag_missing', source: 'fallback' };
   const f = bundle.flags.find(flag => flag.key === key);
   if (!f) return d;
@@ -91,6 +115,7 @@ export function evaluateVariant(bundle: FlagsBundle, key: string, customer: stri
   for (const rule of f.rules) {
     if (rule.customers?.length && !rule.customers.includes(customer)) continue;
     if (rule.group && !bundle.groups[rule.group]?.includes(customer)) continue;
+    if (rule.attributes?.length && !matchFlagConditions(rule.attributes, attributes)) continue;
     const subjectScoped = !!rule.subjects?.length || rule.rollout_unit === 'subject';
     if (subjectScoped && !subject) { subjectMissing = true; continue; }
     if (rule.subjects?.length && !rule.subjects.includes(subject!)) continue;
@@ -129,7 +154,7 @@ export interface GregaleFlagsOptions {
 type PropagatedDecision =
   | (FlagDecision & { source: 'configuration' | 'fallback'; origin: FlagDecisionOrigin })
   | (VariantFlagDecision & { source: 'configuration' | 'fallback'; origin: FlagDecisionOrigin });
-type RequestFlags = { customer?: string; subject?: string; bundle?: FlagsBundle; fresh: boolean; evidence: Map<string, AnyFlagEvidence>; inherited: Map<string, PropagatedDecision> };
+type RequestFlags = { customer?: string; subject?: string; attributes: FlagAttributes; bundle?: FlagsBundle; fresh: boolean; evidence: Map<string, AnyFlagEvidence>; inherited: Map<string, PropagatedDecision> };
 
 /** Server-only client. Refresh is asynchronous; all checks in a request share one snapshot. */
 export class GregaleFlags {
@@ -176,7 +201,7 @@ export class GregaleFlags {
     if (!identity.ok) throw new Error('Flags workload identity unavailable');
     const token = await boundedJSON(identity, 16_384) as { access_token?: string };
     if (typeof token.access_token !== 'string' || !token.access_token || token.access_token.length > 8192) throw new Error('Invalid workload identity');
-    const response = await this.fetchImpl(this.apiURL, { signal, redirect: 'error', cache: 'no-store', headers: { Authorization: `Bearer ${token.access_token}`, 'X-Faas-Flags-Capabilities': 'subject-targeting-v1' } });
+    const response = await this.fetchImpl(this.apiURL, { signal, redirect: 'error', cache: 'no-store', headers: { Authorization: `Bearer ${token.access_token}`, 'X-Faas-Flags-Capabilities': 'subject-targeting-v1, attribute-targeting-v1' } });
     if (!response.ok) throw new Error(`Flags refresh failed (${response.status})`);
     // Configuration is bounded to 256 KiB; the runtime envelope adds scope/version.
     const next = validateBundle(await boundedJSON(response, 262_144 + 1024));
@@ -198,8 +223,13 @@ export class GregaleFlags {
       ? undefined
       : decodedPropagation;
     const customer = propagated?.customer_id ?? (CUSTOMER_ID.test(rawCustomer) ? rawCustomer : undefined);
+    const attributes: FlagAttributes = {};
+    const country = normalized.get(GREGALE_CLIENT_COUNTRY_HEADER) ?? '';
+    if (/^[A-Z]{2}$/.test(country)) attributes['gregale.country'] = country;
+    const uaFamily = normalized.get(GREGALE_CLIENT_UA_FAMILY_HEADER) ?? '';
+    if (FLAG_KEY.test(uaFamily)) attributes['gregale.ua_family'] = uaFamily;
     const request: RequestFlags = {
-      customer, bundle: this.bundle,
+      customer, attributes, bundle: this.bundle,
       fresh: !!this.bundle && currentAge >= 0 && currentAge <= this.maxStaleMs,
       evidence: new Map(), inherited: propagated?.decisions ?? new Map(),
     };
@@ -211,6 +241,21 @@ export class GregaleFlags {
     if (!request) throw new Error('Subject context requires runRequest');
     if (!validFlagSubjectID(subjectID)) throw new Error('Invalid opaque subject ID');
     return this.requests.run({ ...request, subject: subjectID }, async () => await handler());
+  }
+  /** Bind application attributes (app.<name>) after authenticating the user, within runRequest.
+   * Names are lowercase identifiers; invalid values are dropped and read as missing. */
+  withAttributes<T>(attributes: Record<string, string>, handler: () => T | Promise<T>): Promise<T> {
+    const request = this.requests.getStore();
+    if (!request) throw new Error('Attribute context requires runRequest');
+    const next: FlagAttributes = { ...request.attributes };
+    let count = Object.keys(next).filter(name => name.startsWith('app.')).length;
+    for (const [name, value] of Object.entries(attributes)) {
+      if (!APP_ATTRIBUTE_NAME.test(name)) throw new Error(`Invalid flag attribute name ${name}`);
+      if (!(`app.${name}` in next)) count += 1;
+      if (count > MAX_APP_ATTRIBUTES) throw new Error(`At most ${MAX_APP_ATTRIBUTES} application attributes per request`);
+      if (validFlagAttributeValue(value)) next[`app.${name}`] = value; else delete next[`app.${name}`];
+    }
+    return this.requests.run({ ...request, attributes: next }, async () => await handler());
   }
   boolean(key: string, fallback: boolean): FlagDecision {
     const r = this.requests.getStore();
@@ -225,7 +270,7 @@ export class GregaleFlags {
       if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
       return { ...d };
     }
-    const d: FlagDecision = r.fresh && r.bundle ? evaluateFlag(r.bundle, key, r.customer, fallback, r.subject) : { flag: key, value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
+    const d: FlagDecision = r.fresh && r.bundle ? evaluateFlag(r.bundle, key, r.customer, fallback, r.subject, r.attributes) : { flag: key, value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
     if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
     return d;
   }
@@ -242,7 +287,7 @@ export class GregaleFlags {
       if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
       return { ...d };
     }
-    const d: VariantFlagDecision = r.fresh && r.bundle ? evaluateVariant(r.bundle, key, r.customer, fallback, r.subject) : { flag: key, type: 'variant', value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
+    const d: VariantFlagDecision = r.fresh && r.bundle ? evaluateVariant(r.bundle, key, r.customer, fallback, r.subject, r.attributes) : { flag: key, type: 'variant', value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
     if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
     return d;
   }
@@ -369,7 +414,10 @@ function validateBundle(raw: unknown): FlagsBundle {
       const validRuleValue = isVariant ? (r.value === undefined || (typeof r.value === 'string' && variantKeys.has(r.value))) : typeof r.value === 'boolean';
       const validSubjects = (value: unknown): value is string[] => Array.isArray(value) && value.length >= 1 && value.length <= 1000 && value.every(validFlagSubjectID) && new Set(value).size === value.length;
       const tenantScoped = !!r.customers?.length || !!r.group;
-      if (!key(r.id) || rules.has(r.id) || !validRuleValue || (r.customers !== undefined && !ids(r.customers)) || (r.group !== undefined && (!key(r.group) || !Object.hasOwn(b.groups, r.group))) || (r.subjects !== undefined && !validSubjects(r.subjects)) || (r.rollout_unit !== undefined && r.rollout_unit !== 'customer' && r.rollout_unit !== 'subject') || (r.rollout_unit !== undefined && r.rollout === undefined) || ((!!r.subjects?.length || r.rollout_unit === 'subject') && !tenantScoped) || (r.rollout !== undefined && (!Number.isInteger(r.rollout) || r.rollout < 0 || r.rollout > 10000)) || (!r.customers?.length && !r.group && !r.subjects?.length && r.rollout === undefined)) throw new Error('Invalid Flags rule');
+      const validConditions = r.attributes === undefined || (Array.isArray(r.attributes) && r.attributes.length >= 1 && r.attributes.length <= 8 && r.attributes.every(c =>
+        typeof c?.attribute === 'string' && ATTRIBUTE_NAME.test(c.attribute) && ['in', 'not_in', 'ends_with'].includes(c.op) && (c.op !== 'ends_with' || c.attribute.startsWith('app.')) &&
+        Array.isArray(c.values) && c.values.length >= 1 && c.values.length <= 100 && c.values.every(validFlagAttributeValue) && new Set(c.values).size === c.values.length));
+      if (!key(r.id) || rules.has(r.id) || !validRuleValue || (r.customers !== undefined && !ids(r.customers)) || (r.group !== undefined && (!key(r.group) || !Object.hasOwn(b.groups, r.group))) || (r.subjects !== undefined && !validSubjects(r.subjects)) || (r.rollout_unit !== undefined && r.rollout_unit !== 'customer' && r.rollout_unit !== 'subject') || (r.rollout_unit !== undefined && r.rollout === undefined) || ((!!r.subjects?.length || r.rollout_unit === 'subject') && !tenantScoped) || (r.rollout !== undefined && (!Number.isInteger(r.rollout) || r.rollout < 0 || r.rollout > 10000)) || !validConditions || (!r.customers?.length && !r.group && !r.subjects?.length && !r.attributes?.length && r.rollout === undefined)) throw new Error('Invalid Flags rule');
       rules.add(r.id);
     }
   }

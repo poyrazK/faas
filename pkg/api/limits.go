@@ -2634,6 +2634,14 @@ const (
 	FlagsMaxConfigVersion      = int64(9007199254740991)
 )
 
+// Flag attribute targeting bounds (ADR 20261114150000 §2).
+const (
+	FlagsMaxConditionsPerRule   = 8
+	FlagsMaxConditionValues     = 100
+	FlagsMaxAttributeValueBytes = 128
+	FlagsMaxAppAttributes       = 16
+)
+
 // Progressive rollout controls are structural bounds, not plan allowances.
 const (
 	FlagsMaxProgressiveStages                = 8

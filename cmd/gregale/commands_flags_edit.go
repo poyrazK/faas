@@ -69,8 +69,9 @@ func cmdFlagsEdit(verb string, args []string) int {
 	group := fs.String("group", "", "customer group")
 	percent := fs.String("percent", "", "percentage of eligible customers, 0..100")
 	value := fs.String("value", "", "rule value: true/false, or a variant key")
-	var customers repeatedFlag
+	var customers, attrs repeatedFlag
 	fs.Var(&customers, "customer", "platform customer UUID (repeatable)")
+	fs.Var(&attrs, "attr", "attribute condition NAME=V1,V2, NAME!=V1,V2 or NAME$=SUFFIX (repeatable)")
 	positionals, err := parseInterleaved(fs, args)
 	if err != nil {
 		return 1
@@ -125,7 +126,7 @@ func cmdFlagsEdit(verb string, args []string) int {
 		}
 		edit = flagsPercent(key, bp)
 	case "rule-add":
-		rule, err := flagsRuleFromOptions(*ruleID, customers, *group, *percent, *value, fs)
+		rule, err := flagsRuleFromOptions(*ruleID, customers, *group, attrs, *percent, *value, fs)
 		if err != nil {
 			printCommandValidation(os.Stderr, "gregale flags rule-add: %v\n", err)
 			return 1
@@ -394,13 +395,67 @@ func formatBasisPoints(bp int) string {
 	return strings.TrimSuffix(strings.TrimRight(strconv.FormatFloat(float64(bp)/100, 'f', 2, 64), "0"), ".")
 }
 
+// flagsAttributeName expands a short attribute name: country and ua_family
+// are the gateway's, any other bare name is the application's.
+func flagsAttributeName(name string) string {
+	switch {
+	case strings.Contains(name, "."):
+		return name
+	case name == "country" || name == "ua_family":
+		return "gregale." + name
+	default:
+		return flags.AppAttributePrefix + name
+	}
+}
+
+// parseFlagsCondition reads NAME=V1,V2 (in), NAME!=V1,V2 (not_in) or
+// NAME$=SUFFIX,... (ends_with).
+func parseFlagsCondition(raw string) (flags.Condition, error) {
+	for _, form := range []struct{ sep, op string }{{"!=", flags.OpNotIn}, {"$=", flags.OpEndsWith}, {"=", flags.OpIn}} {
+		name, values, ok := strings.Cut(raw, form.sep)
+		if !ok {
+			continue
+		}
+		c := flags.Condition{Attribute: flagsAttributeName(strings.TrimSpace(name)), Op: form.op, Values: splitList(values)}
+		if !flags.ValidAttributeName(c.Attribute) || len(c.Values) == 0 {
+			break
+		}
+		return c, nil
+	}
+	return flags.Condition{}, fmt.Errorf("--attr %q: use NAME=V1,V2 (in), NAME!=V1,V2 (not in) or NAME$=SUFFIX (ends with); NAME is country, ua_family or an app attribute", raw)
+}
+
+// parseFlagsInspectAttributes reads repeated NAME=VALUE options.
+func parseFlagsInspectAttributes(raw []string) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	out := map[string]string{}
+	for _, item := range raw {
+		name, value, ok := strings.Cut(item, "=")
+		name = flagsAttributeName(strings.TrimSpace(name))
+		if !ok || !flags.ValidAttributeName(name) || !flags.ValidAttributeValue(value) {
+			return nil, fmt.Errorf("--attr %q: use NAME=VALUE; NAME is country, ua_family or an app attribute", item)
+		}
+		out[name] = value
+	}
+	return out, nil
+}
+
 // flagsRuleFromOptions builds a rule from rule-add options. The value is
 // checked against the flag later, in flagsRuleAdd.
-func flagsRuleFromOptions(id string, customers []string, group, percent, value string, fs *flag.FlagSet) (flags.Rule, error) {
+func flagsRuleFromOptions(id string, customers []string, group string, attrs []string, percent, value string, fs *flag.FlagSet) (flags.Rule, error) {
 	if !flags.ValidKey(id) {
 		return flags.Rule{}, fmt.Errorf("--id must be a rule ID (lowercase letter, then up to 63 of a-z 0-9 _ -)")
 	}
 	rule := flags.Rule{ID: id, Customers: []string(customers), Group: group}
+	for _, raw := range attrs {
+		c, err := parseFlagsCondition(raw)
+		if err != nil {
+			return flags.Rule{}, err
+		}
+		rule.Attributes = append(rule.Attributes, c)
+	}
 	if flagSetAny(fs, "percent") {
 		bp, err := parseFlagsPercent(percent)
 		if err != nil {
