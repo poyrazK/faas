@@ -3,7 +3,6 @@ package datapipelines
 import (
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -103,18 +102,11 @@ func (h *Handler) manageDashboardSetup(r *http.Request, account string) (string,
 	ctx, id := r.Context(), r.FormValue("connection_id")
 	switch r.FormValue("action") {
 	case "setup":
-		serving, err := dashboardServing(r)
+		req, err := dashboardSetupInput(r)
 		if err != nil {
 			return "", err
 		}
-		subjects := []string{}
-		if r.FormValue("read_subjects") != "" {
-			subjects = strings.Split(r.FormValue("read_subjects"), ",")
-		}
-		for i := range subjects {
-			subjects[i] = strings.TrimSpace(subjects[i])
-		}
-		_, err = h.Service.StartSetup(ctx, account, datapipeline.SetupRequest{Serving: serving, Name: r.FormValue("name"), SourceConnectionID: id, DatabaseID: r.FormValue("database_id"), Region: r.FormValue("region"), Tables: r.Form["tables"], ReadSubjects: subjects, DataAPIName: r.FormValue("data_api_name"), AuthAppID: r.FormValue("auth_app_id")})
+		_, err = h.Service.StartSetup(ctx, account, req)
 		return id, err
 	case "setup_control":
 		if r.FormValue("control") == "retry" && !h.Service.Available(ctx, account) {

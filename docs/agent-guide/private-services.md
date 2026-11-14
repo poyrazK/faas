@@ -4,7 +4,7 @@ Apps in your account reach each other privately; a port declared :internal never
 
 - Give an app no public URL:
     gregale app <app> --visibility internal
-- Declare a private TCP port (Redis, a broker):
+- Declare a private TCP port (a broker, memcached):
     gregale app <app> --ports <name>=tcp:<port>:internal
 - Declare a public raw TCP port, then give it a listener:
     gregale app <app> --ports <name>=tcp:<port>
