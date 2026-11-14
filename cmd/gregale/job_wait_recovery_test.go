@@ -53,6 +53,7 @@ func newJobWaitTestAPI(t *testing.T, mode string) (*jobWaitTestAPI, *httptest.Se
 	main.SetupConnectionProfiles(t)
 	main.SetFakeKeyring(t)
 	main.ResetJSONOut(t)
+	t.Chdir(t.TempDir()) // accepted-run journals belong to this fixture
 	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "1")
 	t.Setenv("FAAS_JSON", "0")
 	f := &jobWaitTestAPI{t: t, mode: mode, token: "fp_test_job-wait-private", headers: []string{jobWaitRequestID}, polled: make(chan struct{}), canceled: make(chan struct{})}
