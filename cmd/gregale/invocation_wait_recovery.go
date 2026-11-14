@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -43,13 +42,7 @@ func invocationRecoveryCommand(verb, id string) string {
 func renderInvocationWaitProblem(problem api.Problem, code int, id string) int {
 	problem = diagnosticProblem(problem)
 	if jsonOutput {
-		_ = json.NewEncoder(osStderr).Encode(struct {
-			api.Problem
-			Recovery  *invocationWaitRecovery `json:"recovery,omitempty"`
-			Category  string                  `json:"category"`
-			ExitCode  int                     `json:"exit_code"`
-			RequestID string                  `json:"request_id,omitempty"`
-		}{Problem: problem, Recovery: newInvocationWaitRecovery(id), Category: exitCategory(code), ExitCode: code, RequestID: safeProblemRequestID(problem)})
+		_ = writeJSONWaitProblem(osStderr, problem, code, newInvocationWaitRecovery(id))
 	} else {
 		renderAPIError(osStderr, &APIError{Problem: problem})
 	}

@@ -35,6 +35,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`version`](#version) | Print the CLI version |
 | [`update`](#update) | Update the CLI to the newest release |
 | [`man`](#man) | Print the CLI manual page, or one command&#39;s page |
+| [`guide`](#guide) | Short task pages: deploy, health checks, private services, rollouts |
 | [`release`](#release) | Inspect releases and control rollouts: canary, traffic, approvals |
 | [`preview`](#preview) | Manage pull-request preview environments |
 | [`project`](#project) | Inspect and recover repository projects |
@@ -1040,6 +1041,24 @@ gregale update --version v0.1.18
 Print the CLI manual page, or one command&#39;s page
 
 `gregale man <command>`
+
+
+## guide
+
+Short task pages: deploy, health checks, private services, rollouts
+
+`gregale guide [<task>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | print the pages as JSON |  |
+
+Examples:
+
+```sh
+gregale guide
+gregale guide private-services
+```
 
 
 ## release
@@ -7270,12 +7289,18 @@ Revoke an API key
 
 Rotate an API key
 
-`gregale key rotate <key-id>`
+`gregale key rotate [--revoke-old] [--grace-days <N>] <key-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--revoke-old` | revoke the old key now instead of after the grace window (use when the key leaked) |  |
+| `--grace-days <N>` | days the old key keeps working, for this rotation only (0 to 30) |  |
 
 Examples:
 
 ```sh
 gregale key rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a
+gregale key rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a --revoke-old
 ```
 
 

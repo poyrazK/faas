@@ -231,7 +231,7 @@ func (m *MemStore) AuthenticateDeployToken(_ context.Context, hash []byte) (Acco
 		return Account{}, APIKey{}, ErrNotFound
 	}
 	if t.Status == string(APIKeyStatusRevoked) {
-		return Account{}, APIKey{}, ErrAPIKeyRevoked
+		return Account{}, refusedKey(t.ID, t.AccountID), ErrAPIKeyRevoked
 	}
 	if t.ExpiresAt == nil || !t.ExpiresAt.After(time.Now()) {
 		now := time.Now().UTC()
@@ -239,7 +239,7 @@ func (m *MemStore) AuthenticateDeployToken(_ context.Context, hash []byte) (Acco
 		t.RevokedAt = &now
 		m.deployTokens[t.ID] = t
 		m.deployTokenByHash[string(hash)] = t
-		return Account{}, APIKey{}, ErrAPIKeyExpired
+		return Account{}, refusedKey(t.ID, t.AccountID), ErrAPIKeyExpired
 	}
 	return acct, APIKey{ID: t.ID, AccountID: principal, OrgID: orgID, AppID: t.AppID,
 		Hash: append([]byte(nil), t.Hash...), Label: t.Label,

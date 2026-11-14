@@ -19,6 +19,8 @@ from .account_health_request import AccountHealthRequest
 from .account_health_requests import AccountHealthRequests
 from .account_health_restriction import AccountHealthRestriction
 from .account_health_restriction_kind import AccountHealthRestrictionKind
+from .account_health_signal import AccountHealthSignal
+from .account_health_signal_kind import AccountHealthSignalKind
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_overage_cap_response import AccountOverageCapResponse
@@ -1832,6 +1834,7 @@ from .plan_managed_not_provisioned_reason import PlanManagedNotProvisionedReason
 from .plan_managed_provision import PlanManagedProvision
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
+from .plan_source_host import PlanSourceHost
 from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
@@ -2162,6 +2165,7 @@ from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
 )
 from .rotate_deploy_token_request import RotateDeployTokenRequest
 from .rotate_deploy_token_response import RotateDeployTokenResponse
+from .rotate_key_request import RotateKeyRequest
 from .rotate_key_response import RotateKeyResponse
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
@@ -2735,6 +2739,8 @@ __all__ = (
     "AccountHealthRequests",
     "AccountHealthRestriction",
     "AccountHealthRestrictionKind",
+    "AccountHealthSignal",
+    "AccountHealthSignalKind",
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountOverageCapResponse",
@@ -4412,6 +4418,7 @@ __all__ = (
     "PlanManagedProvision",
     "PlanResponse",
     "PlanResponseScanSource",
+    "PlanSourceHost",
     "PlanWorkload",
     "PlanWorkloadAction",
     "PlanWorkloadClass",
@@ -4726,6 +4733,7 @@ __all__ = (
     "RotateAppWebhookSecretResponseWebhookSecretSealedMasked",
     "RotateDeployTokenRequest",
     "RotateDeployTokenResponse",
+    "RotateKeyRequest",
     "RotateKeyResponse",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",

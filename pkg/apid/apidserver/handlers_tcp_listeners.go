@@ -31,6 +31,26 @@ func tcpListenerResponse(listener state.TCPListener) api.TCPListenerResponse {
 // manifest selector. A durable public listener must not invent a guest port
 // or listener name that the deployed workload did not declare. Unnamed
 // manifest entries use the same deterministic tcp-<port> selector as ADR-176.
+// appInternalTCPPort returns the internal TCP port a listener request names:
+// declared, so the request is not a typo, but private by design (ADR-576).
+func appInternalTCPPort(app state.App, name string, guestPort int) (api.WorkloadPort, bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, port := range app.Manifest.Ports {
+		if !port.Internal || port.EffectiveProtocol() != api.WorkloadPortTCP || port.Port != guestPort {
+			continue
+		}
+		declared := strings.ToLower(strings.TrimSpace(port.Name))
+		if declared == "" {
+			declared = fmt.Sprintf("tcp-%d", port.Port)
+		}
+		if declared == name {
+			port.Name = declared
+			return port, true
+		}
+	}
+	return api.WorkloadPort{}, false
+}
+
 func appDeclaresTCPListener(app state.App, name string, guestPort int) bool {
 	name = strings.ToLower(strings.TrimSpace(name))
 	for _, port := range app.Manifest.Ports {
@@ -112,6 +132,16 @@ func (s *server) createAppTCPListener(w http.ResponseWriter, r *http.Request, ac
 	if err := api.ValidateWorkloadPorts([]api.WorkloadPort{{Name: name, Port: req.GuestPort, Protocol: api.WorkloadPortTCP}}); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid TCP listener", err.Error()))
+		return
+	}
+	if internal, ok := appInternalTCPPort(app, name, req.GuestPort); ok {
+		// ADR-20261112223000 §2: say why the declared port is refused and
+		// how it is reached, instead of asking to declare it again.
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Invalid TCP listener", fmt.Sprintf("port %d (%s) is declared internal, and an internal port never gets a public listener. "+
+				"Apps in your account that declare %s in depends_on already reach it at $%s:%d, so it needs no listener. "+
+				"For a public listener, declare it without :internal: `gregale app %s --ports %s=tcp:%d`",
+				internal.Port, internal.Name, app.Slug, api.ServiceBindingHostEnvKey(app.Slug), internal.Port, app.Slug, internal.Name, internal.Port)))
 		return
 	}
 	if !appDeclaresTCPListener(app, name, req.GuestPort) {

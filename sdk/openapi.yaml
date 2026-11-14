@@ -5375,6 +5375,9 @@ paths:
                 dev_source_deleted:
                   type: string
                   description: "JSON string array of canonical archive paths removed since dev_source_base."
+                dev_source_build_now:
+                  type: string
+                  description: "Set to true to build this sync at once even when it reaches the running instance as a live patch. Without it, such a sync's build waits until the developer stops saving and a later sync replaces it."
                 dockerfile:
                   type: boolean
                 runtime:
@@ -15916,7 +15919,9 @@ paths:
         default). Status flips to 'grace' for the window, then to
         'revoked' at the deadline. Setting
         `accounts.key_grace_window_days = 0` makes rotation atomic
-        (old key revoked immediately).
+        (old key revoked immediately). The optional body's
+        `grace_window_days` overrides the window for this rotation
+        only; send `0` to revoke a leaked key at once.
 
         Returns the new plaintext exactly once — the old plaintext
         is not re-issued (we only store the SHA-256 hash). The
@@ -15926,6 +15931,14 @@ paths:
 
         Quota: rotation is quota-neutral (-1 +1 = 0 net). A
         customer AT the per-account cap can still rotate.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateKeyRequest'
+            example:
+              grace_window_days: 0
       responses:
         '200':
           description: New key minted, old key now in 'grace' (or 'revoked' if grace_window_days=0).
@@ -26137,16 +26150,20 @@ components:
           items: {type: string}
           description: Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
     AccountHealth:
-      description: "What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain problems and refused API requests."
+      description: "What may stop the calling account from working: restrictions with the next step, problems that keep recurring, failed deployments, custom-domain problems and refused API requests."
       type: object
       required: [generated_at, attention, restrictions, failed_deployments, domain_issues, refused_requests]
       properties:
         generated_at: {type: string, format: date-time, description: When the checks ran.}
-        attention: {type: integer, description: "Number of restrictions, failed deployments and domain issues; zero means nothing needs action."}
+        attention: {type: integer, description: "Number of restrictions, signals, failed deployments and domain issues; zero means nothing needs action."}
         restrictions:
           type: array
           description: Restrictions currently applied to the account, one per kind.
           items: {$ref: '#/components/schemas/AccountHealthRestriction'}
+        signals:
+          type: array
+          description: "Problems that keep recurring on the account, such as repeated failed deployments or out-of-memory stops, with the next step. Absent from older servers."
+          items: {$ref: '#/components/schemas/AccountHealthSignal'}
         failed_deployments:
           type: array
           description: Failed deployments from the last 7 days, newest first, at most 10.
@@ -26174,6 +26191,21 @@ components:
         action: {type: string, description: Label of the next step.}
         action_url: {type: string, description: Dashboard path for the next step.}
         since: {type: string, format: date-time, description: "When the restriction started, when known."}
+    AccountHealthSignal:
+      description: "A problem that keeps recurring, in customer wording, with the next step when there is one."
+      type: object
+      required: [kind, subject, title, detail, since]
+      properties:
+        kind:
+          type: string
+          enum: [deploy_failing, app_oom, jobs_failing, limit_pressure]
+          description: Stable signal identifier.
+        subject: {type: string, description: "What the signal is about: an app slug, a scheduled job name or a problem code."}
+        title: {type: string, description: Short headline for the signal.}
+        detail: {type: string, description: What keeps happening and how to fix it.}
+        action: {type: string, description: Label of the link that fixes the signal.}
+        action_url: {type: string, description: Dashboard path of the page that fixes the signal.}
+        since: {type: string, format: date-time, description: When Gregale first detected the problem.}
     AccountHealthDeployment:
       description: A failed deployment with the error and fix hint the build or rollout reported.
       type: object
@@ -28117,7 +28149,7 @@ components:
         metrics: {type: string}
         configuration: {type: string}
     DevPatchPreview:
-      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have been applied as a live source patch to the deployment that was live at upload time (phase 1). It is a measurement only; the normal developer build always runs.
+      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync can be applied as a live source patch to the deployment that was live at upload time and, when it was published as one, whether its build waits for the developer to stop saving.
       type: object
       required:
         - eligible
@@ -28156,6 +28188,10 @@ components:
           format: int64
           minimum: 1
           description: Set when this sync published a live patch; poll getDevPatchStatus with it.
+        build_deferred_until:
+          type: string
+          format: date-time
+          description: Set when this sync's build waits behind its live patch. The build starts at this time unless a later sync replaces it first; a patch that fails to apply starts it at once.
     AppDeploySettingsCondition:
       type: object
       additionalProperties: false
@@ -35905,6 +35941,10 @@ components:
             type: string
             enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
           description: "For an unset_env_keys name with a Compose value, why that value is not imported. Never values."
+        source_hosts:
+          type: array
+          items: {$ref: '#/components/schemas/PlanSourceHost'}
+          description: "String literals in the workload's source that dial another service by its Compose name, which does not resolve on Gregale. At most a few per workload."
         imported_env_keys:
           type: array
           items: {type: string}
@@ -36107,6 +36147,14 @@ components:
         limit: {type: integer, format: int64}
         observed: {type: integer, format: int64}
         docs_url: {type: string}
+    PlanSourceHost:
+      type: object
+      description: "One place source code dials a service by its Compose name."
+      required: [host, file, line]
+      properties:
+        host: {type: string, description: "The Compose service name the code uses as a host."}
+        file: {type: string, description: "Repository-relative path of the file."}
+        line: {type: integer, description: "1-based line number."}
     FeatureHint:
       description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable."
       type: object
@@ -39225,6 +39273,11 @@ components:
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project."}
         approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field."}
+    RotateKeyRequest:
+      description: "Optional body of POST /v1/keys/{id}/rotate. `grace_window_days` overrides, for this rotation only, how many days the old key keeps working; `0` revokes it at once (use it for a leaked key). Omitted uses the account's grace window or the plan default (7 days)."
+      type: object
+      properties:
+        grace_window_days: {type: integer, minimum: 0, maximum: 30, description: "Days the old key keeps working after this rotation. `0` revokes it at once."}
     RotateKeyResponse:
       description: "Response body of POST /v1/keys/{id}/rotate. The new `key_plaintext` is returned exactly once; the old plaintext is NEVER returned (only the hash is stored). `old_key_expires_at` is the grace deadline applied to the predecessor — the customer's CI rotates over by then."
       type: object

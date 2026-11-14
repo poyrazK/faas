@@ -871,7 +871,7 @@ const (
 	CodeRecentSignInRequired = "recent_sign_in_required"
 	// CodeBrowserSessionRequired refuses an API key on an action only a
 	// person in a signed-in browser may take, such as transferring an
-	// organization's ownership (ADR 20261113180000).
+	// organization's ownership (ADR 20261114170352).
 	CodeBrowserSessionRequired = "browser_session_required"
 	// CodeMFAInvalidCode is returned when /confirm, /verify, or
 	// /recover validate a presented TOTP code / recovery code and
@@ -2096,7 +2096,7 @@ const (
 	CodeOrgInvitationCapExceeded = "org_invitation_cap_exceeded"
 	CodeOrgRoleForbidden         = "org_role_forbidden"
 	// CodeOrgMFARequired refuses a member without two-factor authentication
-	// on an organization that requires it (ADR 20261113180000).
+	// on an organization that requires it (ADR 20261114170352).
 	CodeOrgMFARequired       = "org_mfa_required"
 	CodeOrgAlreadyMember     = "org_already_member"
 	CodeOrgInvitationInvalid = "org_invitation_invalid"
@@ -6392,7 +6392,7 @@ func ErrTrafficServingChanged() *Problem {
 func ErrTrafficChangeDuringCanary() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
 		"Canary rollout controls traffic",
-		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale rollouts recover <app> --action abort`.").
+		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale release traffic rollback <app>`.").
 		WithDocs(docsBase + "/deployments#canary")
 }
 
@@ -7516,7 +7516,7 @@ func ErrOrgRoleForbidden(action string) *Problem {
 }
 
 // ErrOrgMFARequired is the 403 a member without two-factor authentication
-// gets on an organization that requires it (ADR 20261113180000).
+// gets on an organization that requires it (ADR 20261114170352).
 func ErrOrgMFARequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeOrgMFARequired,
 		"Two-factor authentication required",

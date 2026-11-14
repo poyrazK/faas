@@ -20,7 +20,7 @@ from provider_qualification import FAULTS
 
 ACTIONS = {*FAULTS, *FAULTS.values(), "preflight", "audit_cleanup", "audit_capacity", "data_api_refresh"}
 EVIDENCE_FIELDS = {"staging", "isolated_fixture", "source_retention_bytes", "shared_admission_scope",
-                   "provider_kind", "target_postgres_version", "target_subscription_count", "pipeline_reservation_count", "fault_resource_count", "reservation_count"}
+                   "provider_kind", "source_provider_kind", "target_postgres_version", "target_subscription_count", "pipeline_reservation_count", "fault_resource_count", "reservation_count"}
 
 
 def execute(request: dict, config: dict) -> dict:
@@ -61,6 +61,8 @@ def execute(request: dict, config: dict) -> dict:
         value = evidence[key]
         if key == "provider_kind":
             valid = value == "neon"
+        elif key == "source_provider_kind":
+            valid = value in {"postgresql", "neon"}
         elif key in ("staging", "isolated_fixture", "shared_admission_scope"):
             valid = type(value) is bool
         else:
