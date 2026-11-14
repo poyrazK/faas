@@ -2437,6 +2437,7 @@ export type { ProjectEnvironmentApprovalResponse } from './ProjectEnvironmentApp
 export type { ProjectEnvironmentApprovalStatusResponse } from './ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentBindingChangeResponse } from './ProjectEnvironmentBindingChangeResponse.js';
 export type { ProjectEnvironmentBindingResponse } from './ProjectEnvironmentBindingResponse.js';
+export type { ProjectEnvironmentBranchBucket } from './ProjectEnvironmentBranchBucket.js';
 export type { ProjectEnvironmentBranchDatabase } from './ProjectEnvironmentBranchDatabase.js';
 export type { ProjectEnvironmentBranchListResponse } from './ProjectEnvironmentBranchListResponse.js';
 export type { ProjectEnvironmentBranchResponse } from './ProjectEnvironmentBranchResponse.js';
