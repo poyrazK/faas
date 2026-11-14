@@ -51,7 +51,7 @@ Opening the billing portal (`GET /v1/billing/portal`) and changing the spend cap
 
 ## Billing email
 
-The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it, so give the organization its own address:
+The billing provider keeps one customer per email address. It sends that address the invoices, and the address signs in to the billing portal with a one-time code. An account bills to its sign-in email. An organization's first checkout bills to the email of the owner who starts it; until then the organization's quota and billing mail goes to its owner. Give the organization its own address:
 
 ```bash
 curl -X PUT https://api.gregale.dev/v1/orgs/acme/billing/email \

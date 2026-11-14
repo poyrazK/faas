@@ -133,6 +133,8 @@ func (p QuotaParams) Enforce(ctx context.Context, account state.Account, usedGB 
 	}
 	if res.Action == "" {
 		p.warnApproachingStop(ctx, account, usedGB, at)
+	} else {
+		account.Email = billingMailTo(ctx, store, account)
 	}
 	switch res.Action {
 	case "stop":
@@ -333,7 +335,7 @@ const quotaApproachingPercent = 80
 // thing a Free customer, or a paid one without egress overage, heard of it.
 // It shares the daily quota-warning stamp, so one mail goes out a day.
 func (p QuotaParams) warnApproachingStop(ctx context.Context, account state.Account, usedGB float64, at time.Time) {
-	if p.Mailer == nil || p.Store == nil || account.Email == "" {
+	if p.Mailer == nil || p.Store == nil {
 		return
 	}
 	kind, percent := mail.QuotaKind(""), 0
@@ -350,6 +352,9 @@ func (p QuotaParams) warnApproachingStop(ctx context.Context, account state.Acco
 		}
 	}
 	if kind == "" {
+		return
+	}
+	if account.Email = billingMailTo(ctx, p.Store, account); account.Email == "" {
 		return
 	}
 	today := at.UTC().Truncate(24 * time.Hour)
