@@ -3,29 +3,31 @@ package dashboard
 import "github.com/onebox-faas/faas/pkg/api"
 
 type DataPipelinesData struct {
-	NeonSteps                 []string
-	MembershipLimit           int
-	Alerts                    []DataPipelineAlerts
-	Readers                   []DataPipelineReaders
-	DataAPIEnabled            bool
-	AuthApps                  []DataPipelineAuthApp
-	SetupEnabled              bool
-	Setups                    []DataPipelineSetupItem
-	Enabled                   bool
-	ReadersEnabled            bool
-	VerificationCancelEnabled bool
-	CSRFToken                 string
-	ConnectionID              string
-	ConnectionRevision        int64
-	RefreshSeconds            int
-	Connections               []api.DataConnection
-	Check                     *api.DataConnectionCheck
-	Pipelines                 []api.DataPipeline
-	SchemaChanges             []DataPipelineSchemaChange
-	TableSelections           []DataPipelineTableSelection
-	Verifications             []DataPipelineVerificationItem
-	Databases                 []ManagedPostgresDatabaseItem
-	Message                   string
+	SetupPlan                                  *api.DataPipelineSetupPlan
+	FreshnessMin, FreshnessMax, IndexBudgetMax int64
+	NeonSteps                                  []string
+	MembershipLimit                            int
+	Alerts                                     []DataPipelineAlerts
+	Readers                                    []DataPipelineReaders
+	DataAPIEnabled                             bool
+	AuthApps                                   []DataPipelineAuthApp
+	SetupEnabled                               bool
+	Setups                                     []DataPipelineSetupItem
+	Enabled                                    bool
+	ReadersEnabled                             bool
+	VerificationCancelEnabled                  bool
+	CSRFToken                                  string
+	ConnectionID                               string
+	ConnectionRevision                         int64
+	RefreshSeconds                             int
+	Connections                                []api.DataConnection
+	Check                                      *api.DataConnectionCheck
+	Pipelines                                  []api.DataPipeline
+	SchemaChanges                              []DataPipelineSchemaChange
+	TableSelections                            []DataPipelineTableSelection
+	Verifications                              []DataPipelineVerificationItem
+	Databases                                  []ManagedPostgresDatabaseItem
+	Message                                    string
 }
 
 type DataPipelineAlerts struct {
