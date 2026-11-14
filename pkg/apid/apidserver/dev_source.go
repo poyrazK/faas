@@ -23,7 +23,9 @@ type devSourceMetadata struct {
 	base    string
 	target  string
 	deleted []string
-	seen    map[string]bool
+	// buildNow opts this sync out of build coalescing (ADR-20261021221906).
+	buildNow bool
+	seen     map[string]bool
 }
 
 func (m *devSourceMetadata) readField(name string, part *multipart.Part) *api.Problem {
@@ -51,6 +53,8 @@ func (m *devSourceMetadata) readField(name string, part *multipart.Part) *api.Pr
 		if err := json.Unmarshal(b, &m.deleted); err != nil {
 			return api.ErrSourceInvalid("dev_source_deleted must be a JSON string array")
 		}
+	case "dev_source_build_now":
+		m.buildNow = strings.TrimSpace(string(b)) == "true"
 	}
 	return nil
 }

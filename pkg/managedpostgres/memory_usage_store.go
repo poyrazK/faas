@@ -207,6 +207,17 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 			return UsageSnapshot{}, err
 		}
 	}
+	if len(snapshot.DatabaseEgress) > 0 {
+		for _, database := range s.databases {
+			if database.RestoreSourceDatabaseID == "" || s.billingSubject(database) != accountID {
+				continue
+			}
+			if snapshot.RestoreSources == nil {
+				snapshot.RestoreSources = map[string]string{}
+			}
+			snapshot.RestoreSources[database.ID] = database.RestoreSourceDatabaseID
+		}
+	}
 	snapshot.LastObservedAt = lastObservedAt(snapshot.Databases)
 	return snapshot, nil
 }
