@@ -3895,6 +3895,10 @@ type Querier interface {
 	// have none, so the sweeper stops them.
 	ListDueCustomerOperationDeadlines(ctx context.Context, db DBTX, arg ListDueCustomerOperationDeadlinesParams) ([]string, error)
 	ListDueExclusiveWork(ctx context.Context, db DBTX, rowLimit int32) ([]ExclusiveWorkOperation, error)
+	// Two branches so each keeps its partial index: due replays
+	// (trigger_operator_replay_due_idx), and replays a dispatcher claimed and then
+	// lost, which return once the claim lapses (trigger_records_claim_expiry_idx):
+	// the broker already settled the original delivery and never hands it back.
 	ListDueExternalTriggerReplays(ctx context.Context, db DBTX, arg ListDueExternalTriggerReplaysParams) ([]TriggerRecord, error)
 	ListDueInvocationRows(ctx context.Context, db DBTX, arg ListDueInvocationRowsParams) ([]Invocation, error)
 	ListDueInvocationRowsAfter(ctx context.Context, db DBTX, arg ListDueInvocationRowsAfterParams) ([]Invocation, error)
@@ -4953,6 +4957,11 @@ type Querier interface {
 	// count; the spend breaker sums the month through the usage primary key, one
 	// index range per database, so the ledger's growth never forces a full scan.
 	ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg ManagedPostgresFleetTotalsParams) (ManagedPostgresFleetTotalsRow, error)
+	// Billing review 2026-11-13 (R7-1): the subject's live managed PostgreSQL
+	// overage charge for the month, which the spend cap counts like compute,
+	// egress and object storage: delivered, and reserved in steps not yet
+	// finished (their target past their starting point).
+	ManagedPostgresLiveOverageMillicents(ctx context.Context, db DBTX, arg ManagedPostgresLiveOverageMillicentsParams) (ManagedPostgresLiveOverageMillicentsRow, error)
 	// ADR-20261112160000: neond refuses deleting a Neon project or branch that a
 	// live managed PostgreSQL database runs on. A provider resource is the
 	// project ID, or "<project>/<branch>" for a database on a branch.
@@ -4982,6 +4991,12 @@ type Querier interface {
 	// otherwise the account's usage subject, as in the reservation counts. Read
 	// under the owner's reservation lock.
 	ManagedPostgresRestoreSlotHeld(ctx context.Context, db DBTX, arg ManagedPostgresRestoreSlotHeldParams) (bool, error)
+	// Billing review 2026-11-13 (R6-1): every database of a subject that was made
+	// as a restore copy (a restore, branch or PR preview copy), with the database
+	// it was restored from, deleted rows included. A copy shares its root
+	// source's egress allowance: on Neon a copy is a branch of its source's
+	// project, and Neon's 500 GB transfer allowance is per project.
+	ManagedPostgresRestoreSources(ctx context.Context, db DBTX, subjectID pgtype.UUID) ([]ManagedPostgresRestoreSourcesRow, error)
 	ManagedPostgresRotationRuntime(ctx context.Context, db DBTX, arg ManagedPostgresRotationRuntimeParams) (ManagedPostgresRotationRuntimeRow, error)
 	// ADR-20261029174950 decision 6: a window wholly inside a scheduled delete is
 	// waived. The fleet spend breaker (ManagedPostgresFleetTotals) still counts it.
@@ -5664,6 +5679,7 @@ type Querier interface {
 	OperatorOverviewTotals(ctx context.Context, db DBTX, arg OperatorOverviewTotalsParams) (OperatorOverviewTotalsRow, error)
 	OperatorParkHoldsInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (bool, error)
 	OperatorPostCaptureSnapshot(ctx context.Context, db DBTX, instanceLookback int32) ([]OperatorPostCaptureSnapshotRow, error)
+	// Deferred builds that are not due yet (ADR-20261021221906) are not backlog.
 	OperatorQueuedBuildsCount(ctx context.Context, db DBTX) (int64, error)
 	OperatorQueuedBuildsSnapshot(ctx context.Context, db DBTX) (OperatorQueuedBuildsSnapshotRow, error)
 	OperatorRecentFailureCounts(ctx context.Context, db DBTX, since pgtype.Timestamptz) ([]OperatorRecentFailureCountsRow, error)
@@ -6843,6 +6859,10 @@ type Querier interface {
 	ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg ReadTrafficSecurityEpochsParams) ([]ReadTrafficSecurityEpochsRow, error)
 	ReadUsableCustomDomainDefaults(ctx context.Context, db DBTX, arg ReadUsableCustomDomainDefaultsParams) ([]ReadUsableCustomDomainDefaultsRow, error)
 	ReadValidRouteLifecycleApprovals(ctx context.Context, db DBTX, arg ReadValidRouteLifecycleApprovalsParams) ([][]byte, error)
+	// A dead webhook delivery replayed from the dead letter re-enters its
+	// account's outbox under the caps an explicit delivery meets (event-driven
+	// hunt #16). The plan resolves as ReadQueueReplayAdmission's does.
+	ReadWebhookReplayAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (ReadWebhookReplayAdmissionRow, error)
 	// Same literal suffix language as ReadPublicHostDomain and WildcardMatchesHost.
 	// Management callers retain the complete row; request snapshots omit secrets.
 	ReadWildcardCustomDomain(ctx context.Context, db DBTX, arg ReadWildcardCustomDomainParams) ([]byte, error)

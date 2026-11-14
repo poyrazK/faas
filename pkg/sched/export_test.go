@@ -788,6 +788,7 @@ func (r *fakeVMM) StatsHook() *func(context.Context, string) (*StatsSnapshot, er
 	return &r.statsHook
 }
 func (r *fakeVMM) WakeErr() *error           { return &r.wakeErr }
+func (r *fakeVMM) BaseScanGrace() *bool      { return &r.baseScanGrace }
 func (r *fakeVMM) WarmSnapshotHook() *func() { return &r.warmSnapshotHook }
 func (r *fakeVMM) WarmSnapshots() *int       { return &r.warmSnapshots }
 
@@ -1426,4 +1427,10 @@ func NodeBudgetRefusal(detail string, blockers ...api.WorkerAdmissionBlocker) er
 // failed its retries.
 func (r *Loop) FinishFailedPrime(ctx context.Context, appID, deploymentID string, err error) {
 	r.finishFailedPrime(ctx, appID, deploymentID, 1, err)
+}
+
+// PollStoredTriggerReplays polls a stored-replay source over records with
+// trigger t, as dispatchOneTrigger does after the record-rate reservation.
+func PollStoredTriggerReplays(records []sqlc.TriggerRecord, t sqlc.Trigger) PollResult {
+	return (&storedTriggerReplaySource{records: records, kind: t.Kind}).Poll(context.Background(), t)
 }

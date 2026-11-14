@@ -9016,6 +9016,16 @@ LEFT JOIN accounts a ON a.id = p.account_id
 LEFT JOIN orgs o ON o.id = p.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
 WHERE p.id = sqlc.arg(id)::uuid AND p.source = 'queue' AND p.state = 'dead_letter';
 
+-- name: ReadWebhookReplayAdmission :one
+-- A dead webhook delivery replayed from the dead letter re-enters its
+-- account's outbox under the caps an explicit delivery meets (event-driven
+-- hunt #16). The plan resolves as ReadQueueReplayAdmission's does.
+SELECT d.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM app_webhook_deliveries d
+LEFT JOIN accounts a ON a.id = d.account_id
+LEFT JOIN orgs o ON o.id = d.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE d.id = sqlc.arg(id)::uuid AND d.status = 'dead';
+
 -- name: RetryProductionQueueDeadLetter :one
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
     instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code=''
@@ -14570,11 +14580,23 @@ WHERE r.id=sqlc.arg(id)::uuid
 FOR UPDATE OF r;
 
 -- name: ListDueExternalTriggerReplays :many
-SELECT r.* FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
-WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
- AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
- AND t.kind IN ('kafka','nats','redis_streams')
-ORDER BY r.next_fire_at,r.id LIMIT sqlc.arg(batch_limit)::integer;
+-- Two branches so each keeps its partial index: due replays
+-- (trigger_operator_replay_due_idx), and replays a dispatcher claimed and then
+-- lost, which return once the claim lapses (trigger_records_claim_expiry_idx):
+-- the broker already settled the original delivery and never hands it back.
+SELECT d.* FROM (
+  (SELECT r.* FROM trigger_records r
+    WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
+      AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
+    ORDER BY r.next_fire_at,r.id LIMIT sqlc.arg(batch_limit)::integer)
+  UNION ALL
+  (SELECT r.* FROM trigger_records r
+    WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
+      AND r.state='claimed' AND r.claim_expires_at<=clock_timestamp()
+    ORDER BY r.claim_expires_at,r.id LIMIT sqlc.arg(batch_limit)::integer)
+) d
+WHERE EXISTS (SELECT 1 FROM triggers t WHERE t.id=d.trigger_id AND t.kind IN ('kafka','nats','redis_streams'))
+ORDER BY d.next_fire_at,d.id LIMIT sqlc.arg(batch_limit)::integer;
 
 -- name: QueueFinishDeliveryClaims :many
 with targets as (
@@ -29136,6 +29158,17 @@ AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_i
  AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers p WHERE p.database_id=w.database_id
   AND p.waived_from<w.waived_from AND p.waived_from>w.waived_from-interval '30 days'))
 GROUP BY u.database_id;
+
+-- name: ManagedPostgresRestoreSources :many
+-- Billing review 2026-11-13 (R6-1): every database of a subject that was made
+-- as a restore copy (a restore, branch or PR preview copy), with the database
+-- it was restored from, deleted rows included. A copy shares its root
+-- source's egress allowance: on Neon a copy is a branch of its source's
+-- project, and Neon's 500 GB transfer allowance is per project.
+SELECT d.id, d.restore_source_database_id
+FROM managed_postgres_databases d
+WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(subject_id)::uuid
+AND d.restore_source_database_id IS NOT NULL;
 
 -- name: ManagedPostgresFleetTotals :one
 -- ADR-20261028103115: the fleet database cap counts what reservation limits

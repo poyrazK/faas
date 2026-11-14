@@ -289,6 +289,9 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		workflowDefs = manifest.Workflows
 	}
 	rolloutReq.Workflows = workflowDefs
+	if s.answerSourceManifestPreview(w, r, acct, app, manifest) {
+		return
+	}
 	rollout, sched, rolloutProblem := s.prepareSourceDeploymentRollout(r, acct, app, manifest, rolloutReq)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)

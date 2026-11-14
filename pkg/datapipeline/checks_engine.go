@@ -24,8 +24,12 @@ func blockedCheck(code, message, remediation string) api.DataConnectionCheck {
 
 // Check inspects bounded metadata with verified TLS and the replication network
 // policy. It creates no publications, slots, tables, or subscriptions.
-func (e *Engine) Check(ctx context.Context, job ConnectionCheck, raw string) api.DataConnectionCheck {
-	result := blockedCheck("source_connection_unavailable", "Source connection failed", "Check the credential, verified TLS certificate, and approved source network access.")
+func (e *Engine) Check(ctx context.Context, job ConnectionCheck, raw string) (result api.DataConnectionCheck) {
+	defer func() { neonCheckGuidance(&result, raw) }()
+	if _, pooled := neonSource(raw); pooled {
+		return blockedCheck("source_neon_direct_connection_required", "A direct Neon connection is required", "Register a new source using Neon's direct connection string without the -pooler hostname suffix. Credential rotation preserves the existing host identity.")
+	}
+	result = blockedCheck("source_connection_unavailable", "Source connection failed", "Check the credential, verified TLS certificate, and approved source network access.")
 	source, err := e.connectSource(ctx, raw)
 	if err != nil {
 		return result

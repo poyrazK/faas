@@ -32,6 +32,9 @@ type Connection struct {
 	Identity   string
 }
 type Pipeline struct {
+	IndexWorkBlocked     bool
+	IndexChange          *IndexChange
+	ServingInvalid       bool
 	WALSample            *walRetentionSample
 	ReaderChange         *ReaderChange
 	VerificationProgress *VerificationProgress
@@ -46,6 +49,8 @@ type Pipeline struct {
 	SourceRevision  int64
 }
 type Observation struct {
+	IndexOnly                   bool
+	IndexChange                 *IndexChange
 	WALSample                   *walRetentionSample
 	ReaderOnly                  bool
 	ReaderChange                *ReaderChange
@@ -60,7 +65,18 @@ type Observation struct {
 }
 
 func ValidateCreate(r api.CreateDataPipelineRequest) error {
-	if len(r.ReadSubjects) == 0 {
+	if !validFreshnessTarget(r.FreshnessTargetSeconds) {
+		return ErrInvalid
+	}
+	if r.Serving != nil && r.Serving.TenantAccess != nil {
+		if len(r.ReadSubjects) != 0 {
+			return ErrInvalid
+		}
+	} else if len(r.ReadSubjects) == 0 {
+		return ErrInvalid
+	}
+	r.Serving = normalizeServing(r.Serving)
+	if !validServing(r.Serving, r.Tables) {
 		return ErrInvalid
 	}
 	return validatePipeline(r)
@@ -123,6 +139,10 @@ func normalize(r api.CreateDataPipelineRequest) api.CreateDataPipelineRequest {
 	r.DatabaseID = canonicalID(r.DatabaseID)
 	r.Tables = slices.Clone(r.Tables)
 	r.ReadSubjects = slices.Clone(r.ReadSubjects)
+	r.Serving = normalizeServing(r.Serving)
+	if r.Serving != nil && r.Serving.TenantAccess != nil {
+		r.ReadSubjects = membershipSubjects(r.Serving.TenantAccess.Memberships)
+	}
 	slices.Sort(r.Tables)
 	slices.Sort(r.ReadSubjects)
 	return r
