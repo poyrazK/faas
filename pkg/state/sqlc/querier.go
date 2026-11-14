@@ -4214,7 +4214,7 @@ type Querier interface {
 	// per-account projections; the broader ?actor + ?subject filter
 	// shape lives on ListAllEventsPaged.
 	ListRecentEventsForAccount(ctx context.Context, db DBTX, arg ListRecentEventsForAccountParams) ([]ListRecentEventsForAccountRow, error)
-	// ADR-20261114120000: every snapshot memory key a row still references, so
+	// ADR-20261114182830: every snapshot memory key a row still references, so
 	// a compute node can drop cached captures nothing references. use is 'live'
 	// for a non-stale snapshot (evicted last), 'stale' for a stale one (evicted
 	// first) and 'other' for branch captures, crash captures and in-flight live
@@ -4280,7 +4280,7 @@ type Querier interface {
 	// time; the runner decides which are due. The public edge does not serve an
 	// internal app, so its checks wait until it is public (ADR-20261031144636).
 	ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error)
-	// ADR-20261114120000: every runtime release, and whether a compute node must
+	// ADR-20261114182830: every runtime release, and whether a compute node must
 	// keep its base cached: a deployment that is not failed or cancelled is
 	// bound to it, or a runtime upgrade targets it.
 	ListRuntimeReleaseRetention(ctx context.Context, db DBTX) ([]ListRuntimeReleaseRetentionRow, error)
@@ -5679,6 +5679,7 @@ type Querier interface {
 	OperatorOverviewTotals(ctx context.Context, db DBTX, arg OperatorOverviewTotalsParams) (OperatorOverviewTotalsRow, error)
 	OperatorParkHoldsInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (bool, error)
 	OperatorPostCaptureSnapshot(ctx context.Context, db DBTX, instanceLookback int32) ([]OperatorPostCaptureSnapshotRow, error)
+	// Deferred builds that are not due yet (ADR-20261021221906) are not backlog.
 	OperatorQueuedBuildsCount(ctx context.Context, db DBTX) (int64, error)
 	OperatorQueuedBuildsSnapshot(ctx context.Context, db DBTX) (OperatorQueuedBuildsSnapshotRow, error)
 	OperatorRecentFailureCounts(ctx context.Context, db DBTX, since pgtype.Timestamptz) ([]OperatorRecentFailureCountsRow, error)
@@ -5704,7 +5705,7 @@ type Querier interface {
 	// counter. Until then they stay on the namespace counter (ADR-202610171908).
 	OrgQueueReadPolicy(ctx context.Context, db DBTX, arg OrgQueueReadPolicyParams) (OrgQueueReadPolicyRow, error)
 	OrgQueueUsage(ctx context.Context, db DBTX, orgID pgtype.UUID) (OrgQueueUsageRow, error)
-	// Organization security policy (ADR 20261113180000).
+	// Organization security policy (ADR 20261114170352).
 	OrgSecurityPolicy(ctx context.Context, db DBTX, orgID pgtype.UUID) (OrgSecurityPolicy, error)
 	OwnEnvironmentGitOpsField(ctx context.Context, db DBTX, arg OwnEnvironmentGitOpsFieldParams) (int64, error)
 	OwnsPrivateNetworkService(ctx context.Context, db DBTX, arg OwnsPrivateNetworkServiceParams) (bool, error)

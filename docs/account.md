@@ -120,7 +120,13 @@ operation still enforces its own authorization and admission checks.
   credential you did not create is noticed.
 - **Rotation grace window:** `gregale key grace-window set --days N` keeps a
   rotated key working for N days (0 to 30). Changing it asks for a recent
-  sign-in or authenticator code.
+  sign-in or authenticator code. To end it sooner for one rotation, for a key
+  that leaked, run `gregale key rotate KEY_ID --revoke-old` (or
+  `--grace-days N`); the old key stops working at once.
+- **Key lifetime:** every new API key, full-access keys included, expires a
+  year after it is made (agent keys after 90 days); rotate it before then.
+  `gregale login` keeps your five newest CLI sign-ins and signs older ones
+  out.
 - **Leaving an org:** `gregale org leave SLUG`. Owners transfer ownership first,
   billing contacts are replaced first, and a personal org cannot be left.
 

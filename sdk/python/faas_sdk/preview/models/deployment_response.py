@@ -115,9 +115,9 @@ class DeploymentResponse:
     """Customer-visible deployment stage progress. `current` is the open stage, or an empty string once the
     deployment is live, failed or cancelled and that stage has moved into `history`."""
     dev_patch: DevPatchPreview | Unset = UNSET
-    """Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have
-    been applied as a live source patch to the deployment that was live at upload time (phase 1). It is a
-    measurement only; the normal developer build always runs."""
+    """Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync can be
+    applied as a live source patch to the deployment that was live at upload time and, when it was published as one,
+    whether its build waits for the developer to stop saving."""
     revision: int | Unset = UNSET
     """Per-app deployment revision, rendered as `v42`. Accepted in place of a deployment id wherever this API takes
     one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the `deploy-{N}-{slug}`

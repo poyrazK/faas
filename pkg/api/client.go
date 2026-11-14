@@ -4710,6 +4710,14 @@ func (c *Client) RotateKey(ctx context.Context, id string) (RotateKeyResponse, e
 	return out, c.do(ctx, "POST", "/v1/keys/"+id+"/rotate", nil, &out)
 }
 
+// RotateKeyWithGrace rotates a key and sets, for this rotation only, how
+// many days the old key keeps working. 0 revokes the old key at once; use
+// it when the key leaked.
+func (c *Client) RotateKeyWithGrace(ctx context.Context, id string, graceWindowDays int) (RotateKeyResponse, error) {
+	var out RotateKeyResponse
+	return out, c.do(ctx, "POST", "/v1/keys/"+id+"/rotate", RotateKeyRequest{GraceWindowDays: &graceWindowDays}, &out)
+}
+
 // GetGraceWindow returns the customer's per-account rotation
 // grace-window override (issue #189 / IAM-5). days=null means
 // "no override" — the rotation handler uses the plan default.
