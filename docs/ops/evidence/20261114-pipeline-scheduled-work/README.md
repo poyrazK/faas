@@ -65,3 +65,20 @@ uses the same pinned fixtures without the race build.
 This is staging implementation evidence. Provider connection qualification,
 live Neon faults/sleep/billing, production enablement, larger native COPY/index
 workloads and review/CI of the complete stacked PR chain remain separate gates.
+
+## Merge qualification — 2026-11-14
+
+PIPE-019 records the command-tree and help failures from
+[Data API acceptance run 43618311957](https://github.com/poyrazK/faas/actions/runs/43618311957).
+Canonical aliases preserve the existing command spellings. Evolution and work
+controls now have manifest help, including creation's `--operations-file` flag.
+The command-tree, usage/help, message, Markdown reference and pipeline CLI test
+families passed locally. Approval and work-request regressions exercise both
+spellings and retain their saved intent, action and revision.
+
+The complete CLI run with the acceptance workflow's 25-minute package timeout
+finished in 998.674 seconds. The pipeline discovery failures did not recur; it
+failed `TestPoolExhaustionRealTCPSequenceAndCleanup` on three late arrivals and
+`TestNativeTransportNegativeAssertionsRealTCP` on an unavailable connection
+baseline. Both unmodified TCP tests passed on isolated rerun (10.45s and 28.30s).
+The final hosted Data API acceptance remains the complete-suite merge gate.
