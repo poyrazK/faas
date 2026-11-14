@@ -85,5 +85,12 @@ func TestHelloTemplatesMatchRuntimeAndAccessDefaults(t *testing.T) {
 				t.Errorf("%s README lacks %q", name, want)
 			}
 		}
+		// The gateway enforces require-authn before the edge health
+		// answer, so a private app's keyless /healthz is a 401, not the
+		// edge 200 the README once promised unconditionally (#6630).
+		text := strings.Join(strings.Fields(string(readme)), " ")
+		if !strings.Contains(text, "On a public app the `/healthz` URL answers") || !strings.Contains(text, "on a private app it needs a key") {
+			t.Errorf("%s README must scope the keyless edge /healthz answer to public apps", name)
+		}
 	}
 }
