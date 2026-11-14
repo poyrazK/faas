@@ -383,7 +383,7 @@ func Codes() []string {
 // rawTCPServerFix is the way out for a server that speaks its own TCP
 // protocol: a directly deployed image is ready once its port accepts
 // connections, with no HTTP probe (ADR-20261112223000 §2).
-const rawTCPServerFix = "• a raw TCP server (Redis, PostgreSQL, a message broker) never answers HTTP: deploy its published image with `gregale deploy --image <image>@sha256:<digest> --name <slug>`, which is ready once the port accepts connections, then keep it private with `gregale app <slug> --visibility internal --ports <name>=tcp:<port>:internal`"
+const rawTCPServerFix = "• Gregale does not run datastores (Redis, PostgreSQL, MySQL, MongoDB): an app parks to a snapshot and keeps no data. Use managed PostgreSQL (`gregale postgres create <name>`) or a hosted service, and read its URL from the environment (`gregale env set --app <slug> REDIS_URL=<url>`)\n• another raw TCP server (a message broker, memcached) never answers HTTP: deploy its published image with `gregale deploy --image <image>@sha256:<digest> --name <slug>`, which is ready once the port accepts connections, then keep it private with `gregale app <slug> --visibility internal --ports <name>=tcp:<port>:internal`"
 
 // startupFailureGuidance uses only known phase markers emitted by fcvm/schedd.
 // Raw error text can contain guest output; never interpolate it into guidance.
@@ -406,7 +406,7 @@ func startupFailureGuidance(detail string) (why, fix string) {
 			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", fmt.Sprintf("• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• listen first and defer expensive initialization: %s\n%s", startupWindowCopy("answer", ""), rawTCPServerFix)
 		case "startup_phase=handler_healthcheck":
 			if strings.Contains(detail, "answered without HTTP") {
-				return "The app accepted the readiness probe on its serving port and answered with something other than HTTP, as a raw TCP server (Redis, PostgreSQL, a message broker) does. A source build must answer HTTP on that port.", rawTCPServerFix
+				return "The app accepted the readiness probe on its serving port and answered with something other than HTTP, as a raw TCP server (a datastore or a message broker) does. A source build must answer HTTP on that port.", rawTCPServerFix
 			}
 			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", fmt.Sprintf("• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• report ready sooner: %s", startupWindowCopy("be ready", ""))
 		case "startup_phase=image_healthcheck":
