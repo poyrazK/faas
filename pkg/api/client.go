@@ -687,6 +687,9 @@ func apiErrorFromResponse(resp *http.Response, data []byte) error {
 			p = *p.WithHeader(name, value)
 		}
 	}
+	if id := ResponseRequestID(resp.Header); id != "" {
+		p = *p.WithRequestID(id)
+	}
 	return &APIError{Problem: p}
 }
 
