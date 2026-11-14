@@ -75,6 +75,22 @@ app, in a non-default scope) with the branch's stable URL.
 
 A PR whose project switches back to `app` mode keeps its branch until it expires.
 
+### Slice 2 (2026-11-14)
+
+- **Unchanged workloads keep their build.** On a push, githubd keeps an app's build when
+  its live deployment in `pr-{N}` is a build of this PR at an earlier commit and the files
+  changed since that commit lie outside the app's directory, by the production push's path
+  filter (a shared file rebuilds every app). This needs no preview set: the branch's own
+  deployments record each app's commit. An opened or reopened PR, a deployment copied from
+  production, or a compare GitHub cannot answer exactly rebuilds everything, and so does a
+  push that would keep every app, so the head always gets a deployment to report on.
+- **Branches end with the project's previews.** The transactions that mark a project's app
+  previews stale (previews turned off, the bound app unbound or moved to another
+  repository, the installation revoked, the repository removed) also set the expiry of the
+  project's pull request branches to now. The branch sweeper deletes them within a minute,
+  and the orphan reconcilers remove their data copies. Branches made by hand keep their
+  expiry.
+
 ## Consequences
 
 - A branch preview serves production's configuration and a copy of its data. Data written
@@ -90,4 +106,4 @@ A PR whose project switches back to `app` mode keeps its branch until it expires
 | # | Scope |
 |---|---|
 | 1 | Policy field and flag, bridge RPCs, branch-scoped PR builds, close and reopen, PR comment and check with the branch URL, fallback. |
-| 2 | Skip rebuilding workloads whose files did not change (as ADR-20261108150000 does for app previews); retire branches when previews are turned off or the repository is unbound. |
+| 2 | Skip rebuilding workloads whose files did not change (as ADR-20261108150000 does for app previews); retire branches when previews are turned off or the repository is unbound. Built 2026-11-14 (above). |

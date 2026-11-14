@@ -12885,6 +12885,7 @@
   {
     "table": "object_inventory_schedule",
     "columns": [
+      "active_since",
       "attempt_at",
       "bucket_id",
       "mutated_at",
