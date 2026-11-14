@@ -1,0 +1,21 @@
+source                items  mapped  infra/tooling  unmatched
+routes                 2343    2292             51          0
+cli                     116     115              1          0
+manifest_keys           364     364              0          0
+plan_limits             219     218              1          0
+dashboard               134     134              0          0
+docs                    290     276             14          0
+openapi_tags             63      61              2          0
+daemons                  67      28             39          0
+platform_flags           30      30              0          0
+feature_env_flags       182     173              9          0
+catalog                 274     274              0          0
+sdk_go                  125     125              0          0
+tables                 1285    1246             39          0
+packages                355     263             92          0
+deploy_env              717     526            191          0
+gateway_files           282     238             44          0
+
+rows with no entry point mapped: 0
+
+TOTAL UNMATCHED: 0
