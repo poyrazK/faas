@@ -1,0 +1,7 @@
+ok  	github.com/onebox-faas/faas/pkg/datapipeline	409.281s
+ok  	github.com/onebox-faas/faas/pkg/apid/datapipelines	31.052s
+ok  	github.com/onebox-faas/faas/pkg/apid/apidsource	0.476s
+ok  	github.com/onebox-faas/faas/pkg/dashboard	0.495s
+ok  	github.com/onebox-faas/faas/pkg/managedpostgres	25.008s
+ok  	github.com/onebox-faas/faas/pkg/managedpostgres/neon	0.528s
+ok  	github.com/onebox-faas/faas/cmd/gregale	4.230s

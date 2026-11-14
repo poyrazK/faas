@@ -9,7 +9,14 @@ import type { DataConnection } from '../models/DataConnection.js';
 import type { DataConnectionCheck } from '../models/DataConnectionCheck.js';
 import type { DataConnectionList } from '../models/DataConnectionList.js';
 import type { DataPipeline } from '../models/DataPipeline.js';
+import type { DataPipelineFreshnessRequest } from '../models/DataPipelineFreshnessRequest.js';
+import type { DataPipelineIndexRequest } from '../models/DataPipelineIndexRequest.js';
 import type { DataPipelineList } from '../models/DataPipelineList.js';
+import type { DataPipelineSetup } from '../models/DataPipelineSetup.js';
+import type { DataPipelineSetupControlRequest } from '../models/DataPipelineSetupControlRequest.js';
+import type { DataPipelineSetupList } from '../models/DataPipelineSetupList.js';
+import type { DataPipelineSetupPlan } from '../models/DataPipelineSetupPlan.js';
+import type { DataPipelineSetupRequest } from '../models/DataPipelineSetupRequest.js';
 import type { DataPipelineTenantReadersRequest } from '../models/DataPipelineTenantReadersRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { RequestDataConnectionCheck } from '../models/RequestDataConnectionCheck.js';
@@ -263,6 +270,164 @@ export class DataPipelinesService {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines/{id}/tenant-readers',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Preview durable setup resources and billing
+   * @returns DataPipelineSetupPlan Preview durable setup resources and billing response.
+   * @returns Problem Validation or availability problem for planDataPipelineSetup.
+   * @throws ApiError
+   */
+  public static planDataPipelineSetup({
+    requestBody,
+  }: {
+    requestBody: DataPipelineSetupRequest,
+  }): CancelablePromise<DataPipelineSetupPlan | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/data/pipeline-setups/plan',
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Save a resumable mirror and Data API setup
+   * @returns Problem Validation or availability problem for createDataPipelineSetup.
+   * @returns DataPipelineSetup Save a resumable mirror and Data API setup response.
+   * @throws ApiError
+   */
+  public static createDataPipelineSetup({
+    requestBody,
+    idempotencyKey,
+  }: {
+    requestBody: DataPipelineSetupRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | DataPipelineSetup> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/data/pipeline-setups',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * List saved pipeline setup jobs
+   * @returns DataPipelineSetupList List saved pipeline setup jobs response.
+   * @returns Problem Validation or availability problem for listDataPipelineSetups.
+   * @throws ApiError
+   */
+  public static listDataPipelineSetups(): CancelablePromise<DataPipelineSetupList | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/data/pipeline-setups',
+    });
+  }
+  /**
+   * Inspect durable pipeline setup progress
+   * @returns DataPipelineSetup Inspect durable pipeline setup progress response.
+   * @returns Problem Validation or availability problem for getDataPipelineSetup.
+   * @throws ApiError
+   */
+  public static getDataPipelineSetup({
+    id,
+  }: {
+    /**
+     * Owned resource receiving getDataPipelineSetup requests.
+     */
+    id: string,
+  }): CancelablePromise<DataPipelineSetup | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/data/pipeline-setups/{id}',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Retry or cancel a saved pipeline setup
+   * @returns Problem Validation or availability problem for controlDataPipelineSetup.
+   * @returns DataPipelineSetup Retry or cancel a saved pipeline setup response.
+   * @throws ApiError
+   */
+  public static controlDataPipelineSetup({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Owned resource receiving controlDataPipelineSetup requests.
+     */
+    id: string,
+    requestBody: DataPipelineSetupControlRequest,
+  }): CancelablePromise<Problem | DataPipelineSetup> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/data/pipeline-setups/{id}/control',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Configure checkpoint freshness confirmation
+   * @returns Problem Validation or availability problem for configureDataPipelineFreshness.
+   * @returns DataPipeline Configure checkpoint freshness confirmation response.
+   * @throws ApiError
+   */
+  public static configureDataPipelineFreshness({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Owned resource receiving configureDataPipelineFreshness requests.
+     */
+    id: string,
+    requestBody: DataPipelineFreshnessRequest,
+  }): CancelablePromise<Problem | DataPipeline> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/data/pipelines/{id}/freshness',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Preview and approve bounded mirror indexes
+   * @returns Problem Validation or availability problem for changeDataPipelineIndexes.
+   * @returns DataPipeline Preview and approve bounded mirror indexes response.
+   * @throws ApiError
+   */
+  public static changeDataPipelineIndexes({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Owned resource receiving changeDataPipelineIndexes requests.
+     */
+    id: string,
+    requestBody: DataPipelineIndexRequest,
+  }): CancelablePromise<Problem | DataPipeline> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/data/pipelines/{id}/indexes',
       path: {
         'id': id,
       },

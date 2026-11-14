@@ -14,7 +14,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.data_pipeline_capacity import DataPipelineCapacity
+    from ..models.data_pipeline_freshness import DataPipelineFreshness
     from ..models.data_pipeline_health import DataPipelineHealth
+    from ..models.data_pipeline_index_advice import DataPipelineIndexAdvice
     from ..models.data_pipeline_serving import DataPipelineServing
     from ..models.data_pipeline_tenant_change import DataPipelineTenantChange
     from ..models.data_pipeline_wal_retention import DataPipelineWALRetention
@@ -44,6 +46,17 @@ class DataPipeline:
     tables_ready: int
     verification: DataPipelineVerification
     created_at: datetime.datetime
+    freshness_target_seconds: int | Unset = UNSET
+    """Current owner-configured checkpoint confirmation target; zero means disabled and enabled targets range from
+    15 to 86400 seconds."""
+    freshness: DataPipelineFreshness | Unset = UNSET
+    """Read-time confirmation of an applied checkpoint against the owner freshness target. Old confirmation is not
+    measured replication lag; an idle source may already be caught up."""
+    index_advice: DataPipelineIndexAdvice | Unset = UNSET
+    """Frozen metadata-based mirror index advice. Size is a conservative estimate, not measured query performance.
+    Explicit approval permits a transactional build for tables up to 64 MiB, indexes up to 32 MiB, at most eight
+    owned indexes per pipeline, with a two-second deadline and 250 ms lock timeout. Failures roll back and require a
+    fresh preview."""
     serving: DataPipelineServing | Unset = UNSET
     """Versioned serving contract. Columns are immutable and affect publication, mirror schema and recovery. Omit
     columns for all-column replication. Tenant access uses owner-managed subject memberships; JWT tenant claims
@@ -98,6 +111,16 @@ class DataPipeline:
         verification: str = self.verification
 
         created_at = self.created_at.isoformat()
+
+        freshness_target_seconds = self.freshness_target_seconds
+
+        freshness: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.freshness, Unset):
+            freshness = self.freshness.to_dict()
+
+        index_advice: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.index_advice, Unset):
+            index_advice = self.index_advice.to_dict()
 
         serving: dict[str, Any] | Unset = UNSET
         if not isinstance(self.serving, Unset):
@@ -156,6 +179,12 @@ class DataPipeline:
                 "created_at": created_at,
             }
         )
+        if freshness_target_seconds is not UNSET:
+            field_dict["freshness_target_seconds"] = freshness_target_seconds
+        if freshness is not UNSET:
+            field_dict["freshness"] = freshness
+        if index_advice is not UNSET:
+            field_dict["index_advice"] = index_advice
         if serving is not UNSET:
             field_dict["serving"] = serving
         if tenant_change is not UNSET:
@@ -182,7 +211,9 @@ class DataPipeline:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.data_pipeline_capacity import DataPipelineCapacity
+        from ..models.data_pipeline_freshness import DataPipelineFreshness
         from ..models.data_pipeline_health import DataPipelineHealth
+        from ..models.data_pipeline_index_advice import DataPipelineIndexAdvice
         from ..models.data_pipeline_serving import DataPipelineServing
         from ..models.data_pipeline_tenant_change import DataPipelineTenantChange
         from ..models.data_pipeline_wal_retention import DataPipelineWALRetention
@@ -217,6 +248,22 @@ class DataPipeline:
         verification = check_data_pipeline_verification(d.pop("verification"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        freshness_target_seconds = d.pop("freshness_target_seconds", UNSET)
+
+        _freshness = d.pop("freshness", UNSET)
+        freshness: DataPipelineFreshness | Unset
+        if isinstance(_freshness, Unset):
+            freshness = UNSET
+        else:
+            freshness = DataPipelineFreshness.from_dict(_freshness)
+
+        _index_advice = d.pop("index_advice", UNSET)
+        index_advice: DataPipelineIndexAdvice | Unset
+        if isinstance(_index_advice, Unset):
+            index_advice = UNSET
+        else:
+            index_advice = DataPipelineIndexAdvice.from_dict(_index_advice)
 
         _serving = d.pop("serving", UNSET)
         serving: DataPipelineServing | Unset
@@ -294,6 +341,9 @@ class DataPipeline:
             tables_ready=tables_ready,
             verification=verification,
             created_at=created_at,
+            freshness_target_seconds=freshness_target_seconds,
+            freshness=freshness,
+            index_advice=index_advice,
             serving=serving,
             tenant_change=tenant_change,
             wal_retention=wal_retention,

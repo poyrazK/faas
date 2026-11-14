@@ -15,7 +15,7 @@ import (
 )
 
 func (h *Handler) Workspace(ctx context.Context, account, connection string) (dashboard.DataPipelinesData, error) {
-	data := dashboard.DataPipelinesData{ConnectionID: connection, NeonSteps: datapipeline.NeonSourceGuide().Steps}
+	data := dashboard.DataPipelinesData{ConnectionID: connection, MembershipLimit: api.DataPipelineTenantMembershipsMax, FreshnessMin: api.DataPipelineFreshnessTargetMinSeconds, FreshnessMax: api.DataPipelineFreshnessTargetMaxSeconds, IndexBudgetMax: api.DataPipelineIndexBuildMaxBytes, NeonSteps: datapipeline.NeonSourceGuide().Steps}
 	if h == nil || h.Service == nil || h.Service.Store == nil {
 		return data, nil
 	}
@@ -123,6 +123,8 @@ func (h *Handler) applyDashboardAction(r *http.Request, account string) (string,
 	ctx := r.Context()
 	id := r.FormValue("connection_id")
 	switch r.FormValue("action") {
+	case "freshness", "indexes":
+		return h.manageDashboardOperability(r, account)
 	case "alerts_enable", "alerts_disable":
 		return h.manageDashboardAlerts(r, account)
 	case "connection":

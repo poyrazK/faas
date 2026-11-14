@@ -32,6 +32,8 @@ type Connection struct {
 	Identity   string
 }
 type Pipeline struct {
+	IndexWorkBlocked     bool
+	IndexChange          *IndexChange
 	ServingInvalid       bool
 	WALSample            *walRetentionSample
 	ReaderChange         *ReaderChange
@@ -47,6 +49,8 @@ type Pipeline struct {
 	SourceRevision  int64
 }
 type Observation struct {
+	IndexOnly                   bool
+	IndexChange                 *IndexChange
 	WALSample                   *walRetentionSample
 	ReaderOnly                  bool
 	ReaderChange                *ReaderChange
@@ -61,6 +65,9 @@ type Observation struct {
 }
 
 func ValidateCreate(r api.CreateDataPipelineRequest) error {
+	if !validFreshnessTarget(r.FreshnessTargetSeconds) {
+		return ErrInvalid
+	}
 	if r.Serving != nil && r.Serving.TenantAccess != nil {
 		if len(r.ReadSubjects) != 0 {
 			return ErrInvalid

@@ -2002,6 +2002,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/data/pipelines/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.pipelineGet))))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/control", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineControl))))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/tenant-readers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineTenantReaders))))
+	mux.HandleFunc("POST /v1/data/pipeline-setups/plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelinePlanSetup))))
+	mux.HandleFunc("POST /v1/data/pipeline-setups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.pipelineStartSetup))))))
+	mux.HandleFunc("GET /v1/data/pipeline-setups", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.pipelineSetups))))
+	mux.HandleFunc("GET /v1/data/pipeline-setups/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.pipelineGetSetup))))
+	mux.HandleFunc("POST /v1/data/pipeline-setups/{id}/control", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineControlSetup))))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/freshness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineFreshness))))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/indexes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineIndexes))))
 	mux.HandleFunc("GET /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresDatabases))))
 	mux.HandleFunc("GET /v1/postgres/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCapabilities))))
 	mux.HandleFunc("GET /v1/postgres/overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresOverage))))
@@ -6507,7 +6514,7 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 		return problem.Code != api.CodeReleasePhaseUnavailable
 	}
 	switch problem.Code {
-	case api.CodeImageRunCacheFull, "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
+	case "data_connection_check_required", "data_connection_check_busy", api.CodeImageRunCacheFull, "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
 		api.CodeFullEnvironmentCloneUnavailable:
 		return false
 	default:

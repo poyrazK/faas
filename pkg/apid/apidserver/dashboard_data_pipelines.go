@@ -14,6 +14,9 @@ const dashboardPipelinesAction = "data_pipelines"
 const dashboardPipelinesCookie = "gregale_data_pipelines_csrf"
 
 func (s *server) renderDashboardPipelines(w http.ResponseWriter, r *http.Request) {
+	s.renderDashboardPipelinesWithPlan(w, r, nil)
+}
+func (s *server) renderDashboardPipelinesWithPlan(w http.ResponseWriter, r *http.Request, plan *api.DataPipelineSetupPlan) {
 	account, ok := AccountFrom(r.Context())
 	if !ok {
 		writeDashboardUnauthorized(w, r)
@@ -24,7 +27,14 @@ func (s *server) renderDashboardPipelines(w http.ResponseWriter, r *http.Request
 		pipelineapi.WriteProblem(w, err)
 		return
 	}
-	data.CSRFToken = s.issueDashboardConfigCSRF(w, s.log, dashboardPipelinesAction, dashboardPipelinesCookie, account.ID, "")
+	data.SetupPlan = plan
+	if plan != nil {
+		// This POST was already CSRF-verified. Reuse its token so the preview tab
+		// does not invalidate the original tab's still-pending setup form.
+		data.CSRFToken = r.FormValue("csrf_token")
+	} else {
+		data.CSRFToken = s.issueDashboardConfigCSRF(w, s.log, dashboardPipelinesAction, dashboardPipelinesCookie, account.ID, "")
+	}
 	if data.Enabled && data.DataAPIEnabled {
 		s.pipelineAuthChoices(r, account.ID, &data)
 	}
@@ -80,6 +90,15 @@ func (s *server) dashboardPipelineAction(w http.ResponseWriter, r *http.Request)
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, api.DataPipelineRequestMaxBytes)
 	if !s.verifyDashboardConfigCSRF(w, r, dashboardPipelinesAction, dashboardPipelinesCookie, account.ID) {
+		return
+	}
+	if r.FormValue("preview_setup") == "yes" {
+		plan, err := s.dataPipelines.PlanDashboardSetup(r, account.ID)
+		if err != nil {
+			pipelineapi.WriteProblem(w, err)
+			return
+		}
+		s.renderDashboardPipelinesWithPlan(w, r, &plan)
 		return
 	}
 	s.dataPipelines.DashboardAction(w, r, account.ID)

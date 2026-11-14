@@ -15,7 +15,7 @@ import (
 
 func pipelineCreateKey(req api.CreateDataPipelineRequest) string {
 	parts := []string{req.Name, req.DatabaseID, req.SourceConnectionID}
-	if req.Serving != nil {
+	if req.Serving != nil || req.FreshnessTargetSeconds != 0 {
 		b, _ := json.Marshal(datapipeline.NormalizeCreateRequest(req))
 		parts = append(parts, string(b))
 	}
