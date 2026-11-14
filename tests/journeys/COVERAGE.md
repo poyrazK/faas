@@ -58,6 +58,12 @@ covered. Update this table when a journey or a GA row changes.
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
+`invoke --async --wait` is covered by `TestInvokeAsyncWaitLiveAPI` (one
+health request through the durable queue, compared with its stored record) and
+`TestInvokeAsyncWaitIsolatedAPI` / `TestInvokeAsyncWaitInterrupt` (terminal
+results, timeout and Ctrl-C recovery, exactly one submission and no remote
+cancellation). The live check requires a plan that permits async invocation.
+
 ## GA candidates
 
 Rows not yet GA whose journeys exist ahead of a promotion, so the
@@ -88,6 +94,15 @@ custom metric history, SLOs and synthetic checks were hidden for it.
 | 168 | On-demand profile captures (preview) | `TestProfileCaptures`: `capture` (CPU and heap of the running probe while requests keep it busy; ready, both views, CPU not empty), `capture_listed`, `pprof_download` (merged gzip pprof per kind), `capture_diff` (a second heap capture against the first), `delete` (the capture is gone), `slow_request_captured` (the probe's `/slow` held past 10 s yields an automatic `slow_request` capture). It skips while `profile-captures` is hidden for the account or the installation has on-demand profiling off | automatic memory-pressure and CPU-saturation captures and OOM linking (`cmd/e2e` metal tests cover the first and the last), Go block and mutex profiles and `pprof_port` (the probe is Node), Node stuck-thread stacks, opting out with `profiling.automatic_captures`, the dashboard capture page, `profile.capture_ready` webhooks |
 
 ## Regression journeys
+
+`--wait` alone selects async submission in the invocation family journeys,
+including timeout and interruption; explicit async contradictions are covered
+by CLI validation tests.
+
+`TestInvocationFamilyIsolatedAPI` exercises submission, list, get and wait through
+the single `invocation` family. The invocation wait journeys also use its
+canonical `run` leaf; unit routing tests cover the earlier `invoke` spelling
+and apps named after lifecycle verbs.
 
 `TestInvokeIdempotencyKeyLiveAPI` covers async CLI receipt replay and changed-input
 refusal against the deployed API. `TestInvokeIdempotencyKeyIsolatedAPI` checks

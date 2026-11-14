@@ -22,7 +22,6 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`status`](#status) | Show what this checkout targets, or Gregale&#39;s platform status |
 | [`open`](#open) | Open an app&#39;s URL in your browser |
 | [`rollback`](#rollback) | Restore a previous deployment, or check an exact historical rollback |
-| [`invoke`](#invoke) | Call an app or function once to smoke-test it |
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`link`](#link) | Link this checkout to a Gregale project |
 | [`unlink`](#unlink) | Remove the linked project from this checkout |
@@ -41,7 +40,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`github`](#github) | Connect GitHub and bind apps to repositories |
 | [`registry`](#registry) | Manage registry credentials, signing keys and published images |
 | [`app`](#app) | Inspect, change, scale and operate apps |
-| [`invocation`](#invocation) | List, inspect, wait on and watch invocations |
+| [`invocation`](#invocation) | Run apps and functions, inspect calls and wait for results |
 | [`function`](#function) | Generate typed clients for calls between a project&#39;s functions |
 | [`env`](#env) | Set, list and sync an app&#39;s sealed variables |
 | [`domain`](#domain) | Manage custom domains |
@@ -796,28 +795,6 @@ Read an exact rollback operation
 Waiting never submits another rollback.
 
 With a switch ID in place of --operation, it shows a rollback that restores the database (`gregale rollback status &lt;slug&gt; &lt;switch-id&gt;`).
-
-
-## invoke
-
-Call an app or function once to smoke-test it
-
-`gregale invoke [<slug>] [--async] [--idempotency-key <KEY>] [--payload <J|@file|->] [--method <METHOD>] [--path <PATH>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
-
-Reuse an idempotency key only with the same async request within the server&#39;s 24-hour replay window. Use a new key for new work.
-
-| Flag | Meaning | |
-|---|---|---|
-| `--async` | return immediately with status_url |  |
-| `--idempotency-key <KEY>` | stable key for retrying the same submission within server retention; requires --async |  |
-| `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
-| `--method <METHOD>` | HTTP method (default POST, or the function handler&#39;s) |  |
-| `--path <PATH>` | URL path (default /, or the function handler&#39;s) |  |
-| `--on-success-webhook <ID>` | app webhook id for completed invocation callbacks |  |
-| `--on-failure-webhook <ID>` | app webhook id for failed or dead-lettered callbacks |  |
-| `--work-policy <NAME>` | named app work policy for async invocation |  |
-| `--work-key <JSON>` | JSON scalar application key for async invocation |  |
-| `--work-fairness-key <JSON>` | JSON scalar fairness group for async invocation |  |
 
 
 ## add
@@ -3030,9 +3007,39 @@ Show policy convergence and fresh gateway traffic wiring
 
 ## invocation
 
-List, inspect, wait on and watch invocations
+Run apps and functions, inspect calls and wait for results
 
-`gregale invocation [<subcommand>] <id>`
+`gregale invocation [<subcommand>]`
+
+### invocation run
+
+Call an app or function once to smoke-test it
+
+`gregale invocation run [--async] [--wait] [--timeout <DURATION>] [--interval <DURATION>] [--idempotency-key <KEY>] [--payload <J|@file|->] [--method <METHOD>] [--path <PATH>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--async` | enqueue once and return status_url unless --wait |  |
+| `--wait` | wait for the invocation result; implies --async |  |
+| `--timeout <DURATION>` | local wait duration (default 0: until Ctrl-C); requires --wait |  |
+| `--interval <DURATION>` | time between status checks (default 1s); requires --wait |  |
+| `--idempotency-key <KEY>` | stable key for retrying the same submission within server retention; requires --async or --wait |  |
+| `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
+| `--method <METHOD>` | HTTP method (default POST, or the function handler&#39;s) |  |
+| `--path <PATH>` | URL path (default /, or the function handler&#39;s) |  |
+| `--on-success-webhook <ID>` | app webhook id for completed invocation callbacks |  |
+| `--on-failure-webhook <ID>` | app webhook id for failed or dead-lettered callbacks |  |
+| `--work-policy <NAME>` | named app work policy for async invocation |  |
+| `--work-key <JSON>` | JSON scalar application key for async invocation |  |
+| `--work-fairness-key <JSON>` | JSON scalar fairness group for async invocation |  |
+
+Examples:
+
+```sh
+gregale invocation run api --wait --timeout 2m --payload @request.json
+```
+
+Reuse an idempotency key only with the same async request within the server&#39;s 24-hour replay window. Use a new key for new work.
 
 ### invocation watch
 
