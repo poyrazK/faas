@@ -57,7 +57,7 @@ var warningRules = map[string]warningRule{
 	"non_http_service": {
 		level:  LevelAmber,
 		title:  "TCP server will fail the HTTP readiness probe",
-		remedy: "Deploy the published image with `gregale deploy --image <image>@sha256:<digest>`; it is ready once its port accepts connections.",
+		remedy: "A datastore is not run: use managed PostgreSQL or a hosted service. Another TCP server: deploy its published image with `gregale deploy --image <image>@sha256:<digest>`.",
 	},
 	// Expected on every container deploy: the image, not the source, carries
 	// the entrypoint. Informational, so it never downgrades an otherwise
