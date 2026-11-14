@@ -60341,7 +60341,9 @@ paths:
       description: |
         Marks the company organization as deleted_pending. Live managed
         PostgreSQL databases must complete deletion first. Owner-only
-        (`org.delete`); personal organizations are immutable.
+        (`org.delete`); personal organizations are immutable. Needs a
+        signed-in browser session with a fresh step-up; an API key cannot
+        delete an organization. Owners and admins are emailed.
       responses:
         '204': { description: Org soft-deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -60349,7 +60351,9 @@ paths:
           description: |
             `403 Forbidden` — caller is authenticated but lacks the
             `org.delete` action. Owner-only. Stable code
-            `org_role_forbidden`.
+            `org_role_forbidden`. An API key gets
+            `browser_session_required`; a stale sign-in gets
+            `step_up_required`.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
@@ -61452,9 +61456,10 @@ paths:
         (a single PostgreSQL tx with `FOR UPDATE` locks on both
         rows). The exactly-one-owner invariant is enforced by the
         partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-        member of the org. For a Free organization, the recipient must have
+        member of the org whose account is active. For a Free organization, the recipient must have
         available Free-organization ownership capacity; admission is serialized
-        with organization creation and other incoming transfers.
+        with organization creation and other incoming transfers. Needs a
+        signed-in browser session; an API key gets `browser_session_required`.
       requestBody:
         required: true
         content:
@@ -61477,7 +61482,59 @@ paths:
           description: 'code: NotFound (new owner is not a member)'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '409':
-          description: 'code: org_last_owner (caller not the active owner OR new owner already owner)'
+          description: 'code: org_last_owner (caller not the active owner OR new owner already owner), or conflict (new owner''s account is suspended or pending deletion)'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/security-policy:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgSecurityPolicy
+      summary: Read the organization's security policy.
+      description: |
+        Any member can read whether the organization requires two-factor
+        authentication.
+      responses:
+        '200':
+          description: The organization's security policy.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/OrgSecurityPolicy' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: '`org_mfa_required` when the organization requires two-factor authentication and the caller has none.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [orgs]
+      operationId: putOrgSecurityPolicy
+      summary: Require or stop requiring two-factor authentication for members.
+      description: |
+        Owner-only (`org.manage_security`) and needs a fresh step-up. While
+        `require_mfa` is on, a member without two-factor authentication is
+        refused on the organization's routes with `org_mfa_required`, by
+        sessions and API keys alike, until they enrol. Turning it on needs
+        the caller to have two-factor authentication. Owners and admins
+        are emailed when the policy changes.
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/OrgSecurityPolicy' } }
+      responses:
+        '200':
+          description: The organization's security policy with the requested two-factor requirement applied.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/OrgSecurityPolicy' } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: '`org_role_forbidden` for a non-owner; `step_up_required` for a stale sign-in.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`conflict` when the caller turning the requirement on has no two-factor authentication.'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -126289,6 +126346,19 @@ components:
             `created_at DESC, id DESC` order exact under random UUIDs. The wire shape is
             opaque; clients MUST pass the value back unchanged.
           type: string
+
+    OrgSecurityPolicy:
+      description: An organization's security policy.
+      type: object
+      required: [require_mfa]
+      properties:
+        require_mfa:
+          type: boolean
+          description: Members without two-factor authentication are refused on the organization's routes.
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
 
     TransferOwnershipRequest:
       description: |

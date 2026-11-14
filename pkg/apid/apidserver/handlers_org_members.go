@@ -127,6 +127,13 @@ func (s *server) inviteOrgMember(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrOrgRoleForbidden("invite members"))
 		return
 	}
+	// Only an owner may promote anyone to admin, so only an owner may
+	// invite an admin: an admin could otherwise add a second admin
+	// identity of their own (account-flow audit 2026-11-10).
+	if role == state.OrgRoleAdmin && mem.Role != state.OrgRoleOwner {
+		api.WriteProblem(w, api.ErrOrgRoleForbidden("invite admins"))
+		return
+	}
 	org, ok := s.loadMutableOrgByMembership(r.Context(), w, mem)
 	if !ok {
 		return

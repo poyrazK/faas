@@ -107,7 +107,7 @@ func transferOrgOwnershipTx(ctx context.Context, tx pgx.Tx, orgID, fromAccountID
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
 			return OrgMembership{}, OrgMembership{}, ErrOrgLastOwner
 		}
-		return OrgMembership{}, OrgMembership{}, fmt.Errorf("state: transfer ownership promote: %w", err)
+		return OrgMembership{}, OrgMembership{}, fmt.Errorf("state: transfer ownership promote: %w", mapErr(err))
 	}
 	from.Role = OrgRoleAdmin
 	to.Role = OrgRoleOwner

@@ -27813,6 +27813,8 @@ func mapErr(err error) error {
 			return ErrLayerArtifactRetired
 		case "account_shared_app_ownership_pending":
 			return ErrOrgAppOwnershipPending
+		case "org_owner_account_inactive":
+			return ErrOrgOwnerInactive
 		case accountManagedPostgresDatabasesConstraint:
 			return accountManagedPostgresDatabasesError(admission.Detail)
 		case "migration_admission_current", "migration_source_current", "function_migration_node_pending":
