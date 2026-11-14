@@ -40,10 +40,11 @@ Never put a key in the URL. To make the app public on purpose, run
 `gregale app update <slug> --no-require-authn`.
 
 `GET /` returns your greeting and the Node.js version, as `node`; that
-response comes from your handler. The public `/healthz` URL answers
-`{"status":"ok","source":"edge"}` without a key: Gregale's edge reports that
-the route is up, not that your code ran. Your handler's own health check
-returns `{"ok":true}`:
+response comes from your handler. On a public app the `/healthz` URL answers
+`{"status":"ok","source":"edge"}` without a key; on a private app it needs a
+key like every other path and answers `401 unauthorized` without one. Either
+way that edge answer means the route is up, not that your code ran. Your
+handler's own health check returns `{"ok":true}`:
 
 ```
 gregale invocation run <slug> --method GET --path /healthz
