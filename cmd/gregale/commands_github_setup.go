@@ -390,7 +390,7 @@ func githubSetupProjectBacked(ctx context.Context, client *Client, slug string) 
 func githubSetupProjectOnlyFlag(fs *flag.FlagSet) string {
 	projectOnly := map[string]bool{"preview-ttl-hours": true, "preview-bots": true,
 		"no-preview-bots": true, "preview-drafts": true, "no-preview-drafts": true, "preview-service-policy": true,
-		"root-dir": true, "ignore": true, "deploy-branches": true}
+		"root-dir": true, "ignore": true, "deploy-branches": true, "preview-mode": true}
 	found := ""
 	fs.Visit(func(f *flag.Flag) {
 		if found == "" && projectOnly[f.Name] {
