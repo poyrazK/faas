@@ -221,6 +221,9 @@ type Problem struct {
 	// exactly the spec; WriteProblem flushes these onto the wire
 	// before WriteHeader. nil = no extras.
 	extraHeaders map[string][]string `json:"-"`
+	// clientRequestID is error correlation metadata retained by SDK decoders.
+	// It is neither part of the problem body nor a forwarded response header.
+	clientRequestID string
 }
 
 // LogExcerpt is one entry of Problem.RelevantLogs — a small,

@@ -150,11 +150,38 @@ const (
 	AttentionKindDeployFailing = "deploy_failing"
 	AttentionKindRefusedBurst  = "refused_burst"
 	AttentionKindDomainStuck   = "domain_stuck"
+	// ADR-20261113180000 kinds.
+	AttentionKindAppOOM         = "app_oom"
+	AttentionKindBootFailing    = "boot_failing"
+	AttentionKindJobsFailing    = "jobs_failing"
+	AttentionKindPaymentFailing = "payment_failing"
+	AttentionKindLimitPressure  = "limit_pressure"
 
 	AttentionStateOpen      = "open"
 	AttentionStateDismissed = "dismissed"
 	AttentionStateResolved  = "resolved"
+
+	// Outcomes record what support did about a signal
+	// (ADR-20261113180000). Contacting sets contacted; dismissing names one
+	// of the next four; a signal that clears without one is resolved_on_own.
+	AttentionOutcomeContacted      = "contacted"
+	AttentionOutcomePlatformIssue  = "platform_issue"
+	AttentionOutcomeAlreadyInTouch = "already_in_touch"
+	AttentionOutcomeNotNeeded      = "not_needed"
+	AttentionOutcomeFalsePositive  = "false_positive"
+	AttentionOutcomeResolvedOnOwn  = "resolved_on_own"
 )
+
+// AttentionKinds lists every signal kind in display order.
+func AttentionKinds() []string {
+	return []string{AttentionKindDeployFailing, AttentionKindAppOOM, AttentionKindBootFailing, AttentionKindJobsFailing,
+		AttentionKindDomainStuck, AttentionKindRefusedBurst, AttentionKindLimitPressure, AttentionKindPaymentFailing}
+}
+
+// AttentionDismissOutcomes are the outcomes staff pick when dismissing.
+func AttentionDismissOutcomes() []string {
+	return []string{AttentionOutcomePlatformIssue, AttentionOutcomeAlreadyInTouch, AttentionOutcomeNotNeeded, AttentionOutcomeFalsePositive}
+}
 
 // ObsAttentionSignal is one customer who is probably stuck: what kind of
 // trouble, on which subject (app slug, problem code or hostname), since
@@ -167,7 +194,8 @@ type ObsAttentionSignal struct {
 	Detail    string `json:"detail,omitempty"`
 	State     string `json:"state"`
 	// Observed is the count behind the signal at its last evaluation:
-	// failed deployments, refusals or 1 for a domain.
+	// failed deployments, refusals, OOM kills, failed boots, failed runs,
+	// days with limit refusals, failed payments, or 1 for a domain.
 	Observed      int64      `json:"observed"`
 	FirstSeenAt   time.Time  `json:"first_seen_at"`
 	LastSeenAt    time.Time  `json:"last_seen_at"`
@@ -175,6 +203,10 @@ type ObsAttentionSignal struct {
 	DismissedAt   *time.Time `json:"dismissed_at,omitempty"`
 	DismissedBy   string     `json:"dismissed_by,omitempty"`
 	DismissReason string     `json:"dismiss_reason,omitempty"`
+	// Outcome is what support did (contacted, platform_issue, ...);
+	// TicketID is the ticket support opened when it contacted the customer.
+	Outcome  string `json:"outcome,omitempty"`
+	TicketID string `json:"ticket_id,omitempty"`
 }
 
 // ObsAttentionListResponse answers GET /v1/admin/obs/attention.

@@ -27,6 +27,7 @@
         "/signup",
         "=/v1/account",
         "/v1/account/email",
+        "/v1/account/health",
         "/v1/account/mfa",
         "/v1/account/rate-limits",
         "/v1/account/security-activity",
@@ -3274,6 +3275,26 @@
       ]
     },
     {
+      "id": "mcp-hosted-tool-invocations",
+      "name": "Hosted granted tool invocation",
+      "category": "runtime",
+      "description": "Invoke exact owner-granted open or private tool versions through personal hosted connections with separate consent, static or managed OAuth credentials with guided public-client setup, durable single-dispatch receipts and cancellation without replay.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#hosted-invocation-with-tool-grants",
+      "acceptance_test": "pkg/apid/toolregistry/delegated_invocations_test.go::TestDelegatedToolInvocationsPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/delegated-tool-invocations",
+        "/v1/delegated-tool-connections",
+        "/v1/tool-oauth-connections"
+      ]
+    },
+    {
       "id": "mcp-hosting",
       "name": "MCP hosting",
       "category": "runtime",
@@ -3371,6 +3392,61 @@
       "routes": [
         "/v1/apps/{}/mcp-task-compatibility",
         "/v1/deployments/{}/mcp-task-hold"
+      ]
+    },
+    {
+      "id": "mcp-tool-grants",
+      "name": "Scoped published-tool grants",
+      "category": "runtime",
+      "description": "Delegate exact private tool versions to personal agent connections with expiry, revocation and native project boundaries.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#scoped-tool-grants",
+      "acceptance_test": "pkg/apid/toolregistry/grants_test.go::TestToolGrantsPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/tool-grants"
+      ]
+    },
+    {
+      "id": "mcp-tool-invocations",
+      "name": "Registered MCP tool invocation",
+      "category": "runtime",
+      "description": "Invoke one exact private registered tool version with explicit consent, durable single-dispatch tracking and honest cancellation outcomes.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#invoke-published-tools",
+      "acceptance_test": "pkg/apid/toolregistry/invocations_test.go::TestToolInvocationsPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/tool-invocations"
+      ]
+    },
+    {
+      "id": "mcp-tool-registry",
+      "name": "Private MCP tool registry",
+      "category": "runtime",
+      "description": "Retain publication attempts and discover exact private tool versions with publisher-attested runtime schemas and native deployment identity.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#private-tool-registry",
+      "acceptance_test": "pkg/apid/toolregistry/handlers_test.go::TestToolRegistryPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/tool-publications",
+        "/v1/tool-registry"
       ]
     },
     {
@@ -5252,6 +5328,24 @@
       "routes": [
         "/v1/apps/{}/buckets/{}/s3-credentials",
         "/v1/orgs/{}/apps/{}/buckets/{}/s3-credentials"
+      ]
+    },
+    {
+      "id": "sales-referrals",
+      "name": "Sales and referrals",
+      "category": "account",
+      "description": "Staff sales pipeline, attributed signup links and customer referral codes.",
+      "maturity": "internal",
+      "plans": [],
+      "operator_flag": "FAAS_SALES_ENABLED",
+      "docs_url": "/docs/adr/20261103180000-sales-referrals",
+      "acceptance_test": "pkg/apid/apidserver/sales_test.go::TestSalesRoutesDefaultOff",
+      "routes": [
+        "/dashboard/referral-assets",
+        "/dashboard/referrals",
+        "/dashboard/sales",
+        "/v1/referrals",
+        "/v1/sales"
       ]
     },
     {

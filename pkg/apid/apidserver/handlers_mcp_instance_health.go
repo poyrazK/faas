@@ -63,26 +63,33 @@ func (s *server) getMCPInstanceHealth(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrValidation("host must be a hostname and optional port without a URL path"))
 		return
 	}
-	controlURL := s.gatewayControlURL(r.Context())
-	if controlURL == "" {
-		api.WriteProblem(w, api.ErrCapacity("gateway instance probe is unavailable"))
+	result, problem := s.probeMCPInstanceHealth(r.Context(), app, deploymentID, instanceID, host)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *server) probeMCPInstanceHealth(ctx context.Context, app state.App, deploymentID, instanceID, host string) (api.MCPInstanceHealthProbeResponse, *api.Problem) {
+	controlURL := s.gatewayControlURL(ctx)
+	if controlURL == "" {
+		return api.MCPInstanceHealthProbeResponse{}, api.ErrCapacity("gateway instance probe is unavailable")
 	}
 	endpoint, err := url.JoinPath(controlURL, "v1", "internal", "apps", app.Slug, "mcp-health")
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("gateway instance probe is unavailable"))
-		return
+		return api.MCPInstanceHealthProbeResponse{}, api.ErrCapacity("gateway instance probe is unavailable")
 	}
 	query := url.Values{}
 	query.Set("deployment_id", deploymentID)
 	query.Set("instance_id", instanceID)
 	query.Set("host", host)
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, endpoint+"?"+query.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+query.Encode(), nil)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("gateway instance probe is unavailable"))
-		return
+		return api.MCPInstanceHealthProbeResponse{}, api.ErrCapacity("gateway instance probe is unavailable")
 	}
-	probeCtx, cancel := context.WithTimeout(r.Context(), mcpInstanceHealthProbeTimeout)
+	probeCtx, cancel := context.WithTimeout(ctx, mcpInstanceHealthProbeTimeout)
 	defer cancel()
 	req = req.WithContext(probeCtx)
 	resp, err := (&http.Client{Timeout: mcpInstanceHealthProbeTimeout}).Do(req)
@@ -90,32 +97,25 @@ func (s *server) getMCPInstanceHealth(w http.ResponseWriter, r *http.Request, ac
 		if s.log != nil {
 			s.log.Warn("apid to gatewayd MCP instance probe failed", "app_id", app.ID, "deployment_id", deploymentID, "instance_id", instanceID, "err", err)
 		}
-		api.WriteProblem(w, api.ErrCapacity("gateway could not reach the requested MCP instance"))
-		return
+		return api.MCPInstanceHealthProbeResponse{}, api.ErrCapacity("gateway could not reach the requested MCP instance")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Instance changed", "instance stopped or changed deployment before the probe completed"))
-		return
+		return api.MCPInstanceHealthProbeResponse{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Instance changed", "instance stopped or changed deployment before the probe completed")
 	}
 	if resp.StatusCode != http.StatusOK {
-		api.WriteProblem(w, api.ErrCapacity("gateway could not verify the requested MCP instance"))
-		return
+		return api.MCPInstanceHealthProbeResponse{}, api.ErrCapacity("gateway could not verify the requested MCP instance")
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, mcpInstanceHealthProbeMaxWire+1))
 	if err != nil || len(body) > mcpInstanceHealthProbeMaxWire {
-		api.WriteProblem(w, api.ErrCapacity("gateway MCP probe response exceeded its size limit"))
-		return
+		return api.MCPInstanceHealthProbeResponse{}, api.ErrCapacity("gateway MCP probe response exceeded its size limit")
 	}
 	var result api.MCPInstanceHealthProbeResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("gateway returned an invalid MCP probe response"))
-		return
+		return api.MCPInstanceHealthProbeResponse{}, api.ErrCapacity("gateway returned an invalid MCP probe response")
 	}
 	if result.AppID != app.ID || result.DeploymentID != deploymentID || result.InstanceID != instanceID || result.HTTPStatus < 100 || result.HTTPStatus > 599 || len(result.HealthBody) > mcpInstanceHealthMaxBodyBytes {
-		api.WriteProblem(w, api.ErrCapacity("gateway MCP probe identity or response was invalid"))
-		return
+		return api.MCPInstanceHealthProbeResponse{}, api.ErrCapacity("gateway MCP probe identity or response was invalid")
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, result)
+	return result, nil
 }

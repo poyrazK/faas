@@ -1142,7 +1142,7 @@ var cliCommands = []cliCommand{
 				{Name: "max-output-tokens", Short: "per-request output-token ceiling, or none", Value: "N"},
 			}},
 			{Name: "prices", Short: "Show the price list, or replace it with prices set", Notes: []string{"Replace with: prices set <integration-id> --price ..."}, Positionals: []string{"[set]", "<integration-id>"}, Flags: []cliFlag{
-				{Name: "price", Short: "model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD][,input-image=USD][,output-image=USD] per million tokens, [,image=USD] per image, [,audio-minute=USD] per minute, [,characters=USD] per million characters, [,video-second=USD] per second of video, with model=<model>@<resolution> for one resolution, [,web-search=USD] [,file-search=USD] per use, [,code-session-gb=USD] per GB container session, [,input-audio=USD][,cached-audio=USD][,output-audio=USD] per million audio tokens (repeat; none clears)", Value: "SPEC"},
+				{Name: "price", Short: "model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD][,input-image=USD][,output-image=USD] per million tokens, [,image=USD] per image, [,audio-minute=USD] per minute, [,characters=USD] per million characters, [,video-second=USD] per second of video, with model=<model>@<resolution> for one resolution, [,web-search=USD] [,file-search=USD] per use, [,code-session-gb=USD] per GB container session, [,input-audio=USD][,cached-audio=USD][,output-audio=USD] per million audio tokens, [,cache-write-1h=USD] per million one-hour cache-write tokens, [,long-context=TOKENS:IN%:OUT%] to scale prices above a prompt size, such as 200000:200:150 (repeat; none clears)", Value: "SPEC"},
 			}},
 			{Name: "catalog", Short: "Show built-in prices for models missing from a price list", Positionals: []string{"<provider>"}, Flags: []cliFlag{
 				{Name: "model", Short: "show only the entry that prices this model", Value: "NAME"},
@@ -3178,6 +3178,7 @@ var cliCommands = []cliCommand{
 			{Name: "rollback-on-5xx", Group: "Rollout and health", Short: "roll back after repeated first-wake 5xx responses"},
 			{Name: "queue-canary-binding", Group: "Rollout and health", Short: "declare safe queue canary support for this deployment", Value: "NAME", Repeatable: true},
 			{Name: "healthcheck-path", Group: "Rollout and health", Short: "startup HTTP readiness path", Value: "PATH"},
+			{Name: "readiness-path", Group: "Rollout and health", Short: "steady-state readiness HTTP path; failing instances leave routing", Value: "PATH"},
 			{Name: "healthcheck-grpc", Group: "Rollout and health", Short: "use standard gRPC health for startup readiness"},
 			{Name: "healthcheck-grpc-service", Group: "Rollout and health", Short: "service name (requires --healthcheck-grpc; default: overall server)", Value: "SERVICE"},
 			{Name: "disable-startup-cpu-boost", Group: "Rollout and health", Short: "disable temporary CPU boost during VM startup"},
@@ -4822,11 +4823,16 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "invoke",
-		DocSlug: "invoke",
-		Short:   "Call an app or function once to smoke-test it",
+		Name:     "invoke",
+		DocSlug:  "invoke",
+		Examples: []string{"gregale invocation run api --wait --timeout 2m --payload @request.json"},
+		Short:    "Call an app or function once to smoke-test it",
 		Flags: []cliFlag{
-			{Name: "async", Short: "return immediately with status_url"},
+			{Name: "async", Short: "enqueue once and return status_url unless --wait"},
+			{Name: "wait", Short: "wait for the invocation result; implies --async"},
+			{Name: "timeout", Short: "local wait duration (default 0: until Ctrl-C); requires --wait", Value: "DURATION"},
+			{Name: "interval", Short: "time between status checks (default 1s); requires --wait", Value: "DURATION"},
+			{Name: "idempotency-key", Short: "stable key for retrying the same submission within server retention; requires --async or --wait", Value: "KEY"},
 			{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J|@file|-"},
 			{Name: "method", Short: "HTTP method (default POST, or the function handler's)", Value: "METHOD"},
 			{Name: "path", Short: "URL path (default /, or the function handler's)", Value: "PATH"},
@@ -4837,6 +4843,7 @@ var cliCommands = []cliCommand{
 			{Name: "work-fairness-key", Short: "JSON scalar fairness group for async invocation", Value: "JSON"},
 		},
 		Positionals: []string{"[<slug>]"},
+		HelpNotes:   []string{"Reuse an idempotency key only with the same async request within the server's 24-hour replay window. Use a new key for new work."},
 	},
 	{
 		Name:    "run",
@@ -4953,7 +4960,6 @@ var cliCommands = []cliCommand{
 				{Name: "interval", Value: "D", Short: "time between status checks (default 1s)"},
 			}},
 		},
-		Positionals: []string{"<id>"},
 	},
 	{Name: "issues", DocSlug: "issues", Short: "Group failures into issues and track ownership and resolution", Examples: []string{"gregale debug issue list --app my-api", "gregale debug issue list --app my-api --assignee me", "gregale debug issue list --app my-api --assignee unassigned", "gregale debug issue list --app my-api --sort impact", "gregale debug issue impact-alert --app my-api --min-customers 5", "gregale debug issue ownership-rules --app my-api", "gregale debug issue ownership-rules --app my-api --rules-file issue-routing.json", "gregale debug issue get ISSUE_ID --app my-api", "gregale debug issue resolve ISSUE_ID --app my-api --release DEPLOYMENT_ID"}, Subcommands: []cliSub{
 		{Name: "list", Short: "List grouped issues", Flags: issueAppFlags}, {Name: "get", Short: "Read evidence and release history", Positionals: []string{"[<issue-id>]"}, Examples: []string{"gregale debug issue get --app my-api --interactive", "gregale debug issue get --app <SLUG> <issue-id>"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "interactive", Bool: true, Short: "browse issues by state and order, then inspect one"})}, {Name: "assign", Short: "Assign an issue to an account or team", Positionals: []string{"[<issue-id>]"}, Examples: []string{"gregale debug issue assign --app my-api --interactive"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "interactive", Bool: true, Short: "choose an open issue, assign to yourself or unassign, and confirm ownership"}, cliFlag{Name: "team", Value: "UUID", Short: "team assignment or shared inbox"}, cliFlag{Name: "assignee", Short: "owner account UUID (empty unassigns)", Value: "UUID"})}, {Name: "resolve", Short: "Resolve in a deployment", Positionals: []string{"[<issue-id>]"}, Examples: []string{"gregale debug issue resolve --app my-api --interactive"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "interactive", Bool: true, Short: "choose an open issue and fixing release, then confirm resolution"}, cliFlag{Name: "deployment", Short: "fixing deployment UUID or vN revision (required unless interactive)", Value: "UUID|vN"})}, {Name: "reopen", Short: "Reopen an issue", Positionals: []string{"[<issue-id>]"}, Examples: []string{"gregale debug issue reopen --app my-api --interactive"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "interactive", Bool: true, Short: "choose a resolved or ignored issue, review its state, and confirm reopening"})}, {Name: "ignore", Short: "Ignore until a timestamp", Positionals: []string{"[<issue-id>]"}, Examples: []string{"gregale debug issue ignore --app my-api --interactive"}, Flags: append(append([]cliFlag{}, issueAppFlags...), cliFlag{Name: "interactive", Bool: true, Short: "choose an open issue and duration, then confirm expiry"}, cliFlag{Name: "until", Short: "ignore until RFC3339 (required unless interactive)", Value: "RFC3339"})},
@@ -5837,6 +5843,13 @@ var cliCommands = []cliCommand{
 					{Name: "scenario", Value: "NAME", Short: "one named replay scenario (requires --replay)"},
 				}, Examples: []string{"gregale --json data-api migration preview --baseline schema.json --replay data-api.requests.json"}},
 			}},
+			{Name: "integrate", Short: "Add typed data and local authorization tests to a TypeScript app", Notes: []string{"Integrates an existing npm app with local setup, generated types and two-user authorization checks."}, Flags: []cliFlag{
+				{Name: "directory", Value: "DIR", Short: "existing project directory (default .)"},
+				{Name: "client-directory", Value: "DIR", Short: "npm client directory relative to the project (default .)"},
+				{Name: "bundle", Value: "MANIFEST", Short: "approved local data-api-bundle.json"},
+				{Name: "sdk-version", Value: "VERSION", Short: "exact public @gregale/data version, instead of a bundle"},
+				{Name: "dry-run", Short: "preview files and installation without writing or starting services"},
+			}, Examples: []string{"gregale data-api integrate --bundle /path/to/data-api-bundle.json --dry-run", "gregale data-api integrate --bundle /path/to/data-api-bundle.json"}},
 			{Name: "onboard", Short: "Create and verify a local typed application with two-user isolation", Flags: []cliFlag{
 				{Name: "template", Value: "NAME", Short: "data-api-starter or data-api-teams", ClosedSet: []string{"data-api-starter", "data-api-teams"}},
 				{Name: "path", Value: "DIR", Short: "new starter project directory", Req: true},

@@ -70,9 +70,8 @@ func (c *Client) HostingReleaseUploads(ctx context.Context, site, release string
 
 func (c *Client) FinalizeHostingRelease(ctx context.Context, site, release string) (HostingRelease, error) {
 	var out HostingRelease
-	cli := *c.http
-	cli.Timeout = HostingFinalizeTimeout + HostingStorageTimeout
-	err := c.doWithClientAndIdempotencyKey(ctx, &cli, http.MethodPost, hostingReleasePath(site, release)+"/finalize", nil, &out, "")
+	cli := c.operationHTTP(HostingFinalizeTimeout + HostingStorageTimeout)
+	err := c.doWithClientAndIdempotencyKey(ctx, cli, http.MethodPost, hostingReleasePath(site, release)+"/finalize", nil, &out, "")
 	return out, err
 }
 

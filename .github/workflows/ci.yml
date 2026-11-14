@@ -1105,14 +1105,16 @@ jobs:
             # 2026-10-27, 1243 s on 2026-10-29 and passed the 30m package
             # timeout on 2026-10-30 (run 40995340344); it is 501 s without
             # race or coverage. The job keeps 30 minutes past the package
-            # budget for race compilation and coverage upload.
-            test_timeout: 45m
+            # budget for race compilation and coverage upload. It took 2611 s
+            # and 2702 s on 2026-11-14 and then hit the 45m bound (run
+            # 43569561576), so the bounds are 60m and 90 minutes.
+            test_timeout: 60m
             # Shard b alone runs the PostgreSQL native verdict, starter TLS,
             # fixture and GitOps compilation gates before its tests: about
             # 28 minutes on 2026-10-18 (20 on 2026-10-17), ahead of a ~20
             # minute test step. 45 cancelled it mid-suite. The gates moved to
             # shard c when they reached 36 minutes (run 40420329172).
-            job_timeout_minutes: 75
+            job_timeout_minutes: 90
           - id: c
             label: PostgreSQL native and starter gates
             # Shard b's pre-test gates took 26 minutes on 2026-10-26 and 36 on

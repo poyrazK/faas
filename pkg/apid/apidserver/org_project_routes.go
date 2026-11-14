@@ -34,8 +34,16 @@ func (s *server) registerOrganizationProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/orgs/{organization}/projects/{slug}/environments/{environment}/config", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentConfig)))))
 	mux.HandleFunc("PUT /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/routes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentRoutes)))))
 	mux.HandleFunc("DELETE /v1/orgs/{organization}/projects/{slug}/exclusions/{slug2}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteDeploymentScopeExclusion))))
-	mux.HandleFunc("POST /v1/orgs/{organization}/projects", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotentIntent(s.applyProject))))))
+	// Deploys go through projectApplySubmission like POST /v1/projects, so a
+	// deployment-attempt header is tracked for company projects too.
+	mux.HandleFunc("POST /v1/orgs/{organization}/projects", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.projectApplySubmission)))))
 	mux.HandleFunc("POST /v1/orgs/{organization}/projects/scan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scanProject))))
+	// Reviewed-plan, safe-release and connected-repository forms of the
+	// company scan and deploy (ADR-20261113090000). A company project's
+	// repository resolves through its organization's own GitHub installation.
+	mux.HandleFunc("POST /v1/orgs/{organization}/projects/scan/source-ref", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scanProjectSourceRef))))
+	mux.HandleFunc("POST /v1/orgs/{organization}/projects/safe-deploy", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.safeProjectApplySubmission)))))
+	mux.HandleFunc("POST /v1/orgs/{organization}/projects/apply-plan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.applyCachedProjectPlan))))))
 	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/qualifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentQualifySurface...)(s.idempotent(s.createProjectEnvironmentQualification)))))
 	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.publishProjectReleaseSet))))))
 	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promote", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.promoteProjectEnvironment))))))
@@ -53,5 +61,5 @@ func (s *server) registerOrganizationProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/orgs/{organization}/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteProject))))
 	mux.HandleFunc("DELETE /v1/orgs/{organization}/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.deleteProjectEnvironment)))))
 	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/scan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scanProject))))
-	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/deploy", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotentIntent(s.applyProject))))))
+	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/deploy", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.projectApplySubmission)))))
 }

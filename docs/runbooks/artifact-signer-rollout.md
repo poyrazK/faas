@@ -74,8 +74,11 @@ on a node without `faas_imaged_signd_target`, so it can't strand imaged without
 a signer. The compute role then checks that the file stays gone.
 
 imaged in signd mode doesn't read the file, so removing it changes nothing
-for running builds. Compute CD still requires the `COMPUTE_SIGN_KEY` secret
-until the release that refuses v1 drops it (step 5).
+for running builds. Once every compute node has joined with the switch set,
+delete the `COMPUTE_SIGN_KEY` secret from the compute environment: compute CD
+stages `sign.key` only when the secret is set, and `gregalectl deploy join`
+refuses a missing key on a node that is not retired. Keep a copy until
+step 5, since rolling back the switch needs the key again.
 
 ## 5. Refuse v1 (a later release)
 

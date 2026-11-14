@@ -91,3 +91,15 @@ Consequences:
 - The account rate is per `outboundd` process; with several gateway nodes an account may reach that many times the rate.
 - `ai_budget_alerts` is evaluated on meterd's alert cadence, so a channel hears of a crossing up to one evaluation after the webhook.
 - An integration budget's crossing is counted by the rule of every app bound to the integration.
+
+## Amendment 3 (2026-11-13): visible and customer-set price tiers
+
+The long-context tiers and the one-hour cache-write rule of #6826 applied to the built-in catalog only, and no API showed them: a customer could not see why a long call cost more, and an integration's own price list could express neither, so long prompts were billed flat against its caps.
+
+- **Decision:**
+  - A price entry gains `cache_write_1h_millicents_per_mtok` and `long_context` (`above_input_tokens`, `input_percent`, `output_percent`), both optional, in the catalog response and in customer price lists.
+  - The catalog fills them from what billing charges: each model's long-context tier, and for Claude models the one-hour write price, the higher of the cache-write price and twice the input price.
+  - A customer list entry's tier and one-hour write price are stored (`outbound_ai_price_entries`, nullable columns with CHECKs) and applied like the catalog's. An entry without them keeps today's behaviour: no tier, and the one-hour rule above.
+  - Bounds live in `pkg/api/limits.go`: thresholds 1,000 to 2,000,000 input tokens, percentages 100 to 1,000.
+- **Consequences:** price lists are immutable versions, so a list set before this keeps billing as before; `gregale ai catalog` and `gregale ai prices` show and set the new fields.
+
