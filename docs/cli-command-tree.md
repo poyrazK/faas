@@ -162,6 +162,7 @@ touch them. The tables below map each earlier name.
 | `gregale account billing-run schedule-set` | `gregale account billing-run schedule set` |
 | `gregale account billing-run schedule` | `gregale account billing-run schedule get` |
 | `gregale account dpa` | `gregale account dpa get` |
+| `gregale account health` | `gregale account health get` |
 | `gregale account slo` | `gregale alert slo list --account` |
 | `gregale ai app-limit` | `gregale ai app-limit get` |
 | `gregale ai app-limit` | `gregale ai app-limit set` |
