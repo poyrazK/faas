@@ -99739,7 +99739,7 @@ WITH locked AS MATERIALIZED (
 )
 UPDATE managed_postgres_databases d SET lease_token=NULL,lease_until=NULL
 FROM locked l WHERE d.id=l.id AND l.lease_token=$1::text
-    AND l.state IN ('ready','failed') AND l.lease_until>clock_timestamp()
+    AND l.state IN ('ready','failed','updating') AND l.lease_until>clock_timestamp()
 `
 
 type ReleaseManagedPostgresComputeHoldParams struct {

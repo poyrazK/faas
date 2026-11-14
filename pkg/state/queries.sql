@@ -16490,7 +16490,7 @@ WITH locked AS MATERIALIZED (
 )
 UPDATE managed_postgres_databases d SET lease_token=NULL,lease_until=NULL
 FROM locked l WHERE d.id=l.id AND l.lease_token=sqlc.arg(lease_token)::text
-    AND l.state IN ('ready','failed') AND l.lease_until>clock_timestamp();
+    AND l.state IN ('ready','failed','updating') AND l.lease_until>clock_timestamp();
 
 -- name: ReleaseManagedPostgresLifecycleLease :execrows
 UPDATE managed_postgres_databases SET state=sqlc.arg(next_state)::text,last_error_code=NULLIF(sqlc.arg(error_code)::text,''),

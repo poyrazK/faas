@@ -56,7 +56,9 @@ func TestResolveSimpleAppPlanUsesCanonicalFrameworkDefaults(t *testing.T) {
 			},
 			framework: "fastapi",
 			port:      8000,
-			health:    "/healthz",
+			// No health route in the source: TCP listener readiness
+			// (ADR-079 amendment 2).
+			health: "",
 		},
 		{
 			name: "go",
@@ -66,7 +68,7 @@ func TestResolveSimpleAppPlanUsesCanonicalFrameworkDefaults(t *testing.T) {
 			},
 			framework: "go-net-http",
 			port:      8080,
-			health:    "/healthz",
+			health:    "",
 		},
 	}
 
