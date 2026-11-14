@@ -38,8 +38,13 @@ func TestPipelineEvolutionApprovalUsesOnlySavedIntent(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	if code := main.Run([]string{"--json", "pipeline", "evolve", id, "--approve", "frozen-change", "--revision", "7"}); code != 0 || calls != 1 {
-		t.Fatal(code, calls)
+	for _, command := range [][]string{{"pipeline", "evolve"}, {"pipeline", "evolution", "review"}} {
+		args := append([]string{"--json"}, command...)
+		args = append(args, id, "--approve", "frozen-change", "--revision", "7")
+		before := calls
+		if code := main.Run(args); code != 0 || calls != before+1 {
+			t.Fatal(command, code, calls)
+		}
 	}
 	file := filepath.Join(t.TempDir(), "evolution.json")
 	for _, contents := range []string{`null`, `{"kind":"projection","unknown":true}`, `{"action":"approve","change_id":"other"}`, `{} {}`} {
@@ -50,7 +55,7 @@ func TestPipelineEvolutionApprovalUsesOnlySavedIntent(t *testing.T) {
 			t.Fatal("invalid file accepted", contents)
 		}
 	}
-	if calls != 1 {
+	if calls != 2 {
 		t.Fatal("invalid local intent reached server", calls)
 	}
 }

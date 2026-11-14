@@ -35,8 +35,13 @@ func TestPipelineOperationsUsesRevisionAndRejectsMalformedFilesLocally(t *testin
 	}))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
-	if code := main.Run([]string{"--json", "pipeline", "operations", id, "--revision", "7", "--run-snapshot"}); code != 0 || calls != 1 {
-		t.Fatal(code, calls)
+	for _, command := range [][]string{{"pipeline", "operations"}, {"pipeline", "work", "update"}} {
+		args := append([]string{"--json"}, command...)
+		args = append(args, id, "--revision", "7", "--run-snapshot")
+		before := calls
+		if code := main.Run(args); code != 0 || calls != before+1 {
+			t.Fatal(command, code, calls)
+		}
 	}
 	file := filepath.Join(t.TempDir(), "work.json")
 	for _, body := range []string{`null`, `{"version":1,"unknown":true}`, `{} {}`} {
@@ -47,7 +52,7 @@ func TestPipelineOperationsUsesRevisionAndRejectsMalformedFilesLocally(t *testin
 			t.Fatal("malformed file accepted")
 		}
 	}
-	if calls != 1 {
+	if calls != 2 {
 		t.Fatal("invalid local request reached API", calls)
 	}
 }
