@@ -190,6 +190,49 @@ plane: watch its network and `faas_secretd_opens_total{rpc="RegistryFetch"}`.
 3. **Builder VMs** come with slice 3j-3. Job images pull through secretd
    with the same switch (3j-2b).
 
+## Take the edge and delivery identities off compute
+
+Once slices 3f–3i run on every compute node, nothing on compute needs the
+edge or delivery identity. The build identity stays until builder VMs pull
+through the control plane (slice 3j-3): vmmd still opens builder registry
+passwords with it.
+
+**Edge, per node.** Prerequisites: `faas_seal_domain_edge_contracted: true`
+(the fleet identity also opens edge values), `faas_gateway_secretd_log_drains:
+true`, `faas_gateway_basic_auth: verifier-only` and
+`faas_gateway_edge_header_secrets: inject` (after
+`faas_vmmd_edge_header_secrets` on every node), and
+`SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true`, so secretd holds the identity. Set
+`faas_seal_domain_edge_retired_on_compute: true` for the node and converge
+(`--limit`). The role removes `edge.age` and `edge.age.previous`, stops
+publishing the edge probe from the node, and gives gatewayd-internal
+`FAAS_SEAL_DOMAIN_EDGE_RETIRED=true`; the restart drops the loaded identity.
+Check: gatewayd-internal logs `edge identity retired on this node`, refuses to
+start if any prerequisite mode is off or an identity is loaded, and the
+converge proves its credentials hold no edge, fleet or host identity.
+
+**Delivery, per node.** Prerequisites: schedd's contract step
+(`faas_seal_domain_control_contracted` and
+`faas_seal_domain_delivery_contracted`) and `faas_schedd_secretd_delivery:
+true`. Set `faas_seal_domain_delivery_retired_on_compute: true` and converge
+(`--limit`). The role removes `delivery.age` and its `.previous` twin, skips
+the delivery probe and the delivery contract check on the node (the control
+plane's converge still runs both), and gives schedd
+`FAAS_SEAL_DOMAIN_DELIVERY_RETIRED=true`. Check: schedd logs `delivery
+identity retired on this node` and refuses to start without the secretd
+opener, with a delivery identity, or with `fleet.age` among its credentials.
+
+**Fleet-wide (CD).** Once every compute node is retired, set the GitHub
+environment variables `SEAL_DOMAIN_EDGE_RETIRED_ON_COMPUTE=true` (needs
+`SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true`) and
+`SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE=true`. cd-compute is then not handed
+either identity, does not fetch them from the escrow, and marks every node,
+including nodes that join later, as retired. The control plane keeps both.
+
+Back out a node by setting its switch to false and converging: the role
+stages the identity again and the daemon restarts with it. With the CD
+variable on, unset it first.
+
 ## Rotation
 
 The runtime domain rotates as before (`docs/runbooks/seal-domain-key-escrow.md`).

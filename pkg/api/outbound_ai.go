@@ -57,6 +57,52 @@ type OutboundAIPriceEntry struct {
 	InputAudioMillicentsPerMTok       *int64 `json:"input_audio_millicents_per_mtok,omitempty"`
 	CachedInputAudioMillicentsPerMTok *int64 `json:"cached_input_audio_millicents_per_mtok,omitempty"`
 	OutputAudioMillicentsPerMTok      *int64 `json:"output_audio_millicents_per_mtok,omitempty"`
+	// CacheWrite1hMillicentsPerMTok prices cache writes kept for one hour
+	// (ADR 20261027132936 amendment 3). Absent, they cost the higher of the
+	// cache-write price and twice the input price.
+	CacheWrite1hMillicentsPerMTok *int64 `json:"cache_write_1h_millicents_per_mtok,omitempty"`
+	// LongContext raises the prices of a call whose prompt is longer than
+	// its threshold. Absent, a price list entry has no long-context tier.
+	LongContext *OutboundAILongContextTier `json:"long_context,omitempty"`
+}
+
+// OutboundAILongContextTier is a higher price for a long prompt: when a
+// call's input tokens (cached reads and cache writes included) exceed
+// AboveInputTokens, its input-side prices are scaled by InputPercent/100
+// and its output prices by OutputPercent/100.
+type OutboundAILongContextTier struct {
+	AboveInputTokens int64 `json:"above_input_tokens"`
+	InputPercent     int64 `json:"input_percent"`
+	OutputPercent    int64 `json:"output_percent"`
+}
+
+// Columns splits a tier into its three stored columns; nil stores none.
+func (t *OutboundAILongContextTier) Columns() (above, input, output *int64) {
+	if t == nil {
+		return nil, nil, nil
+	}
+	return &t.AboveInputTokens, &t.InputPercent, &t.OutputPercent
+}
+
+// OutboundAILongContextFromColumns joins the stored columns into a tier;
+// a missing one means the entry has none.
+func OutboundAILongContextFromColumns(above, input, output *int64) *OutboundAILongContextTier {
+	if above == nil || input == nil || output == nil {
+		return nil
+	}
+	return &OutboundAILongContextTier{AboveInputTokens: *above, InputPercent: *input, OutputPercent: *output}
+}
+
+// Valid reports whether the tier is within the limits.
+func (t *OutboundAILongContextTier) Valid() bool {
+	if t == nil {
+		return true
+	}
+	percent := func(v int64) bool {
+		return v >= OutboundAILongContextPercentMin && v <= OutboundAILongContextPercentMax
+	}
+	return t.AboveInputTokens >= OutboundAILongContextAboveTokensMin && t.AboveInputTokens <= OutboundAILongContextAboveTokensMax &&
+		percent(t.InputPercent) && percent(t.OutputPercent)
 }
 
 // ValidOutboundAIPriceEntries checks one complete price list.
@@ -72,7 +118,8 @@ func ValidOutboundAIPriceEntries(entries []OutboundAIPriceEntry) bool {
 		}
 		for _, optional := range []*int64{entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok,
 			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerMillionCharacters,
-			entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok} {
+			entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok,
+			entry.CacheWrite1hMillicentsPerMTok} {
 			if optional != nil && !validPrice(*optional) {
 				return false
 			}
@@ -82,7 +129,7 @@ func ValidOutboundAIPriceEntries(entries []OutboundAIPriceEntry) bool {
 			!optionalWithin(entry.MillicentsPerVideoSecond, MaxOutboundAIPriceMillicentsPerVideoSecond) ||
 			!optionalWithin(entry.MillicentsPerWebSearch, MaxOutboundAIPriceMillicentsPerToolUse) ||
 			!optionalWithin(entry.MillicentsPerFileSearch, MaxOutboundAIPriceMillicentsPerToolUse) ||
-			!optionalWithin(entry.MillicentsPerCodeSessionGB, MaxOutboundAIPriceMillicentsPerToolUse) {
+			!optionalWithin(entry.MillicentsPerCodeSessionGB, MaxOutboundAIPriceMillicentsPerToolUse) || !entry.LongContext.Valid() {
 			return false
 		}
 		if _, dup := seen[entry.ModelPrefix]; dup {

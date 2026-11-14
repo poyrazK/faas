@@ -13,9 +13,9 @@ import (
 )
 
 type dataAPIOnboardingStep struct {
-	Name    string
-	Command string
-	Args    []string
+	Name    string   `json:"name"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
 }
 
 func dataAPIOnboardingSteps(root, bundle, template string) []dataAPIOnboardingStep {

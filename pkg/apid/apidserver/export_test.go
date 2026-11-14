@@ -2149,6 +2149,18 @@ func (r *server) ExpireComplimentaryAccounts(ctx context.Context, now time.Time)
 	return r.expireComplimentaryAccounts(ctx, now)
 }
 
+// StampActiveBillingSubscription stamps subscriptionID as acct's subscription,
+// as a provider webhook does.
+func (r *server) StampActiveBillingSubscription(ctx context.Context, acct state.Account, subscriptionID string) error {
+	return r.stampActiveBillingSubscription(ctx, acct, subscriptionID)
+}
+
+// ManagedPostgresSubjectInactive reports whether account's databases stop
+// because the account is not active.
+func ManagedPostgresSubjectInactive(ctx context.Context, store any, account state.Account) (bool, error) {
+	return managedPostgresSubjectInactive(ctx, store, account)
+}
+
 // ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
 func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
 	return r.expireUnverifiedAccounts(ctx)
@@ -2378,6 +2390,12 @@ func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
 
+func (s *server) VerifyPrivateToolPinForTest(ctx context.Context, target api.ToolInvocationTarget, endpoint string) error {
+	return s.verifyPrivateToolPin(ctx, target, endpoint)
+}
+
+var ToolConnectionRecipientsForTest = toolConnectionRecipients
+
 func (s *server) ConfigureCustomerSupportForTest(ctx context.Context, pool *pgxpool.Pool) error {
 	return s.configureCustomerSupport(ctx, pool, func(string) string { return "" })
 }
@@ -2517,3 +2535,13 @@ var FinancialBudgetProblem = financialBudgetProblem
 
 // AppOOMRecommendation is the operational-summary OOM recommendation (2026-11-13).
 var AppOOMRecommendation = appOOMRecommendation
+
+// SetSignupGeoForTest replaces the sign-up country and network-owner lookups
+// (ADR-20261113160000); nil lookups leave the facts empty.
+func (s *server) SetSignupGeoForTest(country func(net.IP) string, asn func(net.IP) (uint32, string)) {
+	s.signupGeo = &signupGeo{country: country, asn: asn}
+}
+
+func (r pgHandlerEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map[string]string) *httptest.ResponseRecorder {
+	return r.doSession(p0, p1, p2, p3, p4, p5)
+}

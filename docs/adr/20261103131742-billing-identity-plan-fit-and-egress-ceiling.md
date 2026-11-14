@@ -274,3 +274,25 @@ Consequences:
 - A deployment whose Polar egress billing is shadow or live with
   `FAAS_POLAR_EGRESS_MILLICENTS_PER_GIB` set to anything but 3000 fails to
   start its billing provider: unset it or set 3000 before upgrading.
+
+## Amendment 3 (2026-11-13): the quota stop parks apps, warns first, and leaves databases running
+
+The billing review of 2026-11-13 (R10-1, R10-2) found that the egress
+ceiling reused the Free plan's quota stop, which suspends the whole subject.
+A paid account that reached its app egress allowance therefore also lost
+every managed PostgreSQL database (the cap sweep holds an inactive subject's
+databases to one compute-second) and heard nothing: no warning before the
+stop, no mail at it, and a `billing_past_due` notice that read like a
+payment problem.
+
+1. The quota stop (`suspended_reason = 'free_quota'`, the Free compute
+   allowance or an app egress allowance the plan does not bill) keeps
+   parking the subject's apps and refusing deploys, but a subject in it is
+   not inactive for managed PostgreSQL (`state.PgStore.QuotaSuspended`,
+   `managedPostgresSubjectInactive`): databases keep their own allowances.
+   Payment, abuse and operator suspensions still stop them.
+2. meterd mails the subject once a UTC day from 80% of a stopping
+   allowance (`mail.QuotaApproachingBody`), sharing the daily quota-warning
+   stamp, and once when the stop transitions (`mail.QuotaStoppedBody`).
+3. The stop's `billing_past_due` notification keeps its channel for the
+   dashboard and SSE consumers and adds `"kind":"quota_stop"`.

@@ -67,7 +67,7 @@ function, defaults included, for example
 The same values are in `effective_limits` on the app's API response
 (`request_budget_ms`, `idle_timeout_s`, `pause`).
 
-Use `gregale invoke APP` for a smoke request and `gregale invocation get ID`
+Use `gregale invocation run APP` for a smoke request and `gregale invocation get ID`
 for an async result. Runtime-specific limits are in [plans](plans.md).
 
 ## Several functions in one project

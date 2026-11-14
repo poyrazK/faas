@@ -310,6 +310,19 @@ customer cancellation.
 while the task is queued, follows each retry attempt in turn, and ends when
 the task finishes.
 
+If the live stream disconnects, the CLI reconnects up to three times, waiting
+1, 2 and 4 seconds. This also applies to live output from `gregale run --image`.
+Already printed lines are suppressed, and stdout/stderr routing is preserved.
+Reconnecting does not submit or retry the Job. Ctrl+C stops following and any
+pending reconnect immediately, with exit code 130.
+
+If the task changed attempts while disconnected, the retained window lost
+unseen lines, or the resumed stream cannot identify its attempt, the CLI warns
+that output may be incomplete and prints the stored-output recovery command.
+Older streams without VM/sequence metadata keep their existing behavior and
+are not replayed after printing output. A missing live-stream endpoint still
+uses the existing stored-output fallback for image runs.
+
 ## Log retention
 
 Gregale keeps a task's output, the last 1 MiB of its combined stdout and

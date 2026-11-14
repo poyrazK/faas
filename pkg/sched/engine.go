@@ -980,8 +980,14 @@ func (e *Engine) budgetForWake(in bootInput) time.Duration {
 	if e.bootBudget != nil {
 		return e.bootBudget(in.initState)
 	}
+	// A cold boot, or a restore that may fall back to one, gets the app's
+	// startup window (ADR-20261114120000).
+	extension := primeStartupExtension(in.spec.StartupDeadlineS)
 	if in.haveSnap && in.snapKey != "" {
-		return ColdBootTimeout
+		return ColdBootTimeout + extension
+	}
+	if in.initState == state.StateColdBooting {
+		return e.budgetFor(in.initState) + extension
 	}
 	return e.budgetFor(in.initState)
 }
@@ -2359,6 +2365,12 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 			e.ledger.Release(fresh.ID)
 			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
 		}
+	}
+	// A parked app wakes through the lifecycle claim, which also clears its
+	// recoverable deployment parks; any other status is set as before.
+	if _, err := compareAndSetAppStatus(ctx, e.store, appID, state.AppEvictedCold, state.AppActive); err != nil {
+		release()
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: wake parked app %s: %w", appID, err)
 	}
 	active := state.AppActive
 	if _, err := e.store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &active}); err != nil {
@@ -7198,7 +7210,16 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	bootCtx, pcancel := context.WithTimeout(ctx, e.primeColdBootBudget(spec.StartupDeadlineS))
 	defer pcancel()
 	bootStartedAt := time.Now().UTC()
+	// The boot RPC runs without the app lock, as wake's does (its Phase 3):
+	// the admitted COLD_BOOTING row and ledger reservation already hold the
+	// prime's place, the per-deployment prime lock keeps a second prime out,
+	// and publication below is conditional on the row still being
+	// COLD_BOOTING. Holding the lock for the whole cold boot (up to the
+	// startup window) stalled every wake, scale-out and park of the app's
+	// serving release during each deploy (deploy-path review P12).
+	e.unlockApp(appID)
 	out, err := e.createRuntimeWithStandards(bootCtx, placement.NodeID, ins.ID, string(state.StateColdBooting), spec, nil, false)
+	e.lockApp(appID)
 	if err != nil {
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")

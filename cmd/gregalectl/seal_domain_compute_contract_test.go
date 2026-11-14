@@ -92,8 +92,10 @@ func TestSealDomainContractRoleComputeReaders(t *testing.T) {
 	if !strings.Contains(control, "(faas_seal_domain_control_contracted | bool) == (faas_seal_domain_delivery_contracted | bool)") {
 		t.Error("control.yml must refuse one of schedd's domains contracted without the other")
 	}
+	// A compute node whose delivery identity is retired checks control
+	// alone; the control plane's converge still checks delivery.
 	inOrder(t, "control.yml", control,
-		"loop: [control, delivery]",
+		`loop: "{{ ['control'] if (faas_seal_domain_delivery_retired_on_compute | bool) else ['control', 'delivery'] }}"`,
 		"dest: /etc/systemd/system/faas-schedd.service.d/30-faas-seal-domain-schedd-contract.conf")
 	main := read(filepath.Join(role, "tasks", "main.yml"))
 	inOrder(t, "main.yml", main, "include_tasks: control.yml", "include_tasks: delivery.yml")

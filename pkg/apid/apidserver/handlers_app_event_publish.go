@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
@@ -53,6 +54,9 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 	envelope, err := appevents.NormalizePublishRequest(api.PublishEventRequest{ID: id, Source: source, Type: req.Type, Time: req.Time, Data: req.Data, SchemaVersion: req.SchemaVersion}, acct.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return
+	}
+	if envelope.EnvironmentID, ok = s.appEventEnvironment(w, r, acct, app, req.Environment); !ok {
 		return
 	}
 	envelope.Producer = eventcontract.AppProducer(appID)
@@ -110,4 +114,28 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 
 func appProducerEventIdentity(app, key string) (string, string, string, error) {
 	return appevents.AppProducerEventIdentity(app, key)
+}
+
+// appEventEnvironment resolves the environment slug an app publish names to
+// the event's environment: "" for production (ADR-20261104120000).
+func (s *server) appEventEnvironment(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, slug string) (string, bool) {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return "", true
+	}
+	store, ok := s.store.(state.EventEnvironmentStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrInternal("event environment store"))
+		return "", false
+	}
+	environment, err := store.AppEventEnvironment(r.Context(), acct.ID, app.ID, slug)
+	if errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.ErrValidation("environment must name an environment of the app's project"))
+		return "", false
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("failed to resolve event environment"))
+		return "", false
+	}
+	return environment, true
 }

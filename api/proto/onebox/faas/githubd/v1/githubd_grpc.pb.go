@@ -58,6 +58,8 @@ const (
 	Githubd_RetryAppActivity_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/RetryAppActivity"
 	Githubd_UpsertIssueComment_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/UpsertIssueComment"
 	Githubd_PublishGitHubEvent_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/PublishGitHubEvent"
+	Githubd_EnsurePullRequestBranch_FullMethodName    = "/onebox.faas.githubd.v1.Githubd/EnsurePullRequestBranch"
+	Githubd_ClosePullRequestBranch_FullMethodName     = "/onebox.faas.githubd.v1.Githubd/ClosePullRequestBranch"
 )
 
 // GithubdClient is the client API for Githubd service.
@@ -255,6 +257,20 @@ type GithubdClient interface {
 	//   - ALREADY_EXISTS when the delivery ID names a different event.
 	//   - UNAVAILABLE when nothing was published and a retry may succeed.
 	PublishGitHubEvent(ctx context.Context, in *PublishGitHubEventRequest, opts ...grpc.CallOption) (*PublishGitHubEventResponse, error)
+	// EnsurePullRequestBranch is served by apid's bridge (ADR-20261113121342).
+	// For a project on branch-backed PR previews it makes environment branch
+	// pr-{N} of production, or moves the expiry of the pull request's own
+	// branch out to expires_at_unix (capped by the branch's longest lifetime).
+	// ready=false with a fallback_reason tells githubd to give the pull
+	// request an app preview instead: the flag is off, the plan's branch
+	// limit is reached, or a branch the user made holds the name. An older
+	// apid answers UNIMPLEMENTED, which githubd treats the same way.
+	EnsurePullRequestBranch(ctx context.Context, in *EnsurePullRequestBranchRequest, opts ...grpc.CallOption) (*EnsurePullRequestBranchResponse, error)
+	// ClosePullRequestBranch is served by apid's bridge (ADR-20261113121342).
+	// It moves the expiry of the pull request's own branch to
+	// expires_at_unix, the closed-preview grace; the branch sweeper deletes
+	// it then. closed=false when the pull request has no branch.
+	ClosePullRequestBranch(ctx context.Context, in *ClosePullRequestBranchRequest, opts ...grpc.CallOption) (*ClosePullRequestBranchResponse, error)
 }
 
 type githubdClient struct {
@@ -534,6 +550,26 @@ func (c *githubdClient) PublishGitHubEvent(ctx context.Context, in *PublishGitHu
 	return out, nil
 }
 
+func (c *githubdClient) EnsurePullRequestBranch(ctx context.Context, in *EnsurePullRequestBranchRequest, opts ...grpc.CallOption) (*EnsurePullRequestBranchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnsurePullRequestBranchResponse)
+	err := c.cc.Invoke(ctx, Githubd_EnsurePullRequestBranch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *githubdClient) ClosePullRequestBranch(ctx context.Context, in *ClosePullRequestBranchRequest, opts ...grpc.CallOption) (*ClosePullRequestBranchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClosePullRequestBranchResponse)
+	err := c.cc.Invoke(ctx, Githubd_ClosePullRequestBranch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GithubdServer is the server API for Githubd service.
 // All implementations must embed UnimplementedGithubdServer
 // for forward compatibility.
@@ -729,6 +765,20 @@ type GithubdServer interface {
 	//   - ALREADY_EXISTS when the delivery ID names a different event.
 	//   - UNAVAILABLE when nothing was published and a retry may succeed.
 	PublishGitHubEvent(context.Context, *PublishGitHubEventRequest) (*PublishGitHubEventResponse, error)
+	// EnsurePullRequestBranch is served by apid's bridge (ADR-20261113121342).
+	// For a project on branch-backed PR previews it makes environment branch
+	// pr-{N} of production, or moves the expiry of the pull request's own
+	// branch out to expires_at_unix (capped by the branch's longest lifetime).
+	// ready=false with a fallback_reason tells githubd to give the pull
+	// request an app preview instead: the flag is off, the plan's branch
+	// limit is reached, or a branch the user made holds the name. An older
+	// apid answers UNIMPLEMENTED, which githubd treats the same way.
+	EnsurePullRequestBranch(context.Context, *EnsurePullRequestBranchRequest) (*EnsurePullRequestBranchResponse, error)
+	// ClosePullRequestBranch is served by apid's bridge (ADR-20261113121342).
+	// It moves the expiry of the pull request's own branch to
+	// expires_at_unix, the closed-preview grace; the branch sweeper deletes
+	// it then. closed=false when the pull request has no branch.
+	ClosePullRequestBranch(context.Context, *ClosePullRequestBranchRequest) (*ClosePullRequestBranchResponse, error)
 	mustEmbedUnimplementedGithubdServer()
 }
 
@@ -816,6 +866,12 @@ func (UnimplementedGithubdServer) UpsertIssueComment(context.Context, *UpsertIss
 }
 func (UnimplementedGithubdServer) PublishGitHubEvent(context.Context, *PublishGitHubEventRequest) (*PublishGitHubEventResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PublishGitHubEvent not implemented")
+}
+func (UnimplementedGithubdServer) EnsurePullRequestBranch(context.Context, *EnsurePullRequestBranchRequest) (*EnsurePullRequestBranchResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EnsurePullRequestBranch not implemented")
+}
+func (UnimplementedGithubdServer) ClosePullRequestBranch(context.Context, *ClosePullRequestBranchRequest) (*ClosePullRequestBranchResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClosePullRequestBranch not implemented")
 }
 func (UnimplementedGithubdServer) mustEmbedUnimplementedGithubdServer() {}
 func (UnimplementedGithubdServer) testEmbeddedByValue()                 {}
@@ -1299,6 +1355,42 @@ func _Githubd_PublishGitHubEvent_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Githubd_EnsurePullRequestBranch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnsurePullRequestBranchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).EnsurePullRequestBranch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_EnsurePullRequestBranch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).EnsurePullRequestBranch(ctx, req.(*EnsurePullRequestBranchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Githubd_ClosePullRequestBranch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ClosePullRequestBranchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).ClosePullRequestBranch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_ClosePullRequestBranch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).ClosePullRequestBranch(ctx, req.(*ClosePullRequestBranchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Githubd_ServiceDesc is the grpc.ServiceDesc for Githubd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1405,6 +1497,14 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PublishGitHubEvent",
 			Handler:    _Githubd_PublishGitHubEvent_Handler,
+		},
+		{
+			MethodName: "EnsurePullRequestBranch",
+			Handler:    _Githubd_EnsurePullRequestBranch_Handler,
+		},
+		{
+			MethodName: "ClosePullRequestBranch",
+			Handler:    _Githubd_ClosePullRequestBranch_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

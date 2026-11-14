@@ -186,17 +186,33 @@ expiring preview does not create a permanent receipt.
 ## Customers who may be stuck
 
 apid flags customers who look stuck before they write in
-(ADR-20261113123000): repeated failed deployments of one app, a burst of one
-refused API problem code, or a custom domain that is not serving. Staff see
-them at `/dashboard/admin/support/attention` (linked from the staff inbox as
+(ADR-20261113123000, ADR-20261113180000): repeated failed deployments of one
+app, an app that keeps running out of memory or failing to boot, a scheduled
+job whose recent runs all failed, a custom domain that is not serving, a
+burst of one refused API problem code, repeated plan-limit refusals, or a
+payment that failed and has not recovered. Staff see them at
+`/dashboard/admin/support/attention` (linked from the staff inbox as
 "Customers who may be stuck"), in the "May be stuck" section of the ticket
 account panel, and operators through `GET /v1/admin/obs/attention` or
 `gregalectl accounts attention [--kind K] [--state S] [--account-id ID]`.
 
-Signals resolve on their own when the condition clears. Dismiss one only
-with a reason when it needs no follow-up; dismissal needs a fresh step-up.
-Customers are not notified. Decide case by case whether to reach out, and
-treat many signals of one kind at once as a platform problem
+Signals resolve on their own when the condition clears. For an open signal,
+either:
+
+- **Contact customer**: edit the prefilled message and send it. This opens a
+  ticket in the customer's personal support scope with your message first,
+  assigned to you and waiting for the customer; the customer is notified like
+  any staff reply, and no service clock runs until they answer. The signal is
+  marked `contacted` and links the ticket. Write only what the customer can
+  see in their own dashboard.
+- **Dismiss** it with an outcome: `platform_issue`, `already_in_touch`,
+  `not_needed` or `false_positive`, plus an optional note.
+
+Both need a fresh step-up. A signal that clears with no action is marked
+`resolved_on_own`. The page's "Last 30 days" table shows, per kind, how many
+signals led to contact, how many were false positives and the median time
+to act; use it before changing thresholds in `pkg/api/limits.go`. Treat many
+signals of one kind at once as a platform problem
 (`FaasCustomerAttentionSpike`) rather than contacting each customer.
 
 ## Policies, calendars and reporting

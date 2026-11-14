@@ -22,12 +22,15 @@ type consentView struct {
 	// ConsentAction is the consent endpoint, under /mcp on the hosted bridge.
 	ConsentAction string
 	// Capabilities describe the extra scopes chosen before sign-in.
-	Capabilities []string
-	RequestID    string
-	CSRF         string
-	Writes       bool
-	Native       bool
-	LoginURL     string
+	Capabilities       []string
+	RequestID          string
+	CSRF               string
+	Writes             bool
+	Invocations        bool
+	Publishing         bool
+	PrivateInvocations bool
+	Native             bool
+	LoginURL           string
 	// ClientHost is the site a metadata-document client is published at.
 	ClientHost string
 	// Org is the shared organization the connection acts in
@@ -95,12 +98,15 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 		oauthError(w, 400, "access_denied", "Client registration expired; start a new connection")
 		return
 	}
-	view := consentView{MaximumToolsets: r.opts.Toolsets, ConsentAction: r.issuer + "/oauth/consent", Capabilities: describeCapabilities(flow.Capabilities), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL, ClientHost: clientHost(client), SameTab: r.opts.Hosted}
+	view := consentView{MaximumToolsets: r.opts.Toolsets, ConsentAction: r.issuer + "/oauth/consent", Capabilities: describeCapabilities(flow.Capabilities), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Invocations: slices.Contains(flow.Scopes, scopeInvoke), Publishing: slices.Contains(flow.Scopes, scopePublish), PrivateInvocations: slices.Contains(flow.Scopes, scopePrivateInvoke), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL, ClientHost: clientHost(client), SameTab: r.opts.Hosted}
 	if g := r.grants[flow.GrantID]; g != nil {
 		// The connection's key may carry less than the client asked for: an
 		// organization's agent policy caps it (ADR-20261101225122).
 		view.Capabilities = describeCapabilities(g.capabilities)
 		view.Writes = slices.Contains(g.scopes, scopeWrite)
+		view.Invocations = slices.Contains(g.scopes, scopeInvoke)
+		view.Publishing = slices.Contains(g.scopes, scopePublish)
+		view.PrivateInvocations = slices.Contains(g.scopes, scopePrivateInvoke)
 		view.Org = g.orgName
 		view.Projects = g.projects
 		view.Environments = g.availableEnvironments
@@ -175,6 +181,18 @@ func (r *remoteServer) verifyAccount(w http.ResponseWriter, req *http.Request, f
 
 func (r *remoteServer) approveLocked(w http.ResponseWriter, req *http.Request, flow *authorizationRequest) {
 	g := r.grants[flow.GrantID]
+	if g != nil && slices.Contains(g.scopes, scopePrivateInvoke) && (req.PostForm.Get("allow_private_tool_invocation") != "yes" || !slices.Contains(g.scopes, scopeInvoke)) {
+		oauthError(w, http.StatusBadRequest, "access_denied", "Explicit private credential use consent is required")
+		return
+	}
+	if g != nil && slices.Contains(g.scopes, scopePublish) && (req.PostForm.Get("allow_tool_publishing") != "yes" || !slices.Contains(g.scopes, scopeWrite) || req.PostForm.Get("app_access") != "all" || req.PostForm.Get("default_write") != "yes" || g.org != "" || len(g.projects) != 0) {
+		oauthError(w, http.StatusBadRequest, "access_denied", "Publishing requires explicit fixture consent, personal account-wide access and default-environment writes")
+		return
+	}
+	if g != nil && slices.Contains(g.scopes, scopeInvoke) && req.PostForm.Get("allow_tool_invocation") != "yes" {
+		oauthError(w, http.StatusBadRequest, "access_denied", "Review and explicitly approve calls to granted published tools")
+		return
+	}
 	if g == nil || g.revoked || (slices.Contains(g.scopes, scopeWrite) && req.PostForm.Get("allow_writes") != "yes") {
 		oauthError(w, 400, "access_denied", "Review the account and explicitly approve requested write access")
 		return

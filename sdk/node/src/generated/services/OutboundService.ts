@@ -61,6 +61,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class OutboundService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read an explicitly configured outbound probe policy
    * Read a customer-owned integration's safe-method probe configuration. This does not send traffic to a provider.
@@ -76,7 +77,7 @@ export class OutboundService {
      */
     integration: string,
   }): CancelablePromise<OutboundBindingProbePolicy | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/probe-policy',
       path: {
@@ -101,7 +102,7 @@ export class OutboundService {
     integration: string,
     requestBody: OutboundBindingProbePolicy,
   }): CancelablePromise<OutboundBindingProbePolicy | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/integrations/{integration}/probe-policy',
       path: {
@@ -125,7 +126,7 @@ export class OutboundService {
      */
     integration: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/outbound/integrations/{integration}/probe-policy',
       path: {
@@ -140,7 +141,7 @@ export class OutboundService {
    * @throws ApiError
    */
   public static listOutboundIntegrationOffers(): CancelablePromise<OutboundIntegrationOfferList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations',
       errors: {
@@ -163,7 +164,7 @@ export class OutboundService {
   }: {
     requestBody: CreateOutboundIntegrationRequest,
   }): CancelablePromise<OutboundIntegrationOffer> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/outbound/integrations',
       body: requestBody,
@@ -198,7 +199,7 @@ export class OutboundService {
     integration: string,
     requestBody: PutOutboundCredentialRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/integrations/{integration}/credential',
       path: {
@@ -231,7 +232,7 @@ export class OutboundService {
      */
     integration: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/outbound/integrations/{integration}/credential',
       path: {
@@ -264,7 +265,7 @@ export class OutboundService {
     integration: string,
     requestBody: PutOutboundDailyRequestBudgetRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/integrations/{integration}/budget',
       path: {
@@ -299,7 +300,7 @@ export class OutboundService {
     integration: string,
     requestBody: PutOutboundRequestPolicyRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/integrations/{integration}/request-policy',
       path: {
@@ -334,7 +335,7 @@ export class OutboundService {
     integration: string,
     requestBody: PutOutboundAIPolicyRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/integrations/{integration}/ai',
       path: {
@@ -374,7 +375,7 @@ export class OutboundService {
      */
     date?: string,
   }): CancelablePromise<OutboundAIUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-usage',
       path: {
@@ -425,7 +426,7 @@ export class OutboundService {
      */
     limit?: number,
   }): CancelablePromise<OutboundAIUserUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-usage/users',
       path: {
@@ -478,7 +479,7 @@ export class OutboundService {
      */
     format?: 'ndjson' | 'csv',
   }): CancelablePromise<Blob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       responseType: 'blob',
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-usage/users/export',
@@ -522,7 +523,7 @@ export class OutboundService {
      */
     model?: string,
   }): CancelablePromise<OutboundAIPriceCatalogResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/ai-price-catalog',
       query: {
@@ -551,7 +552,7 @@ export class OutboundService {
      */
     integration: string,
   }): CancelablePromise<OutboundAIPriceListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-prices',
       path: {
@@ -586,7 +587,7 @@ export class OutboundService {
     integration: string,
     requestBody: PutOutboundAIPricesRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/integrations/{integration}/ai-prices',
       path: {
@@ -621,7 +622,7 @@ export class OutboundService {
      */
     integration: string,
   }): CancelablePromise<OutboundCredentialKeyList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/credential-keys',
       path: {
@@ -656,7 +657,7 @@ export class OutboundService {
     integration: string,
     requestBody: CreateOutboundCredentialKeyRequest,
   }): CancelablePromise<OutboundCredentialKey> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/outbound/integrations/{integration}/credential-keys',
       path: {
@@ -698,7 +699,7 @@ export class OutboundService {
      */
     key: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/outbound/integrations/{integration}/credential-keys/{key}',
       path: {
@@ -747,7 +748,7 @@ export class OutboundService {
      */
     limit?: number,
   }): CancelablePromise<OutboundAITagUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-usage/tags',
       path: {
@@ -805,7 +806,7 @@ export class OutboundService {
      */
     format?: 'ndjson' | 'csv',
   }): CancelablePromise<OutboundAITagUsageExportRow> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-usage/tags/export',
       path: {
@@ -844,7 +845,7 @@ export class OutboundService {
      */
     integration: string,
   }): CancelablePromise<OutboundAITagLimits> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-tag-limits',
       path: {
@@ -878,7 +879,7 @@ export class OutboundService {
     integration: string,
     requestBody: PutOutboundAITagLimitsRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/integrations/{integration}/ai-tag-limits',
       path: {
@@ -918,7 +919,7 @@ export class OutboundService {
      */
     limit?: number,
   }): CancelablePromise<OutboundAIBudgetAlertList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-alerts',
       path: {
@@ -964,7 +965,7 @@ export class OutboundService {
      */
     before?: string,
   }): CancelablePromise<OutboundAIRequestLogList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-requests',
       path: {
@@ -1021,7 +1022,7 @@ export class OutboundService {
      */
     endUser?: string,
   }): CancelablePromise<OutboundAITraceList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-traces',
       path: {
@@ -1065,7 +1066,7 @@ export class OutboundService {
      */
     trace: string,
   }): CancelablePromise<OutboundAITraceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-traces/{trace}',
       path: {
@@ -1104,7 +1105,7 @@ export class OutboundService {
      */
     limit?: number,
   }): CancelablePromise<OutboundAIQualityAlertList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-quality-alerts',
       path: {
@@ -1147,7 +1148,7 @@ export class OutboundService {
     request: string,
     requestBody: PutOutboundAIFeedbackRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/integrations/{integration}/ai-requests/{request}/feedback',
       path: {
@@ -1190,7 +1191,7 @@ export class OutboundService {
     request: string,
     requestBody: CreateOutboundAIReplayRequest,
   }): CancelablePromise<OutboundAIReplay> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/outbound/integrations/{integration}/ai-requests/{request}/replays',
       path: {
@@ -1228,7 +1229,7 @@ export class OutboundService {
      */
     replay: string,
   }): CancelablePromise<OutboundAIReplay> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/ai-replays/{replay}',
       path: {
@@ -1263,7 +1264,7 @@ export class OutboundService {
     integration: string,
     requestBody: OutboundAIContentPolicy,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/integrations/{integration}/ai-content-policy',
       path: {
@@ -1303,7 +1304,7 @@ export class OutboundService {
      */
     request: string,
   }): CancelablePromise<OutboundAIRequestContent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/ai-requests/{request}/content',
       path: {
@@ -1330,7 +1331,7 @@ export class OutboundService {
    * @throws ApiError
    */
   public static listOutboundAiRoutes(): CancelablePromise<OutboundAIRouteList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/ai-routes',
       errors: {
@@ -1355,7 +1356,7 @@ export class OutboundService {
   }: {
     requestBody: CreateOutboundAIRouteRequest,
   }): CancelablePromise<OutboundAIRoute> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/outbound/ai-routes',
       body: requestBody,
@@ -1388,7 +1389,7 @@ export class OutboundService {
      */
     route: string,
   }): CancelablePromise<OutboundAIRoute> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/ai-routes/{route}',
       path: {
@@ -1421,7 +1422,7 @@ export class OutboundService {
      */
     route: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/outbound/ai-routes/{route}',
       path: {
@@ -1456,7 +1457,7 @@ export class OutboundService {
     route: string,
     requestBody: PutOutboundAIRouteTargetsRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/ai-routes/{route}/targets',
       path: {
@@ -1491,7 +1492,7 @@ export class OutboundService {
      */
     route: string,
   }): CancelablePromise<OutboundAIRouteCanaryStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/ai-routes/{route}/canary',
       path: {
@@ -1526,7 +1527,7 @@ export class OutboundService {
     route: string,
     requestBody: PutOutboundAIRouteCanaryRequest,
   }): CancelablePromise<OutboundAIRouteCanary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/ai-routes/{route}/canary',
       path: {
@@ -1561,7 +1562,7 @@ export class OutboundService {
      */
     route: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/outbound/ai-routes/{route}/canary',
       path: {
@@ -1594,7 +1595,7 @@ export class OutboundService {
      */
     route: string,
   }): CancelablePromise<OutboundAIRouteStats> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/ai-routes/{route}/stats',
       path: {
@@ -1627,7 +1628,7 @@ export class OutboundService {
      */
     route: string,
   }): CancelablePromise<OutboundAIRoute> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/outbound/ai-routes/{route}/canary/promote',
       path: {
@@ -1661,7 +1662,7 @@ export class OutboundService {
      */
     route: string,
   }): CancelablePromise<OutboundAIEvaluationList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/ai-routes/{route}/evaluations',
       path: {
@@ -1696,7 +1697,7 @@ export class OutboundService {
     route: string,
     requestBody: CreateOutboundAIEvaluationRequest,
   }): CancelablePromise<OutboundAIEvaluation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/outbound/ai-routes/{route}/evaluations',
       path: {
@@ -1732,7 +1733,7 @@ export class OutboundService {
      */
     evaluation: string,
   }): CancelablePromise<OutboundAIEvaluation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/ai-evaluations/{evaluation}',
       path: {
@@ -1767,7 +1768,7 @@ export class OutboundService {
     integration: string,
     requestBody: PutOutboundRunsBindingRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/outbound/integrations/{integration}/runs',
       path: {
@@ -1801,7 +1802,7 @@ export class OutboundService {
      */
     integration: string,
   }): CancelablePromise<OutboundIntegrationUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/integrations/{integration}/usage',
       path: {
@@ -1832,7 +1833,7 @@ export class OutboundService {
      */
     integration: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/outbound/integrations/{integration}',
       path: {
@@ -1863,7 +1864,7 @@ export class OutboundService {
      */
     slug: string,
   }): CancelablePromise<AIDeploymentUsageList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/ai-deployments',
       path: {
@@ -1896,7 +1897,7 @@ export class OutboundService {
      */
     slug: string,
   }): CancelablePromise<OutboundAIAccessTokenList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/ai-access-tokens',
       path: {
@@ -1931,7 +1932,7 @@ export class OutboundService {
     slug: string,
     requestBody: CreateOutboundAIAccessTokenRequest,
   }): CancelablePromise<CreatedOutboundAIAccessToken> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/ai-access-tokens',
       path: {
@@ -1972,7 +1973,7 @@ export class OutboundService {
      */
     token: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/ai-access-tokens/{token}',
       path: {
@@ -2005,7 +2006,7 @@ export class OutboundService {
      */
     slug: string,
   }): CancelablePromise<OutboundAppBindingList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/outbound-bindings',
       path: {
@@ -2040,7 +2041,7 @@ export class OutboundService {
      */
     integration: string,
   }): CancelablePromise<OutboundAppBinding> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/outbound-bindings/{integration}',
       path: {
@@ -2079,7 +2080,7 @@ export class OutboundService {
     integration: string,
     requestBody: UpdateOutboundBindingPolicyRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/outbound-bindings/{integration}',
       path: {
@@ -2118,7 +2119,7 @@ export class OutboundService {
      */
     integration: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/outbound-bindings/{integration}',
       path: {
@@ -2157,7 +2158,7 @@ export class OutboundService {
     integration: string,
     requestBody: PutOutboundBindingDailyRequestBudgetRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/outbound-bindings/{integration}/budget',
       path: {
@@ -2198,7 +2199,7 @@ export class OutboundService {
     integration: string,
     requestBody: PutOutboundBindingAIBudgetRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/outbound-bindings/{integration}/ai-budget',
       path: {
@@ -2241,7 +2242,7 @@ export class OutboundService {
     integration: string,
     requestBody: PutOutboundBindingAIGuardrailsRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails',
       path: {
@@ -2282,7 +2283,7 @@ export class OutboundService {
      */
     integration: string,
   }): CancelablePromise<OutboundBindingUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/outbound-bindings/{integration}/usage',
       path: {

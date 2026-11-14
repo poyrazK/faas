@@ -953,6 +953,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// files): both on unless an operator switches them off.
 			WithMemoryPeerSharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_PEER_SHARING") != "off").
 			WithMemorySharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_SHARING") != "off")
+		// ADR-20261114120000: remove cached captures and runtime release
+		// bases nothing references, and order eviction by what is live.
+		// FAAS_NODE_CACHE_SWEEP=off leaves the cache to oldest-first eviction.
+		if os.Getenv("FAAS_NODE_CACHE_SWEEP") != "off" {
+			if reader, ok := store.(state.NodeCacheRetentionReader); ok {
+				fanout.WithCacheRetention(reader)
+			} else {
+				log.Warn("vmmd: node cache sweep disabled: the store cannot list what rows reference")
+			}
+		}
 		if raw := os.Getenv("FAAS_SNAPSHOT_FANOUT_INTERVAL"); raw != "" {
 			interval, parseErr := time.ParseDuration(raw)
 			if parseErr != nil || interval <= 0 {
@@ -1770,6 +1780,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			envelope, err := normalizeGuestEvent(publishCtx, store, appID, accountID, body, time.Now().UTC())
 			if err != nil {
+				return err
+			}
+			// A stage's events stay in its stage (ADR-20261104120000).
+			deploymentID, deploymentApp, deploymentAccount, identityErr := mgr.InstanceRuntimeSecretIdentity(instance)
+			if identityErr != nil || deploymentApp != appID || deploymentAccount != accountID {
+				return errors.New("in-guest event publish: instance identity changed")
+			}
+			if envelope.EnvironmentID, err = guestEventEnvironment(publishCtx, store, accountID, appID, deploymentID, body); err != nil {
 				return err
 			}
 			// Fanout keeps the app's company boundary (ADR-20261025211616).

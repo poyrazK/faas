@@ -231,3 +231,14 @@ DELETE FROM login_failure_budgets WHERE email_hash IN (
     SELECT email_hash FROM login_failure_budgets
     WHERE window_started_at <= now() - make_interval(secs => sqlc.arg(window_seconds)::double precision)
     ORDER BY window_started_at LIMIT 200);
+
+-- Organization security policy (ADR 20261113180000).
+-- name: OrgSecurityPolicy :one
+SELECT org_id, require_mfa, updated_by_account_id, updated_at
+FROM org_security_policies WHERE org_id = $1;
+
+-- name: SetOrgRequireMFA :exec
+INSERT INTO org_security_policies (org_id, require_mfa, updated_by_account_id, updated_at)
+VALUES (sqlc.arg(org_id), sqlc.arg(require_mfa), sqlc.narg(updated_by), clock_timestamp())
+ON CONFLICT (org_id) DO UPDATE SET require_mfa = EXCLUDED.require_mfa,
+    updated_by_account_id = EXCLUDED.updated_by_account_id, updated_at = EXCLUDED.updated_at;

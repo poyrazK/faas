@@ -165,3 +165,32 @@ paths customers can use right now:
 - Node — `npm pack` a tarball, then `npm install /path/to/tarball.tgz`
 - Python — `poetry build -f wheel`, then `pip install dist/*.whl`
 - Go — `go get github.com/gregale-dev/gregale-go@<commit>` works today; a `vX.Y.Z` tag on gregale-go adds versions
+
+## Consumer installation gate
+
+`sdk-mirror` now builds and installs each exported SDK into an independent
+consumer before pushing the public tree. It runs the first-request code from
+that tree's README, a typed application read, and the SDK's typed not-found
+error against the existing `fakeapid` fixture. Node additionally type-checks
+its consumer and imports public browser/workflow subpaths; Python checks its
+workflow import and wheel's `py.typed` marker. No live account is used.
+
+Successful runs retain `sdk-install-gregale-js` (npm tarball and report),
+`sdk-install-gregale-python` (wheel and report), and `sdk-install-gregale-go`
+(report only). `sdk-install.json` records each package's identity, checks and
+artifact SHA-256. Install a verified artifact in another project with
+`npm install /path/to/package.tgz` or
+`python -m pip install /path/to/package.whl`. These artifacts are available to
+maintainers with workflow access; this does not publish a registry version.
+
+Run the same gate locally with new or empty output directories:
+
+```sh
+python3 scripts/sdk_mirror.py build --repo gregale-js --out /tmp/gregale-js-tree
+python3 scripts/sdk_install_check.py --repo gregale-js \
+  --tree /tmp/gregale-js-tree --out /tmp/gregale-js-install
+```
+
+Repeat with `gregale-go` or `gregale-python`. All checks require Go for the
+fixture, plus Node/npm or Python/pip/venv for that language. See
+[installation checks](install-tests/README.md) for requirements and scope.

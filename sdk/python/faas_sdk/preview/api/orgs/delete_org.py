@@ -78,7 +78,9 @@ def sync_detailed(
 
      Marks the company organization as deleted_pending. Live managed
     PostgreSQL databases must complete deletion first. Owner-only
-    (`org.delete`); personal organizations are immutable.
+    (`org.delete`); personal organizations are immutable. Needs a
+    signed-in browser session with a fresh step-up; an API key cannot
+    delete an organization. Owners and admins are emailed.
 
     Args:
         slug (str):
@@ -111,7 +113,9 @@ def sync(
 
      Marks the company organization as deleted_pending. Live managed
     PostgreSQL databases must complete deletion first. Owner-only
-    (`org.delete`); personal organizations are immutable.
+    (`org.delete`); personal organizations are immutable. Needs a
+    signed-in browser session with a fresh step-up; an API key cannot
+    delete an organization. Owners and admins are emailed.
 
     Args:
         slug (str):
@@ -139,7 +143,9 @@ async def asyncio_detailed(
 
      Marks the company organization as deleted_pending. Live managed
     PostgreSQL databases must complete deletion first. Owner-only
-    (`org.delete`); personal organizations are immutable.
+    (`org.delete`); personal organizations are immutable. Needs a
+    signed-in browser session with a fresh step-up; an API key cannot
+    delete an organization. Owners and admins are emailed.
 
     Args:
         slug (str):
@@ -170,7 +176,9 @@ async def asyncio(
 
      Marks the company organization as deleted_pending. Live managed
     PostgreSQL databases must complete deletion first. Owner-only
-    (`org.delete`); personal organizations are immutable.
+    (`org.delete`); personal organizations are immutable. Needs a
+    signed-in browser session with a fresh step-up; an API key cannot
+    delete an organization. Owners and admins are emailed.
 
     Args:
         slug (str):

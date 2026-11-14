@@ -157,6 +157,31 @@ func TestMCPServeWriteOptionIsExplicit(t *testing.T) {
 	}
 }
 
+func TestMCPServeHostedInvocationNeedsSeparateOption(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		args := []string{"--transport", "streamable-http", "--tools", "registry,invoke", "--allow-writes"}
+		if enabled {
+			args = append(args, "--allow-tool-invocation")
+		}
+		opts, err := main.ParseMCPServeOptions(args)
+		if err != nil || *opts.AllowToolInvocation() != enabled {
+			t.Fatalf("hosted invocation options: %+v %v", opts, err)
+		}
+	}
+	if _, err := main.ParseMCPServeOptions([]string{"--allow-tool-invocation"}); err == nil {
+		t.Fatal("HTTP invocation option accepted for stdio")
+	}
+}
+
+func TestMCPServeExecuteSelectionIsExplicit(t *testing.T) {
+	for _, selection := range []string{"execute", "core,execute", "build-tools", "core,build-tools", "registry", "core,registry", "invoke", "core,registry,invoke", "all"} {
+		opts, err := main.ParseMCPServeOptions([]string{"--tools", selection})
+		if err != nil || *opts.AllowWrites() {
+			t.Fatalf("selection %s: opts=%+v error=%v", selection, opts, err)
+		}
+	}
+}
+
 func TestMCPServeRemoteStateAndOnboardingOptions(t *testing.T) {
 	for _, args := range [][]string{
 		{"--oauth-onboarding", "invalid"},

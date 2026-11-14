@@ -114,6 +114,13 @@ func TestSignedSidecarUsesSelectedChildAndCurrentStoredPublisher(t *testing.T) {
 			if p.input != ref {
 				t.Fatalf("sidecar resolution used %q", p.input)
 			}
+			if mode == "missing signature" {
+				// The refusal carries a stable code and a fix, not
+				// deploy_failed with raw cosign text (deploy-path review P6).
+				if p := api.AsProblem(err); p == nil || p.Code != api.CodeDeploySignatureInvalid || p.Hint == "" {
+					t.Fatalf("missing signature problem = %+v (err %v), want %s with a hint", p, err, api.CodeDeploySignatureInvalid)
+				}
+			}
 			if mode != "approved index" {
 				if strings.HasSuffix(mode, "during build") {
 					if err == nil || len(p.layerRefs) != 1 || len(th.bld.calls) != 1 {
