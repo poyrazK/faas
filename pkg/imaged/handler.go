@@ -1295,6 +1295,12 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	}
 	defer cleanup()
 	markScanPhase(ctx, "stage")
+	// Grype runs while the artifact is hashed rather than after it: each took
+	// about 7 s on production and the deploy waited for both in turn
+	// (deploy-path review P15). The hash still decides reuse, which cancels
+	// the scan; the stop runs before cleanup removes the staged artifact.
+	scan := h.startDeployGrype(ctx, scanDir)
+	defer scan.stop()
 	artifactDigest, artifactErr := h.scanArtifactDigest(be, storagekey.AppLayer(scanLayer(app.Slug, dep)), scanDir)
 	markScanPhase(ctx, "digest")
 	if artifactErr != nil {
@@ -1308,10 +1314,12 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		result = h.reusableDeployScan(ctx, app, dep, artifactDigest)
 	}
 	if result != nil {
+		scan.stop()
 		markScanPhase(ctx, "reuse")
 	} else {
-		result, err = h.runGrype(ctx, scanDir)
+		result, err = scan.wait()
 		h.lastDeployScanner.record(result, err, time.Now())
+		markScanPhase(ctx, "scan_wait")
 	}
 	if err != nil {
 		// Fail the scan, not the deploy. Log the grype error
@@ -1387,7 +1395,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
 		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown,
 		"reused_from", result.ReusedFrom,
-	}, timing.attrs()...)...)
+	}, append(timing.attrs(), scan.phaseAttrs()...)...)...)
 	return checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
 }
 
