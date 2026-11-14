@@ -118,6 +118,10 @@ reaper delete a replayed message the moment it settled again.
 
 ## Consequences
 
-Two migrations, both expand-only. Release N-1's lease waiters ignore the new
+Three migrations, all expand-only. 20261113180200000 redefines
+`guard_queue_binding_retirement` unqualified: 20261112193138262 replaced only
+`public.`'s copy, so a schema holding its own objects (each Postgres test
+schema) still refused every revive, and the revive tests could not pass on
+Postgres. In production it changes nothing. Release N-1's lease waiters ignore the new
 `queue_name` notify key and wake as before. A held account's queue messages
 take one write each per half retention.

@@ -8075,6 +8075,27 @@ $$;
 
 
 --
+-- Name: end_queue_leases_with_instance(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.end_queue_leases_with_instance() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.app_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  UPDATE invocations i SET lease_expires_at = clock_timestamp()
+  WHERE i.app_id = NEW.app_id AND i.source = 'queue' AND i.state = 'dispatching'
+    AND i.instance_id = NEW.id::text AND i.lease_expires_at > clock_timestamp()
+    AND EXISTS (SELECT 1 FROM invocation_queue_lease_receipts r
+      WHERE r.invocation_id = i.id AND r.attempt = i.attempts AND r.replay_generation = i.replay_generation);
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: enforce_app_fork_status_transition(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -20152,10 +20173,17 @@ CREATE FUNCTION public.invocation_due_notify() RETURNS trigger
 declare
     payload jsonb;
 begin
+    if tg_op = 'UPDATE' and old.state = 'pending' then
+        return new;
+    end if;
+    if new.due_at > clock_timestamp() then
+        return new;
+    end if;
     payload := jsonb_build_object(
         'invocation_id', new.id::text,
         'app_id', new.app_id::text,
-        'source', new.source
+        'source', new.source,
+        'queue_name', coalesce(new.queue_name, '')
     );
     perform pg_notify('invocation_due', payload::text);
     return new;
@@ -90360,6 +90388,13 @@ CREATE TRIGGER inbound_webhooks_delete_exclusive_binding AFTER DELETE ON public.
 --
 
 CREATE TRIGGER initialize_clone_configuration_guard AFTER INSERT OR UPDATE OF account_id ON public.projects FOR EACH ROW EXECUTE FUNCTION public.initialize_clone_configuration_guard();
+
+
+--
+-- Name: instances instance_end_queue_leases; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instance_end_queue_leases AFTER UPDATE OF state ON public.instances FOR EACH ROW WHEN (((old.state IS DISTINCT FROM new.state) AND (new.state = ANY (ARRAY['stopped'::text, 'failed'::text])))) EXECUTE FUNCTION public.end_queue_leases_with_instance();
 
 
 --
