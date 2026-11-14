@@ -614,6 +614,14 @@ var cliTreeAliases = []cliTreeAlias{
 	{"postgres resize status", "postgres resize-status"},
 	// ADR-20261102123523: what a database gives PR previews is a setting.
 	{"postgres previews set", "postgres previews"},
+	// The pipeline verbs from #7219 and #7239: freshness shows or sets a
+	// target; indexes and access save a preview and approve it (set), and
+	// the offline provider guide reads like `data-api migration explain`.
+	{"pipeline freshness get", "pipeline freshness"},
+	{"pipeline freshness set", "pipeline freshness"},
+	{"pipeline index set", "pipeline indexes"},
+	{"pipeline access set", "pipeline access"},
+	{"pipeline connection explain", "pipeline connection guide"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.
