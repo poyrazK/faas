@@ -190,6 +190,11 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			}
 			if tc.wantHealth != "" {
 				wantHealth = tc.wantHealth
+			} else if profile, err := frameworkprofile.AnalyzeDir(member); err == nil && profile.HealthDefaulted {
+				// The catalog's /healthz is the platform default here: the
+				// source names no health route, so the plan readies on the
+				// listener (ADR-079 amendment 2).
+				wantHealth = ""
 			}
 			if plan.Framework != fixture.Expected.Framework || plan.Port != wantPort || plan.HealthPath != wantHealth {
 				t.Fatalf("plan profile = %+v, want %s :%d %s", plan, fixture.Expected.Framework, wantPort, wantHealth)
@@ -234,7 +239,11 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			if err != nil {
 				t.Fatalf("analyze uploaded source: %v", err)
 			}
-			if profile.Framework != plan.Framework || profile.Port != plan.Port || profile.HealthPath != plan.HealthPath {
+			readiness := profile.HealthPath
+			if profile.HealthDefaulted {
+				readiness = "" // TCP listener readiness (ADR-079 amendment 2)
+			}
+			if profile.Framework != plan.Framework || profile.Port != plan.Port || readiness != plan.HealthPath {
 				t.Errorf("uploaded profile = %+v, differs from plan %+v", profile, plan)
 			}
 			_, shippedOverride := entries[path.Join(sourceRoot, "gregale.yaml")]
