@@ -3167,7 +3167,7 @@ paths:
     put:
       operationId: beginToolPublication
       summary: Journal a reviewed publication before execution; requires deploy-write scope and MFA policy
-      description: Only created=true authorizes the publisher to start once. Duplicate identities return created=false; changed reviews conflict. Local paths and credentials are excluded.
+      description: Only created=true authorizes the publisher to start once. Duplicate identities return created=false; changed reviews conflict. Local paths and credentials are excluded. Hosted private reviews include platform_verification and the reviewed OAuth contract; their completed outcomes must match API-held candidate verification.
       requestBody:
         required: true
         content:
@@ -3205,6 +3205,50 @@ paths:
         '403': {description: Account authority or MFA requirement not satisfied}
         '404': {description: Publication or deployment unavailable to this account}
         '409': {description: Outcome immutable or publisher deadline elapsed}
+  /v1/tool-publications/{id}/verification:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Exact private publication identity}
+    post:
+      operationId: verifyToolPublication
+      summary: Request owner-approved platform verification of one private candidate
+      description: Requires unscoped personal deploy-write authority and MFA policy. Returns a pending owner review binding the publishing key, native candidate/source, catalog pin and immutable publication review. Only an owner-approved fresh begin launches a bounded API-held credential worker. Repeats return retained status and never replay fixtures. Fixture bodies remain transient; credentials and secret names are never returned. Requires the private-publication operator gate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolPublicationVerificationRequest'}
+      responses:
+        '200':
+          description: Pending approval or retained verification receipt; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolPublicationVerification'}
+        '400': {description: Invalid candidate or fixtures}
+        '403': {description: Publishing authority or MFA requirement not satisfied}
+        '404': {description: Current publisher or candidate authority unavailable}
+        '409': {description: Review differs or source/serving identity changed}
+        '429': {description: Verification workers busy; retry the same unstarted request}
+        '503': {description: Platform-held candidate verification is disabled by the operator}
+    put:
+      operationId: decideToolPublicationVerification
+      summary: Approve or revoke private candidate test authority as the personal administrator
+      description: Requires unscoped personal administrator authority and MFA policy. Approval selects an existing ordinary secret:MCP_* test token on the candidate app's default environment. The exact request digest and sealed credential source are immutable. Revocation blocks subsequent credential dispatches; an accepted HTTP request may finish. Completed test evidence is consumed and cannot be reauthorized or revoked. This grants no invocation access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolPublicationVerificationDecision'}
+      responses:
+        '200':
+          description: Public approval status without credential metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolPublicationVerification'}
+        '400': {description: Invalid decision or secret namespace}
+        '403': {description: Personal administrator or MFA requirement not satisfied}
+        '404': {description: Candidate or ordinary app credential unavailable}
+        '409': {description: 'Review changed, expired or consumed'}
+        '503': {description: Owner candidate-test approval is disabled by the operator}
   /v1/tool-oauth-connections:
     get:
       operationId: listToolOAuthConnections
@@ -74817,11 +74861,68 @@ components:
         required_scopes: {type: array, maxItems: 64, items: {type: string, maxLength: 256}}
         evidence_origin: {type: string, enum: [publisher_attested]}
         availability: {type: string, enum: [not_checked]}
+    ToolPublicationAuth:
+      type: object
+      description: Reviewed external OAuth issuer, signing keys, resource and scopes for one private publication.
+      additionalProperties: false
+      required: [issuer, jwks_url, resource, scopes]
+      properties:
+        issuer: {type: string, format: uri, maxLength: 2048}
+        jwks_url: {type: string, format: uri, maxLength: 2048}
+        resource: {type: string, format: uri, maxLength: 2048}
+        scopes: {type: array, maxItems: 64, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 256}}
+    ToolPublicationVerificationRequest:
+      type: object
+      description: Exact native candidate and catalog pin with the reviewed transient behavioral fixture bytes.
+      additionalProperties: false
+      required: [deployment_id, catalog_sha256, fixtures_json]
+      properties:
+        deployment_id: {type: string, format: uuid}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        fixtures_json: {type: string, maxLength: 65536, description: Exact reviewed fixture bytes; SHA-256 must match the publication intent}
+    ToolPublicationVerificationDecision:
+      type: object
+      description: Owner approval selecting an existing sealed test credential or revoking unconsumed candidate-test authority.
+      additionalProperties: false
+      required: [request_sha256]
+      properties:
+        request_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        credential_secret_ref: {type: string, description: Existing ordinary secret:MCP_* app test-token reference; required for approval and forbidden for revocation}
+        revoke: {type: boolean, default: false}
+    ToolPublicationVerification:
+      type: object
+      description: Durable public candidate-test metadata; never includes a token, secret reference or ciphertext.
+      required: [request_sha256, publication_id, key_id, app_id, deployment_id, deployment_source_sha256, catalog_sha256, status, created_at, deadline]
+      properties:
+        request_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        publication_id: {type: string, pattern: '^[0-9a-f]{64}$'}
+        key_id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        deployment_id: {type: string, format: uuid}
+        deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        status: {type: string, enum: [pending, approved, running, completed, failed, revoked, not_started, outcome_unknown]}
+        created_at: {type: string, format: date-time}
+        deadline: {type: string, format: date-time}
+        outcome: {$ref: '#/components/schemas/ToolPublicationVerificationOutcome'}
+    ToolPublicationVerificationOutcome:
+      type: object
+      description: Platform-observed catalog and named test results without credentials or upstream response data.
+      required: [ok, protocol_verified, checks]
+      properties:
+        ok: {type: boolean}
+        protocol_verified: {type: boolean}
+        catalog_base64: {type: string, format: byte, description: Canonical verified catalog; absent on failure}
+        checks: {type: array, maxItems: 64, items: {type: object, required: [name, status], properties: {name: {type: string}, status: {type: string, enum: [passed, failed]}}}}
+        code: {type: string, description: Stable verification failure stage without upstream response data}
     ToolPublicationIntent:
       type: object
       description: Reviewed publication metadata bounded to 64 KiB; never includes local paths or credentials.
       required: [app, source_sha256, fixtures_sha256, access_mode, tool_scopes, test_cases]
       properties:
+        platform_verification: {type: boolean, default: false, description: Private hosted candidates require separate owner-approved API-held test execution}
+        auth: {$ref: '#/components/schemas/ToolPublicationAuth'}
+        legacy: {type: boolean, default: false, description: Include legacy protocol qualification for platform verification}
         endpoint_path: {type: string, maxLength: 512, description: Reviewed canonical MCP path; new invocations require this field and never infer a missing endpoint}
         app: {type: string}
         app_id: {type: string}
@@ -74956,6 +75057,7 @@ components:
       description: Account-owned durable publication review and immutable outcome bound to native deployment source identity.
       required: [id, account_id, intent, status, created_at, deadline, evidence_origin]
       properties:
+        verification: {$ref: '#/components/schemas/ToolPublicationVerification'}
         id: {type: string, pattern: '^[0-9a-f]{64}$'}
         account_id: {type: string, format: uuid}
         intent: {$ref: '#/components/schemas/ToolPublicationIntent'}

@@ -2892,3 +2892,7 @@ var DoctorCheckRuntimeOOM = doctorCheckRuntimeOOM
 // Readiness probe flag (2026-11-13).
 var ResolveDeployReadiness = resolveDeployReadiness
 var DeployProbeOverrides = deployProbeOverrides
+
+func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, id string, in api.ToolPublicationVerificationRequest) (api.ToolPublicationVerification, error) {
+	return waitPrivatePublicationVerification(ctx, c, id, in)
+}

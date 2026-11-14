@@ -150,10 +150,11 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	toolInvocations      map[string]api.ToolInvocationRecord
-	toolPublications     map[string]api.ToolPublicationRecord
-	toolGrants           map[string]api.ToolGrantRecord
-	toolOAuthConnections map[string]ToolOAuthConnection
+	toolInvocations                map[string]api.ToolInvocationRecord
+	toolPublications               map[string]api.ToolPublicationRecord
+	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
+	toolGrants                     map[string]api.ToolGrantRecord
+	toolOAuthConnections           map[string]ToolOAuthConnection
 	// ownerReleaseRequests are app_owner_release_requests by app id
 	// (ADR-20261110210000 §4); allocated on first use under mu.
 	ownerReleaseRequests map[string]AppOwnerReleaseRequest

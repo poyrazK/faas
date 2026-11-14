@@ -67,7 +67,9 @@ func durablePublicationView(record api.ToolPublicationRecord) map[string]any {
 		recovery = Recovery{Action: "inspect", Toolsets: []string{ToolsetCore}}
 	}
 	return map[string]any{"schema_version": 1, "plan_id": record.ID, "action": "tool_deploy", "account_id": record.AccountID,
-		"app": record.Intent.App, "app_id": record.Intent.AppID, "source_sha256": record.Intent.SourceSHA256,
+		"owner_approval_required": record.Verification != nil && record.Verification.Status == "pending",
+		"verification":            record.Verification,
+		"app":                     record.Intent.App, "app_id": record.Intent.AppID, "source_sha256": record.Intent.SourceSHA256,
 		"status": record.Status, "durable": true, "deadline": record.Deadline, "recovery": recovery,
 		"deployment_source_sha256": record.DeploymentSourceSHA256, "result": outcome, "evidence_origin": record.EvidenceOrigin}
 }

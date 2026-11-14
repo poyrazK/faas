@@ -83,10 +83,14 @@ func TestHostedToolPublicationJourney(t *testing.T) {
 	}
 }
 
-func hostedToolPublicationJourney(t *testing.T, protocol, runtime string, archive bool) {
+func hostedToolPublicationJourney(t *testing.T, protocol, runtime string, archive bool, private ...bool) {
 	t.Helper()
 	f, backend := newPublicationFixture(t)
 	opts := hostedPublicationOptions(t, f, backend)
+	privateMode := len(private) > 0 && private[0]
+	if privateMode {
+		opts.LocalCLI = privatePublicationCLI(t, f)
+	}
 	cs, ctx := connectSelectedTestServer(t, backend, opts, protocol)
 	tools := listedTools(t, ctx, cs)
 	for _, name := range []string{"gregale_get_tool_template", "gregale_create_source_upload", "gregale_plan_uploaded_tool_deploy", "gregale_apply_tool_deploy", "gregale_get_tool_deploy"} {
@@ -105,6 +109,9 @@ func hostedToolPublicationJourney(t *testing.T, protocol, runtime string, archiv
 	}
 	publicationCall(t, ctx, cs, "gregale_get_tool_template", toolTemplateArgs{Runtime: runtime}, false)
 	args := uploadedRuntimeToolArgs(t, runtime)
+	if privateMode {
+		args = privateUploadedToolArgs(t, runtime)
+	}
 	f.mu.Lock()
 	f.sourceFile = map[string]string{"node": "server.js", "go": "main.go", "python": "server.py"}[runtime]
 	f.mu.Unlock()
@@ -131,6 +138,9 @@ func hostedToolPublicationJourney(t *testing.T, protocol, runtime string, archiv
 	plan := publicationCall(t, ctx, cs, "gregale_plan_uploaded_tool_deploy", args, false)
 	if string(plan["runtime"]) != `"`+runtime+`"` {
 		t.Fatalf("review runtime: %v", plan)
+	}
+	if privateMode && (string(plan["owner_approval_required"]) != "true" || !strings.Contains(string(plan["auth"]), "issuer.example")) {
+		t.Fatal("private plan omitted owner approval or auth review")
 	}
 	var id string
 	_ = json.Unmarshal(plan["plan_id"], &id)

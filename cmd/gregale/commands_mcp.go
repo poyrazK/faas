@@ -32,6 +32,8 @@ func cmdMCP(args []string) int {
 		return cmdMCPToolConnection(args[1:])
 	case "tool-grant":
 		return cmdMCPToolGrant(args[1:])
+	case "tool-publication":
+		return cmdMCPToolPublication(args[1:])
 	case "invocation-run":
 		return cmdMCPInvocationRun(args[1:])
 	case "connect":
@@ -674,6 +676,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 }
 
 type mcpDeployOptions struct {
+	publicationID                              string
 	smokeFixtures                              string
 	allowToolExecution                         bool
 	path, slug, profile, tokenEnv, secretsFile string
@@ -695,6 +698,7 @@ func cmdMCPDeploy(args []string) int {
 	fs.StringVar(&o.slug, "name", "", "app slug")
 	resourceSizeFlag(fs, &o.profile, "app resource size")
 	fs.StringVar(&o.tokenEnv, "token-env", "", "MCP client token for post-deployment verification")
+	fs.StringVar(&o.publicationID, "publication-id", "", "native private publication whose candidate tests require owner approval")
 	fs.StringVar(&o.secretsFile, "secrets-file", "", "sealed app secrets configured before deployment")
 	fs.StringVar(&o.smokeFixtures, "fixtures", "", "run reviewed MCP smoke fixtures against the candidate before promotion")
 	fs.BoolVar(&o.allowToolExecution, "allow-tool-execution", false, "execute reviewed tool fixtures once; requires --fixtures")
@@ -740,11 +744,14 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if err := validateMCPDeploySecretsFile(o.secretsFile); err != nil {
 		return printErr("MCP catalog pin", err)
 	}
+	if err := validatePrivatePublicationOptions(o, cfg, smoke); err != nil {
+		return printErr("MCP private publication", err)
+	}
 	token, err := mcpToken(o.tokenEnv)
 	if err != nil {
 		return printErr("MCP client token", err)
 	}
-	if cfg.Auth.Mode == "external-oauth" && token == "" {
+	if cfg.Auth.Mode == "external-oauth" && token == "" && o.publicationID == "" {
 		return printErr("MCP verification", errors.New("external-oauth deploy requires --token-env with a client access token for verification"))
 	}
 	if o.validateEndpoint != "" {
@@ -811,6 +818,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	}
 	verificationCtx, cancel := context.WithTimeout(ctx, time.Duration(o.timeout)*time.Second)
 	defer cancel()
+	if o.publicationID != "" {
+		return finishPrivateMCPDeploy(verificationCtx, c, o, cfg, candidate.ID, pinReceipt)
+	}
 	return finishMCPDeployWithSmoke(verificationCtx, c, o.slug, candidate.ID, cfg, token, roles, audit, smoke, pinReceipt)
 }
 
