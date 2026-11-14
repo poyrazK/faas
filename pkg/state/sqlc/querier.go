@@ -5679,7 +5679,7 @@ type Querier interface {
 	// counter. Until then they stay on the namespace counter (ADR-202610171908).
 	OrgQueueReadPolicy(ctx context.Context, db DBTX, arg OrgQueueReadPolicyParams) (OrgQueueReadPolicyRow, error)
 	OrgQueueUsage(ctx context.Context, db DBTX, orgID pgtype.UUID) (OrgQueueUsageRow, error)
-	// Organization security policy (ADR 20261113180000).
+	// Organization security policy (ADR 20261114170352).
 	OrgSecurityPolicy(ctx context.Context, db DBTX, orgID pgtype.UUID) (OrgSecurityPolicy, error)
 	OwnEnvironmentGitOpsField(ctx context.Context, db DBTX, arg OwnEnvironmentGitOpsFieldParams) (int64, error)
 	OwnsPrivateNetworkService(ctx context.Context, db DBTX, arg OwnsPrivateNetworkServiceParams) (bool, error)

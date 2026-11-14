@@ -2,6 +2,8 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261114170352: Organization ownership guards and a require-2FA policy](20261114170352-org-ownership-and-security-policy.md) — accepted; ownership eligibility, browser-only transfer/deletion, organization two-factor policy and owner recovery. Renumbered from the colliding customer-attention identifier.
+
 - [ADR-20261114164404: Structured recovery for CLI Workflow waits](20261114164404-cli-workflow-wait-recovery.md) — accepted; exact-run read-only inspection/resumption for wait and accepted run/resume/retry waits, preserved timing options, snapshots, polling and exit contracts.
 
 - [ADR-20261113180307: Bind execution workflows to independent Node clients](20261113180307-node-sdk-bound-execution-workflows.md) — accepted; preview helpers retain one client snapshot across submission, resumed event streams, and terminal receipt reads, with per-caller cancellation and legacy compatibility.

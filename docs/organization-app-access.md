@@ -315,7 +315,7 @@ You need two-factor authentication yourself to turn it on. While it is on,
 a member without it is refused on the organization's routes with
 `org_mfa_required`, from the dashboard and with API keys alike, until they
 enrol. Their personal apps and keys are not affected. Owners and admins are
-emailed whenever the policy changes. See ADR-20261113180000.
+emailed whenever the policy changes. See ADR-20261114170352.
 
 If an organization's owner can no longer act (suspended or leaving), support
 can make another active member the owner; see
