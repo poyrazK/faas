@@ -496,6 +496,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Proposed 2026-10-29 for review (round 9: one-off verbs).
 	{"account dpa get", "account dpa"},
+	{"account health get", "account health"},
 	{"account billing-run schedule get", "account billing-run schedule"},
 	{"ai quality-alert list", "ai quality-alerts"},
 	{"api consumer plan history", "consumers plan-history"},
