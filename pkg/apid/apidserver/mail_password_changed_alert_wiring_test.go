@@ -220,8 +220,16 @@ func TestPasswordChangedAlertPublicPathsAndAtomicFailures(t *testing.T) {
 				if success && mode == "off" {
 					wantInline = 1
 				}
-				if events != wantEvents || recorder.calls != wantInline {
-					t.Fatal("alert missing, duplicated or sent inline", events, recorder.calls)
+				// A reset also sends its own API-key review notice; count
+				// only the password-changed alert.
+				inline := 0
+				for _, subject := range recorder.subjects {
+					if strings.HasPrefix(subject, "Password updated") {
+						inline++
+					}
+				}
+				if events != wantEvents || inline != wantInline {
+					t.Fatal("alert missing, duplicated or sent inline", events, inline, recorder.subjects)
 				}
 				var revoked, currentRevoked bool
 				if err := pool.QueryRow(t.Context(), "SELECT (SELECT revoked_at IS NOT NULL FROM sessions WHERE id=$1),(SELECT revoked_at IS NOT NULL FROM sessions WHERE id=$2)", otherSID, sid).Scan(&revoked, &currentRevoked); err != nil || revoked != (success && mode != "first_password") || currentRevoked != (success && method != "dashboard") {

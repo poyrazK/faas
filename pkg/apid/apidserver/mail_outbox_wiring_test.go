@@ -13,9 +13,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type outboxInlineRecorder struct{ calls int }
+type outboxInlineRecorder struct {
+	calls    int
+	subjects []string
+}
 
-func (r *outboxInlineRecorder) Send(context.Context, apidserver.Message) error { r.calls++; return nil }
+func (r *outboxInlineRecorder) Send(_ context.Context, m apidserver.Message) error {
+	r.calls++
+	r.subjects = append(r.subjects, m.Subject)
+	return nil
+}
 
 func TestProducerOutboxAccountDeletionWiringPreservesDefaultAndAvoidsInlineDuplicate(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
