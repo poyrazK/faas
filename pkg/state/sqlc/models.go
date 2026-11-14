@@ -11840,6 +11840,14 @@ type PgRatelimitCounter struct {
 	LastRefill pgtype.Timestamptz
 }
 
+// Last plan-fit email per billing subject: the plan and the sha256 of its over-plan app set. Written by meterd (billing review H17-4).
+type PlanFitNotice struct {
+	SubjectID  pgtype.UUID
+	Plan       string
+	AppsDigest string
+	NoticedAt  pgtype.Timestamptz
+}
+
 type PlatformMailAgentRunCapture struct {
 	Namespace  string
 	ProducerID string

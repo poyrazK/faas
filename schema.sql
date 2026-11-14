@@ -51826,6 +51826,27 @@ CREATE TABLE public.pg_ratelimit_counters (
 
 
 --
+-- Name: plan_fit_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.plan_fit_notices (
+    subject_id uuid NOT NULL,
+    plan text NOT NULL,
+    apps_digest text NOT NULL,
+    noticed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT plan_fit_notices_apps_digest_check CHECK ((apps_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT plan_fit_notices_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text])))
+);
+
+
+--
+-- Name: TABLE plan_fit_notices; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.plan_fit_notices IS 'Last plan-fit email per billing subject: the plan and the sha256 of its over-plan app set. Written by meterd (billing review H17-4).';
+
+
+--
 -- Name: platform_mail_agent_run_capture; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -71306,6 +71327,14 @@ ALTER TABLE ONLY public.pg_preauth_failure_counters
 
 ALTER TABLE ONLY public.pg_ratelimit_counters
     ADD CONSTRAINT pg_ratelimit_counters_pkey PRIMARY KEY (scope, subject_id, plan);
+
+
+--
+-- Name: plan_fit_notices plan_fit_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.plan_fit_notices
+    ADD CONSTRAINT plan_fit_notices_pkey PRIMARY KEY (subject_id);
 
 
 --
