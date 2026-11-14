@@ -741,8 +741,15 @@ func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now t
 		return err
 	}
 	observed := saturatedAdd(saturatedAdd(monthCents, meterCents), objectStorageCents)
+	complimentary := false
+	if capCents == 0 {
+		if complimentary, err = state.IsComplimentaryAccount(ctx, l.store, acct.ID); err != nil {
+			l.log.Warn("meter: complimentary read failed", "account", acct.ID, "err", err)
+			return err
+		}
+	}
 	holds, hasHolds := l.store.(state.SpendCapHoldStore)
-	if observed < capCents {
+	if !state.SpendCapReached(capCents, observed, complimentary) {
 		if hasHolds {
 			if err := holds.ClearSpendCapHold(ctx, acct.ID); err != nil {
 				l.log.Warn("meter: clear spend cap hold failed", "account", acct.ID, "err", err)

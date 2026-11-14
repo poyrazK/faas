@@ -446,9 +446,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_WAKE_FAILOVER` | gatewayd-public | `default` |  | 0 | `` | ADR-20261022184531 step 5; 1 retries a response gatewayd-internal marked not dispatched (no request byte reached a guest) on another compute node, within api.GatewayFailover* limits; default off; needs a node-choosing dialer (compute pool or compute edge) |
 | `FAAS_GCS_BUCKET` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | private regional bucket used when `FAAS_STORAGE_BACKEND=gcs`; authenticated with ADC |
 | `FAAS_GC_INTERVAL` | imaged | `default` |  |  | `` |  |
-| `FAAS_GEOIP_ASN_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it |
+| `FAAS_GEOIP_ASN_DB_PATH` | apid, gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it, and apid leaves the sign-up network owner empty (ADR-20261113160000) |
 | `FAAS_GEOIP_AUTO_REFRESH` | gatewayd-internal | `default` |  |  | `` | 0; the geoip role owns refresh through re-bootstrap |
-| `FAAS_GEOIP_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it |
+| `FAAS_GEOIP_DB_PATH` | apid, gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it, and apid leaves the sign-up country empty (ADR-20261113160000) |
 | `FAAS_GITHUBD_AUTOMATION_EVENTS` | githubd | `default` |  |  | `` | ADR-20261027090010 §9: 1 forwards pull_request deliveries to apid's bridge (FAAS_APID_GITHUBD_BRIDGE_SOCK) as gregale.github events; apid publishes them only for accounts the agents capability is released to; unset forwards none |
 | `FAAS_GITHUBD_LISTEN_ADDR` | githubd | `dropin` |  |  | `` | private mTLS gRPC listener for source-ref verification on compute-only hosts |
 | `FAAS_GITHUBD_LOOPBACK` | apid, gatewayd-internal, gatewayd-public | `default` |  |  | `` |  |
