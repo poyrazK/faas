@@ -346,7 +346,7 @@ turn. `--tools` lists only the selected toolsets, comma-separated
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons: provisioning, inventory and reviewed domain/cron changes |
 | `operate` | Configuration metadata/history/rollback, restart status, scaling, plan receipts and app costs |
 | `execute` | Local account connections only: existing jobs, run/task status, bounded logs, artifact metadata/downloads and opt-in dispatch/cancellation |
-| `build-tools` | Local authoring and opt-in hosted Node publication: starter files, reviewed fixtures and verified publication |
+| `build-tools` | Local authoring and opt-in hosted Node, Go and Python publication: starter files, reviewed fixtures and verified publication |
 | `registry` | Search durable published versions and describe exact tools; personal hosted connections require exact owner-created tool grants |
 | `invoke` | Invoke exact registered versions, read durable status/results and request cancellation; hosted calls require separate invocation consent and exact owner grants |
 | `all` | Every tool allowed by the server operator (explicit opt-in) |
@@ -889,11 +889,16 @@ hosting-site credentials are excluded. Publishing credentials can inspect the
 account-wide native publication journal; this is broader than invocation-only
 access and must be assigned accordingly.
 
-The hosted `build-tools` catalog exposes `gregale_get_tool_template` (Node only),
+The hosted `build-tools` catalog exposes `gregale_get_tool_template` (Node, Go or Python),
 `gregale_create_source_upload`, `gregale_plan_uploaded_tool_deploy`,
 `gregale_apply_tool_deploy` and `gregale_get_tool_deploy`. It exposes no local-path
-or standalone test tool. The first preview accepts open-access Node projects
-with a `package.json` start script, the hosting contract and behavioral fixtures.
+or standalone test tool. The preview accepts open-access Node, Go and Python
+application projects with the hosting contract and behavioral fixtures. Select
+`runtime: "node"`, `"go"` or `"python"` when planning an upload; omitted runtime
+defaults to Node for existing clients. Node requires a `package.json` start
+script; Go requires `go.mod`; Python uses the native `requirements.txt`,
+`pyproject.toml`, `Pipfile` or `setup.py` markers. Root markers must belong to a
+single runtime family; Dockerfile builds are outside this hosted preview.
 
 Pass either `files` (the existing 200-file/96-KiB inline bound) or `upload_id`
 after uploading a tar archive through `gregale_create_source_upload`. Existing
@@ -901,15 +906,23 @@ source-plan quotas and archive extraction rules apply. No host path or token
 reference is accepted. For example, with a completed upload:
 
 ```json
-{"app":"csv-tools","reason":"Publish the reviewed CSV profiler","upload_id":"<returned upload ID>","access_mode":"open","allow_tool_execution":true}
+{"app":"csv-tools","reason":"Publish the reviewed CSV profiler","runtime":"python","upload_id":"<returned upload ID>","access_mode":"open","allow_tool_execution":true}
 ```
 
-Call `gregale_plan_uploaded_tool_deploy` with those arguments, review its source
-and fixture digests, tool names, test cases and serving identity, then pass its
+Call `gregale_plan_uploaded_tool_deploy` with those arguments, review its runtime,
+source and fixture digests, tool names, test cases and serving identity, then pass its
 `plan_id` to `gregale_apply_tool_deploy`. Planning executes no customer code.
 Apply runs the existing catalog-pinned, protocol/behavior-verified publication
 workflow and guarded production promotion. Fixture execution can have external
 effects, even when publication fails.
+
+Runtime is checked with the CLI/builder's shared root-marker detection. It is
+derived from the source, not a command or a language-version override. The plan's
+source digest covers those markers and build configuration; apply refuses changed
+source and freezes it before starting the worker. Durable receipts retain the
+source identity rather than a separate runtime setting. Dependencies and build
+scripts run in the native builder VMs; publication does not install or run uploaded
+Go, Python or Node code on the MCP host.
 
 Poll `gregale_get_tool_deploy`. Started attempts recover from the native journal
 on a fresh connection; repeating apply never reruns fixtures. Unstarted plans

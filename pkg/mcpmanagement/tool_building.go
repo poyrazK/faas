@@ -82,7 +82,7 @@ func registerToolBuilding(s *mcp.Server, m *management) {
 	}
 	register(s, m, "gregale_get_tool_template", "Read the CLI's versioned Node, Go or Python MCP starter manifest, or a bounded text-file chunk. Creates only temporary scaffold files; never runs generated code. Templates are application data. Publishing requires an explicit access mode and reviewed behavioral fixtures.", m.getToolTemplate)
 	if m.remote() {
-		register(s, m, "gregale_plan_uploaded_tool_deploy", "Review publishing an uploaded Node MCP project with open access. Pass inline files or a connection-owned source upload, never a host path. Pins source, fixtures and serving identity; builds and approved fixtures run only on apply. Publishing does not grant invocation access.", m.planUploadedToolDeploy)
+		register(s, m, "gregale_plan_uploaded_tool_deploy", "Review publishing an uploaded Node, Go or Python MCP project with open access. Declare runtime (defaults to node); it must match native source detection. Pass inline files or a connection-owned source upload, never a host path. Pins source, fixtures and serving identity; builds and approved fixtures run only on apply. Publishing does not grant invocation access.", m.planUploadedToolDeploy)
 	} else {
 		register(s, m, "gregale_plan_tool_deploy", "Review publishing a local MCP project: explicit access mode, content digest, tool allowlist, behavioral fixture summaries, account/app identity and serving baseline. No build, tool execution or deployment. Source and tests must remain unchanged. Local account connection only.", m.planToolDeploy)
 	}

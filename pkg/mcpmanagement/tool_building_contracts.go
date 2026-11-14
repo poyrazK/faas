@@ -22,6 +22,7 @@ func toolBuildingOutputSchema(name string) map[string]any {
 	default:
 		required = append(required, "plan_id", "action", "account_id", "app", "status", "recovery")
 		add("string", "plan_id", "action", "account_id", "app", "app_id", "expected_serving_deployment_id")
+		props["runtime"] = map[string]any{"type": "string", "enum": []string{"node", "go", "python"}}
 		props["status"] = map[string]any{"type": "string", "enum": []string{"planned", "running", "completed", "failed", "outcome_unknown"}}
 		props["expires_at"] = map[string]any{"type": "string", "format": "date-time"}
 		props["recovery"] = map[string]any{"$ref": "#/$defs/recovery"}
