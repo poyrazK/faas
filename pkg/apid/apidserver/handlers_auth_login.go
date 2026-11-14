@@ -113,7 +113,7 @@ func (s *server) postLoginEmail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	acct, ok, err := s.verifyPasswordOrPad(r.Context(), email, password)
+	acct, ok, err := s.verifyPasswordOrPad(loginContext(r), email, password)
 	if err != nil {
 		writePasswordCheckUnavailable(w)
 		return
@@ -213,7 +213,7 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(createErr, state.ErrConflict) {
 				// Concurrent signup. Re-issue the verify path so
 				// the response shape matches the post-create path.
-				existing, ok, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+				existing, ok, verr := s.verifyPasswordOrPad(loginContext(r), email, password)
 				if verr != nil {
 					writePasswordCheckUnavailable(w)
 					return
@@ -261,7 +261,7 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 	//   - Different password: 401 invalid_credentials (NEVER 409).
 	// Signup is also a password sign-in for a bound address. Share its
 	// verification and failure accounting with /login and /v1/auth/signup.
-	acct, ok, err := s.verifyPasswordOrPad(r.Context(), email, password)
+	acct, ok, err := s.verifyPasswordOrPad(loginContext(r), email, password)
 	if err != nil {
 		writePasswordCheckUnavailable(w)
 		return
@@ -484,7 +484,7 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 	}
 	// The reset link proved control of the address: lift a failed-sign-in
 	// pause someone else's guessing put on it.
-	s.resetLoginFailures(r.Context(), acct.Email)
+	s.resetLoginFailures(loginContext(r), acct.Email)
 	s.issueSessionCookie(w, r, acct)
 	target := "/dashboard/"
 	if len(leftKeys) > 0 {
@@ -712,7 +712,7 @@ func (s *server) accountChangeProof(w http.ResponseWriter, r *http.Request, acct
 			s.log.Error("set_password.verify", "account_id", acct.ID, "err", verr)
 		}
 		if verr != nil || !matched {
-			s.recordLoginFailure(r.Context(), acct.Email, &acct)
+			s.recordLoginFailure(loginContext(r), acct.Email, &acct)
 			s.audit.Emit(r.Context(), "account.password_set_denied", &acct.ID, map[string]any{
 				"reason": "current_password",
 			})
@@ -1059,7 +1059,7 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if errors.Is(createErr, state.ErrConflict) {
-				existing, ok, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+				existing, ok, verr := s.verifyPasswordOrPad(loginContext(r), email, password)
 				if verr != nil {
 					writePasswordCheckUnavailable(w)
 					return
@@ -1096,7 +1096,7 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 	// (OAuth-only accounts) stay aligned with postV1AuthLogin and
 	// postLoginEmail. Otherwise the duplicate Argon2id-verify here
 	// would drift from the canonical helper.
-	existing, hit, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+	existing, hit, verr := s.verifyPasswordOrPad(loginContext(r), email, password)
 	if verr != nil {
 		writePasswordCheckUnavailable(w)
 		return
@@ -1124,7 +1124,7 @@ func (s *server) postV1AuthLogin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	acct, hit, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+	acct, hit, verr := s.verifyPasswordOrPad(loginContext(r), email, password)
 	if verr != nil {
 		writePasswordCheckUnavailable(w)
 		return

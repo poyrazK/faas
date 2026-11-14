@@ -345,7 +345,13 @@ const (
 // LoginFailureEvictionSample random entries, so filling the table with random
 // addresses does not stop a targeted one from being counted.
 const (
-	LoginFailuresPerEmail        = 20
+	LoginFailuresPerEmail = 20
+	// LoginFailuresPerEmailFleet bounds failed password checks for one
+	// address over every client network in LoginFailureEmailWindow.
+	// LoginFailuresPerEmail applies per client network (/24 or /48), so
+	// failures from other networks do not pause the owner's
+	// (ADR-20261115100000).
+	LoginFailuresPerEmailFleet   = 300
 	LoginFailureEmailWindow      = time.Hour
 	LoginFailureEmailsTrackedMax = 100_000
 	LoginFailureEvictionSample   = 32
