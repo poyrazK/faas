@@ -15,5 +15,5 @@ Each Compose service becomes an app in one project. Gregale does not run Docker'
 
 Notes:
 - Code that dials a Compose name (redis, db) must read $GREGALE_SERVICE_<NAME>_HOST (raw TCP) or $GREGALE_SERVICE_<NAME>_URL (HTTP); the caller lists the service in depends_on. The dry run names each place.
-- A postgres service becomes a managed database bound as DATABASE_URL. Other datastore images (redis, mongo) are not run: point the code at one you run elsewhere, or run it as an app (`gregale guide private-services`).
+- A postgres service becomes a managed database bound as DATABASE_URL. Gregale does not run other datastores (redis, mysql, mongo): an app parks to a snapshot and keeps no data. Point the code at a hosted one (Upstash, PlanetScale, Atlas) with an env URL.
 - A build target or command for development (target: dev, nodemon, --reload) is deployed as written.

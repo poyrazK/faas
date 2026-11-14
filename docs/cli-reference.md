@@ -7289,12 +7289,18 @@ Revoke an API key
 
 Rotate an API key
 
-`gregale key rotate <key-id>`
+`gregale key rotate [--revoke-old] [--grace-days <N>] <key-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--revoke-old` | revoke the old key now instead of after the grace window (use when the key leaked) |  |
+| `--grace-days <N>` | days the old key keeps working, for this rotation only (0 to 30) |  |
 
 Examples:
 
 ```sh
 gregale key rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a
+gregale key rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a --revoke-old
 ```
 
 

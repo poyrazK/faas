@@ -15,15 +15,16 @@ import (
 // SetupRequest is immutable customer intent, containing no credentials.
 // Empty DatabaseID requests a new dedicated mirror.
 type SetupRequest struct {
-	Serving            *api.DataPipelineServing `json:"Serving,omitempty"`
-	Name               string
-	SourceConnectionID string
-	DatabaseID         string
-	Region             string
-	Tables             []string
-	ReadSubjects       []string
-	DataAPIName        string
-	AuthAppID          string
+	FreshnessTargetSeconds int64                    `json:"FreshnessTargetSeconds,omitempty"`
+	Serving                *api.DataPipelineServing `json:"Serving,omitempty"`
+	Name                   string
+	SourceConnectionID     string
+	DatabaseID             string
+	Region                 string
+	Tables                 []string
+	ReadSubjects           []string
+	DataAPIName            string
+	AuthAppID              string
 }
 
 func normalizeSetupIDs(r SetupRequest) SetupRequest {
@@ -90,7 +91,7 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 	if target == "" {
 		target = uuid.NewString()
 	}
-	input := api.CreateDataPipelineRequest{Serving: r.Serving, Name: r.Name, SourceConnectionID: r.SourceConnectionID, DatabaseID: target, Tables: r.Tables, ReadSubjects: r.ReadSubjects}
+	input := api.CreateDataPipelineRequest{FreshnessTargetSeconds: r.FreshnessTargetSeconds, Serving: r.Serving, Name: r.Name, SourceConnectionID: r.SourceConnectionID, DatabaseID: target, Tables: r.Tables, ReadSubjects: r.ReadSubjects}
 	if err := ValidateCreate(input); err != nil {
 		return Setup{}, err
 	}
@@ -268,7 +269,7 @@ func (s *Service) advanceSetup(ctx context.Context, job *Setup) error {
 			job.Phase = "starting"
 		}
 	case "starting":
-		p, err := s.Create(ctx, job.AccountID, api.CreateDataPipelineRequest{Name: job.Request.Name, SourceConnectionID: job.Request.SourceConnectionID, DatabaseID: job.DatabaseID, Tables: job.Request.Tables, ReadSubjects: setupCreationSubjects(job.Request), Serving: job.Request.Serving})
+		p, err := s.Create(ctx, job.AccountID, api.CreateDataPipelineRequest{FreshnessTargetSeconds: job.Request.FreshnessTargetSeconds, Name: job.Request.Name, SourceConnectionID: job.Request.SourceConnectionID, DatabaseID: job.DatabaseID, Tables: job.Request.Tables, ReadSubjects: setupCreationSubjects(job.Request), Serving: job.Request.Serving})
 		if errors.Is(err, ErrCheckRequired) {
 			job.Phase = "checking_mirror"
 			return nil

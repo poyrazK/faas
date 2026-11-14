@@ -18,7 +18,6 @@ func TestGuessedConceptsNameTheRealCommand(t *testing.T) {
 		want []string
 	}{
 		{[]string{"app", "x", "listener", "--help"}, []string{"gregale app <app> tcp add --name <name> --guest-port <port>", "gregale app <app> --ports <name>=tcp:<port>[:internal]"}},
-		{[]string{"app", "x", "redis"}, []string{"gregale app <app> --ports redis=tcp:6379:internal"}},
 		{[]string{"app", "x", "private"}, []string{"gregale app <app> --visibility internal"}},
 	}
 	for _, tc := range cases {

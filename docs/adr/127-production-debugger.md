@@ -557,3 +557,19 @@ resolved at 17:23, while v3 still served and was still 15x slower.
   off on a node; a setup failure is logged rather than stopping vmmd unless
   `1` asks for it). Whether an app may trace is still decided by apid and the
   broker.
+
+## Amendment (2026-11-14): a stray request does not hide the baseline
+
+The debugger journey (`tests/journeys/debugger_test.go`) deployed v1 (`GET /`
+p95 17 ms, 120 requests), then v2 (p95 412 ms, 120 requests). No regression
+was recorded in 13 minutes. A platform cold-boot `GET /healthz` reached v1 at
+18:12:51, after v2's first request at 18:11:00. Under the 2026-11-11 rule that
+one request made the two deployments side by side. The detector then read
+v1's baseline in v2's window, where v1 had served only that health check, so
+`GET /` had no baseline.
+
+Side by side, the shared window still decides every route the predecessor
+served in it, which keeps canary and traffic-split comparisons on the same
+stretch of time. A route the predecessor did not serve there takes its p95
+and error rate from the predecessor's own last 30 minutes of traffic, as a
+sequential rollout does.

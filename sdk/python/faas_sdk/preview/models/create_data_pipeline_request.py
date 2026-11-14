@@ -28,6 +28,8 @@ class CreateDataPipelineRequest:
     source_connection_id: UUID
     database_id: UUID
     tables: list[str]
+    freshness_target_seconds: int | Unset = UNSET
+    """Initial checkpoint confirmation target for the new pipeline; use zero to disable it, or 15 to 86400 seconds."""
     serving: DataPipelineServing | Unset = UNSET
     """Versioned serving contract. Columns are immutable and affect publication, mirror schema and recovery. Omit
     columns for all-column replication. Tenant access uses owner-managed subject memberships; JWT tenant claims
@@ -42,6 +44,8 @@ class CreateDataPipelineRequest:
         database_id = str(self.database_id)
 
         tables = self.tables
+
+        freshness_target_seconds = self.freshness_target_seconds
 
         serving: dict[str, Any] | Unset = UNSET
         if not isinstance(self.serving, Unset):
@@ -61,6 +65,8 @@ class CreateDataPipelineRequest:
                 "tables": tables,
             }
         )
+        if freshness_target_seconds is not UNSET:
+            field_dict["freshness_target_seconds"] = freshness_target_seconds
         if serving is not UNSET:
             field_dict["serving"] = serving
         if read_subjects is not UNSET:
@@ -81,6 +87,8 @@ class CreateDataPipelineRequest:
 
         tables = cast(list[str], d.pop("tables"))
 
+        freshness_target_seconds = d.pop("freshness_target_seconds", UNSET)
+
         _serving = d.pop("serving", UNSET)
         serving: DataPipelineServing | Unset
         if isinstance(_serving, Unset):
@@ -95,6 +103,7 @@ class CreateDataPipelineRequest:
             source_connection_id=source_connection_id,
             database_id=database_id,
             tables=tables,
+            freshness_target_seconds=freshness_target_seconds,
             serving=serving,
             read_subjects=read_subjects,
         )

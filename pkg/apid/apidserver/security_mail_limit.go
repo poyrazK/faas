@@ -30,6 +30,12 @@ func newSecurityMailLimiter() *securityMailLimiter {
 // now and, if so, counts it. Kinds are counted apart, so a verification mail
 // does not hold up the magic link the customer asks for next.
 func (l *securityMailLimiter) allow(accountID, kind string) bool {
+	return l.allowWithin(accountID, kind, securityMailSlot)
+}
+
+// allowWithin is allow with an explicit per-kind limit. Its window must be
+// at most an hour, the span the limiter remembers.
+func (l *securityMailLimiter) allowWithin(accountID, kind string, limit state.MailSlotLimit) bool {
 	if l == nil || accountID == "" {
 		return true
 	}
@@ -39,12 +45,12 @@ func (l *securityMailLimiter) allow(accountID, kind string) bool {
 	key := accountID + "\x00" + kind
 	recent := l.sent[key][:0]
 	for _, at := range l.sent[key] {
-		if now.Sub(at) < time.Hour {
+		if now.Sub(at) < limit.Window {
 			recent = append(recent, at)
 		}
 	}
-	if len(recent) >= api.SecurityMailPerAccountPerHour ||
-		(len(recent) > 0 && now.Sub(recent[len(recent)-1]) < api.SecurityMailPerAccountInterval) {
+	if len(recent) >= limit.MaxPerWindow ||
+		(len(recent) > 0 && now.Sub(recent[len(recent)-1]) < limit.MinInterval) {
 		l.sent[key] = recent
 		return false
 	}
@@ -60,6 +66,24 @@ var securityMailSlot = state.MailSlotLimit{
 	Window:       time.Hour,
 	MaxPerWindow: api.SecurityMailPerAccountPerHour,
 	MinInterval:  api.SecurityMailPerAccountInterval,
+}
+
+// credentialMailSlot caps "a new credential was created" notices. They are
+// not spaced out: minting a second key a few seconds after the first must
+// still mail about the second, or the owner revokes only the one they were
+// told about (F14-2, ADR-20261114120000). The hourly cap still bounds a
+// flood.
+var credentialMailSlot = state.MailSlotLimit{
+	Window:       time.Hour,
+	MaxPerWindow: api.CredentialNoticeMailsPerHour,
+}
+
+// securityMailLimitFor is the per-account cap for one kind of security mail.
+func securityMailLimitFor(kind string) state.MailSlotLimit {
+	if kind == credentialNoticeKind {
+		return credentialMailSlot
+	}
+	return securityMailSlot
 }
 
 // takeSharedMailSlot counts a mail in the database, so every apid shares
@@ -82,9 +106,10 @@ func (s *server) takeSharedMailSlot(ctx context.Context, accountID, kind string,
 // allowSecurityMail applies the per-account cap; a refused send is logged
 // and audited, and the public endpoint still answers its constant 200.
 func (s *server) allowSecurityMail(ctx context.Context, acct state.Account, kind string) bool {
-	allowed, shared := s.takeSharedMailSlot(ctx, acct.ID, kind, securityMailSlot)
+	limit := securityMailLimitFor(kind)
+	allowed, shared := s.takeSharedMailSlot(ctx, acct.ID, kind, limit)
 	if !shared {
-		allowed = s.securityMail.allow(acct.ID, kind)
+		allowed = s.securityMail.allowWithin(acct.ID, kind, limit)
 	}
 	if allowed {
 		return true

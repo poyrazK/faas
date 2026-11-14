@@ -35,37 +35,39 @@ type DataConnectionCheck struct {
 }
 
 type DataPipeline struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	Name                 string
-	SourceConnectionID   pgtype.UUID
-	DatabaseID           pgtype.UUID
-	Tables               []byte
-	ReadSubjects         []byte
-	ServingConfig        []byte
-	DesiredState         string
-	State                string
-	Revision             int64
-	ObservedRevision     int64
-	Generation           int64
-	Reason               string
-	TablesReady          int32
-	RetainedWalBytes     pgtype.Int8
-	WalRetention         []byte
-	AppliedThroughAt     pgtype.Timestamptz
-	VerificationProgress []byte
-	ReaderChange         []byte
-	SchemaApproval       string
-	SchemaChange         []byte
-	ObservedAt           pgtype.Timestamptz
-	Verification         string
-	VerifiedAt           pgtype.Timestamptz
-	Initialized          bool
-	VerifyRequested      bool
-	LeaseToken           string
-	LeaseUntil           pgtype.Timestamptz
-	RetryAt              pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
+	FreshnessTargetSeconds int64
+	IndexChange            []byte
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	Name                   string
+	SourceConnectionID     pgtype.UUID
+	DatabaseID             pgtype.UUID
+	Tables                 []byte
+	ReadSubjects           []byte
+	ServingConfig          []byte
+	DesiredState           string
+	State                  string
+	Revision               int64
+	ObservedRevision       int64
+	Generation             int64
+	Reason                 string
+	TablesReady            int32
+	RetainedWalBytes       pgtype.Int8
+	WalRetention           []byte
+	AppliedThroughAt       pgtype.Timestamptz
+	VerificationProgress   []byte
+	ReaderChange           []byte
+	SchemaApproval         string
+	SchemaChange           []byte
+	ObservedAt             pgtype.Timestamptz
+	Verification           string
+	VerifiedAt             pgtype.Timestamptz
+	Initialized            bool
+	VerifyRequested        bool
+	LeaseToken             string
+	LeaseUntil             pgtype.Timestamptz
+	RetryAt                pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
 }
 
 type DataPipelineAlert struct {

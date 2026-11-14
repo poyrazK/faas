@@ -868,6 +868,10 @@ type DevPatchPreview struct {
 	// Generation is set when this sync published a live patch; poll
 	// GET /v1/dev/sessions/{project}/patches/{generation} for delivery.
 	Generation int64 `json:"generation,omitempty"`
+	// BuildDeferredUntil is set when the sync's convergence build waits
+	// for the developer to stop saving (ADR-20261021221906): the live patch is the
+	// sync, and a later sync supersedes this build before it starts.
+	BuildDeferredUntil *time.Time `json:"build_deferred_until,omitempty"`
 }
 
 // DevPatchStatusResponse reports whether a published live patch reached the
@@ -4642,6 +4646,18 @@ type ListOrgAPIKeysResponse struct {
 // re-bound.
 type RotateOrgAPIKeyRequest struct {
 	Label string `json:"label,omitempty"`
+	// GraceWindowDays overrides, for this rotation only, how many days the
+	// old key keeps working (0 revokes it at once). Omitted uses the
+	// account setting or the plan default.
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
+}
+
+// RotateKeyRequest is the optional body of POST /v1/keys/{id}/rotate.
+// GraceWindowDays overrides, for this rotation only, how many days the old
+// key keeps working; 0 revokes it at once, which is what to do with a key
+// that leaked. Omitted uses the account setting or the plan default.
+type RotateKeyRequest struct {
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
 }
 
 // RotateOrgAPIKeyResponse is the body of

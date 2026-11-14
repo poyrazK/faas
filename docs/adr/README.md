@@ -3,6 +3,8 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261114141449: Offline OpenAPI tool generation](20261114141449-openapi-tool-generation.md) — accepted; explicit public API operation selection, offline Node adapter source, completed behavioral assertions before existing publication and exact grants
+
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
 - [ADR-20261113180307: Bind execution workflows to independent Node clients](20261113180307-node-sdk-bound-execution-workflows.md) — accepted; preview helpers retain one client snapshot across submission, resumed event streams, and terminal receipt reads, with per-caller cancellation and legacy compatibility.
 - [ADR-20261113173610: Independent Node SDK clients](20261113173610-node-sdk-client-isolation.md) — accepted; per-client generated service namespaces and transports, immutable request configuration, and migration from shared FaaSClient/static services.
@@ -2312,6 +2314,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261111163000: Workflow recovery and replay integrity](20261111163000-workflow-recovery-and-replay-integrity.md) — tenant-scoped idempotency, monotonic HTTP attempts, replay cursors, reserved timeout payloads, and safe workflow transport budgets
 - [ADR-20261112160000: Neon API keys are held by neond, which enforces what apid may ask](20261112160000-neon-keys-held-by-neond.md) — accepted (design); a new control-plane `neond` holds the Neon service user's admin key and a project-scoped key per Neon project; apid forwards its Neon requests over a unix socket, and neond allow-lists them, picks the key, refuses deleting a live database's project or branch, rate-limits destructive calls and logs every call; no backups outside Neon (owner's choice)
 - [ADR-20261112210000: Data API investigation hardening](20261112210000-data-api-investigation-hardening.md) — accepted; resolves DAPI001–DAPI030, with exact numeric mode, bounded authorization leases, independent budget counters, retry/quarantine scheduling and opt-in owner maintenance with shared-bucket ownership protection.
+
+- [ADR-20261113181050: Pipeline freshness, durable CLI setup and index advice](20261113181050-pipeline-freshness-durable-cli-and-index-advice.md) — staging pilot; checkpoint confirmation targets, resumable provisioning and explicitly approved bounded mirror indexes.
 - [ADR-20261113120820: Invocation-scoped CLI HTTP request timeout](20261113120820-cli-http-request-timeout.md) — accepted; positive prefix duration overrides API/upload budgets, while streams retain caller-controlled body lifetime
 - [ADR-20261113132310: Opt-in retries for selected CLI reads](20261113132310-cli-read-request-retries.md) — accepted; bounded invocation-scoped retries on a closed JSON read set, authoritative Retry-After, cancellation and attempt metadata
 
@@ -2332,3 +2336,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261114162429: Hosted tool publication for Node, Go and Python](20261114162429-hosted-tool-runtime-selection.md) — accepted; source-derived runtime review using shared native markers, all three hosted starters and the existing verified publication workflow
 
 - [ADR-20261114173309: Hosted private tool publication with owner-approved candidate tests](20261114173309-hosted-private-tool-publication.md) — accepted; candidate/source-bound administrator approval, API-held test tokens, one-attempt verification receipts and exact-grant invocation
+- [ADR-20261114170352: Organization ownership guards and a require-2FA policy](20261114170352-org-ownership-and-security-policy.md) — accepted; ownership eligibility, browser-only transfer/deletion, organization two-factor policy and owner recovery. Renumbered from the colliding customer-attention identifier.
+- [ADR-20261114164404: Structured recovery for CLI Workflow waits](20261114164404-cli-workflow-wait-recovery.md) — accepted; exact-run read-only inspection/resumption for wait and accepted run/resume/retry waits, preserved timing options, snapshots, polling and exit contracts.
+- [ADR-20261114182830: Node cache disk budget and reference-based retention](20261114182830-node-cache-budget-from-disk-and-retention.md) — accepted; filesystem-sized budget, unreferenced capture/base retention and live snapshots evicted last. Renumbered from the startup-window identifier collision.
+
+- [ADR-20261114190002: Customers see their own attention signals; sign-in refusals are recorded](20261114190002-customer-signal-hints-and-credential-refusals.md)

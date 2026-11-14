@@ -1,6 +1,6 @@
 package apidserver
 
-// Organization security policy and ownership safety (ADR 20261113180000):
+// Organization security policy and ownership safety (ADR 20261114170352):
 //
 //   - Owners can require two-factor authentication. The org-access snapshot
 //     does not admit members without it, and loadOrg answers them with
