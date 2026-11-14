@@ -62,7 +62,7 @@ func (h *Handler) admission(acct state.Account, body createBody) (agentstore.San
 		func() *api.Problem { return validPreset(acct.Plan, &a, in.Image, in.Template, in.RAMMB) },
 		func() *api.Problem { return validImageSource(in) },
 		func() *api.Problem { return validTenant(&a, in.Tenant) },
-		func() *api.Problem { return validNetwork(&a, in.Network) },
+		func() *api.Problem { return validNetwork(&a, in.Network, h.WebNetwork) },
 		func() *api.Problem { return h.validPorts(acct, &a, in.Ports) },
 		func() *api.Problem { return resourcelabels.Problem(labels.Change{Set: in.Labels}.Validate()) },
 	}
@@ -184,9 +184,10 @@ func validTenant(a *agentstore.SandboxAdmission, tenant string) *api.Problem {
 	return nil
 }
 
-// validNetwork takes none or registries (the default). web needs the agent
-// egress gateway first.
-func validNetwork(a *agentstore.SandboxAdmission, n *api.SandboxNetwork) *api.Problem {
+// validNetwork takes none or registries (the default), and web where the
+// operator turned it on: it needs the tenant egress gateway
+// (ADR-20261112121456).
+func validNetwork(a *agentstore.SandboxAdmission, n *api.SandboxNetwork, web bool) *api.Problem {
 	a.NetworkMode = api.SandboxNetworkRegistries
 	if n == nil || n.Mode == "" {
 		return nil
@@ -196,7 +197,11 @@ func validNetwork(a *agentstore.SandboxAdmission, n *api.SandboxNetwork) *api.Pr
 		a.NetworkMode = n.Mode
 		return nil
 	case api.SandboxNetworkWeb:
-		return api.ErrSandboxUnsupported("network.mode", "web needs the agent egress gateway (ADR-20261027090014 §4); use registries or none")
+		if web {
+			a.NetworkMode = n.Mode
+			return nil
+		}
+		return api.ErrSandboxUnsupported("network.mode", "web egress is not on for this control plane yet; use registries or none")
 	}
 	return api.ErrValidation("network.mode must be none, registries or web")
 }

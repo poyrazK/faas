@@ -238,7 +238,7 @@ func (a SandboxAdmission) validate() error {
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox RAM %d MB is outside the %s plan", a.RAMMB, a.Plan)}
 	case a.VCPU < 1 || a.VCPU > api.AgentRunVCPUMax[idx] || a.CPUMillicores < 1:
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox vCPU %d is outside the %s plan", a.VCPU, a.Plan)}
-	case a.network() != api.SandboxNetworkNone && a.network() != api.SandboxNetworkRegistries:
+	case a.network() != api.SandboxNetworkNone && a.network() != api.SandboxNetworkRegistries && a.network() != api.SandboxNetworkWeb:
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox network mode %q is not supported", a.Network)}
 	}
 	return nil

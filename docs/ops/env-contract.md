@@ -935,6 +935,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SALES_STALE_DAYS` | apid, shared | `dropin` |  | 14 | `` | Ansible control_plane_service sales drop-in: Days without a recorded conversation before an open lead is marked stalled |
 | `FAAS_SAMPLE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_SANDBOX_PREVIEW_DOMAIN` | apid, gatewayd-internal | `default` |  |  | `` | ADR-20261027090013 §11 sandbox previews: the domain preview hosts <port>-<sandbox id>.<domain> live under (a wildcard DNS name routed to the nodes' public gateways); apid writes preview URLs with it and gatewayd-internal serves them; unset turns previews off |
+| `FAAS_SANDBOX_WEB_NETWORK` | apid | `default` |  |  | `` | ADR-20261112121456 §6: 1 admits sandbox network.mode web; set only on a fleet whose manifest declares egress.tenant_gateway, after the owner's production test |
+| `FAAS_SANDBOX_WEB_NODE_EGRESS` | vmmd | `dev-only` |  |  | `` | ADR-20261112121456 §3: 1 lets web-mode sandbox sessions leave from the node's own address when the host has no tenant egress gateway; must never be set on a production host |
 | `FAAS_SBOM_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_SCAN_SPOOL_ROOT` | apid | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_ADDR` | meterd | `default` |  |  | `` |  |

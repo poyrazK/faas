@@ -1015,6 +1015,8 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_SALES_STALE_DAYS", Owners: []string{"apid", "shared"}, Source: EnvSourceDropin, Default: "14", Note: "Ansible control_plane_service sales drop-in: Days without a recorded conversation before an open lead is marked stalled"},
 	{Name: "FAAS_SAMPLE_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SANDBOX_PREVIEW_DOMAIN", Owners: []string{"apid", "gatewayd-internal"}, Source: EnvSourceDefault, Default: "", Note: "ADR-20261027090013 §11 sandbox previews: the domain preview hosts <port>-<sandbox id>.<domain> live under (a wildcard DNS name routed to the nodes' public gateways); apid writes preview URLs with it and gatewayd-internal serves them; unset turns previews off"},
+	{Name: "FAAS_SANDBOX_WEB_NETWORK", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "", Note: "ADR-20261112121456 §6: 1 admits sandbox network.mode web; set only on a fleet whose manifest declares egress.tenant_gateway, after the owner's production test"},
+	{Name: "FAAS_SANDBOX_WEB_NODE_EGRESS", Owners: []string{"vmmd"}, Source: EnvSourceDevOnly, Note: "ADR-20261112121456 §3: 1 lets web-mode sandbox sessions leave from the node's own address when the host has no tenant egress gateway; must never be set on a production host"},
 	{Name: "FAAS_SBOM_ROOT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCAN_SPOOL_ROOT", Owners: []string{"apid"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SCHEDD_ADDR", Owners: []string{"meterd"}, Source: EnvSourceDefault},

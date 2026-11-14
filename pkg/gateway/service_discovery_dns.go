@@ -28,8 +28,11 @@ const (
 	// SandboxRegistriesDNSPort mirrors netns's registries-only DNS port for
 	// sandbox sessions (ADR-20261027090013 §6); the same vmmd test keeps it.
 	SandboxRegistriesDNSPort = 5356
-	serviceDiscoveryTTL      = 5
-	serviceDiscoveryTimeout  = 2 * time.Second
+	// SandboxWebDNSPort mirrors netns's public-names DNS port for web-mode
+	// sandbox sessions (ADR-20261112121456 §2); the same vmmd test keeps it.
+	SandboxWebDNSPort       = 5357
+	serviceDiscoveryTTL     = 5
+	serviceDiscoveryTimeout = 2 * time.Second
 )
 
 // ServiceDiscoveryDNSHandler answers private service names on a compute
