@@ -161,9 +161,14 @@ limits rather than add new numbers.
 - **Account bytes.** `invocation_backlog_bytes` now counts `async_invoke` and
   `delayed_task` payloads as well as `queue`, and the account's pending bytes
   across the three are one pool against `MaxQueueBacklogBytesPerAccount`.
-  Migration `20261113190512417` holds writers off while it changes the
-  function and recounts the newly counted sources' pending rows, so a later
-  decrement never takes a counter below the table.
+  Migration `20261113190512417` changes the function without recounting:
+  a recount under a lock on `invocations` is an unbatched write
+  (docs/release-compatibility.md), and a batched one cannot stay consistent
+  with live decrements. Async and delayed rows already pending were counted
+  with 0 bytes, so a decrement now stops at zero. Those rows' bytes go
+  uncounted until they leave the backlog: the pool may admit up to that much
+  over the cap meanwhile, never refuse below it, and is exact again once the
+  pre-upgrade backlog drains.
 - **No serialization.** Async producers count without the app lock queue
   sends take (`Invocation.AdmissionUnlocked`); concurrent requests may pass
   the cap by the requests in flight. An idempotent async route retry at the

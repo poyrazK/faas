@@ -20276,7 +20276,7 @@ CREATE FUNCTION public.invocation_backlog_count() RETURNS trigger
 BEGIN
     IF TG_OP IN ('UPDATE', 'DELETE') AND OLD.state IN ('pending', 'dispatching') THEN
         UPDATE invocation_backlog_counters
-        SET pending = pending - 1, bytes = bytes - invocation_backlog_bytes(OLD.source, OLD.payload)
+        SET pending = pending - 1, bytes = greatest(0, bytes - invocation_backlog_bytes(OLD.source, OLD.payload))
         WHERE app_id = OLD.app_id AND source = OLD.source AND account_id = OLD.account_id
             AND slot = (hashtext(OLD.id::text) & 7);
     END IF;

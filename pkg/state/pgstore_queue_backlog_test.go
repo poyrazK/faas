@@ -129,10 +129,12 @@ func TestPgQueueLeaseLapsedOnLastAttemptDeadLetters(t *testing.T) {
 	testQueueLeaseLapsedOnLastAttempt(t, store)
 }
 
-// The async backlog bytes migration recounts the async and delayed rows that
-// were pending under the old function, so a later decrement never takes a
-// counter below the table (ADR-20261022105723 amendment 2026-11-13).
-func TestPgAsyncBacklogBytesMigrationRecountsPendingRows(t *testing.T) {
+// Async and delayed rows pending before the async backlog bytes migration
+// were counted with 0 bytes. Their decrement under the new function stops at
+// zero, so the counters never go below zero or above the table, and they are
+// exact again once that backlog drains (ADR-20261022105723 amendment
+// 2026-11-13).
+func TestPgAsyncBacklogBytesMigrationNeverOvercounts(t *testing.T) {
 	store, ctx, pool := pgWithPool(t)
 	app := seedQueueBacklogApp(t, store, seedQueueBacklogAccount(t, store, api.PlanPro))
 	sqlDB := stdlib.OpenDBFromPool(pool)
@@ -146,35 +148,64 @@ func TestPgAsyncBacklogBytesMigrationRecountsPendingRows(t *testing.T) {
 	if _, err = provider.ApplyVersion(ctx, version, false); err != nil {
 		t.Fatalf("down: %v", err)
 	}
-	pending, err := enqueueBacklogMessage(t, store, app, state.InvocationAsyncInvoke, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = enqueueBacklogMessage(t, store, app, state.InvocationDelayedTask, 0); err != nil {
-		t.Fatal(err)
+	var before []state.Invocation
+	for _, source := range []state.InvocationSource{state.InvocationAsyncInvoke, state.InvocationDelayedTask, state.InvocationAsyncInvoke} {
+		inv, err := enqueueBacklogMessage(t, store, app, source, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before = append(before, inv)
 	}
 	if _, err = provider.ApplyVersion(ctx, version, true); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	counted := func() (int64, int64) {
+	counted := func(when string) (int64, int64) {
 		t.Helper()
-		var counters, table int64
-		if err := pool.QueryRow(ctx, `SELECT coalesce(sum(bytes),0) FROM invocation_backlog_counters WHERE app_id=$1`, app.ID).Scan(&counters); err != nil {
+		var counters, negative, table int64
+		if err := pool.QueryRow(ctx, `SELECT coalesce(sum(bytes),0), count(*) FILTER (WHERE bytes < 0) FROM invocation_backlog_counters WHERE app_id=$1`, app.ID).Scan(&counters, &negative); err != nil {
 			t.Fatal(err)
 		}
 		if err := pool.QueryRow(ctx, `SELECT coalesce(sum(octet_length(payload::text)),0) FROM invocations
 			WHERE app_id=$1 AND state IN ('pending','dispatching') AND source IN ('queue','async_invoke','delayed_task')`, app.ID).Scan(&table); err != nil {
 			t.Fatal(err)
 		}
+		if negative > 0 || counters > table {
+			t.Fatalf("%s: counters hold %d bytes (%d negative slots), pending rows %d", when, counters, negative, table)
+		}
 		return counters, table
 	}
-	if counters, table := counted(); counters != table || table == 0 {
-		t.Fatalf("after upgrade counters hold %d bytes, pending rows %d", counters, table)
+	if counters, _ := counted("after upgrade"); counters != 0 {
+		t.Fatalf("after upgrade counters hold %d bytes; rows from before it are not counted", counters)
 	}
-	if err := store.CancelInvocation(ctx, pending.ID); err != nil {
+	var after []state.Invocation
+	for range 8 {
+		inv, err := enqueueBacklogMessage(t, store, app, state.InvocationAsyncInvoke, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after = append(after, inv)
+	}
+	counted("after new rows")
+	for _, inv := range before {
+		if err := store.CancelInvocation(ctx, inv.ID); err != nil {
+			t.Fatal(err)
+		}
+		counted("after cancelling a row from before the upgrade")
+	}
+	for _, inv := range after {
+		if err := store.CancelInvocation(ctx, inv.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if counters, table := counted("after the backlog drained"); counters != 0 || table != 0 {
+		t.Fatalf("drained: counters %d, rows %d", counters, table)
+	}
+	// Exact again from here.
+	if _, err := enqueueBacklogMessage(t, store, app, state.InvocationDelayedTask, 0); err != nil {
 		t.Fatal(err)
 	}
-	if counters, table := counted(); counters != table {
-		t.Fatalf("after cancelling a recounted row counters hold %d bytes, pending rows %d", counters, table)
+	if counters, table := counted("after the drain"); counters != table || table == 0 {
+		t.Fatalf("after the drain counters %d, rows %d", counters, table)
 	}
 }
+
