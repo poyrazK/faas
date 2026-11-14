@@ -169,6 +169,9 @@ type MemStore struct {
 	abuseStrikes map[string][]time.Time
 	// signupFacts is each account's sign-up record (ADR-20261113160000).
 	signupFacts map[string]AccountSignupFacts
+	// heldLinks is each account's links to abuse-held accounts
+	// (ADR-20261114174600).
+	heldLinks map[string][]AccountHeldLink
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
@@ -25195,6 +25198,16 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	}
 	delete(m.legalAcceptances, id) // ON DELETE CASCADE
 	delete(m.signupFacts, id)      // ON DELETE CASCADE
+	delete(m.heldLinks, id)        // ON DELETE CASCADE (as the new account)
+	for other, links := range m.heldLinks {
+		kept := links[:0]
+		for _, l := range links {
+			if l.HeldAccountID != id { // ON DELETE CASCADE (as the held account)
+				kept = append(kept, l)
+			}
+		}
+		m.heldLinks[other] = kept
+	}
 	delete(m.accounts, id)
 	for promotionID := range m.environmentPromotionReceipts {
 		if m.projectEnvironmentPromotions[promotionID].AccountID == id {

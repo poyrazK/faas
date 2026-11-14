@@ -33,6 +33,9 @@ type signupMetrics struct {
 	// factsFailed counts sign-ups whose ADR-20261113160000 sign-up record
 	// could not be stored; the account is created either way.
 	factsFailed *prometheus.CounterVec
+	// heldLinks counts new accounts flagged as resembling an abuse-held
+	// account, by signal (ADR-20261114174600); "error" counts failed checks.
+	heldLinks *prometheus.CounterVec
 }
 
 const (
@@ -61,6 +64,13 @@ func newSignupMetrics(reg prometheus.Registerer, prefix string) *signupMetrics {
 		Help: "Sign-ups whose sign-up record (address, country, network owner, email domain) could not be stored; the account was created.",
 	}, nil)
 	m.factsFailed.WithLabelValues().Add(0)
+	m.heldLinks = registerCounterVec(reg, prometheus.CounterOpts{
+		Name: prefix + "_signup_held_links_total",
+		Help: "New accounts linked to an abuse-held account for operator review, by signal: signup_network, email_domain, or error (the check failed).",
+	}, []string{"signal"})
+	for _, signal := range []string{"signup_network", "email_domain", "error"} {
+		m.heldLinks.WithLabelValues(signal).Add(0)
+	}
 	for _, scope := range []string{signupCapNetwork, signupCapFleet} {
 		m.capped.WithLabelValues(scope).Add(0)
 	}
@@ -70,6 +80,12 @@ func newSignupMetrics(reg prometheus.Registerer, prefix string) *signupMetrics {
 		}
 	}
 	return m
+}
+
+func (m *signupMetrics) observeHeldLink(signal string) {
+	if m != nil {
+		m.heldLinks.WithLabelValues(signal).Inc()
+	}
 }
 
 func (m *signupMetrics) observeFactsFailed() {
