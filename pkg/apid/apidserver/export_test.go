@@ -2149,6 +2149,18 @@ func (r *server) ExpireComplimentaryAccounts(ctx context.Context, now time.Time)
 	return r.expireComplimentaryAccounts(ctx, now)
 }
 
+// StampActiveBillingSubscription stamps subscriptionID as acct's subscription,
+// as a provider webhook does.
+func (r *server) StampActiveBillingSubscription(ctx context.Context, acct state.Account, subscriptionID string) error {
+	return r.stampActiveBillingSubscription(ctx, acct, subscriptionID)
+}
+
+// ManagedPostgresSubjectInactive reports whether account's databases stop
+// because the account is not active.
+func ManagedPostgresSubjectInactive(ctx context.Context, store any, account state.Account) (bool, error) {
+	return managedPostgresSubjectInactive(ctx, store, account)
+}
+
 // ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
 func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
 	return r.expireUnverifiedAccounts(ctx)

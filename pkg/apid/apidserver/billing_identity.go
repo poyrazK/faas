@@ -90,7 +90,10 @@ func (s *server) stampActiveBillingSubscription(ctx context.Context, acct state.
 	if provider == "" {
 		// Narrow unit-test/no-provider compatibility path. Production webhook
 		// handlers reject a missing active provider before reaching here.
-		return s.store.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, subscriptionID)
+		if err := s.store.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, subscriptionID); err != nil {
+			return err
+		}
+		return s.endComplimentaryForSubscription(ctx, acct, subscriptionID)
 	}
 	identity, err := s.store.BillingIdentity(ctx, acct.ID, provider)
 	if errors.Is(err, state.ErrNotFound) && acct.ProviderCustomerID != "" {
@@ -110,5 +113,8 @@ func (s *server) stampActiveBillingSubscription(ctx context.Context, acct state.
 	if err := s.store.UpdateAccountProviderCustomerID(ctx, acct.ID, identity.CustomerID); err != nil {
 		return err
 	}
-	return s.store.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, subscriptionID)
+	if err := s.store.UpdateAccountStripeSubscriptionItem(ctx, acct.ID, subscriptionID); err != nil {
+		return err
+	}
+	return s.endComplimentaryForSubscription(ctx, acct, subscriptionID)
 }
