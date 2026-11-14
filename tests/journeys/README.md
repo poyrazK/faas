@@ -319,3 +319,10 @@ before the next run. Supply only a dedicated staging session, never a live
 customer's session. Without live fixtures, the journey skips; local HTTP and
 PostgreSQL acceptance tests cover CSRF, verification, account-only disconnect,
 unchanged credentials in the other account, and exclusive GitHub login.
+
+The SDK project journey additionally needs `GREGALE_E2E_NODE_SDK` pointing to a
+built Node SDK `dist/index.js` and an explicit `GREGALE_E2E_TOKEN`. Run
+`--run TestSDKReviewedProject --tier full` against an installation that supports
+managed PostgreSQL and cached-plan submission receipts. It creates two apps and
+a database, resumes a hard-stopped apply in another process, checks a public API
+read, and cleans up its resources. CLI-login-only runs skip this SDK journey.

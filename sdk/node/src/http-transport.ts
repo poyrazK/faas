@@ -105,6 +105,41 @@ function responseInfo(response: Response, attempt: number, start: number): Respo
   });
 }
 
+/** Own the reader so cancellation also retires a body before decoding starts.
+ * A TransformStream pipe can wait on backpressure if its output is never read. */
+function abortableBody(body: ReadableStream<Uint8Array>, signal: AbortSignal): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  let closed = false;
+  let output: ReadableStreamDefaultController<Uint8Array>;
+  const detach = () => signal.removeEventListener('abort', abort);
+  const abort = () => {
+    if (closed) return;
+    closed = true; detach(); output.error(signal.reason);
+    void reader.cancel(signal.reason).catch(() => undefined).finally(() => reader.releaseLock());
+  };
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      output = controller;
+      if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+    },
+    async pull(controller) {
+      try {
+        const result = await reader.read();
+        if (closed) return;
+        if (result.done) { closed = true; detach(); reader.releaseLock(); controller.close(); }
+        else controller.enqueue(result.value);
+      } catch (error) {
+        if (!closed) { closed = true; detach(); reader.releaseLock(); controller.error(error); }
+      }
+    },
+    cancel(reason) {
+      if (closed) return;
+      closed = true; detach();
+      return reader.cancel(reason).finally(() => reader.releaseLock());
+    },
+  });
+}
+
 export function createHttpTransport(
   options: FaaSClientOptions,
   defaultIdempotencyKey?: () => string | undefined,
@@ -164,10 +199,10 @@ export function createHttpTransport(
         observe(requestOptions?.onResponse, info);
       }
       // Only scoped generated calls wrap bodies. A custom fetch may ignore its
-      // signal; piping with the scope signal still cancels a blocked body read.
+      // signal; an owned reader also cancels a blocked or not-yet-consumed body.
       // Legacy global fetch retains the original Response object and metadata.
       if (requestOptions?.signal && resp.body) {
-        return new Response(resp.body.pipeThrough(new TransformStream(), { signal: init?.signal ?? requestOptions.signal }), {
+        return new Response(abortableBody(resp.body, init?.signal ?? requestOptions.signal), {
           status: resp.status, statusText: resp.statusText, headers: resp.headers,
         });
       }

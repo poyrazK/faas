@@ -2035,6 +2035,12 @@ paths:
         sealed before any deployment is enqueued. Failed configuration starts
         no builds; saved apps and any completed configuration remain available
         for correction. Values are never included in responses or scan plans.
+      parameters:
+        - name: Deployment-Attempt-ID
+          in: header
+          required: false
+          description: Durable project submission identity. Persist before apply; after an uncertain response inspect the receipt instead of resubmitting.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
       requestBody:
         required: true
         content:
@@ -69227,6 +69233,12 @@ paths:
       operationId: applyCachedOrgProjectPlan
       summary: "Deploy a company project's reviewed source without another upload."
       description: "Applies the exact archive retained by a company project scan in the same organization. A plan reviewed for a personal project or another organization is refused. The normal scanner and apply admission gates run again; the reviewed source expires after one hour. Requires the deploy role."
+      parameters:
+        - name: Deployment-Attempt-ID
+          in: header
+          required: false
+          description: Durable project submission identity. Persist before apply; after an uncertain response inspect the receipt instead of resubmitting.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
       requestBody:
         required: true
         content:

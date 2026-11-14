@@ -1,10 +1,14 @@
 import { createOpenAPIConfig, type OpenAPIConfig } from './generated/core/OpenAPI.js';
 import { createHttpTransport, type FaaSClientOptions } from './http-transport.js';
+import { bindProjectWorkflows, type ProjectWorkflows } from './project-workflows.js';
 import type { IdempotencyKey } from './idempotency.js';
 import type { CancelablePromise } from './generated/core/CancelablePromise.js';
 import type { RequestOptions } from './request-options.js';
+import { bindSourceUploads, type SourceUploads } from './source-upload.js';
 import { scopedRequest } from './request-scope.js';
 import { bindDeploymentPagination, type DeploymentPagination } from './deployment-pagination.js';
+import { bindDeploymentWaiters, type DeploymentWaiters } from './deployment-waiters.js';
+import { bindSourceDeployments, type SourceDeployments } from './source-deployment.js';
 
 type WithOptions<T> = T extends (...args: infer Args) => CancelablePromise<infer Result>
   ? (...args: Args extends [] ? [params?: undefined, options?: RequestOptions] : [...Args, options?: RequestOptions]) => CancelablePromise<Result>
@@ -42,7 +46,7 @@ export function bindService<T extends object>(service: T, getConfig: () => Clien
 
 export type BoundClient<Services> = {
   readonly [K in keyof Services as K extends `${infer Name}Service` ? Uncapitalize<Name> : never]: Methods<Services[K]> &
-    (K extends 'DeploymentsService' ? DeploymentPagination : object);
+    (K extends 'DeploymentsService' ? DeploymentPagination & DeploymentWaiters & SourceDeployments : K extends 'UploadsService' ? SourceUploads : K extends 'ProjectsService' ? ProjectWorkflows : object);
 } & {
   /** Applies to future requests; in-flight requests keep their original token. */
   setToken(token: string | undefined): void;
@@ -101,11 +105,23 @@ export function bindClient<Services extends Record<string, object>, Helpers exte
     if (namespace in client) throw new Error(`Duplicate SDK namespace: ${namespace}`);
     const methods = bindService(service, () => config);
     if (name === 'DeploymentsService') {
-      const pagination = bindDeploymentPagination(service as Parameters<typeof bindDeploymentPagination>[0], () => config);
-      for (const key of Object.keys(pagination)) {
+      const additions = {
+        ...bindDeploymentPagination(service as Parameters<typeof bindDeploymentPagination>[0], () => config),
+        ...bindDeploymentWaiters(service as Parameters<typeof bindDeploymentWaiters>[0], () => config),
+        ...bindSourceDeployments(service as Parameters<typeof bindSourceDeployments>[0], () => config),
+      };
+      for (const key of Object.keys(additions)) {
         if (key in methods) throw new Error(`Duplicate SDK helper: ${namespace}.${key}`);
       }
-      client[namespace] = Object.freeze({ ...methods, ...pagination });
+      client[namespace] = Object.freeze({ ...methods, ...additions });
+    } else if (name === 'UploadsService') {
+      const additions = bindSourceUploads(() => config);
+      for (const key of Object.keys(additions)) if (key in methods) throw new Error(`Duplicate SDK helper: ${namespace}.${key}`);
+      client[namespace] = Object.freeze({ ...methods, ...additions });
+    } else if (name === 'ProjectsService') {
+      const additions=bindProjectWorkflows(services.DeploymentsService as Parameters<typeof bindProjectWorkflows>[0],()=>config);
+      for(const key of Object.keys(additions))if(key in methods)throw new Error(`Duplicate SDK helper: ${namespace}.${key}`);
+      client[namespace]=Object.freeze({...methods,...additions});
     } else client[namespace] = methods;
   }
   for (const [name, helper] of Object.entries(helpers?.(() => config) ?? {})) {
