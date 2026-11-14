@@ -1,4 +1,4 @@
--- filename: 20261114160000000_plan_fit_notices.sql
+-- filename: 20261114183358507_plan_fit_notices.sql
 -- migration-compat: expand
 
 -- +goose Up
