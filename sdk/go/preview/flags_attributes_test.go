@@ -49,9 +49,9 @@ func TestFlagDecisionVectors(t *testing.T) {
 	for _, c := range v.Cases {
 		var d FlagDecision
 		if c.Type == "variant" {
-			d = evaluateRuntimeVariantWithAttributes(bundle, c.Flag, c.Customer, c.Subject, c.Attributes, c.Fallback.(string))
+			d = evaluateRuntimeVariantWithAttributes(bundle, c.Flag, c.Customer, c.Subject, c.Attributes, c.Kills, c.Fallback.(string))
 		} else {
-			d = evaluateRuntimeBooleanWithAttributes(bundle, c.Flag, c.Customer, c.Subject, c.Attributes, c.Fallback.(bool))
+			d = evaluateRuntimeBooleanWithAttributes(bundle, c.Flag, c.Customer, c.Subject, c.Attributes, c.Kills, c.Fallback.(bool))
 		}
 		if d.Value != c.Value || d.Reason != c.Reason || d.RuleID != c.RuleID {
 			t.Errorf("%s: got value=%v reason=%s rule=%q, want value=%v reason=%s rule=%q", c.Name, d.Value, d.Reason, d.RuleID, c.Value, c.Reason, c.RuleID)
@@ -84,6 +84,14 @@ func TestFlagRequestAttributesFromGatewayAndApplication(t *testing.T) {
 	}
 	if d, err := f.Boolean(request("DE", ""), "eu-checkout", false); err != nil || d.Value != true || d.RuleID != "eu" {
 		t.Fatalf("DE: %+v %v", d, err)
+	}
+	killedCtx := request("DE", "")
+	killedCtx.Value(flagRequestContextKey{}).(*flagRequestState).kills = map[string]struct{}{"eu-checkout": {}}
+	if d, _ := f.Boolean(killedCtx, "eu-checkout", false); d.Value != false || d.Reason != "killed" {
+		t.Fatalf("gateway kill ignored: %+v", d)
+	}
+	if d, _ := f.Boolean(request("", ""), "risky-path", false); d.Value != false || d.Reason != "killed" {
+		t.Fatalf("bundle kill ignored: %+v", d)
 	}
 	if d, _ := f.Boolean(request("de", ""), "eu-checkout", false); d.Value != false {
 		t.Fatalf("malformed country matched: %+v", d)

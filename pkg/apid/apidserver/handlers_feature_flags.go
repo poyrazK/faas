@@ -346,7 +346,25 @@ func (s *server) runtimeFeatureFlags(w http.ResponseWriter, r *http.Request) {
 	// Refresh responses never become shared caches of customer targeting lists.
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("ETag", fmt.Sprintf(`"flags-%s-%d"`, scope.EnvironmentID, v.Version))
-	writeJSON(w, http.StatusOK, v.Bundle)
+	writeJSON(w, http.StatusOK, runtimeBundleForSDK(v.Bundle, capabilities))
+}
+
+// runtimeBundleForSDK leaves killed flags out of the bundle for an SDK
+// without kill-v1: it would ignore "killed" and serve the configured default,
+// while a missing flag makes it serve the application fallback, which is
+// what a kill means (ADR 20261114150000 §3).
+func runtimeBundleForSDK(b flags.Bundle, capabilities string) flags.Bundle {
+	if supportsFlagCapability(capabilities, api.FlagSDKKillCapability) || len(flags.KilledKeys(b.Config)) == 0 {
+		return b
+	}
+	out := b
+	out.Flags = make([]flags.Flag, 0, len(b.Flags))
+	for _, f := range b.Flags {
+		if !f.Killed {
+			out.Flags = append(out.Flags, f)
+		}
+	}
+	return out
 }
 
 type featureFlagCapability struct{ feature, capability string }

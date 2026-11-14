@@ -13,8 +13,8 @@ test('cross-language decision vectors', () => {
   const { bundle, cases } = decisionVectors();
   for (const c of cases) {
     const d = c.type === 'variant'
-      ? evaluateVariant(bundle, c.flag, c.customer, c.fallback as string, c.subject, c.attributes)
-      : evaluateFlag(bundle, c.flag, c.customer, c.fallback as boolean, c.subject, c.attributes);
+      ? evaluateVariant(bundle, c.flag, c.customer, c.fallback as string, c.subject, c.attributes, c.kills)
+      : evaluateFlag(bundle, c.flag, c.customer, c.fallback as boolean, c.subject, c.attributes, c.kills);
     assert.equal(d.value, c.value, c.name);
     assert.equal(d.reason, c.reason, c.name);
     assert.equal(d.rule_id, c.rule_id, c.name);
@@ -38,6 +38,7 @@ test('gateway attributes and withAttributes feed attribute rules', async () => {
   await flags.start();
   flags.close();
   assert.match(seen.capabilities, /attribute-targeting-v1/);
+  assert.match(seen.capabilities, /kill-v1/);
 
   const eu = await flags.runRequest({ 'X-Faas-Platform-Tenant-Id': tenant, 'X-Faas-Client-Country': 'DE', 'X-Faas-Client-Ua-Family': 'chrome' }, () => flags.boolean('eu-checkout', false));
   assert.equal(eu.value, true);
@@ -50,6 +51,15 @@ test('gateway attributes and withAttributes feed attribute rules', async () => {
   const pro = await flags.runRequest({ 'X-Faas-Platform-Tenant-Id': tenant, 'X-Faas-Client-Ua-Family': 'chrome' },
     () => flags.withAttributes({ plan: 'pro' }, () => flags.boolean('pro-only', false)));
   assert.equal(pro.value, true);
+
+  // A gateway kill beats a matching rule and is recorded as killed.
+  const killed = await flags.runRequest({ 'X-Faas-Platform-Tenant-Id': tenant, 'X-Faas-Client-Country': 'DE', 'X-Faas-Flag-Kills': 'eu-checkout' }, () => flags.boolean('eu-checkout', false));
+  assert.equal(killed.value, false);
+  assert.equal(killed.reason, 'killed');
+  // A flag killed in the bundle serves the fallback, not its default (true).
+  const bundled = await flags.runRequest({ 'X-Faas-Platform-Tenant-Id': tenant }, () => flags.boolean('risky-path', false));
+  assert.equal(bundled.value, false);
+  assert.equal(bundled.reason, 'killed');
 
   await flags.runRequest({ 'X-Faas-Platform-Tenant-Id': tenant, 'X-Faas-Client-Ua-Family': 'chrome' }, async () => {
     assert.throws(() => flags.withAttributes({ 'Bad-Name': 'x' }, () => undefined));

@@ -29,6 +29,21 @@ func TestFeatureFlagCapabilityOnlyRequiredForEnabledSubjectRules(t *testing.T) {
 	}
 }
 
+func TestRuntimeBundleDropsKilledFlagsForOlderSDKs(t *testing.T) {
+	b := flags.Bundle{Version: 3, Config: flags.Config{Flags: []flags.Flag{{Key: "risky", Killed: true, Default: true}, {Key: "safe"}}}}
+	old := apidserver.RuntimeBundleForSDK(b, api.FlagSDKSubjectTargetingCapability)
+	if len(old.Flags) != 1 || old.Flags[0].Key != "safe" {
+		t.Fatalf("older SDK bundle = %+v", old.Flags)
+	}
+	current := apidserver.RuntimeBundleForSDK(b, api.FlagSDKSubjectTargetingCapability+", "+api.FlagSDKKillCapability)
+	if len(current.Flags) != 2 {
+		t.Fatalf("kill-v1 SDK bundle = %+v", current.Flags)
+	}
+	if len(b.Flags) != 2 {
+		t.Fatal("stripping mutated the stored bundle")
+	}
+}
+
 func TestFeatureFlagCapabilityRequiredForEnabledAttributeRules(t *testing.T) {
 	config := flags.Config{Flags: []flags.Flag{{Key: "eu", Enabled: true, Rules: []flags.Rule{{ID: "de", Attributes: []flags.Condition{{Attribute: flags.AttributeCountry, Op: flags.OpIn, Values: []string{"DE"}}}}}}}}
 	if got := apidserver.FeatureFlagRequiredCapabilities(config); len(got) != 1 || got[0] != api.FlagSDKAttributeTargetingCapability {

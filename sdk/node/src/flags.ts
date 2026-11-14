@@ -9,9 +9,9 @@ export interface FlagCondition { attribute: string; op: 'in' | 'not_in' | 'ends_
 export interface FlagRule { id: string; customers?: string[]; group?: string; subjects?: string[]; attributes?: FlagCondition[]; rollout?: number; rollout_unit?: 'customer' | 'subject'; value: boolean; progression?: ProgressiveRollout }
 export interface VariantFlagRule { id: string; customers?: string[]; group?: string; subjects?: string[]; attributes?: FlagCondition[]; rollout?: number; rollout_unit?: 'customer' | 'subject'; value?: string }
 export interface WeightedVariant { key: string; weight: number }
-export interface FeatureFlag { key: string; description?: string; type?: 'boolean'; enabled: boolean; default: boolean; seed: string; rules: FlagRule[]; variants?: never }
+export interface FeatureFlag { key: string; description?: string; type?: 'boolean'; enabled: boolean; killed?: boolean; default: boolean; seed: string; rules: FlagRule[]; variants?: never }
 export type BooleanFeatureFlag = FeatureFlag;
-export interface VariantFeatureFlag { key: string; description?: string; type: 'variant'; enabled: boolean; default: string; seed: string; rules: VariantFlagRule[]; variants: WeightedVariant[] }
+export interface VariantFeatureFlag { key: string; description?: string; type: 'variant'; enabled: boolean; killed?: boolean; default: string; seed: string; rules: VariantFlagRule[]; variants: WeightedVariant[] }
 export type FlagDefinition = FeatureFlag | VariantFeatureFlag;
 export interface FlagsBundle { environment_id: string; version: number; flags: FlagDefinition[]; groups: Record<string, string[]> }
 export interface FlagDecision {
@@ -34,6 +34,14 @@ export const GREGALE_FLAG_CONTEXT_HEADER = 'X-Faas-Platform-Tenant-Id';
 export const GREGALE_FLAG_PROPAGATION_HEADER = 'X-Faas-Flag-Context';
 export const GREGALE_CLIENT_COUNTRY_HEADER = 'X-Faas-Client-Country';
 export const GREGALE_CLIENT_UA_FAMILY_HEADER = 'X-Faas-Client-Ua-Family';
+/** Flags killed in this request's environment, stamped by Gregale's gateway. */
+export const GREGALE_FLAG_KILLS_HEADER = 'X-Faas-Flag-Kills';
+/** Parse the gateway kill header: valid flag keys, at most 100. */
+export function parseFlagKills(value: string | null | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const part of (value ?? '').split(',')) { const key = part.trim(); if (FLAG_KEY.test(key)) out.add(key); if (out.size >= 100) break; }
+  return out;
+}
 /** Request attributes for rule conditions: gregale.* from the gateway, app.* from the application. */
 export type FlagAttributes = Record<string, string>;
 const APP_ATTRIBUTE_NAME = /^[a-z][a-z0-9_]{0,31}$/;
@@ -74,9 +82,10 @@ export function validFlagSubjectID(value: unknown): value is string {
   return typeof value === 'string' && /^[\x21-\x7e]{1,128}$/.test(value);
 }
 /** Pure evaluator. customer must come from trusted server-side middleware. */
-export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: boolean, subject?: string, attributes?: FlagAttributes): FlagDecision {
+export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: boolean, subject?: string, attributes?: FlagAttributes, kills?: Iterable<string>): FlagDecision {
   const d: FlagDecision = { flag: key, value: fallback, config_version: bundle.version, reason: 'flag_missing', source: 'fallback' };
   const f = bundle.flags.find(flag => flag.key === key);
+  if (isKilled(key, f, kills)) return { ...d, reason: 'killed' };
   if (!f) return d;
   if (f.type === 'variant') return { ...d, reason: 'type_mismatch' };
   d.value = f.default; d.source = 'configuration'; d.reason = 'default';
@@ -102,9 +111,10 @@ export function evaluateFlag(bundle: FlagsBundle, key: string, customer: string 
   return d;
 }
 /** Pure named-variant evaluator with deterministic weighted allocation. */
-export function evaluateVariant(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: string, subject?: string, attributes?: FlagAttributes): VariantFlagDecision {
+export function evaluateVariant(bundle: FlagsBundle, key: string, customer: string | undefined, fallback: string, subject?: string, attributes?: FlagAttributes, kills?: Iterable<string>): VariantFlagDecision {
   const d: VariantFlagDecision = { flag: key, type: 'variant', value: fallback, config_version: bundle.version, reason: 'flag_missing', source: 'fallback' };
   const f = bundle.flags.find(flag => flag.key === key);
+  if (isKilled(key, f, kills)) return { ...d, reason: 'killed' };
   if (!f) return d;
   if (f.type !== 'variant') return { ...d, reason: 'type_mismatch' };
   d.value = f.default; d.source = 'configuration'; d.reason = 'default';
@@ -131,6 +141,12 @@ export function evaluateVariant(bundle: FlagsBundle, key: string, customer: stri
   if (subjectMissing) return { ...d, reason: 'subject_missing' };
   return d;
 }
+/** A kill (bundle or gateway header) serves the application's fallback. */
+function isKilled(key: string, f: FlagDefinition | undefined, kills: Iterable<string> | undefined): boolean {
+  if (f?.killed === true) return true;
+  for (const k of kills ?? []) if (k === key) return true;
+  return false;
+}
 function chooseVariant(variants: WeightedVariant[], bucket: number): string {
   for (const variant of variants) {
     if (bucket < variant.weight) return variant.key;
@@ -154,7 +170,7 @@ export interface GregaleFlagsOptions {
 type PropagatedDecision =
   | (FlagDecision & { source: 'configuration' | 'fallback'; origin: FlagDecisionOrigin })
   | (VariantFlagDecision & { source: 'configuration' | 'fallback'; origin: FlagDecisionOrigin });
-type RequestFlags = { customer?: string; subject?: string; attributes: FlagAttributes; bundle?: FlagsBundle; fresh: boolean; evidence: Map<string, AnyFlagEvidence>; inherited: Map<string, PropagatedDecision> };
+type RequestFlags = { customer?: string; subject?: string; attributes: FlagAttributes; kills: Set<string>; bundle?: FlagsBundle; fresh: boolean; evidence: Map<string, AnyFlagEvidence>; inherited: Map<string, PropagatedDecision> };
 
 /** Server-only client. Refresh is asynchronous; all checks in a request share one snapshot. */
 export class GregaleFlags {
@@ -201,7 +217,7 @@ export class GregaleFlags {
     if (!identity.ok) throw new Error('Flags workload identity unavailable');
     const token = await boundedJSON(identity, 16_384) as { access_token?: string };
     if (typeof token.access_token !== 'string' || !token.access_token || token.access_token.length > 8192) throw new Error('Invalid workload identity');
-    const response = await this.fetchImpl(this.apiURL, { signal, redirect: 'error', cache: 'no-store', headers: { Authorization: `Bearer ${token.access_token}`, 'X-Faas-Flags-Capabilities': 'subject-targeting-v1, attribute-targeting-v1' } });
+    const response = await this.fetchImpl(this.apiURL, { signal, redirect: 'error', cache: 'no-store', headers: { Authorization: `Bearer ${token.access_token}`, 'X-Faas-Flags-Capabilities': 'subject-targeting-v1, attribute-targeting-v1, kill-v1' } });
     if (!response.ok) throw new Error(`Flags refresh failed (${response.status})`);
     // Configuration is bounded to 256 KiB; the runtime envelope adds scope/version.
     const next = validateBundle(await boundedJSON(response, 262_144 + 1024));
@@ -229,7 +245,7 @@ export class GregaleFlags {
     const uaFamily = normalized.get(GREGALE_CLIENT_UA_FAMILY_HEADER) ?? '';
     if (FLAG_KEY.test(uaFamily)) attributes['gregale.ua_family'] = uaFamily;
     const request: RequestFlags = {
-      customer, attributes, bundle: this.bundle,
+      customer, attributes, kills: parseFlagKills(normalized.get(GREGALE_FLAG_KILLS_HEADER)), bundle: this.bundle,
       fresh: !!this.bundle && currentAge >= 0 && currentAge <= this.maxStaleMs,
       evidence: new Map(), inherited: propagated?.decisions ?? new Map(),
     };
@@ -262,6 +278,11 @@ export class GregaleFlags {
     if (!r) throw new Error('Flag checks require runRequest');
     const prior = r.evidence.get(key);
     if (prior) return typeof prior.value === 'boolean' ? { ...prior } : { flag: key, value: fallback, config_version: prior.config_version, reason: 'type_mismatch', source: 'fallback' };
+    if (r.kills.has(key) || (r.fresh && r.bundle?.flags.find(f => f.key === key)?.killed === true)) {
+      const d: FlagDecision = { flag: key, value: fallback, config_version: r.bundle?.version ?? 0, reason: 'killed', source: 'fallback' };
+      if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
+      return d;
+    }
     const inherited = r.inherited.get(key);
     if (inherited) {
       const d: FlagDecision = typeof inherited.value === 'boolean'
@@ -270,7 +291,7 @@ export class GregaleFlags {
       if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
       return { ...d };
     }
-    const d: FlagDecision = r.fresh && r.bundle ? evaluateFlag(r.bundle, key, r.customer, fallback, r.subject, r.attributes) : { flag: key, value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
+    const d: FlagDecision = r.fresh && r.bundle ? evaluateFlag(r.bundle, key, r.customer, fallback, r.subject, r.attributes, r.kills) : { flag: key, value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
     if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
     return d;
   }
@@ -279,6 +300,11 @@ export class GregaleFlags {
     if (!r) throw new Error('Flag checks require runRequest');
     const prior = r.evidence.get(key);
     if (prior) return typeof prior.value === 'string' ? { ...prior, type: 'variant' } : { flag: key, type: 'variant', value: fallback, config_version: prior.config_version, reason: 'type_mismatch', source: 'fallback' };
+    if (r.kills.has(key) || (r.fresh && r.bundle?.flags.find(f => f.key === key)?.killed === true)) {
+      const d: VariantFlagDecision = { flag: key, type: 'variant', value: fallback, config_version: r.bundle?.version ?? 0, reason: 'killed', source: 'fallback' };
+      if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
+      return d;
+    }
     const inherited = r.inherited.get(key);
     if (inherited) {
       const d: VariantFlagDecision = typeof inherited.value === 'string'
@@ -287,7 +313,7 @@ export class GregaleFlags {
       if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
       return { ...d };
     }
-    const d: VariantFlagDecision = r.fresh && r.bundle ? evaluateVariant(r.bundle, key, r.customer, fallback, r.subject, r.attributes) : { flag: key, type: 'variant', value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
+    const d: VariantFlagDecision = r.fresh && r.bundle ? evaluateVariant(r.bundle, key, r.customer, fallback, r.subject, r.attributes, r.kills) : { flag: key, type: 'variant', value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
     if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
     return d;
   }
@@ -338,7 +364,7 @@ const MAX_PROPAGATION_CONTEXT_BYTES = 8 * 1024;
 const MAX_PROPAGATION_CONTEXT_HEADER_BYTES = 12 * 1024;
 
 function isFallbackReason(reason: string): boolean {
-  return reason === 'flag_missing' || reason === 'configuration_stale' || reason === 'type_mismatch';
+  return reason === 'flag_missing' || reason === 'configuration_stale' || reason === 'type_mismatch' || reason === 'killed';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -357,7 +383,7 @@ function decodePropagationHeader(value: string | null): { customer_id: string; d
     const envelope: unknown = JSON.parse(raw.toString('utf8'));
     if (!isRecord(envelope) || !hasOnlyKeys(envelope, ['version', 'customer_id', 'decisions']) || envelope.version !== 1 || typeof envelope.customer_id !== 'string' || !UUID.test(envelope.customer_id) || !Array.isArray(envelope.decisions) || envelope.decisions.length === 0 || envelope.decisions.length > 32) return undefined;
     const decisions = new Map<string, PropagatedDecision>();
-    const reasons = new Set(['flag_missing', 'default', 'disabled', 'customer_missing', 'subject_missing', 'rule_match', 'configuration_stale', 'type_mismatch']);
+    const reasons = new Set(['flag_missing', 'default', 'disabled', 'customer_missing', 'subject_missing', 'rule_match', 'configuration_stale', 'type_mismatch', 'killed']);
     const decisionKeys = ['flag', 'value', 'type', 'config_version', 'rule_id', 'reason', 'bucket', 'rollout_bucket', 'source', 'origin'];
     for (const rawDecision of envelope.decisions) {
       if (!isRecord(rawDecision) || !hasOnlyKeys(rawDecision, decisionKeys)) return undefined;
@@ -398,7 +424,7 @@ function validateBundle(raw: unknown): FlagsBundle {
   const keys = new Set<string>();
   for (const f of b.flags) {
     const isVariant = f.type === 'variant';
-    if (!key(f.key) || keys.has(f.key) || (f.type !== undefined && f.type !== 'boolean' && !isVariant) || typeof f.enabled !== 'boolean' || (isVariant ? typeof f.default !== 'string' : typeof f.default !== 'boolean') || typeof f.seed !== 'string' || !f.seed || f.seed.length > 128 || f.seed.includes('\0') || !Array.isArray(f.rules) || f.rules.length > 32) throw new Error('Invalid Flags definition');
+    if (!key(f.key) || keys.has(f.key) || (f.type !== undefined && f.type !== 'boolean' && !isVariant) || typeof f.enabled !== 'boolean' || (f.killed !== undefined && typeof f.killed !== 'boolean') || (isVariant ? typeof f.default !== 'string' : typeof f.default !== 'boolean') || typeof f.seed !== 'string' || !f.seed || f.seed.length > 128 || f.seed.includes('\0') || !Array.isArray(f.rules) || f.rules.length > 32) throw new Error('Invalid Flags definition');
     keys.add(f.key); const rules = new Set<string>();
     const variantKeys = new Set<string>();
     if (isVariant) {

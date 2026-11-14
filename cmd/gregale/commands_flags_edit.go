@@ -26,7 +26,7 @@ const (
 	flagsEditAttempts     = 3
 	flagsEveryonePercent  = "everyone-percent"
 	flagsTypeVariant      = "variant"
-	flagsUsageEditVerbs   = "list|create|set|on|off|percent|rule-add|rule-rm|rm"
+	flagsUsageEditVerbs   = "list|create|set|on|off|kill|unkill|percent|rule-add|rule-rm|rm"
 	flagsEditConflictCode = "flags_version_conflict"
 )
 
@@ -37,6 +37,8 @@ var flagsEditVerbs = map[string]string{
 	"set":      "a flag KEY and at least one of --default, --description",
 	"on":       "a flag KEY",
 	"off":      "a flag KEY",
+	"kill":     "a flag KEY",
+	"unkill":   "a flag KEY",
 	"percent":  "a flag KEY and a percentage 0..100",
 	"rule-add": "a flag KEY and --id",
 	"rule-rm":  "a flag KEY and --id",
@@ -118,6 +120,10 @@ func cmdFlagsEdit(verb string, args []string) int {
 		edit = flagsOnOff(key, true)
 	case "off":
 		edit = flagsOnOff(key, false)
+	case "kill":
+		edit = flagsKill(key, true)
+	case "unkill":
+		edit = flagsKill(key, false)
 	case "percent":
 		bp, err := parseFlagsPercent(positionals[1])
 		if err != nil {
@@ -341,6 +347,29 @@ func flagsOnOff(key string, on bool) flagsEdit {
 	}
 }
 
+// flagsKill sets or clears a flag's kill (ADR 20261114150000 §3). A killed
+// flag serves the application's fallback on the next request through the
+// gateway, whatever its default or rules say.
+func flagsKill(key string, killed bool) flagsEdit {
+	return func(cfg *flags.Config) (string, error) {
+		f, err := findFlag(cfg, key)
+		if err != nil {
+			return "", err
+		}
+		if f.Killed == killed {
+			if killed {
+				return fmt.Sprintf("%s is already killed", key), nil
+			}
+			return fmt.Sprintf("%s is not killed", key), nil
+		}
+		f.Killed = killed
+		if killed {
+			return fmt.Sprintf("Killed %s: requests now get the fallback value in your code", key), nil
+		}
+		return fmt.Sprintf("Revived %s: it serves its configuration again", key), nil
+	}
+}
+
 // parseFlagsPercent accepts "12", "12.5" or "12.5%" and returns basis points.
 func parseFlagsPercent(raw string) (int, error) {
 	s := strings.TrimSuffix(strings.TrimSpace(raw), "%")
@@ -525,6 +554,9 @@ func flagsRemove(key string) flagsEdit {
 }
 
 func flagState(f flags.Flag) string {
+	if f.Killed {
+		return "killed"
+	}
 	if !f.Enabled {
 		return "off"
 	}

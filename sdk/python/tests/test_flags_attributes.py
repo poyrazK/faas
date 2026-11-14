@@ -10,6 +10,7 @@ from faas_sdk.preview import (
     GREGALE_CLIENT_COUNTRY_HEADER,
     GREGALE_CLIENT_UA_FAMILY_HEADER,
     GREGALE_FLAG_CONTEXT_HEADER,
+    GREGALE_FLAG_KILLS_HEADER,
     GregaleFlags,
     evaluate_flag,
     evaluate_variant,
@@ -33,6 +34,7 @@ def test_cross_language_decision_vectors():
             case["fallback"],
             case.get("subject"),
             case.get("attributes"),
+            case.get("kills"),
         )
         assert decision.value == case["value"], case["name"]
         assert decision.reason == case["reason"], case["name"]
@@ -71,11 +73,25 @@ async def test_gateway_and_application_attributes_feed_rules():
     flags, client, seen = flags_client()
     await flags.refresh()
     assert "attribute-targeting-v1" in seen["capabilities"]
+    assert "kill-v1" in seen["capabilities"]
     try:
         headers = {GREGALE_FLAG_CONTEXT_HEADER: TENANT, GREGALE_CLIENT_COUNTRY_HEADER: "DE"}
         async with flags.run_request(headers):
             decision = flags.boolean("eu-checkout", False)
             assert decision.value is True and decision.rule_id == "eu"
+
+        headers = {
+            GREGALE_FLAG_CONTEXT_HEADER: TENANT,
+            GREGALE_CLIENT_COUNTRY_HEADER: "DE",
+            GREGALE_FLAG_KILLS_HEADER: "eu-checkout",
+        }
+        async with flags.run_request(headers):
+            killed = flags.boolean("eu-checkout", False)
+            assert killed.value is False and killed.reason == "killed"
+
+        async with flags.run_request({GREGALE_FLAG_CONTEXT_HEADER: TENANT}):
+            bundled = flags.boolean("risky-path", False)
+            assert bundled.value is False and bundled.reason == "killed"
 
         async with flags.run_request({GREGALE_FLAG_CONTEXT_HEADER: TENANT, GREGALE_CLIENT_COUNTRY_HEADER: "de"}):
             assert flags.boolean("eu-checkout", False).value is False

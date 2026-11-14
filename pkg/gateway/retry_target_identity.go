@@ -25,6 +25,11 @@ func platformIdentityForTarget(ctx context.Context, request *http.Request, app A
 	identity.PlatformTenantID = authenticatedFrom(ctx).PlatformTenantID
 	attrs := flagRequestAttributesFrom(ctx)
 	identity.ClientCountry, identity.ClientUAFamily = attrs.country, attrs.uaFamily
+	if attrs.kills != nil {
+		// Per target: a retry onto a sibling of another deployment gets
+		// that deployment's environment's kills.
+		identity.FlagKills = attrs.kills.FlagKillsHeader(ctx, target.DeploymentID)
+	}
 	if identity.AppID == "" {
 		identity.AppID = app.ID
 	}

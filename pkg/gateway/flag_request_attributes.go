@@ -15,6 +15,9 @@ type flagRequestAttributesKey struct{}
 type flagRequestAttributes struct {
 	country  string
 	uaFamily string
+	// kills looks up the target deployment's kill list; nil when the
+	// backend does not stamp kills.
+	kills flagKillSource
 }
 
 // withFlagRequestAttributes resolves the client's country and browser family
@@ -31,6 +34,9 @@ func (h *Handler) withFlagRequestAttributes(r *http.Request) *http.Request {
 	}
 	if attrs.uaFamily == telemetryUnknownDimension {
 		attrs.uaFamily = ""
+	}
+	if source, ok := h.backend.(flagKillSource); ok {
+		attrs.kills = source
 	}
 	return r.WithContext(context.WithValue(r.Context(), flagRequestAttributesKey{}, attrs))
 }

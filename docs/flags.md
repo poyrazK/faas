@@ -26,6 +26,27 @@ gregale flags create checkout --variants legacy,new --project exports
 gregale flags rm new-export --project exports
 ```
 
+### Kill a flag
+
+```bash
+gregale flags kill new-export --project exports     # every check serves the fallback in your code
+gregale flags unkill new-export --project exports
+```
+
+A killed flag (`"killed": true`) evaluates to the **fallback your code passes**
+at the call site, with reason `killed`, whatever its default, rules or a
+decision inherited from another service say. The fallback is the behavior your
+code had before the flag existed, so a kill never turns something on.
+
+Gregale's gateway lists each environment's killed flags on every request
+(`X-Faas-Flag-Kills`), and the SDKs honor that list before their cached
+configuration, so a kill applies from the next request rather than the next
+refresh. Work that does not arrive through the gateway (queued messages, cron)
+picks the kill up on the SDK's next refresh. SDKs advertise capability
+`kill-v1`; an older SDK receives configurations without killed flags, so it
+also serves its fallback (reason `flag_missing`) after its next refresh. A kill
+is a published version like any other change, with history and rollback.
+
 `percent` manages a rule named `everyone-percent` that always stays last;
 `rule-add` inserts new rules before it, so targeted rules win. `off` on a
 boolean flag also sets its default to `false`, because a disabled flag serves
@@ -272,7 +293,7 @@ fallback, with reason `configuration_stale`. Missing flags also use the fallback
 Startup during a configuration outage also permits explicit fallback behavior.
 Disabling a defined flag uses its configured default; use `default: false` for an
 off switch. Changes do not interrupt requests already using an earlier version.
-Do not use this mechanism for an instantaneous security revocation.
+Do not use this mechanism for an instantaneous security revocation; use `gregale flags kill` for an emergency stop of application behavior.
 
 ### Use flags in a Python ASGI application
 

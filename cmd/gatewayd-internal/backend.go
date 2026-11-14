@@ -1135,6 +1135,9 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyAppDelete,
 		db.NotifyAccountDeleted,
 		db.NotifyTrafficSecurityChanged,
+		// ADR 20261114150000 §3: a published flag configuration may kill
+		// or revive a flag; the per-deployment kill cache is wholesale.
+		db.NotifyFeatureFlagsChanged,
 	}
 	// With resync: a LISTEN reconnect or a full hub buffer loses notifications
 	// (ADR-1344 §5 rule 3), and the route and app caches have no TTL.
@@ -1245,6 +1248,9 @@ func flushAfterMissedNotifications(inv invalidator, log *slog.Logger) {
 	if refresher, ok := inv.(interface{ RequestTrafficRevocationRefresh() }); ok {
 		refresher.RequestTrafficRevocationRefresh()
 	}
+	if kills, ok := inv.(interface{ InvalidateFlagKills() }); ok {
+		kills.InvalidateFlagKills()
+	}
 }
 
 func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw string, log *slog.Logger) (db.DeploymentRouteChangedPayload, bool) {
@@ -1349,6 +1355,10 @@ func ackEdgeRuleInvalidation(ctx context.Context, pool *pgxpool.Pool, raw, node 
 // require both app_id and instance_id and malformed payloads are logged.
 func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification, log *slog.Logger) {
 	switch n.Channel {
+	case db.NotifyFeatureFlagsChanged:
+		if kills, ok := inv.(interface{ InvalidateFlagKills() }); ok {
+			kills.InvalidateFlagKills()
+		}
 	case db.NotifyTrafficSecurityChanged:
 		if _, err := db.ParseTrafficSecurityChangedPayload(n.Payload); err != nil {
 			log.Warn("gatewayd: invalid traffic security notification", "err", err)

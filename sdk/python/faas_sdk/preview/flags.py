@@ -29,7 +29,8 @@ GREGALE_FLAG_CONTEXT_HEADER = "X-Faas-Platform-Tenant-Id"
 GREGALE_FLAG_PROPAGATION_HEADER = "X-Faas-Flag-Context"
 GREGALE_CLIENT_COUNTRY_HEADER = "X-Faas-Client-Country"
 GREGALE_CLIENT_UA_FAMILY_HEADER = "X-Faas-Client-Ua-Family"
-_FLAG_CAPABILITIES = "subject-targeting-v1, attribute-targeting-v1"
+_FLAG_CAPABILITIES = "subject-targeting-v1, attribute-targeting-v1, kill-v1"
+GREGALE_FLAG_KILLS_HEADER = "X-Faas-Flag-Kills"
 _APP_ATTRIBUTE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _ATTRIBUTE_NAME = re.compile(r"^(gregale\.(country|ua_family)|app\.[a-z][a-z0-9_]{0,31})$")
 _COUNTRY = re.compile(r"^[A-Z]{2}$")
@@ -40,7 +41,7 @@ _MAX_CONDITION_VALUES = 100
 _CUSTOMER_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 _FLAG_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-_FALLBACK_REASONS = {"flag_missing", "configuration_stale", "type_mismatch"}
+_FALLBACK_REASONS = {"flag_missing", "configuration_stale", "type_mismatch", "killed"}
 _DECISION_REASONS = _FALLBACK_REASONS | {"default", "disabled", "customer_missing", "subject_missing", "rule_match"}
 _MAX_SAFE_INTEGER = 9_007_199_254_740_991
 _MAX_FLAGS = 100
@@ -102,6 +103,7 @@ class _RequestState:
     inherited: dict[str, tuple[dict[str, Any], dict[str, str]]]
     subject: str | None = None
     attributes: dict[str, str] = field(default_factory=dict)
+    kills: frozenset[str] = frozenset()
 
 
 def flag_bucket(seed: str, key: str, customer: str) -> int:
@@ -135,6 +137,22 @@ def _valid_subject_id(value: Any) -> bool:
         and value.isascii()
         and all(0x21 <= ord(char) <= 0x7E for char in value)
     )
+
+
+def parse_kills(value: str | None) -> frozenset[str]:
+    """Parse the gateway's X-Faas-Flag-Kills header: valid keys, at most 100."""
+    keys: list[str] = []
+    for part in (value or "").split(","):
+        key = part.strip()
+        if _FLAG_KEY.fullmatch(key) is not None and key not in keys:
+            keys.append(key)
+            if len(keys) >= _MAX_FLAGS:
+                break
+    return frozenset(keys)
+
+
+def _killed(key: str, flag: Mapping[str, Any] | None, kills: Any) -> bool:
+    return (flag is not None and flag.get("killed") is True) or key in (kills or ())
 
 
 def _valid_attribute_value(value: Any) -> bool:
@@ -190,12 +208,15 @@ def evaluate_flag(
     fallback: bool,
     subject: str | None = None,
     attributes: Mapping[str, str] | None = None,
+    kills: Any = None,
 ) -> FlagDecision:
     """Evaluate a boolean flag without I/O using trusted customer identity."""
     version = _bundle_version(bundle)
     if not isinstance(fallback, bool):
         return FlagDecision(key, fallback, version, "type_mismatch", "fallback")
     flag = _find_flag(bundle, key)
+    if _killed(key, flag, kills):
+        return FlagDecision(key, fallback, version, "killed", "fallback")
     if flag is None:
         return FlagDecision(key, fallback, version, "flag_missing", "fallback")
     if flag.get("type") not in (None, "boolean"):
@@ -259,12 +280,15 @@ def evaluate_variant(
     fallback: str,
     subject: str | None = None,
     attributes: Mapping[str, str] | None = None,
+    kills: Any = None,
 ) -> FlagDecision:
     """Evaluate a named variant with independent rollout and weight buckets."""
     version = _bundle_version(bundle)
     if not isinstance(fallback, str):
         return FlagDecision(key, fallback, version, "type_mismatch", "fallback", type_="variant")
     flag = _find_flag(bundle, key)
+    if _killed(key, flag, kills):
+        return FlagDecision(key, fallback, version, "killed", "fallback", type_="variant")
     if flag is None:
         return FlagDecision(key, fallback, version, "flag_missing", "fallback", type_="variant")
     if flag.get("type") != "variant":
@@ -427,6 +451,7 @@ def validate_bundle(raw: Any) -> dict[str, Any]:
             or key in keys
             or ("type" in flag and flag_type not in ("boolean", "variant"))
             or not isinstance(flag.get("enabled"), bool)
+            or ("killed" in flag and not isinstance(flag.get("killed"), bool))
             or (not isinstance(default, str) if is_variant else not isinstance(default, bool))
             or not isinstance(seed, str)
             or not seed
@@ -846,6 +871,7 @@ class GregaleFlags:
             attributes["gregale.ua_family"] = ua_family
         request = _RequestState(
             attributes=attributes,
+            kills=parse_kills(_single_header(headers, GREGALE_FLAG_KILLS_HEADER)),
             customer=customer,
             bundle=self._bundle,
             fresh=fresh,
@@ -902,6 +928,10 @@ class GregaleFlags:
                 return _decision_from_dict(prior)
             return FlagDecision(key, fallback, prior["config_version"], "type_mismatch", "fallback")
 
+        if self._request_killed(request, key):
+            decision = FlagDecision(key, fallback, _bundle_version(request.bundle or {}), "killed", "fallback")
+            self._record_decision(request, decision)
+            return decision
         inherited = request.inherited.get(key)
         if inherited is not None:
             wire, origin = inherited
@@ -912,7 +942,9 @@ class GregaleFlags:
                 decision = FlagDecision(key, fallback, version, "type_mismatch", "fallback")
         else:
             decision = (
-                evaluate_flag(request.bundle, key, request.customer, fallback, request.subject, request.attributes)
+                evaluate_flag(
+                    request.bundle, key, request.customer, fallback, request.subject, request.attributes, request.kills
+                )
                 if request.fresh and request.bundle is not None
                 else FlagDecision(
                     key,
@@ -941,6 +973,12 @@ class GregaleFlags:
                 type_="variant",
             )
 
+        if self._request_killed(request, key):
+            decision = FlagDecision(
+                key, fallback, _bundle_version(request.bundle or {}), "killed", "fallback", type_="variant"
+            )
+            self._record_decision(request, decision)
+            return decision
         inherited = request.inherited.get(key)
         if inherited is not None:
             wire, origin = inherited
@@ -954,7 +992,9 @@ class GregaleFlags:
                 decision = FlagDecision(key, fallback, version, "type_mismatch", "fallback", type_="variant")
         else:
             decision = (
-                evaluate_variant(request.bundle, key, request.customer, fallback, request.subject, request.attributes)
+                evaluate_variant(
+                    request.bundle, key, request.customer, fallback, request.subject, request.attributes, request.kills
+                )
                 if request.fresh and request.bundle is not None
                 else FlagDecision(
                     key,
@@ -967,6 +1007,11 @@ class GregaleFlags:
             )
         self._record_decision(request, decision)
         return decision
+
+    @staticmethod
+    def _request_killed(request: _RequestState, key: str) -> bool:
+        flag = _find_flag(request.bundle, key) if request.fresh and request.bundle is not None else None
+        return _killed(key, flag, request.kills)
 
     def _current_request(self) -> _RequestState:
         request = self._request.get()
@@ -1116,6 +1161,7 @@ __all__ = [
     "GREGALE_FLAG_PROPAGATION_HEADER",
     "GREGALE_CLIENT_COUNTRY_HEADER",
     "GREGALE_CLIENT_UA_FAMILY_HEADER",
+    "GREGALE_FLAG_KILLS_HEADER",
     "AsyncGregaleFlagsTransport",
     "FlagDecision",
     "GregaleFlags",
@@ -1125,5 +1171,6 @@ __all__ = [
     "flag_bucket",
     "flag_variant_bucket",
     "match_conditions",
+    "parse_kills",
     "validate_bundle",
 ]

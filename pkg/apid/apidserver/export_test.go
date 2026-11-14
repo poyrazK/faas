@@ -532,6 +532,8 @@ var ExecutionRequest = executionRequest
 var ExtractInputValue = extractInputValue
 var ExtractTarGzToDir = extractTarGzToDir
 var FailedStageFromJSON = failedStageFromJSON
+var RuntimeBundleForSDK = runtimeBundleForSDK
+
 func FeatureFlagRequiredCapabilities(config flags.Config) []string {
 	var out []string
 	for _, c := range featureFlagRequiredCapabilities(config) {

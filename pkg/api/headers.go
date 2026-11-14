@@ -32,6 +32,14 @@ const (
 	// unknown; clients cannot author them.
 	ClientCountryHeader  = "X-Faas-Client-Country"
 	ClientUAFamilyHeader = "X-Faas-Client-Ua-Family"
+	// FlagKillsHeader lists, comma-separated and sorted, the flags killed in
+	// the environment of the request's deployment. SDKs serve the
+	// application fallback for them before consulting their cached bundle
+	// (ADR 20261114150000 §3). Clients cannot author it.
+	FlagKillsHeader = "X-Faas-Flag-Kills"
+	// FlagSDKKillCapability advertises an SDK that understands killed flags;
+	// older SDKs get bundles without them, so they fall back as flag_missing.
+	FlagSDKKillCapability = "kill-v1"
 	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
 	// RequestIDHeader, this value is always the 32-character lowercase OTel
 	// trace id when tracing is active.
@@ -157,6 +165,9 @@ type PlatformIdentity struct {
 	// the public caller, so only public-ingress paths set them.
 	ClientCountry  string
 	ClientUAFamily string
+	// FlagKills is the sorted, comma-separated kill list of the target
+	// deployment's environment (ADR 20261114150000 §3).
+	FlagKills string
 }
 
 // ApplyGuestHeaders clears any inbound platform claims and stamps the
@@ -187,6 +198,7 @@ func (i PlatformIdentity) ApplyGuestHeaders(h http.Header) {
 	set(ImageDigestHeader, i.ImageDigest)
 	set(ClientCountryHeader, i.ClientCountry)
 	set(ClientUAFamilyHeader, i.ClientUAFamily)
+	set(FlagKillsHeader, i.FlagKills)
 	set("X-Faas-App", i.AppID)
 	set("X-Faas-Instance", i.InstanceID)
 	set("X-Faas-Node", i.NodeID)
@@ -281,7 +293,7 @@ var guestIdentityHeaderNames = map[string]struct{}{
 	"x-faas-tenant-id": {}, "x-faas-platform-tenant-id": {}, "x-faas-instance-id": {}, "x-faas-node-id": {},
 	"x-faas-region": {}, "x-faas-commit-sha": {}, "x-faas-deployment-tag": {},
 	"x-faas-deployment-created-at": {}, "x-faas-image-digest": {}, "x-faas-flag-context": {},
-	"x-faas-client-country": {}, "x-faas-client-ua-family": {},
+	"x-faas-client-country": {}, "x-faas-client-ua-family": {}, "x-faas-flag-kills": {},
 	"x-gregale-operation-id": {}, "x-gregale-operation-generation": {}, "x-gregale-operation-result-version": {},
 	"x-gregale-customer-operation-id": {}, "x-gregale-operation-attempt": {}, "x-gregale-operation-capability": {},
 }

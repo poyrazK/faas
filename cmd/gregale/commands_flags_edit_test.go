@@ -224,6 +224,25 @@ func TestFlagsRuleAddAttributeConditions(t *testing.T) {
 	}
 }
 
+func TestFlagsKillAndUnkill(t *testing.T) {
+	api := &fakeFlagsAPI{}
+	if code, _ := runFlagsCLI(t, api, "create", "risky", "--default", "true"); code != 0 {
+		t.Fatal("create")
+	}
+	if code, out := runFlagsCLI(t, api, "kill", "risky"); code != 0 || !strings.Contains(out, "Killed risky") || !api.flag(t, "risky").Killed {
+		t.Fatalf("kill: %d %q", code, out)
+	}
+	if code, out := runFlagsCLI(t, api, "list"); code != 0 || !strings.Contains(out, "killed") {
+		t.Fatalf("list: %q", out)
+	}
+	if code, _ := runFlagsCLI(t, api, "unkill", "risky"); code != 0 || api.flag(t, "risky").Killed {
+		t.Fatal("unkill")
+	}
+	if code, _ := runFlagsCLI(t, api, "kill", "missing"); code == 0 {
+		t.Fatal("killed a missing flag")
+	}
+}
+
 func TestFlagsEditRetriesAfterVersionConflict(t *testing.T) {
 	api := &fakeFlagsAPI{conflictOnce: true}
 	if code, _ := runFlagsCLI(t, api, "create", "retry-me"); code != 0 {

@@ -46,7 +46,7 @@ func loadDecisionVectors(t *testing.T) decisionVectors {
 func TestDecisionVectors(t *testing.T) {
 	v := loadDecisionVectors(t)
 	for _, c := range v.Cases {
-		ctx := EvaluationContext{Customer: c.Customer, Subject: c.Subject, Attributes: c.Attributes}
+		ctx := EvaluationContext{Customer: c.Customer, Subject: c.Subject, Attributes: c.Attributes, Kills: c.Kills}
 		var d Decision
 		if c.Type == "variant" {
 			d = EvaluateVariantWithContext(v.Bundle, c.Flag, ctx, c.Fallback.(string))

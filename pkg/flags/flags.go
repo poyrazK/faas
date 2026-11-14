@@ -123,6 +123,57 @@ type EvaluationContext struct {
 	Customer   string
 	Subject    string
 	Attributes map[string]string
+	// Kills are the flag keys the gateway reported killed for this request
+	// (X-Faas-Flag-Kills). They apply even before the bundle has refreshed.
+	Kills []string
+}
+
+// ReasonKilled marks a decision forced to the application fallback by a kill.
+const ReasonKilled = "killed"
+
+// ParseKills reads the gateway's comma-separated kill header, keeping valid
+// flag keys only and bounding the list to FlagsMaxPerEnvironment.
+func ParseKills(header string) []string {
+	if header == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(header, ",") {
+		if key := strings.TrimSpace(part); ValidKey(key) && !slices.Contains(out, key) {
+			out = append(out, key)
+			if len(out) == api.FlagsMaxPerEnvironment {
+				break
+			}
+		}
+	}
+	return out
+}
+
+// FormatKills renders sorted keys for the X-Faas-Flag-Kills header.
+func FormatKills(keys []string) string {
+	sorted := slices.Clone(keys)
+	slices.Sort(sorted)
+	return strings.Join(slices.Compact(sorted), ",")
+}
+
+// KilledKeys lists the killed flags of a configuration, sorted.
+func KilledKeys(c Config) []string {
+	var out []string
+	for _, f := range c.Flags {
+		if f.Killed {
+			out = append(out, f.Key)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func killedDecision(b Bundle, key, typ string, fallback any) Decision {
+	d := Decision{Flag: key, Value: fallback, ConfigVersion: b.Version, Reason: ReasonKilled, Source: "fallback"}
+	if typ == "variant" {
+		d.Type = "variant"
+	}
+	return d
 }
 
 type ProgressiveRollout struct {
@@ -140,8 +191,11 @@ type Flag struct {
 	Key         string `json:"key"`
 	Description string `json:"description,omitempty"`
 	// Type is omitted for legacy boolean flags. Variant flags use "variant".
-	Type     string        `json:"type,omitempty"`
-	Enabled  bool          `json:"enabled"`
+	Type    string `json:"type,omitempty"`
+	Enabled bool   `json:"enabled"`
+	// Killed forces every evaluation to the application's fallback, whatever
+	// the default, rules or inherited decisions say (ADR 20261114150000 §3).
+	Killed   bool          `json:"killed,omitempty"`
 	Default  any           `json:"default"`
 	Seed     string        `json:"seed"`
 	Rules    []Rule        `json:"rules"`
@@ -235,10 +289,16 @@ func EvaluateForSubject(b Bundle, key, customer, subject string, fallback bool) 
 
 // EvaluateWithContext evaluates a boolean flag for one request context.
 func EvaluateWithContext(b Bundle, key string, c EvaluationContext, fallback bool) Decision {
+	if slices.Contains(c.Kills, key) {
+		return killedDecision(b, key, "boolean", fallback)
+	}
 	d := Decision{Flag: key, Value: fallback, ConfigVersion: b.Version, Reason: "flag_missing", Source: "fallback"}
 	for _, f := range b.Flags {
 		if f.Key != key {
 			continue
+		}
+		if f.Killed {
+			return killedDecision(b, key, "boolean", fallback)
 		}
 		if flagType(f) != "boolean" {
 			d.Reason = "type_mismatch"
@@ -264,10 +324,16 @@ func EvaluateVariantForSubject(b Bundle, key, customer, subject, fallback string
 
 // EvaluateVariantWithContext evaluates a named variant for one request context.
 func EvaluateVariantWithContext(b Bundle, key string, c EvaluationContext, fallback string) Decision {
+	if slices.Contains(c.Kills, key) {
+		return killedDecision(b, key, "variant", fallback)
+	}
 	d := Decision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: b.Version, Reason: "flag_missing", Source: "fallback"}
 	for _, f := range b.Flags {
 		if f.Key != key {
 			continue
+		}
+		if f.Killed {
+			return killedDecision(b, key, "variant", fallback)
 		}
 		if flagType(f) != "variant" {
 			d.Reason = "type_mismatch"
