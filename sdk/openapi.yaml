@@ -20708,7 +20708,7 @@ paths:
         - name: Deployment-Attempt-ID
           in: header
           required: false
-          description: Durable project submission identity. Persist before apply; after an uncertain response inspect the receipt instead of resubmitting.
+          description: Durable organization project submission identity. Persist before applying this organization's reviewed plan; after an uncertain response inspect its submission receipt instead of resubmitting.
           schema: {type: string, pattern: '^[a-f0-9]{32}$'}
       requestBody:
         required: true

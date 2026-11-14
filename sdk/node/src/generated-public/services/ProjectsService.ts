@@ -1371,7 +1371,7 @@ export class ProjectsService {
     organization: string,
     requestBody: ApplyCachedProjectPlanRequest,
     /**
-     * Durable project submission identity. Persist before apply; after an uncertain response inspect the receipt instead of resubmitting.
+     * Durable organization project submission identity. Persist before applying this organization's reviewed plan; after an uncertain response inspect its submission receipt instead of resubmitting.
      */
     deploymentAttemptId?: string,
   }): CancelablePromise<ApplyResponse> {
