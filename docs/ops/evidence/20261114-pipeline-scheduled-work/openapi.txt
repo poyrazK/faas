@@ -1,0 +1,1 @@
+ok  	github.com/onebox-faas/faas/scripts/ci/speccompliance	13.910s

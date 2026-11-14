@@ -1,0 +1,3 @@
+ok  	github.com/onebox-faas/faas/pkg/datapipeline	97.691s
+ok  	github.com/onebox-faas/faas/pkg/apid/datapipelines	(cached)
+ok  	github.com/onebox-faas/faas/pkg/dashboard	(cached)

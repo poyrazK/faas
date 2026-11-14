@@ -2010,6 +2010,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/freshness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineFreshness))))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/indexes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineIndexes))))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/evolution", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineEvolve))))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/operations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineOperations))))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/schema-approval", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineApproveSchema))))
 	mux.HandleFunc("GET /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresDatabases))))
 	mux.HandleFunc("GET /v1/postgres/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCapabilities))))

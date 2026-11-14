@@ -61,6 +61,13 @@ func (s *Service) ConfigureFreshness(ctx context.Context, account, id string, r 
 }
 
 func (s *PostgresStore) ConfigureFreshness(ctx context.Context, account, id string, revision, seconds int64) error {
+	p, err := s.Get(ctx, account, id)
+	if err != nil {
+		return err
+	}
+	if snapshotMode(p) {
+		return ErrInvalid
+	}
 	n, err := s.q.PipelineSetFreshness(ctx, s.pool, sqlc.PipelineSetFreshnessParams{AccountID: account, ID: id, Revision: revision, TargetSeconds: seconds})
 	if err != nil {
 		return storeError(err)

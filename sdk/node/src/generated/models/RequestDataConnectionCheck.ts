@@ -7,6 +7,10 @@
  */
 export type RequestDataConnectionCheck = {
   /**
+   * Select snapshot inspection for read-only scheduled imports; omit for continuous replication.
+   */
+  mode?: 'snapshot';
+  /**
    * Exact public table names to inspect, bypassing the default discovery page. Mutually exclusive with search.
    */
   tables?: Array<string>;

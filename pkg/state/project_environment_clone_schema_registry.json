@@ -5118,7 +5118,9 @@
       "verification_progress",
       "verified_at",
       "verify_requested",
-      "wal_retention"
+      "wal_retention",
+      "work_config",
+      "work_status"
     ],
     "kind": "configuration",
     "capabilities": [],

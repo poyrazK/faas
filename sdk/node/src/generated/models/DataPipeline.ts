@@ -7,6 +7,8 @@ import type { DataPipelineEvolution } from './DataPipelineEvolution.js';
 import type { DataPipelineFreshness } from './DataPipelineFreshness.js';
 import type { DataPipelineHealth } from './DataPipelineHealth.js';
 import type { DataPipelineIndexAdvice } from './DataPipelineIndexAdvice.js';
+import type { DataPipelineOperations } from './DataPipelineOperations.js';
+import type { DataPipelineOperationsStatus } from './DataPipelineOperationsStatus.js';
 import type { DataPipelineSchemaReview } from './DataPipelineSchemaReview.js';
 import type { DataPipelineServing } from './DataPipelineServing.js';
 import type { DataPipelineTenantChange } from './DataPipelineTenantChange.js';
@@ -15,6 +17,8 @@ import type { DataPipelineWALRetention } from './DataPipelineWALRetention.js';
  * Managed replication intent with bounded, revision-specific worker observations.
  */
 export type DataPipeline = {
+  operations?: DataPipelineOperations;
+  operations_status?: DataPipelineOperationsStatus;
   schema_review?: DataPipelineSchemaReview;
   evolution?: DataPipelineEvolution;
   /**

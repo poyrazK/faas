@@ -1,0 +1,4 @@
+ok  	github.com/onebox-faas/faas/cmd/gregale	5.920s
+ok  	github.com/onebox-faas/faas/pkg/apid/apidserver	0.494s
+ok  	github.com/onebox-faas/faas/pkg/state	36.075s
+ok  	github.com/onebox-faas/faas/pkg/managedpostgres	30.523s

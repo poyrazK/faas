@@ -193,3 +193,7 @@ func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 	}, RefreshRelationships: store.RefreshRelationships, RefreshSchema: store.RefreshSchema, RefreshReadGate: store.RefreshReadGate, Policy: policy, Target: service.WithPipelineSQL, Capacity: capacity, Admit: store.AdmitCapacity}}
 	return worker.Run(ctx)
 }
+
+func (s *server) pipelineOperations(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.Operations(w, r, a.ID)
+}

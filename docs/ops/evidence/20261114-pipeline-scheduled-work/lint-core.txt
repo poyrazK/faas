@@ -1,0 +1,11 @@
+Checking ./cmd/gregale
+0 issues.
+Checking ./pkg/apid/apidserver
+0 issues.
+Checking ./pkg/datapipeline
+0 issues.
+Checking ./pkg/apid/datapipelines
+0 issues.
+Checking ./pkg/dashboard
+0 issues.
+Failed: []

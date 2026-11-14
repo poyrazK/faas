@@ -6,6 +6,12 @@ import (
 	"net/url"
 )
 
+func (c *Client) ConfigureDataPipelineOperations(ctx context.Context, id string, r DataPipelineOperationsRequest) (DataPipeline, error) {
+	var out DataPipeline
+	err := c.do(ctx, http.MethodPost, "/v1/data/pipelines/"+url.PathEscape(id)+"/operations", r, &out)
+	return out, err
+}
+
 func (c *Client) CreateDataConnection(ctx context.Context, r CreateDataConnectionRequest) (DataConnection, error) {
 	var out DataConnection
 	err := c.do(ctx, http.MethodPost, "/v1/data/connections", r, &out)

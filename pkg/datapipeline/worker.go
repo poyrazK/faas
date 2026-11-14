@@ -44,10 +44,19 @@ func (w *Worker) reconcilePipeline(ctx context.Context, p Pipeline) error {
 	if p.ServingInvalid || !validRuntimeServing(p) {
 		return w.Store.Finish(ctx, p, Observation{State: "blocked", Reason: "serving_contract_invalid"})
 	}
-	op, cancel := context.WithTimeout(ctx, api.DataPipelineOperationTimeout)
+	timeout := api.DataPipelineOperationTimeout
+	if snapshotMode(p) {
+		timeout = api.DataPipelineSnapshotOperationTimeout
+	}
+	op, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if err := w.syncAuthMemberships(op, &p); err != nil {
 		return err
+	}
+	if w.Allowed != nil && w.Allowed(op, p.AccountID) {
+		if err := w.startSnapshot(op, &p); err != nil {
+			return err
+		}
 	}
 	intent := p
 	admitted := w.Allowed != nil && w.Allowed(op, p.AccountID)
@@ -72,13 +81,18 @@ func (w *Worker) reconcilePipeline(ctx context.Context, p Pipeline) error {
 		raw, err = openConnection(w.Identities, c)
 	}
 	var ob Observation
-	if err != nil {
+	if snapshotMode(p) {
+		ob = w.Engine.reconcileSnapshot(op, intent, raw, current)
+	} else if err != nil {
 		ob = w.Engine.reconcileUnavailable(op, intent, current)
 	} else {
 		ob = w.Engine.Reconcile(op, intent, raw, current)
 	}
 	if !admitted && p.DesiredState == "running" && ob.State == "paused" {
 		ob.State, ob.Reason = "blocked", "admission_closed"
+	}
+	if admitted && !ob.ReaderOnly && !ob.IndexOnly && ob.State == "live" && p.DesiredState == "running" {
+		w.Engine.observeQuality(op, intent, &ob, current)
 	}
 	return w.Store.Finish(ctx, p, ob)
 }

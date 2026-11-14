@@ -13,6 +13,7 @@ import type { DataPipelineEvolutionRequest } from '../models/DataPipelineEvoluti
 import type { DataPipelineFreshnessRequest } from '../models/DataPipelineFreshnessRequest.js';
 import type { DataPipelineIndexRequest } from '../models/DataPipelineIndexRequest.js';
 import type { DataPipelineList } from '../models/DataPipelineList.js';
+import type { DataPipelineOperationsRequest } from '../models/DataPipelineOperationsRequest.js';
 import type { DataPipelineSchemaApprovalRequest } from '../models/DataPipelineSchemaApprovalRequest.js';
 import type { DataPipelineSetup } from '../models/DataPipelineSetup.js';
 import type { DataPipelineSetupControlRequest } from '../models/DataPipelineSetupControlRequest.js';
@@ -246,6 +247,33 @@ export class DataPipelinesService {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines/{id}/control',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Configure scheduled pipeline work
+   * Set bounded snapshot schedules, curated quality rules and UTC work budgets, or request the next snapshot or quality run. Import mode and serving selection remain immutable. Manual requests respect work windows.
+   * @returns Problem Scheduled operations validation, ownership, admission or intent conflict.
+   * @returns DataPipeline Scheduled work policy or explicit run request accepted.
+   * @throws ApiError
+   */
+  public static configureDataPipelineOperations({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Pipeline whose scheduled maintenance policy is updated.
+     */
+    id: string,
+    requestBody: DataPipelineOperationsRequest,
+  }): CancelablePromise<Problem | DataPipeline> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/data/pipelines/{id}/operations',
       path: {
         'id': id,
       },
