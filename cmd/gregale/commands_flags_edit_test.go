@@ -1,0 +1,226 @@
+package main_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/onebox-faas/faas/cmd/gregale"
+	"github.com/onebox-faas/faas/pkg/flags"
+)
+
+// fakeFlagsAPI keeps one environment's configuration and enforces
+// expected_version like apid. conflictOnce makes the next PUT answer 409
+// after a concurrent writer bumped the version.
+type fakeFlagsAPI struct {
+	mu           sync.Mutex
+	version      int64
+	config       flags.Config
+	puts         int
+	conflictOnce bool
+}
+
+func (f *fakeFlagsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if r.URL.Path != "/v1/projects/exports/environments/production/flags" {
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+	case http.MethodPut:
+		var body struct {
+			ExpectedVersion int64        `json:"expected_version"`
+			Config          flags.Config `json:"config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		f.puts++
+		if f.conflictOnce {
+			f.conflictOnce = false
+			f.version++
+		}
+		if body.ExpectedVersion != f.version {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"type":"about:blank","status":409,"code":"flags_version_conflict","title":"Configuration changed","detail":"refresh"}`))
+			return
+		}
+		if err := flags.Validate(body.Config); err != nil {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"type":"about:blank","status":400,"code":"validation_error","title":"Invalid","detail":` + jsonString(err.Error()) + `}`))
+			return
+		}
+		f.version++
+		f.config = body.Config
+	default:
+		http.Error(w, "method", http.StatusMethodNotAllowed)
+		return
+	}
+	cfg := f.config
+	if cfg.Flags == nil {
+		cfg.Flags = []flags.Flag{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"version": f.version, "flags": cfg.Flags, "groups": cfg.Groups})
+}
+
+func jsonString(s string) string {
+	raw, _ := json.Marshal(s)
+	return string(raw)
+}
+
+func (f *fakeFlagsAPI) flag(t *testing.T, key string) flags.Flag {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, fl := range f.config.Flags {
+		if fl.Key == key {
+			return fl
+		}
+	}
+	t.Fatalf("flag %s missing from %+v", key, f.config.Flags)
+	return flags.Flag{}
+}
+
+func runFlagsCLI(t *testing.T, api *fakeFlagsAPI, args ...string) (int, string) {
+	t.Helper()
+	server := httptest.NewServer(api)
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	oldOut, oldJSON := (*main.OsStdout), (*main.JsonOutput)
+	var out bytes.Buffer
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	defer func() { (*main.OsStdout), (*main.JsonOutput) = oldOut, oldJSON }()
+	code := main.CmdFlags(append(args, "--project", "exports"))
+	return code, out.String()
+}
+
+func TestFlagsEditCommandsBooleanLifecycle(t *testing.T) {
+	api := &fakeFlagsAPI{}
+	if code, out := runFlagsCLI(t, api, "create", "new-export", "--description", "new pipeline"); code != 0 || !strings.Contains(out, "Created new-export") {
+		t.Fatalf("create: %d %q", code, out)
+	}
+	if f := api.flag(t, "new-export"); !f.Enabled || f.Default != false || f.Description != "new pipeline" {
+		t.Fatalf("created %+v", f)
+	}
+	if code, _ := runFlagsCLI(t, api, "create", "new-export"); code == 0 {
+		t.Fatal("duplicate create accepted")
+	}
+	if code, out := runFlagsCLI(t, api, "percent", "new-export", "12.5%"); code != 0 || !strings.Contains(out, "12.5% of customers") {
+		t.Fatalf("percent: %d %q", code, out)
+	}
+	f := api.flag(t, "new-export")
+	if len(f.Rules) != 1 || f.Rules[0].ID != "everyone-percent" || *f.Rules[0].Rollout != 1250 || f.Rules[0].Value != true {
+		t.Fatalf("percent rule %+v", f.Rules)
+	}
+	// A targeted rule goes before the catch-all percentage.
+	if code, out := runFlagsCLI(t, api, "rule-add", "new-export", "--id", "pilot", "--customer", "11111111-1111-4111-8111-111111111111"); code != 0 || !strings.Contains(out, "position 1") {
+		t.Fatalf("rule-add: %d %q", code, out)
+	}
+	f = api.flag(t, "new-export")
+	if len(f.Rules) != 2 || f.Rules[0].ID != "pilot" || f.Rules[0].Value != true || f.Rules[1].ID != "everyone-percent" {
+		t.Fatalf("rules %+v", f.Rules)
+	}
+	// Changing the percentage keeps it last.
+	if code, _ := runFlagsCLI(t, api, "percent", "new-export", "50"); code != 0 {
+		t.Fatal("percent 50")
+	}
+	if f = api.flag(t, "new-export"); f.Rules[1].ID != "everyone-percent" || *f.Rules[1].Rollout != 5000 {
+		t.Fatalf("rules %+v", f.Rules)
+	}
+	if code, _ := runFlagsCLI(t, api, "set", "new-export", "--default", "true"); code != 0 || api.flag(t, "new-export").Default != true {
+		t.Fatal("set default true")
+	}
+	// off on a boolean flag also turns its default off.
+	if code, out := runFlagsCLI(t, api, "off", "new-export"); code != 0 || !strings.Contains(out, "default to false") {
+		t.Fatalf("off: %d %q", code, out)
+	}
+	if f = api.flag(t, "new-export"); f.Enabled || f.Default != false {
+		t.Fatalf("off left %+v", f)
+	}
+	if code, _ := runFlagsCLI(t, api, "on", "new-export"); code != 0 || !api.flag(t, "new-export").Enabled {
+		t.Fatal("on")
+	}
+	if code, _ := runFlagsCLI(t, api, "rule-rm", "new-export", "--id", "pilot"); code != 0 || len(api.flag(t, "new-export").Rules) != 1 {
+		t.Fatal("rule-rm")
+	}
+	if code, _ := runFlagsCLI(t, api, "percent", "new-export", "0"); code != 0 || len(api.flag(t, "new-export").Rules) != 0 {
+		t.Fatal("percent 0 should remove the rule")
+	}
+	if code, out := runFlagsCLI(t, api, "list"); code != 0 || !strings.Contains(out, "new-export") || !strings.Contains(out, "boolean") {
+		t.Fatalf("list: %d %q", code, out)
+	}
+	if code, _ := runFlagsCLI(t, api, "rm", "new-export"); code != 0 || len(api.config.Flags) != 0 {
+		t.Fatal("rm")
+	}
+}
+
+func TestFlagsEditCommandsVariants(t *testing.T) {
+	api := &fakeFlagsAPI{}
+	if code, _ := runFlagsCLI(t, api, "create", "pipeline", "--variants", "legacy,new,next", "--default", "new"); code != 0 {
+		t.Fatal("create variants")
+	}
+	f := api.flag(t, "pipeline")
+	if f.Type != "variant" || f.Default != "new" || len(f.Variants) != 3 || f.Variants[0].Weight != 3334 || f.Variants[1].Weight != 3333 {
+		t.Fatalf("variant flag %+v", f)
+	}
+	if code, _ := runFlagsCLI(t, api, "set", "pipeline", "--default", "nope"); code == 0 {
+		t.Fatal("unknown variant default accepted")
+	}
+	if code, _ := runFlagsCLI(t, api, "percent", "pipeline", "10"); code != 0 {
+		t.Fatal("variant percent")
+	}
+	if f = api.flag(t, "pipeline"); f.Rules[0].Value != nil {
+		t.Fatalf("variant percentage rule should use weights, got %+v", f.Rules[0])
+	}
+	if code, _ := runFlagsCLI(t, api, "rule-add", "pipeline", "--id", "pinned", "--percent", "5", "--value", "next"); code != 0 {
+		t.Fatal("variant rule-add")
+	}
+	if f = api.flag(t, "pipeline"); f.Rules[0].ID != "pinned" || f.Rules[0].Value != "next" {
+		t.Fatalf("rules %+v", f.Rules)
+	}
+	// off on a variant flag leaves its default alone.
+	if code, _ := runFlagsCLI(t, api, "off", "pipeline"); code != 0 || api.flag(t, "pipeline").Default != "new" {
+		t.Fatal("variant off")
+	}
+}
+
+func TestFlagsEditRetriesAfterVersionConflict(t *testing.T) {
+	api := &fakeFlagsAPI{conflictOnce: true}
+	if code, _ := runFlagsCLI(t, api, "create", "retry-me"); code != 0 {
+		t.Fatal("create after one conflict")
+	}
+	if api.puts != 2 || api.version != 2 {
+		t.Fatalf("puts=%d version=%d", api.puts, api.version)
+	}
+}
+
+func TestFlagsEditValidation(t *testing.T) {
+	api := &fakeFlagsAPI{}
+	for _, args := range [][]string{
+		{"create"},
+		{"create", "Bad-Key"},
+		{"percent", "x", "101"},
+		{"percent", "x", "1.234"},
+		{"set", "x"},
+		{"on", "missing"},
+		{"rule-add", "x"},
+		{"rule-rm", "x"},
+	} {
+		if code, _ := runFlagsCLI(t, api, args...); code == 0 {
+			t.Errorf("%v accepted", args)
+		}
+	}
+	if api.puts != 0 {
+		t.Fatalf("invalid commands published %d times", api.puts)
+	}
+}

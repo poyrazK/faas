@@ -15,8 +15,11 @@ import (
 
 func cmdFlags(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale flags <get|apply|history|inspect|rollback|requests|outcomes|promote> --project SLUG [flags]", "flags")
+		PrintUsage(os.Stderr, "usage: gregale flags <"+flagsUsageEditVerbs+"|get|apply|history|inspect|rollback|requests|outcomes|promote> --project SLUG [flags]", "flags")
 		return 1
+	}
+	if _, ok := flagsEditVerbs[args[0]]; ok {
+		return cmdFlagsEdit(args[0], args[1:])
 	}
 	if !knownFlagsVerb(args[0]) {
 		// `flags list` answered "invalid flags command or missing required

@@ -3705,8 +3705,23 @@ var cliCommands = []cliCommand{
 	},
 	{
 		Name: "flags", DocSlug: "flags", Short: "Roll out feature flags to selected customers",
+		Examples: []string{
+			"gregale flags create new-export --project exports",
+			"gregale flags percent new-export 10 --project exports",
+			"gregale flags rule-add new-export --id pilot --group pilot-customers --project exports",
+			"gregale flags off new-export --project exports",
+		},
 		Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}},
 		Subcommands: []cliSub{
+			{Name: "list", Short: "List flags with their state, default and rule count", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "create", Short: "Create an enabled flag (boolean, or variants with --variants)", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "variants", Short: "comma-separated variant keys; weights split evenly", Value: "a,b"}, {Name: "default", Short: "default value (default false, or the first variant)", Value: "value"}, {Name: "description", Short: "flag description", Value: "TEXT"}}},
+			{Name: "set", Short: "Change a flag's default or description", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "default", Short: "default value", Value: "value"}, {Name: "description", Short: "flag description", Value: "TEXT"}}},
+			{Name: "on", Short: "Enable a flag", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "off", Short: "Disable a flag (a boolean flag's default becomes false)", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "percent", Short: "Roll a flag out to a percentage of customers (0 removes it)", Positionals: []string{"<key>", "<percent>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "rule-add", Short: "Add a targeting rule before the percentage rollout", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "id", Short: "rule ID", Value: "ID", Req: true}, {Name: "customer", Short: "platform customer UUID (repeatable)", Value: "UUID"}, {Name: "group", Short: "customer group", Value: "NAME"}, {Name: "percent", Short: "percentage of matching customers", Value: "number"}, {Name: "value", Short: "value served (default true, or weighted variants)", Value: "value"}}},
+			{Name: "rule-rm", Short: "Remove a targeting rule", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "id", Short: "rule ID", Value: "ID", Req: true}}},
+			{Name: "rm", Short: "Remove a flag", Positionals: []string{"<key>"}, Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 			{Name: "get", Short: "Read current flag configuration", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
 			{Name: "apply", Short: "Publish a versioned configuration", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "file", Short: "JSON update bundle", Value: "path", Req: true}}},
 			{Name: "history", Short: "List immutable configuration versions", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "before-version", Short: "page before this version", Value: "number"}}},
