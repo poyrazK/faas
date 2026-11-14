@@ -82,3 +82,12 @@ failed `TestPoolExhaustionRealTCPSequenceAndCleanup` on three late arrivals and
 `TestNativeTransportNegativeAssertionsRealTCP` on an unavailable connection
 baseline. Both unmodified TCP tests passed on isolated rerun (10.45s and 28.30s).
 The final hosted Data API acceptance remains the complete-suite merge gate.
+
+[Hosted Data API acceptance run 43645387930](https://github.com/poyrazK/faas/actions/runs/43645387930)
+subsequently passed on `6e616d7cc84c87b22826cc9b5cc52e0278fb36ae`, including
+credential qualification, lifecycle and the complete CLI integration suite.
+That commit also passed all six required ci-light checks and
+[native pipeline acceptance](https://github.com/poyrazK/faas/actions/runs/43645388053).
+The subsequent main integration replays the async-backlog migration and carries
+the regenerated environment-branch preview SDK models. Its final commit still
+requires fresh CI before merge.

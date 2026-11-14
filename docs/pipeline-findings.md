@@ -661,6 +661,10 @@ operations manifest, its canonical alias and the creation-time
 the requested action and expected revision, and rejects malformed local files
 before contacting the API.
 
+[Hosted Data API acceptance run 43645387930](https://github.com/poyrazK/faas/actions/runs/43645387930)
+passed on `6e616d7cc8`, including the complete CLI integration suite after these
+fixes. The later main/schema integration remains subject to fresh commit CI.
+
 ## Customer roadmap
 
 Reviewed 2026-11-14 against the evolution branch. CUST-007–012 have approved
