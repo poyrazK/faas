@@ -242,8 +242,8 @@ func (s queueDepthSignal) desiredWorkers(target float64, maxInstances int, minWo
 			desired = int(math.Ceil(float64(s.brokerLag) / target))
 		}
 	} else if len(s.bindings) == 0 {
-		if s.queue.Depth > 0 {
-			desired = int(math.Ceil(float64(s.queue.Depth) / target))
+		if depth := s.queue.RunnableDepth(); depth > 0 {
+			desired = int(math.Ceil(float64(depth) / target))
 		}
 	} else {
 		for _, perBinding := range s.bindingWorkerDemand(target) {
@@ -270,8 +270,10 @@ func (s queueDepthSignal) bindingWorkerDemand(target float64) map[string]int {
 	demand := make(map[string]int, len(s.bindings))
 	for _, sample := range s.bindings {
 		workers := 0
-		if sample.binding.Enabled && sample.queue.Depth > 0 {
-			workers = int(math.Ceil(float64(sample.queue.Depth) / target))
+		// Messages waiting behind their key cannot run: a blocked ordered
+		// key must not start idle workers (ADR-20261112193306).
+		if depth := sample.queue.RunnableDepth(); sample.binding.Enabled && depth > 0 {
+			workers = int(math.Ceil(float64(depth) / target))
 			if workers < 1 {
 				workers = 1
 			}
@@ -655,6 +657,9 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 						return queueDepthSignal{}, false, fmt.Errorf("queue binding %q: %w", binding.QueueName, err)
 					}
 					signal.queue.Depth += queue.Depth
+					signal.queue.WaitingBehindKey += queue.WaitingBehindKey
+					signal.queue.BlockedLanes += queue.BlockedLanes
+					signal.queue.OldestBlockedAt = earliest(signal.queue.OldestBlockedAt, queue.OldestBlockedAt)
 					signal.queue.InFlight += queue.InFlight
 					signal.queue.DeadLetter += queue.DeadLetter
 					if !queue.OldestPendingAt.IsZero() && (signal.queue.OldestPendingAt.IsZero() || queue.OldestPendingAt.Before(signal.queue.OldestPendingAt)) {
@@ -664,6 +669,8 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 				signal.bindings = append(signal.bindings, queueBindingDepth{binding: binding, queue: queue})
 				aggregate := byName[binding.QueueName]
 				aggregate.Depth += queue.Depth
+				aggregate.BlockedLanes += queue.BlockedLanes
+				aggregate.OldestBlockedAt = earliest(aggregate.OldestBlockedAt, queue.OldestBlockedAt)
 				aggregate.InFlight += queue.InFlight
 				aggregate.DeadLetter += queue.DeadLetter
 				if !queue.OldestPendingAt.IsZero() && (aggregate.OldestPendingAt.IsZero() || queue.OldestPendingAt.Before(aggregate.OldestPendingAt)) {
@@ -674,6 +681,7 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 			if publish && t.metrics != nil {
 				for name, queue := range byName {
 					t.metrics.SetQueueBindingState(app.ID, name, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
+					t.metrics.SetQueueBindingBlocked(app.ID, name, queue.BlockedLanes, queue.OldestBlockedAt, now)
 				}
 			}
 			return withBroker(signal, true, nil)
@@ -684,6 +692,14 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 	}
 	queue, err := t.queueStats.QueueState(ctx, app.ID)
 	return withBroker(queueDepthSignal{queue: queue}, true, err)
+}
+
+// earliest returns the earlier non-zero time.
+func earliest(a, b time.Time) time.Time {
+	if a.IsZero() || (!b.IsZero() && b.Before(a)) {
+		return b
+	}
+	return a
 }
 
 func (t *Trigger) bindingQueueState(ctx context.Context, appID, bindingID string, limit int) (state.QueueStats, error) {
@@ -990,7 +1006,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			}
 			if haveQueue {
 				queue := queueSignal.queue
-				observedQueueDepth = queue.Depth
+				observedQueueDepth = queue.RunnableDepth()
 				observedBrokerLag = queueSignal.brokerLag
 				haveBrokerLag = queueSignal.haveBrokerLag
 				if publish {

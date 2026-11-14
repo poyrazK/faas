@@ -121806,6 +121806,8 @@ components:
         dead_letter: { type: integer, minimum: 0 }
         oldest_pending_at: { type: [string, "null"], format: date-time }
         oldest_pending_age_seconds: { type: [integer, "null"], minimum: 0 }
+        blocked_groups: { type: integer, minimum: 0, description: "group_key groups whose first message has failed and holds later messages with its key until it succeeds or dead-letters. Omitted when zero." }
+        oldest_blocked_age_seconds: { type: integer, minimum: 0, description: "Age of the oldest message holding its group_key group." }
         generated_at: { type: string, format: date-time }
 
     RetryPolicyDTO:

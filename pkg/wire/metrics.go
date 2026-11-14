@@ -4064,6 +4064,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		workerRecovery.apps, workerRecovery.replicas, workerRecovery.observedAt,
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
+		queue.bindingBlockedLanes, queue.bindingBlockedAgeSeconds,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
 		cronDelivery.deliveryTotal, cronDelivery.scheduleLagSeconds,
 		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenFastPathSkipped, frozenThawTickets, ownerCacheTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,

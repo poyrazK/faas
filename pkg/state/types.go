@@ -5274,6 +5274,21 @@ type QueueStats struct {
 	InFlight        int
 	OldestPendingAt time.Time
 	DeadLetter      int
+	// Ordered work (ADR-20261112193306), from bounded binding telemetry;
+	// other readers leave them zero. WaitingBehindKey counts due messages
+	// held behind an older message of their work key; BlockedLanes counts
+	// keys whose head has failed and holds later messages, the oldest head
+	// created at OldestBlockedAt.
+	WaitingBehindKey int
+	BlockedLanes     int
+	OldestBlockedAt  time.Time
+}
+
+// RunnableDepth is the backlog that could run now: Depth without messages
+// waiting behind their key. queue_depth scaling sizes workers by it, so a
+// blocked key does not start idle workers.
+func (q QueueStats) RunnableDepth() int {
+	return max(q.Depth-q.WaitingBehindKey, 0)
 }
 
 // QueueBinding is the durable app-scoped contract between a logical queue and

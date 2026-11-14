@@ -67,7 +67,12 @@ type QueueBindingStatusResponse struct {
 	DeadLetter              int        `json:"dead_letter"`
 	OldestPendingAt         *time.Time `json:"oldest_pending_at,omitempty"`
 	OldestPendingAgeSeconds *int64     `json:"oldest_pending_age_seconds,omitempty"`
-	GeneratedAt             time.Time  `json:"generated_at"`
+	// BlockedGroups counts group_key groups whose first message has failed
+	// and holds later messages of its key; OldestBlockedAgeSeconds is the
+	// oldest such message's age (ADR-20261112193306).
+	BlockedGroups           int       `json:"blocked_groups,omitempty"`
+	OldestBlockedAgeSeconds *int64    `json:"oldest_blocked_age_seconds,omitempty"`
+	GeneratedAt             time.Time `json:"generated_at"`
 }
 
 type CreateQueueBindingRequest struct {

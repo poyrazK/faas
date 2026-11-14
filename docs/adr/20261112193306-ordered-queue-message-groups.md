@@ -1,6 +1,6 @@
 # ADR-20261112193306: Ordered message groups for worker queues
 
-- Status: accepted (owner decisions 2026-11-12); slices 1–3 built, 2–3 dark
+- Status: accepted (owner decisions 2026-11-12); slices 1–4 built, 2–4 dark
 - Amends: ADR-374 (application keyed work policy), ADR-20261022105723 (pull
   leases), ADR-20261112140000 (Postgres change workers)
 - Related: ADR-795 (keyed event delivery ordering), ADR-972 (parallel push)
@@ -103,12 +103,19 @@ but kept out of help, completions and the reference while the
   declared `gregale-ordered` itself blocks it as `work_policy_reserved`.
   `state.OrderedWorkPolicy` is the one get-or-create both paths use.
 
-### Slice 4: health and scaling
+### Slice 4: health and scaling (built)
 
-`queue_depth` scaling counts lane heads plus unkeyed messages instead of all
-pending rows, so one blocked key does not start idle workers. Worker status
-and queue health add blocked lanes and the oldest blocked lane's age; metric
-`queue_blocked_lanes` per binding.
+Binding telemetry adds `waiting_behind_key` (due messages held behind an
+older pending or running message of their key), `blocked_lanes` (keys whose
+head has failed at least once and holds later pending messages) and the
+oldest blocking head's `created_at`, each bounded like the other counts.
+Queue depth as reported is unchanged; `queue_depth` scaling sizes workers by
+`QueueStats.RunnableDepth()` (depth minus waiting), per binding and for
+push-app decisions, so one blocked key does not start idle workers. schedd
+publishes `schedd_queue_binding_blocked_lanes` and
+`schedd_queue_binding_blocked_age_seconds`; the binding status API reports
+`blocked_groups` and `oldest_blocked_age_seconds`, the customer's term for a
+group_key group.
 
 ## Consequences
 
@@ -119,8 +126,9 @@ and queue health add blocked lanes and the oldest blocked lane's age; metric
   traffic is unchanged.
 - A poison message stalls its key until its attempts are spent, bounded by
   the binding's retry policy (owner choice 3).
-- Until slice 4, a long blocked lane lengthens the candidate scan, since the
-  head filter runs while the due-ordered index is walked.
+- A long blocked lane lengthens the lease candidate scan, since the head
+  filter runs while the due-ordered index is walked; the telemetry counts
+  are bounded by the status row limit.
 
 ## Rollout
 

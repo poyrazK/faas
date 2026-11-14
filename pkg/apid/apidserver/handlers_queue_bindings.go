@@ -233,6 +233,11 @@ func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, a
 		resp.OldestPendingAt = &oldest
 		resp.OldestPendingAgeSeconds = &age
 	}
+	resp.BlockedGroups = stats.BlockedLanes
+	if !stats.OldestBlockedAt.IsZero() {
+		age := max(int64(resp.GeneratedAt.Sub(stats.OldestBlockedAt).Seconds()), 0)
+		resp.OldestBlockedAgeSeconds = &age
+	}
 
 	if binding.Mode == "push" {
 		resp.ConsumerState = "not_configured"

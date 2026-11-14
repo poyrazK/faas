@@ -3,6 +3,7 @@ package state
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -84,9 +85,13 @@ func (s *PgStore) QueueBindingTelemetry(ctx context.Context, appID, bindingID st
 	if err != nil {
 		return QueueStats{}, mapErr(err)
 	}
-	stats := QueueStats{Depth: min(int(row.Depth), limit), InFlight: int(row.InFlight), DeadLetter: int(row.DeadLetter)}
+	stats := QueueStats{Depth: min(int(row.Depth), limit), InFlight: int(row.InFlight), DeadLetter: int(row.DeadLetter),
+		WaitingBehindKey: min(int(row.WaitingBehindKey), limit), BlockedLanes: int(row.BlockedLanes)}
 	if row.OldestPendingAt.Valid {
 		stats.OldestPendingAt = row.OldestPendingAt.Time
+	}
+	if row.OldestBlockedAt.Valid {
+		stats.OldestBlockedAt = row.OldestBlockedAt.Time
 	}
 	return stats, nil
 }
@@ -165,6 +170,63 @@ func (m *MemStore) QueueBindingTelemetry(_ context.Context, appID, bindingID str
 		return QueueStats{}, err
 	}
 	stats, err := m.queueStateForBinding(appID, bindingID, "")
+	if err != nil {
+		return stats, err
+	}
+	m.orderedLaneStats(appID, bindingID, &stats)
 	stats.Depth, stats.InFlight, stats.DeadLetter = min(stats.Depth, limit), min(stats.InFlight, limit), min(stats.DeadLetter, limit)
-	return stats, err
+	stats.WaitingBehindKey, stats.BlockedLanes = min(stats.WaitingBehindKey, limit), min(stats.BlockedLanes, limit)
+	return stats, nil
+}
+
+// orderedLaneStats mirrors QueueBindingTelemetry's ordered-work figures
+// (ADR-20261112193306) for the binding's own keyed messages.
+func (m *MemStore) orderedLaneStats(appID, bindingID string, stats *QueueStats) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	type lane struct{ policy, digest string }
+	type laneState struct {
+		head    *Invocation // oldest pending or dispatching message
+		pending []*Invocation
+	}
+	binding := canonicalMemUUID(bindingID)
+	now := time.Now()
+	lanes := map[lane]*laneState{}
+	for _, row := range m.invocations {
+		inv := &row
+		if inv.AppID != appID || inv.WorkPolicyName == "" ||
+			(inv.State != InvocationPending && inv.State != InvocationDispatching) {
+			continue
+		}
+		k := lane{inv.WorkPolicyName, string(inv.WorkKeyDigest)}
+		l := lanes[k]
+		if l == nil {
+			l = &laneState{}
+			lanes[k] = l
+		}
+		if l.head == nil || inv.WorkSequence < l.head.WorkSequence {
+			l.head = inv
+		}
+		if inv.State == InvocationPending && inv.Source == InvocationQueue && canonicalMemUUID(inv.QueueBindingID) == binding {
+			l.pending = append(l.pending, inv)
+		}
+	}
+	for _, l := range lanes {
+		waiting := false
+		for _, inv := range l.pending {
+			if inv != l.head && !inv.DueAt.After(now) {
+				stats.WaitingBehindKey++
+			}
+			if inv != l.head {
+				waiting = true
+			}
+		}
+		h := l.head
+		if waiting && h.Attempts > 0 && h.Source == InvocationQueue && canonicalMemUUID(h.QueueBindingID) == binding {
+			stats.BlockedLanes++
+			if stats.OldestBlockedAt.IsZero() || h.CreatedAt.Before(stats.OldestBlockedAt) {
+				stats.OldestBlockedAt = h.CreatedAt
+			}
+		}
+	}
 }
