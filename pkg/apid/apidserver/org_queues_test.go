@@ -155,7 +155,7 @@ func orgQueueHTTPJourney(t *testing.T, server *apidserver.Server, store state.St
 	}
 	stagePath := "/v1/orgs/" + org.Slug + "/projects/" + project.Slug + "/environments/stage/workloads/" + stageApp.Slug + "/queue-bindings"
 	revision := int64(0)
-	definitions := []api.ProjectEnvironmentQueueBinding{{Name: "jobs", QueueName: "jobs", Mode: "pull", WorkloadClass: "worker", Enabled: true, MaxConcurrency: 2}}
+	definitions := []api.ProjectEnvironmentQueueBinding{{Name: "jobs", QueueName: "jobs", Mode: "push", WorkloadClass: "worker", Enabled: true, MaxConcurrency: 2}}
 	configured := send(t, "PUT", stagePath, api.ReplaceProjectEnvironmentQueueBindingsRequest{ExpectedRevision: &revision, Bindings: &definitions}, devHeaders)
 	if configured.Code != 200 {
 		t.Fatalf("company stage configuration: %d %s", configured.Code, configured.Body)

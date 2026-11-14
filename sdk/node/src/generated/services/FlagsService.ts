@@ -16,6 +16,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class FlagsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read current or historical feature flag configuration.
    * Requires operator enablement via FAAS_FLAGS_ENABLED. Account-scoped read credentials only; app deploy tokens cannot read project-wide targeting lists.
@@ -40,7 +41,7 @@ export class FlagsService {
      */
     version?: number,
   }): CancelablePromise<FeatureFlagVersion> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/environments/{environment}/flags',
       path: {
@@ -84,7 +85,7 @@ export class FlagsService {
     environment: string,
     requestBody: UpdateFeatureFlagsRequest,
   }): CancelablePromise<FeatureFlagVersion> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/projects/{slug}/environments/{environment}/flags',
       path: {
@@ -131,7 +132,7 @@ export class FlagsService {
      */
     beforeVersion?: number,
   }): CancelablePromise<Array<FeatureFlagVersion>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/environments/{environment}/flags/versions',
       path: {
@@ -175,7 +176,7 @@ export class FlagsService {
     environment: string,
     requestBody: RollbackFeatureFlagsRequest,
   }): CancelablePromise<FeatureFlagVersion> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/environments/{environment}/flags/rollback',
       path: {
@@ -224,7 +225,7 @@ export class FlagsService {
     key: string,
     requestBody: InspectFeatureFlagRequest,
   }): CancelablePromise<FlagDecision> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/environments/{environment}/flags/{key}/inspect',
       path: {
@@ -301,7 +302,7 @@ export class FlagsService {
      */
     cursor?: string,
   }): CancelablePromise<FlagEvidencePage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/environments/{environment}/flags/{key}/requests',
       path: {
@@ -374,7 +375,7 @@ export class FlagsService {
      */
     since?: string,
   }): CancelablePromise<FlagOutcomesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes',
       path: {
@@ -427,7 +428,7 @@ export class FlagsService {
     key: string,
     requestBody: FlagRolloutPromotionRequest,
   }): CancelablePromise<FlagRolloutPromotion> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote',
       path: {
@@ -465,7 +466,7 @@ export class FlagsService {
      */
     xFaasFlagsCapabilities?: string,
   }): CancelablePromise<FlagsBundle> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/runtime/flags',
       headers: {

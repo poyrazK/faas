@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/aiconsole"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
+	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
 	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/capgate"
@@ -77,6 +78,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/servicemap"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
+	"github.com/onebox-faas/faas/pkg/apid/toolregistry"
 	"github.com/onebox-faas/faas/pkg/auth"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
@@ -130,14 +132,20 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
-	sales           sales.Service
-	customerSupport *support.Service
+	privateTools     *toolregistry.PrivateExecutor
+	privateToolsOnce sync.Once
+	sales            sales.Service
+	customerSupport  *support.Service
 	// customerErrors records API problems returned to customers
 	// (ADR-20261112170000); nil without PostgreSQL.
 	customerErrors *customererrors.Recorder
 	// customerErrorSink receives each recorded event; it is
 	// customerErrors.Record in production and a capture in tests.
 	customerErrorSink func(customererrors.Event)
+	// attention evaluates customer attention signals (ADR-20261113123000);
+	// nil without PostgreSQL. supportSignals holds their metrics.
+	attention      *attention.Evaluator
+	supportSignals supportSignalsHolder
 
 	domainChecks domainverify.Checker
 	// requestIDLookups resolves request IDs kept on compute nodes
@@ -858,6 +866,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	s.configureInternalCIHealthMetrics(ctx)
 	if ops == nil {
 		s.domainVerificationMetrics = nil
+		s.supportSignals.Store(nil)
 		s.metricsDiscoveryMetrics = nil
 		s.prewarmMetrics = nil
 		s.statusMetrics = nil
@@ -866,6 +875,7 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.durable.Metrics = nil
 	} else if s.metricsDiscoveryMetrics == nil || s.metricsDiscoveryMetrics.registry != ops.Registry() {
 		s.domainVerificationMetrics = newDomainVerificationMetrics(ops.Registry(), ops.MetricPrefix())
+		s.supportSignals.Store(newSupportSignalMetrics(ops.Registry(), ops.MetricPrefix()))
 		s.metricsDiscoveryMetrics = newMetricsDiscoveryMetrics(ops.Registry(), ops.MetricPrefix())
 		s.prewarmMetrics = wire.NewPrewarmMetrics(ops.Registry())
 	}
@@ -2179,7 +2189,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/orgs/{slug}/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgApps)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.requireVerifiedEmail(s.idempotent(s.createOrgApp)))))))
 	mux.HandleFunc("PATCH /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.patchOrg)))))
-	mux.HandleFunc("DELETE /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.softDeleteOrg)))))
+	mux.HandleFunc("DELETE /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.softDeleteOrg))))))
+	// ADR-20261113180000: an owner can require two-factor authentication.
+	mux.HandleFunc("GET /v1/orgs/{slug}/security-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrgSecurityPolicy)))))
+	mux.HandleFunc("PUT /v1/orgs/{slug}/security-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.putOrgSecurityPolicy))))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgMembers)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireVerifiedEmail(s.loadOrg(s.inviteOrgMember))))))
 	mux.HandleFunc("PATCH /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.changeOrgMemberRole)))))
@@ -3072,6 +3085,33 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/mcp-catalog-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(mcpcatalog.Handler(s.store, s.authMw)))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/mcp-catalog-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpcatalog.Handler(s.store, s.authMw)))))
 	mux.HandleFunc("GET /v1/mcp-connection-health", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(mcpcatalog.ConnectionHealthHandler(s.store))))
+	mux.HandleFunc("GET /v1/tool-publications/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(toolregistry.Handler(s.store))))
+	mux.HandleFunc("PUT /v1/tool-publications/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(toolregistry.Handler(s.store)))))
+	mux.HandleFunc("POST /v1/tool-publications/{id}/outcome", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(toolregistry.Handler(s.store)))))
+	mux.HandleFunc("GET /v1/tool-registry", s.authLimited(s.requireScope(api.ScopesReadSurface...)(toolregistry.Search(s.store))))
+	mux.HandleFunc("GET /v1/tool-registry/{version}/tools/{name}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(toolregistry.Describe(s.store))))
+	s.privateToolsOnce.Do(func() { s.privateTools = s.newPrivateTools() })
+	toolConnections := toolregistry.Connections(s.store, s.agentConnectionDeps().Audit)
+	mux.HandleFunc("GET /v1/tool-oauth-connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(toolConnections))))
+	mux.HandleFunc("GET /v1/tool-oauth-connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(toolConnections))))
+	mux.HandleFunc("PUT /v1/tool-oauth-connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(toolConnections))))
+	mux.HandleFunc("DELETE /v1/tool-oauth-connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(toolConnections))))
+	mux.HandleFunc("GET /v1/tool-oauth-connections/{id}/authorization", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.AuthorizationHandler()))))
+	mux.HandleFunc("POST /v1/tool-oauth-connections/{id}/authorization", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.AuthorizationHandler()))))
+	mux.HandleFunc("GET /v1/delegated-tool-connections/{grant}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(toolregistry.DelegatedConnection(s.store))))
+	mux.HandleFunc("POST /v1/delegated-tool-invocations/{id}/execute", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.privateTools.Handler()))))
+	toolGrantAPI := toolregistry.Grants(s.store, s.agentConnectionDeps().Audit)
+	delegatedToolsAPI := toolregistry.DelegatedInvocations(s.store, s.agentConnectionDeps().Audit)
+	mux.HandleFunc("GET /v1/delegated-tool-invocations/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(delegatedToolsAPI)))
+	mux.HandleFunc("PUT /v1/delegated-tool-invocations/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(delegatedToolsAPI))))
+	mux.HandleFunc("POST /v1/delegated-tool-invocations/{id}/{action}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(delegatedToolsAPI))))
+	mux.HandleFunc("GET /v1/tool-grants", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(toolGrantAPI)))
+	mux.HandleFunc("GET /v1/tool-grants/{id}", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(toolGrantAPI)))
+	mux.HandleFunc("PUT /v1/tool-grants/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(toolGrantAPI))))
+	mux.HandleFunc("DELETE /v1/tool-grants/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(toolGrantAPI))))
+	mux.HandleFunc("GET /v1/tool-invocations/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(toolregistry.Invocations(s.store))))
+	mux.HandleFunc("PUT /v1/tool-invocations/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(toolregistry.Invocations(s.store)))))
+	mux.HandleFunc("POST /v1/tool-invocations/{id}/{action}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(toolregistry.Invocations(s.store)))))
 	mux.HandleFunc("GET /v1/mcp-oauth-retirements", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(mcpcatalog.RetirementHandler(s.store))))
 	mux.HandleFunc("POST /v1/mcp-oauth-retirements/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(mcpcatalog.RetirementHandler(s.store)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/mcp-catalog-monitor/oauth", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpcatalog.OAuthHandler(s.store, s.authMw, hostIdentitiesForUnseal)))))
@@ -4608,6 +4648,9 @@ func (s *server) handler() http.Handler {
 	// ADR-20261112170000: resolve a customer-supplied identifier.
 	mux.HandleFunc("GET /v1/admin/obs/lookup",
 		s.authLimited(s.requireOperatorSessionRead(s.obsLookup)))
+	// ADR-20261113123000: customers who are probably stuck.
+	mux.HandleFunc("GET /v1/admin/obs/attention",
+		s.authLimited(s.requireOperatorSessionRead(s.obsListAttention)))
 	mux.HandleFunc("GET /v1/admin/obs/capacity",
 		s.authLimited(s.requireOperatorRead(s.obsCapacity)))
 	mux.HandleFunc("GET /v1/admin/obs/tenants/{id}/360",
@@ -4668,6 +4711,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/obs/health",
 		s.authLimited(s.requireOperatorRead(s.obsHealthHandler)))
 	mux.HandleFunc("GET /v1/admin/obs/notification-health", s.authLimited(s.requireOperatorRead(s.obsNotificationHealth)))
+	mux.HandleFunc("GET /v1/admin/obs/serving-health", s.authLimited(s.requireOperatorRead(s.obsServingHealth)))
 	mux.HandleFunc("GET /v1/admin/obs/rule-health", s.authLimited(s.requireOperatorRead(s.obsRuleHealth)))
 	mux.HandleFunc("GET /v1/admin/obs/rule-coverage", s.authLimited(s.requireOperatorRead(s.obsRuleCoverage)))
 	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireOperatorRead(s.obsRecordingCoverage)))
@@ -4774,6 +4818,8 @@ func (s *server) handler() http.Handler {
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountResetMFA))))
 	mux.Handle("POST /v1/admin/ops/accounts/{id}/revert-email",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountRevertEmail))))
+	mux.Handle("POST /v1/admin/ops/accounts/{id}/make-org-owner",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAccountMakeOrgOwner))))
 	// ADR-20261101214152: support raises (or returns to the plan's) a paid
 	// billing subject's object-storage ceiling.
 	mux.Handle("POST /v1/admin/ops/accounts/{id}/object-storage-ceiling",
@@ -5892,6 +5938,9 @@ func (s *server) handler() http.Handler {
 			return s.durable.Hidden(r) || s.liveGate().Hidden(r) || s.realtimePreviewProbe(r) || s.capabilityPathHidden(r) || s.agentPathHidden(r) || s.upgrades().HidesUpgrade(r)
 		})),
 	)))))
+	// ADR-20261111114059 amendment 2026-11-13: a budget preview reaches
+	// only routes that price before writing.
+	inner = agentPreviewGuard(mux, inner)
 	orgProjectInner = inner
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },

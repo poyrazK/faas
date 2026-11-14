@@ -20,6 +20,7 @@ type contractTestStore interface {
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
 	state.AccountAbuseHoldStore
+	state.AccountAbuseStrikeStore
 	state.AgentClientStore
 	state.OrgAgentStore
 	state.KeyProjectLimitStore
@@ -61,6 +62,8 @@ type contractTestStore interface {
 	state.EventStorageUsageStore
 	state.EventSubscriptionControlStore
 	state.EventSubscriptionStore
+	state.EventSubscriptionScopeStore
+	state.EventEnvironmentStore
 	state.EventSubscriptionReconcileStore
 	state.EventSubscriptionActivationStore
 	state.EventWorkBindingStore

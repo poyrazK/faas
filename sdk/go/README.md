@@ -1,8 +1,8 @@
 # gregale-go — Gregale Go SDK
 
-> **PR 3 of issue #266** — the public Go SDK surface. The module is
-> still internal to the monorepo and consumed only by the daemon's
-> own tests; **publishing to the Go module proxy is gated on PR 13**.
+The SDK is published as source in `gregale-dev/gregale-go` under Apache-2.0.
+This platform repository remains its source of truth; see
+[SDK publishing](../README-publishing.md) for version-tag release status.
 
 This is the public import path for the Gregale platform:
 
@@ -26,8 +26,11 @@ The package exposes:
 ## Install
 
 ```sh
-go get github.com/gregale-dev/gregale-go
+go get github.com/gregale-dev/gregale-go@<commit>
 ```
+
+Replace `<commit>` with a full commit SHA from the public SDK repository.
+Commit `go.mod` and `go.sum` so subsequent builds resolve the same revision.
 
 The SDK targets `go 1.23` (the floor of the daemon's own toolchain
 at the moment of extraction). The daemon's `go.mod` is `go 1.26.11`,
@@ -72,12 +75,15 @@ capabilities import `preview` and use a `preview.Client`.
 
 ## Quick start
 
+Set `FAAS_TOKEN` to your existing credential. This request only reads your
+account; no application needs to exist yet.
+
+<!-- sdk-install-quickstart:start -->
 ```go
 package main
 
 import (
     "context"
-    "errors"
     "fmt"
     "log"
     "os"
@@ -86,21 +92,23 @@ import (
 )
 
 func main() {
-    c, err := faas.NewClient("https://api.example.com", os.Getenv("FAAS_TOKEN"))
+    baseURL := os.Getenv("FAAS_API")
+    if baseURL == "" {
+        baseURL = "https://api.gregale.dev"
+    }
+    c, err := faas.NewClient(baseURL, os.Getenv("FAAS_TOKEN"))
     if err != nil {
         log.Fatal(err)
     }
 
-    app, err := c.GetApp(context.Background(), "hello-world")
-    if errors.Is(err, faas.ErrNotFound) {
-        log.Fatal("app not found")
-    }
+    account, err := c.Whoami(context.Background())
     if err != nil {
         log.Fatal(err)
     }
-    fmt.Println(app.Slug, app.Status)
+    fmt.Println(account.Plan)
 }
 ```
+<!-- sdk-install-quickstart:end -->
 
 ## Request tracing
 

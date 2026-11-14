@@ -101,6 +101,9 @@ type MigrationReport struct {
 	Failed   int               `json:"failed"`
 	Skipped  int               `json:"skipped,omitempty"`
 	Pending  int               `json:"pending,omitempty"`
+	// BasicAuthVerifiers is the edge migration's verifier backfill
+	// (ADR-20261110210000 slice 3h).
+	BasicAuthVerifiers *VerifierReport `json:"basic_auth_verifiers,omitempty"`
 }
 
 // OutboundStore is the slice of *state.PgStore the outbound re-seal uses.

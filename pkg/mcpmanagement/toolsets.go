@@ -25,6 +25,14 @@ const (
 	ToolsetProvision = "provision"
 	// ToolsetOperate adds configuration, restart, scaling, plan recovery and costs.
 	ToolsetOperate = "operate"
+	// ToolsetExecute runs and inspects existing account-owned jobs locally.
+	ToolsetExecute = "execute"
+	// ToolsetBuildTools authors local projects or publishes reviewed hosted uploads.
+	ToolsetBuildTools = "build-tools"
+	// ToolsetRegistry discovers immutable, account-owned published tool versions.
+	ToolsetRegistry = "registry"
+	// ToolsetInvoke dispatches explicitly approved registered tool versions.
+	ToolsetInvoke = "invoke"
 	// ToolsetAll explicitly opts into every tool. Core is the default.
 	ToolsetAll = "all"
 )
@@ -32,8 +40,31 @@ const (
 // toolsetOf assigns every tool a primary toolset. Shared plan helpers are also
 // included in the workflow groups below. TestEveryToolHasAToolset keeps this complete.
 var toolsetOf = map[string]string{
+	"gregale_invoke_tool":                    ToolsetInvoke,
+	"gregale_get_tool_invocation":            ToolsetInvoke,
+	"gregale_get_tool_connection":            ToolsetInvoke,
+	"gregale_cancel_tool_invocation":         ToolsetInvoke,
+	"gregale_search_tools":                   ToolsetRegistry,
+	"gregale_describe_tool":                  ToolsetRegistry,
+	"gregale_get_tool_template":              ToolsetBuildTools,
+	"gregale_test_tool":                      ToolsetBuildTools,
+	"gregale_plan_tool_deploy":               ToolsetBuildTools,
+	"gregale_plan_uploaded_tool_deploy":      ToolsetBuildTools,
+	"gregale_apply_tool_deploy":              ToolsetBuildTools,
+	"gregale_get_tool_deploy":                ToolsetBuildTools,
+	"gregale_list_jobs":                      ToolsetExecute,
+	"gregale_get_job":                        ToolsetExecute,
+	"gregale_start_job":                      ToolsetExecute,
+	"gregale_list_job_runs":                  ToolsetExecute,
+	"gregale_get_job_run":                    ToolsetExecute,
+	"gregale_cancel_job_run":                 ToolsetExecute,
+	"gregale_list_job_tasks":                 ToolsetExecute,
+	"gregale_get_job_logs":                   ToolsetExecute,
+	"gregale_list_artifacts":                 ToolsetExecute,
+	"gregale_read_artifact":                  ToolsetExecute,
 	"gregale_wait_for_approval":              ToolsetCore,
 	"gregale_agent_activity":                 ToolsetCore,
+	"gregale_agent_budget":                   ToolsetCore,
 	"gregale_plan_undo":                      ToolsetCore,
 	"gregale_apply_undo":                     ToolsetCore,
 	"gregale_get_saved_plan":                 ToolsetOperate,
@@ -150,6 +181,8 @@ func toolsetIncludes(name, selected string) bool {
 		return true
 	}
 	switch name {
+	case "gregale_create_source_upload":
+		return selected == ToolsetBuildTools
 	case "gregale_list_actions", "gregale_get_action":
 		return selected == ToolsetCore || selected == ToolsetRelease || selected == ToolsetDiagnose || selected == ToolsetProvision
 	case "gregale_get_saved_plan", "gregale_check_plan", "gregale_get_action_outcome":
@@ -164,6 +197,13 @@ func toolsetIncludes(name, selected string) bool {
 	return false
 }
 
+// ToolsetOf reports the toolset of a management tool the server defines,
+// including tools only a hosted connection registers.
+func ToolsetOf(name string) (string, bool) {
+	set, ok := toolsetOf[name]
+	return set, ok
+}
+
 // ParseToolsets reads a comma-separated toolset list such as "core,diagnose".
 // An omitted selection uses core. All remains an explicit, durable selection.
 func ParseToolsets(spec string) ([]string, error) {
@@ -176,10 +216,10 @@ func ParseToolsets(spec string) ([]string, error) {
 		switch name = strings.TrimSpace(name); name {
 		case ToolsetAll:
 			all = true
-		case ToolsetCore, ToolsetRelease, ToolsetDiagnose, ToolsetProvision, ToolsetOperate:
+		case ToolsetCore, ToolsetRelease, ToolsetDiagnose, ToolsetProvision, ToolsetOperate, ToolsetExecute, ToolsetBuildTools, ToolsetRegistry, ToolsetInvoke:
 			seen[name] = true
 		default:
-			return nil, fmt.Errorf("unknown toolset %q; use core, release, diagnose, provision, operate or all", name)
+			return nil, fmt.Errorf("unknown toolset %q; use core, release, diagnose, provision, operate, execute, build-tools, registry, invoke or all", name)
 		}
 	}
 	if all {
@@ -287,6 +327,9 @@ func (m *management) toolListed(name string) bool {
 	}
 	for _, selected := range m.opts.Toolsets {
 		if toolsetIncludes(name, selected) {
+			if name == "gregale_create_source_upload" && selected == ToolsetBuildTools && m.toolBuildingAccess() != nil {
+				continue
+			}
 			return true
 		}
 	}

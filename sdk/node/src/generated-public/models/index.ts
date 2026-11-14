@@ -881,6 +881,7 @@ export type { OrgProjectSlug } from './OrgProjectSlug.js';
 export type { OrgProjectSlug2 } from './OrgProjectSlug2.js';
 export type { OrgProjectSlugb08370 } from './OrgProjectSlugb08370.js';
 export type { OrgResponse } from './OrgResponse.js';
+export type { OrgSecurityPolicy } from './OrgSecurityPolicy.js';
 export type { OrgSlug } from './OrgSlug.js';
 export type { OrgWithRole } from './OrgWithRole.js';
 export type { OutboundAIBudgetThresholdWebhookPayload } from './OutboundAIBudgetThresholdWebhookPayload.js';

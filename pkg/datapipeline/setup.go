@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -156,10 +157,15 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 }
 
 func setupMirrorName(name, id string) string {
-	generated := name + "-mirror-" + id[:8]
+	return MirrorName(name) + "-" + id[:8]
+}
+
+// MirrorName keeps generated names valid for managed Postgres as well as pipeline slugs.
+func MirrorName(name string) string {
+	generated := name + "-mirror"
 	// Pipeline slugs may start with a digit; managed database names may not.
-	if name[0] >= '0' && name[0] <= '9' {
-		generated = "p-" + generated
+	if len(name) > 0 && name[0] >= '0' && name[0] <= '9' {
+		generated = "p-" + generated + "-db"
 	}
 	return generated
 }
@@ -301,7 +307,7 @@ func (s *Service) setupCheck(ctx context.Context, job Setup, database string) (b
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return false, err
 	}
-	if err == nil && check.ConnectionRevision == connection.Revision && check.DatabaseID == database && check.Fresh && setupCapacityEvidenceFresh(check.DataConnectionCheck, time.Now()) {
+	if err == nil && check.ConnectionRevision == connection.Revision && check.DatabaseID == database && check.Fresh && setupCapacityEvidenceFresh(check.DataConnectionCheck, time.Now()) && setupCheckCovers(check.DataConnectionCheck, job.Request.Tables) {
 		if check.State != "passed" {
 			return false, &blocked{code: "connection_check_blocked"}
 		}
@@ -313,11 +319,25 @@ func (s *Service) setupCheck(ctx context.Context, job Setup, database string) (b
 		}
 		return true, nil
 	}
-	_, err = s.Store.RequestCheck(ctx, job.AccountID, connection.ID, connection.Revision, database)
+	_, err = s.Store.RequestCheck(ctx, job.AccountID, connection.ID, connection.Revision, database, api.RequestDataConnectionCheck{Tables: job.Request.Tables})
 	if errors.Is(err, ErrCheckBusy) {
 		return false, nil
 	}
 	return false, err
+}
+
+// An unrelated discovery page is not negative evidence for a saved selection.
+// Exact requests cover missing/unsupported tables too, so genuine blockers stay visible.
+func setupCheckCovers(check api.DataConnectionCheck, tables []string) bool {
+	if slices.Equal(check.RequestedTables, tables) {
+		return true
+	}
+	for _, name := range tables {
+		if !slices.ContainsFunc(check.Tables, func(table api.DataSourceTable) bool { return table.Name == name }) {
+			return false
+		}
+	}
+	return true
 }
 
 func setupErrorCode(err error) string {

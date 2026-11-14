@@ -50,6 +50,31 @@ application's port with the helpers' once the build has decided it. A
 collision then fails the deployment with
 `workloads "main" and "<name>" both claim port <port>`.
 
+## Command and arguments
+
+`cmd` works like an image's `CMD`: it replaces the image's default arguments
+and keeps its `ENTRYPOINT`. For an image with an entrypoint, list only the
+arguments. The entrypoint of `hashicorp/http-echo` is `/http-echo`, so:
+
+```yaml
+companions:
+  - name: echo
+    image: docker.io/hashicorp/http-echo@sha256:<64-hex-digest>
+    cmd: ["-listen=:5678", "-text=hello"]
+    port: 5678
+```
+
+`cmd: ["/http-echo", "-listen=:5678", "-text=hello"]` would run
+`/http-echo /http-echo -listen=:5678 -text=hello`, and http-echo exits with
+`Too many arguments!`. For an image without an entrypoint, `cmd` is the whole
+command. `gregale doctor --image <ref>` prints an image's entrypoint and
+default command.
+
+A companion is essential unless it sets `essential: false`. When an essential
+companion exits and its restarts run out, the instance stops, and a
+deployment fails with `app exited during startup` and the companion's last
+output.
+
 ## Writable paths
 
 A companion's image filesystem is read-only. Its only writable path is

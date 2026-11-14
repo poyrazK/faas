@@ -32,6 +32,7 @@ type Connection struct {
 	Identity   string
 }
 type Pipeline struct {
+	WALSample            *walRetentionSample
 	ReaderChange         *ReaderChange
 	VerificationProgress *VerificationProgress
 	SchemaChange         *SchemaChange
@@ -45,6 +46,7 @@ type Pipeline struct {
 	SourceRevision  int64
 }
 type Observation struct {
+	WALSample                   *walRetentionSample
 	ReaderOnly                  bool
 	ReaderChange                *ReaderChange
 	VerificationProgress        *VerificationProgress
@@ -58,7 +60,14 @@ type Observation struct {
 }
 
 func ValidateCreate(r api.CreateDataPipelineRequest) error {
-	if !api.ValidAppSlug(r.Name) || !validID(r.SourceConnectionID) || !validID(r.DatabaseID) || len(r.Tables) == 0 || len(r.Tables) > api.DataPipelineTablesMax || len(r.ReadSubjects) == 0 || len(r.ReadSubjects) > api.DataPipelineSubjectsMax {
+	if len(r.ReadSubjects) == 0 {
+		return ErrInvalid
+	}
+	return validatePipeline(r)
+}
+
+func validatePipeline(r api.CreateDataPipelineRequest) error {
+	if !api.ValidAppSlug(r.Name) || !validID(r.SourceConnectionID) || !validID(r.DatabaseID) || len(r.Tables) == 0 || len(r.Tables) > api.DataPipelineTablesMax || len(r.ReadSubjects) > api.DataPipelineSubjectsMax {
 		return ErrInvalid
 	}
 	seen := map[string]bool{}
@@ -97,7 +106,7 @@ type Store interface {
 	Claim(context.Context, string) (Pipeline, error)
 	Finish(context.Context, Pipeline, Observation) error
 	TargetInUse(context.Context, string, string) (bool, error)
-	RequestCheck(context.Context, string, string, int64, string) (ConnectionCheck, error)
+	RequestCheck(context.Context, string, string, int64, string, ...api.RequestDataConnectionCheck) (ConnectionCheck, error)
 	Check(context.Context, string, string) (ConnectionCheck, error)
 	ClaimCheck(context.Context, string) (ConnectionCheck, error)
 	FinishCheck(context.Context, ConnectionCheck, api.DataConnectionCheck) error

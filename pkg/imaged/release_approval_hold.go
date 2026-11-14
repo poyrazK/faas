@@ -143,6 +143,49 @@ func (h *Handler) releaseScheduleEnded(ctx context.Context, dep state.Deployment
 	return sr.State, nil
 }
 
+// refuseReleaseFrozenSinceDeploy fails dep at go-live when a deploy freeze
+// that was not in force when it was deployed is active now. apid checks
+// freezes only when it creates a deployment, so a release queued behind
+// builds, building or waiting for prime capacity when a freeze began went
+// live inside it, with no override or audit. That includes the freeze
+// Gregale starts after an automatic rollback: a second push already building
+// rolled the app forward again right after the rollback (deploy-path review
+// P14). A freeze the release passed or overrode when it was deployed does
+// not stop it. Rollbacks are never refused; the caller skips them.
+func (h *Handler) refuseReleaseFrozenSinceDeploy(ctx context.Context, dep state.Deployment) (bool, error) {
+	app, err := state.AppForDeployment(ctx, h.store, dep)
+	if err != nil {
+		return false, fmt.Errorf("imaged: load app for deploy freezes: %w", err)
+	}
+	now := time.Now().UTC()
+	active, err := freeze.ActiveFor(ctx, h.store, app, dep.Scope, now)
+	if err != nil {
+		return false, fmt.Errorf("imaged: read deploy freezes before go-live: %w", err)
+	}
+	if len(active) == 0 {
+		return false, nil
+	}
+	atDeploy, err := freeze.ActiveFor(ctx, h.store, app, dep.Scope, dep.CreatedAt)
+	if err != nil {
+		return false, fmt.Errorf("imaged: read deploy freezes at deploy time: %w", err)
+	}
+	blocking := newFreezes(active, atDeploy, dep.CreatedAt)
+	if len(blocking) == 0 {
+		return false, nil
+	}
+	detail := "a deploy freeze started after this release was deployed (" + freeze.Summary(app.Slug, blocking) +
+		"); it did not go live and the serving release is unchanged. Deploy again when the freeze ends, or with --override-freeze REASON"
+	if _, err := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeReleaseFrozen, detail); err != nil {
+		if errors.Is(err, state.ErrDeploymentActivationStale) {
+			return true, nil
+		}
+		return true, fmt.Errorf("imaged: fail release frozen before go-live: %w", err)
+	}
+	h.log.Info("imaged: release refused at go-live by a freeze that started after it was deployed", "deployment_id", dep.ID, "app_id", app.ID)
+	h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
+	return true, nil
+}
+
 // newFreezes are the active freezes that were not in force when the release
 // was deployed: created since, or whose window started since.
 func newFreezes(active, atDeploy []state.ReleaseFreeze, deployedAt time.Time) []state.ReleaseFreeze {

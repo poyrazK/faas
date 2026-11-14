@@ -22,6 +22,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AuthService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Email + password sign-in.
    * Verifies the email + password against the `account_passwords`
@@ -47,7 +48,7 @@ export class AuthService {
   }: {
     requestBody: PasswordLoginRequest,
   }): CancelablePromise<PasswordLoginResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/login',
       body: requestBody,
@@ -82,7 +83,7 @@ export class AuthService {
   }: {
     requestBody: PasswordSignupRequest,
   }): CancelablePromise<PasswordLoginResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/signup',
       body: requestBody,
@@ -115,7 +116,7 @@ export class AuthService {
   }): CancelablePromise<{
     status: 'ok';
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/login/forgot',
       body: requestBody,
@@ -153,7 +154,7 @@ export class AuthService {
   }: {
     requestBody: PasswordSignupRequest,
   }): CancelablePromise<ProgrammaticAuthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/signup',
       body: requestBody,
@@ -188,7 +189,7 @@ export class AuthService {
   }: {
     requestBody: PasswordLoginRequest,
   }): CancelablePromise<ProgrammaticAuthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/login',
       body: requestBody,
@@ -219,7 +220,7 @@ export class AuthService {
   }): CancelablePromise<{
     accepted: boolean;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/referrals/selection',
       body: requestBody,
@@ -261,7 +262,7 @@ export class AuthService {
   }): CancelablePromise<{
     status: 'ok';
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/signup/magic-link',
       body: requestBody,
@@ -295,7 +296,7 @@ export class AuthService {
      */
     token: string,
   }): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/verify-email',
       query: {
@@ -330,7 +331,7 @@ export class AuthService {
       token: string;
     },
   }): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/verify-email',
       formData: formData,
@@ -364,7 +365,7 @@ export class AuthService {
      */
     token: string,
   }): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/auth/reset',
       query: {
@@ -389,7 +390,7 @@ export class AuthService {
   }: {
     formData: PasswordResetConfirm,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/auth/reset',
       formData: formData,
@@ -428,7 +429,7 @@ export class AuthService {
    * @throws ApiError
    */
   public static googleAuthRedirect(): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/google',
       errors: {
@@ -473,7 +474,7 @@ export class AuthService {
      */
     state: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/google/callback',
       query: {
@@ -515,7 +516,7 @@ export class AuthService {
    * @throws ApiError
    */
   public static githubAuthRedirect(): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/github',
       errors: {
@@ -565,7 +566,7 @@ export class AuthService {
      */
     state: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/github/callback',
       query: {
@@ -630,7 +631,7 @@ export class AuthService {
    * @throws ApiError
    */
   public static getAuthCapabilities(): CancelablePromise<AuthCapabilities> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/capabilities',
       errors: {
@@ -671,7 +672,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/logout',
       cookies: {
@@ -730,7 +731,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<CSRFTokenResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/csrf',
       cookies: {
@@ -775,7 +776,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<SessionListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/sessions',
       cookies: {
@@ -831,7 +832,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/auth/sessions/{id}',
       path: {
@@ -873,7 +874,7 @@ export class AuthService {
    * @throws ApiError
    */
   public static resendEmailVerification(): CancelablePromise<EmailVerificationResendResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/verify-email/resend',
       errors: {
@@ -917,7 +918,7 @@ export class AuthService {
       csrf_token: string;
     },
   }): CancelablePromise<SessionsRevokeAllResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/sessions/revoke_all',
       cookies: {
@@ -975,7 +976,7 @@ export class AuthService {
   }: {
     requestBody: OIDCExchangeRequest,
   }): CancelablePromise<(OIDCExchangeResponse | OAuthTokenExchangeResponse)> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/oidc/exchange',
       body: requestBody,
@@ -1040,7 +1041,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/dashboard/account/set-password',
       cookies: {
@@ -1082,7 +1083,7 @@ export class AuthService {
     ready_after_ms: number;
     expires_in_seconds: number;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/sales/inquiries/challenge',
       errors: {
@@ -1135,7 +1136,7 @@ export class AuthService {
   }): CancelablePromise<{
     accepted: boolean;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/sales/inquiries',
       body: requestBody,
@@ -1173,7 +1174,7 @@ export class AuthService {
      */
     code?: string;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/referrals/checkout',
       errors: {

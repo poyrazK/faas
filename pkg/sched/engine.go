@@ -902,10 +902,10 @@ type Engine struct {
 	// refused for fleet capacity may park (ADR-643).
 	pressurePark pressureParkView
 
-	// egressAbuseRecycles is each account's recent ADR-361 egress abuse
-	// recycle times (fan-out or flood), for the escalation to the account
-	// abuse hold. It is per schedd and in memory: a restart forgets it,
-	// which costs at most one more recycle before the hold.
+	// egressAbuseRecycles is each account's recent abuse recycle times, used
+	// for the account abuse hold escalation only when the store cannot
+	// record strikes (test fakes). Production stores keep the strikes in
+	// account_abuse_strikes (ADR-20261113133500).
 	egressAbuseMu       sync.Mutex
 	egressAbuseRecycles map[string][]time.Time
 
@@ -2359,6 +2359,12 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 			e.ledger.Release(fresh.ID)
 			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
 		}
+	}
+	// A parked app wakes through the lifecycle claim, which also clears its
+	// recoverable deployment parks; any other status is set as before.
+	if _, err := compareAndSetAppStatus(ctx, e.store, appID, state.AppEvictedCold, state.AppActive); err != nil {
+		release()
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: wake parked app %s: %w", appID, err)
 	}
 	active := state.AppActive
 	if _, err := e.store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &active}); err != nil {
@@ -5749,6 +5755,14 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 		// threshold is the operator's cue to add capacity.
 		return nil
 	}
+	return e.rebalancePressured(ctx, appID, e.ownerNodeID)
+}
+
+// rebalancePressured moves the parked app appID off fromNodeID, its owner,
+// to a peer with headroom. The owner's schedd calls it for itself; under
+// control-plane owner authority (ADR-20261110210000 §4) the control plane
+// calls it for a node's release request.
+func (e *Engine) rebalancePressured(ctx context.Context, appID, fromNodeID string) error {
 	if appID == "" {
 		// Cold-start sweep is delegated to the watcher; the
 		// engine's per-app method is the per-tick path.
@@ -5766,7 +5780,7 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 		e.observePressure("no_eligibility")
 		return nil
 	}
-	if app.NodeID != e.ownerNodeID {
+	if app.NodeID != fromNodeID {
 		e.observePressure("no_eligibility")
 		return nil
 	}
@@ -5999,7 +6013,9 @@ func (e *Engine) findPeerWithHeadroom(ctx context.Context, app state.App) (strin
 	neededMB := int64(app.RAMMB) + int64(api.PerVMOverheadMB)
 	usedByNode := e.nodeUsageForNodes(ctx, nodes)
 	for _, n := range nodes {
-		if n.ID == e.ownerNodeID {
+		// The app's current owner: this node on the owner's own path,
+		// the requesting node on the control plane's.
+		if n.ID == app.NodeID || n.ID == e.ownerNodeID {
 			continue
 		}
 		used := usedByNode[n.ID]
@@ -6037,7 +6053,7 @@ func (e *Engine) findPeerWithHeadroom(ctx context.Context, app state.App) (strin
 // (it does) or surface the error (it doesn't — the fallback
 // path is the canonical recovery).
 func (e *Engine) findOverflowPeerWithHeadroom(ctx context.Context, app state.App, targetUUID string) (string, error) {
-	if targetUUID == e.ownerNodeID {
+	if targetUUID == e.ownerNodeID || targetUUID == app.NodeID {
 		return "", nil
 	}
 	n, err := e.store.ComputeNodeByID(ctx, targetUUID)
@@ -9490,7 +9506,7 @@ func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appI
 			missing = append(missing, fmt.Sprintf("%q (-> %q)", envKey, ref))
 			continue
 		}
-		entry := fcvm.SealedEnvEntry{Key: envKey, Ciphertext: row.Ciphertext}
+		entry := fcvm.SealedEnvEntry{Key: envKey, Ciphertext: row.Ciphertext, Scope: row.Scope}
 		if envKey != row.Key || intentSources[envKey] {
 			entry.SourceKey = row.Key
 		}

@@ -6854,9 +6854,31 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 		select {
 		case <-ctx.Done():
 			return v.readinessCutShort(ctx, l, healthcheckPath, seen, readyTimeout, readinessStartedAt)
-		case <-time.After(10 * time.Millisecond):
+		case <-time.After(seen.nextProbeDelay()):
 		}
 	}
+}
+
+// Readiness probe cadence. While nothing listens a probe costs the guest a
+// kernel RST, so it repeats every readinessProbeMinDelay to catch a fast boot.
+// Once the app answers without being ready, every probe runs the app's own
+// healthcheck on the guest's vCPU: production saw 1.3k-2.5k probes in a 30 s
+// boot (~80/s), slowing the startup they wait for and, for a healthcheck that
+// queries its database, issuing thousands of queries per cold boot
+// (deploy-path review P8). The delay then doubles up to readinessProbeMaxDelay.
+const (
+	readinessProbeMinDelay = 10 * time.Millisecond
+	readinessProbeMaxDelay = 100 * time.Millisecond
+)
+
+// nextProbeDelay is the wait before the next HTTP readiness probe.
+func (o *readinessObservation) nextProbeDelay() time.Duration {
+	if o.responses+o.nonHTTP == 0 {
+		o.delay = readinessProbeMinDelay
+		return o.delay
+	}
+	o.delay = min(max(o.delay*2, readinessProbeMinDelay), readinessProbeMaxDelay)
+	return o.delay
 }
 
 // readinessAnswerMargin is how long before the caller's deadline a readiness
@@ -7237,6 +7259,43 @@ func (v *JailerVMM) guestStopRequested(instance string) bool {
 // with the workload's own last output lines, in the same form as a
 // characterization report of a workload that exited during startup.
 func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
+	return v.guestStopped(l, fmt.Sprintf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance))
+}
+
+// ExplainGuestStop reports a guest that passed readiness and then stopped
+// before its wake finished, from the workload's own output, the way
+// guestStoppedDuringStartup reports one that stopped before readiness. Hunt
+// 34 H34-35: a crash-looping essential companion ended guest-init just after
+// the main workload answered its readiness probe, and the deploy failed with
+// "apply current app CPU policy: … connection refused" and none of the
+// companion's output.
+func (v *JailerVMM) ExplainGuestStop(l Lease) error {
+	v.mu.Lock()
+	rec := v.recs[l.Instance]
+	v.mu.Unlock()
+	if rec != nil && rec.done != nil {
+		select {
+		case <-rec.done:
+			// The tailer copies the guest's last lines into the ring once
+			// the process has exited.
+			v.awaitConsoleDrain(l.Instance, rec)
+		default:
+		}
+	}
+	err := v.guestStopped(l, fmt.Sprintf("workload stopped during startup (guest %s exited after becoming ready)", l.Instance))
+	if api.AsProblem(err) != nil {
+		return err
+	}
+	// The guest passed readiness, so its init, overlay and the app all ran;
+	// guest-init then exited cleanly, which it does when the supervisor
+	// returns. A workload that exits with status 0 is not restarted and
+	// prints no restart marker, so this read as an internal platform failure
+	// and the customer got no app code or logs hint (deploy-path review P4,
+	// production h35-comp 2026-11-13: the app exited 0 without listening).
+	return startupCrashProblem("", err.Error()+"; the app's process exited after it became ready (a clean exit is not restarted). Keep the server process running in the foreground")
+}
+
+func (v *JailerVMM) guestStopped(l Lease, detail string) error {
 	var lines []string
 	if ring := v.LogRing(l.Instance); ring != nil {
 		// Seq starts at 1; Snapshot(0) means "tail from now" and returned
@@ -7246,7 +7305,6 @@ func (v *JailerVMM) guestStoppedDuringStartup(l Lease) error {
 			lines = append(lines, line.Line)
 		}
 	}
-	detail := fmt.Sprintf("workload stopped during startup (guest %s exited before becoming ready)", l.Instance)
 	if tail := workloadOutputTail(lines, 20); tail != "" {
 		detail += ": " + tail
 	}
@@ -7278,6 +7336,8 @@ var supervisedWorkloadMarkers = []string{
 	"guest-init: main restart (",
 	"app crash-looped after ",
 	"app restart budget exhausted",
+	// A companion's restarts: "guest-init: sidecar echo crashed (restart 1/3): …".
+	" crashed (restart ",
 }
 
 func supervisedWorkloadExited(lines []string) bool {
@@ -7359,6 +7419,8 @@ func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefused
 // crashed app was reported as "answered 348 readiness probes without a 2xx").
 type readinessObservation struct {
 	responses, lastStatus, connRefused, nonHTTP int
+	// delay is the current wait between probes (nextProbeDelay).
+	delay time.Duration
 }
 
 // isNonHTTPReply reports a probe the app accepted and answered with something

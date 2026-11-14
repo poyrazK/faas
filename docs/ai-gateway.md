@@ -52,6 +52,9 @@ account during the preview; contact support to have it turned on for yours.
 - **Response cache.** Identical calls, streamed or not, can be answered from
   the gateway's cache. Usage shows cache hits and what the response cache and
   prompt caching saved.
+- **Semantic cache** (Pro and Scale). A call that asks the same thing in
+  other words can be answered from the response cache too. See
+  [Semantic cache](#semantic-cache).
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
@@ -182,6 +185,8 @@ gregale ai content-policy <id> --moderation block --moderation-kind classifier \
   --moderation-integration <check-id> --moderation-model gpt-5-nano --moderation-categories prompt_injection
 gregale ai policy <id> --log-export on                  # to the app's log drains
 gregale ai policy <id> --prompt-cache on                # cache repeated Claude prompts
+gregale ai policy <id> --semantic-cache on --semantic-embedding-integration <openai-id> \
+  --semantic-embedding-model text-embedding-3-small      # answer reworded questions from the cache
 gregale ai routes set <route-id> --target <a> --target <b> --strategy weighted --weights 70,30
 gregale ai routes set <route-id> --target <a> --target <b> --strategy cost --max-ttfb-ms 1500
 gregale ai routes canary <route-id> --position 2 --percent 10
@@ -315,6 +320,36 @@ tools, quality flags, ratings and scores.
 Latency and the trace timeline come from the request log, so turn it on with
 `gregale ai policy <id> --request-log on`.
 
+### Semantic cache
+
+With the semantic cache on, a call the exact cache misses can still be
+answered from it when its last user message means the same as a cached
+call's. Everything else must match exactly: the model, system prompt,
+earlier turns, tools and parameters, and the calling app. By default each
+end user (`X-Gregale-AI-User`) has their own answers;
+`--semantic-share-users on` lets end users share them.
+
+- It needs the response cache (`response_cache_ttl_seconds` above 0) and a
+  Pro or Scale plan.
+- The gateway embeds the last user message through one of your OpenAI or
+  Gemini integrations, on that integration's key. Each candidate call the
+  exact cache misses costs one embedding call, shown in usage as
+  "Semantic cache embeddings".
+- A hit needs a cosine similarity of at least the threshold: 0.95 by
+  default, 0.85 to 0.99 with `--semantic-threshold`. Higher is safer. Two
+  differently worded questions can still need different answers, so turn
+  this on only where that risk is acceptable.
+- Chat completions, Responses, Claude messages and Gemini
+  `generateContent` calls are candidates when the last message is the
+  user's, is text only (no images, audio, files or tool results), is at most
+  8 KiB, and the conversation has at most 3 user messages. Batch calls and
+  calls sent with `Cache-Control: no-cache` are not.
+- A hit is billed like an exact cache hit and carries
+  `X-Gregale-AI-Cache: semantic` and `X-Gregale-AI-Similarity`. If the
+  embedding call fails or takes longer than 1 second, the call goes to the
+  provider.
+- Each outboundd node keeps its own index, in memory; a restart empties it.
+
 ## Limits and errors
 
 | Response | Meaning |
@@ -363,6 +398,13 @@ to AI calls too, and each account may make at most 40 (Hobby), 200 (Pro) or
 of twice that. Provider charges are billed by your provider to your own key;
 Gregale's cost figures are estimates from your price list or the built-in
 catalog, used for budgets and reports.
+
+Some models cost more for long prompts, and Claude's one-hour cache writes
+cost more than five-minute ones. Estimates include both: `gregale ai catalog`
+shows each model's long-context tier and one-hour cache-write price, and
+your own price list can set them per model, for example
+`--price model=claude,input=3,output=15,cache-write-1h=6,long-context=200000:200:150`
+(above 200,000 input tokens, input costs 2x and output 1.5x).
 
 ## Preview notes
 

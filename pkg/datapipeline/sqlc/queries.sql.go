@@ -559,7 +559,7 @@ UPDATE data_pipelines SET revision=revision+1,retry_at=clock_timestamp(),verify_
  verification=CASE WHEN verify_requested THEN 'inconclusive' ELSE verification END,
  verification_progress=jsonb_set(verification_progress,'{State}','"cancelled"')
 WHERE account_id=$1::text::uuid AND id=$2::text::uuid
- AND revision=$3 AND desired_state='running'
+ AND revision=$3 AND desired_state IN ('running','paused') AND state<>'deleted'
  AND verification_progress->>'ID'=$4::text
  AND verification_progress->>'State' IN ('running','waiting')
 `
@@ -763,10 +763,10 @@ func (q *Queries) PipelineCheckGet(ctx context.Context, db DBTX, arg PipelineChe
 }
 
 const pipelineCheckRequest = `-- name: PipelineCheckRequest :one
-INSERT INTO data_connection_checks(connection_id,account_id,id,connection_revision,database_id)
-VALUES($1::text::uuid,$2::text::uuid,$3::text::uuid,$4,$5)
+INSERT INTO data_connection_checks(connection_id,account_id,id,connection_revision,database_id,result)
+VALUES($1::text::uuid,$2::text::uuid,$3::text::uuid,$4,$5,$6)
 ON CONFLICT(connection_id) DO UPDATE SET id=excluded.id,connection_revision=excluded.connection_revision,database_id=excluded.database_id,
- state='pending',result='{}',lease_token='',lease_until=NULL,created_at=clock_timestamp(),observed_at=NULL
+ state='pending',result=excluded.result,lease_token='',lease_until=NULL,created_at=clock_timestamp(),observed_at=NULL
 RETURNING connection_id, account_id, id, connection_revision, database_id, state, result, lease_token, lease_until, created_at, observed_at
 `
 
@@ -776,6 +776,7 @@ type PipelineCheckRequestParams struct {
 	ID                 string
 	ConnectionRevision int64
 	DatabaseID         string
+	Result             []byte
 }
 
 func (q *Queries) PipelineCheckRequest(ctx context.Context, db DBTX, arg PipelineCheckRequestParams) (DataConnectionCheck, error) {
@@ -785,6 +786,7 @@ func (q *Queries) PipelineCheckRequest(ctx context.Context, db DBTX, arg Pipelin
 		arg.ID,
 		arg.ConnectionRevision,
 		arg.DatabaseID,
+		arg.Result,
 	)
 	var i DataConnectionCheck
 	err := row.Scan(
@@ -809,7 +811,7 @@ WITH candidate AS (
  AND (lease_until IS NULL OR lease_until<=clock_timestamp())
  ORDER BY retry_at,id FOR UPDATE SKIP LOCKED LIMIT 1
 ) UPDATE data_pipelines p SET lease_token=$1,lease_until=clock_timestamp()+interval '60 seconds'
- FROM candidate c WHERE p.id=c.id RETURNING p.id, p.account_id, p.name, p.source_connection_id, p.database_id, p.tables, p.read_subjects, p.desired_state, p.state, p.revision, p.observed_revision, p.generation, p.reason, p.tables_ready, p.retained_wal_bytes, p.applied_through_at, p.verification_progress, p.reader_change, p.schema_approval, p.schema_change, p.observed_at, p.verification, p.verified_at, p.initialized, p.verify_requested, p.lease_token, p.lease_until, p.retry_at, p.created_at
+ FROM candidate c WHERE p.id=c.id RETURNING p.id, p.account_id, p.name, p.source_connection_id, p.database_id, p.tables, p.read_subjects, p.desired_state, p.state, p.revision, p.observed_revision, p.generation, p.reason, p.tables_ready, p.retained_wal_bytes, p.wal_retention, p.applied_through_at, p.verification_progress, p.reader_change, p.schema_approval, p.schema_change, p.observed_at, p.verification, p.verified_at, p.initialized, p.verify_requested, p.lease_token, p.lease_until, p.retry_at, p.created_at
 `
 
 func (q *Queries) PipelineClaim(ctx context.Context, db DBTX, leaseToken string) (DataPipeline, error) {
@@ -831,6 +833,7 @@ func (q *Queries) PipelineClaim(ctx context.Context, db DBTX, leaseToken string)
 		&i.Reason,
 		&i.TablesReady,
 		&i.RetainedWalBytes,
+		&i.WalRetention,
 		&i.AppliedThroughAt,
 		&i.VerificationProgress,
 		&i.ReaderChange,
@@ -924,35 +927,38 @@ func (q *Queries) PipelineConnections(ctx context.Context, db DBTX, arg Pipeline
 const pipelineControl = `-- name: PipelineControl :one
 UPDATE data_pipelines SET
  verification_progress=CASE WHEN $1::bigint>0 THEN '{}'::jsonb
- WHEN $2::boolean THEN jsonb_build_object('ManualAttempt',revision+1) ELSE verification_progress END,
+ WHEN $2::boolean THEN $3::jsonb ELSE verification_progress END,
  schema_change=CASE WHEN $1::bigint>0 THEN '{}'::jsonb ELSE schema_change END,
  schema_approval=CASE WHEN $1::bigint>0 THEN '' ELSE schema_approval END,
- desired_state=$3,state=$4,generation=generation+$1::bigint,
+ desired_state=$4,state=$5,generation=generation+$1::bigint,
  applied_through_at=CASE WHEN $1::bigint>0 THEN NULL ELSE applied_through_at END,
+ wal_retention=CASE WHEN $1::bigint>0 THEN '{}'::jsonb ELSE wal_retention END,
  initialized=CASE WHEN $1::bigint>0 THEN false ELSE initialized END,
- revision=revision+1,verify_requested=$5,verification=CASE WHEN $1::bigint>0 THEN 'unknown' WHEN $2 THEN 'pending' ELSE verification END,
+ revision=revision+1,verify_requested=$6,verification=CASE WHEN $1::bigint>0 THEN 'unknown' WHEN $2 THEN 'pending' ELSE verification END,
  verified_at=CASE WHEN $2 OR $1::bigint>0 THEN NULL ELSE verified_at END,
  retry_at=clock_timestamp()
-WHERE account_id=$6::text::uuid AND id=$7::text::uuid AND revision=$8 AND state<>'deleted'
+WHERE account_id=$7::text::uuid AND id=$8::text::uuid AND revision=$9 AND state<>'deleted'
  AND (coalesce(reader_change->>'State','')<>'approved' OR $1::bigint=0)
-RETURNING id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at
+RETURNING id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at
 `
 
 type PipelineControlParams struct {
-	GenerationDelta   int64
-	StartVerification bool
-	DesiredState      string
-	State             string
-	VerifyRequested   bool
-	AccountID         string
-	ID                string
-	Revision          int64
+	GenerationDelta    int64
+	StartVerification  bool
+	QueuedVerification []byte
+	DesiredState       string
+	State              string
+	VerifyRequested    bool
+	AccountID          string
+	ID                 string
+	Revision           int64
 }
 
 func (q *Queries) PipelineControl(ctx context.Context, db DBTX, arg PipelineControlParams) (DataPipeline, error) {
 	row := db.QueryRow(ctx, pipelineControl,
 		arg.GenerationDelta,
 		arg.StartVerification,
+		arg.QueuedVerification,
 		arg.DesiredState,
 		arg.State,
 		arg.VerifyRequested,
@@ -977,6 +983,7 @@ func (q *Queries) PipelineControl(ctx context.Context, db DBTX, arg PipelineCont
 		&i.Reason,
 		&i.TablesReady,
 		&i.RetainedWalBytes,
+		&i.WalRetention,
 		&i.AppliedThroughAt,
 		&i.VerificationProgress,
 		&i.ReaderChange,
@@ -1066,11 +1073,11 @@ UPDATE data_pipelines SET
  AND $6::text='live_table_mismatch' THEN $3::jsonb->>'ID'
  WHEN $3::jsonb->>'State'='withdrawn' THEN '' ELSE schema_approval END,
  applied_through_at=coalesce($8,applied_through_at),
- retained_wal_bytes=$9,observed_at=clock_timestamp(),
- verification=$10,verified_at=$11,verify_requested=($10='pending'),
+ retained_wal_bytes=$9,wal_retention=$10,observed_at=clock_timestamp(),
+ verification=$11,verified_at=$12,verify_requested=($11='pending'),
  lease_token='',lease_until=NULL,retry_at=clock_timestamp()+interval '15 seconds'
-WHERE id=$12::text::uuid AND account_id=$13::text::uuid
- AND revision=$14 AND lease_token=$15 AND lease_until>clock_timestamp()
+WHERE id=$13::text::uuid AND account_id=$14::text::uuid
+ AND revision=$15 AND lease_token=$16 AND lease_until>clock_timestamp()
 `
 
 type PipelineFinishParams struct {
@@ -1083,6 +1090,7 @@ type PipelineFinishParams struct {
 	TablesReady          int32
 	AppliedThroughAt     pgtype.Timestamptz
 	RetainedWalBytes     pgtype.Int8
+	WalRetention         []byte
 	Verification         string
 	VerifiedAt           pgtype.Timestamptz
 	ID                   string
@@ -1102,6 +1110,7 @@ func (q *Queries) PipelineFinish(ctx context.Context, db DBTX, arg PipelineFinis
 		arg.TablesReady,
 		arg.AppliedThroughAt,
 		arg.RetainedWalBytes,
+		arg.WalRetention,
 		arg.Verification,
 		arg.VerifiedAt,
 		arg.ID,
@@ -1146,7 +1155,7 @@ func (q *Queries) PipelineFinishReaders(ctx context.Context, db DBTX, arg Pipeli
 }
 
 const pipelineGet = `-- name: PipelineGet :one
-SELECT id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid AND id=$2::text::uuid
+SELECT id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid AND id=$2::text::uuid
 `
 
 type PipelineGetParams struct {
@@ -1173,6 +1182,7 @@ func (q *Queries) PipelineGet(ctx context.Context, db DBTX, arg PipelineGetParam
 		&i.Reason,
 		&i.TablesReady,
 		&i.RetainedWalBytes,
+		&i.WalRetention,
 		&i.AppliedThroughAt,
 		&i.VerificationProgress,
 		&i.ReaderChange,
@@ -1192,7 +1202,7 @@ func (q *Queries) PipelineGet(ctx context.Context, db DBTX, arg PipelineGetParam
 }
 
 const pipelineGetByName = `-- name: PipelineGetByName :one
-SELECT id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid AND name=$2
+SELECT id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid AND name=$2
 `
 
 type PipelineGetByNameParams struct {
@@ -1219,6 +1229,7 @@ func (q *Queries) PipelineGetByName(ctx context.Context, db DBTX, arg PipelineGe
 		&i.Reason,
 		&i.TablesReady,
 		&i.RetainedWalBytes,
+		&i.WalRetention,
 		&i.AppliedThroughAt,
 		&i.VerificationProgress,
 		&i.ReaderChange,
@@ -1239,7 +1250,7 @@ func (q *Queries) PipelineGetByName(ctx context.Context, db DBTX, arg PipelineGe
 
 const pipelineInsert = `-- name: PipelineInsert :one
 INSERT INTO data_pipelines(id,account_id,name,source_connection_id,database_id,tables,read_subjects)
-VALUES($1::text::uuid,$2::text::uuid,$3,$4::text::uuid,$5::text::uuid,$6,$7) RETURNING id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at
+VALUES($1::text::uuid,$2::text::uuid,$3,$4::text::uuid,$5::text::uuid,$6,$7) RETURNING id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at
 `
 
 type PipelineInsertParams struct {
@@ -1279,6 +1290,7 @@ func (q *Queries) PipelineInsert(ctx context.Context, db DBTX, arg PipelineInser
 		&i.Reason,
 		&i.TablesReady,
 		&i.RetainedWalBytes,
+		&i.WalRetention,
 		&i.AppliedThroughAt,
 		&i.VerificationProgress,
 		&i.ReaderChange,
@@ -1344,6 +1356,31 @@ type PipelinePruneHistoryParams struct {
 func (q *Queries) PipelinePruneHistory(ctx context.Context, db DBTX, arg PipelinePruneHistoryParams) error {
 	_, err := db.Exec(ctx, pipelinePruneHistory, arg.AccountID, arg.HistoryOffset, arg.PageLimit)
 	return err
+}
+
+const pipelineReadGateRefreshLock = `-- name: PipelineReadGateRefreshLock :one
+SELECT id FROM data_pipelines WHERE account_id=$1::text::uuid AND id=$2::text::uuid
+ AND revision=$3 AND lease_token=$4 AND lease_until>clock_timestamp()
+ AND desired_state IN ('running','paused') AND state<>'deleted' FOR UPDATE
+`
+
+type PipelineReadGateRefreshLockParams struct {
+	AccountID  string
+	ID         string
+	Revision   int64
+	LeaseToken string
+}
+
+func (q *Queries) PipelineReadGateRefreshLock(ctx context.Context, db DBTX, arg PipelineReadGateRefreshLockParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, pipelineReadGateRefreshLock,
+		arg.AccountID,
+		arg.ID,
+		arg.Revision,
+		arg.LeaseToken,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const pipelineReaders = `-- name: PipelineReaders :execrows
@@ -1661,8 +1698,8 @@ func (q *Queries) PipelineSchemaApps(ctx context.Context, db DBTX, arg PipelineS
 }
 
 const pipelineSchemaRefreshInsert = `-- name: PipelineSchemaRefreshInsert :execrows
-INSERT INTO data_pipeline_schema_refreshes(pipeline_id,change_id,attempt,app_id,wake_id)
-VALUES($1::text::uuid,$2,$3,$4::text::uuid,$5::text::uuid)
+INSERT INTO data_pipeline_schema_refreshes(pipeline_id,change_id,attempt,app_id,wake_id,read_gate)
+VALUES($1::text::uuid,$2,$3,$4::text::uuid,$5::text::uuid,$6::boolean)
 ON CONFLICT DO NOTHING
 `
 
@@ -1672,6 +1709,7 @@ type PipelineSchemaRefreshInsertParams struct {
 	Attempt    int32
 	AppID      string
 	WakeID     string
+	ReadGate   bool
 }
 
 func (q *Queries) PipelineSchemaRefreshInsert(ctx context.Context, db DBTX, arg PipelineSchemaRefreshInsertParams) (int64, error) {
@@ -1681,6 +1719,7 @@ func (q *Queries) PipelineSchemaRefreshInsert(ctx context.Context, db DBTX, arg 
 		arg.Attempt,
 		arg.AppID,
 		arg.WakeID,
+		arg.ReadGate,
 	)
 	if err != nil {
 		return 0, err
@@ -1720,16 +1759,17 @@ func (q *Queries) PipelineSchemaRefreshLock(ctx context.Context, db DBTX, arg Pi
 }
 
 const pipelineSchemaRefreshPrune = `-- name: PipelineSchemaRefreshPrune :exec
-DELETE FROM data_pipeline_schema_refreshes WHERE pipeline_id=$1::text::uuid AND change_id<>$2
+DELETE FROM data_pipeline_schema_refreshes WHERE pipeline_id=$1::text::uuid AND read_gate=$2::boolean AND change_id<>$3
 `
 
 type PipelineSchemaRefreshPruneParams struct {
 	PipelineID string
+	ReadGate   bool
 	ChangeID   string
 }
 
 func (q *Queries) PipelineSchemaRefreshPrune(ctx context.Context, db DBTX, arg PipelineSchemaRefreshPruneParams) error {
-	_, err := db.Exec(ctx, pipelineSchemaRefreshPrune, arg.PipelineID, arg.ChangeID)
+	_, err := db.Exec(ctx, pipelineSchemaRefreshPrune, arg.PipelineID, arg.ReadGate, arg.ChangeID)
 	return err
 }
 
@@ -2250,7 +2290,7 @@ func (q *Queries) PipelineTargetInUse(ctx context.Context, db DBTX, arg Pipeline
 }
 
 const pipelinesList = `-- name: PipelinesList :many
-SELECT id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid ORDER BY (state='deleted'),created_at DESC,id LIMIT $2
+SELECT id, account_id, name, source_connection_id, database_id, tables, read_subjects, desired_state, state, revision, observed_revision, generation, reason, tables_ready, retained_wal_bytes, wal_retention, applied_through_at, verification_progress, reader_change, schema_approval, schema_change, observed_at, verification, verified_at, initialized, verify_requested, lease_token, lease_until, retry_at, created_at FROM data_pipelines WHERE account_id=$1::text::uuid ORDER BY (state='deleted'),created_at DESC,id LIMIT $2
 `
 
 type PipelinesListParams struct {
@@ -2283,6 +2323,7 @@ func (q *Queries) PipelinesList(ctx context.Context, db DBTX, arg PipelinesListP
 			&i.Reason,
 			&i.TablesReady,
 			&i.RetainedWalBytes,
+			&i.WalRetention,
 			&i.AppliedThroughAt,
 			&i.VerificationProgress,
 			&i.ReaderChange,

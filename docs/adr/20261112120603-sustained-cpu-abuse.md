@@ -17,7 +17,7 @@
   - A Free miner gets at most 15 minutes per instance before the recycle and two recycles before the account is held, instead of running until someone notices.
   - A miner that throttles itself below 90% of its quota is not detected. It then gets less than the Free CPU quota the plan already gives away, which is the cost the plan accepts.
   - A legitimate Free app that holds its CPU quota for 15 minutes under real traffic is recycled; a repeat within the hour holds the account until an operator releases it. Shadow mode is how that rate is measured before enforcing.
-  - The escalation counter remains per schedd and in memory (ADR-361's known limit), so a schedd restart forgets earlier recycles.
+  - The escalation counter was per schedd and in memory (ADR-361's known limit); ADR-20261113133500 stores it, so restarts and other schedds no longer reset it.
 - **Rejected alternatives:**
   - Recycling paid plans too: CPU-bound paid workloads are legitimate and the plan, not a heuristic, is their limit.
   - Requiring low request traffic as a second condition: a Free miner already has to send itself requests to stay awake, so the condition adds evasion room without removing false positives.

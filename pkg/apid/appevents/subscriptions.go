@@ -18,6 +18,7 @@ func eventSubscriptionResponse(subscription state.EventSubscription) api.EventSu
 		Type:               subscription.Type,
 		Filter:             subscription.Filter,
 		Enabled:            subscription.Enabled,
+		Environment:        subscription.DeploymentScope,
 		CreatedAt:          subscription.CreatedAt,
 		UpdatedAt:          subscription.UpdatedAt,
 	}

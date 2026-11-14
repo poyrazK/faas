@@ -37,9 +37,14 @@ type AIPrice struct {
 	InputAudio       int64
 	CachedInputAudio int64
 	OutputAudio      int64
-	// LongContext is the built-in catalog's long-prompt tier, nil for an
-	// integration's own price list (its owner prices what they mean).
+	// LongContext is the long-prompt tier: the built-in catalog's, or the
+	// one an integration's own price list entry sets (ADR 20261027132936
+	// amendment 3); nil when the price has none.
 	LongContext *aiprices.LongContextTier
+	// CacheWrite1h prices one-hour cache writes when HasCacheWrite1h is
+	// set; otherwise they cost aiprices.CacheWrite1hFallback.
+	CacheWrite1h    int64
+	HasCacheWrite1h bool
 }
 
 // withLongContext returns price with its long-context tier applied when the
@@ -55,7 +60,8 @@ func (price AIPrice) withLongContext(usage AIUsage) AIPrice {
 		}
 		return (v*pct + 99) / 100
 	}
-	for _, p := range []*int64{&price.Input, &price.CachedInput, &price.CacheWrite, &price.InputAudio, &price.CachedInputAudio, &price.InputImage} {
+	for _, p := range []*int64{&price.Input, &price.CachedInput, &price.CacheWrite, &price.CacheWrite1h, &price.InputAudio,
+		&price.CachedInputAudio, &price.InputImage} {
 		*p = scale(*p, tier.InputPercent)
 	}
 	for _, p := range []*int64{&price.Output, &price.OutputAudio, &price.OutputImage} {
@@ -128,6 +134,13 @@ func ResolveAIPrices(entries []api.OutboundAIPriceEntry) []AIPrice {
 			entry.MillicentsPerImage, entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters, entry.MillicentsPerVideoSecond)
 		resolveToolPrices(&price, entry.MillicentsPerWebSearch, entry.MillicentsPerFileSearch, entry.MillicentsPerCodeSessionGB)
 		resolveAudioPrices(&price, entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok)
+		if entry.CacheWrite1hMillicentsPerMTok != nil {
+			price.CacheWrite1h, price.HasCacheWrite1h = *entry.CacheWrite1hMillicentsPerMTok, true
+		}
+		if tier := entry.LongContext; tier != nil {
+			price.LongContext = &aiprices.LongContextTier{AboveInputTokens: tier.AboveInputTokens,
+				InputPercent: tier.InputPercent, OutputPercent: tier.OutputPercent}
+		}
 		prices = append(prices, price)
 	}
 	return prices
@@ -209,12 +222,14 @@ func priceCostMillicents(price AIPrice, usage AIUsage) int64 {
 	uncached := max(usage.InputTokens-usage.CachedInputTokens-usage.CacheWriteTokens-usage.InputImageTokens-uncachedAudio, 0)
 	cachedText := max(usage.CachedInputTokens-usage.CachedInputAudioTokens, 0)
 	textOutput := max(usage.OutputTokens-usage.OutputImageTokens-usage.OutputAudioTokens, 0)
-	// One-hour cache writes cost twice the input price (five-minute ones
-	// 1.25 times, the catalog's cache_write); price them at whichever is
-	// higher so a budget never under-counts them.
+	// One-hour cache writes cost the price's own one-hour write price, or
+	// the catalog's rule for them (ADR 20261027132936 amendment 3).
 	writes1h := min(max(usage.CacheWrite1hTokens, 0), usage.CacheWriteTokens)
 	writes5m := usage.CacheWriteTokens - writes1h
-	cacheWrite1h := max(price.CacheWrite, 2*price.Input)
+	cacheWrite1h := aiprices.CacheWrite1hFallback(price.CacheWrite, price.Input)
+	if price.HasCacheWrite1h {
+		cacheWrite1h = price.CacheWrite1h
+	}
 	// Every term is scaled to sixty million: per-million prices by 60,
 	// per-image, per-second and per-use prices by 60,000,000 and per-minute
 	// prices by 1,000,000.

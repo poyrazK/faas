@@ -30,9 +30,21 @@ func countDirtyVerification(ctx context.Context, p Pipeline, target receiptSQL, 
 	return count, nil
 }
 func verificationCancelled(p Pipeline, intent string) bool {
-	return p.VerificationProgress != nil && p.VerificationProgress.State == "cancelled" && (p.VerificationProgress.IntentID == intent || p.VerificationProgress.ID == intent)
+	v := p.VerificationProgress
+	if v == nil || v.State != "cancelled" {
+		return false
+	}
+	if v.IntentID == intent || v.ID == intent {
+		return true
+	}
+	schema, attempt := verificationAttempt(p)
+	return schema == "" && v.Phase == "queued" && v.ManualAttempt > 0 && v.ManualAttempt == attempt && v.ID == queuedVerificationID(p, attempt)
 }
 func verifyResumable(ctx context.Context, p Pipeline, source *pgxpool.Pool, target *pgx.Conn, relations []relation, ob *Observation, current func(context.Context) error) (bool, error) {
+	relations, err := orderedVerificationRelations(ctx, source, relations)
+	if err != nil {
+		return false, err
+	}
 	intent, spec := verificationID(p, relations)
 	c, err := loadVerification(ctx, target, p)
 	if err != nil {
@@ -143,6 +155,10 @@ func sealVerification(ctx context.Context, p Pipeline, source *pgxpool.Pool, tar
 		return false, err
 	}
 	if err := checkProofContinuity(ctx, p, source, target); err != nil {
+		return false, err
+	}
+	relations, err := orderedVerificationRelations(ctx, source, relations)
+	if err != nil {
 		return false, err
 	}
 	c, err := loadVerification(ctx, target, p)

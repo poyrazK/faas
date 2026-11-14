@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/datapipeline/sqlc"
@@ -32,6 +33,18 @@ type verificationCheckpoint struct {
 	Spec       string
 	Table      int
 	Cursor     []string
+}
+
+func queuedVerificationID(p Pipeline, attempt int64) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d:%d:queued", p.ID, p.Generation, attempt)))
+	return hex.EncodeToString(sum[:])
+}
+
+func queuedVerification(p Pipeline) []byte {
+	now := time.Now().UTC()
+	progress := VerificationProgress{ManualAttempt: p.Revision + 1, ID: queuedVerificationID(p, p.Revision+1), State: "waiting", Phase: "queued", StartedAt: now, UpdatedAt: now, TablesTotal: len(p.Tables)}
+	encoded, _ := json.Marshal(progress)
+	return encoded
 }
 
 func verificationID(p Pipeline, relations []relation) (string, string) {

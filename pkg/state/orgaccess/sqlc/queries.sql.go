@@ -53,9 +53,12 @@ func (q *Queries) LockDeployToken(ctx context.Context, db DBTX, arg LockDeployTo
 }
 
 const lockMembership = `-- name: LockMembership :one
-SELECT role, access_revision FROM org_memberships
-WHERE org_id = $1 AND account_id = $2 AND removed_at IS NULL
-FOR SHARE
+SELECT m.role, m.access_revision FROM org_memberships m
+WHERE m.org_id = $1 AND m.account_id = $2 AND m.removed_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM org_security_policies p JOIN accounts a ON a.id = m.account_id
+    WHERE p.org_id = m.org_id AND p.require_mfa AND a.mfa_enrolled_at IS NULL)
+FOR SHARE OF m
 `
 
 type LockMembershipParams struct {
@@ -108,8 +111,11 @@ func (q *Queries) NotifyIntent(ctx context.Context, db DBTX, arg NotifyIntentPar
 }
 
 const snapshot = `-- name: Snapshot :one
-SELECT role, access_revision FROM org_memberships
-WHERE org_id = $1 AND account_id = $2 AND removed_at IS NULL
+SELECT m.role, m.access_revision FROM org_memberships m
+WHERE m.org_id = $1 AND m.account_id = $2 AND m.removed_at IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM org_security_policies p JOIN accounts a ON a.id = m.account_id
+    WHERE p.org_id = m.org_id AND p.require_mfa AND a.mfa_enrolled_at IS NULL)
 `
 
 type SnapshotParams struct {
@@ -122,6 +128,8 @@ type SnapshotRow struct {
 	AccessRevision int64
 }
 
+// A member without two-factor authentication is not admitted to an
+// organization that requires it (ADR-20261113180000).
 func (q *Queries) Snapshot(ctx context.Context, db DBTX, arg SnapshotParams) (SnapshotRow, error) {
 	row := db.QueryRow(ctx, snapshot, arg.OrgID, arg.AccountID)
 	var i SnapshotRow

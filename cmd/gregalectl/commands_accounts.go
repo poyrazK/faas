@@ -36,7 +36,7 @@ type accountMutationOutput struct {
 
 func cmdAccountsDispatch(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl accounts: missing subcommand; want list|find|show|360|activity|suspend|restore|revoke-sessions|reset-mfa|revert-email|object-storage-ceiling|complimentary")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl accounts: missing subcommand; want list|find|attention|show|360|activity|suspend|restore|revoke-sessions|reset-mfa|revert-email|make-org-owner|object-storage-ceiling|complimentary")
 		return 2
 	}
 	switch args[0] {
@@ -44,13 +44,15 @@ func cmdAccountsDispatch(args []string) int {
 		return cmdAccountsList(args[1:])
 	case "find":
 		return cmdAccountsFind(args[1:])
+	case "attention":
+		return cmdAccountsAttention(args[1:])
 	case "show":
 		return cmdAccountsShow(args[1:])
 	case "360":
 		return cmdAccounts360(args[1:])
 	case "activity":
 		return cmdAccountsActivity(args[1:])
-	case "suspend", "restore", "revoke-sessions", "reset-mfa", "revert-email":
+	case "suspend", "restore", "revoke-sessions", "reset-mfa", "revert-email", "make-org-owner":
 		return cmdAccountsMutation(args[0], args[1:])
 	case "object-storage-ceiling":
 		return cmdAccountsObjectStorageCeiling(args[1:])
@@ -225,6 +227,65 @@ func printAccountDiagnosis(d api.ObsTenantDiagnosis) {
 	}
 }
 
+// cmdAccountsAttention lists customers who are probably stuck
+// (ADR-20261113123000).
+func cmdAccountsAttention(args []string) int {
+	fs := flag.NewFlagSet("attention", flag.ContinueOnError)
+	fs.SetOutput(osStderr)
+	kind := fs.String("kind", "", strings.Join(api.AttentionKinds(), ", "))
+	stateFlag := fs.String("state", "", "active (default), open, dismissed or resolved")
+	accountID := fs.String("account-id", "", "only this account (uuid)")
+	limit := fs.Int("limit", api.AttentionListMax, "maximum signals (1..200)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl accounts attention: positional arguments are not accepted")
+		return 2
+	}
+	if *limit < 1 || *limit > api.AttentionListMax {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl accounts attention: --limit must be between 1 and %d\n", api.AttentionListMax)
+		return 2
+	}
+	query := url.Values{"limit": {strconv.Itoa(*limit)}}
+	if value := strings.TrimSpace(*kind); value != "" {
+		query.Set("kind", value)
+	}
+	if value := strings.TrimSpace(*stateFlag); value != "" {
+		query.Set("state", value)
+	}
+	if value := strings.TrimSpace(*accountID); value != "" {
+		if _, err := uuid.Parse(value); err != nil {
+			_, _ = fmt.Fprintln(osStderr, "gregalectl accounts attention: --account-id must be a UUID")
+			return 2
+		}
+		query.Set("account_id", value)
+	}
+	var response api.ObsAttentionListResponse
+	if code := accountGet("attention", "/v1/admin/obs/attention?"+query.Encode(), &response); code != 0 {
+		return code
+	}
+	if jsonEnabled() {
+		return emitOperatorJSON(response)
+	}
+	if len(response.Items) == 0 {
+		_, _ = fmt.Fprintln(osStdout, "no signals")
+		return 0
+	}
+	for _, s := range response.Items {
+		_, _ = fmt.Fprintf(osStdout, "signal id=%d account_id=%s kind=%s subject=%s state=%s observed=%d since=%s last=%s detail=%q",
+			s.ID, s.AccountID, s.Kind, s.Subject, s.State, s.Observed, s.FirstSeenAt.Format(time.RFC3339), s.LastSeenAt.Format(time.RFC3339), s.Detail)
+		if s.Outcome != "" {
+			_, _ = fmt.Fprintf(osStdout, " outcome=%s", s.Outcome)
+		}
+		if s.TicketID != "" {
+			_, _ = fmt.Fprintf(osStdout, " ticket_id=%s", s.TicketID)
+		}
+		_, _ = fmt.Fprintln(osStdout)
+	}
+	return 0
+}
+
 // cmdAccountsFind resolves a customer-supplied identifier (email, app slug,
 // hostname or URL, account/app/deployment id, request or trace id) to the
 // account it belongs to.
@@ -310,6 +371,10 @@ func cmdAccountsMutation(action string, args []string) int {
 	reason := fs.String("reason", "", "audit reason slug ([a-z0-9_]{1,64})")
 	traceIDFlag := fs.String("trace-id", "", "OTel 32-char-hex trace id (auto-generated when empty)")
 	ack := fs.Bool("yes", false, "acknowledge the account mutation")
+	org := new(string)
+	if action == "make-org-owner" {
+		org = fs.String("org", "", "organization slug")
+	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -340,6 +405,14 @@ func cmdAccountsMutation(action string, args []string) int {
 		return 1
 	}
 	path := "/v1/admin/ops/accounts/" + url.PathEscape(id) + "/" + action + "?confirm=true&reason=" + url.QueryEscape(cleanReason)
+	if action == "make-org-owner" {
+		slug := strings.TrimSpace(*org)
+		if slug == "" {
+			_, _ = fmt.Fprintln(osStderr, "gregalectl accounts make-org-owner: --org is required")
+			return 2
+		}
+		path += "&org=" + url.QueryEscape(slug)
+	}
 	headers := make(http.Header)
 	headers.Set(operatorTraceIDHeader, traceID)
 	var response api.ObsAccountMutationResponse

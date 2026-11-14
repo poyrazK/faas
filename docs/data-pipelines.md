@@ -19,6 +19,8 @@ Start in **Dashboard → Data connections**, or inspect a source with the CLI:
 gregale pipeline connection add orders-source --url-file ./source-url.txt
 gregale pipeline connection check CONNECTION_ID
 gregale pipeline connection tables CONNECTION_ID
+gregale pipeline connection tables CONNECTION_ID --search orders
+gregale pipeline connection check CONNECTION_ID --tables orders,customers
 ```
 
 The private worker checks verified TLS/network access, PostgreSQL version,
@@ -33,7 +35,8 @@ configuration. Checks default to waiting for a result; `--wait=false` queues
 the job and returns immediately. `connection tables` reads the latest check,
 so run `connection check` again when it expires or reports stale credentials.
 Active requests and requests within 15 seconds of the previous request may
-reuse that job. Rotate a credential before checking a replacement password.
+reuse that job when the mirror and discovery selection match. A different search
+or exact selection replaces the job and fences its earlier worker result. Rotate a credential before checking a replacement password.
 
 The dashboard provides table selection, explicit reader subjects, saved setup,
 and sync health. After a passing source check, choose **Start saved setup** to
@@ -249,11 +252,15 @@ gregale pipeline wait PIPELINE_ID --timeout 30m
 gregale pipeline pause PIPELINE_ID --wait
 gregale pipeline resume PIPELINE_ID --wait
 gregale pipeline verify PIPELINE_ID --wait
-gregale pipeline resync PIPELINE_ID --wait
+gregale pipeline resync PIPELINE_ID --yes --wait
 gregale pipeline delete PIPELINE_ID --wait
 gregale pipeline connection rotate CONNECTION_ID --url-file ./replacement-url.txt
 gregale pipeline connection delete CONNECTION_ID
 ```
+
+Resync replaces imported rows and can interrupt reads. Interactive use asks for
+typed confirmation; scripts and JSON output must supply `--yes`. Recovery waits
+ignore previous-revision errors until the worker observes the current request.
 
 `desired_state` records your request; `state`, `reason`, `tables_ready`, and
 `retained_wal_bytes` describe the latest worker observation. `observation_fresh`
@@ -289,15 +296,29 @@ blocked state as a failure. An expired or preceding revision's failure does not
 end the wait. Pending automatic schema refresh also keeps polling; an actual
 refresh failure ends the wait. All waits are bounded by `--timeout`.
 
-A pause retains readable rows and its upstream slot. Source WAL may accumulate;
+A pause retains readable rows and its upstream slot. Health reports
+`pause_pending` or `pause_failed` until a fresh destination observation acknowledges pause;
+native replication may continue before that acknowledgement. Source WAL may accumulate;
 the configured finite retention backstop can invalidate the slot during a long
 pause or outage. Unsupported schema changes and invalidated slots result in
 `resync_required`, stop replication, and deny mirror reads. A verified mismatch
 in an unchanged live table gates only that table and offers confirmed
 [table repair](#repair-an-already-live-table). Explicit `resync`
 starts a new generation and replaces only the preceding generation's owned
-tables. It can interrupt reads and requires enough time for a full new copy. Existing
-Data API queries may return no rows while the new generation denies reads.
+tables. It can interrupt reads and requires enough time for a full new copy. Upgraded
+Data API runtimes return HTTP 503 `mirror_unavailable` to authorized readers while
+the requested mirror table is gated. The response carries `Retry-After` and
+`Cache-Control: no-store`; it does not represent an empty dataset.
+Initial hook installation also requests a durable refresh of preexisting APIs and
+invalidates their cached snapshots. New or rotated read-only credentials receive
+the pinned hook grants before publication, including while replication is paused.
+
+Initial copy persists native per-table progress high-water marks. Five minutes
+without observed progress produces `initial_copy_stalled` and a health incident,
+including when the worker can inspect the source but destination-side COPY fails.
+Large copies that keep advancing do not trigger a stall solely because of age.
+Restarts preserve the saved progress clock; recovery never starts an automatic
+destructive resync.
 
 Pause and account suspension can disable owned destination subscriptions even
 when the worker cannot decrypt the source credential. Disconnect also suspends
@@ -421,9 +442,16 @@ block does not itself confirm a paused subscription. Staged cutovers involving
 admitted databases are refused until their private credentials have a separate
 capacity model.
 
-Discovery is bounded to the first 128 public relations in catalog name order,
+Default discovery is bounded to the first 128 public relations in catalog name order,
 129 reported columns per table (the supported limit remains 128), and a 4 MiB
 result. Truncation is explicit and only reported, supported tables are eligible.
+Use `connection tables CONNECTION_ID --search TEXT` to filter names before the
+limit, or `connection check CONNECTION_ID --tables TABLE1,TABLE2` to inspect up to
+16 exact names anywhere in the catalog. These options are mutually exclusive and
+queue a fresh check, subject to ordinary request coalescing. The dashboard offers
+the same name search and exact-table fields. Pipeline creation and saved setup
+refresh checks for their exact selected tables, including tables outside the
+default page. Each result replaces the connection's previous discovery evidence.
 One check job is retained per connection. A dead worker's 60-second lease can
 be reclaimed, and a replaced job or credential revision cannot publish results.
 A different check cannot replace pending or running work. While setup needs its
@@ -592,8 +620,8 @@ deadline. A primary-key verification limit requires reducing oversized key
 values before retrying; changing the key definition requires a resync.
 
 The dashboard displays in-app alerts and recovery guidance for stale monitoring,
-credential failures, blocked sync, retention pressure (80% of the existing
-retention ceiling), pause and required resync. Reconciliation already retries
+credential failures, blocked sync, retention pressure (80% of the current source
+retention allowance, reduced further by PostgreSQL slot headroom), pause and required resync. Reconciliation already retries
 transient failures. Credential rotation uses the existing source-connection
 rotation command; resume and confirmed resync use existing revision-guarded
 controls. Resync requires confirmation and replaces imported tables. There is no
@@ -913,7 +941,14 @@ baseline requires resync.
 Approval binds the exact source definition, pipeline generation and current
 revision. Confirm that every saved reader may see the added fields. A different
 source definition requires a fresh preview and approval. While approval is
-pending, replication is disabled and RLS denies reads (queries return no rows).
+pending, replication is disabled and RLS denies reads. Upgraded Data API runtimes
+return HTTP 503 `mirror_unavailable` to the table's authorized readers, including
+for an empty table or a query matching no rows. Other tables remain accessible
+during table-only repair/onboarding gates; subjects outside the reader list keep
+the ordinary RLS denial behavior. The worker installs protected hooks, and the
+runtime composes them with existing deadline/refresh hooks in the same database
+transaction. Existing apps need the upgraded runtime deployed to use this error
+contract; direct SQL and older runtimes continue to rely on RLS.
 The existing publication and slot are retained within the 1 GiB WAL budget;
 expired or excessive retained WAL still requires resync. Source changes reverted
 before application withdraw their pending approval once any earlier migration
@@ -1073,13 +1108,19 @@ destination lock acquisition is limited to 250 ms, individual statements to two
 seconds, and replication catch-up waiting to two seconds. These are per-operation
 bounds, not a promise of a two-second total write pause. Writes pause during a
 batch or final fence; there is no source snapshot or lock held between worker
-ticks. A server-side idle transaction timeout of 60 seconds bounds abandoned
+ticks. Verification follows the source primary-key column order, including keys
+whose index order differs from the physical column order. Changes in key ordering
+invalidate physical proofs without forcing an unrelated schema resync.
+A server-side idle transaction timeout of 60 seconds bounds abandoned
 verification write locks after worker/network failure. Text primary keys use C ordering, which may require an appropriate source
 index to avoid slow scans on large tables. Repeated timeouts retain progress;
 sustained write churn can delay completion. Production performance qualification
 remains outstanding.
 
-Choose **Stop verification** to cancel the current run. Cancellation is bound to
+Manual requests have an identity immediately, before the worker can contact the
+source. Choose **Stop verification** to cancel queued or running work, including
+while the pipeline is paused. A paused pipeline rejects new verification requests.
+Cancellation is bound to
 the account, revision and exact run, and removes temporary tracking on the next
 worker reconciliation with destination access, including when source credentials
 or connectivity are unavailable. You can stop verification during billing grace.
@@ -1108,7 +1149,8 @@ subject list, one subject per line, and choose **Preview reader changes**. The
 preview names every grant, every revocation, and the selected tables. Confirm
 that allowed readers can read **every row in every selected table** before
 applying it. This is whole-table access, not a per-customer row filter. The
-existing limit of 1–32 unique subjects still applies. A retired generation must
+initial setup requires 1–32 unique subjects; updates may apply 0–32. Leave the
+list empty to revoke every reader while retaining rows and replication. A retired generation must
 be resynced before its readers can be edited.
 
 Subjects must contain valid UTF-8. Malformed input is rejected before saving a
@@ -1121,7 +1163,9 @@ confirmed applied-reader list remains visible while an update is pending.
 A pipeline or table-selection change invalidates an unapproved preview: discard
 it and preview again. Approved changes cannot be discarded because the mirror
 may already have committed them. A full resync waits until the approved reader
-change is acknowledged; pause and disconnect remain available. New schema and
+change is acknowledged. Pause remains available; disconnect first applies approved
+reader reductions. An approved grant must finish before disconnect is accepted.
+New schema and
 table approvals also wait for the acknowledged reader set.
 
 Reader changes require no row copy, resync, source connection check, new copy
@@ -1138,7 +1182,7 @@ transaction cannot prevent suspension. Once the lock clears, the approved reader
 change retries while the pipeline remains paused.
 
 During an active account's past-due grace period, previews and approvals may
-remove existing subjects while retaining at least one. Adding or replacing a
+remove existing subjects, including the final reader. Adding or replacing a
 subject still requires deployment eligibility. Approval checks the saved preview
 again, so a grant previewed before the grace period cannot bypass this rule.
 Discarding an unapproved preview remains available. Operator and account
@@ -1191,18 +1235,25 @@ The units remain compatible with older binaries during rollout and rollback;
 systemd can report a worker active while it is still waiting for the catalog.
 The independent monitor reports missing observations once the catalog recovers.
 
-Conditions must persist for two minutes after detection. Monitoring is checked
+Conditions normally persist for two minutes after detection. Retention pressure
+also considers a sampled estimate of less than five minutes of remaining WAL
+headroom. At 10% remaining headroom or an estimate of at most two minutes, its
+incident bypasses the debounce on the next monitor check. This estimate uses
+cluster-wide WAL generation between recent samples, is omitted for idle,
+rewound, or stale samples, and is not a guaranteed invalidation deadline.
+`pipeline status` and the dashboard report the effective source limit, remaining
+bytes, and any current time estimate. No source WAL cursor is exposed. Monitoring is checked
 every 15 seconds, with a 90-second observation freshness allowance:
 
 | Code | Evidence |
 | --- | --- |
-| `monitoring_stale` | A running pipeline or an unacknowledged pause has no current worker observation, including a stopped replication worker. |
-| `sync_blocked` | A fresh, current-revision observation says blocked or resync required, including a failed pause. |
-| `retention_pressure` | A fresh observation reports retained WAL at or above 80% of the 1 GiB retention ceiling, including intentionally paused pipelines. |
+| `monitoring_stale` | A running or paused pipeline has no current worker observation, or a paused pipeline cannot observe its retained slot because source access is unavailable. |
+| `sync_blocked` | A fresh, current-revision observation says blocked (including a failed pause), resync required, or initial-copy progress has stalled. |
+| `retention_pressure` | A fresh source-specific observation has at most 20% remaining headroom or an estimated remaining time of at most five minutes, including intentionally paused pipelines. Older workers fall back to the existing 80% of 1 GiB threshold. |
 | `apply_unconfirmed` | A live/catching-up pipeline retains at least 16 MiB of WAL and lacks an applied checkpoint from the last 90 seconds. This signals uncertain apply progress, not proven row lag. |
 
 An old applied checkpoint on an idle source alone does not trigger an alert.
-Initial copy and ordinary in-progress controls are not blocked-sync incidents.
+Advancing initial copy and ordinary in-progress controls are not blocked-sync incidents.
 One incident stays open through condition changes. A fresh, current-revision live
 observation with no alert condition must persist for 30 seconds before a recovery
 is queued. Pausing does not claim recovery; disconnecting cancels pending events

@@ -6,6 +6,7 @@ type DataConnection = api.DataConnection
 type DataConnectionList = api.DataConnectionList
 type CreateDataConnectionRequest = api.CreateDataConnectionRequest
 type RotateDataConnectionRequest = api.RotateDataConnectionRequest
+type DataPipelineWALRetention = api.DataPipelineWALRetention
 type DataPipeline = api.DataPipeline
 type DataPipelineList = api.DataPipelineList
 type CreateDataPipelineRequest = api.CreateDataPipelineRequest

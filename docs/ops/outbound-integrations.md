@@ -644,6 +644,16 @@ call:
   model's `cached_requests` and adds the cost the provider call would have had,
   priced from the cached response, to `cache_saved_millicents`.
   `outbound_ai_response_cache_saved_millicents_total` counts it.
+- **Semantic cache** (ADR 20261112194947, Pro and Scale): an AI policy's
+  `semantic_cache` answers a cache miss from an entry whose last user turn
+  embeds within the threshold of the call's and whose rest of the call
+  matches exactly. The embedding runs in process through the named OpenAI or
+  Gemini integration under the caller `semantic_cache` (1 s, fail-open).
+  Each outboundd process indexes at most 2,000 entries per integration, 256
+  integrations and 64 MiB. `outbound_ai_semantic_cache_total{result}`
+  counts `hit`, `miss`, `skipped` (not a candidate) and `error` (the
+  embedding failed). outboundd ignores the settings when the plan no longer
+  includes them or the response cache is off.
 - **Prompt-cache savings:** every call also adds
   `prompt_cache_saved_millicents`: its cost with cached reads and cache
   writes priced as plain input, minus its cost. It is negative when cache
@@ -896,8 +906,21 @@ from the catalog for the integration's provider. Reservations and settlement
 use the same price.
 
 - The file records its LiteLLM source commit, generation date and currency.
-  Prices are base-tier list prices; batch, priority, long-context tiers
-  and negotiated discounts are not modelled.
+  Prices are base-tier list prices; batch and priority tiers and negotiated
+  discounts are not modelled.
+- Long-context tiers and one-hour cache writes are (ADR 20261027132936
+  amendment 3). Claude Sonnet 4.x and Gemini 2.5 Pro cost 2x input and 1.5x
+  output above 200k prompt tokens, Gemini 1.5 Pro 2x both above 128k
+  (`pkg/outbound/aiprices/long_context.go`); Claude's one-hour cache writes
+  cost the higher of the cache-write price and twice the input price. The
+  catalog response shows both as `long_context` and
+  `cache_write_1h_millicents_per_mtok`.
+- A customer price list entry can set its own: `long_context`
+  (`above_input_tokens` 1,000 to 2,000,000, `input_percent` and
+  `output_percent` 100 to 1,000) and `cache_write_1h_millicents_per_mtok`.
+  An entry without a tier is billed flat; without a one-hour price, its
+  one-hour writes use the rule above. With the CLI:
+  `gregale ai prices set <id> --price model=claude,input=3,output=15,cache-write-1h=6,long-context=200000:200:150`.
 - A dated or versioned model the catalog lacks is priced as its family
   (`gpt-4o-2024-08-06` as `gpt-4o`, `claude-sonnet-4-5@20250929` as
   `claude-sonnet-4-5`). Bedrock cross-region prefixes and ARNs are stripped.
