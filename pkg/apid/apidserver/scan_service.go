@@ -1862,8 +1862,13 @@ func (s *server) scanService(
 		if routeWarning := projectPathRoutePlanWarning(resolvedManifest.Routes, resolvedManifest.RoutesPresent, req.NoTriggers); routeWarning != "" {
 			warnings = append(warnings, routeWarning)
 		}
-	} else if resolvedManifest.AsyncRoutesPresent || resolvedManifest.RoutesPresent || len(crons) > 0 {
-		warnings = append(warnings, "environment deployment leaves production routes and triggers unchanged")
+	} else {
+		if resolvedManifest.AsyncRoutesPresent || resolvedManifest.RoutesPresent || len(crons) > 0 {
+			warnings = append(warnings, "environment deployment leaves production routes and triggers unchanged")
+		}
+		if releaseWarning := s.environmentReleaseSetWarning(r.Context(), acct.ID, req.ProjectSlug, req.Environment); releaseWarning != "" {
+			warnings = append(warnings, releaseWarning)
+		}
 	}
 	if noTriggers {
 		if len(crons) > 0 && req.NoTriggers {
