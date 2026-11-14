@@ -71,6 +71,12 @@ func (c *Client) PreviewAppScaling(ctx context.Context, app, scope string, req A
 	return c.preview(ctx, http.MethodPost, appScalingPath(app, scope, ""), req)
 }
 
+// PreviewDeployFromSourceRef prices a Git source deploy without making it:
+// apid fetches the ref and prices the warm capacity its gregale.yaml adds.
+func (c *Client) PreviewDeployFromSourceRef(ctx context.Context, slug string, req SourceRefDeployRequest) (AgentBudgetPreview, error) {
+	return c.preview(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/deployments/source-ref", req)
+}
+
 // PreviewCreateApp prices POST /v1/apps without creating the app.
 func (c *Client) PreviewCreateApp(ctx context.Context, req CreateAppRequest) (AgentBudgetPreview, error) {
 	return c.preview(ctx, http.MethodPost, "/v1/apps", req)

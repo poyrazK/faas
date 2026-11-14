@@ -610,7 +610,11 @@ delivery to that destination.
 
 Gregale signs the same canonical string and emits the same delivery headers as
 ordinary app webhooks. Receivers should verify the signature, reject stale
-timestamps, and deduplicate the durable delivery id.
+timestamps, and deduplicate the durable delivery id. Because the two look the
+same, an explicit delivery cannot use a type Gregale itself delivers
+(`deployment.failed`, `consumer.plan_changed`, `workflow.finished` and the rest
+of the platform events you can subscribe to); such a type is refused with
+`400 app_webhook_invalid`.
 Use `--idempotency-key` when retrying a `gregale webhook deliver` call whose outcome
 is unknown; a new key can enqueue a second delivery.
 
@@ -636,7 +640,12 @@ requests in flight across the platform, and a subscription at most 4. A
 receiver that times out pauses its subscription for a minute, as a `429` or
 `503` with `Retry-After` does; then one probe delivery decides whether it
 reopens. A suspended or deleted account's deliveries, and an app's after
-the app is deleted, wait without being sent.
+the app is deleted, wait without being sent. A deleted app's waiting deliveries
+do not count towards the account's caps; they go when the app is purged, or
+resume if it is restored. Replaying a dead delivery from the dead-letter queue
+meets the same caps: into a full outbox it is refused with
+`429 webhook_outbox_full` and stays in the dead-letter queue, and a replay-all
+skips it.
 
 ## Inbound webhooks
 
