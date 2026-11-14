@@ -26,6 +26,8 @@ On an existing subscription an upgrade happens in place: the billing provider ch
 
 A downgrade applies at the end of the billing period, and is refused until your apps, databases and stored objects fit the lower plan. Downgrading to Free cancels the subscription at the end of the period.
 
+If your plan ends up lower without that check (a subscription that ends or lapses, or a plan change at the provider), apps that do not fit it are parked and do not wake: apps past the plan's deployed-app count (your oldest apps are kept) and apps whose RAM is above the plan's. You get an email naming them. Each wakes again within a minute once it fits: delete apps, lower their RAM, or upgrade.
+
 ### Cancel and resume
 
 A cancelled subscription (`gregale billing cancel`, a downgrade to Free, or a deletion request) keeps its plan until the end of the billing period and then ends. A scheduled downgrade likewise applies at the end of the period. `GET /v1/billing/status` shows what is scheduled (`subscription_ends_at`, `scheduled_plan`, `scheduled_plan_at`), and so does the dashboard billing page.

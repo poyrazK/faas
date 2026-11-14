@@ -30407,3 +30407,17 @@ SELECT starter_app_id::text FROM workflow_run_starts WHERE run_id = sqlc.arg(run
 -- name: WakeWorkflowRunForCall :exec
 UPDATE workflow_runs SET status = 'pending', scheduled_for = now(), updated_at = now()
 WHERE id = sqlc.arg(run_id)::uuid AND status = 'awaiting_event';
+
+-- Plan-fit notices (billing review H17-4): the plan and over-plan app set a
+-- billing subject was last emailed about.
+-- name: GetPlanFitNotice :one
+SELECT plan, apps_digest FROM plan_fit_notices WHERE subject_id = $1;
+
+-- name: PutPlanFitNotice :exec
+INSERT INTO plan_fit_notices (subject_id, plan, apps_digest, noticed_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (subject_id) DO UPDATE
+   SET plan = EXCLUDED.plan, apps_digest = EXCLUDED.apps_digest, noticed_at = now();
+
+-- name: ClearPlanFitNotice :exec
+DELETE FROM plan_fit_notices WHERE subject_id = $1;
