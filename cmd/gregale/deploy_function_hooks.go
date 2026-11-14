@@ -53,3 +53,34 @@ func isFunctionSetMember(ctx context.Context) bool {
 	member, _ := ctx.Value(functionSetMemberKey{}).(bool)
 	return member
 }
+
+// functionSetWorkflows holds the code workflow each workflow function
+// declares on its own app (ADR-20261113120824 §1), keyed by app slug. The
+// functions-project deploy fills it after planning; each member deploy
+// sends its entry with the deployment.
+type functionSetWorkflows struct {
+	bySlug map[string][]api.WorkflowSpec
+}
+
+type functionSetWorkflowsKey struct{}
+
+func withFunctionSetWorkflows(ctx context.Context, w *functionSetWorkflows) context.Context {
+	return context.WithValue(ctx, functionSetWorkflowsKey{}, w)
+}
+
+// memberWorkflows returns the workflows a functions-project member deploy
+// sends: a gregale.yaml beside the function wins, else the function's own
+// workflow, else none (so turning workflow off removes it).
+func memberWorkflows(ctx context.Context, slug string, loaded []api.WorkflowSpec) []api.WorkflowSpec {
+	if loaded != nil || !isFunctionSetMember(ctx) {
+		return loaded
+	}
+	w, _ := ctx.Value(functionSetWorkflowsKey{}).(*functionSetWorkflows)
+	if w == nil || w.bySlug == nil {
+		return loaded
+	}
+	if defs, ok := w.bySlug[slug]; ok {
+		return defs
+	}
+	return []api.WorkflowSpec{}
+}

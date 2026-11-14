@@ -91,6 +91,40 @@ export interface FunctionClient<T extends FunctionTypes = FunctionTypes> {
   call(input: T['input'], options?: FunctionCallOptions): Promise<T['output']>;
   /** Enqueue a durable async invocation and return at once. */
   send(input: T['input'], options?: FunctionSendOptions): Promise<FunctionInvocation<T['output']>>;
+  /**
+   * Start a run of a workflow function (`workflow: true`) and return its
+   * handle at once. Only this function reads or signals the run.
+   */
+  start(input: T['input'], options?: FunctionStartOptions): Promise<FunctionWorkflowRun<T['output']>>;
+}
+
+export interface FunctionStartOptions {
+  /** Makes retried starts return the same run. */
+  idempotencyKey?: string;
+  signal?: AbortSignal;
+}
+
+/** What a function reads about a workflow run it started. */
+export interface FunctionWorkflowRunStatus {
+  id: string;
+  status: string;
+  done: boolean;
+  output?: unknown;
+  error?: string;
+}
+
+/** A started workflow run. */
+export interface FunctionWorkflowRun<Out = unknown> {
+  runId: string;
+  status(): Promise<FunctionWorkflowRunStatus>;
+  /**
+   * Wait until the run finishes and return its output. A failed run raises
+   * FunctionCallError; timeoutMs (default 60 s) raises one with status 408
+   * when it passes first.
+   */
+  wait(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<Out>;
+  /** Send the run an event its wf.waitForEvent may take. */
+  signal(event: string, payload?: unknown): Promise<void>;
 }
 
 export interface FunctionSendOptions extends FunctionCallOptions {
@@ -202,6 +236,15 @@ export function createFunctions<M = GregaleFunctions>(options: CreateFunctionsOp
         if (typeof id !== 'string' || !id) throw new FunctionCallError(name, res.status, body, 'async invocation id missing');
         return sentInvocation(name, id, platformURL, fetchImpl);
       },
+      async start(input, opts) {
+        const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json' };
+        if (opts?.idempotencyKey) headers['idempotency-key'] = opts.idempotencyKey;
+        const body = await platformJSON(name, fetchImpl, `${platformURL}/v1/workflow-runs`, {
+          method: 'POST', headers, body: JSON.stringify({ function: name, input: input ?? null }), ...(opts?.signal ? { signal: opts.signal } : {}),
+        }) as FunctionWorkflowRunStatus;
+        if (typeof body?.id !== 'string' || !body.id) throw new FunctionCallError(name, 500, undefined, 'workflow run id missing');
+        return startedRun(name, body.id, platformURL, fetchImpl);
+      },
     };
     clients.set(name, client);
     return client;
@@ -253,6 +296,51 @@ function sentInvocation<Out>(fn: string, id: string, platformURL: string, fetchI
           throw new FunctionCallError(fn, 408, { code: 'function_invocation_pending', detail: `invocation ${id} is still ${status.state}`, invocation: status }, '');
         }
       }
+    },
+  };
+}
+
+async function platformJSON(fn: string, fetchImpl: typeof globalThis.fetch, url: string, init: RequestInit): Promise<unknown> {
+  const res = await fetchImpl(url, init);
+  const text = await res.text();
+  let body: unknown;
+  try {
+    body = text ? JSON.parse(text) : undefined;
+  } catch {
+    body = undefined;
+  }
+  if (!res.ok) {
+    const problem = body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : undefined;
+    throw new FunctionCallError(fn, res.status, problem, text);
+  }
+  return body;
+}
+
+function startedRun<Out>(fn: string, id: string, platformURL: string, fetchImpl: typeof globalThis.fetch): FunctionWorkflowRun<Out> {
+  const base = `${platformURL}/v1/workflow-runs/${encodeURIComponent(id)}`;
+  const read = async (waitSeconds: number, signal?: AbortSignal) => (await platformJSON(fn, fetchImpl, base + (waitSeconds > 0 ? `?wait=${waitSeconds}` : ''),
+    { headers: { accept: 'application/json' }, ...(signal ? { signal } : {}) })) as FunctionWorkflowRunStatus;
+  return {
+    runId: id,
+    status: () => read(0),
+    async wait(options) {
+      const deadline = Date.now() + (options?.timeoutMs ?? 60_000);
+      for (;;) {
+        const left = Math.ceil((deadline - Date.now()) / 1000);
+        const status = await read(Math.max(0, Math.min(MAX_WAIT_SECONDS, left)), options?.signal);
+        if (status.done) {
+          if (status.status === 'succeeded') return status.output as Out;
+          throw new FunctionCallError(fn, 500, { code: 'workflow_run_failed', detail: status.error ?? status.status, run: status }, status.error ?? '');
+        }
+        if (Date.now() >= deadline) {
+          throw new FunctionCallError(fn, 408, { code: 'workflow_run_pending', detail: `workflow run ${id} is still ${status.status}`, run: status }, '');
+        }
+      }
+    },
+    async signal(event, payload) {
+      await platformJSON(fn, fetchImpl, `${base}/events`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event, payload: payload ?? {} }),
+      });
     },
   };
 }

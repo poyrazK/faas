@@ -89,3 +89,27 @@ def test_wait_raises_for_a_failed_invocation():
     with pytest.raises(FunctionCallError) as err:
         asyncio.run(run())
     assert err.value.code == "function_invocation_failed"
+
+
+def test_start_returns_a_workflow_run_handle():
+    # ADR-20261113120824 section 3: start() posts to the platform API; the
+    # handle long-polls the run and signals it.
+    seen, transport = _recorder([
+        httpx.Response(201, json={"id": "run-1", "status": "pending", "done": False}),
+        httpx.Response(202),
+        httpx.Response(200, json={"id": "run-1", "status": "succeeded", "done": True, "output": {"shipped": True}}),
+        httpx.Response(201, json={"id": "run-2", "status": "pending", "done": False}),
+        httpx.Response(200, json={"id": "run-2", "status": "failed", "done": True, "error": "boom"}),
+    ])
+    fns = Functions({"orders": "shop-orders"}, env={}, sync_transport=transport)
+    run = fns.orders.start_sync({"id": 1}, idempotency_key="order-1")
+    assert run.run_id == "run-1"
+    assert str(seen[0].url) == "http://api.svc.gregale:10081/v1/workflow-runs"
+    assert seen[0].headers["idempotency-key"] == "order-1"
+    assert json.loads(seen[0].content) == {"function": "orders", "input": {"id": 1}}
+    run.signal_sync("approved", {"ok": True})
+    assert str(seen[1].url) == "http://api.svc.gregale:10081/v1/workflow-runs/run-1/events"
+    assert run.wait_sync(timeout=5) == {"shipped": True}
+    failed = fns.orders.start_sync({"id": 2})
+    with pytest.raises(FunctionCallError):
+        failed.wait_sync(timeout=5)

@@ -843,6 +843,7 @@ type MemStore struct {
 	appWebhooks                 map[string]AppWebhook
 	appWebhookDeliveries        map[string]AppWebhookDelivery
 	invocationSends             map[string]InvocationSend
+	workflowRunStarts           map[string]string
 	appWebhookDeliverySources   map[string]string
 	entityOutboxAcceptances     map[string]string
 	appWebhookDeliveryAttempts  map[string][]AppWebhookDeliveryAttempt

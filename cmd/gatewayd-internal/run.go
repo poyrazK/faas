@@ -4484,6 +4484,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				appID, _, err := serviceProxyConfig.ResolveCallerIdentity(ctx, remote)
 				return appID, err
 			}, pgStore)
+			// ADR-20261113120824 §3: a function starts the workflow functions
+			// it may call, and reads and signals the runs it started, at
+			// api.svc.gregale/v1/workflow-runs.
+			guestServiceProxy = gateway.WithFunctionWorkflowRunAPI(guestServiceProxy, serviceProxyConfig.ResolveCallerIdentity, pgStore)
 		}
 	}
 

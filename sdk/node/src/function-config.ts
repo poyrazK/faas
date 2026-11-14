@@ -83,6 +83,22 @@ export interface FunctionConfig {
   output?: Record<string, unknown> | string;
   /** Other apps of the account, by slug, the typed client may call. */
   calls?: string[];
+  /**
+   * Makes the function a durable workflow: its handler takes (input, wf).
+   * `true`, or the workflow's timeout, retry, trigger and maxConcurrentRuns.
+   */
+  workflow?: boolean | FunctionWorkflowConfig;
+}
+
+/** A workflow function's code-workflow settings. */
+export interface FunctionWorkflowConfig {
+  /** Per call of the handler, such as '60s' (default 30 s). */
+  timeout?: string;
+  /** Default step retry policy. */
+  retry?: { maxAttempts?: number; backoff?: 'fixed' | 'exponential' };
+  /** Starts runs on a schedule or an event as well as by start(). */
+  trigger?: Record<string, unknown>;
+  maxConcurrentRuns?: number;
 }
 
 /**

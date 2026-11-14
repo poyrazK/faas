@@ -30285,10 +30285,39 @@ WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.id = sqlc.arg(app_id)::uui
 
 -- name: InsertInvocationSend :exec
 -- ADR-20261112160000: the app that sent this invocation with send(), and the
--- app its completion goes to, written with the invocation row.
-INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id)
-VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(on_complete_app_id)::uuid);
+-- app its completion goes to, written with the invocation row. A workflow
+-- call (ADR-20261113120824) names its run and operation instead.
+INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id, workflow_run_id, workflow_op)
+VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(on_complete_app_id)::uuid,
+ sqlc.narg(workflow_run_id)::uuid, sqlc.narg(workflow_op)::text);
 
 -- name: GetInvocationSend :one
-SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
+SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id,
+ coalesce(workflow_run_id::text, '')::text AS workflow_run_id, coalesce(workflow_op, '')::text AS workflow_op
 FROM invocation_sends WHERE invocation_id = sqlc.arg(invocation_id)::uuid;
+
+-- name: LockWorkflowRunForCallSettle :one
+-- ADR-20261113120824 §2: a call settles under the run lock, taken before the
+-- operation row, the order the engine takes them in.
+SELECT status FROM workflow_runs WHERE id = sqlc.arg(run_id)::uuid FOR UPDATE;
+
+-- name: SettleWorkflowCallOp :execrows
+UPDATE workflow_steps
+SET status = sqlc.arg(status)::text, output = sqlc.narg(output)::jsonb, error = sqlc.narg(error)::text,
+    finished_at = now()
+WHERE run_id = sqlc.arg(run_id)::uuid AND step_name = sqlc.arg(step_name)::text
+  AND status IN ('pending', 'awaiting_event')
+  AND input -> 'gregale_code_op' ->> 'invocation_id' = sqlc.arg(invocation_id)::text;
+
+-- name: InsertWorkflowRunStart :exec
+-- ADR-20261113120824 §3: the app that started a run with start().
+INSERT INTO workflow_run_starts (run_id, starter_app_id)
+VALUES (sqlc.arg(run_id)::uuid, sqlc.arg(starter_app_id)::uuid)
+ON CONFLICT (run_id) DO NOTHING;
+
+-- name: GetWorkflowRunStarter :one
+SELECT starter_app_id::text FROM workflow_run_starts WHERE run_id = sqlc.arg(run_id)::uuid;
+
+-- name: WakeWorkflowRunForCall :exec
+UPDATE workflow_runs SET status = 'pending', scheduled_for = now(), updated_at = now()
+WHERE id = sqlc.arg(run_id)::uuid AND status = 'awaiting_event';

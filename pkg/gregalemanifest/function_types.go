@@ -343,7 +343,7 @@ func pythonFunctionTypes(callees []typedCallee) string {
 	b.WriteString("from __future__ import annotations\n\n")
 	b.WriteString("from collections.abc import Mapping\n")
 	b.WriteString("from typing import Any, Literal, NotRequired, Protocol, TypedDict, cast\n\n")
-	b.WriteString("from faas_sdk.functions_runtime import FunctionClient, FunctionInvocation\n")
+	b.WriteString("from faas_sdk.functions_runtime import FunctionClient, FunctionInvocation, WorkflowRun\n")
 	b.WriteString("from faas_sdk.functions_runtime import functions as _functions\n\n")
 	for _, def := range p.defs {
 		b.WriteString(def + "\n")
@@ -365,7 +365,9 @@ func pythonFunctionTypes(callees []typedCallee) string {
 		fmt.Fprintf(&b, "    async def call(self, input: %sInput, %s) -> %sOutput: ...\n", a.stem, opts, a.stem)
 		fmt.Fprintf(&b, "    def call_sync(self, input: %sInput, %s) -> %sOutput: ...\n", a.stem, opts, a.stem)
 		fmt.Fprintf(&b, "    async def send(self, input: %sInput, %s, on_complete: str | None = ...) -> FunctionInvocation: ...\n", a.stem, opts)
-		fmt.Fprintf(&b, "    def send_sync(self, input: %sInput, %s, on_complete: str | None = ...) -> FunctionInvocation: ...\n\n", a.stem, opts)
+		fmt.Fprintf(&b, "    def send_sync(self, input: %sInput, %s, on_complete: str | None = ...) -> FunctionInvocation: ...\n", a.stem, opts)
+		fmt.Fprintf(&b, "    async def start(self, input: %sInput, *, idempotency_key: str | None = ...) -> WorkflowRun: ...\n", a.stem)
+		fmt.Fprintf(&b, "    def start_sync(self, input: %sInput, *, idempotency_key: str | None = ...) -> WorkflowRun: ...\n\n", a.stem)
 	}
 	b.WriteString("\nclass GregaleFunctions(Protocol):\n")
 	b.WriteString("    \"\"\"The functions this function may call; a name that is not an identifier is reached by item.\"\"\"\n\n")

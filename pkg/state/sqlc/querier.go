@@ -2541,6 +2541,7 @@ type Querier interface {
 	GetWorkflowCallbackPayload(ctx context.Context, db DBTX, id pgtype.UUID) ([]byte, error)
 	GetWorkflowDiagnosticsSteps(ctx context.Context, db DBTX, runID pgtype.UUID) ([]GetWorkflowDiagnosticsStepsRow, error)
 	GetWorkflowRecoveryTarget(ctx context.Context, db DBTX, arg GetWorkflowRecoveryTargetParams) (GetWorkflowRecoveryTargetRow, error)
+	GetWorkflowRunStarter(ctx context.Context, db DBTX, runID pgtype.UUID) (string, error)
 	GetWorkflowScheduleCursor(ctx context.Context, db DBTX, arg GetWorkflowScheduleCursorParams) (WorkflowScheduleCursor, error)
 	// Replay reads and locks one retained occurrence inside the app admission lock.
 	// The replay run identity is separate from the original skipped outcome.
@@ -2931,7 +2932,8 @@ type Querier interface {
 	InsertInstanceApplicationStandardBoot(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardBootParams) error
 	InsertInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardPromotionParams) error
 	// ADR-20261112160000: the app that sent this invocation with send(), and the
-	// app its completion goes to, written with the invocation row.
+	// app its completion goes to, written with the invocation row. A workflow
+	// call (ADR-20261113120824) names its run and operation instead.
 	InsertInvocationSend(ctx context.Context, db DBTX, arg InsertInvocationSendParams) error
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
 	// ADR-732 live fork: pinned to the live_fork capture written in the same
@@ -3156,6 +3158,8 @@ type Querier interface {
 	InsertWorkflowPlaybookProgress(ctx context.Context, db DBTX, arg InsertWorkflowPlaybookProgressParams) (int64, error)
 	InsertWorkflowResume(ctx context.Context, db DBTX, arg InsertWorkflowResumeParams) (pgtype.Timestamptz, error)
 	InsertWorkflowRun(ctx context.Context, db DBTX, arg InsertWorkflowRunParams) (InsertWorkflowRunRow, error)
+	// ADR-20261113120824 §3: the app that started a run with start().
+	InsertWorkflowRunStart(ctx context.Context, db DBTX, arg InsertWorkflowRunStartParams) error
 	InsertWorkflowScheduleOccurrence(ctx context.Context, db DBTX, arg InsertWorkflowScheduleOccurrenceParams) error
 	InstallApplicationStandardDrain(ctx context.Context, db DBTX, arg InstallApplicationStandardDrainParams) error
 	InstallApplicationStandardEnrollmentIntent(ctx context.Context, db DBTX, arg InstallApplicationStandardEnrollmentIntentParams) (int64, error)
@@ -4898,6 +4902,9 @@ type Querier interface {
 	LockWorkflowRunAdmission(ctx context.Context, db DBTX, appKey string) error
 	// Coordinate per-definition claims during rolling upgrades.
 	LockWorkflowRunConcurrency(ctx context.Context, db DBTX, arg LockWorkflowRunConcurrencyParams) error
+	// ADR-20261113120824 §2: a call settles under the run lock, taken before the
+	// operation row, the order the engine takes them in.
+	LockWorkflowRunForCallSettle(ctx context.Context, db DBTX, runID pgtype.UUID) (string, error)
 	LockWorkflowRunForManualRetry(ctx context.Context, db DBTX, runID string) (WorkflowRun, error)
 	LockWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg LockWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error)
 	LockWorkflowScheduleTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (LockWorkflowScheduleTargetRow, error)
@@ -8020,6 +8027,7 @@ type Querier interface {
 	SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, arg SettleCustomerOperationWorkflowParams) (int64, error)
 	SettleEventSubscriptionIntent(ctx context.Context, db DBTX, arg SettleEventSubscriptionIntentParams) error
 	SettleSpendCapNotice(ctx context.Context, db DBTX, arg SettleSpendCapNoticeParams) (pgtype.UUID, error)
+	SettleWorkflowCallOp(ctx context.Context, db DBTX, arg SettleWorkflowCallOpParams) (int64, error)
 	ShareProjectBindingVerificationRun(ctx context.Context, db DBTX, arg ShareProjectBindingVerificationRunParams) (ProjectBindingVerificationRun, error)
 	ShareRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeExternalFenceAuthority, error)
 	ShareRuntimeUpgradeGatewayRosterHead(ctx context.Context, db DBTX) (pgtype.UUID, error)
@@ -8504,6 +8512,7 @@ type Querier interface {
 	// Preserve an arrival in the wait-registration/park window without releasing
 	// coordinator custody. Legacy running runs retain their existing wake policy.
 	WakeNativeWorkflowForReceivedEvent(ctx context.Context, db DBTX, runID pgtype.UUID) error
+	WakeWorkflowRunForCall(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	WebhookWorkflowLegacyReceiptExists(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	WithdrawCloneCheckpointObjectPublication(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointObjectPublicationParams) (int64, error)
 	WithdrawCloneCheckpointPgBinding(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointPgBindingParams) (int64, error)

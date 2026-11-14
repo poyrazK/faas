@@ -66,18 +66,9 @@ func fixtureSource(t *testing.T, name string) string {
 	t.Helper()
 	dir := t.TempDir()
 	src := filepath.Join("testdata", name)
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		t.Fatalf("read %s: %v", src, err)
-	}
-	for _, e := range entries {
-		b, err := os.ReadFile(filepath.Join(src, e.Name()))
-		if err != nil {
-			t.Fatalf("read %s: %v", src, err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, e.Name()), b, 0o644); err != nil {
-			t.Fatalf("write %s: %v", src, err)
-		}
+	// Function projects nest a directory per function, so copy the tree.
+	if err := os.CopyFS(dir, os.DirFS(src)); err != nil {
+		t.Fatalf("copy %s: %v", src, err)
 	}
 	return dir
 }

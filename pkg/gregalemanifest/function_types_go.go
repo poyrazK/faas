@@ -101,6 +101,9 @@ func goFunctionTypes(pkg string, callees []typedCallee) (string, error) {
 		fmt.Fprintf(&b, "\n// Send%s enqueues a durable async invocation of the %s function.\n", m.name, m.call)
 		fmt.Fprintf(&b, "func (gregaleFunctions) Send%s(ctx context.Context, in %s, opts ...gregalefunctions.Option) (*gregalefunctions.Invocation, error) {\n", m.name, m.in)
 		fmt.Fprintf(&b, "\treturn gregalefunctions.Send(ctx, %q, in, opts...)\n}\n", m.call)
+		fmt.Fprintf(&b, "\n// Start%s starts a run of the %s workflow function.\n", m.name, m.call)
+		fmt.Fprintf(&b, "func (gregaleFunctions) Start%s(ctx context.Context, in %s, opts ...gregalefunctions.Option) (*gregalefunctions.Run, error) {\n", m.name, m.in)
+		fmt.Fprintf(&b, "\treturn gregalefunctions.Start(ctx, %q, in, opts...)\n}\n", m.call)
 	}
 	src, err := format.Source([]byte(b.String()))
 	if err != nil {

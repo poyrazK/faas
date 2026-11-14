@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
@@ -935,5 +936,51 @@ func TestFunctionTypesWriteCheckAndDeployRefresh(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(webTypes); !strings.Contains(string(got), "age?: number;") {
 		t.Fatalf("deploy did not refresh the existing types:\n%s", got)
+	}
+}
+
+// ADR-20261113120824 §1: a functions-project deploy hands each workflow
+// function's code workflow to that function's deploy; other members send an
+// empty set (removing a workflow turned off), and a gregale.yaml beside the
+// function still wins.
+func TestFunctionSetHandsWorkflowsToMemberDeploys(t *testing.T) {
+	dir := writeFunctionProject(t, "functions:\n  - name: orders\n    root: fo\n    runtime: node24\n    workflow: {timeout: 45s}\n  - name: web\n    root: fw\n    runtime: node24\n", "fo", "fw")
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"dependencies":{"@gregale/sdk-node":"*"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := functionSetManifest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder := &functionSetWorkflows{}
+	d := functionSetDeploy{cwd: dir, projectDir: dir, projectSlug: "shop", manifest: m, workflows: holder}
+	planned, err := d.plan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.recordWorkflows(planned); err != nil {
+		t.Fatal(err)
+	}
+	ctx := withFunctionSetWorkflows(withFunctionSetMember(context.Background()), holder)
+	orders := memberWorkflows(ctx, "shop-orders", nil)
+	if len(orders) != 1 || orders[0].Name != "orders" || orders[0].Code == nil || orders[0].Code.Path != "/" || orders[0].Code.Timeout != 45*time.Second {
+		t.Fatalf("orders workflows = %+v", orders)
+	}
+	if web := memberWorkflows(ctx, "shop-web", nil); web == nil || len(web) != 0 {
+		t.Fatalf("web workflows = %#v, want an explicit empty set", web)
+	}
+	own := []api.WorkflowSpec{{Name: "mine"}}
+	if got := memberWorkflows(ctx, "shop-orders", own); len(got) != 1 || got[0].Name != "mine" {
+		t.Fatalf("a gregale.yaml beside the function lost: %+v", got)
+	}
+	if got := memberWorkflows(context.Background(), "shop-orders", nil); got != nil {
+		t.Fatalf("a plain deploy got %+v", got)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "package.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.plan(); err == nil || !strings.Contains(err.Error(), "@gregale/sdk-node") {
+		t.Fatalf("plan without the SDK = %v", err)
 	}
 }

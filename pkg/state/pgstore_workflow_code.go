@@ -92,6 +92,7 @@ func (s *PgStore) BeginWorkflowCodeInvocation(ctx context.Context, runID string,
 }
 
 func (s *PgStore) FinishWorkflowCodeInvocation(ctx context.Context, runID string, finish WorkflowCodeInvocation) error {
+	finish.runID = runID
 	if err := validateWorkflowCodeInvocation(finish); err != nil {
 		return err
 	}
@@ -170,6 +171,11 @@ func writeWorkflowCodeOpTx(ctx context.Context, tx pgx.Tx, runID string, op Work
 		}
 		if tag.RowsAffected() == 0 {
 			return fmt.Errorf("%w: code operation %q already exists", ErrConflict, op.StepName)
+		}
+		if op.Call != nil {
+			if err := enqueueWorkflowCallTx(ctx, tx, *op.Call); err != nil {
+				return err
+			}
 		}
 	} else {
 		tag, err := tx.Exec(ctx, `
