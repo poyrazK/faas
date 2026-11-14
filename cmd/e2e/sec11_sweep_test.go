@@ -1118,7 +1118,7 @@ func jinja2Available() bool {
 func renderJinja2(tmplBody, publicIface, masqueradeCIDR string) (string, error) {
 	script := `import sys
 from jinja2 import Template
-tmpl = Template(sys.stdin.read())
+tmpl = Template(sys.stdin.read(), trim_blocks=True)  # as Ansible and scripts/egress-render-cross-check.sh render it
 print(tmpl.render(public_iface=sys.argv[1], masquerade_cidr=sys.argv[2]), end="")
 `
 	cmd := exec.Command("python3", "-c", script, publicIface, masqueradeCIDR)

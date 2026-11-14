@@ -47,24 +47,27 @@ func testQueueDemandScope(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The scaling reader counts only queues something consumes (#7188); with
+	// no queue trigger or binding here that is the unnamed queue alone.
 	for _, item := range []struct {
 		scope           string
 		depth, inflight int
 		dead            int
+		scaling         int
 	}{
-		{"production", 6, 1, 1}, {"staging", 1, 0, 1}, {"default", 1, 0, 0}, {"missing", 0, 0, 0},
-		{"a", 1, 0, 0}, {"1", 1, 0, 0},
+		{"production", 6, 1, 1, 1}, {"staging", 1, 0, 1, 0}, {"default", 1, 0, 0, 0}, {"missing", 0, 0, 0, 0},
+		{"a", 1, 0, 0, 0}, {"1", 1, 0, 0, 0},
 	} {
 		stats, err := fx.Store.QueueStateInScope(fx.Ctx, app.ID, item.scope)
 		if err != nil || stats.Depth != item.depth || stats.InFlight != item.inflight || stats.DeadLetter != item.dead ||
 			(item.depth > 0) == stats.OldestPendingAt.IsZero() {
 			t.Fatalf("scope %q stats = %+v, %v", item.scope, stats, err)
 		}
-		// The scaling reader counts the same depth, stopping at its limit.
+		// The scaling reader stops at its limit.
 		for _, limit := range []int{100, 2} {
 			depth, err := fx.Store.QueueDepthInScope(fx.Ctx, app.ID, item.scope, limit)
-			if err != nil || depth != min(item.depth, limit) {
-				t.Fatalf("scope %q depth limit %d = %d, %v; want %d", item.scope, limit, depth, err, min(item.depth, limit))
+			if err != nil || depth != min(item.scaling, limit) {
+				t.Fatalf("scope %q depth limit %d = %d, %v; want %d", item.scope, limit, depth, err, min(item.scaling, limit))
 			}
 		}
 	}
