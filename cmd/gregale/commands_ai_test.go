@@ -44,6 +44,28 @@ func TestParseAIPriceSpec(t *testing.T) {
 	}
 }
 
+// adr: 20261027132936 — a price spec sets a one-hour cache-write price and a
+// long-context tier, and the tables show them (amendment 3).
+func TestParseAIPriceSpecTiers(t *testing.T) {
+	entry, err := main.ParseAIPriceSpec("model=claude,input=3,output=15,cache-write-1h=6,long-context=200000:200:150")
+	if err != nil || entry.CacheWrite1hMillicentsPerMTok == nil || *entry.CacheWrite1hMillicentsPerMTok != 600_000 ||
+		entry.LongContext == nil || *entry.LongContext != (api.OutboundAILongContextTier{AboveInputTokens: 200_000, InputPercent: 200, OutputPercent: 150}) {
+		t.Fatalf("price spec = %+v %+v, %v", entry, entry.LongContext, err)
+	}
+	if got := main.FormatPriceTiers(entry); got != "1h cache write USD 6.00; above 200k input tokens: 2x input, 1.5x output" {
+		t.Fatalf("tiers = %q", got)
+	}
+	if got := main.FormatPriceTiers(api.OutboundAIPriceEntry{}); got != "-" {
+		t.Fatalf("no tiers = %q", got)
+	}
+	for _, bad := range []string{"model=m,input=1,output=2,long-context=200000:200", "model=m,input=1,output=2,long-context=500:200:150",
+		"model=m,input=1,output=2,long-context=200000:50:150", "model=m,input=1,output=2,long-context=a:b:c"} {
+		if _, err := main.ParseAIPriceSpec(bad); err == nil {
+			t.Errorf("parseAIPriceSpec(%q) accepted", bad)
+		}
+	}
+}
+
 // adr: 991 — guardrail flags merge into the current set; keys come from stdin.
 func TestApplyAIGuardrailFlags(t *testing.T) {
 	rpm := int64(60)

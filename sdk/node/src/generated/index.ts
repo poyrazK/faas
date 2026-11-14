@@ -2153,6 +2153,7 @@ export type { OutboundAIEvaluation } from './models/OutboundAIEvaluation.js';
 export type { OutboundAIEvaluationItem } from './models/OutboundAIEvaluationItem.js';
 export type { OutboundAIEvaluationList } from './models/OutboundAIEvaluationList.js';
 export type { OutboundAIEvaluationTargetStats } from './models/OutboundAIEvaluationTargetStats.js';
+export type { OutboundAILongContextTier } from './models/OutboundAILongContextTier.js';
 export type { OutboundAIModeration } from './models/OutboundAIModeration.js';
 export type { OutboundAIOnlineEvaluation } from './models/OutboundAIOnlineEvaluation.js';
 export type { OutboundAIPriceCatalogResponse } from './models/OutboundAIPriceCatalogResponse.js';

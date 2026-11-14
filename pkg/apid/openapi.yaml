@@ -87582,6 +87582,27 @@ components:
           minimum: 0
           maximum: 1000000000
           description: Charged per million audio output tokens; the output price when absent.
+        cache_write_1h_millicents_per_mtok:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000
+          description: >-
+            Charged per million tokens of cache writes kept for one hour. When absent they cost the higher of the
+            cache-write price and twice the input price.
+        long_context:
+          $ref: '#/components/schemas/OutboundAILongContextTier'
+    OutboundAILongContextTier:
+      type: object
+      description: >-
+        A higher price for a long prompt. When a call's input tokens (cached reads and cache writes included) exceed
+        above_input_tokens, its input-side prices are multiplied by input_percent/100 and its output prices by
+        output_percent/100.
+      required: [above_input_tokens, input_percent, output_percent]
+      properties:
+        above_input_tokens: { type: integer, format: int64, minimum: 1000, maximum: 2000000 }
+        input_percent: { type: integer, format: int64, minimum: 100, maximum: 1000 }
+        output_percent: { type: integer, format: int64, minimum: 100, maximum: 1000 }
     PutOutboundAIPricesRequest:
       type: object
       description: Replace an integration's price list. It takes effect immediately; earlier lists stay for costs already settled.
