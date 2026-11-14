@@ -13,7 +13,7 @@ synchronization does not require application Auth.
 
 ## Neon source onboarding
 
-Run `gregale pipeline connection explain neon` without logging in, or open
+Run `gregale pipeline connection guide get neon` without logging in, or open
 **Connect a Neon source** in the dashboard. Use a direct PostgreSQL 16 endpoint;
 `-pooler` URLs are rejected before connecting. Keep `sslmode=verify-full`.
 Enable logical replication in Neon project settings only after reviewing its
