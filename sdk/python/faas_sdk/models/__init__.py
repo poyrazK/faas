@@ -19,6 +19,8 @@ from .account_health_request import AccountHealthRequest
 from .account_health_requests import AccountHealthRequests
 from .account_health_restriction import AccountHealthRestriction
 from .account_health_restriction_kind import AccountHealthRestrictionKind
+from .account_health_signal import AccountHealthSignal
+from .account_health_signal_kind import AccountHealthSignalKind
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_overage_cap_response import AccountOverageCapResponse
@@ -2736,6 +2738,8 @@ __all__ = (
     "AccountHealthRequests",
     "AccountHealthRestriction",
     "AccountHealthRestrictionKind",
+    "AccountHealthSignal",
+    "AccountHealthSignalKind",
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountOverageCapResponse",
