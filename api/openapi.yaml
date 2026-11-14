@@ -28458,6 +28458,9 @@ paths:
                 dev_source_deleted:
                   type: string
                   description: "JSON string array of canonical archive paths removed since dev_source_base."
+                dev_source_build_now:
+                  type: string
+                  description: "Set to true to build this sync at once even when it reaches the running instance as a live patch. Without it, such a sync's build waits until the developer stops saving and a later sync replaces it."
                 dockerfile:
                   type: boolean
                 runtime:
@@ -32196,8 +32199,13 @@ paths:
           in: query
           schema: { type: string, enum: [info, warn, error] }
           description: >
-            Exact match on the structured `level` field (info, warn, or error)
-            surfaced in each matching log event.
+            Severity floor: returns lines at this level or higher, so
+            `warn` returns warn and error lines and `info` returns info,
+            warn and error lines. A line's level comes from its structured
+            `level` field (info, warn, or error) surfaced in each matching
+            log event, or from common line markers when the line has no
+            structured level; lines with no recognisable level are omitted
+            whenever a level is set.
             Empty = no level filter. The CLI and the API handler both validate
             against the same enum (api.IsValidLogLevel);
             an unknown value short-circuits with an SSE error frame carrying
@@ -56515,7 +56523,9 @@ paths:
         default). Status flips to 'grace' for the window, then to
         'revoked' at the deadline. Setting
         `accounts.key_grace_window_days = 0` makes rotation atomic
-        (old key revoked immediately).
+        (old key revoked immediately). The optional body's
+        `grace_window_days` overrides the window for this rotation
+        only; send `0` to revoke a leaked key at once.
 
         Returns the new plaintext exactly once — the old plaintext
         is not re-issued (we only store the SHA-256 hash). The
@@ -56525,6 +56535,14 @@ paths:
 
         Quota: rotation is quota-neutral (-1 +1 = 0 net). A
         customer AT the per-account cap can still rotate.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateKeyRequest'
+            example:
+              grace_window_days: 0
       responses:
         '200':
           description: New key minted, old key now in 'grace' (or 'revoked' if grace_window_days=0).
@@ -98429,7 +98447,7 @@ components:
           description: Optional placement region; omitted uses the platform default.
 
     DevPatchPreview:
-      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have been applied as a live source patch to the deployment that was live at upload time (phase 1). It is a measurement only; the normal developer build always runs.
+      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync can be applied as a live source patch to the deployment that was live at upload time and, when it was published as one, whether its build waits for the developer to stop saving.
       type: object
       required:
         - eligible
@@ -98468,6 +98486,10 @@ components:
           format: int64
           minimum: 1
           description: Set when this sync published a live patch; poll getDevPatchStatus with it.
+        build_deferred_until:
+          type: string
+          format: date-time
+          description: Set when this sync's build waits behind its live patch. The build starts at this time unless a later sync replaces it first; a patch that fails to apply starts it at once.
     DevPatchStatusResponse:
       description: Delivery state of one developer live patch.
       type: object
@@ -112317,6 +112339,10 @@ components:
           type: array
           description: The managed PostgreSQL copies the branch owns. Reported by the branch's own view.
           items: { $ref: '#/components/schemas/ProjectEnvironmentBranchDatabase' }
+        buckets:
+          type: array
+          description: The overlay buckets the branch owns on its parent's buckets. Reported by the branch's own view.
+          items: { $ref: '#/components/schemas/ProjectEnvironmentBranchBucket' }
 
     ProjectEnvironmentBranchWorkload:
       description: One workload the branch published from its parent's build. It starts on its first request.
@@ -112338,6 +112364,20 @@ components:
         source_database_id: { type: string }
         name: { type: string }
         copy_database_id: { type: string, description: "Empty until the copy is made." }
+
+    ProjectEnvironmentBranchBucket:
+      description: "One overlay bucket a branch owns on a parent bucket. The branch reads every key it does not hold itself from the parent."
+      type: object
+      required: [source_bucket_id]
+      properties:
+        source_bucket_id: { type: string }
+        name: { type: string, description: "The parent bucket's name." }
+        copy_bucket_id: { type: string, description: "Empty until the bucket is made." }
+        consistency:
+          type: string
+          enum: [as_of, live_parent]
+          description: "as_of when the branch reads the parent as of the branch point (the parent had versioning on when the branch was made); live_parent when it reads the parent's current objects."
+        as_of: { type: string, format: date-time, description: "The instant an as_of bucket reads the parent at." }
 
     ExtendProjectEnvironmentBranchRequest:
       description: "Moves a branch's expiry."
@@ -118434,6 +118474,12 @@ components:
           example: [apps:read, deploy:write]
         projects: { type: array, maxItems: 100, items: { type: string }, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project." }
         approval_categories: { type: array, items: { type: string, enum: [delete, production, credentials, billing] }, description: "Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field." }
+
+    RotateKeyRequest:
+      description: "Optional body of POST /v1/keys/{id}/rotate. `grace_window_days` overrides, for this rotation only, how many days the old key keeps working; `0` revokes it at once (use it for a leaked key). Omitted uses the account's grace window or the plan default (7 days)."
+      type: object
+      properties:
+        grace_window_days: { type: integer, minimum: 0, maximum: 30, description: "Days the old key keeps working after this rotation. `0` revokes it at once." }
 
     RotateKeyResponse:
       description: "Response body of POST /v1/keys/{id}/rotate. The new `key_plaintext` is returned exactly once; the old plaintext is NEVER returned (only the hash is stored). `old_key_expires_at` is the grace deadline applied to the predecessor — the customer's CI rotates over by then."

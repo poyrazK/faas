@@ -593,7 +593,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			// error and emit the audit event from here so the
 			// store stays independent of the audit seam.
 			if err != nil {
-				// ADR-20261114090000: a revoked or expired key still
+				// ADR-20261114190002: a revoked or expired key still
 				// names its account.
 				noteAccount(r, key.AccountID)
 				if errors.Is(err, state.ErrAPIKeyExpired) {

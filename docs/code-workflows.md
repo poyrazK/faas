@@ -146,6 +146,17 @@ timeouts. If customer data needs that shape, wrap it, for example as
   `workflow/<run-id>/<step-name>`, unchanged across attempts. Delivery is at
   least once, as for declarative steps; pass the key to external APIs.
 
+## Following runs from the CLI
+
+Use `gregale workflow run NAME --app APP --wait` to start once and follow the
+accepted run. `workflow resume RUN_ID --expected-resume-count N --wait` and
+`workflow retry RUN_ID STEP --wait` follow their accepted changes in the same
+way. To continue reading after timeout or Ctrl-C, use `workflow wait RUN_ID`
+with the original timeout and polling interval rather than repeating a change.
+JSON errors provide exact-run inspection and wait commands in `recovery` and
+retain an available run snapshot on stdout. See
+[Workflow wait recovery](cli-config.md#workflow-wait-recovery).
+
 ## Rules for workflow code
 
 Your function is replayed from the start on every resume, so code **outside**

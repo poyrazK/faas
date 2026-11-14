@@ -1,10 +1,12 @@
 -- name: OperatorQueuedBuildsCount :one
-SELECT count(*)::bigint FROM builds WHERE status = 'queued';
+-- Deferred builds that are not due yet (ADR-20261021221906) are not backlog.
+SELECT count(*)::bigint FROM builds
+WHERE status = 'queued' AND (not_before IS NULL OR not_before <= now());
 
 -- name: OperatorQueuedBuildsSnapshot :one
 SELECT count(*)::bigint AS queued,
-       min(enqueued_at)::timestamptz AS oldest_enqueued_at
-FROM builds WHERE status = 'queued';
+       min(coalesce(not_before, enqueued_at))::timestamptz AS oldest_enqueued_at
+FROM builds WHERE status = 'queued' AND (not_before IS NULL OR not_before <= now());
 
 -- name: OperatorBuildRecoverySnapshot :one
 WITH running AS (

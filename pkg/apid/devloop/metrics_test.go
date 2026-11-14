@@ -43,7 +43,12 @@ func TestDevLoopMetricsObserveSyncAndPatchPlans(t *testing.T) {
 	if again := NewMetrics(m.registry, "apid"); again.syncs != m.syncs {
 		t.Fatal("re-registration created a second sync counter")
 	}
+	m.ObserveBuildDeferral(BuildDeferred)
+	if got := testutil.ToFloat64(m.deferrals.WithLabelValues(BuildDeferred)); got != 1 {
+		t.Fatalf("deferred builds = %v, want 1", got)
+	}
 	var nilMetrics *Metrics
+	nilMetrics.ObserveBuildDeferral(BuildStarted)
 	nilMetrics.ObserveSync(api.RecordDevSyncRequest{Status: "live"}, false)
 	nilMetrics.ObservePatchPlan(PatchPublished, "", false)
 }
