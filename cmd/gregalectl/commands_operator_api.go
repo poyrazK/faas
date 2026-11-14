@@ -367,7 +367,12 @@ func checkEvidenceRevision(label, revision string, apply bool, readErr error) bo
 
 func readOperatorEvidence[T any](path string, limit int64) (T, error) {
 	var request T
-	file, err := os.Open(path)
+	if info, err := os.Lstat(path); err != nil {
+		return request, err
+	} else if !info.Mode().IsRegular() {
+		return request, errors.New("evidence must be a regular file, not a symlink or device")
+	}
+	file, err := os.Open(path) //nolint:forbidigo // operator-supplied evidence file; regular-file check above and a bounded read follow.
 	if err != nil {
 		return request, err
 	}
