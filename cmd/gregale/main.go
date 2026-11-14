@@ -54,6 +54,7 @@ func topLevelUsage(showAll, showOperator bool) string {
 		b.WriteString("Run 'gregale help --all --operator' to include operator and compatibility commands.\n")
 	}
 	b.WriteString("\nGlobal flags:\n")
+	b.WriteString("  --http-timeout DURATION  API request timeout, such as 90s (before the command).\n")
 	b.WriteString("  --debug-http           Write HTTP metadata diagnostics to stderr (before the command).\n")
 	b.WriteString("  --agent-reason TEXT    With an agent key, tell the person who approves a request\n")
 	b.WriteString("                         what it is for (before the command; up to 280 characters).\n")
@@ -63,6 +64,7 @@ func topLevelUsage(showAll, showOperator bool) string {
 	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
 	b.WriteString("                         Interactive-only commands retain human prompts.\n")
 	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
+	b.WriteString("  --http-retries N       Retry selected read-only API requests up to N times (0–5; before the command).\n")
 	b.WriteString("  --org SLUG             Run project commands on a company's projects (before\n")
 	b.WriteString("                         the command), e.g. gregale --org acme deploy --project.\n")
 	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
@@ -115,6 +117,9 @@ func init() {
 
 func run(args []string) (status int) {
 	args = protectImageRunCommandArgs(args)
+	previousHTTPTimeout := httpRequestTimeout
+	httpRequestTimeout = 0
+	defer func() { httpRequestTimeout = previousHTTPTimeout }()
 	previousDebug, previousTrace := httpDebugEnabled, activeHTTPDebug.Load()
 	httpDebugEnabled = false
 	activeHTTPDebug.Store(nil)
@@ -133,6 +138,9 @@ func run(args []string) (status int) {
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
 	}()
+	previousRetries := httpReadRetries
+	httpReadRetries = 0
+	defer func() { httpReadRetries = previousRetries }()
 	previousAutomation, previousWait, previousOrg, previousReason := nonInteractive, approvalWaitEnabled, projectOrganization, agentReason
 	defer func() {
 		nonInteractive, approvalWaitEnabled, projectOrganization, agentReason = previousAutomation, previousWait, previousOrg, previousReason

@@ -4,6 +4,21 @@ Every GA row of `docs/ga-capability-inventory.md`, mapped to the journeys
 that test it end to end against a deployed Gregale, and to what is not
 covered. Update this table when a journey or a GA row changes.
 
+Preview acceptance is separate from this GA matrix: the opt-in
+`TestMCPToolLifecycle` covers verified tool publication, owner grants, scoped
+discovery, both hosted invocation protocols, lost-reply recovery without another
+runtime call, cancellation and revocation. See the
+[staging run instructions](README.md#published-tool-lifecycle-preview).
+Local harness checks do not establish that this deployed journey passed.
+
+The separate opt-in `TestMCPPrivateToolLifecycle` covers synthetic JWT-authenticated
+publication, owner-provisioned sealed credentials, exact private bindings, both
+invocation protocols, result redaction, lost-reply recovery, cancellation,
+expiry, rotation, catalog drift and revocation. See the
+[private staging instructions](README.md#private-tool-lifecycle-preview).
+It does not certify external OAuth provider login/refresh or API/bridge restart
+recovery; local preparation checks do not establish deployed acceptance.
+
 | # | GA capability | Journeys and steps | Not covered |
 |---|---|---|---|
 | 1 | Apps: create, update, rename, delete, restore | `TestAppSettingsAndRename` (update, rename), `TestDeleteAndRestore`, every `deployProbe` | — |
@@ -50,13 +65,19 @@ covered. Update this table when a journey or a GA row changes.
 | 151 | Plans, usage, invoices, overage cap, costs, forecast, egress overage election, checkout and subscription changes | `TestBillingAndUsage` (read-only views); `TestEgressOverageElection` (read, toggle and restore the election); `TestBillingCheckout` (Free fixture account: hosted checkout hand-off, nothing changes before payment, cancel refused without a subscription; with `GREGALE_E2E_BILLING_CHECKOUT_WAIT` a person pays and the webhooks move the plan to Hobby and invoice the order); `TestBillingSubscription` (paid fixture account: status, invoice periods, card or portal, spend cap set and restored, cancel and keep, scheduled downgrade and undo) | the payment journeys need live billing and fixture tokens, so they skip while a target's billing is off; upgrading a paid subscription (prorated charge), dunning, FOCUS export |
 | 152 | Budgets (monitored; strict budgets stay beta) | `TestBudgets`: `preview`, `create` (monitored notify, active, not enforcing), `list`, `get`, `update` (revision 2), `history`, `channels` (read, clear), `delete` | threshold and projected-overrun alerts (thresholds set above the account's spend: no test inbox), channel delivery, preview stops, organization budgets, strict budgets (beta) |
 | 153 | GDPR export, account deletion and restore, DPA | `TestAccountExportAndDPA` (export, status, DPA) | deletion and restore (no disposable accounts) |
-| 156 | `gregale` CLI | every journey, `TestCLITools` (version, context, doctor, completion, man, help), `TestHTTPDebugLiveAPI` (read-only API diagnostics), `TestHTTPDebugIsolatedAPI` (built CLI: success/error captures, unchanged stdout, credential redaction) | interactive `start` and `menu` |
+| 156 | `gregale` CLI | every journey, `TestCLITools` (version, context, doctor, completion, man, help), `TestErrorRequestIDLiveAPI` (correlation on read-only API errors), `TestErrorRequestIDIsolatedAPI` (built CLI: text/JSON errors, invalid IDs and proxy bodies), `TestHTTPTimeoutLiveAPI` (read-only API with explicit request budget), `TestHTTPTimeoutIsolatedAPI` (built CLI: body deadline, invalid duration, unchanged stdout, invocation isolation), `TestHTTPReadRetriesLiveAPI` (read-only retry policy), `TestHTTPReadRetriesIsolatedAPI` (built CLI: transient recovery, attempt diagnostics, budget and stdout), `TestHTTPDebugLiveAPI` (read-only API diagnostics), `TestHTTPDebugIsolatedAPI` (built CLI: success/error captures, unchanged stdout, credential redaction) | interactive `start` and `menu` |
 | 157 | Web dashboard | — | all (dashboard journeys not enabled) |
 | 159 | Public OpenAPI spec and capabilities endpoint | `TestPublicSurface/openapi_spec`, `TestAccountAndKeys/capabilities` | — |
 | 161 | Docs site and trust pages | `TestDocsPages` (every route not marked `unpublished` in `docs/customer-pages.json`), `TestPublicSurface/security_txt` | pages of preview and internal capabilities, which are deliberately unpublished |
 
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
+
+`invoke --async --wait` is covered by `TestInvokeAsyncWaitLiveAPI` (one
+health request through the durable queue, compared with its stored record) and
+`TestInvokeAsyncWaitIsolatedAPI` / `TestInvokeAsyncWaitInterrupt` (terminal
+results, timeout and Ctrl-C recovery, exactly one submission and no remote
+cancellation). The live check requires a plan that permits async invocation.
 
 ## GA candidates
 
@@ -89,6 +110,20 @@ custom metric history, SLOs and synthetic checks were hidden for it.
 
 ## Regression journeys
 
+`--wait` alone selects async submission in the invocation family journeys,
+including timeout and interruption; explicit async contradictions are covered
+by CLI validation tests.
+
+`TestInvocationFamilyIsolatedAPI` exercises submission, list, get and wait through
+the single `invocation` family. The invocation wait journeys also use its
+canonical `run` leaf; unit routing tests cover the earlier `invoke` spelling
+and apps named after lifecycle verbs.
+
+`TestInvokeIdempotencyKeyLiveAPI` covers async CLI receipt replay and changed-input
+refusal against the deployed API. `TestInvokeIdempotencyKeyIsolatedAPI` checks
+human/JSON key validation before network access and explicit-key submission.
+The live check requires a plan that permits async invocation.
+
 `TestBazaarRegressions` replays the bugs that three rounds of deploying a
 multi-service project (bazaar) by hand found, one subtest per area, each
 check naming the change that fixed it (#5934, #6001, #6060): an
@@ -99,3 +134,14 @@ alias whose revision a rollback superseded answering 409 (row 24); a job
 that exits at once keeping its output, its command given after `--`; the
 standalone default RAM; and `metrics --services` explaining a hidden
 service map. A check fails on a release cut before its fix.
+
+The same preview journey can select hosted source publication with
+`--mcp-hosted-tool-lifecycle`: remote starter retrieval, connection-owned archive
+upload, verified publication by a separate publishing key and native receipt
+recovery before exact grants and invocation. This remains opt-in preview coverage.
+
+`TestJSONInputLocationsIsolatedAPI` adds GA row 156 coverage for shared JSON
+input diagnostics: inline/file/stdin sources, human and JSON errors, CRLF
+locations, omitted payload values and zero API calls on malformed input.
+`TestJSONInputValidPayloadIsolatedAPI` verifies that the built CLI still sends
+valid input with large numbers and Unicode text intact.
