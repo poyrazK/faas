@@ -445,7 +445,7 @@ func (s *server) confirmMFAFirstFactor(w http.ResponseWriter, r *http.Request, a
 		return false
 	}
 	if err != nil || !matched {
-		s.recordLoginFailure(loginContext(r), acct.Email, &acct)
+		s.recordLoginFailure(withLoginNetwork(r.Context(), r), acct.Email, &acct)
 		api.WriteProblem(w, api.ErrInvalidCredentials())
 		return false
 	}
@@ -910,7 +910,7 @@ func (s *server) disableByPassword(w http.ResponseWriter, r *http.Request, acct 
 		return false
 	}
 	if err != nil || !ok {
-		s.recordLoginFailure(loginContext(r), acct.Email, &acct)
+		s.recordLoginFailure(withLoginNetwork(r.Context(), r), acct.Email, &acct)
 		s.audit.Emit(r.Context(), "account.mfa_disable_failed", &acct.ID, map[string]any{"reason": "password_mismatch"})
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
 			"Invalid credentials", "password did not match"))

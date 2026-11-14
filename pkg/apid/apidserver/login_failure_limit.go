@@ -164,10 +164,11 @@ var loginFailureFleetBudget = state.LoginFailureBudget{
 
 type loginNetworkKey struct{}
 
-// loginContext carries r's client network to the failed-password budget, so
-// a password check counts against the network it came from.
-func loginContext(r *http.Request) context.Context {
-	return context.WithValue(r.Context(), loginNetworkKey{}, loginNetwork(clientIPFromRequest(r)))
+// withLoginNetwork returns ctx carrying r's client network for the
+// failed-password budget, so a password check counts against the network it
+// came from.
+func withLoginNetwork(ctx context.Context, r *http.Request) context.Context {
+	return context.WithValue(ctx, loginNetworkKey{}, loginNetwork(clientIPFromRequest(r)))
 }
 
 // loginNetwork is the client network a password check is counted under: the
@@ -270,7 +271,7 @@ func (s *server) resetLoginFailures(ctx context.Context, email string) {
 // change, turning off two-factor) shares the budget, so a stolen session
 // cannot guess the password through a route sign-in does not count.
 func (s *server) refuseWhileLoginLimited(w http.ResponseWriter, r *http.Request, email string) bool {
-	wait := s.loginRetryAfter(loginContext(r), email)
+	wait := s.loginRetryAfter(withLoginNetwork(r.Context(), r), email)
 	if wait <= 0 {
 		return false
 	}
