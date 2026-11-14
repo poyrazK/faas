@@ -1,6 +1,7 @@
 package conformance
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -49,6 +50,20 @@ func testAccountLifecycleLeavesTheDunningLadder(t *testing.T, fx *Fixture) {
 	if got := status(); got.Status != state.AccountSuspended {
 		t.Fatalf("after quota stop: status %s, want suspended", got.Status)
 	}
+	quota, hasQuota := s.(interface {
+		QuotaSuspended(ctx context.Context, id string) (bool, error)
+	})
+	quotaSuspended := func() bool {
+		t.Helper()
+		got, err := quota.QuotaSuspended(ctx, id)
+		if err != nil {
+			t.Fatalf("QuotaSuspended: %v", err)
+		}
+		return got
+	}
+	if hasQuota && !quotaSuspended() {
+		t.Fatal("QuotaSuspended after the quota stop = false, want true")
+	}
 	if ok, err := s.RestoreFreeQuotaSuspension(ctx, id); err != nil || !ok {
 		t.Fatalf("RestoreFreeQuotaSuspension(quota stop) = %v, %v; want true", ok, err)
 	}
@@ -65,6 +80,9 @@ func testAccountLifecycleLeavesTheDunningLadder(t *testing.T, fx *Fixture) {
 	}
 	if got := status(); got.Status != state.AccountSuspended {
 		t.Fatalf("operator suspension was lifted: status %s", got.Status)
+	}
+	if hasQuota && quotaSuspended() {
+		t.Fatal("QuotaSuspended for an operator suspension = true, want false")
 	}
 }
 

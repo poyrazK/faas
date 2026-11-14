@@ -77,8 +77,15 @@ func (f *floorHolders) capReached(ctx context.Context, subject string) bool {
 	if !capped {
 		return false
 	}
-	if observed, err := f.store.CurrentMonthOverageCents(ctx, subject); err == nil && observed >= capCents {
-		return true
+	if observed, err := f.store.CurrentMonthOverageCents(ctx, subject); err == nil {
+		complimentary := false
+		if capCents == 0 {
+			// A failed read keeps the ordinary $0 cap: reached.
+			complimentary, _ = state.IsComplimentaryAccount(ctx, f.store, subject)
+		}
+		if state.SpendCapReached(capCents, observed, complimentary) {
+			return true
+		}
 	}
 	holds, ok := f.store.(state.SpendCapHoldStore)
 	if !ok {
