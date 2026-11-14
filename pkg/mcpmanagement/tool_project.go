@@ -182,9 +182,6 @@ func (m *management) getToolTemplate(ctx context.Context, a toolTemplateArgs) (a
 	if a.Runtime != "node" && a.Runtime != "go" && a.Runtime != "python" || a.Offset < 0 {
 		return nil, invalid("invalid_argument", "runtime must be node, go or python and offset non-negative")
 	}
-	if m.remote() && a.Runtime != "node" {
-		return nil, invalid("unsupported_project", "hosted tool publishing currently supports the Node starter")
-	}
 	parent, err := os.MkdirTemp("", "gregale-tool-template-")
 	if err != nil {
 		return nil, err

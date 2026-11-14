@@ -2325,3 +2325,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261113220000: Managed OAuth connections for private tool execution](20261113220000-managed-tool-oauth.md) — accepted; immutable execution authority, encrypted rotating credentials, durable renewal leases and credential-free agent status
 
 - [ADR-20261113230000: Guided OAuth for execution connections](20261113230000-guided-tool-oauth.md) — accepted; owner-only browser PKCE, direct encrypted credentials, consumed authorization attempts and new identities for reconnects
+
+- [ADR-20261114162429: Hosted tool publication for Node, Go and Python](20261114162429-hosted-tool-runtime-selection.md) — accepted; source-derived runtime review using shared native markers, all three hosted starters and the existing verified publication workflow

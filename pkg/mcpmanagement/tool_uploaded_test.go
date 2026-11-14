@@ -51,87 +51,124 @@ func uploadedToolArgs(t *testing.T) planUploadedToolArgs {
 	return planUploadedToolArgs{App: "alpha", Reason: "publish reviewed Node tool", Files: uploadedToolFiles(t), AccessMode: "open", AllowToolExecution: true}
 }
 
-func TestHostedToolPublicationJourney(t *testing.T) {
-	for _, protocol := range []string{"2026-07-28", "2025-11-25"} {
-		for _, archive := range []bool{false, true} {
-			t.Run(protocol+map[bool]string{false: "/inline", true: "/archive"}[archive], func(t *testing.T) {
-				f, backend := newPublicationFixture(t)
-				opts := hostedPublicationOptions(t, f, backend)
-				cs, ctx := connectSelectedTestServer(t, backend, opts, protocol)
-				tools := listedTools(t, ctx, cs)
-				for _, name := range []string{"gregale_get_tool_template", "gregale_create_source_upload", "gregale_plan_uploaded_tool_deploy", "gregale_apply_tool_deploy", "gregale_get_tool_deploy"} {
-					if !tools[name] {
-						t.Fatalf("missing hosted tool %s", name)
-					}
-				}
-				for _, name := range []string{"gregale_plan_tool_deploy", "gregale_test_tool", "gregale_plan_local_deploy"} {
-					if tools[name] {
-						t.Fatalf("host filesystem tool listed: %s", name)
-					}
-					result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: map[string]any{}})
-					if err == nil && !result.IsError {
-						t.Fatalf("unlisted %s callable", name)
-					}
-				}
-				publicationCall(t, ctx, cs, "gregale_get_tool_template", toolTemplateArgs{Runtime: "node"}, false)
-				publicationCall(t, ctx, cs, "gregale_get_tool_template", toolTemplateArgs{Runtime: "go"}, true)
-				args := uploadedToolArgs(t)
-				if archive {
-					created := callTool(t, ctx, cs, "gregale_create_source_upload", createUploadArgs{App: "alpha"}, false)
-					var uploadURL string
-					_ = json.Unmarshal(created["upload_url"], &uploadURL)
-					_ = json.Unmarshal(created["upload_id"], &args.UploadID)
-					entries := []tarEntry{}
-					for _, file := range args.Files {
-						entries = append(entries, tarEntry{name: file.Path, typeflag: tar.TypeReg, body: file.Content})
-					}
-					parsed, err := url.Parse(uploadURL)
-					if err != nil {
-						t.Fatal(err)
-					}
-					rec := httptest.NewRecorder()
-					opts.uploads.receive(rec, httptest.NewRequest(http.MethodPut, parsed.RequestURI(), strings.NewReader(string(tarball(t, entries...)))))
-					if rec.Code != http.StatusCreated {
-						t.Fatalf("upload: %d %s", rec.Code, rec.Body.String())
-					}
-					args.Files = nil
-				}
-				plan := publicationCall(t, ctx, cs, "gregale_plan_uploaded_tool_deploy", args, false)
-				var id string
-				_ = json.Unmarshal(plan["plan_id"], &id)
-				raw, _ := json.Marshal(plan)
-				if strings.Contains(string(raw), opts.uploads.root) || strings.Contains(string(raw), "node server.js") {
-					t.Fatal("review leaked host path or source")
-				}
-				f.mu.Lock()
-				if f.deploys != 0 || f.tests != 0 {
-					t.Fatal("planning executed customer code")
-				}
-				f.mu.Unlock()
-				publicationCall(t, ctx, cs, "gregale_apply_tool_deploy", applyArgs{PlanID: id}, false)
-				done := waitPublication(t, ctx, cs, id)
-				if string(done["status"]) != `"completed"` {
-					t.Fatalf("publication: %v", done)
-				}
-				fresh, freshCtx := connectSelectedTestServer(t, backend, opts, protocol)
-				recovered := publicationCall(t, freshCtx, fresh, "gregale_get_tool_deploy", planLookupArgs{PlanID: id}, false)
-				if string(recovered["durable"]) != "true" || string(recovered["status"]) != `"completed"` || !strings.Contains(string(recovered["result"]), "published") {
-					t.Fatalf("recovery: %v", recovered)
-				}
-				publicationCall(t, freshCtx, fresh, "gregale_apply_tool_deploy", applyArgs{PlanID: id}, false)
-				f.mu.Lock()
-				if f.deploys != 1 || f.observedSource != "v1" {
-					t.Fatalf("dispatches=%d source=%q", f.deploys, f.observedSource)
-				}
-				f.mu.Unlock()
-				opts.uploads.mu.Lock()
-				if len(opts.uploads.dirs) != 0 {
-					t.Fatal("publication retained consumed upload source")
-				}
-				opts.uploads.mu.Unlock()
-			})
+func uploadedRuntimeToolArgs(t *testing.T, runtime string) planUploadedToolArgs {
+	t.Helper()
+	a := uploadedToolArgs(t)
+	a.Runtime, a.Reason = runtime, "publish reviewed "+runtime+" tool"
+	for i := range a.Files {
+		if a.Files[i].Path == "package.json" {
+			switch runtime {
+			case "go":
+				a.Files[i] = inlineFile{Path: "go.mod", Content: "module tool\n\ngo 1.26.0\n"}
+			case "python":
+				a.Files[i] = inlineFile{Path: "requirements.txt", Content: "mcp==1.26.0\n"}
+			}
+		}
+		if a.Files[i].Path == "server.js" && runtime != "node" {
+			a.Files[i].Path = map[string]string{"go": "main.go", "python": "server.py"}[runtime]
 		}
 	}
+	return a
+}
+
+func TestHostedToolPublicationJourney(t *testing.T) {
+	for _, protocol := range []string{"2026-07-28", "2025-11-25"} {
+		for _, runtime := range []string{"node", "go", "python"} {
+			for _, archive := range []bool{false, true} {
+				t.Run(protocol+"/"+runtime+map[bool]string{false: "/inline", true: "/archive"}[archive], func(t *testing.T) {
+					hostedToolPublicationJourney(t, protocol, runtime, archive)
+				})
+			}
+		}
+	}
+}
+
+func hostedToolPublicationJourney(t *testing.T, protocol, runtime string, archive bool) {
+	t.Helper()
+	f, backend := newPublicationFixture(t)
+	opts := hostedPublicationOptions(t, f, backend)
+	cs, ctx := connectSelectedTestServer(t, backend, opts, protocol)
+	tools := listedTools(t, ctx, cs)
+	for _, name := range []string{"gregale_get_tool_template", "gregale_create_source_upload", "gregale_plan_uploaded_tool_deploy", "gregale_apply_tool_deploy", "gregale_get_tool_deploy"} {
+		if !tools[name] {
+			t.Fatalf("missing hosted tool %s", name)
+		}
+	}
+	for _, name := range []string{"gregale_plan_tool_deploy", "gregale_test_tool", "gregale_plan_local_deploy"} {
+		if tools[name] {
+			t.Fatalf("host filesystem tool listed: %s", name)
+		}
+		result, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: map[string]any{}})
+		if err == nil && !result.IsError {
+			t.Fatalf("unlisted %s callable", name)
+		}
+	}
+	publicationCall(t, ctx, cs, "gregale_get_tool_template", toolTemplateArgs{Runtime: runtime}, false)
+	args := uploadedRuntimeToolArgs(t, runtime)
+	f.mu.Lock()
+	f.sourceFile = map[string]string{"node": "server.js", "go": "main.go", "python": "server.py"}[runtime]
+	f.mu.Unlock()
+	if archive {
+		created := callTool(t, ctx, cs, "gregale_create_source_upload", createUploadArgs{App: "alpha"}, false)
+		var uploadURL string
+		_ = json.Unmarshal(created["upload_url"], &uploadURL)
+		_ = json.Unmarshal(created["upload_id"], &args.UploadID)
+		entries := []tarEntry{}
+		for _, file := range args.Files {
+			entries = append(entries, tarEntry{name: file.Path, typeflag: tar.TypeReg, body: file.Content})
+		}
+		parsed, err := url.Parse(uploadURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		opts.uploads.receive(rec, httptest.NewRequest(http.MethodPut, parsed.RequestURI(), strings.NewReader(string(tarball(t, entries...)))))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("upload: %d %s", rec.Code, rec.Body.String())
+		}
+		args.Files = nil
+	}
+	plan := publicationCall(t, ctx, cs, "gregale_plan_uploaded_tool_deploy", args, false)
+	if string(plan["runtime"]) != `"`+runtime+`"` {
+		t.Fatalf("review runtime: %v", plan)
+	}
+	var id string
+	_ = json.Unmarshal(plan["plan_id"], &id)
+	raw, _ := json.Marshal(plan)
+	if strings.Contains(string(raw), opts.uploads.root) || strings.Contains(string(raw), "node server.js") {
+		t.Fatal("review leaked host path or source")
+	}
+	f.mu.Lock()
+	if f.deploys != 0 || f.tests != 0 {
+		t.Fatal("planning executed customer code")
+	}
+	f.mu.Unlock()
+	publicationCall(t, ctx, cs, "gregale_apply_tool_deploy", applyArgs{PlanID: id}, false)
+	done := waitPublication(t, ctx, cs, id)
+	if string(done["status"]) != `"completed"` {
+		t.Fatalf("publication: %v", done)
+	}
+	fresh, freshCtx := connectSelectedTestServer(t, backend, opts, protocol)
+	recovered := publicationCall(t, freshCtx, fresh, "gregale_get_tool_deploy", planLookupArgs{PlanID: id}, false)
+	if string(recovered["durable"]) != "true" || string(recovered["status"]) != `"completed"` || !strings.Contains(string(recovered["result"]), "published") {
+		t.Fatalf("recovery: %v", recovered)
+	}
+	publicationCall(t, freshCtx, fresh, "gregale_apply_tool_deploy", applyArgs{PlanID: id}, false)
+	reader, readerCtx := connectSelectedTestServer(t, backend, Options{APIBase: backend.URL, Toolsets: []string{ToolsetRegistry}}, protocol)
+	described := publicationCall(t, readerCtx, reader, "gregale_describe_tool", describeToolArgs{Version: id, Name: "add"}, false)
+	if string(described["execution_authorized"]) != "false" || string(described["version"]) != `"`+id+`"` || string(described["deployment_id"]) != `"published"` {
+		t.Fatal("published version did not retain discovery/invocation separation")
+	}
+	f.mu.Lock()
+	if f.deploys != 1 || f.observedSource != "v1" {
+		t.Fatalf("dispatches=%d source=%q", f.deploys, f.observedSource)
+	}
+	f.mu.Unlock()
+	opts.uploads.mu.Lock()
+	if len(opts.uploads.dirs) != 0 {
+		t.Fatal("publication retained consumed upload source")
+	}
+	opts.uploads.mu.Unlock()
 }
 
 func TestHostedToolPublicationRefusesInvalidSourceAndConsent(t *testing.T) {
@@ -332,39 +369,52 @@ func TestHostedToolPublishingOAuthScopeAndConsent(t *testing.T) {
 }
 
 func TestHostedToolPublicationUncertainAndFailedAttemptsNeverRepeat(t *testing.T) {
-	for _, mode := range []string{"lost begin", "lost worker reply", "failed fixture"} {
-		t.Run(mode, func(t *testing.T) {
-			f, backend := newPublicationFixture(t)
-			f.loseBegin, f.lose, f.fail = mode == "lost begin", mode == "lost worker reply", mode == "failed fixture"
-			opts := hostedPublicationOptions(t, f, backend)
-			cs, ctx := connectSelectedTestServer(t, backend, opts, "2026-07-28")
-			plan := publicationCall(t, ctx, cs, "gregale_plan_uploaded_tool_deploy", uploadedToolArgs(t), false)
-			var id string
-			_ = json.Unmarshal(plan["plan_id"], &id)
-			publicationCall(t, ctx, cs, "gregale_apply_tool_deploy", applyArgs{PlanID: id}, mode == "lost begin")
-			if mode != "lost begin" {
-				terminal := waitPublication(t, ctx, cs, id)
-				want := `"outcome_unknown"`
-				if f.fail {
-					want = `"failed"`
-				}
-				if string(terminal["status"]) != want {
-					t.Fatalf("terminal: %v", terminal)
-				}
-			}
-			fresh, freshCtx := connectSelectedTestServer(t, backend, opts, "2026-07-28")
-			publicationCall(t, freshCtx, fresh, "gregale_apply_tool_deploy", applyArgs{PlanID: id}, false)
-			publicationCall(t, ctx, cs, "gregale_apply_tool_deploy", applyArgs{PlanID: id}, false)
-			f.mu.Lock()
-			defer f.mu.Unlock()
-			want := 1
-			if mode == "lost begin" {
-				want = 0
-			}
-			if f.deploys != want {
-				t.Fatalf("uncertain attempt executed %d times; want %d", f.deploys, want)
-			}
-		})
+	for _, runtime := range []string{"node", "go", "python"} {
+		for _, mode := range []string{"lost begin", "lost worker reply", "failed fixture"} {
+			t.Run(runtime+"/"+mode, func(t *testing.T) {
+				hostedToolPublicationFailedAttempt(t, runtime, mode)
+			})
+		}
+	}
+}
+
+func hostedToolPublicationFailedAttempt(t *testing.T, runtime, mode string) {
+	t.Helper()
+	f, backend := newPublicationFixture(t)
+	f.sourceFile = map[string]string{"node": "server.js", "go": "main.go", "python": "server.py"}[runtime]
+	f.loseBegin, f.lose, f.fail = mode == "lost begin", mode == "lost worker reply", mode == "failed fixture"
+	opts := hostedPublicationOptions(t, f, backend)
+	cs, ctx := connectSelectedTestServer(t, backend, opts, "2026-07-28")
+	plan := publicationCall(t, ctx, cs, "gregale_plan_uploaded_tool_deploy", uploadedRuntimeToolArgs(t, runtime), false)
+	var id string
+	_ = json.Unmarshal(plan["plan_id"], &id)
+	publicationCall(t, ctx, cs, "gregale_apply_tool_deploy", applyArgs{PlanID: id}, mode == "lost begin")
+	if mode != "lost begin" {
+		terminal := waitPublication(t, ctx, cs, id)
+		want := `"outcome_unknown"`
+		if f.fail {
+			want = `"failed"`
+		}
+		if string(terminal["status"]) != want {
+			t.Fatalf("terminal: %v", terminal)
+		}
+	}
+	fresh, freshCtx := connectSelectedTestServer(t, backend, opts, "2026-07-28")
+	publicationCall(t, freshCtx, fresh, "gregale_apply_tool_deploy", applyArgs{PlanID: id}, false)
+	publicationCall(t, ctx, cs, "gregale_apply_tool_deploy", applyArgs{PlanID: id}, false)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	want := 1
+	if mode == "lost begin" {
+		want = 0
+	}
+	if f.deploys != want {
+		t.Fatalf("uncertain attempt executed %d times; want %d", f.deploys, want)
+	}
+	f.base.mu.Lock()
+	defer f.base.mu.Unlock()
+	if f.fail && f.base.current != "stable" {
+		t.Fatal("failed publication changed the serving release")
 	}
 }
 
