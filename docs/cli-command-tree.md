@@ -461,6 +461,10 @@ touch them. The tables below map each earlier name.
 | `gregale orgs standards operation abort` | `gregale org standards operation cancel` |
 | `gregale orgs standards reviews preview` | `gregale org standards reviews approve --dry-run` |
 | `gregale orgs transfer-ownership` | `gregale org owner set` |
+| `gregale pipeline access` | `gregale pipeline reader update` |
+| `gregale pipeline connection guide` | `gregale pipeline connection explain` |
+| `gregale pipeline freshness` | `gregale pipeline freshness configure` |
+| `gregale pipeline indexes` | `gregale pipeline indexes configure` |
 | `gregale platform-tenants activation` | `gregale api tenant activation get` |
 | `gregale platform-tenants activation` | `gregale api tenant activation wait` |
 | `gregale platform-tenants billing-policy-delete` | `gregale api tenant billing-policy delete` |
