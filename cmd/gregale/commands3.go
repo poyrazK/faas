@@ -516,8 +516,7 @@ func secretsSet(args []string) int {
 	noGuard := fs.Bool("no-guard", false, "do not open a config guard for this change (ADR-1451)")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "secret set:", err)
-		return 1
+		return printErr("Invalid secret input", err)
 	}
 	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
@@ -556,8 +555,7 @@ func secretsSet(args []string) int {
 	*app = resolvedApp
 
 	if *secretClass != "" && *secretClass != api.SecretClassPersistent && *secretClass != api.SecretClassEphemeral {
-		fmt.Fprintln(os.Stderr, "secret set: --class must be persistent or ephemeral")
-		return 1
+		return printErr("Invalid secret class", errors.New("--class must be persistent or ephemeral"))
 	}
 	if *interactive {
 		if *fromStdin || len(positionals) != 0 || *restart || *dryRun || *waitForAck || timeoutSpecified {
@@ -581,49 +579,49 @@ func secretsSet(args []string) int {
 		}
 	} else if *fromStdin {
 		if len(positionals) != 0 {
-			fmt.Fprintln(os.Stderr, "secret set: --from-stdin takes no positional pairs")
-			return 1
+			return printErr("Invalid secret input", errors.New("--from-stdin takes no positional KEY=VALUE pairs"))
 		}
 		// The line cap fits SecretValueMaxBytes at Scale plus the key name;
 		// a longer line fails here with the cap named.
 		scanner := newKeyValueScanner(bufio.NewScanner(osStdin))
+		lineNo := 0
 		for scanner.Scan() {
+			lineNo++
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
+			// Errors name the line number only: a malformed line may hold a
+			// secret value, so it is never echoed (#6662).
 			p, err := parseSecretsPair(line)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				return 1
+				return printErr("Invalid secret input", fmt.Errorf("stdin line %d: %w", lineNo, err))
 			}
 			pairs = append(pairs, p)
 		}
 		if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
-			fmt.Fprintln(os.Stderr, "read stdin:", keyValueScanErr(err))
-			return 1
+			return printErr("Could not read stdin", keyValueScanErr(err))
 		}
 	} else {
-		for _, a := range positionals {
+		for i, a := range positionals {
 			p, err := parseSecretsPair(a)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				return 1
+				return printErr("Invalid secret input", fmt.Errorf("argument %d: %w", i+1, err))
 			}
 			pairs = append(pairs, p)
 		}
 	}
 	if len(pairs) == 0 {
-		fmt.Fprintln(os.Stderr, "secret set: at least one KEY=VALUE pair is required")
-		return 1
+		return printErr("Invalid secret input", errors.New("at least one KEY=VALUE pair is required"))
 	}
 	// Validate the complete batch before authenticating or issuing a PUT.
 	// SetSecretWithScope writes one key per request, so discovering an invalid
 	// later key after the first request would otherwise leave a partial update.
 	for _, p := range pairs {
 		if problem := api.ValidateSecretKey(p.Key); problem != nil {
-			fmt.Fprintln(os.Stderr, problem.Detail)
-			return 1
+			// Keep the secret_invalid_key Problem a PUT would return, so
+			// JSON consumers route on the same code (#6662).
+			return printErr(problem.Title, &APIError{Problem: *problem})
 		}
 	}
 

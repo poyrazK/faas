@@ -105,6 +105,11 @@ func (s *server) invokeAppAsync(w http.ResponseWriter, r *http.Request, acct sta
 		ResultRetentionUntil:   retentionForRequest(req.RetentionSeconds, acct),
 		OnSuccessDestinationID: onSuccessDestination,
 		OnFailureDestinationID: onFailureDestination,
+		// ADR-20261022105723 amendment 2026-11-13: the queue caps, counted
+		// without the app lock so async invokes never serialize.
+		AdmissionMaxPending:      limits.MaxQueueDepth,
+		AdmissionMaxBacklogBytes: limits.MaxQueueBacklogBytesPerAccount,
+		AdmissionUnlocked:        true,
 	}, "enqueue async invoke", req.Work)
 	if versionProblem != nil {
 		api.WriteProblem(w, versionProblem)
@@ -914,6 +919,9 @@ func (s *server) delayedTaskCreate(w http.ResponseWriter, r *http.Request, acct 
 		// The count above rejects early; the store re-checks under the app
 		// lock so concurrent creates cannot overshoot.
 		AdmissionMaxPending: limits.MaxDelayedTasksPerApp,
+		// ADR-20261022105723 amendment 2026-11-13: delayed tasks share the
+		// account backlog bytes with queue messages and async invocations.
+		AdmissionMaxBacklogBytes: limits.MaxQueueBacklogBytesPerAccount,
 	}, "enqueue delayed task", req.Work)
 	if versionProblem != nil {
 		api.WriteProblem(w, versionProblem)
