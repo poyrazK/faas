@@ -24,6 +24,26 @@ func tieChatCompletion(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(`{"model":"gpt-4o","choices":[{"message":{"role":"assistant","content":"{\"winner\": \"tie\"}"}}],"usage":{"prompt_tokens":20,"completion_tokens":10}}`))
 }
 
+// The gateway's own in-process calls and replays name no app binding; on a
+// customer integration Postgres admission must still admit them, while an
+// unbound call that is not the gateway's own is refused.
+func TestPostgresAdmitsGatewayOwnCallsWithoutBinding(t *testing.T) {
+	f := newAIPreviewFixture(t, okChatCompletion, state.OutboundAIPolicy{})
+	backend, err := NewPostgresBackend(f.pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := f.spec()
+	spec.BindingAppID = ""
+	if _, err := backend.Admit(context.Background(), spec); err == nil {
+		t.Fatal("an unbound app call on a customer integration was admitted")
+	}
+	spec.GatewayOwn = true
+	if decision, err := backend.Admit(context.Background(), spec); err != nil || !decision.Granted {
+		t.Fatalf("gateway's own call = %+v %v", decision, err)
+	}
+}
+
 func TestPostgresManagedPrompts(t *testing.T) {
 	f := newAIPreviewFixture(t, tieChatCompletion, state.OutboundAIPolicy{RequestLogEnabled: true})
 	ctx := context.Background()

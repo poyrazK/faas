@@ -522,6 +522,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		LeaseTTL:                       integration.RequestTimeout,
 		PolicyRevision:                 integration.PolicyRevision,
 		AgentRun:                       isAgentRun,
+		GatewayOwn:                     (isInternal || isReplay) && appID == "",
 	}
 	decision, err := h.Backend.Admit(r.Context(), spec)
 	if err != nil {

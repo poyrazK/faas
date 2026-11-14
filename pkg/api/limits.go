@@ -6447,7 +6447,7 @@ var planLimits = map[Plan]Limits{
 		PreviewApps:               1,
 		EnvironmentBranches:       1,
 		OutboundRequestsPerDayMax: 100_000,
-		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, OutboundAIAccountRatePerSecondMax: 20, OutboundAIPromptsMax: 5,
+		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, OutboundAIAccountRatePerSecondMax: 20, OutboundAIPromptsMax: 0,
 		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
 
 		DeploysPerHour:        10,
