@@ -253,6 +253,22 @@ func handleLoadOrg(cfg LoadOrgConfig, r OrgResolver, w http.ResponseWriter, req 
 		return
 	}
 
+	// (4b) An organization that requires two-factor authentication does
+	// not admit a member without it (ADR 20261113180000).
+	if policy, ok := r.(OrgMFAPolicyResolver); ok && !acct.MFAEnrolled() {
+		required, err := policy.OrgRequiresMFA(req.Context(), org.ID)
+		if err != nil {
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
+				"Organization policy lookup failed", "try again; if the problem persists, contact support"))
+			return
+		}
+		if required {
+			emitAudit(req.Context(), cfg.Audit, acct, "org.load.mfa_required", api.ErrOrgMFARequired())
+			api.WriteProblem(w, api.ErrOrgMFARequired())
+			return
+		}
+	}
+
 	// (5) Replace the request context with the membership stamped.
 	// The principal stays the same; only Membership changes.
 	// Pointer-mutation contract (issue #278 / PR #332): we mutate

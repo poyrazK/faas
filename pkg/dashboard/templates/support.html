@@ -181,7 +181,7 @@
 <h3>Custom domains</h3>{{range .DomainIssues}}<p><code>{{.Domain}}</code>: {{.Problem}}{{with .CertLastError}} ({{.}}){{end}}</p>{{else}}<p class="muted">No problems ({{.HealthyDomains}} healthy).</p>{{end}}
 <h3>Refused API requests, last 24 hours</h3>{{if .CustomerErrors.Total}}<p>{{.CustomerErrors.Total}} refused.</p><ul>{{range .CustomerErrors.ByCode}}<li><code>{{.Code}}</code> × {{.Count}}, last {{$d.Date .LastAt}}</li>{{end}}</ul>{{else}}<p class="muted">None recorded.</p>{{end}}
 {{with .EnabledFlags}}<h3>Previews</h3><p>{{range $i, $flag := .}}{{if $i}}, {{end}}<code>{{$flag}}</code>{{end}}</p>{{end}}
-{{with .AttentionSignals}}<h3>May be stuck</h3>{{range .}}<p><strong>{{.Kind}}</strong> · <code>{{.Subject}}</code>{{with .Detail}}: {{.}}{{end}} <small class="muted">since {{$d.Date .FirstSeenAt}}{{if eq .State "dismissed"}}, dismissed{{end}}</small></p>{{end}}{{end}}
+{{with .AttentionSignals}}<h3>May be stuck</h3>{{range .}}<p><strong>{{.Kind}}</strong> · <code>{{.Subject}}</code>{{with .Detail}}: {{.}}{{end}} <small class="muted">since {{$d.Date .FirstSeenAt}}{{if eq .Outcome "contacted"}}, contacted {{with .DismissedAt}}{{$d.Date .}}{{end}}{{with .TicketID}} (<a href="/dashboard/admin/support/{{.}}">ticket</a>){{end}}{{else if eq .State "dismissed"}}, dismissed{{with .Outcome}}: {{.}}{{end}}{{end}}</small></p>{{end}}{{end}}
 {{with .Unavailable}}<p class="muted">Not loaded: {{range $i, $section := .}}{{if $i}}, {{end}}{{$section}}{{end}}</p>{{end}}
 {{end}}
 <p class="meta">Full view: <code>gregalectl accounts 360 --account-id {{.AccountID}}</code></p>

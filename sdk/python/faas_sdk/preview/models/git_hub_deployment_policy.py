@@ -7,6 +7,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.git_hub_deployment_policy_preview_mode import (
+    GitHubDeploymentPolicyPreviewMode,
+    check_git_hub_deployment_policy_preview_mode,
+)
 from ..models.git_hub_deployment_policy_preview_service_policy import (
     GitHubDeploymentPolicyPreviewServicePolicy,
     check_git_hub_deployment_policy_preview_service_policy,
@@ -45,6 +49,13 @@ class GitHubDeploymentPolicy:
     the preview allowance."""
     preview_draft_prs: bool | Unset = True
     """Preview draft pull requests. When off, a draft gets its preview once it is marked ready for review."""
+    preview_mode: GitHubDeploymentPolicyPreviewMode | Unset = "app"
+    """How pull requests are previewed. `app` gives each previewed
+    workload its own preview app. `branch` makes environment branch
+    `pr-{N}` of production for each pull request and deploys the PR
+    head into it. Choosing `branch` needs the
+    platform to enable branch previews.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +77,10 @@ class GitHubDeploymentPolicy:
 
         preview_draft_prs = self.preview_draft_prs
 
+        preview_mode: str | Unset = UNSET
+        if not isinstance(self.preview_mode, Unset):
+            preview_mode = self.preview_mode
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -83,6 +98,8 @@ class GitHubDeploymentPolicy:
             field_dict["preview_bot_prs"] = preview_bot_prs
         if preview_draft_prs is not UNSET:
             field_dict["preview_draft_prs"] = preview_draft_prs
+        if preview_mode is not UNSET:
+            field_dict["preview_mode"] = preview_mode
 
         return field_dict
 
@@ -107,6 +124,13 @@ class GitHubDeploymentPolicy:
 
         preview_draft_prs = d.pop("preview_draft_prs", UNSET)
 
+        _preview_mode = d.pop("preview_mode", UNSET)
+        preview_mode: GitHubDeploymentPolicyPreviewMode | Unset
+        if isinstance(_preview_mode, Unset):
+            preview_mode = UNSET
+        else:
+            preview_mode = check_git_hub_deployment_policy_preview_mode(_preview_mode)
+
         git_hub_deployment_policy = cls(
             project_id=project_id,
             root_dir=root_dir,
@@ -117,6 +141,7 @@ class GitHubDeploymentPolicy:
             production_trigger=production_trigger,
             preview_bot_prs=preview_bot_prs,
             preview_draft_prs=preview_draft_prs,
+            preview_mode=preview_mode,
         )
 
         git_hub_deployment_policy.additional_properties = d

@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const aiPricesUsage = "usage: gregale ai prices <integration-id> | gregale ai prices set <integration-id> --price model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD] (repeatable)"
+const aiPricesUsage = "usage: gregale ai prices <integration-id> | gregale ai prices set <integration-id> --price model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD][,cache-write-1h=USD][,long-context=TOKENS:IN%:OUT%] (repeatable)"
 
 // cmdAIPrices shows or replaces a price list. Prices are USD per million
 // tokens; "model=*" prices any model without a longer matching prefix.
@@ -42,11 +42,11 @@ func cmdAIPrices(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Effective from %s (USD per million tokens)\n", list.EffectiveFrom.Format("2006-01-02 15:04 UTC"))
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "MODEL PREFIX\tINPUT\tCACHED INPUT\tCACHE WRITE\tOUTPUT\tMEDIA")
+	_, _ = fmt.Fprintln(tw, "MODEL PREFIX\tINPUT\tCACHED INPUT\tCACHE WRITE\tOUTPUT\tTIERS\tMEDIA")
 	for _, entry := range list.Entries {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", entry.ModelPrefix, financialMoney(entry.InputMillicentsPerMTok),
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", entry.ModelPrefix, financialMoney(entry.InputMillicentsPerMTok),
 			formatOptionalPrice(entry.CachedInputMillicentsPerMTok), formatOptionalPrice(entry.CacheWriteMillicentsPerMTok),
-			financialMoney(entry.OutputMillicentsPerMTok), formatMediaPrices(entry))
+			financialMoney(entry.OutputMillicentsPerMTok), formatPriceTiers(entry), formatMediaPrices(entry))
 	}
 	_ = tw.Flush()
 	return 0
@@ -78,6 +78,63 @@ func formatMediaPrices(entry api.OutboundAIPriceEntry) string {
 	return strings.Join(parts, "; ")
 }
 
+// formatPriceTiers shows an entry's one-hour cache-write price and
+// long-context tier (ADR 20261027132936 amendment 3), or "-".
+func formatPriceTiers(entry api.OutboundAIPriceEntry) string {
+	var parts []string
+	if entry.CacheWrite1hMillicentsPerMTok != nil {
+		parts = append(parts, "1h cache write "+financialMoney(*entry.CacheWrite1hMillicentsPerMTok))
+	}
+	if tier := entry.LongContext; tier != nil {
+		parts = append(parts, fmt.Sprintf("above %s input tokens: %s input, %s output", formatTokenThreshold(tier.AboveInputTokens),
+			formatPercentMultiplier(tier.InputPercent), formatPercentMultiplier(tier.OutputPercent)))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, "; ")
+}
+
+// formatTokenThreshold renders 200000 as "200k".
+func formatTokenThreshold(tokens int64) string {
+	if tokens%1_000 == 0 {
+		return strconv.FormatInt(tokens/1_000, 10) + "k"
+	}
+	return strconv.FormatInt(tokens, 10)
+}
+
+// formatPercentMultiplier renders 150 as "1.5x".
+func formatPercentMultiplier(percent int64) string {
+	whole, rest := percent/100, percent%100
+	if rest == 0 {
+		return strconv.FormatInt(whole, 10) + "x"
+	}
+	return strings.TrimRight(fmt.Sprintf("%d.%02d", whole, rest), "0") + "x"
+}
+
+// parseLongContextSpec reads TOKENS:IN%:OUT%, such as 200000:200:150.
+func parseLongContextSpec(value string) (*api.OutboundAILongContextTier, error) {
+	parts := strings.Split(value, ":")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("long-context %q: expected TOKENS:INPUT-PERCENT:OUTPUT-PERCENT, such as 200000:200:150", value)
+	}
+	var numbers [3]int64
+	for index, part := range parts {
+		number, err := strconv.ParseInt(strings.TrimSuffix(part, "%"), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("long-context %q: %q is not a whole number", value, part)
+		}
+		numbers[index] = number
+	}
+	tier := &api.OutboundAILongContextTier{AboveInputTokens: numbers[0], InputPercent: numbers[1], OutputPercent: numbers[2]}
+	if !tier.Valid() {
+		return nil, fmt.Errorf("long-context %q: tokens must be %d to %d and percentages %d to %d", value,
+			api.OutboundAILongContextAboveTokensMin, api.OutboundAILongContextAboveTokensMax,
+			api.OutboundAILongContextPercentMin, api.OutboundAILongContextPercentMax)
+	}
+	return tier, nil
+}
+
 func formatOptionalPrice(value *int64) string {
 	if value == nil {
 		return "= input"
@@ -88,8 +145,9 @@ func formatOptionalPrice(value *int64) string {
 func cmdAIPricesSet(args []string) int {
 	fs := newFlagSet("ai prices set", flag.ContinueOnError)
 	var prices stringListFlag
-	fs.Var(&prices, "price", "model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD][,input-image=USD][,output-image=USD] per million tokens, "+
-		"[,image=USD] per image, [,audio-minute=USD] per minute, [,characters=USD] per million characters (repeatable; none clears)")
+	fs.Var(&prices, "price", "model=PREFIX,input=USD,output=USD[,cached=USD][,cache-write=USD][,cache-write-1h=USD][,input-image=USD][,output-image=USD] per million tokens, "+
+		"[,image=USD] per image, [,audio-minute=USD] per minute, [,characters=USD] per million characters, "+
+		"[,long-context=TOKENS:IN%:OUT%] prices above a prompt size (repeatable; none clears)")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || len(prices) == 0 {
 		return printErr("Invalid ai prices set arguments", errors.New(aiPricesUsage))
 	}
@@ -140,6 +198,14 @@ func parseAIPriceSpec(spec string) (api.OutboundAIPriceEntry, error) {
 			entry.ModelPrefix = value
 			continue
 		}
+		if key == "long-context" {
+			tier, err := parseLongContextSpec(value)
+			if err != nil {
+				return entry, err
+			}
+			entry.LongContext = tier
+			continue
+		}
 		millicents, err := parseUSDMillicents(value)
 		if err != nil {
 			return entry, err
@@ -153,6 +219,8 @@ func parseAIPriceSpec(spec string) (api.OutboundAIPriceEntry, error) {
 			entry.CachedInputMillicentsPerMTok = &millicents
 		case "cache-write":
 			entry.CacheWriteMillicentsPerMTok = &millicents
+		case "cache-write-1h":
+			entry.CacheWrite1hMillicentsPerMTok = &millicents
 		case "input-image":
 			entry.InputImageMillicentsPerMTok = &millicents
 		case "output-image":

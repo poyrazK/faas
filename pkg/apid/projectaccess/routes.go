@@ -41,6 +41,11 @@ var routeActions = map[string]authz.OrgAction{
 	"DELETE /v1/projects/{slug}/environments/{environment}/secrets/{key}":      authz.OrgActionManageProjectSecrets,
 	"POST /v1/projects":      authz.OrgActionDeployProject,
 	"POST /v1/projects/scan": authz.OrgActionDeployProject,
+	// Reviewed-plan, safe-release and connected-repository company deploys
+	// (ADR-20261113090000).
+	"POST /v1/projects/scan/source-ref":                                                   authz.OrgActionDeployProject,
+	"POST /v1/projects/safe-deploy":                                                       authz.OrgActionDeployProject,
+	"POST /v1/projects/apply-plan":                                                        authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/qualifications":                  authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/release-sets":                    authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/promote":                         authz.OrgActionDeployProject,

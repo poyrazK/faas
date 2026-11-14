@@ -554,6 +554,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":              true, // operator-only tenant security control
 	"POST /v1/admin/ops/accounts/{id}/reset-mfa":                    true, // operator-only account recovery (ADR-20261108160000)
 	"POST /v1/admin/ops/accounts/{id}/revert-email":                 true, // operator-only account recovery (ADR-20261110100000)
+	"POST /v1/admin/ops/accounts/{id}/make-org-owner":               true, // operator-only org recovery (ADR-20261113180000)
 	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling":       true, // operator-only support grant (ADR-20261101214152)
 	"POST /v1/admin/ops/accounts/{id}/complimentary":                true, // operator-only complimentary plan (ADR-20261111140000)
 	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
@@ -1703,6 +1704,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "mcp_admission_history.go"),
 		filepath.Join(root, "pkg", "api", "mcp_convergence.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_monitor.go"),
+		filepath.Join(root, "pkg", "api", "tool_publications.go"),
+		filepath.Join(root, "pkg", "api", "tool_invocations.go"),
+		filepath.Join(root, "pkg", "api", "tool_grants.go"),
+		filepath.Join(root, "pkg", "api", "tool_connections.go"),
+		filepath.Join(root, "pkg", "api", "tool_authorization.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_observer.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_renewal.go"),
 		filepath.Join(root, "pkg", "api", "mcp_connection_health.go"),

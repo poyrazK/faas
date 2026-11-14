@@ -245,16 +245,20 @@ type EnqueueParams struct {
 	MCPTaskMigrationOverride bool
 	OverrideHealthcheck      json.RawMessage
 	OverrideLivenessProbe    json.RawMessage
-	OverrideMainDependsOn    json.RawMessage
-	TrafficPercent           int
-	TrafficPercentExplicit   bool
-	RollbackOn5xx            bool
-	DisableStartupCPUBoost   bool
-	CanaryPreset             string
-	CanaryStep               int
-	CanaryTotalSteps         int
-	CanaryStepStartedAt      *time.Time
-	CanaryStages             json.RawMessage
+	// OverrideReadinessProbe is the primary app's steady-state traffic gate
+	// (request override or gregale.yaml hosting.readiness_probe). Source
+	// deploys dropped it before it reached the deployment row.
+	OverrideReadinessProbe json.RawMessage
+	OverrideMainDependsOn  json.RawMessage
+	TrafficPercent         int
+	TrafficPercentExplicit bool
+	RollbackOn5xx          bool
+	DisableStartupCPUBoost bool
+	CanaryPreset           string
+	CanaryStep             int
+	CanaryTotalSteps       int
+	CanaryStepStartedAt    *time.Time
+	CanaryStages           json.RawMessage
 	// ReleaseCommand is immutable source intent. The deployment orchestrator
 	// consumes it after the build has produced an artifact; Enqueue only pins
 	// the validated declaration to this exact deployment row.
@@ -690,6 +694,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		MCPTaskMigrationOverride: p.MCPTaskMigrationOverride,
 		OverrideHealthcheck:      append(json.RawMessage(nil), p.OverrideHealthcheck...),
 		OverrideLivenessProbe:    append(json.RawMessage(nil), p.OverrideLivenessProbe...),
+		OverrideReadinessProbe:   append(json.RawMessage(nil), p.OverrideReadinessProbe...),
 		OverrideMainDependsOn:    append(json.RawMessage(nil), p.OverrideMainDependsOn...),
 		InferredProfile:          append(json.RawMessage(nil), inferredProfile...),
 		TrafficPercent:           p.TrafficPercent,

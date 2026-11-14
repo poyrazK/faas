@@ -86,7 +86,12 @@ func (s *server) loadAndResolveProjectManifest(
 		return resolvedProjectManifest{}, nil
 	}
 	if _, shared := projectaccess.From(ctx); shared && manifest.AsyncRoutes != nil {
-		return resolvedProjectManifest{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization async bindings unavailable", "deploy application workloads with environment configuration; async-route bindings require separate organization ownership support")
+		// Async routes are edge rules on the project's apps; a company member
+		// writes them only with the role that writes edge rules directly
+		// (ADR-20261114090000).
+		if p := projectaccess.AuthorizeManifestAsyncRoutes(ctx, loadOrgAuditFrom(s.audit)); p != nil {
+			return resolvedProjectManifest{}, p
+		}
 	}
 	_, sharedProject := projectaccess.From(ctx)
 	_, sharedApp := appaccess.FromContext(ctx)

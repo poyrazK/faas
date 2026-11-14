@@ -108,6 +108,9 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 	if !s.requireOrgAction(w, r, authz.OrgActionTransferOwnership) {
 		return
 	}
+	if !requireBrowserSession(w, r, "Transferring an organization's ownership") {
+		return
+	}
 	if !s.sessionPresenceForIrreversible(w, r, acct, "org_ownership_transfer") {
 		return
 	}
@@ -149,6 +152,10 @@ func (s *server) transferOrgOwnership(w http.ResponseWriter, r *http.Request, ac
 				"Member not found", "the new owner is not an active member of this org"))
 		case errors.Is(err, state.ErrOrgLastOwner):
 			api.WriteProblem(w, api.ErrOrgLastOwner())
+		case errors.Is(err, state.ErrOrgOwnerInactive):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+				"New owner's account is not active",
+				"the member's account is suspended or pending deletion; choose an active member"))
 		default:
 			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
 				api.CodeCapacity,
