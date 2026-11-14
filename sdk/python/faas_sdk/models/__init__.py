@@ -1832,6 +1832,7 @@ from .plan_managed_not_provisioned_reason import PlanManagedNotProvisionedReason
 from .plan_managed_provision import PlanManagedProvision
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
+from .plan_source_host import PlanSourceHost
 from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
@@ -4412,6 +4413,7 @@ __all__ = (
     "PlanManagedProvision",
     "PlanResponse",
     "PlanResponseScanSource",
+    "PlanSourceHost",
     "PlanWorkload",
     "PlanWorkloadAction",
     "PlanWorkloadClass",

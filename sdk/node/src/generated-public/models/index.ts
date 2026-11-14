@@ -906,6 +906,7 @@ export type { PlanManaged } from './PlanManaged.js';
 export type { PlanManagedBinding } from './PlanManagedBinding.js';
 export type { PlanManagedProvision } from './PlanManagedProvision.js';
 export type { PlanResponse } from './PlanResponse.js';
+export type { PlanSourceHost } from './PlanSourceHost.js';
 export type { PlanWorkload } from './PlanWorkload.js';
 export type { PlatformFlagOptIns } from './PlatformFlagOptIns.js';
 export type { PlatformTenantCustomerLifecycleWebhookPayload } from './PlatformTenantCustomerLifecycleWebhookPayload.js';
