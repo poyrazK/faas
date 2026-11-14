@@ -172,6 +172,11 @@ func run(args []string) (status int) {
 	if profileErr != nil {
 		return printErr("Invalid connection profile", profileErr)
 	}
+	// The explicit help command offers structured discovery before argument
+	// rewriting or connection validation. --help keeps its human usage contract.
+	if jsonOutput && len(args) > 0 && args[0] == "help" {
+		return runJSONHelp(args[1:])
+	}
 	if httpDebugEnabled {
 		invocationTrace = &httpDebugRecorder{out: osStderr}
 		activeHTTPDebug.Store(invocationTrace)
