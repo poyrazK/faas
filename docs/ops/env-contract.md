@@ -1132,6 +1132,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_APID_CLIENT_TLS_CA_PATH` | vmmd | `dropin` |  |  | `` | split-box guest trace exports (ADR-958); vmmd_service 99-faas-spans-writer.conf |
 | `FAAS_VMMD_APID_CLIENT_TLS_CERT_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/apid-client leaf (ADR-958) |
 | `FAAS_VMMD_APID_CLIENT_TLS_KEY_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/apid-client leaf (ADR-958) |
+| `FAAS_VMMD_BUILD_REGISTRY_MIRROR` | vmmd | `dropin` |  | off | `` | ADR-20261110210000 slice 3j-3: off gives a builder VM a Docker config with its app's registry passwords, opened with the build identity; secretd serves the builder those registries as a mirror on its vsock, pulled through secretd's RegistryFetch by build id, and opens no password on the node. Needs FAAS_SECRETD_TARGET and FAAS_SECRETD_TLS_{CERT,KEY,CA}_PATH. Set by vmmd_service (faas_vmmd_build_registry_mirror); read at start |
 | `FAAS_VMMD_CONFIG` | vmmd | `default` |  |  | `` |  |
 | `FAAS_VMMD_DATABASE_ROUTE_ENABLED` | vmmd | `dropin` |  |  | `` | ADR-1027 lets app VMs reach managed PostgreSQL through the node's database route; set from the manifest's managed_postgres.app_route |
 | `FAAS_VMMD_DBURL` | vmmd | `envfile` |  |  | `` |  |

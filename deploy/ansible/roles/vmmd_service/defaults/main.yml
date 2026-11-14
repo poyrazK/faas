@@ -40,6 +40,13 @@ faas_vmmd_secretd_open: false
 # faas_secretd_target. Turn it on for every compute node before any gateway's
 # faas_gateway_edge_header_secrets is inject.
 faas_vmmd_edge_header_secrets: false
+# ADR-20261110210000 slice 3j-3: true makes builder VMs pull their app's
+# private registries through a mirror vmmd serves on the VM's vsock, backed
+# by secretd's RegistryFetch for the build; vmmd opens no registry password
+# and the guest gets none. Needs faas_secretd_target and secretd with the
+# build identity (SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true). Once every
+# compute node runs it, the build identity can leave compute.
+faas_vmmd_build_registry_mirror: false
 faas_vmmd_secretd_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
 
 # ADR-149 prepared networks: vmmd keeps this many unused wake namespaces

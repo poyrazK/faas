@@ -1216,6 +1216,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_VMMD_APID_CLIENT_TLS_CA_PATH", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "split-box guest trace exports (ADR-958); vmmd_service 99-faas-spans-writer.conf"},
 	{Name: "FAAS_VMMD_APID_CLIENT_TLS_CERT_PATH", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "node-identity vmmd/apid-client leaf (ADR-958)"},
 	{Name: "FAAS_VMMD_APID_CLIENT_TLS_KEY_PATH", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "node-identity vmmd/apid-client leaf (ADR-958)"},
+	{Name: "FAAS_VMMD_BUILD_REGISTRY_MIRROR", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Default: "off", Note: "ADR-20261110210000 slice 3j-3: off gives a builder VM a Docker config with its app's registry passwords, opened with the build identity; secretd serves the builder those registries as a mirror on its vsock, pulled through secretd's RegistryFetch by build id, and opens no password on the node. Needs FAAS_SECRETD_TARGET and FAAS_SECRETD_TLS_{CERT,KEY,CA}_PATH. Set by vmmd_service (faas_vmmd_build_registry_mirror); read at start"},
 	{Name: "FAAS_VMMD_CONFIG", Owners: []string{"vmmd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_VMMD_DATABASE_ROUTE_ENABLED", Owners: []string{"vmmd"}, Source: EnvSourceDropin, Note: "ADR-1027 lets app VMs reach managed PostgreSQL through the node's database route; set from the manifest's managed_postgres.app_route"},
 	{Name: "FAAS_VMMD_DBURL", Owners: []string{"vmmd"}, Source: EnvSourceEnvFile},
