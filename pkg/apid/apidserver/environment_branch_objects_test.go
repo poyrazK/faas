@@ -135,7 +135,7 @@ func TestEnvironmentBranchOverlaysParentBuckets(t *testing.T) {
 		t.Fatalf("branching copied objects: %v", parentObjects)
 	}
 
-	req, rec = apidserver.ProjectRequest(http.MethodDelete, "/v1/projects/shop/environments/pr-9", "shop", nil)
+	req, rec := apidserver.ProjectRequest(http.MethodDelete, "/v1/projects/shop/environments/pr-9", "shop", nil)
 	req.SetPathValue("environment", "pr-9")
 	srv.DeleteProjectEnvironment(rec, req, acct)
 	if rec.Code != http.StatusNoContent {
@@ -198,6 +198,15 @@ func TestEnvironmentBranchReadsAVersionedSourceAsOfTheBranchPoint(t *testing.T) 
 	overlay, err := f.store.ObjectBucketOverlay(ctx, owned[0].CopyBucketID)
 	if err != nil || overlay.Consistency != state.ObjectBucketOverlayAsOf || !overlay.AsOf.Equal(branch.BranchPoint) {
 		t.Fatalf("overlay = %+v, %v", overlay, err)
+	}
+	view := f.e.Do(t, http.MethodGet, "/v1/projects/shop/environments/pr-9/branch", nil, nil)
+	var got api.ProjectEnvironmentResponse
+	if view.Code != http.StatusOK || json.Unmarshal(view.Body.Bytes(), &got) != nil || got.Branch == nil || len(got.Branch.Buckets) != 1 {
+		t.Fatalf("branch view = %d %s", view.Code, view.Body.String())
+	}
+	if b := got.Branch.Buckets[0]; b.SourceBucketID != f.source.ID || b.Name != "assets" || b.CopyBucketID != owned[0].CopyBucketID ||
+		b.Consistency != state.ObjectBucketOverlayAsOf || b.AsOf != branch.BranchPoint.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("branch view bucket = %+v", b)
 	}
 }
 

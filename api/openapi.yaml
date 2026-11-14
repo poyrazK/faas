@@ -111739,6 +111739,10 @@ components:
           type: array
           description: The managed PostgreSQL copies the branch owns. Reported by the branch's own view.
           items: { $ref: '#/components/schemas/ProjectEnvironmentBranchDatabase' }
+        buckets:
+          type: array
+          description: The overlay buckets the branch owns on its parent's buckets. Reported by the branch's own view.
+          items: { $ref: '#/components/schemas/ProjectEnvironmentBranchBucket' }
 
     ProjectEnvironmentBranchWorkload:
       description: One workload the branch published from its parent's build. It starts on its first request.
@@ -111760,6 +111764,20 @@ components:
         source_database_id: { type: string }
         name: { type: string }
         copy_database_id: { type: string, description: "Empty until the copy is made." }
+
+    ProjectEnvironmentBranchBucket:
+      description: "One overlay bucket a branch owns on a parent bucket. The branch reads every key it does not hold itself from the parent."
+      type: object
+      required: [source_bucket_id]
+      properties:
+        source_bucket_id: { type: string }
+        name: { type: string, description: "The parent bucket's name." }
+        copy_bucket_id: { type: string, description: "Empty until the bucket is made." }
+        consistency:
+          type: string
+          enum: [as_of, live_parent]
+          description: "as_of when the branch reads the parent as of the branch point (the parent had versioning on when the branch was made); live_parent when it reads the parent's current objects."
+        as_of: { type: string, format: date-time, description: "The instant an as_of bucket reads the parent at." }
 
     ExtendProjectEnvironmentBranchRequest:
       description: "Moves a branch's expiry."

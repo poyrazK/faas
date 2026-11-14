@@ -1,3 +1,4 @@
+// adr: 20261031193635
 package s3gateway
 
 import (
@@ -187,10 +188,10 @@ func TestAsOfCandidateTies(t *testing.T) {
 		want     string
 		live     bool
 	}{
-		{"newest before the branch point", []objectstorage.ListedObjectVersion{version("new", time.Hour, true, false), version("mid", -time.Hour, false, false), version("old", -2 * time.Hour, false, false)}, "mid", true},
+		{"newest before the branch point", []objectstorage.ListedObjectVersion{version("new", time.Hour, true, false), version("mid", -time.Hour, false, false), version("old", -2*time.Hour, false, false)}, "mid", true},
 		{"exactly at the branch point", []objectstorage.ListedObjectVersion{version("at", 0, true, false)}, "at", true},
 		{"only later versions", []objectstorage.ListedObjectVersion{version("new", time.Second, true, false)}, "", false},
-		{"deleted then", []objectstorage.ListedObjectVersion{version("gone", -time.Hour, false, true), version("old", -2 * time.Hour, false, false)}, "gone", false},
+		{"deleted then", []objectstorage.ListedObjectVersion{version("gone", -time.Hour, false, true), version("old", -2*time.Hour, false, false)}, "gone", false},
 		{"tie: latest wins", []objectstorage.ListedObjectVersion{version("x", -time.Hour, false, false), version("y", -time.Hour, true, false)}, "y", true},
 		{"tie: marker beats data", []objectstorage.ListedObjectVersion{version("x", -time.Hour, false, false), version("m", -time.Hour, false, true)}, "m", false},
 		{"tie: data never beats marker", []objectstorage.ListedObjectVersion{version("m", -time.Hour, false, true), version("x", -time.Hour, false, false)}, "m", false},
@@ -330,8 +331,10 @@ func TestGatewayOverlayCopyThroughSource(t *testing.T) {
 		return copyStore
 	}
 	live := newOverlayFixture(t, asOfSourceLive(), branch, overlayFixtureOptions{
-		provider: func(p *overlayTestProvider) objectstorage.Provider { return &overlayLiveCopyProvider{overlayTestProvider: p} },
-		store:    withGrant,
+		provider: func(p *overlayTestProvider) objectstorage.Provider {
+			return &overlayLiveCopyProvider{overlayTestProvider: p}
+		},
+		store: withGrant,
 	})
 	liveStore := copyStore
 	var versioned *overlayVersionProvider
