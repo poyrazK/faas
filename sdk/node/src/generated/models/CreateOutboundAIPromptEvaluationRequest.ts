@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { PutOutboundAIPromptCanaryRequest } from './PutOutboundAIPromptCanaryRequest.js';
+/**
+ * A candidate version, the variable sets to run it on, and the judge model.
+ */
 export type CreateOutboundAIPromptEvaluationRequest = {
   version: number;
   /**

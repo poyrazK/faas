@@ -17,6 +17,8 @@ T = TypeVar("T", bound="OutboundAIPromptEvaluationItem")
 
 @_attrs_define
 class OutboundAIPromptEvaluationItem:
+    """One case's result in a managed AI prompt evaluation."""
+
     case: int
     verdict: OutboundAIPromptEvaluationItemVerdict
     baseline_status: int | None

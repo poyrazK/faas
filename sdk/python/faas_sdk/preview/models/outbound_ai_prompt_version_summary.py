@@ -16,6 +16,8 @@ T = TypeVar("T", bound="OutboundAIPromptVersionSummary")
 
 @_attrs_define
 class OutboundAIPromptVersionSummary:
+    """A managed AI prompt version without its messages."""
+
     version: int
     target: OutboundAIPromptTarget
     """Where a version's calls go: an openai-format route, or a managed AI integration with a model. Exactly one of

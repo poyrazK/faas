@@ -11,6 +11,8 @@ T = TypeVar("T", bound="OutboundAIPromptVersionStats")
 
 @_attrs_define
 class OutboundAIPromptVersionStats:
+    """One version's calls, errors, latency, cost and feedback over the stats window."""
+
     version: int
     calls: int
     errors: int

@@ -19,6 +19,8 @@ T = TypeVar("T", bound="OutboundAIPromptVersion")
 
 @_attrs_define
 class OutboundAIPromptVersion:
+    """One immutable version of a managed AI prompt."""
+
     version: int
     messages: list[OutboundAIPromptMessage]
     variables: list[str]

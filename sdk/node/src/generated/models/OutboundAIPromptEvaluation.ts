@@ -5,6 +5,9 @@
 import type { OutboundAIEvaluationTargetStats } from './OutboundAIEvaluationTargetStats.js';
 import type { OutboundAIPromptEvaluationItem } from './OutboundAIPromptEvaluationItem.js';
 import type { PutOutboundAIPromptCanaryRequest } from './PutOutboundAIPromptCanaryRequest.js';
+/**
+ * A comparison of a candidate prompt version against the live version.
+ */
 export type OutboundAIPromptEvaluation = {
   id: string;
   prompt: string;

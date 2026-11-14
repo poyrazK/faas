@@ -11,6 +11,8 @@ T = TypeVar("T", bound="PutOutboundAIPromptLiveRequest")
 
 @_attrs_define
 class PutOutboundAIPromptLiveRequest:
+    """The version to make live."""
+
     version: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

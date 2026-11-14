@@ -1967,7 +1967,7 @@ export class OutboundService {
   /**
    * Make a managed AI prompt version live.
    * Requires MFA and deploy-write scope. The old live version becomes the previous one and any canary ends.
-   * @returns OutboundAIPrompt The prompt.
+   * @returns OutboundAIPrompt The prompt with the chosen version live.
    * @throws ApiError
    */
   public static setOutboundAiPromptLive({
@@ -2004,7 +2004,7 @@ export class OutboundService {
   /**
    * Roll a managed AI prompt back.
    * Requires MFA and deploy-write scope. Makes the previous live version live again and ends any canary.
-   * @returns OutboundAIPrompt The prompt.
+   * @returns OutboundAIPrompt The prompt with its previous live version back.
    * @throws ApiError
    */
   public static rollBackOutboundAiPrompt({
@@ -2107,7 +2107,7 @@ export class OutboundService {
   /**
    * Promote a managed AI prompt canary.
    * Requires MFA and deploy-write scope. Makes the canary's version live and ends the canary.
-   * @returns OutboundAIPrompt The prompt.
+   * @returns OutboundAIPrompt The prompt with the canary's version live.
    * @throws ApiError
    */
   public static promoteOutboundAiPromptCanary({
@@ -2206,7 +2206,7 @@ export class OutboundService {
   /**
    * Evaluate a managed AI prompt version.
    * Requires MFA and deploy-write scope. The outbound gateway renders the version and the live version for each case's variables, calls each version's target, and asks the judge model which answer is better, in a random order. It passes when losses and candidate errors are at most max_loss_rate percent of the cases; a passing evaluation starts its canary, if it has one, while the baseline is still live and the prompt has no active canary. Calls are metered and capped under the caller evaluation.
-   * @returns OutboundAIPromptEvaluation The pending evaluation.
+   * @returns OutboundAIPromptEvaluation The prompt evaluation, pending until the outbound gateway runs it.
    * @throws ApiError
    */
   public static createOutboundAiPromptEvaluation({
@@ -2243,7 +2243,7 @@ export class OutboundService {
   /**
    * Read a managed AI prompt evaluation.
    * Requires MFA and read scope. Returns each case's result; answer texts need admin or secrets:read. Evaluations are kept for 30 days.
-   * @returns OutboundAIPromptEvaluation The evaluation.
+   * @returns OutboundAIPromptEvaluation The prompt evaluation with each case's result.
    * @throws ApiError
    */
   public static getOutboundAiPromptEvaluation({

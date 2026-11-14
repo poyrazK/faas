@@ -37,6 +37,8 @@ T = TypeVar("T", bound="OutboundAIPromptEvaluation")
 
 @_attrs_define
 class OutboundAIPromptEvaluation:
+    """A comparison of a candidate prompt version against the live version."""
+
     id: UUID
     prompt: str
     baseline_version: int

@@ -788,6 +788,8 @@ func init() {
 var dtoExclude = map[string]bool{
 	"NormalizedIssueTrackerLink":     true, // internal provider identity canonicalizer; never a wire DTO
 	"EventSubscriptionDeadlineQuery": true, // client-only query builder; wire parameters are declared on the route
+	// ADR 20261114180740: the body of an app's call to outboundd's /p/{name}, not an apid route.
+	"OutboundAIPromptCallRequest": true,
 
 	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
 	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract

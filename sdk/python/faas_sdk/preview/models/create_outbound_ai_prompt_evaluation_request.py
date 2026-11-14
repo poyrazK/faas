@@ -21,6 +21,8 @@ T = TypeVar("T", bound="CreateOutboundAIPromptEvaluationRequest")
 
 @_attrs_define
 class CreateOutboundAIPromptEvaluationRequest:
+    """A candidate version, the variable sets to run it on, and the judge model."""
+
     version: int
     cases: list[CreateOutboundAIPromptEvaluationRequestCasesItem]
     """Variable sets; each is rendered with the candidate and the live version."""

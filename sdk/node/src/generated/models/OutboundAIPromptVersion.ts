@@ -5,6 +5,9 @@
 import type { OutboundAIPromptMessage } from './OutboundAIPromptMessage.js';
 import type { OutboundAIPromptParams } from './OutboundAIPromptParams.js';
 import type { OutboundAIPromptTarget } from './OutboundAIPromptTarget.js';
+/**
+ * One immutable version of a managed AI prompt.
+ */
 export type OutboundAIPromptVersion = {
   version: number;
   messages: Array<OutboundAIPromptMessage>;

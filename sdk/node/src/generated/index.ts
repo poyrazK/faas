@@ -2168,6 +2168,7 @@ export type { OutboundAIPromptEvaluationItem } from './models/OutboundAIPromptEv
 export type { OutboundAIPromptEvaluationList } from './models/OutboundAIPromptEvaluationList.js';
 export type { OutboundAIPromptList } from './models/OutboundAIPromptList.js';
 export type { OutboundAIPromptMessage } from './models/OutboundAIPromptMessage.js';
+export type { OutboundAIPromptName } from './models/OutboundAIPromptName.js';
 export type { OutboundAIPromptParams } from './models/OutboundAIPromptParams.js';
 export type { OutboundAIPromptStats } from './models/OutboundAIPromptStats.js';
 export type { OutboundAIPromptTarget } from './models/OutboundAIPromptTarget.js';

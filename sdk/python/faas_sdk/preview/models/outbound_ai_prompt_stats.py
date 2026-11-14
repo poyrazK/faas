@@ -16,6 +16,8 @@ T = TypeVar("T", bound="OutboundAIPromptStats")
 
 @_attrs_define
 class OutboundAIPromptStats:
+    """A managed AI prompt's per-version stats."""
+
     window_start: datetime.datetime
     live_version: int | None
     canary_version: int | None

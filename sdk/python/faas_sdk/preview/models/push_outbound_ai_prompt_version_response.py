@@ -16,9 +16,12 @@ T = TypeVar("T", bound="PushOutboundAIPromptVersionResponse")
 
 @_attrs_define
 class PushOutboundAIPromptVersionResponse:
+    """The prompt and the version a push stored, or the identical latest version."""
+
     prompt: OutboundAIPrompt
     """A managed AI prompt. live_version serves unpinned calls; previous_live_version is what a rollback restores."""
     version: OutboundAIPromptVersion
+    """One immutable version of a managed AI prompt."""
     created: bool
     """False when the push matched the latest version."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

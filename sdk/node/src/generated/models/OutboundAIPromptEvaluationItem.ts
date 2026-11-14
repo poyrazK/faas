@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * One case's result in a managed AI prompt evaluation.
+ */
 export type OutboundAIPromptEvaluationItem = {
   case: number;
   verdict: 'win' | 'tie' | 'loss' | 'candidate_error' | 'judge_error';

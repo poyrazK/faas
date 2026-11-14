@@ -15,6 +15,8 @@ T = TypeVar("T", bound="OutboundAIPromptEvaluationList")
 
 @_attrs_define
 class OutboundAIPromptEvaluationList:
+    """A managed AI prompt's evaluations, newest first."""
+
     items: list[OutboundAIPromptEvaluation]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

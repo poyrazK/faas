@@ -15,6 +15,8 @@ T = TypeVar("T", bound="OutboundAIPromptList")
 
 @_attrs_define
 class OutboundAIPromptList:
+    """The account's managed AI prompts."""
+
     items: list[OutboundAIPrompt]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

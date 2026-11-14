@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * One version's calls, errors, latency, cost and feedback over the stats window.
+ */
 export type OutboundAIPromptVersionStats = {
   version: number;
   calls: number;
