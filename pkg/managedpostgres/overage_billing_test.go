@@ -146,6 +146,33 @@ func TestOverageBillerDeliversCumulativeStepsOnce(t *testing.T) {
 	}
 }
 
+// The spend cap bounds the managed PostgreSQL charge like every other meter:
+// a live step stops at the room the cap leaves, and nothing is charged once
+// none is left (billing review 2026-11-13, R7-1).
+func TestOverageBillerStopsAtTheSpendCap(t *testing.T) {
+	ctx := context.Background()
+	november := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	f := newOverageFixture(t, november.Add(10*24*time.Hour))
+	biller := f.biller(t, true, november)
+	room, capped := int64(api.ManagedPostgresOverageMillicentsPerComputeUnitHour), true
+	biller.options.CapRoom = func(context.Context, string, time.Time, time.Time) (int64, bool, error) {
+		return room, capped, nil
+	}
+	f.reachAllowance(t, "acct", november, true)
+	f.store.used["acct2026-11"] = testAllowance + 3*3600
+	if _, err := biller.Deliver(ctx); err != nil || len(f.published) != 1 || f.published[0].TargetMillicents != api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
+		t.Fatalf("capped step = %+v, %v; want one compute-unit hour", f.published, err)
+	}
+	room = 0
+	if _, err := biller.Deliver(ctx); err != nil || len(f.published) != 1 {
+		t.Fatalf("a step past the cap was sent: %+v, %v", f.published, err)
+	}
+	room, capped = 0, false
+	if _, err := biller.Deliver(ctx); err != nil || len(f.published) != 2 || f.published[1].TargetMillicents != 3*api.ManagedPostgresOverageMillicentsPerComputeUnitHour {
+		t.Fatalf("uncapped step = %+v, %v; want the rest", f.published, err)
+	}
+}
+
 func TestOverageBillerChargesOnlyOptedInSubjects(t *testing.T) {
 	ctx := context.Background()
 	november := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
