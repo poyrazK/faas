@@ -399,6 +399,13 @@ of twice that. Provider charges are billed by your provider to your own key;
 Gregale's cost figures are estimates from your price list or the built-in
 catalog, used for budgets and reports.
 
+Some models cost more for long prompts, and Claude's one-hour cache writes
+cost more than five-minute ones. Estimates include both: `gregale ai catalog`
+shows each model's long-context tier and one-hour cache-write price, and
+your own price list can set them per model, for example
+`--price model=claude,input=3,output=15,cache-write-1h=6,long-context=200000:200:150`
+(above 200,000 input tokens, input costs 2x and output 1.5x).
+
 ## Preview notes
 
 - Calls for one integration share its admission state, so very high call rates
