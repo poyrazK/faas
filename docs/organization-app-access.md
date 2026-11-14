@@ -221,9 +221,12 @@ protected promotion is approved by an owner or admin in the browser and
 exchanged only by the member whose credential asked for it; the approval
 records the approving member, so release approval policies judge them.
 
-Async-route manifest bindings and other unreviewed integrations remain
-outside the reviewed project surface. Shared uploads reject async-route bindings
-before resolving personal services. Managed PostgreSQL bindings use the company
+A company manifest may declare `async_routes`, which write async edge rules on
+the project's apps; deploying one (including `async_routes: []`, which clears
+them) needs owner or admin, as writing edge rules directly does, and a
+developer gets 403
+([ADR-20261114090000](adr/20261114090000-company-project-manifest-async-routes.md)).
+Managed PostgreSQL bindings use the company
 ownership rules below. Other data services and GitHub/GitOps references still
 prevent creator erasure.
 
