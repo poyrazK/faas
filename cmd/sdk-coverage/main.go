@@ -1650,6 +1650,13 @@ var methodRouteMap = map[string]string{
 	"GET /v1/data/pipelines/{id}":                                                     "GetDataPipeline",
 	"POST /v1/data/pipelines/{id}/control":                                            "ControlDataPipeline",
 	"POST /v1/data/pipelines/{id}/tenant-readers":                                     "ChangeDataPipelineTenantReaders",
+	"POST /v1/data/pipeline-setups/plan":                                              "PlanDataPipelineSetup",
+	"POST /v1/data/pipeline-setups":                                                   "CreateDataPipelineSetup",
+	"GET /v1/data/pipeline-setups":                                                    "ListDataPipelineSetups",
+	"GET /v1/data/pipeline-setups/{id}":                                               "GetDataPipelineSetup",
+	"POST /v1/data/pipeline-setups/{id}/control":                                      "ControlDataPipelineSetup",
+	"POST /v1/data/pipelines/{id}/freshness":                                          "ConfigureDataPipelineFreshness",
+	"POST /v1/data/pipelines/{id}/indexes":                                            "ChangeDataPipelineIndexes",
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/status":                                          "GetManagedPostgresDatabaseStatus", // ADR-20261030151810
