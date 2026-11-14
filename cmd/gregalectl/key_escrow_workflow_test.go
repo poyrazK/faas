@@ -13,7 +13,11 @@ func TestCDWorkflowsReadPrivateIdentitiesFromKeyEscrow(t *testing.T) {
 	compute := readWorkflow(t, "cd-compute.yml")
 	for _, required := range []string{
 		"SEAL_DOMAIN_KEY_SOURCE: ${{ vars.SEAL_DOMAIN_KEY_SOURCE }}",
-		`secrets) required_secrets+=(FLEET_AGE_KEY) ;;`,
+		// Secrets mode no longer requires FLEET_AGE_KEY: a node that retires
+		// fleet.age never receives it, and deploy join refuses a missing key
+		// that is not retired (ADR-20261109170000).
+		`escrow) required_secrets+=(KEY_ESCROW_HOST KEY_ESCROW_SSH_KEY_VALUE) ;;`,
+		`elif [[ -n "${FLEET_AGE_KEY:-}" ]]; then`,
 		`mapfile -t escrow_names < <(scripts/ci/seal_domain_vars.sh --identities compute)`,
 		`scripts/ci/key_escrow.sh fetch "$escrow_dir" fleet "${escrow_names[@]}"`,
 		`install -m 0600 "$escrow_dir/fleet.age" "$ARTIFACT_DIR/fleet.age"`,

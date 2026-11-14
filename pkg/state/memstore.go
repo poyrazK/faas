@@ -167,6 +167,8 @@ type MemStore struct {
 	// abuseStrikes is each resource owner's abuse recycle times inside the
 	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
 	abuseStrikes map[string][]time.Time
+	// signupFacts is each account's sign-up record (ADR-20261113160000).
+	signupFacts map[string]AccountSignupFacts
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
@@ -2799,6 +2801,13 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 	return true, nil
 }
 
+// QuotaSuspended mirrors PgStore.QuotaSuspended.
+func (m *MemStore) QuotaSuspended(_ context.Context, id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.freeQuotaSuspended[id], nil
+}
+
 // RestoreFreeQuotaSuspension mirrors PgStore.RestoreFreeQuotaSuspension.
 func (m *MemStore) RestoreFreeQuotaSuspension(_ context.Context, id string) (bool, error) {
 	m.mu.Lock()
@@ -4508,6 +4517,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	for cronID, cron := range m.crons {
 		if app, ok := m.apps[cron.AppID]; ok && app.ProjectID == projectID && cron.DeploymentScope == slug {
 			delete(m.crons, cronID)
+		}
+	}
+	for key, subscription := range m.eventSubscriptions {
+		if app, ok := m.eventSubscriptionAppLocked(subscription.AppID); ok && app.ProjectID == projectID && subscription.DeploymentScope == slug {
+			delete(m.eventSubscriptions, key)
 		}
 	}
 	m.deleteProjectEnvironmentBranchLocked(environmentID)
@@ -8357,6 +8371,7 @@ func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
 			m.apps[id] = preview
 		}
 	}
+	m.expirePullRequestBranchesLocked(parent.AccountID, parent.ProjectID, now)
 }
 
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch
@@ -25179,6 +25194,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	delete(m.legalAcceptances, id) // ON DELETE CASCADE
+	delete(m.signupFacts, id)      // ON DELETE CASCADE
 	delete(m.accounts, id)
 	for promotionID := range m.environmentPromotionReceipts {
 		if m.projectEnvironmentPromotions[promotionID].AccountID == id {

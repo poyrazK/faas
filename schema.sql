@@ -8928,6 +8928,7 @@ DECLARE existing_schema_version text;
 DECLARE recipients jsonb;
 DECLARE target_app uuid;
 DECLARE target_tenant uuid;
+DECLARE event_environment uuid;
 BEGIN
     IF NEW.kind <> 'event.published' THEN
         RETURN NEW;
@@ -8937,6 +8938,22 @@ BEGIN
        NEW.data->'data' IS NULL THEN
         RAISE EXCEPTION 'event.published requires account, source, id, type and data'
             USING ERRCODE = '23514';
+    END IF;
+
+    -- ADR-20261104120000: an event belongs to one project environment of
+    -- its account; none is production. Subscriptions receive only their own
+    -- environment's events, and only production events reach workflows.
+    IF coalesce(NEW.data->>'environmentid', '') <> '' THEN
+        BEGIN
+            event_environment := (NEW.data->>'environmentid')::uuid;
+        EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION 'event environment must be a UUID' USING ERRCODE = '23514';
+        END;
+        IF NOT EXISTS (SELECT 1 FROM project_environments e
+                       WHERE e.id = event_environment AND e.account_id = NEW.subject) THEN
+            RAISE EXCEPTION 'event environment is not a project environment of its account'
+                USING ERRCODE = '23514';
+        END IF;
     END IF;
 
     IF NEW.data ? 'platformtenantid' THEN
@@ -8958,6 +8975,7 @@ BEGIN
             'routing_retry_policy', s.routing_retry_policy,
             'acknowledgment_lease_seconds', s.acknowledgment_lease_seconds,
             'schema_versions', s.schema_versions,
+            'deployment_scope', s.deployment_scope, 'environment_id', s.environment_id,
             'work_snapshot_captured', true,
             'work', CASE WHEN b.subscription_id IS NULL THEN NULL
                 ELSE jsonb_build_object(
@@ -8984,12 +9002,15 @@ BEGIN
         WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
           AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
           AND event_fanout_pattern_matches(s.type, NEW.data->>'type')
+          AND s.environment_id IS NOT DISTINCT FROM event_environment
           AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x WHERE x.app_id = s.app_id);
 
-        recipients := recipients || coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
-            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
-            WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
-                WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
+        IF event_environment IS NULL THEN
+            recipients := recipients || coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
+                FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
+                WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
+                    WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
+        END IF;
         -- ADR-20261025211616: keep the event inside its producer's company.
         recipients := event_recipients_in_producer_reach(NEW.subject, NEW.data->>'producer', recipients);
     END IF;
@@ -17489,6 +17510,37 @@ END $$;
 
 
 --
+-- Name: guard_event_subscription_environment_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_event_subscription_environment_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE environment uuid;
+BEGIN
+  IF TG_OP='UPDATE' THEN
+    IF NEW.environment_id IS DISTINCT FROM OLD.environment_id OR NEW.deployment_scope IS DISTINCT FROM OLD.deployment_scope
+      OR (OLD.deployment_scope<>'' AND NEW.app_id IS DISTINCT FROM OLD.app_id) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='event_subscription_scope_identity',
+        MESSAGE='event subscription environment identity is immutable';
+    END IF;
+  ELSIF NEW.deployment_scope<>'' THEN
+    SELECT e.id INTO environment FROM apps a JOIN project_environments e ON e.project_id=a.project_id
+      AND e.account_id=a.account_id AND e.slug=NEW.deployment_scope
+      WHERE a.id=NEW.app_id AND a.status<>'deleted'
+      FOR SHARE OF a,e;
+    IF NOT FOUND OR (NEW.environment_id IS NOT NULL AND NEW.environment_id IS DISTINCT FROM environment) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='event_subscription_environment_membership',
+        MESSAGE='an environment event subscription requires a project environment of its app';
+    END IF;
+    NEW.environment_id=environment;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_function_migration_node(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -18702,6 +18754,24 @@ BEGIN
   RAISE EXCEPTION 'organization has object buckets' USING ERRCODE='23514',CONSTRAINT='org_has_object_buckets';
  END IF;
  RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_org_owner_account_active(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_org_owner_account_active() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.role = 'owner' AND NEW.removed_at IS NULL AND NOT EXISTS (
+        SELECT 1 FROM accounts a WHERE a.id = NEW.account_id AND a.status IN ('active', 'past_due')
+    ) THEN
+        RAISE EXCEPTION 'only an active account can own an organization'
+            USING ERRCODE = '23514', CONSTRAINT = 'org_owner_account_inactive';
+    END IF;
+    RETURN NEW;
 END $$;
 
 
@@ -22641,10 +22711,10 @@ CREATE FUNCTION public.object_inventory_schedule_activity() RETURNS trigger
     AS $$
 BEGIN
  IF TG_OP = 'DELETE' THEN
-  UPDATE object_inventory_schedule SET mutated_at = '-infinity' WHERE bucket_id = OLD.bucket_id;
+  UPDATE object_inventory_schedule SET mutated_at = '-infinity', active_since = '-infinity' WHERE bucket_id = OLD.bucket_id;
   RETURN OLD;
  END IF;
- UPDATE object_inventory_schedule SET mutated_at = NEW.mutated_at WHERE bucket_id = NEW.bucket_id;
+ UPDATE object_inventory_schedule SET mutated_at = NEW.mutated_at, active_since = NEW.active_since WHERE bucket_id = NEW.bucket_id;
  RETURN NEW;
 END $$;
 
@@ -30343,6 +30413,34 @@ CREATE TABLE public.account_passwords (
     account_id uuid NOT NULL,
     hash text NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: account_signup_facts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_signup_facts (
+    account_id uuid NOT NULL,
+    method text NOT NULL,
+    signup_ip inet,
+    user_agent text,
+    country text,
+    asn bigint,
+    asn_org text,
+    email_domain text NOT NULL,
+    disposable_email boolean NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    reduced_at timestamp with time zone,
+    CONSTRAINT account_signup_facts_asn_check CHECK (((asn > 0) AND (asn <= '4294967295'::bigint))),
+    CONSTRAINT account_signup_facts_asn_org_check CHECK ((char_length(asn_org) <= 200)),
+    CONSTRAINT account_signup_facts_check CHECK (((reduced_at IS NULL) OR ((signup_ip IS NULL) AND (user_agent IS NULL)))),
+    CONSTRAINT account_signup_facts_country_check CHECK ((country ~ '^[A-Z]{2}$'::text)),
+    CONSTRAINT account_signup_facts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT account_signup_facts_email_domain_check CHECK ((char_length(email_domain) <= 253)),
+    CONSTRAINT account_signup_facts_method_check CHECK ((method ~ '^[a-z][a-z0-9_]{0,31}$'::text)),
+    CONSTRAINT account_signup_facts_reduced_at_check CHECK (isfinite(reduced_at)),
+    CONSTRAINT account_signup_facts_user_agent_check CHECK ((char_length(user_agent) <= 512))
 );
 
 
@@ -41345,6 +41443,8 @@ CREATE TABLE public.event_subscriptions (
     routing_retry_policy jsonb,
     schema_versions text[] DEFAULT '{}'::text[] NOT NULL,
     acknowledgment_lease_seconds integer DEFAULT 0 NOT NULL,
+    deployment_scope text DEFAULT ''::text NOT NULL,
+    environment_id uuid,
     CONSTRAINT event_subscriptions_acknowledgment_lease_seconds_check CHECK (((acknowledgment_lease_seconds >= 0) AND (acknowledgment_lease_seconds <= 300))),
     CONSTRAINT event_subscriptions_filter_object_chk CHECK ((jsonb_typeof(filter) = 'object'::text)),
     CONSTRAINT event_subscriptions_routing_retry_policy_check CHECK (public.valid_event_routing_retry_policy(routing_retry_policy)),
@@ -42582,6 +42682,7 @@ CREATE TABLE public.github_deploy_policies (
     production_trigger text DEFAULT 'webhook'::text NOT NULL,
     preview_bot_prs boolean DEFAULT false NOT NULL,
     preview_draft_prs boolean DEFAULT true NOT NULL,
+    preview_mode text DEFAULT 'app'::text NOT NULL,
     CONSTRAINT github_deploy_policies_ignored_paths_array_chk CHECK ((jsonb_typeof(ignored_paths) = 'array'::text)),
     CONSTRAINT github_deploy_policies_preview_service_policy_chk CHECK ((preview_service_policy = ANY (ARRAY['deny'::text, 'allow_marked'::text]))),
     CONSTRAINT github_deploy_policies_preview_ttl_chk CHECK (((preview_ttl_hours >= 1) AND (preview_ttl_hours <= 720))),
@@ -49415,6 +49516,7 @@ CREATE TABLE public.object_inventory_schedule (
     observed_at timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
     quiet_after timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
     mutated_at timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    active_since timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
     CONSTRAINT object_inventory_schedule_check CHECK ((quiet_after <= observed_at))
 );
 
@@ -50720,6 +50822,19 @@ ALTER SEQUENCE public.org_memberships_access_revision_seq OWNED BY public.org_me
 
 
 --
+-- Name: org_security_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.org_security_policies (
+    org_id uuid NOT NULL,
+    require_mfa boolean DEFAULT false NOT NULL,
+    updated_by_account_id uuid,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT org_security_policies_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: outbound_admission_leases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -50999,10 +51114,15 @@ CREATE TABLE public.outbound_ai_price_entries (
     input_audio_millicents_per_mtok bigint,
     cached_input_audio_millicents_per_mtok bigint,
     output_audio_millicents_per_mtok bigint,
+    cache_write_1h_millicents_per_mtok bigint,
+    long_context_above_input_tokens bigint,
+    long_context_input_percent integer,
+    long_context_output_percent integer,
     CONSTRAINT outbound_ai_price_entries_audio_chk CHECK ((((input_audio_millicents_per_mtok IS NULL) OR ((input_audio_millicents_per_mtok >= 0) AND (input_audio_millicents_per_mtok <= 1000000000))) AND ((cached_input_audio_millicents_per_mtok IS NULL) OR ((cached_input_audio_millicents_per_mtok >= 0) AND (cached_input_audio_millicents_per_mtok <= 1000000000))) AND ((output_audio_millicents_per_mtok IS NULL) OR ((output_audio_millicents_per_mtok >= 0) AND (output_audio_millicents_per_mtok <= 1000000000))))),
     CONSTRAINT outbound_ai_price_entries_media_chk CHECK ((((input_image_millicents_per_mtok IS NULL) OR ((input_image_millicents_per_mtok >= 0) AND (input_image_millicents_per_mtok <= 1000000000))) AND ((output_image_millicents_per_mtok IS NULL) OR ((output_image_millicents_per_mtok >= 0) AND (output_image_millicents_per_mtok <= 1000000000))) AND ((millicents_per_image IS NULL) OR ((millicents_per_image >= 0) AND (millicents_per_image <= 10000000))) AND ((millicents_per_audio_minute IS NULL) OR ((millicents_per_audio_minute >= 0) AND (millicents_per_audio_minute <= 10000000))) AND ((millicents_per_million_characters IS NULL) OR ((millicents_per_million_characters >= 0) AND (millicents_per_million_characters <= 1000000000))))),
     CONSTRAINT outbound_ai_price_entries_prefix_chk CHECK ((((length(model_prefix) >= 1) AND (length(model_prefix) <= 128)) AND (model_prefix ~ '^[ -~]+$'::text))),
     CONSTRAINT outbound_ai_price_entries_prices_chk CHECK ((((input_millicents_per_mtok >= 0) AND (input_millicents_per_mtok <= 1000000000)) AND ((output_millicents_per_mtok >= 0) AND (output_millicents_per_mtok <= 1000000000)) AND ((cached_input_millicents_per_mtok IS NULL) OR ((cached_input_millicents_per_mtok >= 0) AND (cached_input_millicents_per_mtok <= 1000000000))) AND ((cache_write_millicents_per_mtok IS NULL) OR ((cache_write_millicents_per_mtok >= 0) AND (cache_write_millicents_per_mtok <= 1000000000))))),
+    CONSTRAINT outbound_ai_price_entries_tiers_chk CHECK ((((cache_write_1h_millicents_per_mtok IS NULL) OR ((cache_write_1h_millicents_per_mtok >= 0) AND (cache_write_1h_millicents_per_mtok <= 1000000000))) AND (((long_context_above_input_tokens IS NULL) AND (long_context_input_percent IS NULL) AND (long_context_output_percent IS NULL)) OR (((long_context_above_input_tokens >= 1000) AND (long_context_above_input_tokens <= 2000000)) AND ((long_context_input_percent >= 100) AND (long_context_input_percent <= 1000)) AND ((long_context_output_percent >= 100) AND (long_context_output_percent <= 1000)))))),
     CONSTRAINT outbound_ai_price_entries_tools_chk CHECK ((((millicents_per_web_search IS NULL) OR ((millicents_per_web_search >= 0) AND (millicents_per_web_search <= 10000000))) AND ((millicents_per_file_search IS NULL) OR ((millicents_per_file_search >= 0) AND (millicents_per_file_search <= 10000000))) AND ((millicents_per_code_session_gb IS NULL) OR ((millicents_per_code_session_gb >= 0) AND (millicents_per_code_session_gb <= 10000000))))),
     CONSTRAINT outbound_ai_price_entries_video_chk CHECK (((millicents_per_video_second IS NULL) OR ((millicents_per_video_second >= 0) AND (millicents_per_video_second <= 10000000))))
 );
@@ -53644,6 +53764,7 @@ CREATE TABLE public.project_environment_branches (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     private_networks text DEFAULT 'off'::text NOT NULL,
     slot_id uuid,
+    pull_request_number integer,
     CONSTRAINT project_environment_branches_data_attempts CHECK ((data_attempts >= 0)),
     CONSTRAINT project_environment_branches_data_state CHECK ((data_state = ANY (ARRAY['pending'::text, 'ready'::text, 'failed'::text]))),
     CONSTRAINT project_environment_branches_depth CHECK (((depth >= 1) AND (depth <= 8))),
@@ -61857,6 +61978,14 @@ ALTER TABLE ONLY public.account_passwords
 
 
 --
+-- Name: account_signup_facts account_signup_facts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_signup_facts
+    ADD CONSTRAINT account_signup_facts_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: account_spend_cap_holds account_spend_cap_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -66681,6 +66810,14 @@ ALTER TABLE ONLY public.event_subscription_rate_commands
 
 
 --
+-- Name: event_subscriptions event_subscription_scope_shape; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.event_subscriptions
+    ADD CONSTRAINT event_subscription_scope_shape CHECK ((((deployment_scope = ''::text) AND (environment_id IS NULL)) OR ((deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (environment_id IS NOT NULL)))) NOT VALID;
+
+
+--
 -- Name: event_subscription_work_bindings event_subscription_work_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -67310,6 +67447,14 @@ ALTER TABLE ONLY public.github_deploy_branches
 
 ALTER TABLE ONLY public.github_deploy_policies
     ADD CONSTRAINT github_deploy_policies_pkey PRIMARY KEY (project_id);
+
+
+--
+-- Name: github_deploy_policies github_deploy_policies_preview_mode_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.github_deploy_policies
+    ADD CONSTRAINT github_deploy_policies_preview_mode_chk CHECK ((preview_mode = ANY (ARRAY['app'::text, 'branch'::text]))) NOT VALID;
 
 
 --
@@ -70785,6 +70930,14 @@ ALTER TABLE ONLY public.org_memberships
 
 
 --
+-- Name: org_security_policies org_security_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_security_policies
+    ADD CONSTRAINT org_security_policies_pkey PRIMARY KEY (org_id);
+
+
+--
 -- Name: orgs orgs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72094,6 +72247,14 @@ ALTER TABLE ONLY public.project_environment_branch_deployments
 
 ALTER TABLE ONLY public.project_environment_branches
     ADD CONSTRAINT project_environment_branches_pkey PRIMARY KEY (environment_id);
+
+
+--
+-- Name: project_environment_branches project_environment_branches_pull_request_number_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_pull_request_number_chk CHECK (((pull_request_number IS NULL) OR (pull_request_number > 0))) NOT VALID;
 
 
 --
@@ -75698,6 +75859,20 @@ CREATE INDEX account_credits_account_active_idx ON public.account_credits USING 
 --
 
 CREATE UNIQUE INDEX account_email_changes_one_pending_idx ON public.account_email_changes USING btree (account_id) WHERE (consumed_at IS NULL);
+
+
+--
+-- Name: account_signup_facts_ip_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_signup_facts_ip_idx ON public.account_signup_facts USING gist (signup_ip inet_ops) WHERE (signup_ip IS NOT NULL);
+
+
+--
+-- Name: account_signup_facts_unreduced_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_signup_facts_unreduced_idx ON public.account_signup_facts USING btree (created_at) WHERE (reduced_at IS NULL);
 
 
 --
@@ -79947,10 +80122,17 @@ CREATE INDEX event_subscriptions_enabled_idx ON public.event_subscriptions USING
 
 
 --
--- Name: event_subscriptions_identity_uniq; Type: INDEX; Schema: public; Owner: -
+-- Name: event_subscriptions_environment_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX event_subscriptions_identity_uniq ON public.event_subscriptions USING btree (app_id, source, type, filter);
+CREATE INDEX event_subscriptions_environment_idx ON public.event_subscriptions USING btree (environment_id) WHERE (environment_id IS NOT NULL);
+
+
+--
+-- Name: event_subscriptions_scope_identity_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_subscriptions_scope_identity_uniq ON public.event_subscriptions USING btree (app_id, deployment_scope, source, type, filter);
 
 
 --
@@ -82894,10 +83076,24 @@ CREATE INDEX object_deletions_due ON public.object_deletions USING btree (retry_
 
 
 --
+-- Name: object_inventory_schedule_activated; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_inventory_schedule_activated ON public.object_inventory_schedule USING btree (active_since, bucket_id) WHERE ((quiet_after > '-infinity'::timestamp with time zone) AND (active_since > observed_at));
+
+
+--
 -- Name: object_inventory_schedule_active; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX object_inventory_schedule_active ON public.object_inventory_schedule USING btree (attempt_at, bucket_id) WHERE (mutated_at >= quiet_after);
+
+
+--
+-- Name: object_inventory_schedule_active_observed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_inventory_schedule_active_observed ON public.object_inventory_schedule USING btree (observed_at, bucket_id) WHERE (mutated_at >= quiet_after);
 
 
 --
@@ -82989,6 +83185,13 @@ CREATE INDEX object_storage_billing_periods_account_period_idx ON public.object_
 --
 
 CREATE INDEX object_storage_billing_progress_account_period_idx ON public.object_storage_billing_progress USING btree (account_id, period_start);
+
+
+--
+-- Name: object_storage_bucket_usage_leased; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_bucket_usage_leased ON public.object_storage_bucket_usage USING btree (bucket_id) WHERE (token <> ''::text);
 
 
 --
@@ -90986,6 +91189,13 @@ CREATE TRIGGER guard_environment_workload_retirement BEFORE INSERT OR DELETE OR 
 
 
 --
+-- Name: event_subscriptions guard_event_subscription_environment_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_event_subscription_environment_scope BEFORE INSERT OR UPDATE OF deployment_scope, environment_id, app_id ON public.event_subscriptions FOR EACH ROW EXECUTE FUNCTION public.guard_event_subscription_environment_scope();
+
+
+--
 -- Name: managed_postgres_databases guard_managed_postgres_accounting_intent; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -92235,7 +92445,7 @@ CREATE TRIGGER object_immutable_deletion_fence BEFORE INSERT ON public.object_de
 -- Name: object_bucket_activity object_inventory_schedule_copy; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER object_inventory_schedule_copy AFTER INSERT OR DELETE OR UPDATE OF mutated_at ON public.object_bucket_activity FOR EACH ROW EXECUTE FUNCTION public.object_inventory_schedule_activity();
+CREATE TRIGGER object_inventory_schedule_copy AFTER INSERT OR DELETE OR UPDATE OF mutated_at, active_since ON public.object_bucket_activity FOR EACH ROW EXECUTE FUNCTION public.object_inventory_schedule_activity();
 
 
 --
@@ -92761,6 +92971,13 @@ CREATE TRIGGER org_member_credentials_revoked AFTER UPDATE OF removed_at ON publ
 --
 
 CREATE TRIGGER org_membership_access_revision BEFORE UPDATE ON public.org_memberships FOR EACH ROW EXECUTE FUNCTION public.advance_org_access_revision();
+
+
+--
+-- Name: org_memberships org_memberships_owner_account_active; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_memberships_owner_account_active BEFORE INSERT OR UPDATE OF role, removed_at ON public.org_memberships FOR EACH ROW WHEN ((new.role = 'owner'::text)) EXECUTE FUNCTION public.guard_org_owner_account_active();
 
 
 --
@@ -94708,6 +94925,14 @@ ALTER TABLE ONLY public.account_oauth_unlinks
 
 ALTER TABLE ONLY public.account_passwords
     ADD CONSTRAINT account_passwords_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_signup_facts account_signup_facts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_signup_facts
+    ADD CONSTRAINT account_signup_facts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -105252,6 +105477,22 @@ ALTER TABLE ONLY public.org_memberships
 
 ALTER TABLE ONLY public.org_memberships
     ADD CONSTRAINT org_memberships_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: org_security_policies org_security_policies_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_security_policies
+    ADD CONSTRAINT org_security_policies_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: org_security_policies org_security_policies_updated_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_security_policies
+    ADD CONSTRAINT org_security_policies_updated_by_account_id_fkey FOREIGN KEY (updated_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

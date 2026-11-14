@@ -16,6 +16,8 @@ type fakeGitHubSourceRefVerifier struct {
 	installationID int64
 	repo           string
 	branch         string
+	calls          int
+	failures       int // transient failures before the lookup answers
 }
 
 func (f *fakeGitHubSourceRefVerifier) GetBranchHead(_ context.Context, accountID string, installationID int64, repo, branch string) (string, bool, error) {
@@ -23,6 +25,11 @@ func (f *fakeGitHubSourceRefVerifier) GetBranchHead(_ context.Context, accountID
 	f.installationID = installationID
 	f.repo = repo
 	f.branch = branch
+	f.calls++
+	if f.failures > 0 {
+		f.failures--
+		return "", false, errors.New("githubd unavailable")
+	}
 	return f.sha, f.found, f.err
 }
 
@@ -110,6 +117,20 @@ func TestGitHubSourceRefFreshness(t *testing.T) {
 		stale, err := h.gitHubSourceRefIsStale(ctx, dep)
 		if stale || !errors.Is(err, wantErr) {
 			t.Fatalf("freshness = (%v, %v), want (false, wrapped lookup error)", stale, err)
+		}
+		if verifier.calls != len(externalVerifyRetryDelays)+1 {
+			t.Fatalf("lookup attempts = %d, want %d", verifier.calls, len(externalVerifyRetryDelays)+1)
+		}
+	})
+
+	t.Run("transient lookup failure is retried", func(t *testing.T) {
+		// Deploy-path review P11: a githubd blip at go-live failed a fully
+		// built deployment as source_ref_unavailable.
+		verifier := &fakeGitHubSourceRefVerifier{sha: dep.CommitSHA, found: true, failures: 2}
+		h := New(store, nil, nil, nil, "", "", nil).WithGitHubSourceRefVerifier(verifier)
+		stale, err := h.gitHubSourceRefIsStale(ctx, dep)
+		if stale || err != nil || verifier.calls != 3 {
+			t.Fatalf("freshness = (%v, %v) after %d calls, want (false, nil) after 3", stale, err, verifier.calls)
 		}
 	})
 

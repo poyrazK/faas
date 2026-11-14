@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // BackendFromEnv is the shared seaming point for imaged / vmmd / any
@@ -65,10 +63,11 @@ import (
 //	                                when the env var is unset; set to ""
 //	                                to explicitly disable.
 //	FAAS_STORAGE_CACHE_MAX_BYTES  local+remote — optional cache byte budget.
-//	                                Unset, it is derived from the host's
-//	                                MemTotal (see ResolveCacheMaxBytes);
-//	                                the old comment here claimed 1 GiB long
-//	                                after the constant became 8 GiB.
+//	                                Unset, it is the cache disk less a 15%
+//	                                reserve, or the MemTotal-derived budget
+//	                                when that is larger (ResolveCacheBudget,
+//	                                ADR-20261114120000). Set, it caps the
+//	                                budget; the free-space floor stays.
 //	FAAS_OCI_REGISTRY             oci-only — full URL incl. scheme (e.g. https://ghcr.io/org)
 //	FAAS_OCI_REPO_PREFIX          oci-only — repo namespace (default "faas")
 //	FAAS_OCI_USERNAME             oci-only — optional Basic-Auth user for token endpoint
@@ -179,28 +178,40 @@ func wrapWithCache(parent StorageBackend, kind string) (StorageBackend, error) {
 	if !ok {
 		return parent, nil
 	}
-	maxBytes := ResolveCacheMaxBytes(hostMemTotalBytes())
-	source := "node-ram"
+	var override int64
 	if raw := os.Getenv("FAAS_STORAGE_CACHE_MAX_BYTES"); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || n <= 0 {
 			return nil, fmt.Errorf("storage: FAAS_STORAGE_CACHE_MAX_BYTES=%q: must be a positive integer", raw)
 		}
-		maxBytes = n
-		source = "env"
+		override = n
 	}
+	cache, err := NewLocalCacheBackend(parent, dir, ResolveCacheMaxBytes(hostMemTotalBytes()))
+	if err != nil {
+		return nil, fmt.Errorf("storage: cache backend: %w", err)
+	}
+	// ADR-20261114120000: the budget is the cache disk less a reserve kept
+	// free for captures, layer clones and build drives; the reserve is also
+	// the free-space floor eviction defends. An explicit
+	// FAAS_STORAGE_CACHE_MAX_BYTES still caps the budget.
+	_, fsTotal, _ := cache.diskSpace(dir)
+	maxBytes, minFree := ResolveCacheBudget(hostMemTotalBytes(), fsTotal)
+	source := "disk"
+	if fsTotal <= 0 {
+		source = "node-ram"
+	}
+	if override > 0 {
+		maxBytes, source = override, "env"
+	}
+	cache.setMaxBytes(maxBytes)
+	cache.SetMinFreeBytes(minFree)
 	// The resolved budget decides how much of the artifact set stays
 	// resident, which is the difference between a warm restore and a
 	// remote fetch. An operator diagnosing wake latency should not have to
 	// infer it from the machine shape.
 	slog.Default().Info("storage: artifact cache budget resolved",
 		"dir", dir, "max_bytes", maxBytes, "source", source,
-		"min_free_bytes", api.ArtifactCacheMinFreeBytes)
-	cache, err := NewLocalCacheBackend(parent, dir, maxBytes)
-	if err != nil {
-		return nil, fmt.Errorf("storage: cache backend: %w", err)
-	}
-	cache.SetMinFreeBytes(api.ArtifactCacheMinFreeBytes)
+		"min_free_bytes", minFree, "filesystem_bytes", fsTotal)
 	return cache, nil
 }
 

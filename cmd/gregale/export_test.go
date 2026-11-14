@@ -1250,6 +1250,8 @@ var DefaultProjectSlug = defaultProjectSlug
 var DeployContextDirectory = deployContextDirectory
 var DeployDeveloperSource = deployDeveloperSource
 var DeployIdempotencyKey = deployIdempotencyKey
+
+var MissingRequiredSecretNames = missingRequiredSecretNames
 var DeployManifestObjectStorageBindings = deployManifestObjectStorageBindings
 var DeployManifestPostgresBindings = deployManifestPostgresBindings
 var DeployManifestQueueBindings = deployManifestQueueBindings
@@ -1547,6 +1549,8 @@ var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
 var RetainedLineLevelMatches = retainedLineLevelMatches
 var ParseAIPriceSpec = parseAIPriceSpec
+
+var FormatPriceTiers = formatPriceTiers
 var ParseAIRouteTargets = parseAIRouteTargets
 var ParseStoredWorkflowLiveBaseline = parseStoredWorkflowLiveBaseline
 var ParseStoredWorkflowLiveGate = parseStoredWorkflowLiveGate

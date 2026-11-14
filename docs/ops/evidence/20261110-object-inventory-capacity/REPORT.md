@@ -195,7 +195,51 @@ after `VACUUM ANALYZE`.
 - Machine load varied between runs (shared host): one earlier unvacuumed
   run at 200,000 measured 24 ms / 13 ms. Every run stayed index-driven.
 - `ObjectInventoryBacklog` still reads every bucket. It runs once a minute
-  for gauges, not on the sweep's path.
+  for gauges, not on the sweep's path. (Changed on 2026-11-12, below.)
+
+## After the backlog amendment (2026-11-12)
+
+ADR-20261111152144 §4 moves `ObjectInventoryBacklog` onto the schedule.
+Before the move it read every ready bucket with its usage, activity and
+listing rows: 230 ms at 22,000 buckets. The `due-query` scenario now also
+times it. The mix and method are the same as above.
+
+| Buckets | Quiet on | Quiet off | Quiet on, vacuumed | Quiet off, vacuumed |
+|---|---|---|---|---|
+| 22,000 (before: full scan) | 230 ms | | | |
+| 22,000 | 4.0 ms | 2.5 ms | 2.7 ms | 2.5 ms |
+
+- **What it reads.** See the [plans](backlog-plan-22000.txt).
+  - With quiet on, the due count reads two index ranges: 1,000 active
+    buckets and 1,000 due for verification.
+  - With quiet off, every bucket is due, and the planner reads the narrow
+    schedule table whole for the count (22,000 rows in 1.8 ms).
+  - Each oldest age is the first row of an index walk.
+  - No plan reads the bucket, usage or activity table whole. The harness
+    fails if one does, and fails if the due query reads the schedule whole.
+- **Planner variance.** Before vacuum, one run with quiet on counted the
+  active buckets from the schedule table instead of the active index. The
+  planner cannot estimate the cross-column predicate, so it guessed 7,333
+  rows where there were 1,000. That run took 10.7 ms, on a busier machine.
+- **200,000 buckets were not measured for the backlog.** The shared
+  development disk filled during the 200,000-bucket seed twice. Postgres
+  ran out of space once, and the harness's watchdog stopped the run the
+  second time. From the plans, only the quiet-off count grows with buckets
+  (the count of due buckets, from the narrow schedule table). By the
+  22,000 figure it would be about 20 ms at 200,000 if most buckets are due.
+- **Equivalence.** `TestObjectInventoryScheduleMatchesFullScanPG` also
+  compares the backlog query with the full-scan backlog query in one
+  transaction, for both modes and both quiet settings, over the randomized
+  buckets. The random data now also covers:
+  - `active_since` around the observation and the 24 h edge;
+  - versioning and Object Lock changes in flight;
+  - progress on both sides of the 5-minute window;
+  - a `deleting` bucket;
+  - young rounds in which an activation anchor is the oldest.
+
+  All 64 comparisons were identical. The test fails unless the comparisons
+  reach every part of the query, and it failed in its first round when the
+  full-scan side was weakened (Object Lock exemption removed).
 
 ## Limits of this measurement
 

@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -14,6 +15,14 @@ type ProjectPromotionClearStore interface {
 }
 
 const projectPromotionClearMessage = "environment promotion rollback"
+
+// projectPromotionClearDetail says why a promotion's only release was
+// retired. A bare "environment promotion rollback" with no error code read as
+// an unexplained failure (deploy-path review P7).
+func projectPromotionClearDetail(promotionID string) string {
+	return projectPromotionClearMessage + ": promotion " + promotionID +
+		" was rolled back and this was the first release in its environment, so there was no earlier release to restore; it was retired, not failed by the app"
+}
 
 func (m *MemStore) ClearProjectPromotionDeployment(ctx context.Context, appID, deploymentID, promotionID string) error {
 	m.mu.Lock()
@@ -34,7 +43,8 @@ func (m *MemStore) ClearProjectPromotionDeployment(ctx context.Context, appID, d
 	if err := m.checkBindingReleaseFailureLocked(d); err != nil {
 		return err
 	}
-	m.failDeploymentLocked(d, projectPromotionClearMessage)
+	d.ErrorCode = api.CodePromotionRolledBack
+	m.failDeploymentLocked(d, projectPromotionClearDetail(promotionID))
 	m.markDeploymentSnapshotsStaleLocked(d.ID)
 	return nil
 }
@@ -48,13 +58,14 @@ func (s *PgStore) ClearProjectPromotionDeployment(ctx context.Context, appID, de
 		return err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	stages, err := failedDeploymentStageStateTx(ctx, tx, deploymentID, projectPromotionClearMessage)
+	message := projectPromotionClearDetail(promotionID)
+	stages, err := failedDeploymentStageStateTx(ctx, tx, deploymentID, message)
 	if err != nil {
 		return err
 	}
 	changed, err := sqlc.New().ClearProjectPromotionDeployment(ctx, tx, sqlc.ClearProjectPromotionDeploymentParams{
 		AppID: mustPgUUID(appID), DeploymentID: mustPgUUID(deploymentID),
-		Reason: "environment promotion/" + promotionID, StageState: stages,
+		Reason: "environment promotion/" + promotionID, StageState: stages, Message: message,
 	})
 	if err != nil {
 		return mapErr(err)
