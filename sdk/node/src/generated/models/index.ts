@@ -2810,6 +2810,7 @@ export type { RotateAppWebhookSecretResponse } from './RotateAppWebhookSecretRes
 export type { RotateDataConnectionRequest } from './RotateDataConnectionRequest.js';
 export type { RotateDeployTokenRequest } from './RotateDeployTokenRequest.js';
 export type { RotateDeployTokenResponse } from './RotateDeployTokenResponse.js';
+export type { RotateKeyRequest } from './RotateKeyRequest.js';
 export type { RotateKeyResponse } from './RotateKeyResponse.js';
 export type { RotateManagedRealtimeAuthRequest } from './RotateManagedRealtimeAuthRequest.js';
 export type { RotateManagedRealtimeAuthResponse } from './RotateManagedRealtimeAuthResponse.js';

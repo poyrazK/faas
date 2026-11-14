@@ -126,7 +126,7 @@ const (
 	OrgActionManagePreviews OrgAction = "org.manage_previews"
 
 	// OrgActionManageSecurity changes the organization's security policy,
-	// such as requiring two-factor authentication (ADR 20261113180000).
+	// such as requiring two-factor authentication (ADR 20261114170352).
 	// Owner only: it decides who may keep working in the organization.
 	OrgActionManageSecurity OrgAction = "org.manage_security"
 )
