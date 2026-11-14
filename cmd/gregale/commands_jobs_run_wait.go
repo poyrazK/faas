@@ -41,10 +41,14 @@ func waitAcceptedJobRun(client *api.Client, name string, accepted api.JobRunResp
 			Error         string             `json:"error,omitempty"`
 		}{Run: result, ExitCode: code, ResumeCommand: resume}
 		if err != nil {
-			receipt.Error = err.Error()
+			receipt.Error = redactErrorText(err.Error())
+			receipt.ResumeCommand = redactErrorText(receipt.ResumeCommand)
 		}
 		if outputCode := jsonOut(writeJSONSingle(receipt)); outputCode != 0 {
 			return outputCode
+		}
+		if err != nil {
+			return renderJobWaitError(err, code, name, accepted.ID, timeout, interval)
 		}
 	} else if err != nil {
 		printErr("Job wait ended", err)
