@@ -100,6 +100,10 @@ func (s *server) pipelineControl(w http.ResponseWriter, r *http.Request, a state
 	s.dataPipelines.Control(w, r, a.ID)
 }
 
+func (s *server) pipelineTenantReaders(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.TenantReaders(w, r, a.ID)
+}
+
 func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 	if _, err := daemonenv.Load("apid"); err != nil {
 		return err

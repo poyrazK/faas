@@ -15,6 +15,8 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.data_pipeline_capacity import DataPipelineCapacity
     from ..models.data_pipeline_health import DataPipelineHealth
+    from ..models.data_pipeline_serving import DataPipelineServing
+    from ..models.data_pipeline_tenant_change import DataPipelineTenantChange
     from ..models.data_pipeline_wal_retention import DataPipelineWALRetention
 
 
@@ -42,6 +44,13 @@ class DataPipeline:
     tables_ready: int
     verification: DataPipelineVerification
     created_at: datetime.datetime
+    serving: DataPipelineServing | Unset = UNSET
+    """Versioned serving contract. Columns are immutable and affect publication, mirror schema and recovery. Omit
+    columns for all-column replication. Tenant access uses owner-managed subject memberships; JWT tenant claims
+    grant nothing. At least columns or tenant_access is required. A missing version defaults to 1 at creation."""
+    tenant_change: DataPipelineTenantChange | Unset = UNSET
+    """Frozen membership preview. Approval applies this exact after set atomically at the mirror before catalog
+    acknowledgement."""
     wal_retention: DataPipelineWALRetention | Unset = UNSET
     """Fresh source-specific WAL headroom. The remaining-time estimate uses sampled cluster WAL generation and does
     not guarantee when a slot will be invalidated."""
@@ -89,6 +98,14 @@ class DataPipeline:
         verification: str = self.verification
 
         created_at = self.created_at.isoformat()
+
+        serving: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.serving, Unset):
+            serving = self.serving.to_dict()
+
+        tenant_change: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tenant_change, Unset):
+            tenant_change = self.tenant_change.to_dict()
 
         wal_retention: dict[str, Any] | Unset = UNSET
         if not isinstance(self.wal_retention, Unset):
@@ -139,6 +156,10 @@ class DataPipeline:
                 "created_at": created_at,
             }
         )
+        if serving is not UNSET:
+            field_dict["serving"] = serving
+        if tenant_change is not UNSET:
+            field_dict["tenant_change"] = tenant_change
         if wal_retention is not UNSET:
             field_dict["wal_retention"] = wal_retention
         if applied_through_at is not UNSET:
@@ -162,6 +183,8 @@ class DataPipeline:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.data_pipeline_capacity import DataPipelineCapacity
         from ..models.data_pipeline_health import DataPipelineHealth
+        from ..models.data_pipeline_serving import DataPipelineServing
+        from ..models.data_pipeline_tenant_change import DataPipelineTenantChange
         from ..models.data_pipeline_wal_retention import DataPipelineWALRetention
 
         d = dict(src_dict)
@@ -194,6 +217,20 @@ class DataPipeline:
         verification = check_data_pipeline_verification(d.pop("verification"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _serving = d.pop("serving", UNSET)
+        serving: DataPipelineServing | Unset
+        if isinstance(_serving, Unset):
+            serving = UNSET
+        else:
+            serving = DataPipelineServing.from_dict(_serving)
+
+        _tenant_change = d.pop("tenant_change", UNSET)
+        tenant_change: DataPipelineTenantChange | Unset
+        if isinstance(_tenant_change, Unset):
+            tenant_change = UNSET
+        else:
+            tenant_change = DataPipelineTenantChange.from_dict(_tenant_change)
 
         _wal_retention = d.pop("wal_retention", UNSET)
         wal_retention: DataPipelineWALRetention | Unset
@@ -257,6 +294,8 @@ class DataPipeline:
             tables_ready=tables_ready,
             verification=verification,
             created_at=created_at,
+            serving=serving,
+            tenant_change=tenant_change,
             wal_retention=wal_retention,
             applied_through_at=applied_through_at,
             health=health,

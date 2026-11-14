@@ -54,3 +54,9 @@ func (c *Client) ControlDataPipeline(ctx context.Context, id string, r ControlDa
 	err := c.do(ctx, http.MethodPost, "/v1/data/pipelines/"+url.PathEscape(id)+"/control", r, &out)
 	return out, err
 }
+
+func (c *Client) ChangeDataPipelineTenantReaders(ctx context.Context, id string, r DataPipelineTenantReadersRequest) (DataPipeline, error) {
+	var out DataPipeline
+	err := c.do(ctx, http.MethodPost, "/v1/data/pipelines/"+url.PathEscape(id)+"/tenant-readers", r, &out)
+	return out, err
+}

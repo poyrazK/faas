@@ -229,6 +229,9 @@ var previewRoutes = map[string]bool{
 	"POST /v1/projects/{}/environments":             true,
 	"POST /v1/projects/{}/environment-clones":       true,
 	"POST /v1/projects/{}/environments/{}/branches": true,
+	// The handler fetches and checks the repository, then answers at
+	// the price of its gregale.yaml before preparing the rollout.
+	"POST /v1/apps/{}/deployments/source-ref": true,
 }
 
 // Previewable reports whether a route accepts the budget preview header.
