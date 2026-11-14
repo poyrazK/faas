@@ -16,6 +16,11 @@ func ResolveHintCommand(line string) error {
 	if len(words) < 2 || words[0] != "gregale" {
 		return fmt.Errorf("%q: must start with gregale and a command", line)
 	}
+	for i, word := range words {
+		if word == "<app>" || word == "<slug>" {
+			words[i] = sampleAppSlug // the tree's app verbs want a slug-shaped target
+		}
+	}
 	args, err := rewriteCliTree(words[1:])
 	if err != nil {
 		return fmt.Errorf("%q: %w", line, err)
@@ -29,7 +34,7 @@ func ResolveHintCommand(line string) error {
 			break
 		}
 		// A <placeholder> after a slug-first command stands for its app.
-		if strings.HasPrefix(word, "<") && len(leading) > 0 {
+		if (strings.HasPrefix(word, "<") || word == sampleAppSlug) && len(leading) > 0 {
 			if node, ok := lookupCliPath(leading); ok && node.AfterPositionals {
 				continue
 			}
@@ -58,6 +63,8 @@ func ResolveHintCommand(line string) error {
 	}
 	return nil
 }
+
+const sampleAppSlug = "sample-app"
 
 // ConceptWords lists the guessed words concept hints answer.
 func ConceptWords() []string {

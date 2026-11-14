@@ -127,7 +127,7 @@ func guardAPIClient(c *Client) *Client {
 // configuration, completion helpers and the manual. Their API calls (context
 // --verify, config profile check) check the base themselves.
 var connectionPreflightExempt = map[string]bool{
-	"config": true, "profile": true, "context": true, "completion": true, "man": true,
+	"config": true, "profile": true, "context": true, "completion": true, "man": true, "guide": true,
 }
 
 // connectionPreflight runs once per invocation, before dispatch. It refuses

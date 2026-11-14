@@ -33,6 +33,10 @@ var sourceHostSkipDirs = map[string]bool{
 	"__tests__": true, "spec": true, "testdata": true, "fixtures": true,
 }
 
+// composeHostName is a service name Docker resolves as a host: `db` is one,
+// though it is too short for an app slug.
+var composeHostName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
 // envLookup marks a line that reads the host from the environment; a
 // literal there is a fallback default, which is fine on Gregale once the
 // variable is set.
@@ -65,7 +69,7 @@ func detectSourceHosts(fsys fs.FS, workloads []Workload, managed []Managed) {
 	}
 	patterns := map[string][]*regexp.Regexp{}
 	for name := range names {
-		if api.ValidAppSlug(name) {
+		if composeHostName.MatchString(name) {
 			patterns[name] = hostPatterns(name)
 		}
 	}

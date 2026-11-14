@@ -412,6 +412,7 @@ func printUsage(w io.Writer, usage, topic string) {
 	if flagHelpPrinted {
 		return
 	}
+	printAgentHint(osStderr) // ADR-20261112223000 §5; stderr only
 	usage = spellUsageForTree(usage)
 	if jsonOutput && !jsonUsageHelp {
 		_ = writeJSONProblemWithExit(w, api.Problem{

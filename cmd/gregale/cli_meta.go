@@ -7284,6 +7284,15 @@ var cliCommands = []cliCommand{
 		Short:       "Print the CLI manual page, or one command's page",
 		Positionals: []string{"<command>"},
 	},
+	{
+		// ADR-20261112223000 §4: short task pages for agents and people.
+		Name:        "guide",
+		DocSlug:     "guide",
+		Short:       "Short task pages: deploy, health checks, private services, rollouts",
+		Positionals: []string{"[<task>]"},
+		Examples:    []string{"gregale guide", "gregale guide private-services"},
+		Flags:       []cliFlag{{Name: "json", Short: "print the pages as JSON", Bool: true}},
+	},
 }
 
 // issueModeSubs lists the mode words of an issue command that takes its mode

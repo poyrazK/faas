@@ -17,7 +17,8 @@ func hintPlans() []featurehints.Input {
 	return []featurehints.Input{
 		{ProjectSlug: "voting-app", Workloads: []api.PlanWorkload{
 			{Name: "vote", AppSlug: "vote", PublicURL: "https://vote.gregale.dev", PublicAuthMode: api.AppPublicAuthModeBearer, BuildTarget: "dev",
-				ImageHealthcheck: &api.ComposeHealthcheck{Test: []string{"CMD", "true"}}, UnsetEnvKeys: []string{"OPTION_A"}},
+				ImageHealthcheck: &api.ComposeHealthcheck{Test: []string{"CMD", "true"}}, UnsetEnvKeys: []string{"OPTION_A"},
+				SourceHosts: []api.PlanSourceHost{{Host: "redis", File: "vote/app.py", Line: 21}, {Host: "cache", File: "vote/app.py", Line: 30}}},
 			{Name: "result", AppSlug: "result", PublicURL: "https://result.gregale.dev", PublicAuthMode: api.AppPublicAuthModeBearer,
 				Command: []string{"nodemon", "server.js"}, UnsetEnvKeys: []string{"OPTION_A"}},
 			{Name: "cache", AppSlug: "cache", Visibility: api.AppVisibilityInternal},
@@ -47,7 +48,7 @@ func TestEveryHintCommandIsARealCommand(t *testing.T) {
 		}
 	}
 	for _, id := range []string{featurehints.IDHealthcheck, featurehints.IDHealthDefault, featurehints.IDPublicNeedsKey, featurehints.IDPrivateServices,
-		featurehints.IDManagedPostgres, featurehints.IDNotRunDatastore, featurehints.IDUnsetEnv, featurehints.IDDevSetup, featurehints.IDProjectReleases} {
+		featurehints.IDManagedPostgres, featurehints.IDNotRunDatastore, featurehints.IDUnsetEnv, featurehints.IDDevSetup, featurehints.IDProjectReleases, featurehints.IDSourceHosts} {
 		if !seen[id] {
 			t.Errorf("no test plan produces hint %s, so its commands are unchecked", id)
 		}

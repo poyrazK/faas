@@ -35866,6 +35866,10 @@ components:
             type: string
             enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
           description: "For an unset_env_keys name with a Compose value, why that value is not imported. Never values."
+        source_hosts:
+          type: array
+          items: {$ref: '#/components/schemas/PlanSourceHost'}
+          description: "String literals in the workload's source that dial another service by its Compose name, which does not resolve on Gregale. At most a few per workload."
         imported_env_keys:
           type: array
           items: {type: string}
@@ -36068,6 +36072,14 @@ components:
         limit: {type: integer, format: int64}
         observed: {type: integer, format: int64}
         docs_url: {type: string}
+    PlanSourceHost:
+      type: object
+      description: "One place source code dials a service by its Compose name."
+      required: [host, file, line]
+      properties:
+        host: {type: string, description: "The Compose service name the code uses as a host."}
+        file: {type: string, description: "Repository-relative path of the file."}
+        line: {type: integer, description: "1-based line number."}
     FeatureHint:
       description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable."
       type: object

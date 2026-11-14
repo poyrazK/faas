@@ -2210,6 +2210,7 @@ export type { PlanManagedBinding } from './models/PlanManagedBinding.js';
 export type { PlanManagedProvision } from './models/PlanManagedProvision.js';
 export type { PlanPlatformTenantReconciliationRequest } from './models/PlanPlatformTenantReconciliationRequest.js';
 export type { PlanResponse } from './models/PlanResponse.js';
+export type { PlanSourceHost } from './models/PlanSourceHost.js';
 export type { PlanWorkload } from './models/PlanWorkload.js';
 export type { PlatformFlagDefinition } from './models/PlatformFlagDefinition.js';
 export type { PlatformFlagOptIns } from './models/PlatformFlagOptIns.js';

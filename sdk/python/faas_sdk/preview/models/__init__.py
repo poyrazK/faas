@@ -4243,6 +4243,7 @@ from .plan_managed_provision import PlanManagedProvision
 from .plan_platform_tenant_reconciliation_request import PlanPlatformTenantReconciliationRequest
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
+from .plan_source_host import PlanSourceHost
 from .plan_workload import PlanWorkload
 from .plan_workload_action import PlanWorkloadAction
 from .plan_workload_class import PlanWorkloadClass
@@ -10463,6 +10464,7 @@ __all__ = (
     "PlanPlatformTenantReconciliationRequest",
     "PlanResponse",
     "PlanResponseScanSource",
+    "PlanSourceHost",
     "PlanWorkload",
     "PlanWorkloadAction",
     "PlanWorkloadClass",
