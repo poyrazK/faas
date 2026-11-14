@@ -45,6 +45,7 @@ func TestHostedMCP(t *testing.T) {
 	s.step("lists_account_apps", j.listsAccountApps)
 	s.check("non_agent_key_refused", j.nonAgentKeyRefused)
 	j.approvalSteps(s)
+	j.budgetSteps(s)
 	s.step("connection_listed", j.connectionListed)
 	s.step("connection_revoked", j.connectionRevoked)
 	s.step("org_created", j.orgCreated)
@@ -72,6 +73,10 @@ type hostedMCPJourney struct {
 	approvalID       string
 	reviewURL        string
 	ghost            string // an app that never exists
+	// Agent budgets and connection status (agent_budgets_test.go).
+	budgetKeyValue   string
+	budgetKeyID      string
+	budgetApprovalID string
 }
 
 var resourceMetadataRe = regexp.MustCompile(`resource_metadata="([^"]+)"`)

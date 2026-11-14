@@ -1,9 +1,13 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -139,6 +143,59 @@ func TestDevPatchRestartSkippedInWatchMode(t *testing.T) {
 	if err := restart(); err == nil || calls != 1 {
 		t.Fatalf("normal mode did not restart: calls=%d err=%v", calls, err)
 	}
+}
+
+// adr: 1170 — watch mode writes patched files in place so the development
+// server's watcher keeps the inode it watches; other apps keep staged renames.
+func TestDevPatchApplyWritesInPlaceInWatchMode(t *testing.T) {
+	t.Cleanup(func() { devWatchActive.Store(false) })
+	dir := t.TempDir()
+	target := filepath.Join(dir, "index.js")
+	if err := os.WriteFile(target, []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		watch    bool
+		body     string
+		sameFile bool
+	}{{watch: true, body: "v2", sameFile: true}, {watch: false, body: "v3", sameFile: false}} {
+		devWatchActive.Store(tc.watch)
+		before, err := os.Stat(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := devPatchApply(dir, devPatchArchive(t, "index.js", tc.body), nil); err != nil {
+			t.Fatal(err)
+		}
+		after, err := os.Stat(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if body, _ := os.ReadFile(target); string(body) != tc.body || os.SameFile(before, after) != tc.sameFile {
+			t.Fatalf("watch=%t: index.js = %q, same inode %t; want %q, %t", tc.watch, body, os.SameFile(before, after), tc.body, tc.sameFile)
+		}
+	}
+}
+
+// devPatchArchive is a one-file live patch archive.
+func devPatchArchive(t *testing.T, name, body string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 // adr: 1170 — a watch-mode workload gets Vite's allowed-hosts override from
