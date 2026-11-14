@@ -21,7 +21,9 @@ package sched_test
 import (
 	"context"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/state"
 	"sync"
 	"testing"
 	"time"
@@ -212,6 +214,54 @@ func TestOverageChecker_NullCapCachesOK(t *testing.T) {
 	}
 	if capCents != 0 {
 		t.Fatalf("post-TTL Check: got cap=%d, want 0 (cap=0 means no overage allowed)", capCents)
+	}
+}
+
+// complimentaryOverageFixture is an overageFixture whose account is
+// complimentary (ADR-20261111140000).
+type complimentaryOverageFixture struct {
+	*overageFixture
+}
+
+func (complimentaryOverageFixture) ComplimentaryAccount(_ context.Context, id string) (*state.ComplimentaryAccount, error) {
+	return &state.ComplimentaryAccount{AccountID: id, Plan: api.PlanPro}, nil
+}
+func (complimentaryOverageFixture) SetComplimentaryAccount(context.Context, state.ComplimentaryAccount) error {
+	return nil
+}
+func (complimentaryOverageFixture) ClearComplimentaryAccount(context.Context, string) error {
+	return nil
+}
+func (complimentaryOverageFixture) ComplimentaryAccountIDs(context.Context) (map[string]struct{}, error) {
+	return nil, nil
+}
+func (complimentaryOverageFixture) ExpiredComplimentaryAccounts(context.Context, time.Time, int) ([]state.ComplimentaryAccount, error) {
+	return nil, nil
+}
+
+// A complimentary account's $0 cap stops it past its allowance, not at once:
+// a $0 cap is a customer's pause switch, but a complimentary account runs on
+// its plan's allowances (bug hunt 2026-11-13 R7-2).
+func TestOverageChecker_ComplimentaryZeroCapRunsWithinAllowance(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		observedCents int64
+		want          sched.OverageStatus
+	}{
+		{"within allowance", 0, sched.OverageOK},
+		{"past allowance", 1, sched.OverageReached},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := complimentaryOverageFixture{&overageFixture{capCents: ptr(0), observedVal: tc.observedCents}}
+			c := sched.XNewMemCacheOverageChecker(f, 5*time.Second)
+			status, _, _, err := c.Check(context.Background(), "acct-comp")
+			if err != nil {
+				t.Fatalf("Check: %v", err)
+			}
+			if status != tc.want {
+				t.Fatalf("got %v, want %v", status, tc.want)
+			}
+		})
 	}
 }
 

@@ -33,7 +33,7 @@ scaling:
   max_queue_depth: 32 # warm-saturation waiters; 0 uses the plan default
   max_queue_wait_ms: 2000 # warm-saturation wait; 0 uses the plan default
   wake_max_queue_depth: 32 # 0 uses the plan default; max 8x plan default
-  wake_max_queue_wait_seconds: 30 # 0 uses the plan default; max 60
+  wake_max_queue_wait_seconds: 30 # 0 uses the plan default; max 120
 ```
 
 ## Scaling signals
@@ -331,4 +331,5 @@ a request whose wait budget expires returns HTTP 503 with error code
 
 `wake_max_queue_depth` and `wake_max_queue_wait_seconds` independently bound
 the per-app cold-wake queue. Zero keeps the plan default; the depth override is
-limited to eight times the plan default and the wait override to 60 seconds.
+limited to eight times the plan default and the wait override to 120 seconds,
+the longest startup window (Scale; see `startup_deadline_s` in [deploy](cli/deploy.md)).

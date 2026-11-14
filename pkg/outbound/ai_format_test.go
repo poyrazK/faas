@@ -79,6 +79,23 @@ func TestGeminiUsageNormalization(t *testing.T) {
 	}
 }
 
+// adr: 20261020161811 — a code-execution call's tool-use prompt tokens are
+// inside Google's totalTokenCount, so they are metered as input
+// (amendment 1; measured on Vertex gemini-3-flash-preview: 23 prompt + 152
+// tool use + 141 candidates + 130 thoughts = 446 total).
+func TestGeminiToolUsePromptTokensAreInput(t *testing.T) {
+	observer := newAIUsageObserverFormat(aiFormatGemini, "application/json", nil)
+	_, _ = observer.Write([]byte(`{"usageMetadata":{"promptTokenCount":23,"candidatesTokenCount":141,"totalTokenCount":446,` +
+		`"toolUsePromptTokenCount":152,"thoughtsTokenCount":130}}`))
+	if usage := observer.Finish(); usage.InputTokens != 175 || usage.OutputTokens != 271 || usage.InputTokens+usage.OutputTokens != 446 {
+		t.Fatalf("code execution usage = %+v", usage)
+	}
+	translated := geminiUsageFields{PromptTokenCount: 23, CandidatesTokenCount: 141, ThoughtsTokenCount: 130, ToolUsePromptTokenCount: 152}.openAI()
+	if translated.PromptTokens != 175 || translated.CompletionTokens != 271 {
+		t.Fatalf("translated usage = %+v", translated)
+	}
+}
+
 func TestBedrockConverseUsageAndFallbackModel(t *testing.T) {
 	observer := newAIUsageObserverFormat(aiFormatBedrockConverse, "application/json", nil)
 	observer.fallbackModel = "anthropic.claude-3-5-haiku"

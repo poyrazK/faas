@@ -65,7 +65,10 @@ func (l *Loop) planFitNotice(ctx context.Context, notices state.PlanFitNoticeSto
 	if found && prev.Plan == subject.Plan && prev.AppsDigest == digest {
 		return nil
 	}
-	if subject.Email == "" {
+	// An organization without a billing email is told through its owner
+	// (billing review R10-3).
+	to := billingMailTo(ctx, l.store, subject)
+	if to == "" {
 		return nil // nobody to tell; retried once the subject has an address
 	}
 	parked := make([]mail.PlanFitApp, 0, len(over))
@@ -76,8 +79,8 @@ func (l *Loop) planFitNotice(ctx context.Context, notices state.PlanFitNoticeSto
 	}
 	sort.Slice(parked, func(i, j int) bool { return parked[i].Slug < parked[j].Slug })
 	planName := planDisplayName(subject.Plan)
-	subj, body := mail.PlanFitBody(subject.Email, planName, limits.DeployedApps, limits.RAMMB, parked)
-	msg := mail.Message{To: []string{subject.Email}, Subject: subj, TextBody: body,
+	subj, body := mail.PlanFitBody(to, planName, limits.DeployedApps, limits.RAMMB, parked)
+	msg := mail.Message{To: []string{to}, Subject: subj, TextBody: body,
 		MessageID: fmt.Sprintf("%s:plan_fit:%s:%s", subject.ID, subject.Plan, digest[:16])}
 	if err := l.mailer.Send(ctx, msg); err != nil {
 		return fmt.Errorf("send: %w", err)

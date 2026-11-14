@@ -167,6 +167,8 @@ type MemStore struct {
 	// abuseStrikes is each resource owner's abuse recycle times inside the
 	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
 	abuseStrikes map[string][]time.Time
+	// signupFacts is each account's sign-up record (ADR-20261113160000).
+	signupFacts map[string]AccountSignupFacts
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
@@ -2799,6 +2801,13 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 	m.freeQuotaSuspended[id] = true
 	m.syncPersonalOrgStatusLocked(id, AccountSuspended)
 	return true, nil
+}
+
+// QuotaSuspended mirrors PgStore.QuotaSuspended.
+func (m *MemStore) QuotaSuspended(_ context.Context, id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.freeQuotaSuspended[id], nil
 }
 
 // RestoreFreeQuotaSuspension mirrors PgStore.RestoreFreeQuotaSuspension.
@@ -25187,6 +25196,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	delete(m.legalAcceptances, id) // ON DELETE CASCADE
+	delete(m.signupFacts, id)      // ON DELETE CASCADE
 	delete(m.accounts, id)
 	for promotionID := range m.environmentPromotionReceipts {
 		if m.projectEnvironmentPromotions[promotionID].AccountID == id {
