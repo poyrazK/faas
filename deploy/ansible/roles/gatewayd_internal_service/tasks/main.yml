@@ -588,6 +588,9 @@
     state: absent
   loop:
     - 60-faas-edge-local-first.conf
+    # 2026-11-14 hand override that turned local first off before the
+    # manifest did; 99-faas-role.conf now carries local_first: false.
+    - 99-zz-local-first-off.conf
     - 60-faas-request-journal-local.conf
     - 61-faas-request-telemetry-minute-collapse.conf
     - 63-faas-gateway-local-vmmd-socket.conf

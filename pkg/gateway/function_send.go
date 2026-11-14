@@ -3,6 +3,10 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"sync"
+	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -30,6 +34,7 @@ const functionSendRuleID = "function-send"
 // caller's VM identity is the authority and no API key is needed in the guest.
 // Calls without the header are not touched.
 func NewFunctionSendAdmitter(store FunctionSendStore) ServiceProxyAsyncAdmitter {
+	sends := &functionSendRate{}
 	return func(w http.ResponseWriter, r *http.Request, caller ServiceCaller, target ServiceTarget, path string) bool {
 		if r.Header.Get(api.FunctionInvokeHeader) != api.FunctionInvokeAsync {
 			return false
@@ -56,6 +61,14 @@ func NewFunctionSendAdmitter(store FunctionSendStore) ServiceProxyAsyncAdmitter 
 		account, err := store.AccountByID(r.Context(), app.AccountID)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("async send account unavailable"))
+			return true
+		}
+		// Sends come from inside the platform, past the edge's account and
+		// app rate limits; hold them to the target's plan rate so a function
+		// that sends to itself or fans out cannot flood its backlog
+		// (ADR-20261022105723 amendment 2026-11-13).
+		if limit, wait, ok := sends.allow(app.ID, account.Plan); !ok {
+			api.WriteProblem(w, api.ErrFunctionSendRateLimited(limit, wait))
 			return true
 		}
 		// The send lands in the caller's environment, as a synchronous call
@@ -98,6 +111,52 @@ func NewFunctionSendAdmitter(store FunctionSendStore) ServiceProxyAsyncAdmitter 
 			RequestInvocationsEnabled: app.AcceptsRequestInvocations(),
 		}, rule)
 	}
+}
+
+// functionSendRateApps bounds the per-target buckets one gateway keeps; the
+// map is cleared when full, which only refills buckets early.
+const functionSendRateApps = 10000
+
+// functionSendRate holds each target app's sends to its plan's RateLimitRPS
+// (burst RateLimitBurst) on this gateway.
+type functionSendRate struct {
+	mu      sync.Mutex
+	now     func() time.Time
+	buckets map[string]*functionSendBucket
+}
+
+type functionSendBucket struct {
+	limiter *rate.Limiter
+	plan    api.Plan
+}
+
+// allow takes one send from the target app's bucket. It reports the plan's
+// rate and, when refused, how long until a send fits.
+func (f *functionSendRate) allow(appID string, plan api.Plan) (int, time.Duration, bool) {
+	limits, ok := api.LimitsFor(plan)
+	if !ok || limits.RateLimitRPS <= 0 {
+		return 0, 0, true
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.buckets == nil || len(f.buckets) >= functionSendRateApps {
+		f.buckets = map[string]*functionSendBucket{}
+	}
+	bucket := f.buckets[appID]
+	if bucket == nil || bucket.plan != plan {
+		bucket = &functionSendBucket{limiter: rate.NewLimiter(rate.Limit(limits.RateLimitRPS), max(limits.RateLimitBurst, 1)), plan: plan}
+		f.buckets[appID] = bucket
+	}
+	now := time.Now()
+	if f.now != nil {
+		now = f.now()
+	}
+	reservation := bucket.limiter.ReserveN(now, 1)
+	if delay := reservation.DelayFrom(now); !reservation.OK() || delay > 0 {
+		reservation.CancelAt(now)
+		return limits.RateLimitRPS, max(delay, time.Second/time.Duration(limits.RateLimitRPS)), false
+	}
+	return limits.RateLimitRPS, 0, true
 }
 
 // functionSendEnqueuer stamps the send's sender and completion target onto
