@@ -6761,6 +6761,7 @@ type GithubDeployPolicy struct {
 	ProductionTrigger    string
 	PreviewBotPrs        bool
 	PreviewDraftPrs      bool
+	PreviewMode          string
 }
 
 type GithubDeployment struct {
@@ -12881,6 +12882,7 @@ type ProjectEnvironmentBranch struct {
 	CreatedAt           pgtype.Timestamptz
 	PrivateNetworks     string
 	SlotID              pgtype.UUID
+	PullRequestNumber   pgtype.Int4
 }
 
 // ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.

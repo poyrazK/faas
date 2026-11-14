@@ -19,6 +19,7 @@ type githubDeployPolicyResponse struct {
 	PreviewDraftPRs      bool                       `json:"preview_draft_prs"`
 	PreviewServicePolicy state.PreviewServicePolicy `json:"preview_service_policy"`
 	ProductionTrigger    state.ProductionTrigger    `json:"production_trigger"`
+	PreviewMode          state.PreviewMode          `json:"preview_mode"`
 }
 
 type githubDeployPolicyPatch struct {
@@ -30,6 +31,7 @@ type githubDeployPolicyPatch struct {
 	PreviewDraftPRs      *bool                       `json:"preview_draft_prs,omitempty"`
 	PreviewServicePolicy *state.PreviewServicePolicy `json:"preview_service_policy,omitempty"`
 	ProductionTrigger    *state.ProductionTrigger    `json:"production_trigger,omitempty"`
+	PreviewMode          *state.PreviewMode          `json:"preview_mode,omitempty"`
 }
 
 func githubDeployPolicyDTO(policy state.GitHubDeployPolicy) githubDeployPolicyResponse {
@@ -43,7 +45,23 @@ func githubDeployPolicyDTO(policy state.GitHubDeployPolicy) githubDeployPolicyRe
 		PreviewDraftPRs:      policy.PreviewDraftPRs,
 		PreviewServicePolicy: policy.PreviewServicePolicy,
 		ProductionTrigger:    policy.ProductionTrigger,
+		PreviewMode:          githubPreviewMode(policy.PreviewMode),
 	}
+}
+
+// githubPreviewMode reports a policy's preview mode, app when unset.
+func githubPreviewMode(mode state.PreviewMode) state.PreviewMode {
+	if mode == "" {
+		return state.PreviewModeApp
+	}
+	return mode
+}
+
+// environmentBranchPRPreviewsEnabled reports whether projects may choose
+// branch-backed PR previews (ADR-20261113121342): both the feature's flag and
+// environment branches must be on.
+func (s *server) environmentBranchPRPreviewsEnabled() bool {
+	return s.environmentBranchesEnabled() && s.runtimeBool(runtimeConfigEnvironmentBranchPRPreviews, false)
 }
 
 func (s *server) githubDeployPolicyForApp(r *http.Request, app state.App, acct state.Account) (state.GitHubDeployPolicy, *api.Problem) {
@@ -125,7 +143,7 @@ func (s *server) patchGitHubDeployPolicy(w http.ResponseWriter, r *http.Request,
 			"Invalid GitHub deployment policy", err.Error()))
 		return
 	}
-	if problem := applyGitHubDeployPolicyPatch(&current, req); problem != nil {
+	if problem := applyGitHubDeployPolicyPatch(&current, req, s.environmentBranchPRPreviewsEnabled()); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -155,6 +173,7 @@ func (s *server) patchGitHubDeployPolicy(w http.ResponseWriter, r *http.Request,
 		"preview_draft_prs":      stored.PreviewDraftPRs,
 		"preview_service_policy": stored.PreviewServicePolicy,
 		"production_trigger":     stored.ProductionTrigger,
+		"preview_mode":           githubPreviewMode(stored.PreviewMode),
 	})
 	if problem := s.retireProjectPreviewsWhenOff(r.Context(), acct.ID, app.ProjectID, stored); problem != nil {
 		api.WriteProblem(w, problem)
@@ -174,7 +193,7 @@ func (s *server) patchAppGitHubPolicy(w http.ResponseWriter, r *http.Request, ap
 		return
 	}
 	if req.RootDir != nil || req.IgnoredPaths != nil || req.PreviewTTLHours != nil ||
-		req.PreviewBotPRs != nil || req.PreviewDraftPRs != nil || req.PreviewServicePolicy != nil {
+		req.PreviewBotPRs != nil || req.PreviewDraftPRs != nil || req.PreviewServicePolicy != nil || req.PreviewMode != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "project_required", "Project required",
 			"an app without a project can set only production_trigger and preview_enabled; the other GitHub deployment settings are available for project-backed apps"))
 		return
@@ -241,8 +260,9 @@ func (s *server) retireProjectPreviewsWhenOff(ctx context.Context, accountID, pr
 }
 
 // applyGitHubDeployPolicyPatch merges a partial update into current and
-// validates the result.
-func applyGitHubDeployPolicyPatch(current *state.GitHubDeployPolicy, req githubDeployPolicyPatch) *api.Problem {
+// validates the result. Choosing branch-backed previews needs
+// branchPreviews; a policy already on them may keep them.
+func applyGitHubDeployPolicyPatch(current *state.GitHubDeployPolicy, req githubDeployPolicyPatch, branchPreviews bool) *api.Problem {
 	if req.RootDir != nil {
 		current.RootDir = *req.RootDir
 	}
@@ -270,6 +290,17 @@ func applyGitHubDeployPolicyPatch(current *state.GitHubDeployPolicy, req githubD
 				"Invalid GitHub deployment policy", "production_trigger must be webhook or actions")
 		}
 		current.ProductionTrigger = *req.ProductionTrigger
+	}
+	if req.PreviewMode != nil {
+		if !req.PreviewMode.Valid() {
+			return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid GitHub deployment policy", "preview_mode must be app or branch")
+		}
+		if *req.PreviewMode == state.PreviewModeBranch && current.PreviewMode != state.PreviewModeBranch && !branchPreviews {
+			return api.NewProblem(http.StatusConflict, api.CodeEnvironmentBranchUnavailable,
+				"Branch previews are unavailable", "branch-backed PR previews are not enabled on this platform")
+		}
+		current.PreviewMode = *req.PreviewMode
 	}
 	if err := current.Validate(); err != nil {
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid GitHub deployment policy", err.Error())
