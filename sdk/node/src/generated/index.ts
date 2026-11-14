@@ -2797,6 +2797,7 @@ export type { RotateAppWebhookSecretResponse } from './models/RotateAppWebhookSe
 export type { RotateDataConnectionRequest } from './models/RotateDataConnectionRequest.js';
 export type { RotateDeployTokenRequest } from './models/RotateDeployTokenRequest.js';
 export type { RotateDeployTokenResponse } from './models/RotateDeployTokenResponse.js';
+export type { RotateKeyRequest } from './models/RotateKeyRequest.js';
 export type { RotateKeyResponse } from './models/RotateKeyResponse.js';
 export type { RotateManagedRealtimeAuthRequest } from './models/RotateManagedRealtimeAuthRequest.js';
 export type { RotateManagedRealtimeAuthResponse } from './models/RotateManagedRealtimeAuthResponse.js';

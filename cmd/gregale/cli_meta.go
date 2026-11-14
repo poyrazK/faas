@@ -5099,7 +5099,10 @@ var cliCommands = []cliCommand{
 				{Name: "approvals", Short: "kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all)", Value: "LIST"},
 			}, Examples: []string{"gregale key create agent-runner --scopes runs:write", "gregale key create ci-agent --scopes agent,deploy:write --projects api,web", "gregale key create sandbox-agent --scopes agent,deploy:write --approvals none"}},
 			{Name: "rm", Short: "Revoke an API key", Positionals: []string{"<id>"}},
-			{Name: subRotate, Short: "Rotate an API key", Positionals: []string{"<key-id>"}, Examples: []string{"gregale key rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a"}},
+			{Name: subRotate, Short: "Rotate an API key", Positionals: []string{"<key-id>"}, Flags: []cliFlag{
+				{Name: "revoke-old", Short: "revoke the old key now instead of after the grace window (use when the key leaked)", Bool: true},
+				{Name: "grace-days", Short: "days the old key keeps working, for this rotation only (0 to 30)", Value: "N"},
+			}, Examples: []string{"gregale key rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a", "gregale key rotate 7f8c2a1e-6d3b-4c55-9a7e-0b1d2c3e4f5a --revoke-old"}},
 			{Name: "grace-window", Short: "Read or update the rotation grace window", Flags: []cliFlag{
 				{Name: "reset", Short: "clear the account override and use the plan default", Bool: true},
 				{Name: "days", Short: "new grace window in days (0 to 30)", Value: "N"},

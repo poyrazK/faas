@@ -5280,6 +5280,7 @@ from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
 from .rotate_data_connection_request import RotateDataConnectionRequest
 from .rotate_deploy_token_request import RotateDeployTokenRequest
 from .rotate_deploy_token_response import RotateDeployTokenResponse
+from .rotate_key_request import RotateKeyRequest
 from .rotate_key_response import RotateKeyResponse
 from .rotate_managed_realtime_auth_request import RotateManagedRealtimeAuthRequest
 from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResponse
@@ -11530,6 +11531,7 @@ __all__ = (
     "RotateDataConnectionRequest",
     "RotateDeployTokenRequest",
     "RotateDeployTokenResponse",
+    "RotateKeyRequest",
     "RotateKeyResponse",
     "RotateManagedRealtimeAuthRequest",
     "RotateManagedRealtimeAuthResponse",

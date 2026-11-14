@@ -379,7 +379,7 @@ func TestPg_SetAccountKeyGraceWindow_UnknownAccountIsNotFound(t *testing.T) {
 	}
 }
 
-// TestPg_AuthenticateKey_RefusalNamesKeyAndAccount pins ADR-20261114090000:
+// TestPg_AuthenticateKey_RefusalNamesKeyAndAccount pins ADR-20261114190002:
 // a revoked or expired key comes back with its id and owning account, and
 // nothing that grants access.
 func TestPg_AuthenticateKey_RefusalNamesKeyAndAccount(t *testing.T) {

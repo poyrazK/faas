@@ -6211,19 +6211,32 @@ func cmdKeys(args []string) int {
 // `gregale keys grace-window`.
 func cmdKeysRotate(args []string) int {
 	fs := newFlagSet("keys rotate", flag.ContinueOnError)
+	revokeOld := fs.Bool("revoke-old", false, "revoke the old key now instead of after the grace window (use when the key leaked)")
+	graceDays := fs.Int("grace-days", -1, "days the old key keeps working, for this rotation only (0 to 30; default: the account's grace window)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale key rotate <key-id>", "keys")
+		PrintUsage(os.Stderr, "usage: gregale key rotate <key-id> [--revoke-old | --grace-days N]", "keys")
 		return 1
+	}
+	if *revokeOld && *graceDays >= 0 {
+		return printErr("Invalid flags", fmt.Errorf("--revoke-old and --grace-days are mutually exclusive"))
+	}
+	if *revokeOld {
+		*graceDays = 0
 	}
 	id := fs.Arg(0)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	resp, err := client.RotateKey(context.Background(), id)
+	var resp api.RotateKeyResponse
+	if *graceDays >= 0 {
+		resp, err = client.RotateKeyWithGrace(context.Background(), id, *graceDays)
+	} else {
+		resp, err = client.RotateKey(context.Background(), id)
+	}
 	if err != nil {
 		return printErr("Rotate failed", err)
 	}
@@ -6233,7 +6246,12 @@ func cmdKeysRotate(args []string) int {
 	PrintOK(osStdout, "Rotated key. New plaintext (shown ONCE):\n  %s", resp.KeyPlaintext)
 	PrintProgress(osStdout, "  new id:        %s", resp.Key.ID)
 	PrintProgress(osStdout, "  old key id:    %s", resp.OldKeyID)
-	PrintProgress(osStdout, "  old key grace: %s", resp.OldKeyExpiresAt)
+	if *graceDays == 0 {
+		PrintProgress(osStdout, "  old key:       revoked now")
+		return 0
+	}
+	PrintProgress(osStdout, "  old key works until %s", resp.OldKeyExpiresAt)
+	PrintProgress(osStdout, "If the old key leaked, revoke it now: gregale key delete %s", resp.OldKeyID)
 	return 0
 }
 
