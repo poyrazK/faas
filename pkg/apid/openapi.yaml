@@ -8163,11 +8163,7 @@ paths:
 
   /v1/outbound/ai-prompts/{prompt}:
     parameters:
-      - name: prompt
-        in: path
-        required: true
-        description: Name of the managed AI prompt, a DNS label.
-        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/OutboundAIPromptName'
     get:
       tags: [outbound]
       operationId: getOutboundAIPrompt
@@ -8203,11 +8199,7 @@ paths:
 
   /v1/outbound/ai-prompts/{prompt}/versions:
     parameters:
-      - name: prompt
-        in: path
-        required: true
-        description: Name of the managed AI prompt, a DNS label.
-        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/OutboundAIPromptName'
     get:
       tags: [outbound]
       operationId: listOutboundAIPromptVersions
@@ -8257,11 +8249,7 @@ paths:
 
   /v1/outbound/ai-prompts/{prompt}/versions/{version}:
     parameters:
-      - name: prompt
-        in: path
-        required: true
-        description: Name of the managed AI prompt, a DNS label.
-        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/OutboundAIPromptName'
       - name: version
         in: path
         required: true
@@ -8288,11 +8276,7 @@ paths:
 
   /v1/outbound/ai-prompts/{prompt}/live:
     parameters:
-      - name: prompt
-        in: path
-        required: true
-        description: Name of the managed AI prompt, a DNS label.
-        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/OutboundAIPromptName'
     put:
       tags: [outbound]
       operationId: setOutboundAIPromptLive
@@ -8306,7 +8290,7 @@ paths:
             schema: { $ref: '#/components/schemas/PutOutboundAIPromptLiveRequest' }
       responses:
         '200':
-          description: The prompt.
+          description: The prompt with the chosen version live.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OutboundAIPrompt' }
@@ -8319,11 +8303,7 @@ paths:
 
   /v1/outbound/ai-prompts/{prompt}/rollback:
     parameters:
-      - name: prompt
-        in: path
-        required: true
-        description: Name of the managed AI prompt, a DNS label.
-        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/OutboundAIPromptName'
     post:
       tags: [outbound]
       operationId: rollBackOutboundAIPrompt
@@ -8332,7 +8312,7 @@ paths:
         Requires MFA and deploy-write scope. Makes the previous live version live again and ends any canary.
       responses:
         '200':
-          description: The prompt.
+          description: The prompt with its previous live version back.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OutboundAIPrompt' }
@@ -8345,11 +8325,7 @@ paths:
 
   /v1/outbound/ai-prompts/{prompt}/canary:
     parameters:
-      - name: prompt
-        in: path
-        required: true
-        description: Name of the managed AI prompt, a DNS label.
-        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/OutboundAIPromptName'
     put:
       tags: [outbound]
       operationId: setOutboundAIPromptCanary
@@ -8380,7 +8356,7 @@ paths:
       description: >-
         Requires MFA and deploy-write scope. The live version keeps serving.
       responses:
-        '204': { description: Canary stopped. }
+        '204': { description: The prompt's canary stopped. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
@@ -8390,11 +8366,7 @@ paths:
 
   /v1/outbound/ai-prompts/{prompt}/canary/promote:
     parameters:
-      - name: prompt
-        in: path
-        required: true
-        description: Name of the managed AI prompt, a DNS label.
-        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/OutboundAIPromptName'
     post:
       tags: [outbound]
       operationId: promoteOutboundAIPromptCanary
@@ -8403,7 +8375,7 @@ paths:
         Requires MFA and deploy-write scope. Makes the canary's version live and ends the canary.
       responses:
         '200':
-          description: The prompt.
+          description: The prompt with the canary's version live.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OutboundAIPrompt' }
@@ -8416,11 +8388,7 @@ paths:
 
   /v1/outbound/ai-prompts/{prompt}/stats:
     parameters:
-      - name: prompt
-        in: path
-        required: true
-        description: Name of the managed AI prompt, a DNS label.
-        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/OutboundAIPromptName'
     get:
       tags: [outbound]
       operationId: getOutboundAIPromptStats
@@ -8442,11 +8410,7 @@ paths:
 
   /v1/outbound/ai-prompts/{prompt}/evaluations:
     parameters:
-      - name: prompt
-        in: path
-        required: true
-        description: Name of the managed AI prompt, a DNS label.
-        schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/OutboundAIPromptName'
     get:
       tags: [outbound]
       operationId: listOutboundAIPromptEvaluations
@@ -8478,7 +8442,7 @@ paths:
             schema: { $ref: '#/components/schemas/CreateOutboundAIPromptEvaluationRequest' }
       responses:
         '202':
-          description: The pending evaluation.
+          description: The prompt evaluation, pending until the outbound gateway runs it.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OutboundAIPromptEvaluation' }
@@ -8504,7 +8468,7 @@ paths:
         Requires MFA and read scope. Returns each case's result; answer texts need admin or secrets:read. Evaluations are kept for 30 days.
       responses:
         '200':
-          description: The evaluation.
+          description: The prompt evaluation with each case's result.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OutboundAIPromptEvaluation' }
@@ -72649,6 +72613,12 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    OutboundAIPromptName:
+      name: prompt
+      in: path
+      required: true
+      description: Name of the managed AI prompt, a DNS label.
+      schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
     AgentActivityBefore:
       name: before
       in: query
@@ -88264,6 +88234,7 @@ components:
         note: { type: string, maxLength: 280 }
         live: { type: boolean, description: Make the version live. A prompt's first version always is. }
     OutboundAIPromptVersion:
+      description: One immutable version of a managed AI prompt.
       type: object
       required: [version, messages, variables, defaults, target, params, note, created_at]
       properties:
@@ -88276,6 +88247,7 @@ components:
         note: { type: string }
         created_at: { type: string, format: date-time }
     OutboundAIPromptVersionSummary:
+      description: A managed AI prompt version without its messages.
       type: object
       required: [version, target, note, created_at]
       properties:
@@ -88284,11 +88256,13 @@ components:
         note: { type: string }
         created_at: { type: string, format: date-time }
     OutboundAIPromptVersionList:
+      description: A managed AI prompt's versions, newest first.
       type: object
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptVersionSummary' } }
     PushOutboundAIPromptVersionResponse:
+      description: The prompt and the version a push stored, or the identical latest version.
       type: object
       required: [prompt, version, created]
       properties:
@@ -88313,11 +88287,13 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     OutboundAIPromptList:
+      description: The account's managed AI prompts.
       type: object
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/OutboundAIPrompt' } }
     PutOutboundAIPromptLiveRequest:
+      description: The version to make live.
       type: object
       required: [version]
       properties:
@@ -88356,6 +88332,7 @@ components:
         min_calls: { type: integer, minimum: 10, maximum: 100000 }
         window_minutes: { type: integer, minimum: 5, maximum: 1440 }
     OutboundAIPromptVersionStats:
+      description: One version's calls, errors, latency, cost and feedback over the stats window.
       type: object
       required: [version, calls, errors, error_rate, mean_ttfb_ms, cost_millicents, mean_cost_millicents, good_feedback, bad_feedback]
       properties:
@@ -88369,6 +88346,7 @@ components:
         good_feedback: { type: integer, format: int64 }
         bad_feedback: { type: integer, format: int64 }
     OutboundAIPromptStats:
+      description: A managed AI prompt's per-version stats.
       type: object
       required: [window_start, live_version, canary_version, versions]
       properties:
@@ -88377,6 +88355,7 @@ components:
         canary_version: { type: [integer, 'null'] }
         versions: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptVersionStats' } }
     CreateOutboundAIPromptEvaluationRequest:
+      description: A candidate version, the variable sets to run it on, and the judge model.
       type: object
       required: [version, cases, judge_integration_id, judge_model]
       properties:
@@ -88392,6 +88371,7 @@ components:
         max_loss_rate: { type: integer, minimum: 0, maximum: 100 }
         canary: { $ref: '#/components/schemas/PutOutboundAIPromptCanaryRequest' }
     OutboundAIPromptEvaluationItem:
+      description: One case's result in a managed AI prompt evaluation.
       type: object
       required: [case, verdict, baseline_status, candidate_status, baseline_cost_millicents, candidate_cost_millicents, baseline_ttfb_ms, candidate_ttfb_ms]
       properties:
@@ -88406,6 +88386,7 @@ components:
         baseline_output_text: { type: string }
         candidate_output_text: { type: string }
     OutboundAIPromptEvaluation:
+      description: A comparison of a candidate prompt version against the live version.
       type: object
       required: [id, prompt, baseline_version, candidate_version, judge_integration_id, judge_model, max_loss_rate, canary, state, verdict, error_code, cases, wins, ties, losses, candidate_errors, judge_errors, baseline, candidate, canary_started, created_at, started_at, finished_at]
       properties:
@@ -88438,6 +88419,7 @@ components:
         items: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptEvaluationItem' } }
         content_withheld: { type: boolean, description: The items' answer texts were left out; reading them needs admin or secrets:read. }
     OutboundAIPromptEvaluationList:
+      description: A managed AI prompt's evaluations, newest first.
       type: object
       required: [items]
       properties:
