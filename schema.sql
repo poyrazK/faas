@@ -8892,6 +8892,7 @@ DECLARE existing_schema_version text;
 DECLARE recipients jsonb;
 DECLARE target_app uuid;
 DECLARE target_tenant uuid;
+DECLARE event_environment uuid;
 BEGIN
     IF NEW.kind <> 'event.published' THEN
         RETURN NEW;
@@ -8901,6 +8902,22 @@ BEGIN
        NEW.data->'data' IS NULL THEN
         RAISE EXCEPTION 'event.published requires account, source, id, type and data'
             USING ERRCODE = '23514';
+    END IF;
+
+    -- ADR-20261104120000: an event belongs to one project environment of
+    -- its account; none is production. Subscriptions receive only their own
+    -- environment's events, and only production events reach workflows.
+    IF coalesce(NEW.data->>'environmentid', '') <> '' THEN
+        BEGIN
+            event_environment := (NEW.data->>'environmentid')::uuid;
+        EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION 'event environment must be a UUID' USING ERRCODE = '23514';
+        END;
+        IF NOT EXISTS (SELECT 1 FROM project_environments e
+                       WHERE e.id = event_environment AND e.account_id = NEW.subject) THEN
+            RAISE EXCEPTION 'event environment is not a project environment of its account'
+                USING ERRCODE = '23514';
+        END IF;
     END IF;
 
     IF NEW.data ? 'platformtenantid' THEN
@@ -8922,6 +8939,7 @@ BEGIN
             'routing_retry_policy', s.routing_retry_policy,
             'acknowledgment_lease_seconds', s.acknowledgment_lease_seconds,
             'schema_versions', s.schema_versions,
+            'deployment_scope', s.deployment_scope, 'environment_id', s.environment_id,
             'work_snapshot_captured', true,
             'work', CASE WHEN b.subscription_id IS NULL THEN NULL
                 ELSE jsonb_build_object(
@@ -8948,12 +8966,15 @@ BEGIN
         WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
           AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
           AND event_fanout_pattern_matches(s.type, NEW.data->>'type')
+          AND s.environment_id IS NOT DISTINCT FROM event_environment
           AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x WHERE x.app_id = s.app_id);
 
-        recipients := recipients || coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
-            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
-            WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
-                WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
+        IF event_environment IS NULL THEN
+            recipients := recipients || coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
+                FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
+                WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
+                    WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
+        END IF;
         -- ADR-20261025211616: keep the event inside its producer's company.
         recipients := event_recipients_in_producer_reach(NEW.subject, NEW.data->>'producer', recipients);
     END IF;
@@ -17450,6 +17471,37 @@ BEGIN
  INSERT INTO event_delivery_slots VALUES (NEW.id,slot.account_id,slot.app_id,slot.subscription_id) ON CONFLICT DO NOTHING;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: guard_event_subscription_environment_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_event_subscription_environment_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE environment uuid;
+BEGIN
+  IF TG_OP='UPDATE' THEN
+    IF NEW.environment_id IS DISTINCT FROM OLD.environment_id OR NEW.deployment_scope IS DISTINCT FROM OLD.deployment_scope
+      OR (OLD.deployment_scope<>'' AND NEW.app_id IS DISTINCT FROM OLD.app_id) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='event_subscription_scope_identity',
+        MESSAGE='event subscription environment identity is immutable';
+    END IF;
+  ELSIF NEW.deployment_scope<>'' THEN
+    SELECT e.id INTO environment FROM apps a JOIN project_environments e ON e.project_id=a.project_id
+      AND e.account_id=a.account_id AND e.slug=NEW.deployment_scope
+      WHERE a.id=NEW.app_id AND a.status<>'deleted'
+      FOR SHARE OF a,e;
+    IF NOT FOUND OR (NEW.environment_id IS NOT NULL AND NEW.environment_id IS DISTINCT FROM environment) THEN
+      RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='event_subscription_environment_membership',
+        MESSAGE='an environment event subscription requires a project environment of its app';
+    END IF;
+    NEW.environment_id=environment;
+  END IF;
+  RETURN NEW;
+END;
+$$;
 
 
 --
@@ -41308,6 +41360,8 @@ CREATE TABLE public.event_subscriptions (
     routing_retry_policy jsonb,
     schema_versions text[] DEFAULT '{}'::text[] NOT NULL,
     acknowledgment_lease_seconds integer DEFAULT 0 NOT NULL,
+    deployment_scope text DEFAULT ''::text NOT NULL,
+    environment_id uuid,
     CONSTRAINT event_subscriptions_acknowledgment_lease_seconds_check CHECK (((acknowledgment_lease_seconds >= 0) AND (acknowledgment_lease_seconds <= 300))),
     CONSTRAINT event_subscriptions_filter_object_chk CHECK ((jsonb_typeof(filter) = 'object'::text)),
     CONSTRAINT event_subscriptions_routing_retry_policy_check CHECK (public.valid_event_routing_retry_policy(routing_retry_policy)),
@@ -66644,6 +66698,14 @@ ALTER TABLE ONLY public.event_subscription_rate_commands
 
 
 --
+-- Name: event_subscriptions event_subscription_scope_shape; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.event_subscriptions
+    ADD CONSTRAINT event_subscription_scope_shape CHECK ((((deployment_scope = ''::text) AND (environment_id IS NULL)) OR ((deployment_scope ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (environment_id IS NOT NULL)))) NOT VALID;
+
+
+--
 -- Name: event_subscription_work_bindings event_subscription_work_bindings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79926,10 +79988,17 @@ CREATE INDEX event_subscriptions_enabled_idx ON public.event_subscriptions USING
 
 
 --
--- Name: event_subscriptions_identity_uniq; Type: INDEX; Schema: public; Owner: -
+-- Name: event_subscriptions_environment_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX event_subscriptions_identity_uniq ON public.event_subscriptions USING btree (app_id, source, type, filter);
+CREATE INDEX event_subscriptions_environment_idx ON public.event_subscriptions USING btree (environment_id) WHERE (environment_id IS NOT NULL);
+
+
+--
+-- Name: event_subscriptions_scope_identity_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_subscriptions_scope_identity_uniq ON public.event_subscriptions USING btree (app_id, deployment_scope, source, type, filter);
 
 
 --
@@ -90976,6 +91045,13 @@ CREATE TRIGGER guard_environment_workload_qualification_request BEFORE INSERT OR
 --
 
 CREATE TRIGGER guard_environment_workload_retirement BEFORE INSERT OR DELETE OR UPDATE ON public.environment_workload_retirements FOR EACH ROW EXECUTE FUNCTION public.guard_environment_workload_retirement();
+
+
+--
+-- Name: event_subscriptions guard_event_subscription_environment_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_event_subscription_environment_scope BEFORE INSERT OR UPDATE OF deployment_scope, environment_id, app_id ON public.event_subscriptions FOR EACH ROW EXECUTE FUNCTION public.guard_event_subscription_environment_scope();
 
 
 --

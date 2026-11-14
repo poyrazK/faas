@@ -135,3 +135,43 @@ Decision 4 for crons, with the owner's choices of 2026-11-12:
   `cron_limit_exceeded`.
 - **Proof.** Publication checks that the stage holds exactly the captured
   crons, each still disabled.
+
+## Amendment 2026-11-12: event subscriptions per environment
+
+Decision 3 for event subscriptions and custom events. Platform events
+(buckets, deployments, databases) and clone copies follow in the next PR.
+
+- **Subscriptions.** `event_subscriptions` gains `deployment_scope` (`''` is
+  production) and `environment_id`, which a trigger resolves from the app's
+  project and keeps immutable. The identity is per environment
+  (`app_id, deployment_scope, source, type, filter`), so a stage may declare
+  the same trigger as production. Deleting an environment deletes its
+  subscriptions.
+- **Deploys.** A manifest deploy installs `triggers.event` into its own
+  environment. Before this, a stage deploy installed them as production
+  subscriptions. Only production records the declared set that activation
+  reconciles. A stage trigger that names `work_policy` or `ordered` is refused
+  (422) until work policies are per environment.
+- **Events carry their environment.** The envelope's server-stamped
+  `environmentid` extension names it; none is production.
+  - `POST /v1/events:publish` and the batch route take `environmentid`, an
+    environment of the account.
+  - `POST /v1/apps/{slug}/events:publish` takes `environment`, a slug of the
+    app's project.
+  - An in-guest publish always gets the publishing deployment's environment
+    from vmmd (the platform's runtime default). A guest that names an
+    environment must name its own.
+  - Naming production stamps none.
+- **Fan-out.** `enqueue_event_fanout` validates the environment against the
+  account, gives the event only to subscriptions of the same environment, and
+  records each recipient's environment. Workflows are production's: only
+  production events start them. Replay previews and backfills offer a
+  subscription only its environment's events.
+- **Delivery.** A stage recipient's invocation is stage work. It carries the
+  environment and is pinned to the stage's live release through the same
+  ingress resolution as the stage's routes.
+- **Release compatibility.** N-1 apid and vmmd stamp no environment, so their
+  events stay production's, as before. N-1 schedd delivers a stage recipient
+  as production work. Stage subscriptions exist only once N apid installs
+  them, and the deploy order (data, control plane, edge/node, runtime)
+  upgrades schedd with apid.
