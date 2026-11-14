@@ -1218,3 +1218,14 @@ func (m *MemStore) AgeObjectUsageForTest(bucket string, d time.Duration) {
 	u.ObservedAt, u.AttemptAt = u.ObservedAt.Add(-d), u.AttemptAt.Add(-d)
 	m.objectUsage[bucket] = u
 }
+
+// LapseTriggerRecordClaimForTest moves a claimed trigger record's claim into
+// the past, as the PG tests do with an UPDATE: its dispatcher was lost.
+func (m *MemStore) LapseTriggerRecordClaimForTest(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r, ok := m.records[id]; ok {
+		r.ClaimExpiresAt = pgtypeFromTime(time.Now().Add(-time.Second))
+		m.records[id] = r
+	}
+}

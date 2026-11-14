@@ -325,9 +325,13 @@ func TestAuthenticateKey_RejectsRevoked(t *testing.T) {
 	if _, err := m.MarkAPIKeyRevoked(ctx, a.ID, k.ID); err != nil {
 		t.Fatalf("MarkAPIKeyRevoked: %v", err)
 	}
-	_, _, err := m.AuthenticateKey(ctx, []byte("hash1"))
+	_, refused, err := m.AuthenticateKey(ctx, []byte("hash1"))
 	if !errors.Is(err, ErrAPIKeyRevoked) {
 		t.Errorf("post-revoke auth: want ErrAPIKeyRevoked, got %v", err)
+	}
+	// ADR-20261114090000: the refusal names the key and its account only.
+	if refused.ID != k.ID || refused.AccountID != a.ID || len(refused.Scopes) != 0 {
+		t.Errorf("post-revoke key = %+v, want only id %s and account %s", refused, k.ID, a.ID)
 	}
 }
 
@@ -345,9 +349,12 @@ func TestAuthenticateKey_LazyExpirySetsRevoked(t *testing.T) {
 	if k.Status != "active" {
 		t.Fatalf("pre-auth status: got %q, want active", k.Status)
 	}
-	_, _, err := m.AuthenticateKey(ctx, []byte("hash1"))
+	_, refused, err := m.AuthenticateKey(ctx, []byte("hash1"))
 	if !errors.Is(err, ErrAPIKeyExpired) {
 		t.Errorf("lazy expiry: want ErrAPIKeyExpired, got %v", err)
+	}
+	if refused.ID != k.ID || refused.AccountID != a.ID || len(refused.Scopes) != 0 {
+		t.Errorf("lazy expiry key = %+v, want only id %s and account %s", refused, k.ID, a.ID)
 	}
 	// Status now flipped to revoked.
 	row, _ := m.APIKeyByHash(ctx, []byte("hash1"))

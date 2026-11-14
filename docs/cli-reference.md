@@ -35,6 +35,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`version`](#version) | Print the CLI version |
 | [`update`](#update) | Update the CLI to the newest release |
 | [`man`](#man) | Print the CLI manual page, or one command&#39;s page |
+| [`guide`](#guide) | Short task pages: deploy, health checks, private services, rollouts |
 | [`release`](#release) | Inspect releases and control rollouts: canary, traffic, approvals |
 | [`preview`](#preview) | Manage pull-request preview environments |
 | [`project`](#project) | Inspect and recover repository projects |
@@ -1040,6 +1041,24 @@ gregale update --version v0.1.18
 Print the CLI manual page, or one command&#39;s page
 
 `gregale man <command>`
+
+
+## guide
+
+Short task pages: deploy, health checks, private services, rollouts
+
+`gregale guide [<task>] [--json]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | print the pages as JSON |  |
+
+Examples:
+
+```sh
+gregale guide
+gregale guide private-services
+```
 
 
 ## release
