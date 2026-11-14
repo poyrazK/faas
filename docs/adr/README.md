@@ -2332,3 +2332,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261114162429: Hosted tool publication for Node, Go and Python](20261114162429-hosted-tool-runtime-selection.md) — accepted; source-derived runtime review using shared native markers, all three hosted starters and the existing verified publication workflow
 
 - [ADR-20261114173309: Hosted private tool publication with owner-approved candidate tests](20261114173309-hosted-private-tool-publication.md) — accepted; candidate/source-bound administrator approval, API-held test tokens, one-attempt verification receipts and exact-grant invocation
+
+- [ADR-20261114191145: Managed OAuth for private publication verification](20261114191145-publication-managed-oauth.md) — accepted; exact owner-approved connection bindings, shared durable renewal leases, per-purpose dispatch authority and credential-free publication receipts
