@@ -71,9 +71,12 @@ const (
 	wakeLeaderAdmissionAllowance = 10 * time.Second
 
 	// DefaultWakeLeaderBudget is wakeLeaderBudget with the default boot
-	// budgets. The gateway holds its own wake generation at least this
-	// long, so it never gives up on a wake schedd may still finish.
-	DefaultWakeLeaderBudget = ColdBootTimeout + wakeLeaderAdmissionAllowance
+	// budgets, including the longest startup window a plan allows
+	// (ADR-20261114120000). The gateway holds its own wake generation at
+	// least this long, so it never gives up on a wake schedd may still
+	// finish. Each boot stays bounded by its own app's budget
+	// (budgetForWake); this only bounds the detached leader.
+	DefaultWakeLeaderBudget = ColdBootTimeout + maxStartupExtension + wakeLeaderAdmissionAllowance
 )
 
 // wakeLeaderBudget bounds a coordinated wake's detached leader. The queue
@@ -83,7 +86,11 @@ const (
 // leader cut at the TTL cancelled those boots before the engine deadline or
 // the watchdog would, and the next request started over from nothing.
 func (e *Engine) wakeLeaderBudget() time.Duration {
-	return max(e.wakeCoord.TTL(), e.budgetFor(state.StateColdBooting)+wakeLeaderAdmissionAllowance)
+	if e.bootBudget != nil {
+		// Deadline tests shorten the boot budgets; keep the leader in step.
+		return max(e.wakeCoord.TTL(), e.budgetFor(state.StateColdBooting)+wakeLeaderAdmissionAllowance)
+	}
+	return max(e.wakeCoord.TTL(), DefaultWakeLeaderBudget)
 }
 
 // ErrQueueFull is returned when every usable wake has reached its follower cap.

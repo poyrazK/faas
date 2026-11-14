@@ -28,7 +28,8 @@ func TestStartupTimeoutCopyNamesCustomerSetting(t *testing.T) {
 
 // Hunt 14 H14-4: H12-10 capped startup deadlines at the 30 s cold-boot window,
 // but every startup-timeout explanation still told the customer to raise the
-// deadline, which the platform refuses above 30 s.
+// deadline, which the platform refused. ADR-20261114120000 lets Pro and Scale
+// raise it to their plan windows, so the guidance names the default and both.
 func TestStartupGuidanceStatesTheColdBootCap(t *testing.T) {
 	entry, _ := Lookup(api.CodeAppStartupTimeout)
 	fixes := []string{entry.Fix}
@@ -40,8 +41,13 @@ func TestStartupGuidanceStatesTheColdBootCap(t *testing.T) {
 		if fix == "" {
 			continue
 		}
-		if strings.Contains(fix, "raise the startup deadline") || !strings.Contains(fix, "30 s") {
-			t.Errorf("guidance %d does not state the 30 s cap: %q", i, fix)
+		if strings.Contains(fix, "raise the startup deadline") {
+			t.Errorf("guidance %d gives open-ended advice: %q", i, fix)
+		}
+		for _, want := range []string{"30 s by default", "60 s on Pro", "120 s on Scale"} {
+			if !strings.Contains(fix, want) {
+				t.Errorf("guidance %d does not state %q: %q", i, want, fix)
+			}
 		}
 	}
 }
