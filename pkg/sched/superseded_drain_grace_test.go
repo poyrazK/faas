@@ -14,9 +14,8 @@ type supersededActivity map[string]sched.InstanceActivity
 
 func (a supersededActivity) SnapshotActivity(time.Time) map[string]sched.InstanceActivity { return a }
 
-func seedSupersededDrain(t *testing.T, plan api.Plan, maxConcurrency, instances int) (*state.MemStore, *sched.Engine, state.App, state.Deployment, []string) {
+func seedSupersededDrain(ctx context.Context, t *testing.T, plan api.Plan, maxConcurrency, instances int) (*state.MemStore, *sched.Engine, state.App, state.Deployment, []string) {
 	t.Helper()
-	ctx := context.Background()
 	mem := state.NewMemStore()
 	acct, err := mem.CreateAccount(ctx, "drain-"+string(plan)+"@example.com", plan)
 	if err != nil {
@@ -42,9 +41,9 @@ func seedSupersededDrain(t *testing.T, plan api.Plan, maxConcurrency, instances 
 	return mem, e, app, dep, ids
 }
 
-func supersededInstanceState(t *testing.T, mem *state.MemStore, id string) string {
+func supersededInstanceState(ctx context.Context, t *testing.T, mem *state.MemStore, id string) string {
 	t.Helper()
-	ins, err := mem.InstanceByID(context.Background(), id)
+	ins, err := mem.InstanceByID(ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,22 +55,22 @@ func supersededInstanceState(t *testing.T, mem *state.MemStore, id string) strin
 func TestSupersededDrainWaitsForRequestsInFlight(t *testing.T) {
 	defer sched.SetSupersededDrainPoll(time.Hour)()
 	ctx := context.Background()
-	mem, e, _, dep, ids := seedSupersededDrain(t, api.PlanPro, 5, 2)
+	mem, e, _, dep, ids := seedSupersededDrain(ctx, t, api.PlanPro, 5, 2)
 	busy, idle := ids[0], ids[1]
 	activity := supersededActivity{busy: {Inflight: 1}}
 	loop := sched.NewLoop(nil, e, nil).WithInstanceActivity(activity)
 
 	loop.DrainSupersededDeployment(ctx, dep.ID, time.Now().Add(time.Minute))
-	if got := supersededInstanceState(t, mem, idle); got != string(state.StateParked) {
+	if got := supersededInstanceState(ctx, t, mem, idle); got != string(state.StateParked) {
 		t.Fatalf("idle superseded instance = %s, want parked at once", got)
 	}
-	if got := supersededInstanceState(t, mem, busy); got != string(state.StateRunning) {
+	if got := supersededInstanceState(ctx, t, mem, busy); got != string(state.StateRunning) {
 		t.Fatalf("busy superseded instance = %s, want running until its request finishes", got)
 	}
 
 	activity[busy] = sched.InstanceActivity{}
 	loop.DrainSupersededDeployment(ctx, dep.ID, time.Now().Add(time.Minute))
-	if got := supersededInstanceState(t, mem, busy); got != string(state.StateParked) {
+	if got := supersededInstanceState(ctx, t, mem, busy); got != string(state.StateParked) {
 		t.Fatalf("finished superseded instance = %s, want parked", got)
 	}
 }
@@ -80,20 +79,20 @@ func TestSupersededDrainDoesNotWaitPastTheGraceOrTheCap(t *testing.T) {
 	defer sched.SetSupersededDrainPoll(time.Hour)()
 	ctx := context.Background()
 	t.Run("grace over", func(t *testing.T) {
-		mem, e, _, dep, ids := seedSupersededDrain(t, api.PlanPro, 5, 1)
+		mem, e, _, dep, ids := seedSupersededDrain(ctx, t, api.PlanPro, 5, 1)
 		loop := sched.NewLoop(nil, e, nil).WithInstanceActivity(supersededActivity{ids[0]: {Inflight: 1}})
 		loop.DrainSupersededDeployment(ctx, dep.ID, time.Now().Add(-time.Second))
-		if got := supersededInstanceState(t, mem, ids[0]); got == string(state.StateRunning) {
+		if got := supersededInstanceState(ctx, t, mem, ids[0]); got == string(state.StateRunning) {
 			t.Fatalf("superseded instance past its grace = %s, want drained", got)
 		}
 	})
 	t.Run("app at its concurrency cap", func(t *testing.T) {
 		// A one-instance app waiting on its old instance would refuse the
 		// new release's first wake.
-		mem, e, _, dep, ids := seedSupersededDrain(t, api.PlanFree, 1, 1)
+		mem, e, _, dep, ids := seedSupersededDrain(ctx, t, api.PlanFree, 1, 1)
 		loop := sched.NewLoop(nil, e, nil).WithInstanceActivity(supersededActivity{ids[0]: {Inflight: 1}})
 		loop.DrainSupersededDeployment(ctx, dep.ID, time.Now().Add(time.Minute))
-		if got := supersededInstanceState(t, mem, ids[0]); got == string(state.StateRunning) {
+		if got := supersededInstanceState(ctx, t, mem, ids[0]); got == string(state.StateRunning) {
 			t.Fatalf("superseded instance of an app at its cap = %s, want drained at once", got)
 		}
 	})
