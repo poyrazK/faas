@@ -2837,7 +2837,7 @@ export class OrgsService {
      */
     slug: string,
   }): CancelablePromise<OrgSecurityPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/security-policy',
       path: {
@@ -2880,7 +2880,7 @@ export class OrgsService {
     slug: string,
     requestBody: OrgSecurityPolicy,
   }): CancelablePromise<OrgSecurityPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{slug}/security-policy',
       path: {
