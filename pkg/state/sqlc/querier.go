@@ -5194,6 +5194,12 @@ type Querier interface {
 	ObjectBucketEncryptionGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketEncryption, error)
 	ObjectBucketEncryptionInsert(ctx context.Context, db DBTX, arg ObjectBucketEncryptionInsertParams) error
 	ObjectBucketEncryptionUpdate(ctx context.Context, db DBTX, arg ObjectBucketEncryptionUpdateParams) (int64, error)
+	// The environment a bucket's storage events belong to (ADR-20261104120000):
+	// a branch's copy bucket or a clone's target bucket is its stage's; every
+	// other bucket is production (''). A stage bucket whose environment is gone
+	// reports its clone operation's ID, which no subscription carries, so its
+	// events reach no one instead of production.
+	ObjectBucketEventEnvironment(ctx context.Context, db DBTX, bucketID pgtype.UUID) (string, error)
 	ObjectBucketFinish(ctx context.Context, db DBTX, arg ObjectBucketFinishParams) (int64, error)
 	ObjectBucketGet(ctx context.Context, db DBTX, arg ObjectBucketGetParams) (ObjectBucket, error)
 	ObjectBucketInsert(ctx context.Context, db DBTX, arg ObjectBucketInsertParams) (ObjectBucket, error)

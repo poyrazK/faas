@@ -68966,6 +68966,33 @@ func (q *Queries) ObjectBucketEncryptionUpdate(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const objectBucketEventEnvironment = `-- name: ObjectBucketEventEnvironment :one
+SELECT COALESCE(
+    (SELECT bb.environment_id::text FROM project_environment_branch_buckets bb
+     WHERE bb.copy_bucket_id = b.id LIMIT 1),
+    (SELECT COALESCE(
+        (SELECT e.id::text FROM project_environment_clone_operations o
+         JOIN project_environments e ON e.project_id = o.project_id AND e.slug = o.target_environment
+         WHERE o.id = b.environment_clone_operation_id),
+        b.environment_clone_operation_id::text)
+     WHERE b.environment_clone_operation_id IS NOT NULL),
+    '')::text AS environment_id
+FROM object_buckets b
+WHERE b.id = $1::uuid
+`
+
+// The environment a bucket's storage events belong to (ADR-20261104120000):
+// a branch's copy bucket or a clone's target bucket is its stage's; every
+// other bucket is production (”). A stage bucket whose environment is gone
+// reports its clone operation's ID, which no subscription carries, so its
+// events reach no one instead of production.
+func (q *Queries) ObjectBucketEventEnvironment(ctx context.Context, db DBTX, bucketID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, objectBucketEventEnvironment, bucketID)
+	var environment_id string
+	err := row.Scan(&environment_id)
+	return environment_id, err
+}
+
 const objectBucketFinish = `-- name: ObjectBucketFinish :execrows
 UPDATE object_buckets SET state = $1, lease_token = NULL, lease_until = NULL, updated_at = now(),
 attempt_count = 0, last_error_code = '', retry_at = now() WHERE id = $2 AND lease_token = $3
