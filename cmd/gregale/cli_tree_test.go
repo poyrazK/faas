@@ -25,7 +25,7 @@ var cliTreeVerbs = []string{
 	"abandon", "activate", "deactivate", "adopt", "allow", "assign", "attach", "detach",
 	"authorize", "bind", "unbind", "rebind", "capture", "clear", "close", "compare", "configure",
 	"confirm", "copy", "correlate", "diagnose", "dismiss", "download", "upload", "drain", "drop",
-	"enroll", "evaluate", "export", "import", "finalize", "grant", "ignore", "init", "install",
+	"enroll", "evaluate", "export", "import", "finalize", "grant", "ignore", "init", "install", "integrate",
 	"invite", "investigate", "lift", "lock", "merge", "minimize", "onboard", "prepare", "protect",
 	"unprotect", "qualify", "reconcile", "reconnect", "refresh", "rehearse", "reopen", "require",
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
@@ -37,6 +37,8 @@ var cliTreeVerbs = []string{
 	// branch: a lazy copy of a project environment (ADR-20261031193635 and the
 	// ADR-20261026145832 glossary); a --branch flag still names a Git branch.
 	"branch",
+	// undo: reverse what an agent changed (ADR-20261112080601).
+	"undo",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -61,7 +63,7 @@ var cliTreeCompoundWords = []string{
 	"data-api", "rule-list", "egress-allowlist", "egress-ports", "static-egress-ip",
 	"port-forward", "wake-ahead", "wake-timeline", "streaming-cap", "spend-cap", "upload-cache",
 	"object-lock", "subscription-version", "subscription-retry", "subscription-circuit",
-	"subscription-capacity", "lock-policy", "deploy-token",
+	"subscription-capacity", "lock-policy", "deploy-token", "tool-connection", "tool-grant",
 	"billing-run", "billing-policy", "rate-card", "overdue-hold", "event-recovery", "failure-recovery", "recovery-policy", "recovery-response", "deadline-alert", "notification-retry", "recovery-notification", "release-sets", "compute-policy",
 	"quality-alert", "probe-policy", "release-policy", "object-storage", "copy-source", "attack-mode",
 	"grace-window", "payment-method", "server-key", "egress-overage",

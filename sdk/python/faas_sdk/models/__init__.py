@@ -11,6 +11,14 @@ from .account_egress_allowlist_extra_response import AccountEgressAllowlistExtra
 from .account_email_change_request import AccountEmailChangeRequest
 from .account_export_response import AccountExportResponse
 from .account_export_response_schema_version import AccountExportResponseSchemaVersion
+from .account_health import AccountHealth
+from .account_health_code import AccountHealthCode
+from .account_health_deployment import AccountHealthDeployment
+from .account_health_domain import AccountHealthDomain
+from .account_health_request import AccountHealthRequest
+from .account_health_requests import AccountHealthRequests
+from .account_health_restriction import AccountHealthRestriction
+from .account_health_restriction_kind import AccountHealthRestrictionKind
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_overage_cap_response import AccountOverageCapResponse
@@ -59,6 +67,13 @@ from .agent_connection_response_approvals_item import AgentConnectionResponseApp
 from .agent_connection_response_kind import AgentConnectionResponseKind
 from .agent_connections_response import AgentConnectionsResponse
 from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
+from .agent_undo_item import AgentUndoItem
+from .agent_undo_item_kind import AgentUndoItemKind
+from .agent_undo_item_result import AgentUndoItemResult
+from .agent_undo_item_status import AgentUndoItemStatus
+from .agent_undo_plan import AgentUndoPlan
+from .agent_undo_request import AgentUndoRequest
+from .agent_undo_result import AgentUndoResult
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
 from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
@@ -837,6 +852,7 @@ from .failure_rules import FailureRules
 from .failure_rules_uncertain_outcome import FailureRulesUncertainOutcome
 from .failure_rules_unmatched_failure import FailureRulesUnmatchedFailure
 from .failure_rules_version import FailureRulesVersion
+from .feature_hint import FeatureHint
 from .field_error import FieldError
 from .financial_allocation import FinancialAllocation
 from .financial_app_cost_allocation import FinancialAppCostAllocation
@@ -931,8 +947,10 @@ from .git_hub_connection_verification import GitHubConnectionVerification
 from .git_hub_connection_verification_permissions import GitHubConnectionVerificationPermissions
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
+from .git_hub_deployment_policy_patch_preview_mode import GitHubDeploymentPolicyPatchPreviewMode
 from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
 from .git_hub_deployment_policy_patch_production_trigger import GitHubDeploymentPolicyPatchProductionTrigger
+from .git_hub_deployment_policy_preview_mode import GitHubDeploymentPolicyPreviewMode
 from .git_hub_deployment_policy_preview_service_policy import GitHubDeploymentPolicyPreviewServicePolicy
 from .git_hub_deployment_policy_production_trigger import GitHubDeploymentPolicyProductionTrigger
 from .git_hub_install_activity import GitHubInstallActivity
@@ -1768,6 +1786,7 @@ from .org_project_delete_deployment_scope_exclusion_response_200 import (
 from .org_response import OrgResponse
 from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
+from .org_security_policy import OrgSecurityPolicy
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
 from .outbound_ai_budget_threshold_webhook_payload import OutboundAIBudgetThresholdWebhookPayload
@@ -2191,6 +2210,7 @@ from .runtime_release_response_runtime import RuntimeReleaseResponseRuntime
 from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
+from .safe_apply_org_project_project_release_mode import SafeApplyOrgProjectProjectReleaseMode
 from .safe_apply_project_project_add_services import SafeApplyProjectProjectAddServices
 from .safe_apply_project_project_progressive import SafeApplyProjectProjectProgressive
 from .safe_apply_project_project_release_mode import SafeApplyProjectProjectReleaseMode
@@ -2707,6 +2727,14 @@ __all__ = (
     "AccountEmailChangeRequest",
     "AccountExportResponse",
     "AccountExportResponseSchemaVersion",
+    "AccountHealth",
+    "AccountHealthCode",
+    "AccountHealthDeployment",
+    "AccountHealthDomain",
+    "AccountHealthRequest",
+    "AccountHealthRequests",
+    "AccountHealthRestriction",
+    "AccountHealthRestrictionKind",
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountOverageCapResponse",
@@ -2753,6 +2781,13 @@ __all__ = (
     "AgentConnectionResponseKind",
     "AgentConnectionsResponse",
     "AgentConnectionsRevokeAllResponse",
+    "AgentUndoItem",
+    "AgentUndoItemKind",
+    "AgentUndoItemResult",
+    "AgentUndoItemStatus",
+    "AgentUndoPlan",
+    "AgentUndoRequest",
+    "AgentUndoResult",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseReadinessDestination",
     "AlertDeliveryResponseReadinessFailoverReason",
@@ -3515,6 +3550,7 @@ __all__ = (
     "FailureRulesUncertainOutcome",
     "FailureRulesUnmatchedFailure",
     "FailureRulesVersion",
+    "FeatureHint",
     "FieldError",
     "FinancialAllocation",
     "FinancialAppCostAllocation",
@@ -3609,8 +3645,10 @@ __all__ = (
     "GitHubConnectionVerificationPermissions",
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
+    "GitHubDeploymentPolicyPatchPreviewMode",
     "GitHubDeploymentPolicyPatchPreviewServicePolicy",
     "GitHubDeploymentPolicyPatchProductionTrigger",
+    "GitHubDeploymentPolicyPreviewMode",
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
@@ -4330,6 +4368,7 @@ __all__ = (
     "OrgResponse",
     "OrgResponsePlan",
     "OrgResponseStatus",
+    "OrgSecurityPolicy",
     "OrgWithRole",
     "OrgWithRoleRole",
     "OutboundAIBudgetThresholdWebhookPayload",
@@ -4735,6 +4774,7 @@ __all__ = (
     "RuntimeUpgradePreviewResponse",
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
+    "SafeApplyOrgProjectProjectReleaseMode",
     "SafeApplyProjectProjectAddServices",
     "SafeApplyProjectProjectProgressive",
     "SafeApplyProjectProjectReleaseMode",

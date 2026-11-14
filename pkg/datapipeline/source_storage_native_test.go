@@ -179,6 +179,20 @@ func TestNativeSourceStorageStoppedProofRequiresExplicitRetry(t *testing.T) {
 					}
 				}
 				f.control(t, "verify")
+				queued := f.pipeline.VerificationProgress
+				if queued == nil || queued.Phase != "queued" {
+					t.Fatal("retry did not expose a cancellable queued request", queued)
+				}
+				if err := f.service.CancelVerification(ctx, f.pipeline.AccountID, f.pipeline.ID, f.pipeline.Revision, queued.ID); err != nil {
+					t.Fatal(err)
+				}
+				for range 2 {
+					f.tick(t)
+				}
+				if f.pipeline.VerifyRequested || f.pipeline.VerificationProgress.State != "cancelled" || nativeReadAs(t, f, role, "alice") != 0 {
+					t.Fatal("cancelled queued retry restarted qualification or reopened reads", f.pipeline.DataPipeline)
+				}
+				f.control(t, "verify")
 				awaitNativeWorkflow(t, f, func(p Pipeline) bool { return p.State == "live" && p.Verification == "passed" })
 			})
 		}

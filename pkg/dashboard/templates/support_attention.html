@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #596579; --line: #8694a940; --panel: #8b9db40c; --accent: #2457c5; }
+    @media (prefers-color-scheme: dark) { :root { --muted: #b0bbcc; --accent: #9fbdff; } }
+    * { box-sizing: border-box; } body { font: 16px/1.55 system-ui, sans-serif; max-width: 1200px; margin: auto; padding: 0 1.25rem; background: Canvas; color: CanvasText; }
+    header { padding: 1rem 0; border-bottom: 1px solid var(--line); } nav, .filters { display: flex; gap: 1rem; flex-wrap: wrap; align-items: end; }
+    a { color: var(--accent); } main { padding: 1.5rem 0 3rem; } h1 { margin: .3rem 0 1rem; }
+    .muted, .meta { color: var(--muted); } .meta { font-size: .85rem; } code { overflow-wrap: anywhere; }
+    .notice { padding: 1rem; border: 1px solid #4c8e69; border-radius: .5rem; margin: 1rem 0; } .error { border-color: #ba573a; }
+    table { border-collapse: collapse; width: 100%; margin: 1rem 0; } th, td { text-align: left; vertical-align: top; padding: .75rem .5rem; border-bottom: 1px solid var(--line); } th { font-size: .85rem; color: var(--muted); }
+    .scroll { overflow-x: auto; } label { display: grid; gap: .3rem; } input, select, button { font: inherit; padding: .45rem .6rem; border: 1px solid #8694a980; border-radius: .35rem; background: transparent; color: inherit; }
+    button { cursor: pointer; } button:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+    details summary { cursor: pointer; color: var(--accent); } .dismiss { display: grid; gap: .4rem; margin-top: .5rem; min-width: 14rem; }
+    .contact { display: grid; gap: .75rem; max-width: 46rem; margin: 1rem 0 2rem; } textarea { font: inherit; padding: .45rem .6rem; border: 1px solid #8694a980; border-radius: .35rem; background: transparent; color: inherit; width: 100%; }
+    h2 { margin: 1.5rem 0 .5rem; font-size: 1.15rem; }
+    @media (max-width: 760px) { body { padding: 0 1rem; } .filters label { width: 100%; } }
+  </style>
+</head>
+<body>
+<header><nav aria-label="Main"><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/admin/support">Staff inbox</a><a href="/dashboard/admin/support/attention" aria-current="page">Customers who may be stuck</a></nav></header>
+<main>
+{{with .Data}}{{$d := .}}
+<h1>Customers who may be stuck</h1>
+<p class="muted">Signals from failed deployments, OOM kills, failed boots, failing scheduled jobs, custom domains that are not serving, refused API requests, plan limits and failed payments. They resolve on their own when the condition clears. Contact the customer, or dismiss a signal with what you found.</p>
+{{if eq .Updated "dismissed"}}<p class="notice" role="status">The signal was dismissed.</p>{{else if eq .Updated "contacted"}}<p class="notice" role="status">The customer was contacted; the ticket is in the staff inbox.</p>{{end}}
+{{if .Error}}<div class="notice error" role="alert"><strong>Could not save.</strong> {{.Error}}{{if .StepUp}} <a href="{{.StepUpURL}}" target="_blank" rel="noopener">Verify your identity</a>, then retry.{{end}}{{if .Contact}} Your message has been kept.{{end}}</div>{{end}}
+{{if .Unavailable}}<p class="notice error" role="alert">Signals could not be loaded. Reload to try again.</p>{{end}}
+{{with .Contact}}<section aria-labelledby="contact-h"><h2 id="contact-h">Contact the customer</h2>
+<p class="muted">Opens a support ticket on account <code>{{.Signal.AccountID}}</code> about <strong>{{.Signal.Kind}}</strong> · <code>{{.Signal.Subject}}</code>. The customer is notified and sees this message; the ticket waits for their reply.</p>
+<form method="post" action="/dashboard/admin/support/attention" class="contact">
+  <input type="hidden" name="csrf_token" value="{{$d.CSRF}}"><input type="hidden" name="action" value="contact">
+  <input type="hidden" name="signal_id" value="{{.Signal.ID}}"><input type="hidden" name="idempotency_key" value="{{.Key}}">
+  <label>Subject <input name="subject" required maxlength="{{.SubjectMax}}" value="{{.Subject}}"></label>
+  <label>Category <select name="category">{{$c := .Category}}{{range .Categories}}<option value="{{.}}" {{if eq $c .}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+  <label>Message <textarea name="body" required maxlength="{{.BodyMax}}" rows="8">{{.Body}}</textarea></label>
+  <div><button type="submit">Send and open ticket</button> <a href="/dashboard/admin/support/attention">Cancel</a></div>
+</form></section>{{end}}
+{{if .Summary}}<section aria-labelledby="summary-h"><h2 id="summary-h">Last {{.SummaryDays}} days</h2>
+<div class="scroll"><table><caption class="meta">Signals first seen in the period, by what support did</caption>
+<thead><tr><th scope="col">Kind</th><th scope="col">Signals</th><th scope="col">Open</th><th scope="col">Contacted</th><th scope="col">Other dismissals</th><th scope="col">False positives</th><th scope="col">Resolved on own</th><th scope="col">Median time to act</th></tr></thead><tbody>
+{{range .Summary}}<tr><th scope="row">{{.Kind}}</th><td>{{.Total}}</td><td>{{.Open}}</td><td>{{.Contacted}}</td><td>{{.OtherDismissed}}</td><td>{{.FalsePositive}}{{$p := .FalsePositivePercent}}{{if ge $p 0}} <small class="meta">({{$p}}% of acted)</small>{{end}}</td><td>{{.ResolvedOnOwn}}</td><td>{{with .MedianAct}}{{.}}{{else}}<span class="muted">—</span>{{end}}</td></tr>{{end}}
+</tbody></table></div></section>{{end}}
+<h2>Signals</h2>
+<form method="get" action="/dashboard/admin/support/attention" class="filters" aria-label="Filter signals">
+  <label>Kind <select name="kind"><option value="">All kinds</option>{{range .Kinds}}<option value="{{.}}" {{if eq $d.Kind .}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+  <label>State <select name="state"><option value="">Open and dismissed</option><option value="open" {{if eq .State "open"}}selected{{end}}>open</option><option value="dismissed" {{if eq .State "dismissed"}}selected{{end}}>dismissed</option><option value="resolved" {{if eq .State "resolved"}}selected{{end}}>resolved</option></select></label>
+  <button type="submit">Filter</button>
+</form>
+<div class="scroll"><table><caption class="meta">Newest activity first</caption>
+<thead><tr><th scope="col">Customer</th><th scope="col">Signal</th><th scope="col">Since</th><th scope="col">State</th></tr></thead><tbody>
+{{range .Signals}}<tr>
+  <td><code>{{.AccountID}}</code><small class="meta"><code>gregalectl accounts 360 --account-id {{.AccountID}}</code></small></td>
+  <td><strong>{{.Kind}}</strong> · <code>{{.Subject}}</code>{{with .Detail}}<br><span class="muted">{{.}}</span>{{end}}<br><small class="meta">observed {{.Observed}}</small></td>
+  <td>{{.FirstSeenAt.UTC.Format "02 Jan 15:04 UTC"}}<br><small class="meta">last {{.LastSeenAt.UTC.Format "02 Jan 15:04 UTC"}}</small></td>
+  <td>{{.State}}{{with .Outcome}} · {{.}}{{end}}{{with .TicketID}}<br><a href="/dashboard/admin/support/{{.}}">Ticket</a>{{end}}{{with .DismissReason}}<br><small class="meta">{{.}}</small>{{end}}
+    {{if eq .State "open"}}<br><a href="/dashboard/admin/support/attention?contact={{.ID}}">Contact customer</a>
+    <details><summary>Dismiss</summary><form method="post" action="/dashboard/admin/support/attention" class="dismiss">
+      <input type="hidden" name="csrf_token" value="{{$d.CSRF}}"><input type="hidden" name="action" value="dismiss"><input type="hidden" name="signal_id" value="{{.ID}}">
+      <label>Outcome <select name="outcome" required>{{range $d.Outcomes}}<option value="{{.}}">{{.}}</option>{{end}}</select></label>
+      <label>Note (optional) <input name="reason" maxlength="{{$d.ReasonMax}}"></label><button type="submit">Dismiss signal</button></form></details>{{end}}</td>
+</tr>{{else}}<tr><td colspan="4">No customers match. Nothing needs attention right now.</td></tr>{{end}}
+</tbody></table></div>
+{{end}}
+</main>
+</body>
+</html>

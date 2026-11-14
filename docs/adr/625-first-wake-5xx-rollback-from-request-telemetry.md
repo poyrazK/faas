@@ -139,3 +139,18 @@ deliver (534 requests at 19:20:16) also went unnoticed by all three.
 **Validation.** `TestRollbackOn5xxSweepReadsOnlyClosedMinutes` pins the
 closed-minute bound; the plain-rollback queries exclude reverted releases in
 both stores.
+
+## Amendment (2026-11-12): 5xx the previous release also returned do not count
+
+Hunt 34 (H34-17): five requests to a route that answers 500 in every release
+rolled a healthy release back 3.5 minutes after it reached 100%. The guard had
+no notion of "regression": any 5xx counted.
+
+When the release breaches the bar, the guard now leaves out its 5xx responses
+on a method, route and status triple that the release it would roll back to
+also returned between `RollbackOn5xxKnownErrorLookback` (24 h) before the
+release was created and now (`RequestTelemetryKnownServerErrors`, two index
+range scans on `request_telemetry_app_dep_received_idx`). The bar applies to
+what is left. A route the predecessor never served, or served without that
+status, still counts, so a new failure still rolls back. Stores without
+request telemetry (MemStore) leave out nothing.

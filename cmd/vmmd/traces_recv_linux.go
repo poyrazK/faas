@@ -16,12 +16,33 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// startTraceReceiver registers the ADR-958 guest trace channel when the
-// installation enables it.
+// startTraceReceiver registers the ADR-958 guest trace channel. It is on by
+// default: whether an app may trace is decided by apid (the guest_tracing
+// platform flag and the app's tracing.enabled), and the broker refuses frames
+// from apps that have not enabled it. Gating the receiver on a node env var
+// as well let the platform flag release tracing to customers while no node
+// listened, so every export failed with "trace host unavailable".
+// FAAS_GUEST_TRACING_ENABLED=0 turns it off on a node; =1 makes a setup
+// failure fatal, as before. By default a setup failure is logged and vmmd
+// starts without the receiver: tracing is never worth a node that will not
+// boot.
 func startTraceReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager, store state.Store, jailer *fcvm.JailerVMM) (func(), error) {
-	if os.Getenv("FAAS_GUEST_TRACING_ENABLED") != "1" {
+	required := false
+	switch os.Getenv("FAAS_GUEST_TRACING_ENABLED") {
+	case "0", "false":
+		return func() {}, nil
+	case "1":
+		required = true
+	}
+	closeFn, err := registerTraceReceiver(ctx, log, mgr, store, jailer)
+	if err != nil && !required {
+		log.Warn("guest trace receiver not registered; in-guest tracing exports from this node will fail", "err", err)
 		return func() {}, nil
 	}
+	return closeFn, err
+}
+
+func registerTraceReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm.Manager, store state.Store, jailer *fcvm.JailerVMM) (func(), error) {
 	if store == nil {
 		return nil, fmt.Errorf("trace receiver requires the state store")
 	}

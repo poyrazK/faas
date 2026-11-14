@@ -12,7 +12,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/internal/api"
+	"github.com/gregale-dev/gregale-go/internal/api"
 )
 
 // Client is implemented by the API client and the public Go SDK client.

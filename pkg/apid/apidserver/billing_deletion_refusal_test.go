@@ -39,7 +39,7 @@ func TestRefusedOrganizationDeletionKeepsTheSubscription(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := e.Do(t, http.MethodDelete, "/v1/orgs/"+org.Slug, nil, map[string]string{"X-Active-Org": org.Slug})
+	rec := e.DoSession(t, "", http.MethodDelete, "/v1/orgs/"+org.Slug, nil, map[string]string{"X-Active-Org": org.Slug})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("DELETE org with a bucket = %d %s, want 409", rec.Code, rec.Body.String())
 	}

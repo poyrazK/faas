@@ -214,7 +214,9 @@ and, for a new request, its review link. It never includes the request body.
 
 An agent can raise what you pay every month without any traffic: by keeping
 instances warm (`min_instances`, a scaling policy's floor or schedule
-windows), raising the RAM of warm instances, or prewarming. Each agent has a
+windows, a deployment's own `min_instances`), running services and workers
+(their replicas run whatever the traffic), raising the RAM of warm instances,
+or prewarming. Each agent has a
 monthly budget for this always-on capacity. A change is priced by how much it
 adds, at the overage rate ($0.05 per GB-hour, RAM plus 8 MB per instance,
 730 hours a month), before it is made. Traffic-driven usage is not counted;
@@ -236,18 +238,57 @@ gregale mcp connection budget <id> --unlimited
 gregale mcp connection budget <id> --default
 ```
 
-An agent reads its own with `gregale mcp connection budget --self`, so it can
-plan within it. An organization can cap every agent acting in it; the lower
+An agent reads its own with `gregale mcp connection budget --self` (MCP:
+`gregale_agent_budget`), so it can plan within it. Before making a change it
+can ask what the change would cost: `gregale_plan_scale` and
+`gregale app <slug> scale --plan` show the added cost, the budget left and
+whether a person would be asked first. Sending a request with the header
+`Gregale-Agent-Preview: budget` does the same for any client; Gregale prices
+it as the real request and changes nothing. Previews work on every change
+the budget prices: app settings, scaling, prewarm, creating an app, a
+deployment's `min_instances`, managed Postgres create, compute policy,
+resize and restore, and creating, cloning or branching a project
+environment. Other routes refuse the header. An organization can cap every agent acting in it; the lower
 of the agent's budget and the ceiling applies:
 
 ```sh
 gregale org agent policy set --org acme --agents allow --max-budget 100
 ```
 
-In this release the budget covers `PATCH /v1/apps/{slug}`,
-`POST /v1/apps/{slug}/scaling` and `POST /v1/apps/{slug}/prewarm`. Replica
-minimums in deployment manifests and project environment settings are
-priced in a later release.
+In this release the budget covers creating an app (`POST /v1/apps`: a
+service or worker is priced for the replicas it starts with),
+`PATCH /v1/apps/{slug}` (including the `execution_mode`, `service_replicas`
+and `worker_replicas` that `gregale deploy` applies from `gregale.yaml`),
+`POST /v1/apps/{slug}/scaling`, `POST /v1/apps/{slug}/prewarm` and
+`PATCH /v1/deployments/{id}`.
+
+Creating an environment from another (`gregale env create --from`, a full
+clone, or an environment branch) is priced at the warm instances it copies:
+each workload's floor in the source environment. A branch keeps no
+`min_instances` floor, but its services and workers still run their
+replicas.
+
+Managed Postgres is priced only when a database never scales to zero: its
+service class's smallest compute (0.25 compute units for development and
+burstable, 1 for production) running all month at the Postgres overage
+rate. That covers creating such a database, turning scale-to-zero off,
+resizing it to a larger class, and restoring a copy of it. A database that
+scales to zero adds nothing; its compute, storage and egress follow use.
+
+## See your agents at a glance
+
+`gregale mcp connection status` shows each connected agent on one line: its
+pending approval requests, the always-on cost it committed this month
+against its budget, how many of its changes of the last 7 days undo can
+reverse, and its last change. Give an id for one agent in detail, with the
+review link of each pending request:
+
+```sh
+gregale mcp connection status
+gregale mcp connection status <id>
+```
+
+A `?` means that part could not be read; `--json` names which.
 
 ## See what an agent changed
 
@@ -269,6 +310,61 @@ organization can read the activity of every agent acting in it. An agent reads
 its own with `gregale mcp connection activity --self`, for example to check
 what it already did before repeating work. Pages hold 50 rows; pass the
 printed `--cursor` value for older ones.
+
+## Undo what an agent changed
+
+`gregale mcp connection undo` reverses an agent's changes. It first prints
+them, newest first, with what undoing each will do, and undoes them once you
+confirm:
+
+```sh
+gregale mcp connection undo <id>                  # the last 24 hours
+gregale mcp connection undo <id> --since 2h
+gregale mcp connection undo <id> --entry <activity-id> --entry <activity-id>
+gregale mcp connection undo <id> --plan           # only show what it would do
+gregale mcp connection undo <id> --org acme       # an agent acting in an organization
+```
+
+Undo restores:
+
+- app settings the agent changed, such as `min_instances`, `ram_mb`,
+  `idle_timeout_s`, egress and CORS settings,
+- scaling changes,
+- env vars of the app and of its project's named environments,
+- deploys and rollbacks: a deployment the agent started is cancelled while
+  it builds, and once it serves the app is rolled back to the deployment
+  that served before it,
+- promotes and traffic changes: the app's live deployments get back the
+  exact traffic split they had before,
+- things the agent created (apps, buckets, crons, domains, Postgres
+  databases) are deleted: an app is parked and can be restored for 7 days, a
+  bucket that holds objects is left, and a database can be undeleted for 7
+  days,
+- things the agent deleted come back: an app or Postgres database within its
+  7-day restore window, a cron or custom domain created again as it was (the
+  domain verifies again),
+
+and cancels prewarms the agent asked for. Undo runs through the same API as
+any other change, with your access, so it is validated and applied the same
+way.
+
+Some changes cannot be undone, and the plan says so and why: a secret the
+agent set or removed (Gregale keeps no copy of a replaced secret, so set it
+again), a few settings that cannot be set back to empty, an app's first
+deploy (there is nothing to return to), and kinds of change Gregale cannot
+undo yet, such as an individual canary step or a deleted bucket. A canary in progress, or an agent's rollback still starting, is left
+until it settles; undo again then. If someone changed a resource again after the agent did, undo leaves
+it, and the agent's older changes to it, as they are; pass `--force` to undo
+them anyway. Each change is undone once, and changes are kept 7 days.
+
+You can undo the agents you connected; owners and admins can undo every agent
+acting in their organization. Undoing needs an admin credential.
+
+An agent can ask to undo its own changes, never another key's, through the
+MCP tools `gregale_plan_undo` and `gregale_apply_undo` (or
+`POST /v1/agent-connections/self/undo`). Applying always waits for your
+approval, whatever approval categories the agent chose; the approval covers
+exactly the plan the agent showed you.
 
 ## Run the CLI non-interactively
 
@@ -350,11 +446,15 @@ so list only the toolsets it needs:
 
 | Toolset | Tools |
 |---|---|
-| `core` (default) | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back, then verify readiness. About a quarter of the full catalog. |
+| `core` (default) | Apps, deployments, logs, metrics, health and error groups; deploy a directory, set variables, promote and roll back, then verify readiness; wait for approvals, list and undo the agent's own changes. About a third of the full catalog. |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets |
 | `diagnose` | Request, performance, wake, trace and regression diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons |
 | `operate` | Configuration, restart, scaling, plan receipts and costs |
+| `execute` | Local account connections: existing jobs, run/task status, bounded logs, artifact downloads and opt-in dispatch/cancellation |
+| `build-tools` | Local authoring, or opt-in hosted Node publishing from reviewed source uploads |
+| `registry` | Local account connections: search retained publication versions and describe exact runtime schemas |
+| `invoke` | Exact registered-tool invocation, status/results and cancellation; hosted connections require separate consent and exact owner grants |
 | `all` | Everything allowed by the server operator (explicit opt-in) |
 
 Combine them with commas, for example `--tools core,diagnose`.
@@ -410,7 +510,111 @@ runs the matching `gregale domain create`, `add bucket`, `add postgres` or
 your DNS provider; `gregale_check_domain` reports when they verify. See
 [Provision a domain, data and crons](mcp.md#provision-a-domain-data-and-crons).
 
+## Run jobs and retrieve artifacts
+
+On a local account connection, select `--tools core,execute` to inspect existing
+jobs, read their runs and task logs, and retrieve output artifacts. Add
+`--allow-writes` to dispatch or cancel a run. Native API scopes and job plan
+limits still apply: `apps:read` for metadata/logs, `deploy:write` for dispatch
+and cancellation, and `storage:read` as well for artifact download links.
+
+`gregale_start_job` takes an existing `job` and a caller-generated `request_id`
+UUID. Retain the exact UUID and original inputs when retrying after an uncertain
+response or reconnecting. Dispatch uses the job's current configuration; it
+does not take a release plan, command overrides or environment values. Run
+status and artifacts remain on Gregale after the MCP connection closes.
+
+Hosted OAuth and agent-key connections, explicitly app-restricted management
+connections, and organization connections do not expose `execute`: app/environment consent does not grant
+access to account jobs. A local token still needs native account job access;
+selecting tools grants no API permissions. See [execution tools](mcp.md#execute-existing-jobs)
+for the tool catalog, retry window and download contract.
+
+## Build and publish MCP tools
+
+Use `gregale mcp serve --tools core,build-tools --allow-writes` to let an agent
+read versioned starter files, review a local MCP project, run approved fixtures
+against a staged candidate and publish through the MCP release pipeline.
+
+`gregale_get_tool_template` returns a Node, Go or Python file manifest. Request
+an exact file and decode its base64 chunks to materialize the starter. The
+agent writes its handler and `gregale-mcp.tests.json`; creating and editing code
+does not execute it on the management host.
+
+`gregale_plan_tool_deploy` requires an explicit access mode and approval to run
+the declared behavioral fixtures. Review the source digest, tool allowlist,
+test names and account/app/serving identities. `gregale_apply_tool_deploy`
+returns a plan handle immediately; poll `gregale_get_tool_deploy`. Builds run
+from a private source snapshot, so edits made after apply cannot change them.
+Publication requires a catalog pin and passing protocol and behavioral checks.
+
+A repeated apply reads the existing attempt. Failed or uncertain attempts
+never rerun fixtures automatically: inspect the receipt and native deployments
+before planning more work. Started attempts are journaled natively and can be
+read after process restart using the retained plan ID. Add `registry` for
+`gregale_search_tools` and `gregale_describe_tool`: a fresh agent can discover
+exact published versions without source files or a CLI executor. Discovery
+does not grant execution permission. See the
+[publishing contract](mcp.md#build-and-publish-tools) for the tools and limits.
+
+Hosted agents can publish open Node tools when the operator enables
+`--allow-tool-publishing` and offers `build-tools`. Submit bounded inline source
+or a connection-owned upload to `gregale_plan_uploaded_tool_deploy`, review the
+source/fixture digests and target identity, then use the existing apply/status
+tools. A hosted connection never receives access to host directories. Personal
+agent keys need deployment authority; browser OAuth additionally needs
+`gregale:tools:publish` and explicit fixture/publishing consent. Publication does
+not grant invocation access. See [hosted publishing](mcp.md#hosted-tool-publishing-preview)
+for source bounds, consent and recovery.
+
+For private tools, the owner can bind an existing sealed application token to
+one exact grant. With separate private-invocation consent, pass the described
+opaque `credential_binding_sha256` as `credential_binding`. APID resolves and
+uses the token; agents receive no provider credential or secret-read authority.
+Static-source rotation requires a new owner-reviewed grant. See
+[private delegated invocation](mcp.md#private-delegated-invocation-preview).
+
+Owners can also create managed execution OAuth connections with
+`gregale mcp server tool-connection create` and grant their exact tool using
+`--credential-connection-id`. Routine token renewal preserves the grant. Agents
+can read `gregale_get_tool_connection` with the exact `grant_id`; this exposes
+credential-free status and never refreshes. `reconnect_required` needs a new
+owner-reviewed connection and grant. See
+[managed execution OAuth](mcp.md#managed-oauth-for-tool-execution) for setup,
+source-secret trust, local revocation and recovery limits.
+
+Public OAuth clients can use owner-only browser setup with a `guided: true`
+configuration and `gregale mcp server tool-connection connect`. APID saves issued
+tokens directly in encrypted connection state; no initial app-secret refresh
+source is needed. Provider consent is followed by a separate exact tool grant.
+Reconnect creates a new connection identity, revokes old local access and requires
+new grants. Agents receive no browser authorization command or token. See
+[guided owner authorization](mcp.md#guided-owner-authorization).
+
+For reusable published tools, add `registry,invoke` to a local connection with
+writes enabled. Search and describe a version, then explicitly approve
+`gregale_invoke_tool` with a caller-retained UUID. Poll its durable receipt;
+reusing that UUID does not repeat execution. Cancellation after dispatch cannot
+undo remote effects. See [invoking published tools](mcp.md#invoke-published-tools)
+for access, result chunks and uncertain-outcome recovery.
+
+Personal hosted connections can also select `registry` after the owner creates
+an exact connection/version/tool grant using `gregale mcp server tool-grant create`.
+Native apps-read permission is sufficient for granted discovery; project
+limits and consented app identities still apply. Scoped descriptions contain
+only the granted tool, and expiry or revocation takes effect on the next read.
+To invoke an open tool on an enabled hosted bridge, select `registry,invoke`,
+request the separate `gregale:tools:invoke` OAuth scope and approve tool calls.
+The owner must create the exact grant with `--allow-invocation`. Pass that
+active `grant_id` with explicit execution consent and a retained request UUID.
+Deployment permission is unnecessary. Calls, results and cancellation remain
+bound to that original key and grant; revocation denies subsequent access.
+See [hosted invocation](mcp.md#hosted-invocation-with-tool-grants) for setup and
+recovery, and [scoped tool grants](mcp.md#scoped-tool-grants) for owner commands
+and catalog-projection digests.
+
 ## Install the Claude Code plugin
+
 
 The `gregale` plugin connects Claude Code to the hosted MCP server and adds
 two skills:

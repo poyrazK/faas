@@ -12,6 +12,9 @@ import type { AgentBudgetResponse } from '../models/AgentBudgetResponse.js';
 import type { AgentClientRequest } from '../models/AgentClientRequest.js';
 import type { AgentConnectionsResponse } from '../models/AgentConnectionsResponse.js';
 import type { AgentConnectionsRevokeAllResponse } from '../models/AgentConnectionsRevokeAllResponse.js';
+import type { AgentUndoPlan } from '../models/AgentUndoPlan.js';
+import type { AgentUndoRequest } from '../models/AgentUndoRequest.js';
+import type { AgentUndoResult } from '../models/AgentUndoResult.js';
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
 import type { CreateKeyRequest } from '../models/CreateKeyRequest.js';
 import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js';
@@ -25,13 +28,14 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class KeysService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List API keys (no plaintext).
    * @returns APIKeyResponse API key metadata on the account. Plaintext is never returned.
    * @throws ApiError
    */
   public static listKeys(): CancelablePromise<Array<APIKeyResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/keys',
       errors: {
@@ -60,7 +64,7 @@ export class KeysService {
      */
     requestBody: CreateKeyRequest,
   }): CancelablePromise<APIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/keys',
       body: requestBody,
@@ -88,7 +92,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/keys/{id}',
       path: {
@@ -117,7 +121,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static listAgentConnections(): CancelablePromise<AgentConnectionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-connections',
       errors: {
@@ -142,7 +146,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static listAgentApprovals(): CancelablePromise<AgentApprovalsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-approvals',
       errors: {
@@ -165,7 +169,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static getAgentApprovalChannels(): CancelablePromise<AgentApprovalChannelsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-approvals/channels',
       errors: {
@@ -193,7 +197,7 @@ export class KeysService {
   }: {
     requestBody: AgentApprovalChannelsRequest,
   }): CancelablePromise<AgentApprovalChannelsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/agent-approvals/channels',
       body: requestBody,
@@ -227,7 +231,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<AgentApprovalResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-approvals/{id}',
       path: {
@@ -255,7 +259,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static revokeAllAgentConnections(): CancelablePromise<AgentConnectionsRevokeAllResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/agent-connections/revoke_all',
       errors: {
@@ -283,7 +287,7 @@ export class KeysService {
   }: {
     requestBody: AgentClientRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/agent-connections/self',
       body: requestBody,
@@ -310,7 +314,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static disconnectAgent(): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/agent-connections/self',
       errors: {
@@ -346,7 +350,7 @@ export class KeysService {
      */
     limit?: number,
   }): CancelablePromise<AgentActivityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-connections/self/activity',
       query: {
@@ -375,7 +379,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static agentConnectionSelfBudget(): CancelablePromise<AgentBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-connections/self/budget',
       errors: {
@@ -408,7 +412,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<AgentBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-connections/{id}/budget',
       path: {
@@ -446,7 +450,7 @@ export class KeysService {
     id: string,
     requestBody: AgentBudgetRequest,
   }): CancelablePromise<AgentBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/agent-connections/{id}/budget',
       path: {
@@ -459,6 +463,160 @@ export class KeysService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Plan undoing the calling agent's own changes.
+   * An agent key plans an undo of its own changes, like a person's plan.
+   * Applying it needs a person's approval.
+   *
+   * @returns AgentUndoPlan The undo plan.
+   * @throws ApiError
+   */
+  public static planSelfAgentUndo({
+    requestBody,
+  }: {
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoPlan> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/agent-connections/self/undo/plan',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Undo the calling agent's own changes, once a person approves.
+   * An agent key applies a reviewed undo of its own changes. It always
+   * waits for a person's approval: the first call answers 428
+   * approval_required with the request to wait on (category undo, bound
+   * to this body and so to the plan digest); after the approval, the same
+   * call applies it once.
+   *
+   * @returns AgentUndoResult What the undo did to each change.
+   * @throws ApiError
+   */
+  public static applySelfAgentUndo({
+    requestBody,
+  }: {
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoResult> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/agent-connections/self/undo',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Plan undoing a connected agent's changes.
+   * Lists the agent's changes the request selects, newest first (by
+   * default those of the last 24 hours; changes are kept 7 days), with
+   * what undoing each will do: undo it, leave it because it cannot be
+   * undone or because someone changed it again since, or nothing because
+   * it was already undone. Apply the plan with its plan_digest. An agent
+   * key cannot plan or apply an undo.
+   *
+   * @returns AgentUndoPlan The undo plan for the connected agent.
+   * @throws ApiError
+   */
+  public static planAgentUndo({
+    id,
+    requestBody,
+  }: {
+    /**
+     * API key id of the connected agent whose changes to undo.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoPlan> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/agent-connections/{id}/undo/plan',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Undo a connected agent's changes.
+   * Applies a reviewed plan: the same request with the plan's
+   * plan_digest. Changes are undone newest first through the same API
+   * the agent used, as the caller; a change that cannot be undone leaves
+   * the older changes of its resource as they are. 409 when the changes
+   * or their state differ from the plan. Needs an admin credential.
+   *
+   * @returns AgentUndoResult What the undo did to each of the connected agent's changes.
+   * @throws ApiError
+   */
+  public static applyAgentUndo({
+    id,
+    requestBody,
+  }: {
+    /**
+     * API key id of the connected agent whose changes are undone.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoResult> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/agent-connections/{id}/undo',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -495,7 +653,7 @@ export class KeysService {
      */
     limit?: number,
   }): CancelablePromise<AgentActivityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-connections/{id}/activity',
       path: {
@@ -535,7 +693,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/agent-connections/{id}',
       path: {
@@ -588,7 +746,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<RotateKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/keys/{id}/rotate',
       path: {
@@ -622,7 +780,7 @@ export class KeysService {
      */
     slug: string,
   }): CancelablePromise<AgentConnectionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/agent-connections',
       path: {
@@ -656,7 +814,7 @@ export class KeysService {
      */
     slug: string,
   }): CancelablePromise<AgentConnectionsRevokeAllResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/agent-connections/revoke_all',
       path: {
@@ -665,6 +823,99 @@ export class KeysService {
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Plan undoing the changes of an agent acting in an organization.
+   * The organization's variant of planning an undo, for its owners and
+   * admins.
+   *
+   * @returns AgentUndoPlan The undo plan for the organization agent.
+   * @throws ApiError
+   */
+  public static planOrgAgentUndo({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API key id of the organization agent whose changes to undo.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoPlan> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/agent-connections/{id}/undo/plan',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Undo the changes of an agent acting in an organization.
+   * The organization's variant of applying a reviewed undo plan, for its
+   * owners and admins.
+   *
+   * @returns AgentUndoResult What the undo did to each of the organization agent's changes.
+   * @throws ApiError
+   */
+  public static applyOrgAgentUndo({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * API key id of the organization agent whose changes are undone.
+     */
+    id: string,
+    requestBody: AgentUndoRequest,
+  }): CancelablePromise<AgentUndoResult> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/agent-connections/{id}/undo',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -705,7 +956,7 @@ export class KeysService {
      */
     limit?: number,
   }): CancelablePromise<AgentActivityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/agent-connections/{id}/activity',
       path: {
@@ -751,7 +1002,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/agent-connections/{id}',
       path: {
@@ -788,7 +1039,7 @@ export class KeysService {
      */
     slug: string,
   }): CancelablePromise<ListOrgAPIKeysResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/keys',
       path: {
@@ -826,7 +1077,7 @@ export class KeysService {
     slug: string,
     requestBody: CreateOrgAPIKeyRequest,
   }): CancelablePromise<APIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/keys',
       path: {
@@ -865,7 +1116,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<APIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/keys/{id}',
       path: {
@@ -906,7 +1157,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/keys/{id}',
       path: {
@@ -951,7 +1202,7 @@ export class KeysService {
     id: string,
     requestBody?: RotateOrgAPIKeyRequest,
   }): CancelablePromise<RotateOrgAPIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/keys/{id}/rotate',
       path: {
@@ -983,7 +1234,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static getGraceWindow(): CancelablePromise<GraceWindowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/keys/grace_window_days',
       errors: {
@@ -1013,7 +1264,7 @@ export class KeysService {
   }: {
     requestBody: SetGraceWindowRequest,
   }): CancelablePromise<GraceWindowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/account/keys/grace_window_days',
       body: requestBody,

@@ -123,6 +123,30 @@ var previewFields = map[string]map[string]bool{
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
+	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
+	"POST /v1/sales/templates":                                true,
+	"GET /v1/sales/templates/{template}":                      true,
+	"PUT /v1/sales/templates/{template}":                      true,
+	"GET /v1/sales/leads/{lead}/templates/{template}/preview": true,
+
+	"GET /v1/sales/qualification":              true, // private qualification and closing analysis
+	"GET /v1/sales/leads/{lead}/qualification": true,
+	"PUT /v1/sales/leads/{lead}/qualification": true,
+
+	"GET /v1/sales/alerts":                   true, // private sales attention and history
+	"GET /v1/sales/leads/{lead}/activities":  true,
+	"POST /v1/sales/leads/{lead}/activities": true,
+
+	"GET /v1/sales/inquiries/challenge":            true, // website intake; x-internal contract
+	"POST /v1/sales/inquiries":                     true,
+	"GET /v1/sales/inquiries":                      true, // private sales inbox
+	"PUT /v1/sales/inquiries/{inquiry}/assignment": true,
+	"PUT /v1/sales/inquiries/{inquiry}/close":      true,
+
+	// ADR-20261112134100: private staff inbox metadata; public customer counterparts remain documented.
+	"GET /v1/admin/support/notifications":                                         true,
+	"POST /v1/admin/support/tickets/{ticket}/read":                                true,
 	"DELETE /v1/apps/{slug}/operation-approval-forms/{id}":                        true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
 	"DELETE /v1/apps/{slug}/operation-concurrency/{id}":                           true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 	"GET /v1/apps/{slug}/operation-approval-forms":                                true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
@@ -470,6 +494,8 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/capacity":                true, // operator-only capacity projection
 	"GET /v1/admin/obs/tenants":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/360":        true, // operator-only tenant 360 projection
+	"GET /v1/admin/obs/lookup":                  true, // operator-only identifier lookup (ADR-20261112170000)
+	"GET /v1/admin/obs/attention":               true, // operator-only customer attention signals (ADR-20261113123000)
 	"GET /v1/admin/obs/tenants/{id}":            true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":   true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":               true, // operator-only app workload drill-down
@@ -492,6 +518,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/incidents/platform_alert/response-times":      true, // private retained-episode response analytics
 	"GET /v1/admin/obs/wakes/{wake_id}":                              true, // private one-wake event timeline (gregalectl obs wake)
 	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
+	"GET /v1/admin/obs/serving-health":                               true, // private serving-probe coverage evidence
 	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
 	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
 	"GET /v1/admin/obs/rule-coverage":                                true, // private explicitly selected rule coverage
@@ -527,6 +554,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":              true, // operator-only tenant security control
 	"POST /v1/admin/ops/accounts/{id}/reset-mfa":                    true, // operator-only account recovery (ADR-20261108160000)
 	"POST /v1/admin/ops/accounts/{id}/revert-email":                 true, // operator-only account recovery (ADR-20261110100000)
+	"POST /v1/admin/ops/accounts/{id}/make-org-owner":               true, // operator-only org recovery (ADR-20261113180000)
 	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling":       true, // operator-only support grant (ADR-20261101214152)
 	"POST /v1/admin/ops/accounts/{id}/complimentary":                true, // operator-only complimentary plan (ADR-20261111140000)
 	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
@@ -1437,6 +1465,7 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg/apid/apidserver", "org_queue_routes.go"),
 		filepath.Join(root, "pkg/apid/apidserver", "handlers_issues.go"),
 		filepath.Join(root, "pkg/apid/apidserver", "customer_support.go"),
+		filepath.Join(root, "pkg/apid/apidserver", "support_notifications.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
 	var codeRoutes []string
@@ -1675,6 +1704,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "mcp_admission_history.go"),
 		filepath.Join(root, "pkg", "api", "mcp_convergence.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_monitor.go"),
+		filepath.Join(root, "pkg", "api", "tool_publications.go"),
+		filepath.Join(root, "pkg", "api", "tool_invocations.go"),
+		filepath.Join(root, "pkg", "api", "tool_grants.go"),
+		filepath.Join(root, "pkg", "api", "tool_connections.go"),
+		filepath.Join(root, "pkg", "api", "tool_authorization.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_observer.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_renewal.go"),
 		filepath.Join(root, "pkg", "api", "mcp_connection_health.go"),
@@ -1916,6 +1950,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "obs_recurrence.go"),
 		filepath.Join(root, "pkg", "api", "obs_collection_history.go"),
 		filepath.Join(root, "pkg", "api", "obs_notifications.go"),
+		filepath.Join(root, "pkg", "api", "obs_serving_health.go"),
 		filepath.Join(root, "pkg", "api", "obs_rule_health.go"),
 		filepath.Join(root, "pkg", "api", "obs_rule_coverage.go"),
 		filepath.Join(root, "pkg", "api", "obs_recording_coverage.go"),
@@ -1984,10 +2019,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "outbound_ai_moderation.go"), // ADR-1340 moderation checks
 		filepath.Join(root, "pkg", "api", "outbound_ai_evaluations.go"),
 		filepath.Join(root, "pkg", "api", "outbound_ai_access_tokens.go"),
-		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"),        // ADR-1436 usage tags and tag limits
-		filepath.Join(root, "pkg", "api", "outbound_ai_traces.go"),      // ADR 20261020202035 AI traces
-		filepath.Join(root, "pkg", "api", "outbound_ai_quality.go"),     // ADR 20261021171712 quality signals
-		filepath.Join(root, "pkg", "api", "outbound_ai_deployments.go"), // ADR 20261022153155 AI calls by deployment
+		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"),           // ADR-1436 usage tags and tag limits
+		filepath.Join(root, "pkg", "api", "outbound_ai_traces.go"),         // ADR 20261020202035 AI traces
+		filepath.Join(root, "pkg", "api", "outbound_ai_quality.go"),        // ADR 20261021171712 quality signals
+		filepath.Join(root, "pkg", "api", "outbound_ai_deployments.go"),    // ADR 20261022153155 AI calls by deployment
+		filepath.Join(root, "pkg", "api", "outbound_ai_semantic_cache.go"), // ADR 20261112194947 semantic cache
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),
@@ -2092,6 +2128,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "agent_approvals.go"),   // ADR-20261104140058: approvals for risky agent actions
 		filepath.Join(root, "pkg", "api", "agent_activity.go"),    // ADR-20261107220000: agent activity log
 		filepath.Join(root, "pkg", "api", "agent_budget.go"),      // ADR-20261111114059: agent budgets
+		filepath.Join(root, "pkg", "api", "agent_undo.go"),        // ADR-20261112080601: agent undo
+		filepath.Join(root, "pkg", "api", "account_health.go"),    // ADR-20261112210000: customer account health
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

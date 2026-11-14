@@ -1,16 +1,114 @@
-# Gregale customer support backend
+# Gregale customer support
 
-This checkout contains a reconstructed native support backend plus target policies,
-team routing, customer reopening, reviewed redaction and engineering handoffs. The
-previous uncommitted support code could not be recovered. Attachments, incoming
-email, knowledge articles, incident linking, dashboard screens and external issue
-creation are not implemented by this change.
+Gregale provides native customer conversations, a browser portal and staff inbox,
+target policies, team routing, customer reopening, reviewed redaction and engineering
+handoffs. Attachments, incoming email, knowledge articles, incident linking and
+external issue creation are not implemented.
 
 Support is cataloged as preview and hidden from customers by default. Use the
 existing `customer_support` platform flag to allow selected account IDs during
 rollout. Staff routes have their own session and roster checks. The published GA/
 beta SDK spec excludes this preview. The Go client exposes the typed customer
 methods below for accounts enrolled in the preview.
+
+## Dashboard
+
+Customers enrolled in the preview can open **Support** from the overview or account
+page at `/dashboard/support`. Organization owners and admins use the support link
+on their organization page at `/dashboard/orgs/{org}/support`. These are separate
+collections: a personal conversation never appears in an organization's portal.
+
+Customers can search and filter conversations, start one with optional app,
+deployment and request identifiers, read paginated messages, reply, mark resolved,
+reopen within the saved policy allowance, and rate a resolution from 1 to 5.
+Text is rendered as escaped plain text. Credentials and logs are never collected
+automatically.
+
+Staff use `/dashboard/admin/support` with their enrolled, MFA-completed support
+session. The inbox filters by team, assignee, status and search. Ticket pages show
+the saved first-response, next-reply and resolution targets, mark paused clocks,
+and keep internal notes visibly separate from public replies. Agents can claim
+unassigned cases and work their own cases; managers can work any case. Assignment
+changes require an audit reason and respect the backend's team, skill and capacity
+checks. Staff can mark a case resolved, reopen it, or pause/resume while waiting
+for the customer. Policies, roster administration, engineering reviews and
+redaction reviews remain available through the private API.
+
+Browser writes require an account-bound CSRF token and a trusted origin. Staff
+writes also require a fresh five-minute MFA step-up. Each form carries a UUID
+request key and the ticket revision. Failed submissions keep the form, key and
+revision for safe retries; a revision conflict requires loading the latest state.
+Copy any draft before reloading. Pages use `Cache-Control: no-store`. The customer
+preview flag also gates the portal routes; staff access uses the independent live
+roster checks.
+
+### Customer account panel
+
+A staff ticket page shows a **Customer account** panel beside the conversation
+(ADR-20261112170000): the account id, organization, plan, status and app count,
+current restrictions (suspension, abuse holds, unverified email, overage cap,
+platform release pause), failed deployments from the last 7 days with their error,
+custom domain problems, enabled previews, and the API errors the customer was
+refused in the last 24 hours, counted by problem code. For an organization case
+the panel describes the member who opened it. The panel never shows an email and
+loads only after the roster check for the ticket; if it cannot be loaded the
+conversation still works.
+
+When the customer opened the ticket, apid saved a snapshot of their account
+health (ADR-20261112210000). The panel shows it under **At ticket creation**: plan,
+status, restrictions, failed deployments, and the refused request matching the
+request id the customer attached, if one was recorded for their account. The live
+view follows under **Now**, with restrictions lifted or added since the ticket was
+opened. Customers see their own view of the same checks at
+`/dashboard/account/health` and `GET /v1/account/health`, and "Contact support about
+this" links there prefill the ticket form.
+
+Operators get the same diagnosis with `gregalectl accounts 360 --account-id <id>`,
+and can find the account behind an email, app slug, app or custom-domain URL,
+account/app/deployment id, request id or trace id with
+`gregalectl accounts find <identifier>`.
+
+### Notifications and unread updates
+
+Support pages show an Updates feed, a scoped unread total and per-conversation
+badges. Read state is personal to each user and separates customer and staff
+activity, including when the same account has both roles. Opening the final message
+page automatically marks only the updates observed on that page read. Without
+JavaScript, use **Mark conversation read**. Later replies remain unread; read updates
+do not change the conversation revision or any service deadline.
+
+Initial customer messages, replies and reopening messages notify the assignee;
+unassigned work notifies the current team and managers. Assignment changes notify
+the new assignee. Public staff replies and reviewed public engineering messages
+notify the personal owner or current organization owners/admins. Own actions and
+private notes do not create customer notifications.
+
+Email uses Gregale's configured platform mail transport. Each email contains an
+authenticated conversation link and ticket identifier, without the subject,
+conversation body or private notes. Notification intent commits with the ticket
+update; a mail outage does not require resubmitting the message. Existing messages
+are not backfilled into notification email. Handoffs use stable
+provider idempotency keys, fenced leases and bounded backoff (eight attempts within
+24 hours). The transport's idempotency guarantees apply; exactly-once email delivery
+is not promised. Read, expired, ineligible and disabled-preview notifications are
+skipped. Membership, verification, staff access and assignment are rechecked before
+delivery; an address changed after an ambiguous handoff is not retried at the new
+address. Temporary eligibility-lookup outages remain retryable. Fanout is limited
+to 1,000 recipients per event; over-limit writes return 429 before committing.
+In-app history remains for 90 days even when email fails.
+
+Use `GET /v1/support/notifications` or
+`GET /v1/orgs/{org}/support/notifications` with optional `before` sequence and
+`unread=true`. Responses include `items`, `next_cursor` and `unread_count`.
+`POST .../tickets/{ticket}/read` accepts `{"through_sequence":123}` and returns the
+remaining ticket and scoped unread totals. It updates only the caller's read state,
+is intrinsically idempotent, and requires neither an expected ticket revision nor
+a permanent UUID receipt. The private staff equivalents live under
+`/v1/admin/support`. Own read-state updates require a current authorized session
+(MFA-completed for staff) and trusted origin; they do not require fresh staff
+step-up. Browser forms retain CSRF protection. Conversation/configuration writes
+still require fresh staff step-up. Go SDK callers use `ListSupportNotifications`,
+`ListOrgSupportNotifications`, `MarkSupportTicketRead` and `MarkOrgSupportTicketRead`.
 
 ## Customer API
 
@@ -33,7 +131,7 @@ collections remain separate, including when an organization is personal.
 | POST | `/tickets/{ticket}/reopen` | New episode, with `expected_revision` and explanatory `body` |
 | GET/POST | `/tickets/{ticket}/satisfaction` | Current eligible episode; submit `episode_id` and rating 1–5 |
 
-Writes return HTTP 202 after committing, with a durable receipt. Use a UUID
+Conversation writes return HTTP 202 after committing, with a durable receipt. Use a UUID
 `Idempotency-Key`, retained for retries. Reusing a key with a different actor,
 operation, resource or decoded request returns 409. Successful retries return the
 original receipt even after the reopening window expires; current authorization
@@ -56,7 +154,7 @@ filters, and message pagination accepts the numeric `after` sequence.
 All private endpoints start with `/v1/admin/support`. API keys are rejected.
 Reads require an MFA-completed session and current enrolled/verified/active staff
 access. All POSTs also require a fresh five-minute step-up and trusted control-plane
-origin. An `FAAS_ADMIN_EMAILS` operator without a roster entry bootstraps as manager;
+origin, except the own read-state operation described above. An `FAAS_ADMIN_EMAILS` operator without a roster entry bootstraps as manager;
 explicit agent or revoked entries override bootstrap. Managers should provision
 another manager before reducing their own role.
 
@@ -84,6 +182,38 @@ grant customer access. Freeform handoff reasons are audit metadata and must not
 contain secrets or conversation content. Configuration changes are revision checked
 and audited. All effective writes require UUID idempotency keys; creating a bounded,
 expiring preview does not create a permanent receipt.
+
+## Customers who may be stuck
+
+apid flags customers who look stuck before they write in
+(ADR-20261113123000, ADR-20261113180000): repeated failed deployments of one
+app, an app that keeps running out of memory or failing to boot, a scheduled
+job whose recent runs all failed, a custom domain that is not serving, a
+burst of one refused API problem code, repeated plan-limit refusals, or a
+payment that failed and has not recovered. Staff see them at
+`/dashboard/admin/support/attention` (linked from the staff inbox as
+"Customers who may be stuck"), in the "May be stuck" section of the ticket
+account panel, and operators through `GET /v1/admin/obs/attention` or
+`gregalectl accounts attention [--kind K] [--state S] [--account-id ID]`.
+
+Signals resolve on their own when the condition clears. For an open signal,
+either:
+
+- **Contact customer**: edit the prefilled message and send it. This opens a
+  ticket in the customer's personal support scope with your message first,
+  assigned to you and waiting for the customer; the customer is notified like
+  any staff reply, and no service clock runs until they answer. The signal is
+  marked `contacted` and links the ticket. Write only what the customer can
+  see in their own dashboard.
+- **Dismiss** it with an outcome: `platform_issue`, `already_in_touch`,
+  `not_needed` or `false_positive`, plus an optional note.
+
+Both need a fresh step-up. A signal that clears with no action is marked
+`resolved_on_own`. The page's "Last 30 days" table shows, per kind, how many
+signals led to contact, how many were false positives and the median time
+to act; use it before changing thresholds in `pkg/api/limits.go`. Treat many
+signals of one kind at once as a platform problem
+(`FaasCustomerAttentionSpike`) rather than contacting each customer.
 
 ## Policies, calendars and reporting
 

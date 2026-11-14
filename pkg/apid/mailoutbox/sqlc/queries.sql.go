@@ -2457,6 +2457,34 @@ func (q *Queries) LinkManagedPostgresCapEvent(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const linkManagedPostgresEgressHoldNotice = `-- name: LinkManagedPostgresEgressHoldNotice :execrows
+UPDATE managed_postgres_egress_hold_notices SET mail_intent_id=$1::uuid
+WHERE database_id=$2::uuid AND period_start=$3::timestamptz
+  AND subject_id=$4::uuid AND mail_intent_id IS NULL
+`
+
+type LinkManagedPostgresEgressHoldNoticeParams struct {
+	IntentID    pgtype.UUID
+	DatabaseID  pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	SubjectID   pgtype.UUID
+}
+
+// ADR-20261110160000 amendment 2026-11-13: the egress hold email is per
+// database; its intent claims that database's row for the month.
+func (q *Queries) LinkManagedPostgresEgressHoldNotice(ctx context.Context, db DBTX, arg LinkManagedPostgresEgressHoldNoticeParams) (int64, error) {
+	result, err := db.Exec(ctx, linkManagedPostgresEgressHoldNotice,
+		arg.IntentID,
+		arg.DatabaseID,
+		arg.PeriodStart,
+		arg.SubjectID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const linkManagedPostgresPlanExcessNotice = `-- name: LinkManagedPostgresPlanExcessNotice :execrows
 UPDATE managed_postgres_plan_excess_notices SET mail_intent_id=$1::uuid,delete_at=$2::timestamptz
 WHERE database_id=$3::uuid AND mail_intent_id IS NULL
@@ -2472,6 +2500,28 @@ type LinkManagedPostgresPlanExcessNoticeParams struct {
 // database is deleted only on a date its owner was mailed.
 func (q *Queries) LinkManagedPostgresPlanExcessNotice(ctx context.Context, db DBTX, arg LinkManagedPostgresPlanExcessNoticeParams) (int64, error) {
 	result, err := db.Exec(ctx, linkManagedPostgresPlanExcessNotice, arg.IntentID, arg.DeleteAt, arg.DatabaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const linkManagedPostgresPlanExcessReminder = `-- name: LinkManagedPostgresPlanExcessReminder :execrows
+UPDATE managed_postgres_plan_excess_notices SET reminder_mail_intent_id=$1::uuid
+WHERE database_id=$2::uuid AND reminder_mail_intent_id IS NULL
+    AND mail_intent_id IS NOT NULL AND delete_at=$3::timestamptz
+`
+
+type LinkManagedPostgresPlanExcessReminderParams struct {
+	IntentID   pgtype.UUID
+	DatabaseID pgtype.UUID
+	DeleteAt   pgtype.Timestamptz
+}
+
+// ADR-20261110184700 amendment 2026-11-12: the reminder names the deletion
+// date the first email named, and is queued once per notice.
+func (q *Queries) LinkManagedPostgresPlanExcessReminder(ctx context.Context, db DBTX, arg LinkManagedPostgresPlanExcessReminderParams) (int64, error) {
+	result, err := db.Exec(ctx, linkManagedPostgresPlanExcessReminder, arg.IntentID, arg.DatabaseID, arg.DeleteAt)
 	if err != nil {
 		return 0, err
 	}
@@ -3683,7 +3733,7 @@ func (q *Queries) ManagedPostgresPlanExcessReady(ctx context.Context, db DBTX) (
 }
 
 const managedPostgresPlanExcessSchemaReady = `-- name: ManagedPostgresPlanExcessSchemaReady :exec
-SELECT n.database_id,n.reason,n.mail_intent_id FROM managed_postgres_plan_excess_notices n LIMIT 0
+SELECT n.database_id,n.reason,n.mail_intent_id,n.reminder_mail_intent_id FROM managed_postgres_plan_excess_notices n LIMIT 0
 `
 
 func (q *Queries) ManagedPostgresPlanExcessSchemaReady(ctx context.Context, db DBTX) error {

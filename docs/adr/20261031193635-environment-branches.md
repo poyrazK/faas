@@ -518,6 +518,34 @@ or `production` (refused for branches).
   - `EnvironmentBranchDefaultTTL` 7 days, `EnvironmentBranchMinTTL` 1 hour,
     `EnvironmentBranchMaxTTL` 30 days;
   - copies use the PostgreSQL branch allowance (`ManagedPostgresBranchesMax`), see Accounting.
+- **Lifecycle** (amended 2026-11-12, owner decisions). A branch has its own view and
+  lifecycle under `/v1/projects/{slug}/environments/{branch}/branch`:
+  - `GET` reports the branch, the database copies it owns and each workload with its URL;
+  - `POST .../extend` moves the expiry to now plus a TTL. A branch lives at most
+    `EnvironmentBranchMaxTTL` (30 days) after its creation; a branch with database copies at
+    most `EnvironmentBranchWithDatabasesMaxLifetime` (7 days), so its copies stay in the
+    PostgreSQL branch allowance. The copies' expiry moves first
+    (`managedpostgres.Service.MoveBranchExpiry`, compare-and-set on the old expiry), then the
+    branch's. A branch whose data is pending is refused: its copies' TTL is fixed from the
+    expiry when they are made, and a retry must adopt the same copy;
+  - `POST .../reset` deletes the branch and creates it again from its parent with its slug,
+    egress, private-network mode and lifetime. The environment gets a new ID: reusing an ID
+    after a delete would let about 20 tables keyed by environment ID without a cascading
+    foreign key (workload heads, queue bindings, runtime proofs, …) carry the old branch's
+    state into the new one.
+- **Stable branch URLs** (amended 2026-11-12, owner decision: opaque but stable, branches
+  only). A branch holds a slot, `project_environment_branches.slot_id`, a UUIDv5 of the
+  project ID and the branch slug (`state.EnvironmentBranchSlotID`), unique while the branch
+  exists. A workload's `url` is `env-<slot>-<app>` in the same 57-character shape as the
+  environment host, so it needs no new DNS name, certificate or allocation table; a branch
+  deleted and made again under its name (reset, or by hand) holds the same slot, so its URLs
+  survive. `ProjectEnvironmentByID`, and the gateway snapshot query `ReadPublicHostEnvironment`,
+  fall back from an environment ID to the branch holding that slot; v5 slots never collide
+  with v4 environment IDs. `environment_url` keeps the incarnation's own host. Branches made
+  before the column have no slot and keep their environment URL. The gateway caches edge
+  rules by host, so for a short time after a reset a slot host may apply the old
+  incarnation's rules; they are the parent's rules copied at both creations. The dev bridge
+  takes environment hosts only.
 - **Organizations** (amended 2026-11-12, owner decision). Company projects branch through
   the reviewed project-access table (`pkg/apid/projectaccess/routes.go`):
   - listing branches needs the read action; creating one needs the configure action

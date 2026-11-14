@@ -43,7 +43,7 @@ test('send asks for an async invocation and returns its id', async () => {
   const { fetch, calls } = fakeFetch([Response.json({ invocation_id: 'inv-1' }, { status: 202 })]);
   type Fns = { mailer: { input: { to: string }; output: unknown } };
   const fns = createFunctions<Fns>({ functions: { mailer: 'shop-mailer' }, env: {}, fetch });
-  assert.deepEqual(await fns.mailer.send({ to: 'a@example.com' }), { invocationId: 'inv-1' });
+  assert.equal((await fns.mailer.send({ to: 'a@example.com' })).invocationId, 'inv-1');
   assert.equal(new Headers(calls[0]?.init.headers).get('x-gregale-invoke'), 'async');
   assert.equal(new Headers(calls[0]?.init.headers).get('x-gregale-function-call'), '1');
 });
@@ -64,4 +64,30 @@ test('a non-2xx answer raises FunctionCallError with the problem', async () => {
 test('an uncallable name says what is callable', () => {
   const fns = createFunctions({ functions: { users: 'shop-users' }, env: {} });
   assert.throws(() => fns.billing, /not callable from here; callable: users/);
+});
+
+test('send names the completion function and wait long-polls the sent invocation', async () => {
+  const { fetch, calls } = fakeFetch([
+    Response.json({ id: 'inv-2' }, { status: 202 }),
+    Response.json({ id: 'inv-2', state: 'dispatching', done: false, attempts: 1 }),
+    Response.json({ id: 'inv-2', state: 'completed', done: true, attempts: 1, result: { sent: true } }),
+  ]);
+  type Fns = { mailer: { input: { to: string }; output: { sent: boolean } } };
+  const fns = createFunctions<Fns>({ functions: { mailer: 'shop-mailer' }, env: {}, fetch });
+  const invocation = await fns.mailer.send({ to: 'a@example.com' }, { onComplete: 'self' });
+  assert.equal(new Headers(calls[0]?.init.headers).get('x-gregale-on-complete'), 'self');
+  const result = await invocation.wait({ timeoutMs: 5_000 });
+  assert.deepEqual(result, { sent: true });
+  assert.match(calls[1]?.url ?? '', /^http:\/\/api\.svc\.gregale:10081\/v1\/invocations\/inv-2\?wait=\d+$/);
+});
+
+test('wait raises FunctionCallError for a failed invocation', async () => {
+  const { fetch } = fakeFetch([
+    Response.json({ id: 'inv-3' }, { status: 202 }),
+    Response.json({ id: 'inv-3', state: 'failed', done: true, attempts: 3, error: 'boom' }),
+  ]);
+  type Fns = { mailer: { input: unknown; output: unknown } };
+  const fns = createFunctions<Fns>({ functions: { mailer: 'shop-mailer' }, env: {}, fetch });
+  const invocation = await fns.mailer.send({});
+  await assert.rejects(invocation.wait(), (err: unknown) => err instanceof FunctionCallError && err.code === 'function_invocation_failed');
 });

@@ -24,5 +24,9 @@ export type AppPublishEventRequest = {
    */
   time?: string;
   schemaversion?: string;
+  /**
+   * Slug of the app's project environment the event belongs to; omitted is production. Only that environment's subscriptions receive the event.
+   */
+  environment?: string;
 };
 

@@ -81,38 +81,46 @@ func (s *server) enqueuePreparedInvocation(ctx context.Context, inv state.Invoca
 	} else {
 		created, err = s.store.EnqueueInvocation(ctx, inv)
 	}
+	if problem := s.enqueueProblem(ctx, inv, err, capacityDetail); problem != nil {
+		return state.Invocation{}, problem
+	}
+	return created, nil
+}
+
+// enqueueProblem maps a store enqueue error to its API problem; nil for nil.
+func (s *server) enqueueProblem(ctx context.Context, inv state.Invocation, err error, capacityDetail string) *api.Problem {
+	if err == nil {
+		return nil
+	}
 	var depth *state.InvocationDepthError
 	if errors.As(err, &depth) {
 		if inv.Source == state.InvocationDelayedTask {
-			return state.Invocation{}, api.ErrPlanDelayedTasksCap(depth.Limit, depth.Observed)
+			return api.ErrPlanDelayedTasksCap(depth.Limit, depth.Observed)
 		}
-		return state.Invocation{}, api.ErrPlanQueueDepth(depth.Limit, depth.Observed)
+		return api.ErrPlanQueueDepth(depth.Limit, depth.Observed)
 	}
 	var backlog *state.InvocationBacklogBytesError
 	if errors.As(err, &backlog) {
-		return state.Invocation{}, api.ErrPlanQueueBacklogBytes(backlog.Limit, backlog.Observed)
+		return api.ErrPlanQueueBacklogBytes(backlog.Limit, backlog.Observed)
 	}
 	if errors.Is(err, state.ErrQueueBindingRetired) {
-		return state.Invocation{}, api.NewProblem(http.StatusConflict, "queue_binding_retired", "Queue binding retired", "this queue is held for explicit recovery")
+		return api.NewProblem(http.StatusConflict, "queue_binding_retired", "Queue binding retired", "this queue is held for explicit recovery")
 	}
 	if errors.Is(err, state.ErrQueueBindingEnvironmentUnavailable) || s.queueAdmissionEnvironmentUnavailable(ctx, inv, err) {
-		return state.Invocation{}, api.NewProblem(http.StatusConflict, "queue_binding_environment_unavailable", "Queue environment unavailable", "the captured queue environment is unavailable; review the queue selection before retrying")
+		return api.NewProblem(http.StatusConflict, "queue_binding_environment_unavailable", "Queue environment unavailable", "the captured queue environment is unavailable; review the queue selection before retrying")
 	}
-	if err != nil {
-		if errors.Is(err, state.ErrInvalidArgument) && inv.PlatformTenantID != "" {
-			return state.Invocation{}, api.ErrValidation("flag_context customer must be active in the app account")
-		}
-		if errors.Is(err, state.ErrPlatformTenantSuspended) {
-			return state.Invocation{}, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Platform tenant suspended", "resume this customer before enqueueing work")
-		}
-		// Hunt 32 H32-20: concurrent queue sends answered this 503 with no
-		// log line naming the store error.
-		if s.log != nil {
-			s.log.ErrorContext(ctx, "invocation enqueue failed", "operation", capacityDetail, "app_id", inv.AppID, "source", string(inv.Source), "err", err)
-		}
-		return state.Invocation{}, api.ErrCapacity(capacityDetail)
+	if errors.Is(err, state.ErrInvalidArgument) && inv.PlatformTenantID != "" {
+		return api.ErrValidation("flag_context customer must be active in the app account")
 	}
-	return created, nil
+	if errors.Is(err, state.ErrPlatformTenantSuspended) {
+		return api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Platform tenant suspended", "resume this customer before enqueueing work")
+	}
+	// Hunt 32 H32-20: concurrent queue sends answered this 503 with no
+	// log line naming the store error.
+	if s.log != nil {
+		s.log.ErrorContext(ctx, "invocation enqueue failed", "operation", capacityDetail, "app_id", inv.AppID, "source", string(inv.Source), "err", err)
+	}
+	return api.ErrCapacity(capacityDetail)
 }
 
 // Both stores can reject stale explicit binding IDs as invalid admission.

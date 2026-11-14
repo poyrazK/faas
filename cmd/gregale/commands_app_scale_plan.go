@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -47,7 +48,10 @@ type appScalePlanView struct {
 	Changes       []appScalePlanChange   `json:"changes"`
 	Warnings      []string               `json:"warnings"`
 	ResidentUsage *appScaleResidentUsage `json:"resident_usage,omitempty"`
-	Notes         []string               `json:"notes"`
+	// AgentBudget is what the change would cost an agent key and whether a
+	// person would be asked (ADR-20261111114059, amendment 2026-11-13).
+	AgentBudget *api.AgentBudgetPreview `json:"agent_budget,omitempty"`
+	Notes       []string                `json:"notes"`
 }
 
 type appScaleSavedPlan struct {
@@ -106,11 +110,19 @@ func cmdAppScalePlan(client *Client, appClient environmentAppClient, slug, envir
 	} else {
 		view.Notes = append(view.Notes, "The account plan could not be read; plan compatibility and resident usage cannot be estimated.")
 	}
+	if environment == "" && accountErr == nil && slices.Contains(account.KeyScopes, api.ScopeAgent) {
+		// An agent key's price; a person's key is never charged, so it
+		// sends nothing.
+		if preview, err := client.PreviewUpdateApp(context.Background(), slug, request); err == nil && preview.Charged {
+			view.AgentBudget = &preview
+		}
+	}
 	var saved appScaleSavedPlan
 	if outputPath != "" {
 		// Keep version-1 saved plans readable by older strict decoders.
 		savedPreview := view
 		savedPreview.Context = nil
+		savedPreview.AgentBudget = nil
 		saved = appScaleSavedPlan{SchemaVersion: 1, AppSlug: slug, Environment: environment, Request: request, Preview: savedPreview}
 		if environment != "" {
 			if appClient.revision == nil || *appClient.revision < 0 {
@@ -397,6 +409,9 @@ func applyAppScaleSavedPlan(slug string, plan appScaleSavedPlan) int {
 		return jsonOut(writeJSON(updated))
 	}
 	PrintOK(osStdout, "Applied saved scale plan for %s", slug)
+	if plan.Request.MinInstances != nil && *plan.Request.MinInstances > 0 && updated.Status == "evicted_cold" {
+		PrintOK(osStdout, "%s", parkedMinInstancesNote(slug, *plan.Request.MinInstances))
+	}
 	if plan.Request.MinInstances != nil && *plan.Request.MinInstances > 0 {
 		if account, err := client.Whoami(context.Background()); err == nil {
 			printResidentCostEcho(api.Plan(account.Plan), updated.RAMMB, *plan.Request.MinInstances)
@@ -644,9 +659,23 @@ func printAppScalePlan(w io.Writer, plan appScalePlanView) {
 		_, _ = fmt.Fprintf(w, "  always-resident usage: ~%.1f → ~%.1f GB-h/30d (change %+.1f GB-h/30d)\n", plan.ResidentUsage.CurrentGBHours30d, plan.ResidentUsage.ProposedGBHours30d, plan.ResidentUsage.ChangeGBHours30d)
 		_, _ = fmt.Fprintf(w, "    %s\n", plan.ResidentUsage.Basis)
 	}
+	if b := plan.AgentBudget; b != nil {
+		_, _ = fmt.Fprintf(w, "  agent budget: adds %s this month", centsUSD(b.AddedCents))
+		if b.BudgetCents != nil && b.RemainingCents != nil {
+			_, _ = fmt.Fprintf(w, "; %s of %s left", centsUSD(*b.RemainingCents), centsUSD(*b.BudgetCents))
+		}
+		_, _ = fmt.Fprintln(w)
+		if b.NeedsApproval {
+			_, _ = fmt.Fprintf(w, "    applying waits for a person's %s approval\n", b.ApprovalCategory)
+		}
+	}
 	for _, note := range plan.Notes {
 		_, _ = fmt.Fprintf(w, "  note: %s\n", note)
 	}
+}
+
+func centsUSD(cents int64) string {
+	return fmt.Sprintf("$%d.%02d", cents/100, cents%100)
 }
 
 func appScalePlanFormatValue(value json.RawMessage) string {

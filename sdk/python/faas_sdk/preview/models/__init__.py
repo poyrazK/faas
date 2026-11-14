@@ -17,6 +17,14 @@ from .account_egress_allowlist_extra_response import AccountEgressAllowlistExtra
 from .account_email_change_request import AccountEmailChangeRequest
 from .account_export_response import AccountExportResponse
 from .account_export_response_schema_version import AccountExportResponseSchemaVersion
+from .account_health import AccountHealth
+from .account_health_code import AccountHealthCode
+from .account_health_deployment import AccountHealthDeployment
+from .account_health_domain import AccountHealthDomain
+from .account_health_request import AccountHealthRequest
+from .account_health_requests import AccountHealthRequests
+from .account_health_restriction import AccountHealthRestriction
+from .account_health_restriction_kind import AccountHealthRestrictionKind
 from .account_limits import AccountLimits
 from .account_limits_plan import AccountLimitsPlan
 from .account_overage_cap_response import AccountOverageCapResponse
@@ -69,6 +77,9 @@ from .admin_status_maintenance_create_request_impact import AdminStatusMaintenan
 from .admin_status_maintenance_create_request_kind import AdminStatusMaintenanceCreateRequestKind
 from .admin_status_maintenance_create_request_state import AdminStatusMaintenanceCreateRequestState
 from .admin_status_update_edit_request import AdminStatusUpdateEditRequest
+from .admit_data_api_shared_budget_body import AdmitDataAPISharedBudgetBody
+from .admit_data_api_shared_budget_body_version import AdmitDataAPISharedBudgetBodyVersion
+from .admit_data_api_shared_budget_response_200 import AdmitDataAPISharedBudgetResponse200
 from .adopt_environment_git_ops_request import AdoptEnvironmentGitOpsRequest
 from .adopt_environment_git_ops_response import AdoptEnvironmentGitOpsResponse
 from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsResponseStatus
@@ -100,6 +111,13 @@ from .agent_connection_response_approvals_item import AgentConnectionResponseApp
 from .agent_connection_response_kind import AgentConnectionResponseKind
 from .agent_connections_response import AgentConnectionsResponse
 from .agent_connections_revoke_all_response import AgentConnectionsRevokeAllResponse
+from .agent_undo_item import AgentUndoItem
+from .agent_undo_item_kind import AgentUndoItemKind
+from .agent_undo_item_result import AgentUndoItemResult
+from .agent_undo_item_status import AgentUndoItemStatus
+from .agent_undo_plan import AgentUndoPlan
+from .agent_undo_request import AgentUndoRequest
+from .agent_undo_result import AgentUndoResult
 from .ai_deployment_usage import AIDeploymentUsage
 from .ai_deployment_usage_list import AIDeploymentUsageList
 from .alert_delivery_response import AlertDeliveryResponse
@@ -536,6 +554,7 @@ from .automatic_route_check_last_error_code import AutomaticRouteCheckLastErrorC
 from .automatic_route_check_stale_reasons_item import AutomaticRouteCheckStaleReasonsItem
 from .automatic_route_check_state import AutomaticRouteCheckState
 from .before_checkpoint_hook import BeforeCheckpointHook
+from .begin_tool_publication_response import BeginToolPublicationResponse
 from .billing_cancel_response import BillingCancelResponse
 from .billing_catalog_entry import BillingCatalogEntry
 from .billing_catalog_entry_kind import BillingCatalogEntryKind
@@ -670,11 +689,15 @@ from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
 from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
 from .change_consumer_billing_plan_request import ChangeConsumerBillingPlanRequest
+from .change_delegated_tool_invocation_action import ChangeDelegatedToolInvocationAction
+from .change_delegated_tool_invocation_body_type_0 import ChangeDelegatedToolInvocationBodyType0
 from .change_managed_postgres_compute_policy_request import ChangeManagedPostgresComputePolicyRequest
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
+from .change_tool_invocation_action import ChangeToolInvocationAction
+from .change_tool_invocation_body_type_0 import ChangeToolInvocationBodyType0
 from .check_account_workflow_readiness_body import CheckAccountWorkflowReadinessBody
 from .check_platform_tenant_self_workflow_readiness_body import CheckPlatformTenantSelfWorkflowReadinessBody
 from .check_profile_regression_request import CheckProfileRegressionRequest
@@ -695,9 +718,12 @@ from .checked_project_release_manifest_service_targets_additional_property impor
 )
 from .checked_project_release_response import CheckedProjectReleaseResponse
 from .checked_project_release_response_bindings_checks import CheckedProjectReleaseResponseBindingsChecks
+from .checkout_referral_status_response_200 import CheckoutReferralStatusResponse200
+from .checkout_referral_status_response_200_reason import CheckoutReferralStatusResponse200Reason
 from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
+from .close_support_ticket_request import CloseSupportTicketRequest
 from .commit_blocked_event_response import CommitBlockedEventResponse
 from .commit_blocked_events_response import CommitBlockedEventsResponse
 from .commit_event_publication import CommitEventPublication
@@ -1017,6 +1043,9 @@ from .create_slo_request_latency_threshold_ms import CreateSLORequestLatencyThre
 from .create_slo_request_sli import CreateSLORequestSli
 from .create_slo_request_window_days import CreateSLORequestWindowDays
 from .create_statement_invoice_request import CreateStatementInvoiceRequest
+from .create_support_ticket_request import CreateSupportTicketRequest
+from .create_support_ticket_request_category import CreateSupportTicketRequestCategory
+from .create_support_ticket_request_priority import CreateSupportTicketRequestPriority
 from .create_synthetic_check_request import CreateSyntheticCheckRequest
 from .create_synthetic_check_request_interval_seconds import CreateSyntheticCheckRequestIntervalSeconds
 from .create_synthetic_check_request_method import CreateSyntheticCheckRequestMethod
@@ -1130,6 +1159,7 @@ from .data_pipeline_health_state import DataPipelineHealthState
 from .data_pipeline_list import DataPipelineList
 from .data_pipeline_state import DataPipelineState
 from .data_pipeline_verification import DataPipelineVerification
+from .data_pipeline_wal_retention import DataPipelineWALRetention
 from .data_repair_health import DataRepairHealth
 from .data_repair_health_item import DataRepairHealthItem
 from .data_repair_health_item_node_status import DataRepairHealthItemNodeStatus
@@ -1253,6 +1283,7 @@ from .delayed_task_at_request_headers import DelayedTaskAtRequestHeaders
 from .delayed_task_at_request_payload import DelayedTaskAtRequestPayload
 from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
+from .delegated_tool_invocation_intent import DelegatedToolInvocationIntent
 from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
 from .delete_exclusive_operation_trigger_binding_source import DeleteExclusiveOperationTriggerBindingSource
@@ -2061,6 +2092,7 @@ from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .export_focus_invoices_format import ExportFOCUSInvoicesFormat
 from .export_outbound_ai_tag_usage_format import ExportOutboundAITagUsageFormat
 from .export_outbound_integration_ai_user_usage_format import ExportOutboundIntegrationAIUserUsageFormat
+from .extend_project_environment_branch_request import ExtendProjectEnvironmentBranchRequest
 from .failure_rule import FailureRule
 from .failure_rule_action import FailureRuleAction
 from .failure_rules import FailureRules
@@ -2070,6 +2102,7 @@ from .failure_rules_version import FailureRulesVersion
 from .feature_flag import FeatureFlag
 from .feature_flag_type import FeatureFlagType
 from .feature_flag_version import FeatureFlagVersion
+from .feature_hint import FeatureHint
 from .field_error import FieldError
 from .filter_criteria import FilterCriteria
 from .filter_criteria_clause import FilterCriteriaClause
@@ -2231,8 +2264,10 @@ from .git_hub_connection_verification import GitHubConnectionVerification
 from .git_hub_connection_verification_permissions import GitHubConnectionVerificationPermissions
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
+from .git_hub_deployment_policy_patch_preview_mode import GitHubDeploymentPolicyPatchPreviewMode
 from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
 from .git_hub_deployment_policy_patch_production_trigger import GitHubDeploymentPolicyPatchProductionTrigger
+from .git_hub_deployment_policy_preview_mode import GitHubDeploymentPolicyPreviewMode
 from .git_hub_deployment_policy_preview_service_policy import GitHubDeploymentPolicyPreviewServicePolicy
 from .git_hub_deployment_policy_production_trigger import GitHubDeploymentPolicyProductionTrigger
 from .git_hub_install_activity import GitHubInstallActivity
@@ -3300,6 +3335,12 @@ from .obs_notification_health_signals import ObsNotificationHealthSignals
 from .obs_notification_health_state import ObsNotificationHealthState
 from .obs_notification_integration import ObsNotificationIntegration
 from .obs_notification_integration_integration import ObsNotificationIntegrationIntegration
+from .obs_notification_receiver import ObsNotificationReceiver
+from .obs_notification_receiver_health import ObsNotificationReceiverHealth
+from .obs_notification_receiver_health_state import ObsNotificationReceiverHealthState
+from .obs_notification_receiver_integration import ObsNotificationReceiverIntegration
+from .obs_notification_receiver_receiver import ObsNotificationReceiverReceiver
+from .obs_notification_receiver_state import ObsNotificationReceiverState
 from .obs_notification_signal import ObsNotificationSignal
 from .obs_notification_signal_state import ObsNotificationSignalState
 from .obs_notification_signal_window_seconds import ObsNotificationSignalWindowSeconds
@@ -3333,6 +3374,13 @@ from .obs_rule_health_item_state import ObsRuleHealthItemState
 from .obs_rule_health_response import ObsRuleHealthResponse
 from .obs_rule_health_response_state import ObsRuleHealthResponseState
 from .obs_rule_health_totals import ObsRuleHealthTotals
+from .obs_serving_health import ObsServingHealth
+from .obs_serving_health_state import ObsServingHealthState
+from .obs_serving_probe import ObsServingProbe
+from .obs_serving_probe_counts import ObsServingProbeCounts
+from .obs_serving_probe_inventory import ObsServingProbeInventory
+from .obs_serving_probe_inventory_state import ObsServingProbeInventoryState
+from .obs_serving_probe_state import ObsServingProbeState
 from .obs_wake_event import ObsWakeEvent
 from .obs_wake_event_data import ObsWakeEventData
 from .obs_wake_timeline import ObsWakeTimeline
@@ -4080,8 +4128,10 @@ from .org_queue_usage_response_plan import OrgQueueUsageResponsePlan
 from .org_response import OrgResponse
 from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
+from .org_security_policy import OrgSecurityPolicy
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
+from .organization_support_list_status import OrganizationSupportListStatus
 from .outbound_ai_access_token import OutboundAIAccessToken
 from .outbound_ai_access_token_list import OutboundAIAccessTokenList
 from .outbound_ai_budget_alert import OutboundAIBudgetAlert
@@ -4107,6 +4157,7 @@ from .outbound_ai_evaluation_list import OutboundAIEvaluationList
 from .outbound_ai_evaluation_state import OutboundAIEvaluationState
 from .outbound_ai_evaluation_target_stats import OutboundAIEvaluationTargetStats
 from .outbound_ai_evaluation_verdict_type_0 import OutboundAIEvaluationVerdictType0
+from .outbound_ai_long_context_tier import OutboundAILongContextTier
 from .outbound_ai_moderation import OutboundAIModeration
 from .outbound_ai_moderation_action import OutboundAIModerationAction
 from .outbound_ai_moderation_categories_item import OutboundAIModerationCategoriesItem
@@ -4151,6 +4202,7 @@ from .outbound_ai_route_stats_strategy import OutboundAIRouteStatsStrategy
 from .outbound_ai_route_strategy import OutboundAIRouteStrategy
 from .outbound_ai_route_target import OutboundAIRouteTarget
 from .outbound_ai_route_target_stats import OutboundAIRouteTargetStats
+from .outbound_ai_semantic_cache import OutboundAISemanticCache
 from .outbound_ai_tag_limit import OutboundAITagLimit
 from .outbound_ai_tag_limits import OutboundAITagLimits
 from .outbound_ai_tag_usage_export_row import OutboundAITagUsageExportRow
@@ -4196,6 +4248,7 @@ from .patch_org_request import PatchOrgRequest
 from .patch_org_request_plan import PatchOrgRequestPlan
 from .payment_method_summary import PaymentMethodSummary
 from .periodic_profile_policy import PeriodicProfilePolicy
+from .personal_support_list_status import PersonalSupportListStatus
 from .plan_affected_app import PlanAffectedApp
 from .plan_affected_app_action import PlanAffectedAppAction
 from .plan_async_route import PlanAsyncRoute
@@ -4446,6 +4499,7 @@ from .private_network_peering import PrivateNetworkPeering
 from .private_network_peering_list_response import PrivateNetworkPeeringListResponse
 from .private_network_peering_status import PrivateNetworkPeeringStatus
 from .private_network_status import PrivateNetworkStatus
+from .private_tool_invocation_request import PrivateToolInvocationRequest
 from .problem import Problem
 from .profile_attribution_comparison import ProfileAttributionComparison
 from .profile_attribution_quality import ProfileAttributionQuality
@@ -4572,6 +4626,7 @@ from .project_environment_binding_change_response_change import ProjectEnvironme
 from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
 from .project_environment_binding_response import ProjectEnvironmentBindingResponse
 from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_branch_database import ProjectEnvironmentBranchDatabase
 from .project_environment_branch_list_response import ProjectEnvironmentBranchListResponse
 from .project_environment_branch_response import ProjectEnvironmentBranchResponse
 from .project_environment_branch_response_data import ProjectEnvironmentBranchResponseData
@@ -4907,6 +4962,7 @@ from .queue_send_request import QueueSendRequest
 from .queue_send_request_payload import QueueSendRequestPayload
 from .queue_send_response import QueueSendResponse
 from .queue_state_response import QueueStateResponse
+from .queue_state_response_backlog_by_source import QueueStateResponseBacklogBySource
 from .queue_state_response_plan import QueueStateResponsePlan
 from .queue_workload_profile_request import QueueWorkloadProfileRequest
 from .queue_workload_profile_request_workload_class import QueueWorkloadProfileRequestWorkloadClass
@@ -5092,6 +5148,7 @@ from .release_timeline_event_kind import ReleaseTimelineEventKind
 from .release_timeline_phase import ReleaseTimelinePhase
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
+from .reopen_support_ticket_request import ReopenSupportTicketRequest
 from .reorder_deployment_body import ReorderDeploymentBody
 from .reorder_deployment_response_200 import ReorderDeploymentResponse200
 from .replace_project_environment_queue_bindings_request import ReplaceProjectEnvironmentQueueBindingsRequest
@@ -5143,6 +5200,7 @@ from .restore_deleted_app_body import RestoreDeletedAppBody
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .restore_mcp_readiness_policy_request import RestoreMCPReadinessPolicyRequest
 from .restore_stored_workflow_revision_request import RestoreStoredWorkflowRevisionRequest
+from .resume_environment_automation_response import ResumeEnvironmentAutomationResponse
 from .resume_project_migration_request import ResumeProjectMigrationRequest
 from .resume_stored_workflow_failure_pause_request import ResumeStoredWorkflowFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
@@ -5469,11 +5527,13 @@ from .runtime_release_response_runtime import RuntimeReleaseResponseRuntime
 from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
+from .safe_apply_org_project_project_release_mode import SafeApplyOrgProjectProjectReleaseMode
 from .safe_apply_project_project_add_services import SafeApplyProjectProjectAddServices
 from .safe_apply_project_project_progressive import SafeApplyProjectProjectProgressive
 from .safe_apply_project_project_release_mode import SafeApplyProjectProjectReleaseMode
 from .safe_apply_project_project_stabilization import SafeApplyProjectProjectStabilization
 from .safe_apply_project_project_worker_health import SafeApplyProjectProjectWorkerHealth
+from .sales_inquiry_challenge_response_200 import SalesInquiryChallengeResponse200
 from .save_profile_deployment_policy_request import SaveProfileDeploymentPolicyRequest
 from .save_profile_investigation_request import SaveProfileInvestigationRequest
 from .save_route_requirements_request import SaveRouteRequirementsRequest
@@ -5648,6 +5708,8 @@ from .security_quarantine_recovery_response import SecurityQuarantineRecoveryRes
 from .security_quarantine_recovery_response_status import SecurityQuarantineRecoveryResponseStatus
 from .seed_dev_session_from_environment_branch_request import SeedDevSessionFromEnvironmentBranchRequest
 from .seed_dev_session_from_environment_branch_response import SeedDevSessionFromEnvironmentBranchResponse
+from .select_referral_code_body import SelectReferralCodeBody
+from .select_referral_code_response_200 import SelectReferralCodeResponse200
 from .selected_trace_app import SelectedTraceApp
 from .selected_trace_invocation import SelectedTraceInvocation
 from .selected_trace_lookup_response import SelectedTraceLookupResponse
@@ -5905,6 +5967,9 @@ from .stream_app_logs_archive import StreamAppLogsArchive
 from .stream_app_logs_follow import StreamAppLogsFollow
 from .stream_app_logs_level import StreamAppLogsLevel
 from .stream_deployment_logs_follow import StreamDeploymentLogsFollow
+from .submit_sales_inquiry_body import SubmitSalesInquiryBody
+from .submit_sales_inquiry_body_intent import SubmitSalesInquiryBodyIntent
+from .submit_sales_inquiry_response_202 import SubmitSalesInquiryResponse202
 from .summarize_account_workflow_attention_dependency_status import SummarizeAccountWorkflowAttentionDependencyStatus
 from .summarize_account_workflow_attention_group_by import SummarizeAccountWorkflowAttentionGroupBy
 from .summarize_account_workflow_attention_priority import SummarizeAccountWorkflowAttentionPriority
@@ -5925,6 +5990,23 @@ from .summarize_platform_tenant_self_workflow_attention_sort import SummarizePla
 from .summarize_platform_tenant_self_workflow_outcomes_group_by import (
     SummarizePlatformTenantSelfWorkflowOutcomesGroupBy,
 )
+from .support_context import SupportContext
+from .support_message import SupportMessage
+from .support_message_author import SupportMessageAuthor
+from .support_message_page import SupportMessagePage
+from .support_message_request import SupportMessageRequest
+from .support_notification import SupportNotification
+from .support_notification_kind import SupportNotificationKind
+from .support_notification_page import SupportNotificationPage
+from .support_read_request import SupportReadRequest
+from .support_read_result import SupportReadResult
+from .support_satisfaction import SupportSatisfaction
+from .support_satisfaction_request import SupportSatisfactionRequest
+from .support_satisfaction_submission import SupportSatisfactionSubmission
+from .support_submission import SupportSubmission
+from .support_ticket import SupportTicket
+from .support_ticket_page import SupportTicketPage
+from .support_ticket_status import SupportTicketStatus
 from .suppress_workflow_recovery_automatic_action_request import SuppressWorkflowRecoveryAutomaticActionRequest
 from .sweep_stuck_builds_response import SweepStuckBuildsResponse
 from .synthetic_check_response import SyntheticCheckResponse
@@ -5957,6 +6039,48 @@ from .test_notification_channel_response import TestNotificationChannelResponse
 from .throttle_preview_row import ThrottlePreviewRow
 from .throttle_suggestion_row import ThrottleSuggestionRow
 from .throttle_suggestions_response import ThrottleSuggestionsResponse
+from .tool_grant_access import ToolGrantAccess
+from .tool_grant_credential import ToolGrantCredential
+from .tool_grant_credential_scope import ToolGrantCredentialScope
+from .tool_grant_intent import ToolGrantIntent
+from .tool_grant_page import ToolGrantPage
+from .tool_grant_record import ToolGrantRecord
+from .tool_invocation_delegation import ToolInvocationDelegation
+from .tool_invocation_intent import ToolInvocationIntent
+from .tool_invocation_intent_access_mode import ToolInvocationIntentAccessMode
+from .tool_invocation_outcome import ToolInvocationOutcome
+from .tool_invocation_outcome_code import ToolInvocationOutcomeCode
+from .tool_invocation_outcome_status import ToolInvocationOutcomeStatus
+from .tool_invocation_receipt import ToolInvocationReceipt
+from .tool_invocation_record import ToolInvocationRecord
+from .tool_invocation_record_status import ToolInvocationRecordStatus
+from .tool_invocation_target import ToolInvocationTarget
+from .tool_o_auth_authorization_request import ToolOAuthAuthorizationRequest
+from .tool_o_auth_authorization_request_action import ToolOAuthAuthorizationRequestAction
+from .tool_o_auth_authorization_response import ToolOAuthAuthorizationResponse
+from .tool_o_auth_authorization_response_state import ToolOAuthAuthorizationResponseState
+from .tool_o_auth_connection_status import ToolOAuthConnectionStatus
+from .tool_o_auth_connection_status_recovery_action import ToolOAuthConnectionStatusRecoveryAction
+from .tool_o_auth_connection_status_state import ToolOAuthConnectionStatusState
+from .tool_publication_check import ToolPublicationCheck
+from .tool_publication_check_status import ToolPublicationCheckStatus
+from .tool_publication_intent import ToolPublicationIntent
+from .tool_publication_intent_access_mode import ToolPublicationIntentAccessMode
+from .tool_publication_intent_tool_scopes import ToolPublicationIntentToolScopes
+from .tool_publication_outcome import ToolPublicationOutcome
+from .tool_publication_outcome_status import ToolPublicationOutcomeStatus
+from .tool_publication_record import ToolPublicationRecord
+from .tool_publication_record_evidence_origin import ToolPublicationRecordEvidenceOrigin
+from .tool_publication_record_status import ToolPublicationRecordStatus
+from .tool_registry_page import ToolRegistryPage
+from .tool_registry_tool import ToolRegistryTool
+from .tool_registry_tool_access_mode import ToolRegistryToolAccessMode
+from .tool_registry_tool_availability import ToolRegistryToolAvailability
+from .tool_registry_tool_evidence_origin import ToolRegistryToolEvidenceOrigin
+from .tool_registry_version import ToolRegistryVersion
+from .tool_registry_version_access_mode import ToolRegistryVersionAccessMode
+from .tool_registry_version_availability import ToolRegistryVersionAvailability
+from .tool_registry_version_evidence_origin import ToolRegistryVersionEvidenceOrigin
 from .trace import Trace
 from .trace_span import TraceSpan
 from .trace_span_attributes import TraceSpanAttributes
@@ -6436,6 +6560,14 @@ __all__ = (
     "AccountEmailChangeRequest",
     "AccountExportResponse",
     "AccountExportResponseSchemaVersion",
+    "AccountHealth",
+    "AccountHealthCode",
+    "AccountHealthDeployment",
+    "AccountHealthDomain",
+    "AccountHealthRequest",
+    "AccountHealthRequests",
+    "AccountHealthRestriction",
+    "AccountHealthRestrictionKind",
     "AccountLimits",
     "AccountLimitsPlan",
     "AccountOverageCapResponse",
@@ -6486,6 +6618,9 @@ __all__ = (
     "AdminStatusMaintenanceCreateRequestKind",
     "AdminStatusMaintenanceCreateRequestState",
     "AdminStatusUpdateEditRequest",
+    "AdmitDataAPISharedBudgetBody",
+    "AdmitDataAPISharedBudgetBodyVersion",
+    "AdmitDataAPISharedBudgetResponse200",
     "AdoptEnvironmentGitOpsRequest",
     "AdoptEnvironmentGitOpsResponse",
     "AdoptEnvironmentGitOpsResponseStatus",
@@ -6517,6 +6652,13 @@ __all__ = (
     "AgentConnectionResponseKind",
     "AgentConnectionsResponse",
     "AgentConnectionsRevokeAllResponse",
+    "AgentUndoItem",
+    "AgentUndoItemKind",
+    "AgentUndoItemResult",
+    "AgentUndoItemStatus",
+    "AgentUndoPlan",
+    "AgentUndoRequest",
+    "AgentUndoResult",
     "AIDeploymentUsage",
     "AIDeploymentUsageList",
     "AlertDeliveryResponse",
@@ -6949,6 +7091,7 @@ __all__ = (
     "AutomaticRouteCheckStaleReasonsItem",
     "AutomaticRouteCheckState",
     "BeforeCheckpointHook",
+    "BeginToolPublicationResponse",
     "BillingCancelResponse",
     "BillingCatalogEntry",
     "BillingCatalogEntryKind",
@@ -7081,11 +7224,15 @@ __all__ = (
     "CapabilityStatusPlansItem",
     "CapabilityStatusUnavailableReason",
     "ChangeConsumerBillingPlanRequest",
+    "ChangeDelegatedToolInvocationAction",
+    "ChangeDelegatedToolInvocationBodyType0",
     "ChangeManagedPostgresComputePolicyRequest",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
+    "ChangeToolInvocationAction",
+    "ChangeToolInvocationBodyType0",
     "CheckAccountWorkflowReadinessBody",
     "CheckedProjectReleaseManifest",
     "CheckedProjectReleaseManifestDeployments",
@@ -7095,6 +7242,8 @@ __all__ = (
     "CheckedProjectReleaseManifestServiceTargetsAdditionalProperty",
     "CheckedProjectReleaseResponse",
     "CheckedProjectReleaseResponseBindingsChecks",
+    "CheckoutReferralStatusResponse200",
+    "CheckoutReferralStatusResponse200Reason",
     "CheckPlatformTenantSelfWorkflowReadinessBody",
     "CheckProfileRegressionRequest",
     "CheckRouteRequirementsRequest",
@@ -7103,6 +7252,7 @@ __all__ = (
     "ClaimAPIConsumerUsageStatementRequest",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
+    "CloseSupportTicketRequest",
     "CommitBlockedEventResponse",
     "CommitBlockedEventsResponse",
     "CommitEventPublication",
@@ -7405,6 +7555,9 @@ __all__ = (
     "CreateSLORequestSli",
     "CreateSLORequestWindowDays",
     "CreateStatementInvoiceRequest",
+    "CreateSupportTicketRequest",
+    "CreateSupportTicketRequestCategory",
+    "CreateSupportTicketRequestPriority",
     "CreateSyntheticCheckRequest",
     "CreateSyntheticCheckRequestIntervalSeconds",
     "CreateSyntheticCheckRequestMethod",
@@ -7517,6 +7670,7 @@ __all__ = (
     "DataPipelineList",
     "DataPipelineState",
     "DataPipelineVerification",
+    "DataPipelineWALRetention",
     "DataRepairHealth",
     "DataRepairHealthItem",
     "DataRepairHealthItemNodeStatus",
@@ -7636,6 +7790,7 @@ __all__ = (
     "DelayedTaskAtRequestPayload",
     "DelayedTaskResponse",
     "DelayedTaskResponseState",
+    "DelegatedToolInvocationIntent",
     "DeleteAccountSessionBody",
     "DeletedAppListResponse",
     "DeletedAppSummary",
@@ -8406,6 +8561,7 @@ __all__ = (
     "ExportFOCUSInvoicesFormat",
     "ExportOutboundAITagUsageFormat",
     "ExportOutboundIntegrationAIUserUsageFormat",
+    "ExtendProjectEnvironmentBranchRequest",
     "FailureRule",
     "FailureRuleAction",
     "FailureRules",
@@ -8415,6 +8571,7 @@ __all__ = (
     "FeatureFlag",
     "FeatureFlagType",
     "FeatureFlagVersion",
+    "FeatureHint",
     "FieldError",
     "FilterCriteria",
     "FilterCriteriaClause",
@@ -8574,8 +8731,10 @@ __all__ = (
     "GitHubConnectionVerificationPermissions",
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
+    "GitHubDeploymentPolicyPatchPreviewMode",
     "GitHubDeploymentPolicyPatchPreviewServicePolicy",
     "GitHubDeploymentPolicyPatchProductionTrigger",
+    "GitHubDeploymentPolicyPreviewMode",
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
@@ -9575,6 +9734,12 @@ __all__ = (
     "ObsNotificationHealthState",
     "ObsNotificationIntegration",
     "ObsNotificationIntegrationIntegration",
+    "ObsNotificationReceiver",
+    "ObsNotificationReceiverHealth",
+    "ObsNotificationReceiverHealthState",
+    "ObsNotificationReceiverIntegration",
+    "ObsNotificationReceiverReceiver",
+    "ObsNotificationReceiverState",
     "ObsNotificationSignal",
     "ObsNotificationSignalState",
     "ObsNotificationSignalWindowSeconds",
@@ -9608,6 +9773,13 @@ __all__ = (
     "ObsRuleHealthResponse",
     "ObsRuleHealthResponseState",
     "ObsRuleHealthTotals",
+    "ObsServingHealth",
+    "ObsServingHealthState",
+    "ObsServingProbe",
+    "ObsServingProbeCounts",
+    "ObsServingProbeInventory",
+    "ObsServingProbeInventoryState",
+    "ObsServingProbeState",
     "ObsWakeEvent",
     "ObsWakeEventData",
     "ObsWakeTimeline",
@@ -10225,6 +10397,7 @@ __all__ = (
     "OrgAgentPolicyRequestAllowedScopesItem",
     "OrgAgentPolicyRequestApprovalCategoriesItem",
     "OrgAgentPolicyResponse",
+    "OrganizationSupportListStatus",
     "OrgAppListResponse",
     "OrgAppSummary",
     "OrgAppSummaryType",
@@ -10247,6 +10420,7 @@ __all__ = (
     "OrgResponse",
     "OrgResponsePlan",
     "OrgResponseStatus",
+    "OrgSecurityPolicy",
     "OrgWithRole",
     "OrgWithRoleRole",
     "OutboundAIAccessToken",
@@ -10272,6 +10446,7 @@ __all__ = (
     "OutboundAIEvaluationState",
     "OutboundAIEvaluationTargetStats",
     "OutboundAIEvaluationVerdictType0",
+    "OutboundAILongContextTier",
     "OutboundAIModeration",
     "OutboundAIModerationAction",
     "OutboundAIModerationCategoriesItem",
@@ -10316,6 +10491,7 @@ __all__ = (
     "OutboundAIRouteStrategy",
     "OutboundAIRouteTarget",
     "OutboundAIRouteTargetStats",
+    "OutboundAISemanticCache",
     "OutboundAITagLimit",
     "OutboundAITagLimits",
     "OutboundAITagUsageExportRow",
@@ -10361,6 +10537,7 @@ __all__ = (
     "PatchOrgRequestPlan",
     "PaymentMethodSummary",
     "PeriodicProfilePolicy",
+    "PersonalSupportListStatus",
     "PlanAffectedApp",
     "PlanAffectedAppAction",
     "PlanAsyncRoute",
@@ -10589,6 +10766,7 @@ __all__ = (
     "PrivateNetworkPeeringListResponse",
     "PrivateNetworkPeeringStatus",
     "PrivateNetworkStatus",
+    "PrivateToolInvocationRequest",
     "Problem",
     "ProfileAttributionComparison",
     "ProfileAttributionQuality",
@@ -10715,6 +10893,7 @@ __all__ = (
     "ProjectEnvironmentBindingChangeResponseKind",
     "ProjectEnvironmentBindingResponse",
     "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentBranchDatabase",
     "ProjectEnvironmentBranchListResponse",
     "ProjectEnvironmentBranchResponse",
     "ProjectEnvironmentBranchResponseData",
@@ -11020,6 +11199,7 @@ __all__ = (
     "QueueSendRequestPayload",
     "QueueSendResponse",
     "QueueStateResponse",
+    "QueueStateResponseBacklogBySource",
     "QueueStateResponsePlan",
     "QueueWorkloadProfileRequest",
     "QueueWorkloadProfileRequestWorkloadClass",
@@ -11199,6 +11379,7 @@ __all__ = (
     "ReleaseTimelinePhase",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
+    "ReopenSupportTicketRequest",
     "ReorderDeploymentBody",
     "ReorderDeploymentResponse200",
     "ReplaceProjectEnvironmentQueueBindingsRequest",
@@ -11250,6 +11431,7 @@ __all__ = (
     "RestoreManagedPostgresDatabaseRequest",
     "RestoreMCPReadinessPolicyRequest",
     "RestoreStoredWorkflowRevisionRequest",
+    "ResumeEnvironmentAutomationResponse",
     "ResumeProjectMigrationRequest",
     "ResumeStoredWorkflowFailurePauseRequest",
     "ResumeWorkflowRunRequest",
@@ -11570,11 +11752,13 @@ __all__ = (
     "RuntimeUpgradePreviewResponse",
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
+    "SafeApplyOrgProjectProjectReleaseMode",
     "SafeApplyProjectProjectAddServices",
     "SafeApplyProjectProjectProgressive",
     "SafeApplyProjectProjectReleaseMode",
     "SafeApplyProjectProjectStabilization",
     "SafeApplyProjectProjectWorkerHealth",
+    "SalesInquiryChallengeResponse200",
     "SavedRouteRequirements",
     "SaveProfileDeploymentPolicyRequest",
     "SaveProfileInvestigationRequest",
@@ -11752,6 +11936,8 @@ __all__ = (
     "SelectedTraceLookupResponseRequestsStatus",
     "SelectedTraceLookupResponseSelection",
     "SelectedTraceRequest",
+    "SelectReferralCodeBody",
+    "SelectReferralCodeResponse200",
     "SendAppMessageRequest",
     "SendAppMessageRequestDatacontenttype",
     "SendAppMessageRequestDataContentType",
@@ -11994,6 +12180,9 @@ __all__ = (
     "StreamAppLogsFollow",
     "StreamAppLogsLevel",
     "StreamDeploymentLogsFollow",
+    "SubmitSalesInquiryBody",
+    "SubmitSalesInquiryBodyIntent",
+    "SubmitSalesInquiryResponse202",
     "SummarizeAccountWorkflowAttentionDependencyStatus",
     "SummarizeAccountWorkflowAttentionGroupBy",
     "SummarizeAccountWorkflowAttentionPriority",
@@ -12006,6 +12195,23 @@ __all__ = (
     "SummarizePlatformTenantSelfWorkflowAttentionReason",
     "SummarizePlatformTenantSelfWorkflowAttentionSort",
     "SummarizePlatformTenantSelfWorkflowOutcomesGroupBy",
+    "SupportContext",
+    "SupportMessage",
+    "SupportMessageAuthor",
+    "SupportMessagePage",
+    "SupportMessageRequest",
+    "SupportNotification",
+    "SupportNotificationKind",
+    "SupportNotificationPage",
+    "SupportReadRequest",
+    "SupportReadResult",
+    "SupportSatisfaction",
+    "SupportSatisfactionRequest",
+    "SupportSatisfactionSubmission",
+    "SupportSubmission",
+    "SupportTicket",
+    "SupportTicketPage",
+    "SupportTicketStatus",
     "SuppressWorkflowRecoveryAutomaticActionRequest",
     "SweepStuckBuildsResponse",
     "SyntheticCheckResponse",
@@ -12038,6 +12244,48 @@ __all__ = (
     "ThrottlePreviewRow",
     "ThrottleSuggestionRow",
     "ThrottleSuggestionsResponse",
+    "ToolGrantAccess",
+    "ToolGrantCredential",
+    "ToolGrantCredentialScope",
+    "ToolGrantIntent",
+    "ToolGrantPage",
+    "ToolGrantRecord",
+    "ToolInvocationDelegation",
+    "ToolInvocationIntent",
+    "ToolInvocationIntentAccessMode",
+    "ToolInvocationOutcome",
+    "ToolInvocationOutcomeCode",
+    "ToolInvocationOutcomeStatus",
+    "ToolInvocationReceipt",
+    "ToolInvocationRecord",
+    "ToolInvocationRecordStatus",
+    "ToolInvocationTarget",
+    "ToolOAuthAuthorizationRequest",
+    "ToolOAuthAuthorizationRequestAction",
+    "ToolOAuthAuthorizationResponse",
+    "ToolOAuthAuthorizationResponseState",
+    "ToolOAuthConnectionStatus",
+    "ToolOAuthConnectionStatusRecoveryAction",
+    "ToolOAuthConnectionStatusState",
+    "ToolPublicationCheck",
+    "ToolPublicationCheckStatus",
+    "ToolPublicationIntent",
+    "ToolPublicationIntentAccessMode",
+    "ToolPublicationIntentToolScopes",
+    "ToolPublicationOutcome",
+    "ToolPublicationOutcomeStatus",
+    "ToolPublicationRecord",
+    "ToolPublicationRecordEvidenceOrigin",
+    "ToolPublicationRecordStatus",
+    "ToolRegistryPage",
+    "ToolRegistryTool",
+    "ToolRegistryToolAccessMode",
+    "ToolRegistryToolAvailability",
+    "ToolRegistryToolEvidenceOrigin",
+    "ToolRegistryVersion",
+    "ToolRegistryVersionAccessMode",
+    "ToolRegistryVersionAvailability",
+    "ToolRegistryVersionEvidenceOrigin",
     "Trace",
     "TraceSpan",
     "TraceSpanAttributes",

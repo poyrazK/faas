@@ -118,9 +118,15 @@ type resourceAdoptionInstance struct {
 	HealthcheckPath string `json:"healthcheck_path,omitempty"`
 	// HealthcheckGRPC selects gRPC readiness (main's health.v1 checks); later
 	// readers, such as rehearsal suspend, branch on it.
-	HealthcheckGRPC          bool `json:"healthcheck_grpc,omitempty"`
-	ImageHealthcheckRequired bool `json:"image_healthcheck_required,omitempty"`
-	StartupDeadlineS         int  `json:"startup_deadline_s,omitempty"`
+	HealthcheckGRPC bool `json:"healthcheck_grpc,omitempty"`
+	// HealthcheckGRPCService and RoutedPortRawTCP rebuild the plan-default
+	// liveness probe (ADR-079 amendment 1). Both are omitempty: an older
+	// vmmd refuses to adopt only an instance that carries one, and that
+	// instance is replaced.
+	HealthcheckGRPCService   string `json:"healthcheck_grpc_service,omitempty"`
+	RoutedPortRawTCP         bool   `json:"routed_port_raw_tcp,omitempty"`
+	ImageHealthcheckRequired bool   `json:"image_healthcheck_required,omitempty"`
+	StartupDeadlineS         int    `json:"startup_deadline_s,omitempty"`
 	// RequestConcurrency is the wake's per-instance request limit (0 = the
 	// plan's); without it an adopted guest falls back to the plan cap.
 	RequestConcurrency int             `json:"request_concurrency,omitempty"`
@@ -512,6 +518,8 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			Port:                     inst.Port,
 			HealthcheckPath:          inst.HealthcheckPath,
 			HealthcheckGRPC:          inst.HealthcheckGRPC,
+			HealthcheckGRPCService:   inst.HealthcheckGRPCService,
+			RoutedPortRawTCP:         inst.RoutedPortRawTCP,
 			ImageHealthcheckRequired: inst.ImageHealthcheckRequired,
 			StartupDeadlineS:         inst.StartupDeadlineS,
 			RequestConcurrency:       inst.RequestConcurrency,

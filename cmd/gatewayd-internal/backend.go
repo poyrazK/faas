@@ -258,7 +258,13 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		return gateway.App{}, false, nil
 	}
 	resolved.PinnedDeploymentID = deployment.ID
+	// The scope the deployment was built for, not the URL's environment
+	// slug: a production URL can serve a legacy "default" row, whose cold
+	// admission must read the default lane's scoped configuration.
 	resolved.PinnedDeploymentScope = environment.Slug
+	if deployment.Scope != "" {
+		resolved.PinnedDeploymentScope = deployment.Scope
+	}
 	resolved.PublicEnvironmentID = environment.ID
 	return resolved, true, nil
 }
@@ -314,7 +320,7 @@ func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, envi
 			return state.Deployment{}, false, err
 		}
 	}
-	deployment, err := r.store.LiveDeploymentForScope(ctx, app.ID, environment.Slug)
+	deployment, err := r.liveEnvironmentDeployment(ctx, app.ID, environment.Slug)
 	if errors.Is(err, state.ErrNotFound) {
 		return state.Deployment{}, false, nil
 	}
@@ -322,6 +328,35 @@ func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, envi
 		return state.Deployment{}, false, err
 	}
 	return deployment, true, nil
+}
+
+// liveEnvironmentDeployment finds the live deployment an environment URL
+// serves when no release graph pins one. A stage matches its own scope. The
+// production environment also covers the legacy default lane: direct and
+// project deploys still store production rows as scope "default" while named
+// production is dark, so matching "production" alone answered 404 for every
+// production environment URL `environment get` printed (Hunt 34 H34-27).
+// The choice follows state.ProductionRoutingDeployments: a traffic-bearing
+// named row first, then the legacy lane, then a dark named row.
+func (r pgRouter) liveEnvironmentDeployment(ctx context.Context, appID, slug string) (state.Deployment, error) {
+	if !state.IsProductionScope(slug) {
+		return r.store.LiveDeploymentForScope(ctx, appID, slug)
+	}
+	named, namedErr := r.store.LiveDeploymentForScope(ctx, appID, "production")
+	if namedErr != nil && !errors.Is(namedErr, state.ErrNotFound) {
+		return state.Deployment{}, namedErr
+	}
+	if namedErr == nil && named.TrafficPercent > 0 {
+		return named, nil
+	}
+	legacy, legacyErr := r.store.LiveDeploymentForScope(ctx, appID, state.DefaultEnvScope)
+	if legacyErr == nil {
+		return legacy, nil
+	}
+	if errors.Is(legacyErr, state.ErrNotFound) && namedErr == nil {
+		return named, nil
+	}
+	return state.Deployment{}, legacyErr
 }
 
 func (r pgRouter) deploymentAliasLabelForHost(host string) (string, bool) {

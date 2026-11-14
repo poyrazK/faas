@@ -36,12 +36,14 @@
       <a href="/dashboard/pricing">Pricing</a>
       <a href="/dashboard/invoices">Invoices</a>
       <a href="/dashboard/account">Account</a>
+      {{if $.On "customer-support"}}<a href="/dashboard/support">Support</a>{{end}}
     </nav>
   </header>
   {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
   <main>
     {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
+    {{with .Data}}{{if .Attention}}<p class="flash" role="status"><strong>{{.Attention}} {{if eq .Attention 1}}thing needs{{else}}things need{{end}} your attention.</strong> <a href="/dashboard/account/health">Review account health →</a></p>{{end}}{{end}}
     {{if .Account}}
       <p>Signed in as <code>{{.Account.Email}}</code> ({{.Account.Plan}} plan).</p>
       <p>Deployed apps: <strong>{{.Account.AppCount}}</strong>.</p>

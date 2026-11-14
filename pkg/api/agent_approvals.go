@@ -22,6 +22,10 @@ const (
 // connection chooses: the budget itself decides when it applies.
 const AgentApprovalBudget = "budget"
 
+// AgentApprovalUndo is an agent applying an undo of its own changes
+// (ADR-20261112080601 §4). It always asks; a connection cannot opt out.
+const AgentApprovalUndo = "undo"
+
 // AgentApprovalCategories lists every category, in display order. An agent
 // connection that chose none gets all of them.
 var AgentApprovalCategories = []string{AgentApprovalDelete, AgentApprovalProduction, AgentApprovalCredentials, AgentApprovalBilling}
@@ -100,10 +104,13 @@ type AgentApprovalResponse struct {
 	Status    string `json:"status"`
 	ReviewURL string `json:"review_url,omitempty"`
 	// Agent names the connection: its client name or key label.
-	Agent     string `json:"agent,omitempty"`
-	CreatedAt string `json:"created_at"`
-	ExpiresAt string `json:"expires_at"`
-	DecidedAt string `json:"decided_at,omitempty"`
+	Agent string `json:"agent,omitempty"`
+	// ConnectionID is the id of the agent connection that asked, as
+	// GET /v1/agent-connections lists it.
+	ConnectionID string `json:"connection_id,omitempty"`
+	CreatedAt    string `json:"created_at"`
+	ExpiresAt    string `json:"expires_at"`
+	DecidedAt    string `json:"decided_at,omitempty"`
 	// Note is the person's reason for a denial, when they gave one.
 	Note string `json:"note,omitempty"`
 	// Reason is what the agent said the request is for, when it said

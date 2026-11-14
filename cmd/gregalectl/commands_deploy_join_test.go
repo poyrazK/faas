@@ -1686,6 +1686,48 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deployJoinValidate: %v", err)
 	}
+
+	// Retired keys (ADR-20261109170000): node_join.yml removes them from the
+	// node, so the join no longer needs sign.key or fleet.age, and still
+	// needs both while they are not retired.
+	withoutKeys := deployJoinOptions{
+		ManifestFile:            manifestPath,
+		Node:                    "fsn-2",
+		SSHHost:                 "203.0.113.27",
+		ReleaseTarball:          tarball,
+		BootstrapBinary:         bootstrap,
+		CosignBinary:            cosign,
+		PKISource:               pkiDir,
+		VerifyKeySource:         verifyKey,
+		ComputeDBEnvSource:      computeDBEnv,
+		StorageEnvSource:        storageEnv,
+		ImagedStorageEnvSource:  imagedStorageEnv,
+		RuntimeBasesEnvSource:   runtimeBasesEnv,
+		FleetAgeRecipientSource: fleetAgeRecipient,
+		RepoRoot:                repo,
+		PostgresOverlapNodes:    4,
+		SkipFleetPreflight:      true,
+	}
+	if _, err := deployJoinValidate(withoutKeys); err == nil || !strings.Contains(err.Error(), "is required for apply") {
+		t.Fatalf("unretired keys missing: err = %v, want a required-for-apply refusal", err)
+	}
+	retiredVars := filepath.Join(artifactDir, "ansible-vars.yml")
+	if err := os.WriteFile(retiredVars, []byte("faas_compute_sign_key_retired: true\nfaas_compute_fleet_key_retired: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withoutKeys.AnsibleVarsFile = retiredVars
+	if _, err := deployJoinValidate(withoutKeys); err != nil {
+		t.Fatalf("retired keys missing: deployJoinValidate: %v", err)
+	}
+	signOnly := withoutKeys
+	if err := os.WriteFile(filepath.Join(artifactDir, "sign-only.yml"), []byte("faas_compute_sign_key_retired: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	signOnly.AnsibleVarsFile = filepath.Join(artifactDir, "sign-only.yml")
+	if _, err := deployJoinValidate(signOnly); err == nil || !strings.Contains(err.Error(), "--fleet-age-key is required for apply") {
+		t.Fatalf("fleet key not retired: err = %v, want --fleet-age-key refusal", err)
+	}
+
 	applyOpts := deployJoinOptions{
 		ManifestFile:            manifestPath,
 		Node:                    "fsn-2",

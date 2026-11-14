@@ -143,3 +143,56 @@
   `move-4-architectural-decision-gateway-streaming`,
   `pr-c-cross-pr-slot-56-collision-pr369` (slot reservation
   pattern).
+
+## Amendment 2026-11-12 — inotify, a vsock stream, vmmd writes the row (Hunt 34 H34-3)
+
+Hunt 34 found that no `stateless.advisory` row had ever been written. Four
+links in the original chain were broken:
+
+1. `fanotify_mark` answered `EINVAL` for every path in every guest:
+   `FAN_CREATE`/`FAN_MOVE` need a group initialised with `FAN_REPORT_FID`,
+   and mount marks refuse them. (A mount mark would also have covered the
+   whole root mount, not the listed directories, and the event struct the
+   reader decoded did not match the kernel's layout.)
+2. Firecracker's vsock carries only streams, so the `SOCK_DGRAM` send could
+   not leave the guest, and no host listener existed on port 1025.
+3. On the split topology apid runs on the control plane, so a compute node
+   has no `/run/faas/apid.sock` and the vmmd → apid gRPC hop could not
+   deliver either.
+4. A buildpack app runs as an unprivileged user that cannot create `/data`
+   or `/db`; the directory it can write — `data/` or `db/` under its
+   working directory, the same directories the deploy-accept scan inspects —
+   was not watched.
+
+Decision:
+
+- **Watcher:** guest-init uses inotify on each watched root and the
+  directories below it (cap 1,024 watches), plus each root's parent so a
+  root created after boot is armed when it appears. The roots are the
+  closed set above plus `<working_dir>/data` and `<working_dir>/db`.
+  inotify watches only those directories, so writes elsewhere cost nothing.
+  It has no writer pid; `pid` is 0.
+- **Once per path:** each path is reported once per instance lifetime (cap
+  256 paths), with its verbs merged while pending. A directory stops
+  reporting modifications after its first report, so a database file
+  rewritten on every request does not wake guest-init on every write.
+- **Transport:** one guest-initiated vsock **stream** per batch to host
+  port 1025, the same pattern as the other guest → host channels. The frame
+  is unchanged (msg_type 2, body length, JSON), without `app_id`. vmmd
+  registers a stream handler on the port and takes the app from the
+  listener's wake origin (or the live instance record), never from the
+  frame, since customer code runs as root in the guest and can open the
+  port itself. The handler bounds and validates the frame (8 KiB, 64
+  events, clean absolute paths ≤ 1,024 bytes, closed verb set) and allows
+  each instance 6 batches a minute.
+- **Row writer:** a database-backed vmmd writes the audit row through its
+  own store (`pkg/audit`, actor `vmmd`), in the shape apid's receiver uses;
+  the rejected Option B above is accepted for that case because vmmd
+  already writes sidecar audit rows through `AppendEvent`, and it is the
+  only writer that can reach Postgres from a compute node. A DB-less vmmd
+  keeps the apid gRPC hop. The severity classifier moved to `pkg/api` so
+  both writers stamp the same value. The SSE summary frame
+  (`stateless_advisory` notify) is still sent only by apid's receiver.
+
+The STREAM-versus-DGRAM rejected alternative above no longer applies:
+DGRAM is not available on Firecracker vsock.

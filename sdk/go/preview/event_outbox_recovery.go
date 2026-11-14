@@ -12,7 +12,7 @@ import (
 	"math"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	faas "github.com/gregale-dev/gregale-go"
 )
 
 // EventOutboxRecoveryOptions bounds one recovery iteration. Backoff is applied

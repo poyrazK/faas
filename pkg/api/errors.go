@@ -221,6 +221,9 @@ type Problem struct {
 	// exactly the spec; WriteProblem flushes these onto the wire
 	// before WriteHeader. nil = no extras.
 	extraHeaders map[string][]string `json:"-"`
+	// clientRequestID is error correlation metadata retained by SDK decoders.
+	// It is neither part of the problem body nor a forwarded response header.
+	clientRequestID string
 }
 
 // LogExcerpt is one entry of Problem.RelevantLogs — a small,
@@ -866,6 +869,10 @@ const (
 	// only proof is the browser session comes from a session older than
 	// RecentSignInWindow (ADR 20261110100000): sign in again, then retry.
 	CodeRecentSignInRequired = "recent_sign_in_required"
+	// CodeBrowserSessionRequired refuses an API key on an action only a
+	// person in a signed-in browser may take, such as transferring an
+	// organization's ownership (ADR 20261113180000).
+	CodeBrowserSessionRequired = "browser_session_required"
 	// CodeMFAInvalidCode is returned when /confirm, /verify, or
 	// /recover validate a presented TOTP code / recovery code and
 	// the comparison fails. The audit Emit fires regardless.
@@ -956,6 +963,10 @@ const (
 	// CodeDevDebugSessionLimit (ADR-741) caps concurrent debugger tunnels to
 	// one developer environment.
 	CodeDevDebugSessionLimit = "dev_debug_session_limit"
+	// CodeDevDebugNotDeveloperEnvironment (ADR-741) refuses a debugger tunnel
+	// to an app that is not a `gregale dev` environment. It was the generic
+	// validation_failed, which clients could not tell from a bad request.
+	CodeDevDebugNotDeveloperEnvironment = "dev_debug_not_developer_environment"
 	// CodeDeploymentCancelLiveForbidden (ADR-124) is returned by
 	// POST /v1/apps/{slug}/deployments/{id}/cancel when the row
 	// is already in DeployLive. Cancel of a live row would
@@ -1920,6 +1931,10 @@ const (
 	// Public candidate verification stayed unavailable within the durable
 	// recovery window. This does not establish an application health verdict.
 	CodeDeploymentVerificationUnavailable = "deployment_verification_unavailable"
+	// CodePromotionRolledBack means an environment promotion was rolled back
+	// and this release, the first in its environment, had no earlier release
+	// to restore, so it was retired. The release itself did not fail.
+	CodePromotionRolledBack = "promotion_rolled_back"
 	// CodeReleaseCommandFailed means the deployment's pre-boot release task
 	// failed, timed out, or was cancelled. The previous deployment remains
 	// live; task output is available through the app-task inspection surface.
@@ -1970,6 +1985,10 @@ const (
 	// CodeSecretEntryUnavailable covers an expired, used, unknown or
 	// mismatched secret entry request (ADR-20261026174727).
 	CodeSecretEntryUnavailable = "secret_entry_unavailable"
+	// CodeGitLabCompanyProjectUnavailable refuses a GitLab GitOps source for
+	// a company project, which never uses a member's own GitLab connection
+	// (ADR-20261112230000).
+	CodeGitLabCompanyProjectUnavailable = "gitlab_company_project_unavailable"
 
 	// CodeAppConcurReached is the typed "already at max_concurrency"
 	// result from Engine.AdmitInstance (issue #168). Distinct from
@@ -2076,12 +2095,15 @@ const (
 	CodeOrgMemberCapExceeded     = "org_member_cap_exceeded"
 	CodeOrgInvitationCapExceeded = "org_invitation_cap_exceeded"
 	CodeOrgRoleForbidden         = "org_role_forbidden"
-	CodeOrgAlreadyMember         = "org_already_member"
-	CodeOrgInvitationInvalid     = "org_invitation_invalid"
-	CodeOrgInvitationExpired     = "org_invitation_expired"
-	CodeOrgLastOwner             = "org_last_owner"
-	CodeOrgPersonalImmutable     = "org_personal_immutable"
-	CodeOrgAPIKeyRequiresOrg     = "org_api_key_requires_org"
+	// CodeOrgMFARequired refuses a member without two-factor authentication
+	// on an organization that requires it (ADR 20261113180000).
+	CodeOrgMFARequired       = "org_mfa_required"
+	CodeOrgAlreadyMember     = "org_already_member"
+	CodeOrgInvitationInvalid = "org_invitation_invalid"
+	CodeOrgInvitationExpired = "org_invitation_expired"
+	CodeOrgLastOwner         = "org_last_owner"
+	CodeOrgPersonalImmutable = "org_personal_immutable"
+	CodeOrgAPIKeyRequiresOrg = "org_api_key_requires_org"
 	// CodeOrgFreeLimitExceeded: the caller already owns
 	// FreeOrganizationsOwnedMax Free organizations (ADR-20261031090658).
 	CodeOrgFreeLimitExceeded = "org_free_limit_exceeded"
@@ -2256,7 +2278,7 @@ func StatusForCode(code string) int {
 	switch code {
 	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict,
 		CodeGitHubInstallationChoiceRequired, CodeGitHubInstallationRequired,
-		CodeBillingEmailInUse, CodeBillingContactMember, CodeBillingSubscriptionEnding:
+		CodeBillingEmailInUse, CodeBillingContactMember, CodeBillingSubscriptionEnding, CodeDevDebugNotDeveloperEnvironment:
 		return http.StatusConflict
 	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
 		return http.StatusForbidden
@@ -7062,6 +7084,12 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 			fmt.Sprintf("the %s plan doesn't include the AI gateway; upgrade to Hobby or higher to call AI providers through managed integrations.", p)).
 			WithDocs(docsBase + "/cli#ai")
 	}
+	if feature == "ai_semantic_cache" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include the AI semantic cache",
+			fmt.Sprintf("the %s plan doesn't include the AI gateway's semantic cache; upgrade to Pro or Scale to answer calls that mean the same as a cached one.", p)).
+			WithDocs(docsBase + "/cli#ai")
+	}
 	if feature == "route_controls" {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 			"Plan doesn't include route controls",
@@ -7485,6 +7513,15 @@ func ErrOrgRoleForbidden(action string) *Problem {
 		"Insufficient role for this action",
 		fmt.Sprintf("your role does not allow %s on this organization.", action)).
 		WithDocs(docsBase + "/orgs#roles")
+}
+
+// ErrOrgMFARequired is the 403 a member without two-factor authentication
+// gets on an organization that requires it (ADR 20261113180000).
+func ErrOrgMFARequired() *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgMFARequired,
+		"Two-factor authentication required",
+		"this organization requires two-factor authentication; turn it on for your account and try again.").
+		WithDocs(docsBase + "/orgs#require-two-factor-authentication")
 }
 
 // ErrOrgAlreadyMember is the 409 returned when the accepting

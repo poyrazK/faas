@@ -152,7 +152,7 @@ func (s *server) noticeManagedPostgresCap(ctx context.Context, event managedpost
 		return nil
 	}
 	err := s.deletionMailOutbox.NoticeManagedPostgresCap(ctx, event.SubjectID, mailoutbox.ManagedPostgresCapEvent{
-		SubjectID: event.SubjectID, PeriodStart: event.PeriodStart, Threshold: event.Threshold, ReachedAt: event.ReachedAt,
+		DatabaseID: event.DatabaseID, DatabaseName: event.DatabaseName, SubjectID: event.SubjectID, PeriodStart: event.PeriodStart, Threshold: event.Threshold, ReachedAt: event.ReachedAt,
 		Used: event.Used, Allowance: event.Allowance, Ceiling: event.Ceiling, Overage: event.Overage,
 	})
 	if errors.Is(err, internalmail.ErrDisabled) {
@@ -187,7 +187,7 @@ func (s *server) noticeManagedPostgresPlanExcess(ctx context.Context, notice man
 	}
 	err := s.deletionMailOutbox.NoticeManagedPostgresPlanExcess(ctx, notice.AccountID, mailoutbox.ManagedPostgresPlanExcessNotice{
 		DatabaseID: notice.DatabaseID, DatabaseName: notice.DatabaseName, ServiceClass: string(notice.ServiceClass),
-		Reason: notice.Reason, RecordedAt: notice.RecordedAt, DeleteAt: notice.DeleteAt,
+		Reason: notice.Reason, RecordedAt: notice.RecordedAt, DeleteAt: notice.DeleteAt, Reminder: notice.Reminder,
 	})
 	if errors.Is(err, internalmail.ErrDisabled) {
 		return nil

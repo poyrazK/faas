@@ -187,8 +187,63 @@ stops at its allowance and never costs extra.
 - **Slice 2:** dropped by the per-database amendment: apps and databases no
   longer share an allowance.
 - **Slice 3:** built, see the amendments above.
-- **Slice 4:** a Neon per-project `data_transfer_bytes` quota at the hold
-  ceiling as a backstop, like the compute quota.
+- **Slice 4:** built, see the amendment below.
+
+## Amendment 2026-11-12: slice 4, a provider egress quota backstop
+
+The sweep holds a database that sent its egress allowance. Since database
+egress is billed, a sweep that stops running would let a database keep
+sending, and Neon bill Gregale for it. Neon enforces its own per-project
+quota, `settings.quota.data_transfer_bytes`: once the project's
+`data_transfer_bytes` counter for the consumption period reaches it, Neon
+suspends every compute in the project until the quota is raised or the
+period ends.
+
+- **Target.** Each sweep sets a provider object's quota to the hold ceiling
+  (the allowance, or twice it while overage is billed live) times the
+  databases sharing that object. A restore is a branch in its source's
+  project, so a project with a restore gets two allowances, as the two
+  databases each have one.
+- **Backstop only.** The quota is written after the holds and never skips
+  one; a failed write fails the subject for that sweep. A provider without
+  the capability (`managedpostgres.EgressCapProvider`), or one whose period
+  does not start within an hour of the UTC month, is skipped. A subject
+  without an allowance keeps its quota as it is, because zero means no
+  quota to Neon.
+- **Writes keep each other.** The compute, storage and transfer quota writes
+  each send the project's other quotas as read and confirm all three by
+  reading the project again.
+- **Mode.** It follows cap enforcement: `shadow` logs the decision, `on`
+  writes it. `apid_managed_postgres_egress_quota_decisions_total{outcome}`
+  counts `applied`, `shadowed`, `unchanged` and `failed`.
+- **Owed.** A native Neon check that `data_transfer_bytes` counts public
+  transfer only, as the usage meter does since the 2026-11-11 amendment; if
+  it also counts private transfer, a project using Private Link reaches the
+  quota before the sweep's hold.
+
+## Amendment 2026-11-13: one hold email per database
+
+Since databases are held one at a time (amendment 2026-11-11), the
+subject-level `egress_held` event mailed only the first database held in a
+month, and the email could not say which one. The hold is now recorded and
+mailed per database:
+
+- **Notice.** `managed_postgres_egress_hold_notices` (migration
+  `20261113170412214`) holds one row per database and UTC month: the egress
+  the database had sent, its allowance and the hold ceiling in bytes,
+  whether overage is billed, and the email's intent. The first enforced
+  sweep that holds a database records it; later sweeps leave it.
+- **Email.** Each notice is mailed once through the same
+  `managed_postgres_cap` path and 24-hour window, linked to its row instead
+  of the subject's event. The subject line and body name the database
+  ("Managed PostgreSQL database orders is paused until next month"); a
+  second database held later in the month gets its own email.
+- **Skew.** The sweep no longer writes subject `egress_held` events; rows
+  already written stay and are never read again. While an apid of the
+  previous release runs beside this one, a held database can be mailed by
+  both, once each. The sealed email payload gains an optional
+  `database_name`; the previous release cannot open a payload that carries
+  it, so roll apid out in one step, as for the 2026-11-11 email.
 
 ## Consequences
 
@@ -196,8 +251,8 @@ stops at its allowance and never costs extra.
   combined egress a month. Since then each database stops at its own
   500 GB; the sweep interval bounds the overshoot.
 - Egress counts and stops are visible as `managed postgres compute held`
-  logs with reason `egress`, and the owner is mailed once per month (amendment
-  2026-11-11).
+  logs with reason `egress`, and the owner is mailed once per held database
+  and month (amendments 2026-11-11 and 2026-11-13).
 - Rejected: a separate database ceiling (two allowances to explain, and it
   doubles what a plan gives away), and the operator ceiling alone (not
   plan-aware, and never checked while a database runs).

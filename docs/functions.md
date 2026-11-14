@@ -20,27 +20,25 @@ source root and served by the Go runner. Start from the `function-rust`
 template. A handler returns one response or streams it: server-sent
 events, generated text and large downloads reach the client as they are
 produced ([Node](runtimes/node24.md#streaming),
-[Python](runtimes/python313.md#streaming), [Go](runtimes/go124.md#streaming);
-ADR-999). Gateway streaming is on for Hobby, Pro and Scale; Free buffers the
+[Python](runtimes/python313.md#streaming), [Go](runtimes/go124.md#streaming)). Gateway streaming is on for Hobby, Pro and Scale; Free buffers the
 response. Every `Set-Cookie` header is sent. Node and Python handlers, and Go and `binary` handlers that
 speak the [persistent protocol](runtimes/go124.md#persistent-handlers), stay
 loaded between requests. Node and Python handlers are also captured warm in
 the init snapshot; a Go or `binary` handler is restarted after a snapshot restore. For ordinary framework APIs, omit `--function`
 and let source detection select the app profile.
 
-A function request must start its response within 30 seconds by default
-([ADR-20261107190000](adr/20261107190000-function-request-default-30s.md)).
+A function request must start its response within 30 seconds by default.
 Set a shorter timeout when callers need a fast failure, or a longer one for
 slower work:
 `gregale app APP --request-timeout SECONDS`, up to 30 s on Free, 1 min on
-Hobby, 5 min on Pro and 15 min on Scale (ADR-1150). The whole invocation,
+Hobby, 5 min on Pro and 15 min on Scale. The whole invocation,
 a streamed response included, may run for the longer of that timeout and
 30 s. The runner passes the time left to the handler in the
 `X-Faas-Deadline-Ms` request header. In an event handler, `event.headers` has
 lowercase names and ignores case on lookup (`event.headers["x-faas-deadline-ms"]`);
 repeated request headers arrive joined into one value. Async, queue and cron invocations
 of the function may run just as long: the longer of its request timeout
-and 30 s (ADR-1180).
+and 30 s.
 
 A Node or Python function that loads the Gregale SDK runs each call inside
 the SDK's request context, with no wrapper of its own. Service calls made
@@ -69,7 +67,7 @@ function, defaults included, for example
 The same values are in `effective_limits` on the app's API response
 (`request_budget_ms`, `idle_timeout_s`, `pause`).
 
-Use `gregale invoke APP` for a smoke request and `gregale invocation get ID`
+Use `gregale invocation run APP` for a smoke request and `gregale invocation get ID`
 for an async result. Runtime-specific limits are in [plans](plans.md).
 
 ## Several functions in one project
@@ -121,8 +119,7 @@ build includes the workspace, so functions can share packages.
 ### Config in code
 
 A Node or Python handler can declare its own settings, so a new function is
-one file. `gregale deploy` reads the config without running your code
-([ADR-20261107193000](adr/20261107193000-function-config-in-code.md)):
+one file. `gregale deploy` reads the config without running your code:
 
 ```js
 // functions/digest/handler.js
@@ -316,9 +313,7 @@ function after deploying. `functions:` is applied by `gregale deploy`, and by
 pushes to a connected repository where your account can
 [deploy functions from GitHub](#deploy-a-functions-project-from-github);
 otherwise a repository deploy ignores it for a function app and refuses it for
-any other app. The design is recorded in
-[ADR-985](adr/985-multi-function-projects.md); per-function settings and
-routes in [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).
+any other app.
 
 ### Deploy a functions project from GitHub
 
@@ -372,8 +367,106 @@ from your shell, and Gregale never reads secrets from the repository).
 Existing webhooks, bucket notifications and secrets stay as they are. The
 push's deploy activity lists each step left, and running `gregale deploy` from
 a checkout completes them; `gregale org activity` and the dashboard's
-activity feed show it. The design is recorded in
-[ADR-20261108160000](adr/20261108160000-functions-projects-from-repository-pushes.md).
+activity feed show it.
+
+## Call another function
+
+Functions in one project can call each other by name. A deploy binds every
+function to its siblings, so the calls stay on the private network and never
+cross the public internet. The platform authorizes each call by the calling
+VM, wakes a parked callee, and passes along the request's deadline and
+release. To reach another app of your account, list its slug under `calls:`:
+
+```yaml
+functions:
+  - name: web
+    root: functions/web
+    runtime: node24
+    calls: [billing-api]
+  - name: users
+    root: functions/users
+    runtime: node24
+    input:
+      type: object
+      required: [email]
+      properties:
+        email: {type: string}
+    output: schemas/user.json   # a .json file inside the function's root
+```
+
+```js
+// functions/web/handler.js
+import { functions } from '@gregale/sdk-node/functions/runtime';
+
+export default async function handler(event) {
+  const user = await functions.users.call({ email: 'a@example.com' });
+  const sent = await functions['billing-api'].send({ user: user.id });
+  return { body: { user, invocation: sent.invocationId } };
+}
+```
+
+In Python, use `from faas_sdk.functions_runtime import functions` and
+`await functions.users.call(...)`, or `call_sync` and `send_sync` in a
+synchronous handler.
+
+- `call(input)` POSTs the input as JSON and returns the parsed output. If the
+  callee answers with an error status, it raises `FunctionCallError`, which
+  carries the problem's `code`.
+- `send(input)` enqueues a durable async invocation of the callee and returns
+  its id at once. The callee runs it with the same retries and dead letters as
+  any async invocation, and `gregale invocation get <id>` shows it. A send
+  from staging runs on the callee's staging release.
+- The invocation a send returns has `wait()` and `status()`. `wait()`
+  long-polls until the callee finishes and returns its output, or raises
+  `FunctionCallError` with code `function_invocation_failed` when it failed
+  for good (`function_invocation_pending` when your timeout passes first).
+  Only the function that sent an invocation can read it.
+- `send(input, { onComplete: 'name' })` (Python `on_complete="name"`) asks the
+  platform to call another function, or `'self'`, when the invocation
+  finishes. The target must be one this function may call. It receives a
+  `POST /` with the header `X-Gregale-Invocation-Completion: <id>` and the
+  body `{invocation_id, app_id, status, outcome, attempts, result | error}`,
+  where `status` is `succeeded` or the failure outcome. The completion is an
+  async invocation with its own retries.
+- `input` and `output` are JSON Schema. The callee checks each call's body
+  against its own `input` before the handler runs, and answers 422
+  `function_input_invalid` naming the field at fault. Only calls from these
+  clients are checked; browsers, webhooks and other service calls never are.
+  A repository push keeps the schema set by the last `gregale deploy`.
+
+A Go function uses the `functions` package of the Go SDK:
+
+```go
+import "github.com/gregale-dev/gregale-go/functions"
+
+user, err := functions.Call[UserInput, User](ctx, "users", UserInput{Email: "a@example.com"})
+sent, err := functions.Send(ctx, "billing-api", Charge{User: user.ID},
+	functions.WithOnComplete("self"))
+var receipt Receipt
+err = sent.Wait(ctx, &receipt) // ctx's deadline bounds the wait
+```
+
+A callee's error comes back as `*functions.Error` with its `Code`. A Go
+callee checks typed calls against its `input` schema like Node and Python
+callees do.
+
+`gregale function types` writes each function's typed client into its root:
+`gregale-functions.d.ts` for a Node function, `gregale_functions.py` for a
+Python one and `gregale_functions.go` for a Go one. The Go file declares a
+struct per schema and a `functions` value with a method pair per callee
+(`functions.Users(ctx, in)` and `functions.SendUsers(ctx, in)`). Each covers the functions that function may call, typed from their
+schemas. In Python, import `functions` from `gregale_functions` instead of the
+SDK to get the types. Siblings without a schema and `calls:` apps get unknown
+(`Any`) types. `gregale deploy` refreshes files that already exist when a
+schema changed. In CI, `gregale function types --check` fails without writing
+anything when a file is out of date.
+
+`gregale dev --local` runs the same calls between the functions it serves:
+`call()` reaches the local sibling, `send()` answers at once and runs the call
+in the background, `wait()`, `status()` and completions work between local
+functions, and the callee checks its `input` schema as it does when
+deployed. It also refreshes generated type files that are out of date.
+`calls:` apps are not served locally.
 
 ## Snapshot hooks
 
@@ -451,8 +544,7 @@ rejects the restored instance and Gregale cold-boots a fresh one. A failing
 captures for the function. A throwing `init` fails the deployment with
 `function_init_failed` and its error ([errors](errors.md)); an `init` that
 does not finish within the startup deadline fails it with
-`app_startup_timeout`. The design is recorded in
-[ADR-20261110190000](adr/20261110190000-function-snapshot-hooks-in-code.md).
+`app_startup_timeout`.
 
 ## Concurrent requests per worker
 
@@ -489,10 +581,9 @@ The value can be up to your plan's per-instance concurrency (`gregale app
   five seconds causes its worker to restart, failing its other in-flight
   requests too.
 - Go SDK functions keep one request per process. A `binary` function's
-  handler can serve several by advertising them in its ready line, as the
-  shared worker protocol in ADR-1342 describes.
+  handler can serve several by advertising them in its ready line (see the
+  [`binary` runtime](runtimes/binary.md)).
 
-See [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).
 
 ### Database requests and cancellation
 

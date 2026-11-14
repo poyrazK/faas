@@ -4,7 +4,6 @@
 # each needs review. Regenerate with: go run ./scripts/ci/sealdomaincheck -write
 credential file:deploy/ansible/node_join.yml /etc/faas/secrets/fleet.age
 credential file:deploy/ansible/node_join.yml /etc/faas/secrets/host.age
-credential file:deploy/ansible/roles/livequeryd_service/templates/50-faas-livequeryd.conf.j2 /etc/faas/secrets/livequeryd/keys.age
 credential unit:faas-apid /etc/faas/secrets/fleet.age
 credential unit:faas-apid /etc/faas/secrets/host.age
 credential unit:faas-apid-clone-worker /etc/faas/secrets/fleet.age
@@ -37,6 +36,7 @@ loader cmd/schedd/cluster_key_loader.go 1
 loader cmd/schedd/internal_svc_minter.go 1
 loader cmd/schedd/main.go 2
 loader cmd/vmmd/main.go 4
+loader cmd/vmmd/runtime_secret_opener.go 1
 loader pkg/apid/apidserver/main.go 3
 loader pkg/apid/apidserver/project_environment_clone_worker.go 2
 loader pkg/apid/mailoutbox/verification_config.go 1
@@ -47,6 +47,7 @@ plain accounts.mfa_recovery_codes_hash
 plain agent_approval_requests.body_sha256
 plain api_consumer_signups.claim_hash
 plain api_keys.key_sha256
+plain app_basic_auth_verifiers.sealed_sha256
 plain app_env_batch_receipts.request_sha256
 plain app_fork_execs.stderr
 plain app_fork_execs.stdout
@@ -151,10 +152,12 @@ plain runtime_upgrade_external_fence_authorities.public_key
 plain runtime_upgrade_external_fence_receipts.envelope
 plain runtime_upgrade_native_public_startups.envelope
 plain runtime_upgrade_native_public_startups.review
+plain stored_workflow_live_verifications.request_fingerprint
 # SHA-256 request digest only; no reversible secret or encryption key (ADR-20261111130000).
 plain support_receipts.request_hash
+# ADR-20261112134100: SHA-256 destination binding for stable mail retries, not a credential.
+plain support_notifications.destination_hash
 plain trigger_records.work_fairness_digest
 plain trigger_records.work_key_digest
-plain stored_workflow_live_verifications.request_fingerprint
 plain workflow_runs.create_request_fingerprint
 plain workflow_webhook_receipts.body_hash

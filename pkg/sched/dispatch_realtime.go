@@ -20,7 +20,7 @@ import (
 // gateway and halves after a gateway failure, as for push queues.
 func (l *Loop) scheduleRealtimeLanes(ctx context.Context, t sqlc.Trigger, store storeLike) {
 	triggerID := t.ID.String()
-	if source, _, err := l.pollerForTrigger(t); err == nil {
+	if source, _, err := l.pollerForTrigger(ctx, t); err == nil {
 		if rt, ok := source.(*realtimePoller); ok && rt.idle(time.Now()) {
 			return
 		}

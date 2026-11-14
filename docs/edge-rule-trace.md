@@ -97,7 +97,7 @@ For a matching `kind=retry` rule, the trace reports effective total attempts
 and replays, the request-budget floor, backoff, aggregate replay budget, and
 whether this request's method/idempotency-key guard permits replay. It reports
 only whether an `Idempotency-Key` is present, never its value. A replay still
-requires the operator retry gate and a transport failure; body replayability,
+requires retries to be enabled for your account and a transport failure; body replayability,
 remaining budget, a healthy sibling, response commitment, and live aggregate
 budget are runtime state, so no retry or response outcome is inferred. The
 gateway retries transport failures only; it does not replay an application
@@ -107,7 +107,7 @@ For a matching `kind=circuit_breaker` rule, the trace reports the effective
 failure-ratio threshold, minimum observations, rolling window, and initial/max
 open intervals after applying the gateway's defensive defaults. This rule
 tunes the per-app instance breaker; it does not enable the breaker. The trace
-does not know whether the operator feature gate is enabled or inspect live
+does not know whether the breaker is enabled for your account or inspect live
 per-instance counters, open/half-open state, or probe results, so target
 selection and a breaker outcome remain incomplete rather than inferred.
 

@@ -8,6 +8,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class InstancesService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read-only instance list for an app.
    * By default this returns only resident and in-flight instances, bounded
@@ -35,7 +36,7 @@ export class InstancesService {
      */
     history?: boolean,
   }): CancelablePromise<Array<InstanceResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/instances',
       path: {
@@ -90,7 +91,7 @@ export class InstancesService {
      */
     limit?: number,
   }): CancelablePromise<ListInstancesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/instances',
       query: {

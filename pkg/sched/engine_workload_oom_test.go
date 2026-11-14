@@ -134,8 +134,10 @@ func TestWorkloadOOM_StampsAppRuntimeOOM(t *testing.T) {
 	if !strings.Contains(got.ErrorWhy, "256 MB + 8 MB overhead") {
 		t.Errorf("deployment.ErrorWhy missing plan cap + 8 MB overhead; got %q", got.ErrorWhy)
 	}
-	if !strings.Contains(got.ErrorFix, "256 MB plan") {
-		t.Errorf("deployment.ErrorFix missing source plan; got %q", got.ErrorFix)
+	// The fix raises the app's own memory (`gregale app <app> --ram N`) since
+	// #7182; per-app RAM does not need a plan upgrade.
+	if !strings.Contains(got.ErrorFix, "from 256 MB") || !strings.Contains(got.ErrorFix, "--ram 512") {
+		t.Errorf("deployment.ErrorFix missing current limit or --ram command; got %q", got.ErrorFix)
 	}
 	if !strings.Contains(got.ErrorFix, "at least 392 MB") {
 		t.Errorf("deployment.ErrorFix missing recommended plan (peak + 8 MB); got %q", got.ErrorFix)

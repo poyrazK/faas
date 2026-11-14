@@ -251,6 +251,10 @@ type Middleware struct {
 	// ActivityRecorder records agent activity when Authn cannot: a gateway
 	// sends the rows to apid (ADR-20261111150000).
 	ActivityRecorder AgentActivityRecorder
+	// UndoCapture, when set, records how to reverse each agent write
+	// (ADR-20261112080601): it is called before the handler, and the
+	// capture finished after it answered. apid sets it; a gateway does not.
+	UndoCapture func(r *http.Request, acct state.Account, key state.APIKey) AgentUndoPending
 
 	// CookieDomain is the cookie attribute on the session-cookie
 	// issued/cleared by RequireSession. Empty = omit Domain
@@ -635,6 +639,18 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// ADR-20261107220000: an agent's write requests are
 				// recorded once the handler answers; the approval gate
 				// notes the approval a request went through on.
+				// ADR-20261111114059 amendment 2026-11-13: a budget preview
+				// writes nothing, so it opens no approval and records no
+				// activity or undo; it only notes the approval the real
+				// request would wait for.
+				if Previewing(r) && ProjectLimitable(key) {
+					if m.notePreviewApproval(w, r, key) {
+						return
+					}
+					*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
+					next(w, r, acct)
+					return
+				}
 				var activity *agentActivityNote
 				if ProjectLimitable(key) && (agentWrite(r.Method) || agentapproval.RecordedRead(r.Pattern)) {
 					*r = *r.WithContext(withAgentActivityNote(r.Context(), &activity))
@@ -671,6 +687,13 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				}
 				if activity != nil {
 					aw := &activityWriter{ResponseWriter: w}
+					activity.id = uuid.NewString()
+					// ADR-20261112080601: read what the write replaces.
+					var undo AgentUndoPending
+					if m.UndoCapture != nil && agentWrite(r.Method) {
+						undo = m.UndoCapture(r, acct, key)
+						aw.keepBody = undo != nil
+					}
 					recorded := false
 					//nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
 					aw.onHijack = func() {
@@ -679,6 +702,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					}
 					next(aw, r, acct)
 					if !recorded {
+						m.finishAgentUndo(r, undo, aw, activity.id)
 						m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
 					}
 					return
@@ -1363,7 +1387,7 @@ func isBillingRecoveryRoute(method, path string) bool {
 		return true
 	}
 	switch method + " " + path {
-	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
+	case "GET /v1/account", "GET /v1/account/export", "GET /v1/account/health", "GET /v1/usage",
 		"GET /v1/billing/portal", "GET /v1/billing/status", "GET /v1/billing/focus", "POST /v1/billing/retry",
 		"GET /v1/billing/costs", "GET /v1/billing/forecast", "GET /v1/billing/budgets", "POST /v1/billing/budgets/preview",
 		"PATCH /v1/account/plan",

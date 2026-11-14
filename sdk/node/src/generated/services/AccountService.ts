@@ -9,6 +9,7 @@ import type { AccountDeletionResponse } from '../models/AccountDeletionResponse.
 import type { AccountEgressAllowlistExtraResponse } from '../models/AccountEgressAllowlistExtraResponse.js';
 import type { AccountEmailChangeRequest } from '../models/AccountEmailChangeRequest.js';
 import type { AccountExportResponse } from '../models/AccountExportResponse.js';
+import type { AccountHealth } from '../models/AccountHealth.js';
 import type { AccountOverageCapResponse } from '../models/AccountOverageCapResponse.js';
 import type { AccountProfileUpdate } from '../models/AccountProfileUpdate.js';
 import type { AccountRateLimitsResponse } from '../models/AccountRateLimitsResponse.js';
@@ -42,6 +43,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AccountService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Return feature maturity and plan availability.
    * Returns the canonical, account-scoped capability registry. `maturity`
@@ -53,7 +55,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static getCapabilities(): CancelablePromise<CapabilitiesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/capabilities',
       errors: {
@@ -74,7 +76,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static getAccount(): CancelablePromise<AccountResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account',
       errors: {
@@ -111,7 +113,7 @@ export class AccountService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AccountDeletionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account',
       headers: {
@@ -141,7 +143,7 @@ export class AccountService {
   }: {
     requestBody: AccountProfileUpdate,
   }): CancelablePromise<AccountProfileUpdate> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/account',
       body: requestBody,
@@ -179,7 +181,7 @@ export class AccountService {
     status: 'confirmation_sent';
     email: string;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/email',
       body: requestBody,
@@ -203,7 +205,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static listAccountSignInMethods(): CancelablePromise<SignInMethodsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/sign-in-methods',
       errors: {
@@ -228,7 +230,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static getAccountSecurityActivity(): CancelablePromise<SecurityActivityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/security-activity',
       errors: {
@@ -263,7 +265,7 @@ export class AccountService {
      */
     provider: 'google' | 'github',
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/sign-in-methods/{provider}',
       path: {
@@ -300,7 +302,7 @@ export class AccountService {
      */
     before?: string,
   }): CancelablePromise<AccountDeadLetterEventsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/dlq',
       query: {
@@ -337,7 +339,7 @@ export class AccountService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AccountDeadLetterPurgeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/dlq',
       headers: {
@@ -377,7 +379,7 @@ export class AccountService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AccountDeadLetterReplayAllResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/dlq:replay_all',
       headers: {
@@ -410,7 +412,7 @@ export class AccountService {
      */
     id: string,
   }): CancelablePromise<DeadLetterEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/dlq/{id}',
       path: {
@@ -447,7 +449,7 @@ export class AccountService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/dlq/{id}',
       path: {
@@ -490,7 +492,7 @@ export class AccountService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<DeadLetterEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/dlq/{id}/replay',
       path: {
@@ -518,7 +520,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static getAccountRateLimits(): CancelablePromise<AccountRateLimitsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/rate-limits',
       errors: {
@@ -563,7 +565,7 @@ export class AccountService {
      */
     limit?: number,
   }): CancelablePromise<SelectedTraceLookupResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/traces/{trace_id}/selected-apps',
       path: {
@@ -613,7 +615,7 @@ export class AccountService {
      */
     limit?: number,
   }): CancelablePromise<AccountTraceLookupResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/traces/{trace_id}',
       path: {
@@ -649,6 +651,12 @@ export class AccountService {
    * pays for another account or organization answers 409
    * `billing_email_in_use`.
    *
+   * The optional `salesperson_code` requires a verified browser session and
+   * applies only before the first paid personal-account purchase. Invalid or
+   * unavailable codes return 400; an existing different referral or prior
+   * paid purchase returns 409. A saved referral survives checkout retries
+   * and provider failures. Only a confirmed invoice payment earns credit.
+   *
    * Asking for the plan the account already pays for keeps its
    * subscription: a scheduled cancellation or downgrade is undone and the
    * 200 carries `plan_change_status: scheduled_change_undone`. A
@@ -669,7 +677,7 @@ export class AccountService {
      */
     requestBody: ChangePlanRequest,
   }): CancelablePromise<AccountResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/account/plan',
       body: requestBody,
@@ -710,7 +718,7 @@ export class AccountService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AccountResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/account/billing',
       headers: {
@@ -762,7 +770,7 @@ export class AccountService {
      */
     window?: '1h' | '24h' | '7d',
   }): CancelablePromise<AccountSLOResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/slo',
       query: {
@@ -772,6 +780,32 @@ export class AccountService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Account health.
+   * Returns what may stop the calling account from working: restrictions
+   * such as a suspension, failed payment or unverified email with the
+   * next step, failed deployments from the last 7 days, custom domains
+   * that are not serving, and API requests refused in the last 24 hours
+   * with their problem codes and request ids. Internal review details are
+   * never included. Available to suspended and past-due accounts.
+   *
+   * @returns AccountHealth The account health checks.
+   * @throws ApiError
+   */
+  public static getAccountHealth(): CancelablePromise<AccountHealth> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/health',
+      errors: {
+        401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -799,7 +833,7 @@ export class AccountService {
      */
     includeSecrets?: boolean,
   }): CancelablePromise<AccountExportResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/export',
       query: {
@@ -817,7 +851,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static restoreAccount(): CancelablePromise<AccountResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/restore',
       errors: {
@@ -839,7 +873,7 @@ export class AccountService {
      */
     provider: BillingProvider,
   }): CancelablePromise<BillingConnectionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/billing-connections/{provider}',
       path: {
@@ -875,7 +909,7 @@ export class AccountService {
     provider: BillingProvider,
     requestBody: PutBillingConnectionRequest,
   }): CancelablePromise<BillingConnectionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/billing-connections/{provider}',
       path: {
@@ -905,7 +939,7 @@ export class AccountService {
      */
     provider: BillingProvider,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/billing-connections/{provider}',
       path: {
@@ -940,7 +974,7 @@ export class AccountService {
      */
     limit?: number,
   }): CancelablePromise<StatementInvoiceListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/statement-invoices',
       query: {
@@ -967,7 +1001,7 @@ export class AccountService {
      */
     limit?: number,
   }): CancelablePromise<BillingRunListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/billing-runs',
       query: {
@@ -1004,7 +1038,7 @@ export class AccountService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<BillingRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/billing-runs',
       headers: {
@@ -1033,7 +1067,7 @@ export class AccountService {
      */
     id: string,
   }): CancelablePromise<BillingRunResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/billing-runs/{id}',
       path: {
@@ -1073,7 +1107,7 @@ export class AccountService {
      */
     limit?: number,
   }): CancelablePromise<BillingRunItemListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/billing-runs/{id}/items',
       path: {
@@ -1097,7 +1131,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static getBillingRunSchedule(): CancelablePromise<BillingRunScheduleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/billing-run-schedule',
       errors: {
@@ -1121,7 +1155,7 @@ export class AccountService {
   }: {
     requestBody: PutBillingRunScheduleRequest,
   }): CancelablePromise<BillingRunScheduleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/billing-run-schedule',
       body: requestBody,
@@ -1140,7 +1174,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static deleteBillingRunSchedule(): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/billing-run-schedule',
       errors: {
@@ -1156,7 +1190,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static getOverageCap(): CancelablePromise<AccountOverageCapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/overage-cap',
       errors: {
@@ -1201,7 +1235,7 @@ export class AccountService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AccountResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/overage-cap',
       headers: {
@@ -1227,7 +1261,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static getEgressOverage(): CancelablePromise<EgressOverageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/egress-overage',
       errors: {
@@ -1259,7 +1293,7 @@ export class AccountService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<EgressOverageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/egress-overage',
       headers: {
@@ -1287,7 +1321,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static listPreviews(): CancelablePromise<PreviewList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/previews',
       errors: {
@@ -1317,7 +1351,7 @@ export class AccountService {
      */
     key: string,
   }): CancelablePromise<Preview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/previews/{key}',
       path: {
@@ -1350,7 +1384,7 @@ export class AccountService {
      */
     key: string,
   }): CancelablePromise<Preview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/previews/{key}',
       path: {
@@ -1382,7 +1416,7 @@ export class AccountService {
    * @throws ApiError
    */
   public static getAccountEgressAllowlistExtra(): CancelablePromise<AccountEgressAllowlistExtraResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/egress_allowlist_extra',
       errors: {
@@ -1417,7 +1451,7 @@ export class AccountService {
   }: {
     requestBody: SetAccountEgressAllowlistExtraRequest,
   }): CancelablePromise<AccountEgressAllowlistExtraResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/account/egress_allowlist_extra',
       body: requestBody,

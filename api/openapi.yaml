@@ -340,6 +340,206 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/support/notifications:
+    get:
+      tags:
+      - support
+      operationId: personalSupportNotificationsFeed
+      summary: List personal support notifications
+      description: Personal support. Metadata-only updates for the current caller. Read state is personal to this account and support audience. Private notes never create customer notifications.
+      parameters:
+      - name: before
+        in: query
+        required: false
+        description: Sequence from the previous notification page. Applies to personalSupportNotificationsFeed.
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: unread
+        in: query
+        required: false
+        description: Return only unread updates. Applies to personalSupportNotificationsFeed.
+        schema:
+          type: boolean
+          default: false
+      responses:
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+        '200':
+          description: Current caller notification feed and scoped unread count. Applies to personalSupportNotificationsFeed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportNotificationPage'
+      security:
+      - bearerAuth: []
+  /v1/support/tickets/{ticket}/read:
+    post:
+      tags:
+      - support
+      operationId: personalSupportMarkNotificationsRead
+      summary: Mark personal support updates read
+      description: Personal support. Marks only this caller's existing ticket notifications through the observed sequence. Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt or expected ticket revision is required.
+      parameters:
+      - name: ticket
+        in: path
+        required: true
+        description: Support ticket UUID in this scope. Applies to personalSupportMarkNotificationsRead.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Read state committed without changing the ticket revision. Applies to personalSupportMarkNotificationsRead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportReadResult'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportReadRequest'
+  /v1/orgs/{org}/support/notifications:
+    get:
+      tags:
+      - support
+      operationId: organizationSupportNotificationsFeed
+      summary: List organization support notifications
+      description: Organization support. Metadata-only updates for the current caller. Read state is personal to this account and support audience. Private notes never create customer notifications.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. Applies to organizationSupportNotificationsFeed.
+        schema:
+          type: string
+      - name: before
+        in: query
+        required: false
+        description: Sequence from the previous notification page. Applies to organizationSupportNotificationsFeed.
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+      - name: unread
+        in: query
+        required: false
+        description: Return only unread updates. Applies to organizationSupportNotificationsFeed.
+        schema:
+          type: boolean
+          default: false
+      responses:
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+        '200':
+          description: Current caller notification feed and scoped unread count. Applies to organizationSupportNotificationsFeed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportNotificationPage'
+      security:
+      - bearerAuth: []
+  /v1/orgs/{org}/support/tickets/{ticket}/read:
+    post:
+      tags:
+      - support
+      operationId: organizationSupportMarkNotificationsRead
+      summary: Mark organization support updates read
+      description: Organization support. Marks only this caller's existing ticket notifications through the observed sequence. Later updates stay unread. Repeating the request is intrinsically idempotent; no permanent receipt or expected ticket revision is required.
+      parameters:
+      - name: org
+        in: path
+        required: true
+        description: Organization slug; current owner or administrator membership is required. Applies to organizationSupportMarkNotificationsRead.
+        schema:
+          type: string
+      - name: ticket
+        in: path
+        required: true
+        description: Support ticket UUID in this scope. Applies to organizationSupportMarkNotificationsRead.
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Read state committed without changing the ticket revision. Applies to organizationSupportMarkNotificationsRead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupportReadResult'
+        '400':
+          $ref: '#/components/responses/SupportInvalid'
+        '401':
+          $ref: '#/components/responses/SupportUnauthenticated'
+        '403':
+          $ref: '#/components/responses/SupportForbidden'
+        '404':
+          $ref: '#/components/responses/SupportMissing'
+        '409':
+          $ref: '#/components/responses/SupportConflict'
+        '413':
+          $ref: '#/components/responses/SupportTooLarge'
+        '429':
+          $ref: '#/components/responses/SupportLimited'
+        '503':
+          $ref: '#/components/responses/SupportUnavailable'
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportReadRequest'
   /v1/support/tickets:
     get:
       tags:
@@ -2798,6 +2998,428 @@ paths:
         '403': {description: Administrator access or MFA requirement not satisfied}
         '404': {description: Retirement unavailable to this account}
         '409': {description: "Retirement is leased, terminal or expired"}
+  /v1/delegated-tool-invocations/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Canonical nonzero UUID retained for one delegated attempt}
+    get:
+      operationId: getDelegatedToolInvocation
+      summary: Read a receipt through its exact active invocation grant
+      description: Personal agent or MCP-login key with apps-read only. Rechecks current key, grant, application ownership and project limits on every read. Only the original key and grant can read the retained sanitized runtime result. Revocation or expiry denies access. This operation never starts work.
+      responses:
+        '200':
+          description: Grant-scoped receipt with private noncacheable runtime evidence
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationRecord'}
+        '400': {description: Delegated receipt UUID is malformed}
+        '403': {description: Personal agent connection or native read scope is missing}
+        '404': {description: Delegated receipt or its current grant is inaccessible}
+    put:
+      operationId: beginDelegatedToolInvocation
+      summary: Record one explicitly approved open-tool call under an exact grant
+      description: Requires a personal apps-read agent key, an active allow-invocation grant for the exact version/tool, and native MFA policy. Does not require deploy-write. APID freezes grant, key, application and project identities. Only created=true permits one bounded worker launch; dispatch is a separate atomic transition. No application token, arbitrary URL or argument body is stored. Reusing the UUID never renews execution permission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DelegatedToolInvocationIntent'}
+      responses:
+        '200':
+          description: First delegated insertion or retained fact without another worker grant
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationReceipt'}
+        '400': {description: Delegated call consent or bounded intent is invalid}
+        '403': {description: Delegated creation scope or MFA policy is not satisfied}
+        '404': {description: "Exact invocation grant, tool or native target is unavailable"}
+        '409': {description: Delegated request identity was reused with changed intent or grant}
+        '429': {description: Shared account call concurrency or retained receipt quota reached}
+  /v1/delegated-tool-invocations/{id}/execute:
+    post:
+      operationId: executePrivateToolInvocation
+      summary: Start one exact credential-bound private invocation; native read scope and MFA policy apply
+      description: Requires operator enablement and an active owner-created credential binding. Only a newly created native identity launches a bounded worker. Arguments are transient; no provider credential is returned or stored in the journal. Replays recover the retained fact without another execution. Rotation, deletion, expiry and revocation prevent subsequent dispatch or receipt access. Only the native worker may dispatch or report private outcomes.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Caller-retained canonical nonzero invocation UUID}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PrivateToolInvocationRequest'}
+      responses:
+        '200':
+          description: Single-shot receipt; created authorizes only the native worker, never the caller
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationReceipt'}
+        '400': {description: Invalid or oversized private invocation intent or arguments}
+        '403': {description: Agent scope or MFA policy not satisfied}
+        '404': {description: Exact tool grant or current credential binding is unavailable}
+        '409': {description: "Immutable invocation identity conflicts, deployment changed, or managed renewal is already in progress"}
+        '429': {description: Account active-call or retained-identity limit reached}
+        '503': {description: "Private invocation is disabled, native workers are unavailable, or the managed connection requires owner reconnection"}
+  /v1/delegated-tool-invocations/{id}/{action}:
+    post:
+      operationId: changeDelegatedToolInvocation
+      summary: Dispatch, cancel or finish a call through its frozen invocation grant
+      description: Requires the original personal agent key, the same active invocation grant and native MFA policy. Dispatch locks the current grant, key, app and journal row before granting only the first queued-to-running transition. Lost dispatch replies are never replayed as permission. Cancellation after dispatch requests stopping the worker wait without rolling back remote effects. Outcomes are immutable; unknown outcomes never authorize retry.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Existing frozen delegated invocation identity}
+        - {name: action, in: path, required: true, schema: {type: string, enum: [dispatch, cancel, outcome]}, description: Explicit delegated journal transition}
+      requestBody:
+        required: true
+        description: Empty object to dispatch or cancel; complete bounded worker evidence to report an outcome.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - {type: object, maxProperties: 0}
+                - {$ref: '#/components/schemas/ToolInvocationOutcome'}
+      responses:
+        '200':
+          description: Updated delegated journal fact with a fresh single-use dispatch flag
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationReceipt'}
+        '400': {description: Delegated journal action or complete result is malformed}
+        '403': {description: Delegated mutation authority or MFA policy was not satisfied}
+        '404': {description: Original invocation binding or currently active grant cannot be accessed}
+        '409': {description: Delegated target is unavailable or retained terminal evidence differs}
+  /v1/tool-invocations/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Caller-retained UUID for the local registered-tool invocation journal}
+    get:
+      operationId: getToolInvocation
+      summary: Read an account-owned invocation receipt and sanitized result
+      description: Requires an unscoped personal-account connection with deploy-write permission. Runtime results are not disclosed by registry-read permission. This read never dispatches work.
+      responses:
+        '200':
+          description: Durable invocation fact with private noncacheable runtime data
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationRecord'}
+        '400': {description: Malformed invocation identity}
+        '403': {description: Runtime-data authority is missing}
+        '404': {description: Invocation does not belong to this account}
+    put:
+      operationId: beginToolInvocation
+      summary: Journal explicit consent for one exact registered tool invocation
+      description: Requires deploy-write permission and MFA policy. Only created=true authorizes starting one local worker. The native dispatch transition is still required before tools-call. Arguments and credentials are never stored in the intent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolInvocationIntent'}
+      responses:
+        '200':
+          description: New queued receipt or retained attempt without renewed execution authority
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationReceipt'}
+        '400': {description: Invalid consent or incomplete publication metadata}
+        '403': {description: Invocation creation permission or MFA policy is not satisfied}
+        '404': {description: Exact publication or deployment is inaccessible}
+        '409': {description: Request identity changed or exact version is unavailable}
+        '429': {description: Account invocation concurrency or retained-identity limit reached}
+  /v1/tool-invocations/{id}/{action}:
+    post:
+      operationId: changeToolInvocation
+      summary: Acquire single dispatch authority or report invocation cancellation and outcome
+      description: Requires deploy-write authority and MFA policy. Dispatch grants only the first queued-to-running transition after native target revalidation. Queued cancellation prevents dispatch; running cancellation requests stopping the local wait and cannot roll back remote effects. Terminal outcomes are immutable. Owner inspection and cancellation also cover delegated records; dispatch and outcome reporting for those records must use the original grant-scoped route.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Existing account-owned invocation UUID}
+        - {name: action, in: path, required: true, schema: {type: string, enum: [dispatch, cancel, outcome]}, description: Single-dispatch transition or explicit receipt mutation}
+      requestBody:
+        required: true
+        description: Empty object for dispatch or cancel; an outcome object for outcome reporting.
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - {type: object, maxProperties: 0}
+                - {$ref: '#/components/schemas/ToolInvocationOutcome'}
+      responses:
+        '200':
+          description: Retained receipt; dispatch_granted is never replayed by this API
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolInvocationReceipt'}
+        '400': {description: Invalid transition or malformed bounded result evidence}
+        '403': {description: Receipt mutation permission or MFA policy is not satisfied}
+        '404': {description: Invocation or target deployment is unavailable to this account}
+        '409': {description: Terminal evidence changed or dispatch binding no longer matches}
+  /v1/tool-publications/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Immutable publication identity}
+    get:
+      operationId: getToolPublication
+      summary: Read a private publication journal; requires account-wide apps-read scope
+      description: Unscoped personal-account connections only. Agent and MCP-login keys additionally require explicit deploy-write scope to inspect the account-wide publication journal. This does not grant registry discovery or invocation. An abandoned attempt is outcome_unknown after its deadline and never authorizes replay.
+      responses:
+        '200':
+          description: Retained publication evidence; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolPublicationRecord'}
+        '400': {description: Invalid identity}
+        '403': {description: Scoped principal cannot read account-wide evidence}
+        '404': {description: Record unavailable to this account}
+    put:
+      operationId: beginToolPublication
+      summary: Journal a reviewed publication before execution; requires deploy-write scope and MFA policy
+      description: Only created=true authorizes the publisher to start once. Duplicate identities return created=false; changed reviews conflict. Local paths and credentials are excluded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolPublicationIntent'}
+      responses:
+        '200':
+          description: Created flag and immutable journal record
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BeginToolPublicationResponse'}
+        '400': {description: Invalid or oversized review}
+        '403': {description: Publication review requires account authority and the configured MFA policy}
+        '409': {description: Identity already binds another review or app identity changed}
+        '429': {description: Preview journal limit of 256 identities reached}
+  /v1/tool-publications/{id}/outcome:
+    post:
+      operationId: finishToolPublication
+      summary: Retain immutable publication evidence; requires deploy-write scope and MFA policy
+      description: Publisher-attested runtime catalogs and tests are bound to a native owned serving deployment and source archive. Identical terminal writes are idempotent. This endpoint executes no tools.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Retained publication identity}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolPublicationOutcome'}
+      responses:
+        '200':
+          description: Final publication record
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolPublicationRecord'}
+        '400': {description: Catalog or test evidence does not match review}
+        '403': {description: Account authority or MFA requirement not satisfied}
+        '404': {description: Publication or deployment unavailable to this account}
+        '409': {description: Outcome immutable or publisher deadline elapsed}
+  /v1/tool-oauth-connections:
+    get:
+      operationId: listToolOAuthConnections
+      summary: List retained execution OAuth connections as the personal administrator
+      description: Owner metadata only; no token values, ciphertext or renewal leases. This read never exchanges credentials.
+      parameters:
+        - {name: cursor, in: query, schema: {type: string, format: uuid}, description: "Last retained connection UUID from next_cursor; omitted starts the owner-scoped list"}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 20, default: 20}, description: "Maximum retained OAuth connections returned for this page"}
+      responses:
+        '200':
+          description: Retained connections; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthConnectionPage'}
+        '400': {description: Invalid page bounds}
+        '403': {description: "Listing execution connections requires a personal administrator and current MFA policy"}
+  /v1/tool-oauth-connections/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: "Owner-assigned immutable execution connection UUID; reconnect uses a new UUID"}
+    put:
+      operationId: putToolOAuthConnection
+      summary: Approve an immutable execution OAuth connection; administrator and MFA policy required
+      description: Binds existing ordinary default-environment app secret references and their ciphertext digests. No credentials are accepted. Identical intent retains the original state; changed intent requires a new UUID. Creating intent performs no provider request. Guided connections require separate browser authorization before exact tool grants. Monitoring OAuth consent is never reused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolOAuthConnectionIntent'}
+      responses:
+        '200':
+          description: Retained owner configuration and credential-free renewal metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}
+        '400': {description: Invalid immutable provider configuration or secret reference}
+        '403': {description: "Creating immutable execution authority requires personal administrator access and MFA"}
+        '404': {description: Application or ordinary source secret unavailable}
+        '409': {description: UUID already names different immutable intent}
+        '429': {description: Retained account or per-app connection capacity reached}
+    get:
+      operationId: getToolOAuthConnection
+      summary: Inspect an exact execution OAuth connection as the personal administrator
+      responses:
+        '200':
+          description: Credential-free metadata; no refresh is attempted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}
+        '400': {description: Invalid connection UUID}
+        '403': {description: "Reading this execution connection requires personal administrator access and MFA"}
+        '404': {description: Connection unavailable to this account}
+    delete:
+      operationId: revokeToolOAuthConnection
+      summary: Locally revoke execution use and discard stored renewed credentials
+      description: Irreversible and idempotent. Fences subsequent dispatch and renewal completion; cannot undo dispatched effects. Does not revoke the provider grant or delete the original app secret.
+      responses:
+        '200':
+          description: Retained revoked connection metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}
+        '400': {description: Invalid revocation UUID}
+        '403': {description: "Revoking execution credentials requires personal administrator access and MFA"}
+        '404': {description: "Execution connection to revoke is unavailable within the caller personal account"}
+  /v1/tool-oauth-connections/{id}/authorization:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: "Execution connection UUID whose single browser authorization attempt is inspected or consumed"}
+    get:
+      operationId: getToolOAuthAuthorization
+      summary: Inspect a guided execution authorization attempt as the personal administrator
+      description: MFA policy applies. Returns phase and expiry without consent URLs, callback state, codes, verifiers or tokens. Never exchanges a code or renews a credential.
+      responses:
+        '200':
+          description: Owner-only authorization status; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthAuthorizationResponse'}
+        '400': {description: Invalid identity or connection is not guided}
+        '403': {description: "Inspecting a PKCE authorization requires personal administrator access and MFA"}
+        '404': {description: "No guided authorization is retained for this account and execution connection"}
+    post:
+      operationId: authorizeToolOAuthConnection
+      summary: Begin or complete owner-approved execution OAuth with S256 PKCE
+      description: Owner and MFA policy required. One authorization attempt per fresh guided connection. Begin returns an expiring browser URL bound to an exact IPv4 loopback callback. Same pending begin and callback return the original URL. Completion consumes state and records an exclusive lease before code exchange; no code exchange is replayed after consumption, failure or restart. Issued tokens are sealed directly in Account-domain state, never app environment secrets. Successful provider authorization does not grant an agent access to any tool. Reconnect requires a new connection UUID and exact tool grants. Provider-side revocation is separate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolOAuthAuthorizationRequest'}
+      responses:
+        '200':
+          description: Owner-only consent URL or final connection state; never includes provider tokens or verifiers
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthAuthorizationResponse'}
+        '400': {description: "Invalid action, callback, code or issuer binding"}
+        '403': {description: "Issuing or consuming browser authorization requires personal administrator access and MFA"}
+        '404': {description: Connection or frozen app authority unavailable}
+        '409': {description: "Attempt consumed, identity already used, callback changed or connection revoked"}
+        '503': {description: Credential storage unavailable or fresh owner authorization required}
+  /v1/delegated-tool-connections/{grant}:
+    get:
+      operationId: getDelegatedToolConnection
+      summary: Read credential-free execution connection status through an exact active tool grant
+      description: Personal agent key, immutable app/project binding and exact invocation grant are checked on every read. No provider configuration, secret names, tokens or ciphertext are returned. Does not trigger renewal.
+      parameters:
+        - {name: grant, in: path, required: true, schema: {type: string, format: uuid}, description: "Exact active invocation-grant UUID bound to the calling personal agent key"}
+      responses:
+        '200':
+          description: Status bound to this exact granted tool; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolOAuthConnectionStatus'}
+        '400': {description: Invalid grant UUID}
+        '403': {description: Personal agent read authority required}
+        '404': {description: Grant or managed connection unavailable within current authority}
+  /v1/tool-grants:
+    get:
+      operationId: listToolGrants
+      summary: List retained tool grants as the unscoped personal administrator
+      description: Agent connections cannot enumerate delegation records. Revoked and expired grants remain readable by the owner.
+      parameters:
+        - {name: cursor, in: query, schema: {type: string, format: uuid}, description: Continuation from the previous page}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 20, default: 20}, description: Maximum grants per page}
+      responses:
+        '200':
+          description: Retained grant page; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolGrantPage'}
+        '400': {description: "Invalid grant-list cursor or requested page bound"}
+        '403': {description: Unscoped personal administrator required}
+  /v1/tool-grants/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, format: uuid}, description: Caller-retained canonical nonzero grant UUID}
+    get:
+      operationId: getToolGrant
+      summary: Read an exact retained delegation as the personal administrator
+      responses:
+        '200':
+          description: Immutable grant intent and revocation metadata; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolGrantRecord'}
+        '400': {description: Invalid grant identity}
+        '403': {description: Personal administrator needed to inspect a retained grant}
+        '404': {description: Grant unavailable to this account}
+    put:
+      operationId: putToolGrant
+      summary: Delegate one exact tool to an existing agent connection; administrator and MFA policy required
+      description: Grants one connection key an immutable version/tool within its existing project scope for at most 30 days. Identical requests return the retained record including revocation; changed intent conflicts. This endpoint never starts execution or exposes credentials.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolGrantIntent'}
+      responses:
+        '200':
+          description: Retained exact grant
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolGrantRecord'}
+        '400': {description: Invalid binding or expiry beyond grant or credential lifetime}
+        '403': {description: Personal administrator or MFA policy not satisfied}
+        '404': {description: Connection or completed tool version unavailable within its project scope}
+        '409': {description: Grant identity already names another immutable intent}
+        '429': {description: Retained account or per-key grant limit reached}
+    delete:
+      operationId: revokeToolGrant
+      summary: Revoke exact delegated tool access; administrator and MFA policy required
+      description: Repeated revocation retains the original timestamp. Registry reads recheck authority on every request; this endpoint does not roll back external effects.
+      responses:
+        '200':
+          description: Retained revoked grant
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolGrantRecord'}
+        '400': {description: Grant revocation requires a canonical nonzero UUID}
+        '403': {description: Grant revocation exceeds current authority or MFA policy}
+        '404': {description: No retained grant can be revoked by this personal account}
+  /v1/tool-registry/{version}/tools/{name}:
+    get:
+      operationId: getRegistryTool
+      summary: Read a single-tool catalog projection; apps-read and exact delegated access required for agents
+      description: Returns only the selected tool and its declared application scopes. Agents require a current exact grant, live personal connection key and matching current app/project identities. Full publication catalogs and unrelated test evidence remain owner-only. No execution or runtime availability is implied.
+      parameters:
+        - {name: version, in: path, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Exact immutable publication version}
+        - {name: name, in: path, required: true, schema: {type: string, minLength: 1, maxLength: 128}, description: Exact published tool name}
+      responses:
+        '200':
+          description: Canonical single-tool catalog with separate projected and original digests; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolRegistryTool'}
+        '400': {description: Invalid version or tool name}
+        '403': {description: Principal cannot use this discovery surface}
+        '404': {description: Tool or exact grant unavailable within current authority}
+  /v1/tool-registry:
+    get:
+      operationId: searchToolRegistry
+      summary: Search private completed tool versions; apps-read plus exact grants for agent connections
+      description: Owners read account summaries. Personal agent connections see only actively granted version/tool names within their current project limits. Registry membership grants no invocation permission and does not establish current availability. Shared organizations and tenant/app principals remain excluded.
+      parameters:
+        - {name: query, in: query, schema: {type: string, maxLength: 128}, description: Case-insensitive app or tool-name substring}
+        - {name: cursor, in: query, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Continuation returned by the previous page}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 20, default: 20}, description: Number of publication versions}
+      responses:
+        '200':
+          description: Version summaries; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolRegistryPage'}
+        '400': {description: Invalid query or continuation}
+        '403': {description: Principal cannot search this registry surface}
+        '404': {description: Personal agent connection unavailable within current authority}
   /v1/mcp-connection-health:
     get:
       operationId: getMCPConnectionHealth
@@ -13904,6 +14526,12 @@ paths:
         pays for another account or organization answers 409
         `billing_email_in_use`.
 
+        The optional `salesperson_code` requires a verified browser session and
+        applies only before the first paid personal-account purchase. Invalid or
+        unavailable codes return 400; an existing different referral or prior
+        paid purchase returns 409. A saved referral survives checkout retries
+        and provider failures. Only a confirmed invoice payment earns credit.
+
         Asking for the plan the account already pays for keeps its
         subscription: a scheduled cancellation or downgrade is undone and the
         200 carries `plan_change_status: scheduled_change_undone`. A
@@ -14029,6 +14657,28 @@ paths:
         '402': { $ref: '#/components/responses/PlanPerAppMetricsNotAllowed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/account/health:
+    get:
+      tags: [account]
+      operationId: getAccountHealth
+      summary: Account health.
+      description: |
+        Returns what may stop the calling account from working: restrictions
+        such as a suspension, failed payment or unverified email with the
+        next step, failed deployments from the last 7 days, custom domains
+        that are not serving, and API requests refused in the last 24 hours
+        with their problem codes and request ids. Internal review details are
+        never included. Available to suspended and past-due accounts.
+      responses:
+        '200':
+          description: The account health checks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountHealth'
+                example: {"generated_at":"2026-11-12T10:00:00Z","attention":1,"restrictions":[{"kind":"email_unverified","title":"Verify your email address","detail":"Some actions are refused until your email address is verified.","action":"Resend verification email","action_url":"/dashboard/account"}],"failed_deployments":[],"domain_issues":[],"refused_requests":{"window_hours":24,"total":2,"by_code":[{"code":"email_unverified","count":2,"last_at":"2026-11-12T09:58:00Z"}],"recent":[{"occurred_at":"2026-11-12T09:58:00Z","route":"POST /v1/apps","code":"email_unverified","request_id":"req_01"}]}}
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/account/export:
     get:
       tags: [account]
@@ -14543,6 +15193,38 @@ paths:
                 $ref: '#/components/schemas/ProgrammaticAuthResponse'
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/InvalidCredentials' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/referrals/selection:
+    post:
+      tags: [auth]
+      x-internal: true
+      operationId: selectReferralCode
+      summary: Preserve an explicitly entered referral code for OAuth signup.
+      description: Rate limited pre-signup request. An empty code clears the pending selection; no customer identity is returned. The host-only selection expires in 15 minutes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [referral_code]
+              properties:
+                referral_code: { type: string, pattern: '^([A-Za-z0-9]{6})?$' }
+      responses:
+        '200':
+          description: Selection accepted; it grants no account access.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/auth/signup/magic-link:
@@ -18102,6 +18784,42 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/runtime/data-api/budget:
+    post:
+      tags: [managed_postgres]
+      operationId: admitDataAPISharedBudget
+      summary: Spend shared Data API request credit
+      description: Private runtime surface. Requires a dedicated gregale:data-api:budget workload assertion. Account and app come from the assertion. The body contains a digest of a verified subject or tenant and owner deployment policy. Admission spends one credit atomically across replicas; a lost reply may spend credit without customer SQL. No automatic replay is permitted.
+      x-internal: true
+      security:
+        - dataAPIBudgetWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version, key, requests, window_seconds]
+              properties:
+                version: { type: integer, enum: [1] }
+                key: { type: string, pattern: '^[a-f0-9]{64}$' }
+                requests: { type: integer, minimum: 1, maximum: 1000000 }
+                window_seconds: { type: integer, minimum: 1, maximum: 3600 }
+      responses:
+        '200':
+          description: Admission decision; a refusal does not dispatch customer SQL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [allowed, retry_after_seconds]
+                properties:
+                  allowed: { type: boolean }
+                  retry_after_seconds: { type: integer, minimum: 1, maximum: 3600 }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/runtime/data-api/events:
     post:
@@ -24054,7 +24772,7 @@ paths:
         - name: method
           in: query
           required: false
-          schema: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+          schema: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER] }
           description: "Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods."
         - name: group_by
           in: query
@@ -27541,6 +28259,9 @@ paths:
                 healthcheck:
                   type: string
                   description: "JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector."
+                readiness_probe:
+                  type: string
+                  description: "JSON steady-state readiness probe with the CreateDeploymentOverrides.readiness_probe shape. Overrides gregale.yaml hosting.readiness_probe for this deployment."
                 override_env:
                   type: string
                   maxLength: 1048576
@@ -27549,7 +28270,7 @@ paths:
                   type: string
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
-                  description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; '.' explicitly selects the archive root."
+                  description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; when the archive does not contain that directory and its own root holds a Dockerfile, package.json, requirements.txt, pyproject.toml, go.mod or gregale.yaml, the archive root is used. '.' explicitly selects the archive root."
                 scope:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
@@ -39884,6 +40605,35 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/automation/resume:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project whose stage automation is resumed.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Stage whose paused automation is enabled; production is refused.
+        schema: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
+    post:
+      tags: [projects]
+      operationId: resumeEnvironmentAutomation
+      summary: Enable the crons a full environment clone copied paused.
+      description: Enables only the copied crons the source environment ran. A cron the source had disabled, or one enabled or disabled since, stays as it is.
+      responses:
+        '200':
+          description: Crons enabled in the environment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResumeEnvironmentAutomationResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments:
     parameters:
       - name: slug
@@ -40068,6 +40818,129 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: Branches are unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/branch:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project that owns the branch to show.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: The environment branch to show.
+        schema: { type: string }
+    get:
+      tags: [projects]
+      operationId: getProjectEnvironmentBranch
+      summary: Show an environment branch.
+      description: |
+        Reports the branch's parent, branch point, expiry, data state, the
+        managed PostgreSQL copies it owns, and each workload with its URL in
+        the branch and its deployment there. A workload with no live
+        deployment in the branch reports `starting`.
+      responses:
+        '200':
+          description: The branch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable, so the branch cannot be shown.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/branch/extend:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project that owns the branch to extend.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: The environment branch to extend.
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: extendProjectEnvironmentBranch
+      summary: Move an environment branch's expiry.
+      description: |
+        Sets the branch's expiry to now plus `ttl`, earlier or later. A branch
+        lives at most 30 days after its creation; a branch with managed
+        PostgreSQL copies at most 7 days, so its copies stay in the plan's
+        PostgreSQL branch allowance. The copies' expiry moves with the
+        branch. A branch whose data is still being copied cannot be extended
+        until its data is ready.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExtendProjectEnvironmentBranchRequest' }
+      responses:
+        '200':
+          description: The branch with its new expiry.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable, the expiry is past the branch's longest lifetime, or its data is still being copied.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/branch/reset:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project that owns the branch to reset.
+        schema: { type: string }
+      - name: environment
+        in: path
+        required: true
+        description: The environment branch to reset.
+        schema: { type: string }
+    post:
+      tags: [projects]
+      operationId: resetProjectEnvironmentBranch
+      summary: Make an environment branch again from its parent.
+      description: |
+        Deletes the branch and creates it again from its parent with the same
+        slug, egress, private-network mode and time to live. Its workloads
+        are published from the parent's current builds and its data is copied
+        again as of now. Work done in the branch is discarded, and its
+        workloads get new URLs. A branch with branches of its own cannot be
+        reset.
+      responses:
+        '200':
+          description: The new branch and its workloads.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The caller may not branch the parent.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Branches are unavailable, or the branch has branches of its own.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -55533,6 +56406,132 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/agent-connections/self/undo/plan:
+    post:
+      tags: [keys]
+      operationId: planSelfAgentUndo
+      summary: Plan undoing the calling agent's own changes.
+      description: |
+        An agent key plans an undo of its own changes, like a person's plan.
+        Applying it needs a person's approval.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: The undo plan.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoPlan' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/self/undo:
+    post:
+      tags: [keys]
+      operationId: applySelfAgentUndo
+      summary: Undo the calling agent's own changes, once a person approves.
+      description: |
+        An agent key applies a reviewed undo of its own changes. It always
+        waits for a person's approval: the first call answers 428
+        approval_required with the request to wait on (category undo, bound
+        to this body and so to the plan digest); after the approval, the same
+        call applies it once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: What the undo did to each change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/{id}/undo/plan:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose changes to undo.
+        schema: { type: string }
+    post:
+      tags: [keys]
+      operationId: planAgentUndo
+      summary: Plan undoing a connected agent's changes.
+      description: |
+        Lists the agent's changes the request selects, newest first (by
+        default those of the last 24 hours; changes are kept 7 days), with
+        what undoing each will do: undo it, leave it because it cannot be
+        undone or because someone changed it again since, or nothing because
+        it was already undone. Apply the plan with its plan_digest. An agent
+        key cannot plan or apply an undo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: The undo plan for the connected agent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoPlan' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/agent-connections/{id}/undo:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: API key id of the connected agent whose changes are undone.
+        schema: { type: string }
+    post:
+      tags: [keys]
+      operationId: applyAgentUndo
+      summary: Undo a connected agent's changes.
+      description: |
+        Applies a reviewed plan: the same request with the plan's
+        plan_digest. Changes are undone newest first through the same API
+        the agent used, as the caller; a change that cannot be undone leaves
+        the older changes of its resource as they are. 409 when the changes
+        or their state differ from the plan. Needs an admin credential.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: What the undo did to each of the connected agent's changes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/agent-connections/{id}/activity:
     parameters:
       - name: id
@@ -55688,6 +56687,73 @@ paths:
               schema: { $ref: '#/components/schemas/AgentConnectionsRevokeAllResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-connections/{id}/undo/plan:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: API key id of the organization agent whose changes to undo.
+        schema: { type: string }
+    post:
+      tags: [orgs, keys]
+      operationId: planOrgAgentUndo
+      summary: Plan undoing the changes of an agent acting in an organization.
+      description: |
+        The organization's variant of planning an undo, for its owners and
+        admins.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: The undo plan for the organization agent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoPlan' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/agent-connections/{id}/undo:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: API key id of the organization agent whose changes are undone.
+        schema: { type: string }
+    post:
+      tags: [orgs, keys]
+      operationId: applyOrgAgentUndo
+      summary: Undo the changes of an agent acting in an organization.
+      description: |
+        The organization's variant of applying a reviewed undo plan, for its
+        owners and admins.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AgentUndoRequest' }
+      responses:
+        '200':
+          description: What the undo did to each of the organization agent's changes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentUndoResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/orgs/{slug}/agent-connections/{id}/activity:
@@ -58545,6 +59611,40 @@ paths:
         '403': { description: Rule coverage read denied by operator scope or MFA or allowlist policy. }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/admin/obs/serving-health:
+    get:
+      tags: [admin]
+      operationId: getObsServingHealth
+      summary: Inspect fleet serving-probe coverage against deployment intent.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Accepts no
+        query parameters and performs no writes or direct HTTP probe. Four strict
+        Prometheus queries share one pinned evaluation time and three-second
+        budget. Independent inventory identifies expected node/URL pairs; missing,
+        stale, inconsistent or unconfigured inventory never becomes healthy empty
+        coverage. An explicitly configured empty fleet is not_applicable.
+        Fresh deployed coverage-rule evaluations distinguish healthy, missing,
+        stale, invalid telemetry, disabled content validation, latency budget
+        mismatch and failing probes. Missing or old evaluations remain unknown.
+        Recorded policy must match current intent and evaluation timestamps must
+        agree. A healthy evaluation cannot hold green beyond its run age budget.
+        Known faults take precedence over unknown peer evaluations.
+        Returns at most 1000 expected pairs ordered by stable node name and URL
+        fingerprint. URL IDs are lowercase SHA-256 of exact configured URL bytes.
+        Raw URLs, response bodies, scrape addresses, source labels and provider
+        errors are excluded. Recording-rule semantics are trusted; this read does
+        not qualify notification delivery or independent watchdog receipt.
+      responses:
+        '200':
+          description: Bounded expected serving-probe coverage with explicit unknown evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsServingHealth' }
+        '400': { description: Serving health accepts no query parameters. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Serving health read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/admin/obs/input-health:
     get:
       tags: [admin]
@@ -58664,6 +59764,10 @@ paths:
         comments are never read or returned. A disabled or invalidly configured
         local Alertmanager reader is explicit. Source failures produce a partial
         HTTP 200 observation with null unavailable values.
+        Optional receiver_health is a separate assessment of deployment intent,
+        collector freshness and completed transport requests for reviewed receiver
+        roles. The top-level state and existing signals retain their aggregate
+        meaning. Cold baselines never invent successful historical delivery.
       responses:
         '200':
           description: Independent notification signals and integration counters with evidence quality.
@@ -59326,7 +60430,9 @@ paths:
       description: |
         Marks the company organization as deleted_pending. Live managed
         PostgreSQL databases must complete deletion first. Owner-only
-        (`org.delete`); personal organizations are immutable.
+        (`org.delete`); personal organizations are immutable. Needs a
+        signed-in browser session with a fresh step-up; an API key cannot
+        delete an organization. Owners and admins are emailed.
       responses:
         '204': { description: Org soft-deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -59334,7 +60440,9 @@ paths:
           description: |
             `403 Forbidden` — caller is authenticated but lacks the
             `org.delete` action. Owner-only. Stable code
-            `org_role_forbidden`.
+            `org_role_forbidden`. An API key gets
+            `browser_session_required`; a stale sign-in gets
+            `step_up_required`.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
@@ -60437,9 +61545,10 @@ paths:
         (a single PostgreSQL tx with `FOR UPDATE` locks on both
         rows). The exactly-one-owner invariant is enforced by the
         partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-        member of the org. For a Free organization, the recipient must have
+        member of the org whose account is active. For a Free organization, the recipient must have
         available Free-organization ownership capacity; admission is serialized
-        with organization creation and other incoming transfers.
+        with organization creation and other incoming transfers. Needs a
+        signed-in browser session; an API key gets `browser_session_required`.
       requestBody:
         required: true
         content:
@@ -60462,7 +61571,59 @@ paths:
           description: 'code: NotFound (new owner is not a member)'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '409':
-          description: 'code: org_last_owner (caller not the active owner OR new owner already owner)'
+          description: 'code: org_last_owner (caller not the active owner OR new owner already owner), or conflict (new owner''s account is suspended or pending deletion)'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/security-policy:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgSecurityPolicy
+      summary: Read the organization's security policy.
+      description: |
+        Any member can read whether the organization requires two-factor
+        authentication.
+      responses:
+        '200':
+          description: The organization's security policy.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/OrgSecurityPolicy' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: '`org_mfa_required` when the organization requires two-factor authentication and the caller has none.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [orgs]
+      operationId: putOrgSecurityPolicy
+      summary: Require or stop requiring two-factor authentication for members.
+      description: |
+        Owner-only (`org.manage_security`) and needs a fresh step-up. While
+        `require_mfa` is on, a member without two-factor authentication is
+        refused on the organization's routes with `org_mfa_required`, by
+        sessions and API keys alike, until they enrol. Turning it on needs
+        the caller to have two-factor authentication. Owners and admins
+        are emailed when the policy changes.
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/OrgSecurityPolicy' } }
+      responses:
+        '200':
+          description: The organization's security policy with the requested two-factor requirement applied.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/OrgSecurityPolicy' } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: '`org_role_forbidden` for a non-owner; `step_up_required` for a stale sign-in.'
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`conflict` when the caller turning the requirement on has no two-factor authentication.'
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -68115,6 +69276,108 @@ paths:
 
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/projects/scan/source-ref:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: scanOrgProjectSourceRef
+      summary: "Preview a company project from a connected repository ref."
+      description: "Fetches the repository at the given ref through the organization's own GitHub installation and runs the same read-only scanner as the company source upload. A member's personal installation is never used; the organization must own its resources and have GitHub connected. Requires the deploy role."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectSourceRefScanRequest'
+      responses:
+        '200':
+          description: "Company repository scan, workload partitions and deployment plan."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ValidationFailed' }
+        '413': { $ref: '#/components/responses/SourceTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/orgs/{organization}/projects/apply-plan:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: applyCachedOrgProjectPlan
+      summary: "Deploy a company project's reviewed source without another upload."
+      description: "Applies the exact archive retained by a company project scan in the same organization. A plan reviewed for a personal project or another organization is refused. The normal scanner and apply admission gates run again; the reviewed source expires after one hour. Requires the deploy role."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyCachedProjectPlanRequest' }
+      responses:
+        '200':
+          description: "Company project applied with per-workload deployment receipts."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyResponse' }
+        '403':
+          description: "The member lacks the deploy role or secret write permission."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: "The company plan is stale, blocked, or requires environment approval."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: "The reviewed company source expired or belongs elsewhere; scan again."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/orgs/{organization}/projects/safe-deploy:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: safeApplyOrgProject
+      summary: "Build an existing company HTTP project and atomically publish its ready release."
+      description: "The company form of the safe project deploy: candidates receive zero traffic and publish only after every candidate completes readiness. Takes the same release headers, attempt ID and plan token as the personal form. Requires the deploy role."
+      parameters:
+        - name: Project-Release-Mode
+          in: header
+          description: "Safe release mode for the company project; defaults to atomic."
+          schema: { type: string, enum: [atomic, atomic-verify, atomic-config-verify, atomic-migrate-verify, atomic-config-migrate-verify, atomic-verify-workers, atomic-config-verify-workers, atomic-migrate-verify-workers, atomic-config-migrate-verify-workers] }
+        - name: Deployment-Attempt-ID
+          in: header
+          required: true
+          description: "Durable identity for this company safe project submission."
+          schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+        - name: plan_token
+          in: query
+          description: "Company scan token bound to the safe release baseline."
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: '#/components/schemas/ProjectApplyRequest' }
+      responses:
+        '200':
+          description: "Accepted company candidate deployments and durable safe release state."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/orgs/{organization}/projects/scan:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -70891,6 +72154,112 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /v1/sales/inquiries/challenge:
+    get:
+      x-internal: true
+      tags: [auth]
+      operationId: salesInquiryChallenge
+      security: []
+      summary: Prepare an anonymous website sales inquiry
+      description: Requires the default-off sales intake flag. This opaque one-hour form token must be at least two seconds old when submitted. The challenge and submission share a separate ten-requests-per-minute IP budget.
+      responses:
+        '200':
+          description: Form check prepared
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [challenge, ready_after_ms, expires_in_seconds]
+                properties:
+                  challenge: { type: string }
+                  ready_after_ms: { type: integer }
+                  expires_in_seconds: { type: integer }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/sales/inquiries:
+    post:
+      x-internal: true
+      tags: [auth]
+      operationId: submitSalesInquiry
+      security: []
+      summary: Submit a contact or demo request from the website
+      description: |
+        Enabled only by FAAS_SALES_INTAKE_ENABLED and FAAS_SALES_ENABLED.
+        Browser writes must come from a trusted control-plane origin. A token
+        is consumed atomically with intake; retrying that token is idempotent
+        until expiry, including when a changed body is presented. Active emails
+        are deduplicated without overwriting staff data or ownership. Unknown,
+        paused, customer or unavailable salesperson codes enter manager review;
+        the response never reveals code validity or ownership. These messages
+        are unverified and grant no referral attribution, rewards or account access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, email, intent, message, challenge]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 120 }
+                email: { type: string, format: email, maxLength: 254 }
+                company: { type: string, maxLength: 200, default: '' }
+                intent: { type: string, enum: [contact, demo] }
+                message: { type: string, minLength: 1, maxLength: 1500, description: UTF-8 byte limit; other text limits are also measured in bytes. }
+                salesperson_code: { type: string, pattern: '^([A-Za-z0-9]{6})?$', default: '' }
+                challenge: { type: string }
+                website: { type: string, default: '', description: Leave blank. }
+      responses:
+        '202':
+          description: Inquiry accepted without disclosing routing details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted: { type: boolean }
+        '400':
+          description: Invalid form input or sales_challenge_invalid; refresh the form check before resubmitting an expired challenge.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/referrals/checkout:
+    get:
+      x-internal: true
+      tags: [auth]
+      operationId: checkoutReferralStatus
+      security: [{ cookieAuth: [] }]
+      summary: Check whether the signed-in account can add a salesperson code
+      description: |
+        Requires a verified browser session and the sales feature flag. API keys
+        are rejected. Eligibility is a display hint; the plan mutation checks it
+        again atomically with referral selection before starting payment.
+      responses:
+        '200':
+          description: Current first-purchase referral eligibility
+          headers:
+            Cache-Control: { schema: { type: string }, description: Always no-store. }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eligible]
+                properties:
+                  eligible: { type: boolean }
+                  reason: { type: string, enum: [already_attributed, not_first_purchase, unavailable] }
+                  code: { type: string, description: The already saved referral code; no referrer contact details are returned. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
 components:
 
   securitySchemes:
@@ -70924,6 +72293,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Short-lived Gregale workload identity for audience gregale:data-api:usage, naming the reporting app and instance. Customer API keys cannot publish usage.
+    dataAPIBudgetWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: A short-lived workload assertion with audience gregale:data-api:budget.
     dataAPIEventsWorkloadIdentity:
       type: http
       scheme: bearer
@@ -71843,6 +73217,89 @@ components:
       - body
       description: Reopen within the saved policy window and count; starts a fresh episode using that policy
         snapshot.
+    SupportNotification:
+      type: object
+      additionalProperties: false
+      description: An actor-specific support update containing metadata only.
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequence:
+          type: integer
+          format: int64
+        ticket_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - staff_reply
+          - customer_reply
+          - ticket_created
+          - assigned
+        created_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - sequence
+      - ticket_id
+      - kind
+      - created_at
+    SupportNotificationPage:
+      type: object
+      additionalProperties: false
+      description: Sequence-ordered page of at most fifty updates in the authorized scope.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SupportNotification'
+        next_cursor:
+          type: integer
+          format: int64
+        unread_count:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - items
+      - unread_count
+    SupportReadRequest:
+      type: object
+      additionalProperties: false
+      description: Observed notification boundary; future rows are never acknowledged.
+      properties:
+        through_sequence:
+          type: integer
+          format: int64
+          minimum: 1
+      required:
+      - through_sequence
+    SupportReadResult:
+      type: object
+      additionalProperties: false
+      description: Remaining unread counts for the ticket and current support scope.
+      properties:
+        ticket_id:
+          type: string
+          format: uuid
+        unread_count:
+          type: integer
+          format: int64
+          minimum: 0
+        unread_total:
+          type: integer
+          format: int64
+          minimum: 0
+      required:
+      - ticket_id
+      - unread_count
+      - unread_total
     SupportTicket:
       type: object
       additionalProperties: false
@@ -71874,6 +73331,11 @@ components:
         resolved_at:
           type: string
           format: date-time
+        unread_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Unread support updates for the current caller and audience.
         can_reopen:
           type: boolean
         reopen_until:
@@ -73338,6 +74800,335 @@ components:
           items: {$ref: '#/components/schemas/MCPAdmissionEvidence'}
         limit: {type: integer, minimum: 1, maximum: 50}
         next_cursor: {type: string}
+    ToolOAuthAuthorizationRequest:
+      type: object
+      description: Owner-only transient PKCE command; codes and callback state are never journaled as tool arguments.
+      required: [action]
+      properties:
+        action: {type: string, enum: [begin, complete]}
+        redirect_uri: {type: string, format: uri, maxLength: 2048, description: Begin only; exact http IPv4 loopback callback with a nonzero port and /callback path}
+        state: {type: string, maxLength: 43, writeOnly: true, description: Complete only; exact nonce from the pending browser attempt}
+        code: {type: string, maxLength: 16384, writeOnly: true, description: Complete only; transient provider authorization code}
+        denied: {type: boolean, default: false, description: Complete a denied browser authorization without a code}
+        issuer: {type: string, maxLength: 2048, description: Optional callback issuer; must equal the immutable configured issuer}
+    ToolOAuthAuthorizationResponse:
+      type: object
+      description: Owner-only authorization metadata. Begin alone may return a consent URL and state; GET and completion omit them. No access token, refresh token, client secret or verifier is returned.
+      required: [connection_id, state]
+      properties:
+        connection_id: {type: string, format: uuid}
+        state: {type: string, enum: [not_started, authorization_pending, authorization_uncertain, connected, reconnect_required, authorization_denied]}
+        authorization_url: {type: string, format: uri, description: Begin only; private owner browser URL bound to the retained attempt}
+        callback_state: {type: string, maxLength: 43, description: Begin only; owner callback nonce}
+        expires_at: {type: string, format: date-time}
+    ToolOAuthConnectionIntent:
+      type: object
+      description: Owner-approved immutable execution authority. Guided public clients use browser PKCE and no source-secret references; manually provisioned connections use existing app-secret references. HTTPS provider URLs cannot include userinfo, queries or fragments. No discovery is performed.
+      required: [app, scope, issuer, token_endpoint, client_id, resource, scopes, token_auth_method]
+      properties:
+        guided: {type: boolean, default: false, description: Enable owner-only authorization-code S256 PKCE for a public client}
+        authorization_endpoint: {type: string, format: uri, maxLength: 2048, description: Explicit reviewed HTTPS endpoint for guided mode only}
+        app: {type: string}
+        scope: {type: string, enum: [default]}
+        issuer: {type: string, format: uri, maxLength: 2048}
+        token_endpoint: {type: string, format: uri, maxLength: 2048}
+        client_id: {type: string, minLength: 1, maxLength: 512}
+        resource: {type: string, format: uri, maxLength: 2048}
+        scopes: {type: array, minItems: 1, maxItems: 64, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 128}}
+        refresh_token_secret_ref: {type: string, description: Manual mode only; existing ordinary secret:MCP_* app secret containing the initial refresh token}
+        client_secret_ref: {type: string, description: Manual mode only; existing ordinary secret:MCP_* app secret required for client_secret_basic}
+        token_auth_method: {type: string, enum: [none, client_secret_basic]}
+      oneOf:
+        - required: [guided, authorization_endpoint]
+          properties:
+            guided: {enum: [true]}
+            token_auth_method: {enum: [none]}
+            refresh_token_secret_ref: {maxLength: 0}
+            client_secret_ref: {maxLength: 0}
+        - required: [refresh_token_secret_ref]
+          properties:
+            guided: {enum: [false]}
+            authorization_endpoint: {maxLength: 0}
+            refresh_token_secret_ref: {minLength: 1}
+    ToolOAuthConnectionRecord:
+      type: object
+      description: Owner-only immutable configuration plus credential-free renewal metadata. Binding excludes routine token generations; source replacement requires a new connection and grant.
+      required: [id, account_id, app_id, binding_sha256, source_sha256, intent, created_at, state, generation]
+      properties:
+        id: {type: string, format: uuid}
+        account_id: {type: string}
+        app_id: {type: string}
+        project_id: {type: string}
+        binding_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        source_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Initial source ciphertext digest in manual mode or versioned source-mode marker in guided mode}
+        client_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        intent: {$ref: '#/components/schemas/ToolOAuthConnectionIntent'}
+        created_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+        state: {type: string, enum: [authorization_pending, refresh_required, ready, refreshing, reconnect_required, revoked]}
+        expires_at: {type: string, format: date-time}
+        generation: {type: integer, format: int64, minimum: 0}
+        recovery_action: {type: string, enum: [connect, reconnect, review_connection]}
+    ToolOAuthConnectionPage:
+      type: object
+      description: Owner-scoped page of retained execution OAuth metadata and a continuation UUID.
+      required: [connections]
+      properties:
+        connections: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ToolOAuthConnectionRecord'}}
+        next_cursor: {type: string}
+    ToolOAuthConnectionStatus:
+      type: object
+      description: Agent projection for one exact active invocation grant. Provider settings, secret references and credentials are excluded. Status is metadata, not proof of provider availability.
+      required: [grant_id, app, app_id, version, name, state]
+      properties:
+        grant_id: {type: string, format: uuid}
+        app: {type: string}
+        app_id: {type: string}
+        version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        name: {type: string}
+        state: {type: string, enum: [refresh_required, ready, refreshing, reconnect_required]}
+        expires_at: {type: string, format: date-time}
+        recovery_action: {type: string, enum: [reconnect, review_connection]}
+    ToolGrantIntent:
+      type: object
+      description: Exact immutable delegation to an existing agent key. Expiry uses microsecond precision; discovery, invocation consent and single-dispatch authority are checked separately.
+      required: [key_id, version, name, expires_at, allow_invocation]
+      properties:
+        key_id: {type: string, description: Exact existing native agent connection key identity}
+        version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        name: {type: string, minLength: 1, maxLength: 128}
+        expires_at: {type: string, format: date-time, description: Future expiry within 30 days and no later than the connection key expiry}
+        allow_invocation: {type: boolean, default: false, description: Owner permits calls through this exact grant; hosted connections also require independent invocation consent and operator enablement}
+        credential_secret_ref: {type: string, description: Optional existing secret:MCP_* access token in the exact app default environment; exclusive with credential_connection_id. Never a value.}
+        credential_connection_id: {type: string, format: uuid, description: Optional exact owner-approved managed execution connection; private invocation grants only and exclusive with credential_secret_ref.}
+    ToolGrantCredential:
+      type: object
+      description: Owner-readable immutable credential binding; contains no plaintext token. Required scopes follow the existing 4-KiB review metadata bound.
+      required: [sha256, source_sha256, scope, required_scopes]
+      properties:
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        source_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Static source ciphertext digest or managed connection authorization digest; source replacement or resealing invalidates the binding}
+        connection_id: {type: string, format: uuid, description: Present only for a managed execution OAuth connection}
+        scope: {type: string, enum: [default]}
+        required_scopes: {type: array, maxItems: 64, items: {type: string}}
+    ToolGrantRecord:
+      type: object
+      description: Owner-readable retained delegation with frozen application/project identities, optional credential binding and irreversible revocation.
+      required: [id, account_id, app, app_id, intent, created_at]
+      properties:
+        credential: {$ref: '#/components/schemas/ToolGrantCredential'}
+        id: {type: string, format: uuid}
+        account_id: {type: string}
+        app: {type: string}
+        app_id: {type: string}
+        project_id: {type: string}
+        intent: {$ref: '#/components/schemas/ToolGrantIntent'}
+        created_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+    ToolGrantPage:
+      type: object
+      description: Bounded owner-only grant page ordered by grant UUID.
+      required: [grants]
+      properties:
+        grants: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ToolGrantRecord'}}
+        next_cursor: {type: string}
+    ToolGrantAccess:
+      type: object
+      description: Currently active grant for this connection and exact described tool; omits other tools and owner-only grant metadata.
+      required: [grant_id, expires_at, allow_invocation]
+      properties:
+        credential_binding_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Opaque reference required for this private invocation grant}
+        grant_id: {type: string, format: uuid}
+        expires_at: {type: string, format: date-time}
+        allow_invocation: {type: boolean}
+    ToolRegistryTool:
+      type: object
+      description: Single-tool catalog projection excluding sibling tools, prompts, resources, test names and credentials. Projected and full publication digests describe different bytes.
+      required: [version, account_id, app, app_id, name, deployment_id, source_sha256, deployment_source_sha256, catalog_sha256, catalog_contract_sha256, published_catalog_contract_sha256, catalog_base64, access_mode, required_scopes, evidence_origin, availability]
+      properties:
+        grants: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/ToolGrantAccess'}, description: Active grants for the exact requested tool and current key; never a dispatch receipt}
+        version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        account_id: {type: string}
+        app: {type: string}
+        app_id: {type: string}
+        name: {type: string, minLength: 1, maxLength: 128}
+        deployment_id: {type: string}
+        source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Original runtime catalog pin}
+        catalog_contract_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Digest of the returned single-tool projection}
+        published_catalog_contract_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Digest of the complete archived publication contract}
+        catalog_base64: {type: string, format: byte, maxLength: 349528}
+        access_mode: {type: string, enum: [open, external-oauth]}
+        required_scopes: {type: array, maxItems: 64, items: {type: string, maxLength: 256}}
+        evidence_origin: {type: string, enum: [publisher_attested]}
+        availability: {type: string, enum: [not_checked]}
+    ToolPublicationIntent:
+      type: object
+      description: Reviewed publication metadata bounded to 64 KiB; never includes local paths or credentials.
+      required: [app, source_sha256, fixtures_sha256, access_mode, tool_scopes, test_cases]
+      properties:
+        endpoint_path: {type: string, maxLength: 512, description: Reviewed canonical MCP path; new invocations require this field and never infer a missing endpoint}
+        app: {type: string}
+        app_id: {type: string}
+        expected_serving_deployment_id: {type: string}
+        source_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Reviewed local source-tree and mode digest}
+        fixtures_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        access_mode: {type: string, enum: [open, external-oauth]}
+        tool_scopes:
+          type: object
+          minProperties: 1
+          maxProperties: 64
+          additionalProperties: {type: array, maxItems: 64, items: {type: string, maxLength: 256}}
+        test_cases: {type: array, minItems: 1, maxItems: 64, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 256}}
+    ToolInvocationIntent:
+      type: object
+      description: Explicit one-call consent with a canonical argument digest and optional opaque credential binding; no argument bodies or credentials.
+      required: [version, name, arguments_sha256, access_mode, timeout_seconds, allow_tool_execution]
+      properties:
+        version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        name: {type: string, minLength: 1, maxLength: 128}
+        arguments_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        access_mode: {type: string, enum: [open, external-oauth]}
+        credential_binding_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Local token-variable hash or exact owner-granted private binding; never a token hash or value}
+        timeout_seconds: {type: integer, minimum: 1, maximum: 600}
+        allow_tool_execution: {type: boolean, enum: [true]}
+    PrivateToolInvocationRequest:
+      type: object
+      description: Private invocation intent plus bounded transient argument JSON. No credential value or secret reference is accepted.
+      required: [grant_id, intent, arguments_json]
+      properties:
+        grant_id: {type: string, format: uuid}
+        intent: {$ref: '#/components/schemas/ToolInvocationIntent'}
+        arguments_json: {type: string, maxLength: 32768, description: Canonical JSON argument object matching the intent digest}
+    DelegatedToolInvocationIntent:
+      type: object
+      description: Exact owner-issued invocation grant plus explicit one-call intent. Only open access is accepted; credential_binding_sha256 must be omitted.
+      required: [grant_id, intent]
+      properties:
+        grant_id: {type: string, format: uuid}
+        intent: {$ref: '#/components/schemas/ToolInvocationIntent'}
+    ToolInvocationDelegation:
+      type: object
+      description: Immutable authority resolved by APID; never accepted as caller-supplied invocation metadata.
+      required: [grant_id, key_id]
+      properties:
+        grant_id: {type: string, format: uuid}
+        key_id: {type: string}
+        project_id: {type: string}
+    ToolInvocationTarget:
+      type: object
+      description: Immutable native target resolved from the exact owned publication and deployment source artifact.
+      required: [app, app_id, deployment_id, deployment_source_sha256, catalog_sha256, catalog_contract_sha256, endpoint_path]
+      properties:
+        app: {type: string}
+        app_id: {type: string}
+        deployment_id: {type: string}
+        deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        catalog_contract_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        endpoint_path: {type: string}
+    ToolInvocationOutcome:
+      type: object
+      description: Worker-reported complete MCP result or explicit preflight/transport uncertainty. Unknown outcomes never authorize a replay.
+      required: [status, code]
+      properties:
+        status: {type: string, enum: [completed, tool_error, not_started, outcome_unknown]}
+        code: {type: string, enum: [result_received, preflight_failed, version_unavailable, catalog_changed, transport_error, timeout, cancel_requested, worker_interrupted]}
+        result_base64: {type: string, format: byte, description: Sanitized complete MCP content and structuredContent only; at most 64 KiB decoded}
+        result_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        result_bytes: {type: integer, minimum: 1}
+        result_omitted: {type: boolean, description: True when a complete result exceeded retention size; only its digest and length are retained}
+        redacted: {type: boolean}
+    ToolInvocationRecord:
+      type: object
+      description: Account-owned single-dispatch fact; cancellation after dispatch does not establish remote rollback or successful cancellation.
+      required: [id, account_id, intent, target, status, created_at, deadline, cancellation_requested]
+      properties:
+        delegation: {$ref: '#/components/schemas/ToolInvocationDelegation'}
+        id: {type: string, format: uuid}
+        account_id: {type: string, format: uuid}
+        intent: {$ref: '#/components/schemas/ToolInvocationIntent'}
+        target: {$ref: '#/components/schemas/ToolInvocationTarget'}
+        status: {type: string, enum: [queued, running, completed, tool_error, not_started, cancelled, outcome_unknown]}
+        created_at: {type: string, format: date-time}
+        deadline: {type: string, format: date-time}
+        dispatched_at: {type: string, format: date-time}
+        cancellation_requested: {type: boolean}
+        finished_at: {type: string, format: date-time}
+        outcome: {$ref: '#/components/schemas/ToolInvocationOutcome'}
+    ToolInvocationReceipt:
+      type: object
+      description: Invocation transition receipt; creation and dispatch flags are fresh transition facts and are false on duplicates.
+      required: [created, dispatch_granted, record]
+      properties:
+        created: {type: boolean}
+        dispatch_granted: {type: boolean}
+        record: {$ref: '#/components/schemas/ToolInvocationRecord'}
+    BeginToolPublicationResponse:
+      type: object
+      description: Journal insertion receipt; only a new insertion can authorize one publisher launch.
+      required: [created, record]
+      properties:
+        created: {type: boolean, description: True only for the first successful journal insertion; never cached as execution permission}
+        record: {$ref: '#/components/schemas/ToolPublicationRecord'}
+    ToolRegistryPage:
+      type: object
+      description: Private immutable tool version summaries with an optional keyset continuation.
+      required: [versions]
+      properties:
+        versions: {type: array, maxItems: 20, items: {$ref: '#/components/schemas/ToolRegistryVersion'}}
+        next_cursor: {type: string}
+    ToolPublicationCheck:
+      type: object
+      description: Publisher attestation that one explicitly reviewed behavioral case passed.
+      required: [name, status]
+      properties:
+        name: {type: string}
+        status: {type: string, enum: [passed]}
+    ToolPublicationOutcome:
+      type: object
+      description: Immutable publisher-attested evidence bounded to 512 KiB. Completed outcomes require the complete observed catalog and exact passing tests. Failed or uncertain outcomes contain only status and protocol_verified=false.
+      required: [status, protocol_verified]
+      properties:
+        status: {type: string, enum: [completed, failed, outcome_unknown]}
+        deployment_id: {type: string}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Runtime integrity pin; separate from the caller-visible contract digest}
+        catalog_base64: {type: string, format: byte, description: "Canonical format-2 MCP contract bytes, at most 256 KiB decoded; base64 preserves byte identity through JSONB"}
+        protocol_verified: {type: boolean}
+        checks: {type: array, maxItems: 64, items: {$ref: '#/components/schemas/ToolPublicationCheck'}}
+    ToolPublicationRecord:
+      type: object
+      description: Account-owned durable publication review and immutable outcome bound to native deployment source identity.
+      required: [id, account_id, intent, status, created_at, deadline, evidence_origin]
+      properties:
+        id: {type: string, pattern: '^[0-9a-f]{64}$'}
+        account_id: {type: string, format: uuid}
+        intent: {$ref: '#/components/schemas/ToolPublicationIntent'}
+        status: {type: string, enum: [running, completed, failed, outcome_unknown]}
+        outcome: {$ref: '#/components/schemas/ToolPublicationOutcome'}
+        deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: "Native source-archive digest, distinct from the reviewed source-tree digest"}
+        created_at: {type: string, format: date-time}
+        deadline: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+        evidence_origin: {type: string, enum: [publisher_attested]}
+    ToolRegistryVersion:
+      type: object
+      description: Completed publisher-attested tool version and access requirements; current availability is not inferred from history.
+      required: [version, account_id, app, tools, deployment_id, source_sha256, deployment_source_sha256, catalog_sha256, evidence_origin, access_mode, availability]
+      properties:
+        app_id: {type: string, description: Immutable app identity when available}
+        version: {type: string, pattern: '^[0-9a-f]{64}$'}
+        account_id: {type: string, format: uuid}
+        app: {type: string}
+        tools: {type: array, minItems: 1, maxItems: 64, items: {type: string}}
+        deployment_id: {type: string}
+        source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        evidence_origin: {type: string, enum: [publisher_attested]}
+        access_mode: {type: string, enum: [open, external-oauth]}
+        availability: {type: string, enum: [not_checked]}
     MCPConnectionHealthSnapshot:
       type: object
       description: Account-wide or app-filtered connection issues with complete counts independent of issue pagination. Incomplete inventory cannot prove alert recovery.
@@ -85540,6 +87331,8 @@ components:
         ai_auto_prompt_cache:
           type: boolean
           description: Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none.
+        ai_semantic_cache:
+          $ref: '#/components/schemas/OutboundAISemanticCache'
         ai_trace_max_calls:
           type: integer
           format: int64
@@ -85662,6 +87455,8 @@ components:
             none: after a system prompt or tool list seen again within five minutes, and after the last message of a
             conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
             marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache. Requires ai_provider.
+        semantic_cache:
+          $ref: '#/components/schemas/OutboundAISemanticCache'
         trace_max_calls:
           type: integer
           format: int64
@@ -85984,6 +87779,27 @@ components:
           minimum: 0
           maximum: 1000000000
           description: Charged per million audio output tokens; the output price when absent.
+        cache_write_1h_millicents_per_mtok:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000
+          description: >-
+            Charged per million tokens of cache writes kept for one hour. When absent they cost the higher of the
+            cache-write price and twice the input price.
+        long_context:
+          $ref: '#/components/schemas/OutboundAILongContextTier'
+    OutboundAILongContextTier:
+      type: object
+      description: >-
+        A higher price for a long prompt. When a call's input tokens (cached reads and cache writes included) exceed
+        above_input_tokens, its input-side prices are multiplied by input_percent/100 and its output prices by
+        output_percent/100.
+      required: [above_input_tokens, input_percent, output_percent]
+      properties:
+        above_input_tokens: { type: integer, format: int64, minimum: 1000, maximum: 2000000 }
+        input_percent: { type: integer, format: int64, minimum: 100, maximum: 1000 }
+        output_percent: { type: integer, format: int64, minimum: 100, maximum: 1000 }
     PutOutboundAIPricesRequest:
       type: object
       description: Replace an integration's price list. It takes effect immediately; earlier lists stay for costs already settled.
@@ -86302,6 +88118,9 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIEvaluationItem' }
+        content_withheld:
+          type: boolean
+          description: The items' output texts were left out; reading them needs admin or secrets:read.
     OutboundAIEvaluationList:
       type: object
       description: A route's latest evaluations, newest first.
@@ -86684,6 +88503,9 @@ components:
         results:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIReplayResult' }
+        content_withheld:
+          type: boolean
+          description: The source's and results' answers were left out; reading them needs admin or secrets:read.
     OutboundAIRequestLogList:
       type: object
       description: One newest-first page of the AI request log.
@@ -86732,6 +88554,27 @@ components:
         judge_integration_id: { type: string, format: uuid }
         judge_model: { type: string, minLength: 1, maxLength: 200 }
         rubric: { type: string, maxLength: 1000, description: What a good answer does for this app, given to the judge. }
+    OutboundAISemanticCache:
+      type: object
+      description: >-
+        Answer a call from the response cache when its last user turn means the same as a cached call's and everything
+        else matches exactly. Pro and Scale plans; needs ai_provider and a response cache TTL. The
+        embedding integration, one of the account's enabled OpenAI or Gemini integrations, embeds each candidate call on
+        its own key, metered under the caller semantic_cache. A hit carries X-Gregale-AI-Cache semantic and
+        X-Gregale-AI-Similarity.
+      required: [enabled, embedding_integration_id, embedding_model]
+      properties:
+        enabled: { type: boolean }
+        threshold_basis_points:
+          type: integer
+          minimum: 8500
+          maximum: 9900
+          description: Cosine similarity a hit needs, in basis points. Absent or 0 means 9500.
+        embedding_integration_id: { type: string, format: uuid }
+        embedding_model: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$' }
+        share_across_users:
+          type: boolean
+          description: Let calls of different end users (X-Gregale-AI-User) share answers. Off, each end user has their own.
     PutOutboundAIFeedbackRequest:
       type: object
       description: A rating of one logged call. A later rating replaces the earlier one.
@@ -89264,10 +91107,14 @@ components:
         enabled: { type: boolean }
 
     PasswordSignupRequest:
-      description: "Email + password for signup. Same shape as PasswordLoginRequest so the create-or-claim race detection reuses the verifier."
+      description: "Email + password for signup. Same shape as PasswordLoginRequest with an optional referral code."
       type: object
       required: [email, password]
       properties:
+        referral_code:
+          type: string
+          pattern: '^([A-Za-z0-9]{6})?$'
+          description: Optional six-character customer or salesperson referral code; case-insensitive. Requires the referral program to be enabled.
         email: { type: string, format: email }
         password: { type: string, minLength: 12, maxLength: 256 }
 
@@ -89322,6 +91169,7 @@ components:
         accounts.
       type: object
       properties:
+        referral_code: { type: string, pattern: '^([A-Za-z0-9]{6})?$' }
         email: { type: string, format: email }
 
     PasswordResetRequest:
@@ -89437,6 +91285,16 @@ components:
           enum: [webhook, actions]
           default: webhook
           description: The single production deploy authority; GitHub App PR previews continue in either mode.
+        preview_mode:
+          type: string
+          enum: [app, branch]
+          default: app
+          description: |
+            How pull requests are previewed. `app` gives each previewed
+            workload its own preview app. `branch` makes environment branch
+            `pr-{N}` of production for each pull request and deploys the PR
+            head into it. Choosing `branch` needs the
+            platform to enable branch previews.
 
     GitHubDeploymentPolicyPatch:
       description: Partial replacement for a project's GitHub deployment policy.
@@ -89458,6 +91316,9 @@ components:
         production_trigger:
           type: string
           enum: [webhook, actions]
+        preview_mode:
+          type: string
+          enum: [app, branch]
 
     GitHubInstallMutationRequest:
       description: |
@@ -89688,6 +91549,100 @@ components:
           items: { type: string }
           description: Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
 
+    AccountHealth:
+      description: "What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain problems and refused API requests."
+      type: object
+      required: [generated_at, attention, restrictions, failed_deployments, domain_issues, refused_requests]
+      properties:
+        generated_at: { type: string, format: date-time, description: When the checks ran. }
+        attention: { type: integer, description: "Number of restrictions, failed deployments and domain issues; zero means nothing needs action." }
+        restrictions:
+          type: array
+          description: Restrictions currently applied to the account, one per kind.
+          items: { $ref: '#/components/schemas/AccountHealthRestriction' }
+        failed_deployments:
+          type: array
+          description: Failed deployments from the last 7 days, newest first, at most 10.
+          items: { $ref: '#/components/schemas/AccountHealthDeployment' }
+        domain_issues:
+          type: array
+          description: Custom domains that are unverified or whose certificate is not serving.
+          items: { $ref: '#/components/schemas/AccountHealthDomain' }
+        refused_requests: { $ref: '#/components/schemas/AccountHealthRequests' }
+        unavailable:
+          type: array
+          items: { type: string }
+          description: Checks that could not be loaded; their lists are empty and mean unknown, not none.
+    AccountHealthRestriction:
+      description: One account restriction in customer wording, with the next step when there is one.
+      type: object
+      required: [kind, title, detail]
+      properties:
+        kind:
+          type: string
+          enum: [account_suspended, account_past_due, deletion_pending, abuse_hold, email_unverified, overage_cap_reached, platform_release_pause]
+          description: Stable restriction identifier.
+        title: { type: string, description: Short headline for the restriction. }
+        detail: { type: string, description: What the restriction does to the account. }
+        action: { type: string, description: Label of the next step. }
+        action_url: { type: string, description: Dashboard path for the next step. }
+        since: { type: string, format: date-time, description: "When the restriction started, when known." }
+    AccountHealthDeployment:
+      description: A failed deployment with the error and fix hint the build or rollout reported.
+      type: object
+      required: [deployment_id, app_id, created_at]
+      properties:
+        deployment_id: { type: string, description: Failed deployment identifier. }
+        app_id: { type: string, description: Identifier of the deployment's app. }
+        app_slug: { type: string, description: Slug of the deployment's app. }
+        error_code: { type: string, description: Stable failure code. }
+        error: { type: string, description: "Failure message, at most 500 bytes." }
+        hint: { type: string, description: "Suggested fix, at most 500 bytes." }
+        created_at: { type: string, format: date-time, description: When the deployment was created. }
+    AccountHealthDomain:
+      description: A custom domain that is not serving correctly.
+      type: object
+      required: [domain, problem]
+      properties:
+        domain: { type: string, description: The custom hostname. }
+        app_slug: { type: string, description: Slug of the app the hostname routes to. }
+        problem: { type: string, description: What is wrong with the hostname. }
+        cert_error: { type: string, description: "The certificate authority's last error, when issuance failed." }
+    AccountHealthRequests:
+      description: API requests Gregale refused for the account in the recent window.
+      type: object
+      required: [window_hours, total, by_code, recent]
+      properties:
+        window_hours: { type: integer, description: Length of the window in hours. }
+        total: { type: integer, format: int64, description: Refused requests in the window. }
+        by_code:
+          type: array
+          description: Counts by problem code, most frequent first, at most 10.
+          items: { $ref: '#/components/schemas/AccountHealthCode' }
+        recent:
+          type: array
+          description: Most recent refused requests, at most 20.
+          items: { $ref: '#/components/schemas/AccountHealthRequest' }
+    AccountHealthCode:
+      description: How often one problem code was returned in the window.
+      type: object
+      required: [code, count, last_at]
+      properties:
+        code: { type: string, description: Problem code from the response body and X-Faas-Error-Code. }
+        count: { type: integer, format: int64, description: Responses with this code. }
+        last_at: { type: string, format: date-time, description: Most recent response with this code. }
+    AccountHealthRequest:
+      description: "One refused request: the matched route pattern, the problem code and the ids to quote to support."
+      type: object
+      required: [occurred_at, route, code]
+      properties:
+        occurred_at: { type: string, format: date-time, description: When the request was refused. }
+        route: { type: string, description: "Matched route pattern, for example POST /v1/apps/{slug}/deployments; never the raw URL." }
+        code: { type: string, description: Problem code returned. }
+        app_slug: { type: string, description: "App slug from the request path, when the route has one." }
+        request_id: { type: string, description: X-Faas-Request-Id of the request. }
+        trace_id: { type: string, description: X-Gregale-Trace-Id of the request. }
+
     AccountResponse:
       description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count."
       type: object
@@ -89733,7 +91688,7 @@ components:
       type: object
       required: [reason, held_at]
       properties:
-        reason: { type: string, enum: [egress_fanout, egress_flood, operator] }
+        reason: { type: string, enum: [cpu_sustained, egress_fanout, egress_flood, operator] }
         held_at: { type: string, format: date-time }
 
     AccountAbuseHoldAction:
@@ -89905,6 +91860,16 @@ components:
       required: [plan]
       properties:
         plan: { type: string, enum: [free, hobby, pro, scale] , example: "hobby"}
+        salesperson_code:
+          type: string
+          pattern: '^\s*([A-Za-z0-9]{6})?\s*$'
+          description: |
+            Optional salesperson code for a personal account's first paid purchase.
+            Letters are normalized to uppercase and surrounding spaces are removed.
+            Requires a live verified session. Only active sales codes are accepted;
+            existing referrals and prior payments cannot be reassigned. The choice
+            remains saved if checkout is retried or abandoned. Omit or leave empty
+            to keep ordinary billing behavior. Organization purchases are excluded.
 
     UpdateAccountBillingInfoRequest:
       description: "Partial legal billing identity update. Empty strings clear fields."
@@ -90760,6 +92725,67 @@ components:
         total_alerts: { type: integer, minimum: 1, maximum: 4096 }
         uncertain_alerts: { $ref: '#/components/schemas/ObsRecordingAlertReferences' }
 
+    ObsServingHealth:
+      type: object
+      description: Coverage of expected serving probes from independent deployment intent and current coverage-rule evaluations. No direct probes are executed.
+      required: [generated_at, scope, state, max_age_seconds, inventory, counts, probes, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, const: expected_serving_probe_coverage }
+        state: { type: string, enum: [healthy, degraded, partial, not_applicable] }
+        reason: { type: string }
+        max_age_seconds: { type: integer, const: 120 }
+        inventory: { $ref: '#/components/schemas/ObsServingProbeInventory' }
+        counts:
+          description: Null when inventory is unknown or unconfigured; an explicitly empty configured fleet has zero counts.
+          anyOf: [{ $ref: '#/components/schemas/ObsServingProbeCounts' }, { type: 'null' }]
+        probes:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/ObsServingProbe' }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsServingProbeInventory:
+      type: object
+      description: Configuration and freshness of independent serving-probe intent.
+      required: [state, configured, expected_pairs, observed_at]
+      properties:
+        state: { type: string, enum: [healthy, stale, unavailable] }
+        reason: { type: string }
+        configured: { type: [boolean, 'null'] }
+        expected_pairs: { type: [integer, 'null'], minimum: 0, maximum: 1000 }
+        observed_at: { type: [string, 'null'], format: date-time }
+    ObsServingProbeCounts:
+      type: object
+      description: Counts cover every expected pair. Reporting is known true only for evaluated pairs with a result; unknown evaluations never count as healthy or reporting.
+      required: [expected, reporting, healthy, missing, stale, invalid, content_disabled, budget_mismatch, failing, unknown]
+      properties:
+        expected: { type: integer, minimum: 0, maximum: 1000 }
+        reporting: { type: integer, minimum: 0, maximum: 1000 }
+        healthy: { type: integer, minimum: 0, maximum: 1000 }
+        missing: { type: integer, minimum: 0, maximum: 1000 }
+        stale: { type: integer, minimum: 0, maximum: 1000 }
+        invalid: { type: integer, minimum: 0, maximum: 1000 }
+        content_disabled: { type: integer, minimum: 0, maximum: 1000 }
+        budget_mismatch: { type: integer, minimum: 0, maximum: 1000 }
+        failing: { type: integer, minimum: 0, maximum: 1000 }
+        unknown: { type: integer, minimum: 0, maximum: 1000 }
+    ObsServingProbe:
+      type: object
+      description: One expected node/URL pair. Raw URL bytes remain private; url_id fingerprints exact URL bytes, including query parameters. Evaluation time describes the recording, and last_run_at is the probe loop clock.
+      required: [node, url_id, state, reporting, evaluated_at, last_run_at, expected_first_byte_seconds, max_result_age_seconds]
+      properties:
+        node: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]*$' }
+        url_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        state: { type: string, enum: [healthy, missing, stale, invalid_telemetry, content_disabled, budget_mismatch, failing, unknown] }
+        reason: { type: string }
+        reporting: { type: [boolean, 'null'] }
+        evaluated_at: { type: [string, 'null'], format: date-time }
+        last_run_at: { type: [string, 'null'], format: date-time }
+        expected_first_byte_seconds: { type: number, exclusiveMinimum: 0 }
+        max_result_age_seconds: { type: number, exclusiveMinimum: 0 }
+
     ObsNotificationHealth:
       type: object
       description: Current pipeline evidence without per-episode delivery or human receipt claims.
@@ -90778,9 +92804,65 @@ components:
           maxItems: 32
           description: Observed integration types ordered by name; missing counters remain unknown.
           items: { $ref: '#/components/schemas/ObsNotificationIntegration' }
+        receiver_health:
+          $ref: '#/components/schemas/ObsNotificationReceiverHealth'
         limitations:
           type: array
           items: { type: string }
+    ObsNotificationReceiverHealth:
+      type: object
+      description: |
+        Independent receiver assessment, bounded to 32 receiver/integration groups.
+        Deployment intent is independent of actual collector output. Healthy
+        requires fresh collection and inventory, complete counter increases and
+        an observed successful transport clock for every expected group. Partial
+        preserves unavailable evidence, insufficient counter samples and unknown
+        success history. Degraded identifies failed requests, missing expected
+        transport telemetry or a freshly observed group outside deployment intent.
+        This section does not change the top-level aggregate assessment.
+      required: [state, collector, inventory, groups, limitations]
+      properties:
+        state: { type: string, enum: [healthy, partial, degraded] }
+        reason: { type: string }
+        collector:
+          allOf: [{ $ref: '#/components/schemas/ObsNotificationSignal' }]
+          description: Fresh read quality for the collector flag and its own run clock. A known zero means collection failed; unavailable or stale evidence has a null value.
+        inventory:
+          allOf: [{ $ref: '#/components/schemas/ObsNotificationSignal' }]
+          description: Expected group count from fresh deployment intent. Missing or inconsistent intent remains null, never zero configured receivers.
+        groups:
+          type: array
+          maxItems: 32
+          description: Reviewed receiver/integration groups ordered by receiver then integration. Addresses, arbitrary names, scrape identities and provider errors are excluded.
+          items: { $ref: '#/components/schemas/ObsNotificationReceiver' }
+        limitations:
+          type: array
+          items: { type: string }
+    ObsNotificationReceiver:
+      type: object
+      description: |
+        Completed transport request observations for one reviewed receiver role
+        and integration type. Multiple destinations within the group aggregate.
+        Signal healthy describes usable evidence, not human acknowledgement.
+        Expected is null when independent deployment intent cannot be established.
+      required: [receiver, integration, expected, state, requests, failures, last_success_observation]
+      properties:
+        receiver: { type: string, enum: [faas-heartbeat, faas-page, faas-warn] }
+        integration:
+          type: string
+          enum: [email, pushover, slack, webhook, pagerduty, opsgenie, victorops, wechat, telegram, discord, webex, sns, msteams, msteamsv2, rocketchat, jira]
+        expected: { type: [boolean, 'null'] }
+        state: { type: string, enum: [healthy, partial, degraded] }
+        reason: { type: string }
+        requests:
+          allOf: [{ $ref: '#/components/schemas/ObsNotificationSignal' }]
+          description: Completed transport request increase over ten minutes, including failed requests and retry attempts. Insufficient samples are null.
+        failures:
+          allOf: [{ $ref: '#/components/schemas/ObsNotificationSignal' }]
+          description: Failed completed request increase over ten minutes, including retries. Fresh zero is distinct from missing evidence.
+        last_success_observation:
+          allOf: [{ $ref: '#/components/schemas/ObsNotificationSignal' }]
+          description: Value is Unix seconds when two collector observations confirmed a new successful completed request count. Observed_at is the freshness of that gauge, not the delivery time. A cold baseline is no_samples with a null value, never an epoch-zero receipt. Older confirmed history may remain valid with a freshly read gauge. It does not establish per-episode delivery or human or external-watchdog receipt.
     ObsNotificationAPIStatus:
       type: object
       description: Reachability and bounded validity of the local alert-status API; does not establish notification receiver readiness.
@@ -102605,6 +104687,10 @@ components:
         data: { description: Event data associated with this producer key. }
         time: { type: string, format: date-time, description: Original occurrence time; defaults to ingress time. }
         schemaversion: { type: string, maxLength: 64 }
+        environment:
+          type: string
+          maxLength: 40
+          description: Slug of the app's project environment the event belongs to; omitted is production. Only that environment's subscriptions receive the event.
     AppPublishEventResponse:
       type: object
       additionalProperties: false
@@ -102663,6 +104749,10 @@ components:
           type: string
           format: uuid
           deprecated: true
+        environmentid:
+          type: string
+          format: uuid
+          description: Project environment the event belongs to; omitted is production. Only that environment's subscriptions receive the event, and only production events start workflows.
 
     PublishEventResponse:
       description: Durable acceptance receipt for a published internal event.
@@ -106453,6 +108543,9 @@ components:
         work_action: { type: string, enum: [invoke, cancel_pending], description: "Action taken on a matching event." }
         ordered: { type: boolean, description: "Whether this subscription waits for earlier matching keyed deliveries before routing." }
         enabled: { type: boolean }
+        environment:
+          type: string
+          description: Project environment slug whose events the subscription receives; omitted is production.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -108404,6 +110497,7 @@ components:
         created_at: { type: string, format: date-time }
         last_fired_at: { type: [string, "null"], format: date-time }
         environment: { type: string, description: "Project environment the cron runs in; omitted for production.", example: "staging" }
+        clone_paused: { type: boolean, description: "A full environment clone copied this cron disabled although the source ran it; resuming the environment's automation enables it." }
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
@@ -109780,6 +111874,11 @@ components:
         workloads:
           type: array
           items: { $ref: '#/components/schemas/ProjectEnvironmentBranchWorkload' }
+        created_at: { type: string, format: date-time, description: When the branch was created. Reported by the branch's own view. }
+        databases:
+          type: array
+          description: The managed PostgreSQL copies the branch owns. Reported by the branch's own view.
+          items: { $ref: '#/components/schemas/ProjectEnvironmentBranchDatabase' }
 
     ProjectEnvironmentBranchWorkload:
       description: One workload the branch published from its parent's build. It starts on its first request.
@@ -109790,7 +111889,23 @@ components:
         deployment_id: { type: string }
         source_deployment_id: { type: string, description: The parent deployment whose build the branch reuses. }
         status: { type: string }
-        url: { type: string, description: "The workload's address in the branch. Its first request starts it." }
+        url: { type: string, description: "The workload's stable address in the branch, which a reset keeps. Its first request starts it." }
+        environment_url: { type: string, description: "The address of this incarnation of the branch; a reset gives it a new one." }
+
+    ProjectEnvironmentBranchDatabase:
+      description: "One managed PostgreSQL copy a branch owns."
+      type: object
+      required: [source_database_id, name]
+      properties:
+        source_database_id: { type: string }
+        name: { type: string }
+        copy_database_id: { type: string, description: "Empty until the copy is made." }
+
+    ExtendProjectEnvironmentBranchRequest:
+      description: "Moves a branch's expiry."
+      type: object
+      properties:
+        ttl: { type: string, description: "The time from now the branch lives, such as 48h. Empty takes the default (168h)." }
 
     ProjectEnvironmentBranchListResponse:
       description: "The branches of one parent environment."
@@ -110794,6 +112909,17 @@ components:
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time }
 
+    ResumeEnvironmentAutomationResponse:
+      type: object
+      description: Crons enabled by resuming a stage's automation after a full environment clone.
+      required: [environment, crons_resumed, cron_ids]
+      properties:
+        environment: { type: string, description: "Stage whose paused automation was enabled.", example: "staging" }
+        crons_resumed: { type: integer, minimum: 0, description: "Number of crons enabled." }
+        cron_ids:
+          type: array
+          description: Crons enabled by this call.
+          items: { type: string }
     ProjectEnvironmentCloneOperationResponse:
       description: Durable clone progress within one account and project, excluding private source configuration and worker credentials.
       type: object
@@ -112331,6 +114457,16 @@ components:
         observed: { type: integer, format: int64 }
         docs_url: { type: string }
 
+    FeatureHint:
+      description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable."
+      type: object
+      required: [id, applied]
+      properties:
+        id: { type: string, description: "Stable hint ID, such as health-default-path or public-needs-api-key" }
+        workloads: { type: array, items: { type: string }, description: "Workloads the hint is about" }
+        applied: { type: string, description: "What Gregale will do with this source" }
+        change: { type: string, description: "How to change it" }
+        commands: { type: array, items: { type: string }, description: "Exact gregale commands; <placeholders> need a value" }
     PlanResponse:
       description: "Dry-run scan response."
       type: object
@@ -112374,6 +114510,10 @@ components:
         warnings:
           type: array
           items: { type: string }
+        feature_hints:
+          type: array
+          description: "Gregale behaviors and features that apply to the scanned source, with the commands that change them."
+          items: { $ref: '#/components/schemas/FeatureHint' }
         detection_warnings:
           type: array
           description: "Structured skipped/merged detector decisions available to explain-mode clients."
@@ -113008,6 +115148,7 @@ components:
             - route_insights_detected
             - route_monitor_incidents
             - route_health_holds
+            - ai_budget_alerts
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -113114,7 +115255,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds, ai_budget_alerts]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -113207,7 +115348,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds, ai_budget_alerts]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -115525,6 +117666,60 @@ components:
         spent_cents: { type: integer, format: int64, minimum: 0, description: "Always-on capacity the agent added this UTC month, priced at the overage rate and rounded up to the cent." }
         month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The UTC month spend counts in." }
 
+    AgentUndoRequest:
+      description: "Chooses an agent's changes to undo: those since a time (default the last 24 hours), or the activity entries named."
+      type: object
+      additionalProperties: false
+      properties:
+        since: { type: string, format: date-time, description: "Undo changes made at or after this time; at most 7 days ago." }
+        entries:
+          type: array
+          maxItems: 500
+          description: "Activity entry ids to undo; when given, only they are undone."
+          items: { type: string }
+        force: { type: boolean, description: "Also undo changes someone changed again since the agent did." }
+        plan_digest: { type: string, description: "On apply, the plan_digest of the reviewed plan." }
+
+    AgentUndoItem:
+      description: "One agent change in an undo plan or result."
+      type: object
+      required: [activity_id, method, path, kind, summary, created_at, status]
+      properties:
+        activity_id: { type: string, description: "The activity entry of the change." }
+        method: { type: string, description: "The HTTP method of the agent's request." }
+        path: { type: string, description: "The path of the agent's request." }
+        kind: { type: string, enum: [settings, deploy, create, delete, other], description: "What kind of change it was." }
+        summary: { type: string, description: "What the agent changed." }
+        created_at: { type: string, format: date-time, description: "When the agent made the change." }
+        status: { type: string, enum: [undoable, not_undoable, changed_since, undone], description: "What undoing it will do, or did." }
+        reason: { type: string, description: "Why it cannot be undone, or why it was left." }
+        result: { type: string, enum: [undone, changed_since, failed, skipped], description: "On apply, what happened to it." }
+        error_code: { type: string, description: "On a failed apply, the code of the refusal." }
+        error: { type: string, description: "On a failed apply, why it was refused." }
+
+    AgentUndoPlan:
+      description: "An agent's changes, newest first, and what undoing them will do."
+      type: object
+      required: [since, items, undoable, plan_digest]
+      properties:
+        since: { type: string, format: date-time, description: "The oldest change time the plan covers." }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AgentUndoItem' }
+        undoable: { type: integer, minimum: 0, description: "How many changes applying the plan will undo." }
+        plan_digest: { type: string, description: "Binds an apply to this plan." }
+
+    AgentUndoResult:
+      description: "What an applied undo did to each change, newest first."
+      type: object
+      required: [items, undone, failed]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AgentUndoItem' }
+        undone: { type: integer, minimum: 0, description: "Changes undone." }
+        failed: { type: integer, minimum: 0, description: "Changes whose undo was refused." }
+
     AgentBudgetRequest:
       description: "Sets an agent connection's budget: exactly one of monthly_cents, unlimited or default."
       type: object
@@ -115590,7 +117785,7 @@ components:
       required: [id, category, review_url, expires_at]
       properties:
         id: { type: string, format: uuid, description: The id of the approval request. }
-        category: { type: string, enum: [delete, production, credentials, billing, budget], description: "The kind of action that needs approval; budget when the change would take the agent past its monthly budget." }
+        category: { type: string, enum: [delete, production, credentials, billing, budget, undo], description: "The kind of action that needs approval; budget when the change would take the agent past its monthly budget, undo when the agent applies an undo of its own changes." }
         review_url: { type: string, format: uri, description: "The page where a signed-in member who may decide approves or denies the request." }
         expires_at: { type: string, format: date-time, description: When the request and any approval of it expire. }
         status: { type: string, enum: [denied, expired], description: "Set on approval_denied and approval_expired: what became of the request." }
@@ -115653,13 +117848,14 @@ components:
       required: [id, category, method, path, body_bound, status, created_at, expires_at]
       properties:
         id: { type: string, format: uuid, description: The request's id. }
-        category: { type: string, enum: [delete, production, credentials, billing, budget], description: "The kind of action; budget for a change past the agent's monthly budget." }
+        category: { type: string, enum: [delete, production, credentials, billing, budget, undo], description: "The kind of action; budget for a change past the agent's monthly budget, undo for an agent undoing its own changes." }
         method: { type: string, description: The HTTP method of the request the approval allows. }
         path: { type: string, description: The path and query of the request the approval allows. }
         body_bound: { type: boolean, description: "Whether the approval is tied to the request body; large and multipart bodies are not." }
         status: { type: string, enum: [pending, approved, denied, consumed, expired], description: "`consumed` once the approved request was made." }
         review_url: { type: string, format: uri, description: The review page, while the request is pending. }
         agent: { type: string, description: "The connection's client name or key label." }
+        connection_id: { type: string, description: "The id of the agent connection that asked, as GET /v1/agent-connections lists it." }
         created_at: { type: string, format: date-time, description: When the agent first made the request. }
         expires_at: { type: string, format: date-time, description: After this time the request can no longer be approved or used. }
         decided_at: { type: string, format: date-time, description: When a person approved or denied it. }
@@ -119161,7 +121357,7 @@ components:
       required: [route, method, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
       properties:
         route: { type: string, description: "Route template, not an expanded URL." }
-        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER] }
         requests: { type: integer, format: int64, minimum: 0 }
         error_requests: { type: integer, format: int64, minimum: 0 }
         error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
@@ -119311,7 +121507,7 @@ components:
       required: [value, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms]
       properties:
         value: { type: string }
-        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER] }
         requests: { type: integer, format: int64, minimum: 0 }
         error_requests: { type: integer, format: int64, minimum: 0 }
         error_rate_pct: { type: number, format: double, minimum: 0, maximum: 100 }
@@ -119343,7 +121539,7 @@ components:
       required: [route, method, requests, identified_requests, anonymous_requests, unresolved_identity_requests, consumer_count, platform_tenant_count, last_observed_at, customers, customers_truncated, other_customer_requests]
       properties:
         route: { type: string, description: "Exact recorded route label; may include its HTTP method prefix." }
-        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "HTTP method for this route observation." }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER], description: "HTTP method for this route observation." }
         requests: { type: integer, format: int64, minimum: 1, description: "All weighted retained requests for this route and deployment." }
         identified_requests: { type: integer, format: int64, minimum: 0, description: "Requests with at least one resolvable account-owned consumer or tenant identity." }
         anonymous_requests: { type: integer, format: int64, minimum: 0, description: "Requests with neither consumer nor tenant identity recorded." }
@@ -119388,6 +121584,10 @@ components:
         `[from, until)`, and the route list is capped at 50 rows.
       required: [slug, since, from, until, window_clamped, requests, error_requests, error_rate_pct, cold_boots, p50_ms, p95_ms, p99_ms, group_by, groups, groups_limit, groups_truncated, routes, routes_limit, routes_truncated, dependencies_truncated, as_of]
       properties:
+        omitted:
+          type: array
+          description: "Optional enrichment sections unavailable within their query budgets; traffic totals remain available."
+          items: { type: string }
         slug: { type: string }
         since: { type: string, description: "Effective lookback duration after retention clamping." }
         from: { type: string, format: date-time, description: "Inclusive lower bound of the analytics window." }
@@ -119441,7 +121641,7 @@ components:
         (`telemetry_coverage_missing`, `telemetry_coverage_stale`), telemetry switched off or sampled
         (`telemetry_disabled`, `telemetry_sampled`), requests still waiting to be delivered
         (`telemetry_ingestion_pending`), or requests lost or a gateway restarted during the window (`telemetry_window_incomplete`).
-      enum: [telemetry_coverage_missing, telemetry_coverage_stale, telemetry_disabled, telemetry_sampled, telemetry_ingestion_pending, telemetry_window_incomplete]
+      enum: [telemetry_coverage_unknown, telemetry_coverage_missing, telemetry_coverage_stale, telemetry_disabled, telemetry_sampled, telemetry_ingestion_pending, telemetry_window_incomplete]
 
     RequestAnalyticsTimeseriesPoint:
       type: object
@@ -119463,7 +121663,7 @@ components:
       required: [value, points]
       properties:
         value: { type: string }
-        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER] }
         points:
           type: array
           items: { $ref: '#/components/schemas/RequestAnalyticsTimeseriesPoint' }
@@ -119478,7 +121678,7 @@ components:
       properties:
         slug: { type: string }
         route: { type: string, maxLength: 256, description: "Exact bounded route-label filter when a route-level series was requested." }
-        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS], description: "Exact method filter when a route-level series was requested." }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER], description: "Exact method filter when a route-level series was requested." }
         since: { type: string, description: "Effective series lookback after retention clamping." }
         from: { type: string, format: date-time, description: "First instant represented by the hourly series." }
         until: { type: string, format: date-time, description: "Exclusive end instant represented by the hourly series." }
@@ -120495,6 +122695,10 @@ components:
         oldest_pending_at: { type: [string, "null"], format: date-time, description: "Oldest pending row's created_at; null when the queue is empty." }
         oldest_pending_age_seconds: { type: [integer, "null"], description: "Convenience field — seconds since oldest_pending_at; null when the queue is empty." }
         generated_at: { type: string, format: date-time }
+        backlog_by_source:
+          type: object
+          additionalProperties: { type: integer, format: int64 }
+          description: "Every pending or in-delivery invocation of the app per source (async_invoke, inbound_webhook, queue, ...), so async work waiting for the scheduler is visible beside the queue's depth. Omitted when nothing waits."
 
     QueuePeekMessage:
       description: "One pending row. No lease was acquired and `attempts` was not incremented."
@@ -124287,6 +126491,19 @@ components:
             opaque; clients MUST pass the value back unchanged.
           type: string
 
+    OrgSecurityPolicy:
+      description: An organization's security policy.
+      type: object
+      required: [require_mfa]
+      properties:
+        require_mfa:
+          type: boolean
+          description: Members without two-factor authentication are refused on the organization's routes.
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
     TransferOwnershipRequest:
       description: |
         POST /v1/orgs/{slug}/transfer_ownership body. The new owner
@@ -124398,7 +126615,7 @@ components:
         approval_id: { type: string, format: uuid, description: The approval request this event is about. }
         key_id: { type: string, format: uuid, description: The agent key that made the request. }
         org_id: { type: string, format: uuid, description: The organization the key acts in, when it acts in one. }
-        category: { type: string, enum: [delete, production, credentials, billing, budget], description: "Which kind of risky action the agent asked to take; budget when it would go past its monthly budget." }
+        category: { type: string, enum: [delete, production, credentials, billing, budget, undo], description: "Which kind of risky action the agent asked to take; budget when it would go past its monthly budget, undo when it undoes its own changes." }
         method: { type: string, description: HTTP method of the agent's request. }
         path: { type: string, description: Path and query of the agent's request. }
         status: { type: string, enum: [pending, approved, denied], description: The request's status when the event was recorded. }
@@ -126508,6 +128725,10 @@ components:
       description: Bounded hourly, customer-safe delivery analytics for one runtime log destination.
       required: [log_drain_id, window, bucket_interval, from, to, buckets, summary]
       properties:
+        requested_from: { type: string, format: date-time, description: "Original requested lower bound before expanding to the recorded hourly observations." }
+        window_aligned: { type: boolean, description: "True when hourly observations changed the effective bounds; from/to match the counter observation times." }
+        complete: { type: boolean, description: "Whether every reported counter delta has a valid baseline without missing hourly samples." }
+        coverage_gaps: { type: array, items: { type: string }, description: "Missing baseline or hourly sample evidence; unknown deltas are omitted from totals." }
         log_drain_id: { type: string, pattern: '^[0-9a-f]{32}$' }
         window: { type: string, enum: [1h, 24h, 7d, 30d] }
         bucket_interval: { type: string, enum: [1h] }
@@ -137739,6 +139960,17 @@ components:
       required:
       - expected_revision
       properties:
+        tables:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          description: Exact public table names to inspect, bypassing the default discovery page. Mutually exclusive with search.
+          items: { type: string, pattern: "^[a-z][a-z0-9_]{0,62}$" }
+        search:
+          type: string
+          maxLength: 63
+          pattern: "^[a-z0-9_]*$"
+          description: Discover names containing this literal text before applying the metadata limit. Mutually exclusive with tables.
         expected_revision:
           type: integer
           format: int64
@@ -137761,6 +139993,14 @@ components:
       - tables
       - created_at
       properties:
+        requested_tables:
+          type: array
+          maxItems: 16
+          items: { type: string }
+          description: Exact discovery selection retained across queueing and worker completion.
+        search:
+          type: string
+          description: Literal discovery name filter.
         capacity:
           $ref: '#/components/schemas/DataPipelineCapacity'
         id:
@@ -138052,6 +140292,8 @@ components:
       - verification
       - created_at
       properties:
+        wal_retention:
+          $ref: '#/components/schemas/DataPipelineWALRetention'
         applied_through_at:
           type: string
           format: date-time
@@ -138095,7 +140337,7 @@ components:
             type: string
             minLength: 1
             maxLength: 256
-          minItems: 1
+          minItems: 0
           maxItems: 32
           uniqueItems: true
         desired_state:
@@ -138151,6 +140393,15 @@ components:
         created_at:
           type: string
           format: date-time
+    DataPipelineWALRetention:
+      description: Fresh source-specific WAL headroom. The remaining-time estimate uses sampled cluster WAL generation and does not guarantee when a slot will be invalidated.
+      type: object
+      additionalProperties: false
+      required: [limit_bytes, remaining_bytes]
+      properties:
+        limit_bytes: { type: integer, format: int64, minimum: 1 }
+        remaining_bytes: { type: integer, format: int64, minimum: 0 }
+        estimated_seconds_remaining: { type: integer, format: int64, minimum: 0 }
     DataPipelineHealth:
       description: Read-time freshness assessment and safe recovery guidance. Unconfirmed checkpoints can occur on idle sources.
       type: object

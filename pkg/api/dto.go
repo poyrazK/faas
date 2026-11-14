@@ -44,6 +44,11 @@ type PublishEventRequest struct {
 	Data            json.RawMessage `json:"data"`
 	AccountID       string          `json:"accountid,omitempty"`
 	SchemaVersion   string          `json:"schemaversion,omitempty"`
+	// EnvironmentID names the project environment the event belongs to
+	// (ADR-20261104120000); omitted is production. Only subscriptions of that
+	// environment receive the event, and only production events start
+	// workflows.
+	EnvironmentID string `json:"environmentid,omitempty"`
 }
 
 func (r *PublishEventRequest) UnmarshalJSON(data []byte) error {
@@ -357,8 +362,11 @@ type EventSubscriptionResponse struct {
 	WorkAction         string                   `json:"work_action,omitempty"`
 	Ordered            bool                     `json:"ordered,omitempty"`
 	Enabled            bool                     `json:"enabled"`
-	CreatedAt          time.Time                `json:"created_at"`
-	UpdatedAt          time.Time                `json:"updated_at"`
+	// Environment is the project environment slug whose events the
+	// subscription receives; omitted is production (ADR-20261104120000).
+	Environment string    `json:"environment,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // EventSubscriptionListResponse is the app-scoped, read-only subscription
@@ -2892,12 +2900,13 @@ func (h *DeploymentHealthcheck) Clone() *DeploymentHealthcheck {
 // DeploymentReadinessProbe is a reversible, steady-state traffic gate for
 // the primary app. It is distinct from Healthcheck (startup admission) and
 // LivenessProbe (which restarts a wedged VM).
+// The yaml tags let gregale.yaml hosting.readiness_probe use the same keys.
 type DeploymentReadinessProbe struct {
-	Path             string                     `json:"path,omitempty"`
-	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty"`
-	PeriodS          int                        `json:"period_s,omitempty"`
-	TimeoutS         int                        `json:"timeout_s,omitempty"`
-	FailureThreshold int                        `json:"failure_threshold,omitempty"`
+	Path             string                     `json:"path,omitempty" yaml:"path,omitempty"`
+	GRPC             *DeploymentGRPCHealthcheck `json:"grpc,omitempty" yaml:"grpc,omitempty"`
+	PeriodS          int                        `json:"period_s,omitempty" yaml:"period_s,omitempty"`
+	TimeoutS         int                        `json:"timeout_s,omitempty" yaml:"timeout_s,omitempty"`
+	FailureThreshold int                        `json:"failure_threshold,omitempty" yaml:"failure_threshold,omitempty"`
 }
 
 // DeploymentLivenessProbe is the liveness-probe shape on the
@@ -4870,10 +4879,24 @@ type CronResponse struct {
 	// Environment is the project environment the cron runs in; omitted for
 	// the app's production environment (ADR-20261104120000).
 	Environment string `json:"environment,omitempty"`
+	// ClonePaused marks a cron a full environment clone copied disabled
+	// although the source ran it; resuming the environment's automation
+	// enables it (ADR-20261104120000).
+	ClonePaused bool `json:"clone_paused,omitempty"`
 	// Labels are the cron's key/value labels (ADR-20261031100025), on its
 	// list and read while the resource-labels capability is on for the
 	// caller. Labels are not secret.
 	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// ResumeEnvironmentAutomationResponse reports the automation a resume
+// enabled in one project environment: the crons a full clone copied paused
+// that the source ran (ADR-20261104120000). A cron the source had disabled,
+// or one already enabled or disabled since, is left as it is.
+type ResumeEnvironmentAutomationResponse struct {
+	Environment  string   `json:"environment"`
+	CronsResumed int      `json:"crons_resumed"`
+	CronIDs      []string `json:"cron_ids"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -5307,8 +5330,9 @@ type PasswordLoginResponse struct {
 // equivalence ("wrong password" vs "no account" vs "weak password") is
 // kept intact under the same JSON keys.
 type PasswordSignupRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	ReferralCode string `json:"referral_code,omitempty"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
 }
 
 // ProgrammaticAuthResponse is the body for the JSON-only
@@ -5349,7 +5373,8 @@ type ProgrammaticAPIKey struct {
 // body regardless of whether the email is bound, so the surface
 // cannot be used to enumerate accounts.
 type MagicLinkSignupRequest struct {
-	Email string `json:"email"`
+	ReferralCode string `json:"referral_code,omitempty"`
+	Email        string `json:"email"`
 }
 
 // PasswordResetRequest is the body of POST /login/forgot. The email
@@ -6566,6 +6591,11 @@ type QueueStateResponse struct {
 	OldestPendingAt         *time.Time `json:"oldest_pending_at,omitempty"`
 	OldestPendingAgeSeconds *int64     `json:"oldest_pending_age_seconds,omitempty"`
 	GeneratedAt             time.Time  `json:"generated_at"`
+	// BacklogBySource is every pending or in-delivery invocation of the app
+	// per source (async_invoke, inbound_webhook, queue, ...), so async work
+	// waiting for the scheduler is visible beside the queue's depth. Omitted
+	// when nothing waits or the server cannot read it.
+	BacklogBySource map[string]int64 `json:"backlog_by_source,omitempty"`
 }
 
 // QueuePeekMessage is one pending row returned by GET .../queues/peek.
@@ -7947,28 +7977,42 @@ type QuotaBlock struct {
 // account (Unaffected = noop or skipped) plus the scan's proposed
 // creates (WillDeploy.Action == "create"). Removed is a flat slug
 // list — removal has no per-row editable metadata worth surfacing.
+// FeatureHint is one Gregale behavior or feature that applies to the scanned
+// source: what the plan will do, how to change it, and the exact commands
+// (ADR-20261112223000 §1). IDs are stable.
+type FeatureHint struct {
+	ID        string   `json:"id"`
+	Workloads []string `json:"workloads,omitempty"`
+	Applied   string   `json:"applied"`
+	Change    string   `json:"change,omitempty"`
+	Commands  []string `json:"commands,omitempty"`
+}
+
 type PlanResponse struct {
-	SafeRelease           *ProjectSafeRelease    `json:"safe_release,omitempty"`
-	ProjectSlug           string                 `json:"project_slug"`
-	RepoFullName          string                 `json:"repo_full_name,omitempty"`
-	Environment           string                 `json:"environment,omitempty"`
-	EnvironmentProtected  bool                   `json:"environment_protected,omitempty"`
-	EnvironmentConfigHash string                 `json:"environment_config_hash,omitempty"`
-	ScanSource            string                 `json:"scan_source"`
-	Tier                  string                 `json:"tier"`
-	Workloads             []PlanWorkload         `json:"workloads"`
-	Managed               []PlanManaged          `json:"managed"`
-	Crons                 []PlanCron             `json:"crons"`
-	AsyncRoutes           []PlanAsyncRoute       `json:"async_routes,omitempty"`
-	Warnings              []string               `json:"warnings,omitempty"`
-	DetectionWarnings     []PlanDetectionWarning `json:"detection_warnings,omitempty"`
-	ObservedApps          int                    `json:"observed_apps"`
-	ObservedCrons         int                    `json:"observed_crons"`
-	LimitApps             int                    `json:"limit_apps"`
-	LimitCrons            int                    `json:"limit_crons"`
-	CanApply              bool                   `json:"can_apply"`
-	CronsNotAllowed       bool                   `json:"crons_not_allowed,omitempty"`
-	PlanToken             string                 `json:"plan_token"`
+	SafeRelease           *ProjectSafeRelease `json:"safe_release,omitempty"`
+	ProjectSlug           string              `json:"project_slug"`
+	RepoFullName          string              `json:"repo_full_name,omitempty"`
+	Environment           string              `json:"environment,omitempty"`
+	EnvironmentProtected  bool                `json:"environment_protected,omitempty"`
+	EnvironmentConfigHash string              `json:"environment_config_hash,omitempty"`
+	ScanSource            string              `json:"scan_source"`
+	Tier                  string              `json:"tier"`
+	Workloads             []PlanWorkload      `json:"workloads"`
+	Managed               []PlanManaged       `json:"managed"`
+	Crons                 []PlanCron          `json:"crons"`
+	AsyncRoutes           []PlanAsyncRoute    `json:"async_routes,omitempty"`
+	Warnings              []string            `json:"warnings,omitempty"`
+	// FeatureHints says which Gregale behaviors and features apply to the
+	// scanned source and the commands that change them (ADR-20261112223000).
+	FeatureHints      []FeatureHint          `json:"feature_hints,omitempty"`
+	DetectionWarnings []PlanDetectionWarning `json:"detection_warnings,omitempty"`
+	ObservedApps      int                    `json:"observed_apps"`
+	ObservedCrons     int                    `json:"observed_crons"`
+	LimitApps         int                    `json:"limit_apps"`
+	LimitCrons        int                    `json:"limit_crons"`
+	CanApply          bool                   `json:"can_apply"`
+	CronsNotAllowed   bool                   `json:"crons_not_allowed,omitempty"`
+	PlanToken         string                 `json:"plan_token"`
 	// ADR-124 can_apply rescue signal. PreExclude is the gate
 	// evaluated on the full scan (pre-`--only`/pre-`--exclude`).
 	// Rescued is true when --exclude flipped a blocked gate to
@@ -8190,9 +8234,10 @@ type AppStaticEgressIPResponse struct {
 // /v1/apps/{slug}/static-egress-ip. IP is the canonical
 // customer-supplied IPv4 (dotted-quad string). The handler
 // validates the family=4 + non-RFC1918 + non-link-local +
-// non-multicast before the column write. Set=false means
-// "clear" — the same wire body covers the DELETE /keep-IP
-// promotion path without a third endpoint.
+// non-multicast before the column write. Set=false with no IP
+// means "clear" — the same wire body covers the DELETE /keep-IP
+// promotion path without a third endpoint. Set=false with an IP
+// is refused as ambiguous.
 type SetAppStaticEgressIPRequest struct {
 	IP  string `json:"ip"`
 	Set bool   `json:"set"`
@@ -12641,6 +12686,8 @@ type RequestAnalyticsGroup struct {
 // envelope for one app. Since/Until are the effective half-open window; a
 // longer requested since value is represented by WindowClamped=true.
 type RequestAnalyticsResponse struct {
+	// Omitted names optional enrichments unavailable within their query budget.
+	Omitted               []string                                 `json:"omitted,omitempty"`
 	Slug                  string                                   `json:"slug"`
 	Since                 string                                   `json:"since"`
 	From                  string                                   `json:"from"`
@@ -13911,6 +13958,9 @@ type AppPublishEventRequest struct {
 	Data          json.RawMessage `json:"data"`
 	Time          *time.Time      `json:"time,omitempty"`
 	SchemaVersion string          `json:"schemaversion,omitempty"`
+	// Environment is the slug of the app's project environment the event
+	// belongs to (ADR-20261104120000); omitted is production.
+	Environment string `json:"environment,omitempty"`
 }
 
 type AppPublishEventResponse struct {

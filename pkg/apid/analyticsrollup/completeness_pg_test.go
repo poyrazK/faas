@@ -18,9 +18,9 @@ import (
 
 // A node counting analytics itself is judged by its analytics gaps when
 // rollups answer: a raw row it lost leaves the window complete, an
-// analytics loss does not, and a heartbeat without the analytics part
-// falls back to raw delivery (amendment 6). Raw completeness, which route
-// removal reads, still sees the raw loss.
+// analytics loss does not. A later backlog or heartbeat without analytics
+// cannot invalidate earlier counting proof. Windows without counting proof
+// fall back to raw delivery. Raw completeness still sees the raw loss.
 func TestAnalyticsCompletenessJudgesCountingNodesByAnalyticsGaps(t *testing.T) {
 	ctx := t.Context()
 	pool := pgtest.OpenMigrated(t)
@@ -66,6 +66,7 @@ func TestAnalyticsCompletenessJudgesCountingNodesByAnalyticsGaps(t *testing.T) {
 				SourceAt: time.Now().UTC(), AppScoped: true, Analytics: analytics}
 			if i == 0 {
 				c.DroppedTotal = drops
+				c.PendingCount = gap.PendingCount
 				if gap.AppID != "" {
 					c.AppGaps = []state.TelemetryAppGap{gap}
 				}
@@ -83,23 +84,29 @@ func TestAnalyticsCompletenessJudgesCountingNodesByAnalyticsGaps(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 
 	// The gateway lost a raw row it had counted.
-	heartbeat(state.TelemetryAppGap{AppID: app.ID, DroppedCount: 1}, counting)
+	heartbeat(state.TelemetryAppGap{AppID: app.ID, DroppedCount: 1, PendingCount: 2}, counting)
 	analytics, err := store.RequestAnalyticsCompleteness(ctx, app.ID, from, until)
 	if err != nil || len(analytics) != 0 {
 		t.Fatalf("analytics blockers = %v, %v; want none for a raw loss the gateway counted", analytics, err)
 	}
 	raw, err := store.RequestTelemetryCompleteness(ctx, app.ID, from, until)
-	if err != nil || !slices.Contains(raw, "telemetry_window_incomplete") {
-		t.Fatalf("raw blockers = %v, %v; want the raw loss", raw, err)
+	if err != nil || !slices.Contains(raw, "telemetry_window_incomplete") || !slices.Contains(raw, "telemetry_ingestion_pending") {
+		t.Fatalf("raw blockers = %v, %v; want the raw loss and backlog", raw, err)
 	}
 
-	// Late rollups are pending, then an analytics loss marks the window.
+	// Late rollups affect a new window, preserving the earlier counting proof.
+	pendingFrom := time.Now().UTC()
+	pendingUntil := pendingFrom.Add(time.Millisecond)
+	time.Sleep(20 * time.Millisecond)
 	heartbeat(state.TelemetryAppGap{AppID: app.ID, AnalyticsPendingCount: 2}, counting)
-	if got, err := store.RequestAnalyticsCompleteness(ctx, app.ID, from, until); err != nil || !slices.Contains(got, "telemetry_ingestion_pending") {
+	if got, err := store.RequestAnalyticsCompleteness(ctx, app.ID, pendingFrom, pendingUntil); err != nil || !slices.Contains(got, "telemetry_ingestion_pending") {
 		t.Fatalf("blockers with late rollups = %v, %v", got, err)
 	}
+	if got, err := store.RequestAnalyticsCompleteness(ctx, app.ID, from, until); err != nil || len(got) != 0 {
+		t.Fatalf("later backlog invalidated earlier counting proof: %v, %v", got, err)
+	}
 	heartbeat(state.TelemetryAppGap{AppID: app.ID, AnalyticsDroppedCount: 1}, counting)
-	if got, err := store.RequestAnalyticsCompleteness(ctx, app.ID, from, until); err != nil || !slices.Contains(got, "telemetry_window_incomplete") || slices.Contains(got, "telemetry_ingestion_pending") {
+	if got, err := store.RequestAnalyticsCompleteness(ctx, app.ID, pendingFrom, pendingUntil); err != nil || !slices.Contains(got, "telemetry_window_incomplete") || slices.Contains(got, "telemetry_ingestion_pending") {
 		t.Fatalf("blockers after an analytics loss = %v, %v; want incomplete, nothing pending", got, err)
 	}
 
@@ -112,11 +119,15 @@ func TestAnalyticsCompletenessJudgesCountingNodesByAnalyticsGaps(t *testing.T) {
 		t.Fatalf("blockers after the loss = %v, %v; want none", got, err)
 	}
 
-	// A heartbeat without the analytics part: the node is judged by raw
-	// delivery, whose loss came after the first window began.
-	heartbeat(state.TelemetryAppGap{}, nil)
-	if got, err := store.RequestAnalyticsCompleteness(ctx, app.ID, from, until); err != nil || !slices.Contains(got, "telemetry_window_incomplete") {
+	// A new window without analytics proof is judged by raw delivery.
+	rawFrom := time.Now().UTC()
+	time.Sleep(20 * time.Millisecond)
+	heartbeat(state.TelemetryAppGap{AppID: app.ID, DroppedCount: 1}, nil)
+	if got, err := store.RequestAnalyticsCompleteness(ctx, app.ID, rawFrom, rawFrom.Add(time.Millisecond)); err != nil || !slices.Contains(got, "telemetry_window_incomplete") {
 		t.Fatalf("blockers without the analytics part = %v, %v; want the raw loss", got, err)
+	}
+	if got, err := store.RequestAnalyticsCompleteness(ctx, app.ID, from, until); err != nil || len(got) != 0 {
+		t.Fatalf("later raw-only heartbeat invalidated earlier counting proof: %v, %v", got, err)
 	}
 
 	// A gateway that stops counting restarts counting_since.

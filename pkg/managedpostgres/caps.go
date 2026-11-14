@@ -241,26 +241,31 @@ const (
 	CapThresholdAllowance      = "allowance"
 	CapThresholdCeilingWarning = "ceiling_warning"
 	CapThresholdSuspended      = "suspended"
-	// CapThresholdEgressHeld: the subject's databases and apps together sent
-	// the shared egress allowance, so its databases are held until the month
-	// ends (ADR-20261110160000). Used, Allowance and Ceiling are bytes: the
-	// shared egress, the plan's allowance and the hold ceiling. Overage is
-	// set when the ceiling is twice the allowance because database egress
-	// overage is billed. It is mailed on its own, never as the most severe
-	// compute threshold.
+	// CapThresholdEgressHeld: a database sent its own monthly egress
+	// allowance, so it is held until the month ends (ADR-20261110160000).
+	// Since the 2026-11-13 amendment it is recorded per database
+	// (EgressHoldNoticeStore), with DatabaseID set; Used, Allowance and
+	// Ceiling are bytes: the database's egress, its allowance and the hold
+	// ceiling. Overage is set when the ceiling is twice the allowance because
+	// database egress overage is billed. It is mailed on its own, never as
+	// the most severe compute threshold.
 	CapThresholdEgressHeld = "egress_held"
 )
 
 // CapEvent is one threshold a subject reached in a month.
 type CapEvent struct {
-	SubjectID   string
-	PeriodStart time.Time
-	Threshold   string
-	ReachedAt   time.Time
-	Used        int64
-	Allowance   int64
-	Ceiling     int64
-	Overage     bool
+	SubjectID string
+	// DatabaseID and DatabaseName name the database an egress hold is for;
+	// the compute thresholds are the subject's and leave them empty.
+	DatabaseID   string
+	DatabaseName string
+	PeriodStart  time.Time
+	Threshold    string
+	ReachedAt    time.Time
+	Used         int64
+	Allowance    int64
+	Ceiling      int64
+	Overage      bool
 	// Mailed is read only: an email is linked to the event.
 	Mailed bool
 }
@@ -388,11 +393,12 @@ func (e *CapEnforcer) uncappedEgress(ctx context.Context, subjectID string, now 
 }
 
 // egressCheck is one sweep's read of a subject's databases' egress: the ones
-// that sent their allowance, and the numbers the hold email reports.
+// that sent their allowance, with the egress each sent, and the numbers the
+// hold email reports.
 type egressCheck struct {
-	held                     map[string]bool
-	used, allowance, ceiling int64
-	billed                   bool
+	held               map[string]int64
+	allowance, ceiling int64
+	billed             bool
 }
 
 // spent reports whether any database is held for egress.
@@ -414,10 +420,9 @@ func (e *CapEnforcer) egressSpent(ctx context.Context, subjectID string, snapsho
 	for id, egress := range snapshot.DatabaseEgress {
 		if egressAllowanceReached(egress, check.ceiling) {
 			if check.held == nil {
-				check.held = map[string]bool{}
+				check.held = map[string]int64{}
 			}
-			check.held[id] = true
-			check.used = max(check.used, egress)
+			check.held[id] = egress
 		}
 	}
 	return check, nil
@@ -440,43 +445,53 @@ func withEgressHolds(reasons map[string]string, check egressCheck) map[string]st
 	return reasons
 }
 
-// noticeEgressHold records the month's egress hold the first time a sweep
-// holds the subject for it, and mails it once (ADR-20261110160000): without
-// it a customer sees ready databases refuse connections and no email says
-// why. Shadow mode records nothing. A failed email does not fail the sweep;
-// the next sweep retries it inside the mail window.
-func (e *CapEnforcer) noticeEgressHold(ctx context.Context, subjectID string, now time.Time, check egressCheck, summary *CapSweepSummary) {
-	store, ok := e.store.(CapEventStore)
+// noticeEgressHold records each database's egress hold the first time a
+// sweep holds it in a month, and mails it once, naming the database
+// (ADR-20261110160000, amendment 2026-11-13): without it a customer sees a
+// ready database refuse connections and no email says why, and each
+// database is held on its own, so each gets its own email. Shadow mode
+// records nothing. A failed email does not fail the sweep; the next sweep
+// retries it inside the mail window.
+func (e *CapEnforcer) noticeEgressHold(ctx context.Context, subjectID string, databases []Database, now time.Time, check egressCheck, summary *CapSweepSummary) {
+	store, ok := e.store.(EgressHoldNoticeStore)
 	if !ok || e.mode != CapEnforcementOn || !check.spent() {
 		return
 	}
-	event := CapEvent{SubjectID: subjectID, PeriodStart: monthStart(now), Threshold: CapThresholdEgressHeld, ReachedAt: now,
-		Used: check.used, Allowance: max(check.allowance, 1), Ceiling: max(check.ceiling, check.allowance, 1), Overage: check.billed}
-	recorded, err := store.RecordCapEvent(ctx, event)
-	if err != nil {
-		summary.NotifyFailed++
-		e.logger.Warn("managed postgres egress hold not recorded", "subject_id", subjectID, "error", err)
-		return
-	}
-	if recorded {
-		summary.EventsRecorded++
-		e.logger.Info("managed postgres egress hold reached", "subject_id", subjectID,
-			"egress_bytes", check.used, "hold_ceiling_bytes", check.ceiling, "overage_billed", check.billed)
-	}
-	reader, ok := e.store.(CapEventReader)
-	if !ok || e.notify == nil {
-		return
-	}
-	stored, err := reader.CapEvent(ctx, subjectID, now, CapThresholdEgressHeld)
-	if err == nil && (stored == nil || stored.Mailed || now.Sub(stored.ReachedAt) >= capMailWindow) {
-		return
-	}
-	if err == nil {
-		err = e.notify(ctx, *stored)
-	}
-	if err != nil {
-		summary.NotifyFailed++
-		e.logger.Warn("managed postgres egress hold email not queued", "subject_id", subjectID, "error", err)
+	for _, database := range databases {
+		used, held := check.held[database.ID]
+		if !held {
+			continue
+		}
+		event := CapEvent{SubjectID: subjectID, DatabaseID: database.ID, DatabaseName: database.Name, PeriodStart: monthStart(now),
+			Threshold: CapThresholdEgressHeld, ReachedAt: now, Used: used, Allowance: max(check.allowance, 1),
+			Ceiling: max(check.ceiling, check.allowance, 1), Overage: check.billed}
+		attrs := []any{"subject_id", subjectID, "database_id", database.ID}
+		recorded, err := store.RecordEgressHoldNotice(ctx, event)
+		if err != nil {
+			summary.NotifyFailed++
+			e.logger.Warn("managed postgres egress hold not recorded", append(attrs, "error", err)...)
+			continue
+		}
+		if recorded {
+			summary.EventsRecorded++
+			e.logger.Info("managed postgres egress hold reached", append(attrs,
+				"egress_bytes", used, "hold_ceiling_bytes", check.ceiling, "overage_billed", check.billed)...)
+		}
+		if e.notify == nil {
+			continue
+		}
+		stored, err := store.EgressHoldNotice(ctx, database.ID, now)
+		if err == nil && (stored == nil || stored.Mailed || now.Sub(stored.ReachedAt) >= capMailWindow) {
+			continue
+		}
+		if err == nil {
+			stored.DatabaseName = database.Name
+			err = e.notify(ctx, *stored)
+		}
+		if err != nil {
+			summary.NotifyFailed++
+			e.logger.Warn("managed postgres egress hold email not queued", append(attrs, "error", err)...)
+		}
 	}
 }
 
@@ -533,6 +548,9 @@ type CapSweepSummary struct {
 	PlanExcessScopesShared    int
 	PlanExcessNoticed         int
 	PlanExcessNotifyFailed    int
+	// PlanExcessReminded counts deletion reminders queued
+	// (ADR-20261110184700 amendment 2026-11-12).
+	PlanExcessReminded int
 	// PlanExcessDelete* count the deletion pass (ADR-20261110184700): due
 	// databases, deletes scheduled, ones only logged in shadow, ones waiting
 	// for bindings to go, and failures.
@@ -553,6 +571,14 @@ type CapSweepSummary struct {
 	HoldsApplied  int
 	HoldsReleased int
 	HoldsShadowed int
+
+	// Egress quota backstop (ADR-20261110160000 slice 4): provider objects
+	// whose quota was set, only logged in shadow mode, already right, or
+	// not written.
+	EgressQuotasApplied   int
+	EgressQuotasShadowed  int
+	EgressQuotasUnchanged int
+	EgressQuotasFailed    int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
@@ -808,8 +834,8 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		if err := e.holdDatabases(ctx, accountID, databases, capHoldNone, withEgressHolds(nil, check), summary); err != nil {
 			return err
 		}
-		e.noticeEgressHold(ctx, accountID, now, check, summary)
-		return nil
+		e.noticeEgressHold(ctx, accountID, databases, now, check, summary)
+		return e.applyEgressQuotas(ctx, accountID, databases, check, now, summary)
 	}
 	if policy := e.registry.UsagePolicy(); policy.Enabled && policy.MaxMonthlyComputeUnitSeconds > 0 {
 		ceiling = min(ceiling, policy.MaxMonthlyComputeUnitSeconds)
@@ -878,10 +904,14 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 	if err := e.holdDatabases(ctx, accountID, databases, all, reasons, summary); err != nil {
 		failures = append(failures, err)
 	}
+	// The egress quota is a backstop too: it never skips a hold.
+	if err := e.applyEgressQuotas(ctx, accountID, databases, egress, now, summary); err != nil {
+		failures = append(failures, err)
+	}
 	if e.mode == CapEnforcementOn && len(failures) == 0 && !limits.Inactive {
 		e.notifyCapEvent(ctx, accountID, now, summary)
 		if all == capHoldNone {
-			e.noticeEgressHold(ctx, accountID, now, egress, summary)
+			e.noticeEgressHold(ctx, accountID, databases, now, egress, summary)
 		}
 	}
 	if e.planExcessEnforced() && len(failures) == 0 {

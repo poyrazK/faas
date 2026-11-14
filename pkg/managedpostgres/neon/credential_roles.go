@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/pipelineread"
 )
 
 const ownerLogin = "gregale_owner"
@@ -273,6 +274,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 		if missingPrivileges {
 			return managedpostgres.ErrConflict
 		}
+		if role.access == managedpostgres.CredentialReadOnly {
+			if err := pipelineread.Grant(ctx, tx, role.name); err != nil {
+				return managedpostgres.ErrConflict
+			}
+		}
 	}
 	if role.access == managedpostgres.CredentialDataAPI {
 		if err := ensureDataAPICredential(ctx, tx, role); err != nil {
@@ -313,11 +319,11 @@ func verifyReadOnlyRole(ctx context.Context, tx pgx.Tx, name string) error {
  OR (c.relkind='S' AND has_sequence_privilege($1,c.oid,'USAGE,UPDATE'))))
  OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
  WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND p.prosecdef AND has_function_privilege($1,p.oid,'EXECUTE')
- AND NOT `+authHelperSQL+`)
+ AND NOT (`+authHelperSQL+` OR `+pipelineread.TrustedReaderSQL+`))
  OR EXISTS (SELECT 1 FROM pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
  WHERE a.grantee IN (0,(SELECT oid FROM pg_roles WHERE rolname=$1))
  AND ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
- OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE'))))`, name).Scan(&unsafe)
+ OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE'))))`, name, pipelineread.ReaderBodySHA256).Scan(&unsafe)
 	if err != nil {
 		return err
 	}

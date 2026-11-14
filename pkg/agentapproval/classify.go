@@ -184,17 +184,60 @@ var billing = map[string]bool{
 var billingPath = regexp.MustCompile(`(^|/)(billing|consumer-billing)(/|$)|/billing-[a-z-]+(/|$)|^/v1/billing/`)
 
 // budgetRoutes change an app's standing capacity, so their handlers charge
-// the agent's budget (ADR-20261111114059 slice 1).
+// the agent's budget (ADR-20261111114059 slices 1 to 3).
 var budgetRoutes = map[string]bool{
-	"PATCH /v1/apps/{}":        true,
-	"POST /v1/apps/{}/scaling": true,
-	"POST /v1/apps/{}/prewarm": true,
+	"PATCH /v1/apps/{}":                             true,
+	"POST /v1/apps/{}/scaling":                      true,
+	"POST /v1/apps/{}/prewarm":                      true,
+	"POST /v1/apps":                                 true,
+	"PATCH /v1/deployments/{}":                      true,
+	"POST /v1/postgres/databases":                   true,
+	"POST /v1/postgres/databases/{}/compute-policy": true,
+	"POST /v1/postgres/databases/{}/resize":         true,
+	"POST /v1/postgres/databases/{}/restore":        true,
+	"POST /v1/projects/{}/environments":             true,
+	"POST /v1/projects/{}/environment-clones":       true,
+	"POST /v1/projects/{}/environments/{}/branches": true,
 }
 
 // ChargesBudget reports whether a route's handler charges the agent's
 // budget, so the request must be bound before the handler reads its body.
 func ChargesBudget(pattern string) bool {
 	return budgetRoutes[Normalize(pattern)]
+}
+
+// previewRoutes accept the budget preview header (ADR-20261111114059,
+// amendment 2026-11-13): their handlers price every request they accept
+// before any write, so answering at the price writes nothing
+// (TestAgentBudgetPreviewWritesNothing). A route joins only with that
+// test.
+var previewRoutes = map[string]bool{
+	"PATCH /v1/apps/{}":                             true,
+	"POST /v1/apps/{}/scaling":                      true,
+	"POST /v1/apps/{}/prewarm":                      true,
+	"POST /v1/apps":                                 true,
+	"PATCH /v1/deployments/{}":                      true,
+	"POST /v1/postgres/databases":                   true,
+	"POST /v1/postgres/databases/{}/compute-policy": true,
+	"POST /v1/postgres/databases/{}/resize":         true,
+	"POST /v1/postgres/databases/{}/restore":        true,
+	"POST /v1/projects/{}/environments":             true,
+	"POST /v1/projects/{}/environment-clones":       true,
+	"POST /v1/projects/{}/environments/{}/branches": true,
+}
+
+// Previewable reports whether a route accepts the budget preview header.
+func Previewable(pattern string) bool {
+	return previewRoutes[Normalize(pattern)]
+}
+
+// PreviewRoutes lists the previewable route patterns, for tests.
+func PreviewRoutes() []string {
+	out := make([]string, 0, len(previewRoutes))
+	for p := range previewRoutes {
+		out = append(out, p)
+	}
+	return out
 }
 
 // gatedReads are reads that hand an agent something a person should agree
@@ -229,6 +272,8 @@ func Classify(pattern string) (Rule, bool) {
 		}
 	}
 	switch {
+	case undoRoutes[key]:
+		return Rule{Category: api.AgentApprovalUndo}, true
 	case method == "DELETE" || destructivePosts[key]:
 		return Rule{Category: api.AgentApprovalDelete}, true
 	case billing[key] || (billingPath.MatchString(path) && !strings.HasSuffix(path, "/preview") && !strings.HasSuffix(path, "/portal")):
@@ -261,4 +306,17 @@ func Effective(own []string, chosen bool, floor []string) map[string]bool {
 		out[category] = true
 	}
 	return out
+}
+
+// Asks reports whether a request of rule's category needs a person's
+// approval under the effective categories. An agent's own undo always asks
+// (ADR-20261112080601 §4): it is not a category a key or organization
+// chooses.
+func Asks(categories map[string]bool, rule Rule) bool {
+	return rule.Category == api.AgentApprovalUndo || categories[rule.Category]
+}
+
+// undoRoutes apply an agent's undo of its own changes.
+var undoRoutes = map[string]bool{
+	"POST /v1/agent-connections/self/undo": true,
 }

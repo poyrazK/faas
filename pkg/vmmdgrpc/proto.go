@@ -8,7 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/netip"
+	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -437,6 +440,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
+		RoutedPortRawTCP:         app.GetRoutedPortRawTcp(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
@@ -558,6 +562,11 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 	if problem := validateAppHealthcheck(app); problem != nil {
 		return fcvm.WakeRequest{}, problem
 	}
+	seedDrive, err := buildKitSeedDriveFromProto(req.GetBuild(), app.GetLayerKey())
+	if err != nil {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid buildkit seed drive", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#create")
+	}
 	return fcvm.WakeRequest{
 		Instance: req.GetInstance(),
 		// issue #463 / ADR-069 / PR-B AC #1 — see toWakeRequest's
@@ -619,6 +628,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
+		RoutedPortRawTCP:         app.GetRoutedPortRawTcp(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
@@ -651,7 +661,28 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// ADR-20261026091500: the built app's sealed registry
 		// credentials, for the builder's FROM pulls.
 		BuildRegistryCredentials: buildRegistryCredentialsFromProto(req.GetBuild()),
+		BuildKitSeedDrive:        seedDrive,
 	}, nil
+}
+
+// buildKitSeedDriveFromProto returns a builder's BuildKit seed copy
+// (ADR-20261030122204). builderd writes it beside drive1, so vmmd accepts
+// only an absolute, clean .ext4 path in drive1's directory that is not drive1.
+func buildKitSeedDriveFromProto(b *vmmdpb.BuildSpec, layerKey string) (string, error) {
+	seed := b.GetBuildkitSeedDrive()
+	if seed == "" {
+		return "", nil
+	}
+	if b.GetExportDir() == "" {
+		return "", errors.New("vmmd: a buildkit seed drive needs a builder VM")
+	}
+	if !filepath.IsAbs(seed) || filepath.Clean(seed) != seed || !strings.HasSuffix(seed, ".ext4") {
+		return "", fmt.Errorf("vmmd: buildkit seed drive %q must be an absolute, clean .ext4 path", seed)
+	}
+	if !filepath.IsAbs(layerKey) || seed == layerKey || filepath.Dir(seed) != filepath.Dir(layerKey) {
+		return "", fmt.Errorf("vmmd: buildkit seed drive %q must sit beside the builder drive", seed)
+	}
+	return seed, nil
 }
 
 // buildRegistryCredentialsFromProto copies a builder's sealed registry
@@ -720,6 +751,7 @@ func sealedFromProto(pbs []*vmmdpb.SealedSecret) []fcvm.SealedEnvEntry {
 			Key:        p.GetKey(),
 			Ciphertext: p.GetCiphertext(),
 			SourceKey:  p.GetSourceKey(),
+			Scope:      p.GetSecretScope(),
 		})
 	}
 	return out

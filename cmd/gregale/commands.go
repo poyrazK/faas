@@ -55,11 +55,12 @@ func cmdLogin(args []string) int {
 		if jsonOutput && !jsonUsageHelp {
 			return
 		}
-		PrintUsage(os.Stderr, "usage: gregale login [--token T | --token-stdin] [--insecure-storage]", "auth")
+		PrintUsage(os.Stderr, "usage: gregale login [--device | --token T | --token-stdin] [--insecure-storage]", "auth")
 		fs.PrintDefaults()
 	}
 	token := fs.String("token", "", "API token (CI/non-interactive)")
 	tokenStdin := fs.Bool("token-stdin", false, "read API token from stdin (CI/non-interactive)")
+	device := fs.Bool("device", false, "sign in with a code typed in a browser on another computer (SSH, headless)")
 	insecureStorage := fs.Bool("insecure-storage", false, "save the API key to a plaintext file readable only by you instead of the OS keychain (for WSL, containers and SSH hosts whose keyring is locked; same as GREGALE_KEYRING=off)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -116,55 +117,11 @@ func cmdLogin(args []string) int {
 		return printErr("Login requires input", errors.New("use --token-stdin or --token in a non-interactive shell"))
 	}
 
-	// Interactive flow (spec §2.2 device-code pair).
+	// Interactive flow: one click in the browser (login_loopback.go), or the
+	// typed code with --device and over SSH.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c := NewClient(apiBase(), "")
-
-	codeResp, err := c.MintCliAuthCode(ctx)
-	if err != nil {
-		return printErr("Could not start login", err)
-	}
-
-	_, _ = fmt.Fprintf(osStdout, "Your code: %s\n", codeResp.Code)
-	_, _ = fmt.Fprintf(osStdout, "Opening %s in your browser...\n", codeResp.URL)
-	_, _ = fmt.Fprintln(osStdout, "  Type the code there to approve this terminal. Never type a code someone sent you.")
-	_, _ = fmt.Fprintln(osStdout, "  (or visit that URL and paste the code below)")
-
-	// Best-effort browser open. On a sandboxed CI box the helper
-	// returns an error (no DISPLAY); we surface it but stay in
-	// paste mode — the user can either paste the code into this
-	// terminal or open the URL in a real browser on another box.
-	if err := openBrowser(codeResp.URL); err != nil {
-		PrintFail(os.Stderr, "Could not open browser: %v", err)
-		fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", codeResp.URL)
-	}
-
-	// Two-mode wait: prompt for a pasted code, OR fall through to
-	// polling if the user just hits Enter. Read with a short
-	// timeout so the poll loop can take over.
-	_, _ = fmt.Fprint(osStdout, "Paste code (or press Enter to wait for browser): ")
-	var pasted string
-	if v, ok := readLineWithTimeout(osStdin, 3*time.Second); ok {
-		pasted = strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(v), "-", ""))
-	}
-
-	if pasted == "" {
-		return waitForApproval(ctx, c, codeResp)
-	}
-	if len(pasted) != 8 {
-		return printErr("Invalid login code", fmt.Errorf("code should be 8 characters (XXXX-NNNN), got %d; run gregale login again", len(pasted)))
-	}
-	// This terminal's own code is exchanged with the device code only it
-	// holds; the server no longer accepts the short code for it (H67).
-	if pasted == strings.ToUpper(strings.ReplaceAll(codeResp.Code, "-", "")) {
-		resp, err := c.ExchangeCliAuthLogin(ctx, codeResp)
-		if err != nil {
-			return printErr("Login failed", err)
-		}
-		return finalizeLogin(ctx, c, resp.Plaintext, resp.KeyID, resp.Account)
-	}
-	return exchangeOnce(ctx, c, pasted)
+	return browserLogin(ctx, NewClient(apiBase(), ""), *device)
 }
 
 // readLoginTokenStdin reads `login --token-stdin`. Piped input is read whole
@@ -252,22 +209,9 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 	}
 }
 
-// exchangeOnce is the paste-the-code single-shot path. Same exchange
-// endpoint, but no polling — used after a successful browser-open
-// that the user decided to mirror by pasting the code back into the
-// same terminal.
-func exchangeOnce(ctx context.Context, c *Client, normalized string) int {
-	resp, err := c.ExchangeCliAuthCode(ctx, normalized)
-	if err != nil {
-		return printErr("Login failed", err)
-	}
-	return finalizeLogin(ctx, c, resp.Plaintext, resp.KeyID, resp.Account)
-}
-
 // finalizeLogin writes the freshly-minted plaintext API key to disk
-// and prints the success line. Splits the path so the paste +
-// browser-open flows can share it without duplicating the printer
-// or saveToken call.
+// and prints the success line. Shared by the one-click and typed-code
+// flows and --token.
 func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID string, acct api.AccountResponse) int {
 	previousCredential := loginErrorCredential
 	loginErrorCredential = plaintext
@@ -311,34 +255,6 @@ func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID strin
 		_, _ = fmt.Fprintf(osStdout, "  %s start\n", recoveryCLI())
 	}
 	return 0
-}
-
-// readLineWithTimeout reads a single line from r. Returns
-// (trimmed-line, true) if a newline arrives within d, or
-// ("", false) on timeout. Used by cmdLogin to multiplex the
-// "paste code" prompt with the "press Enter to wait" fallback.
-//
-// Implementation note: we run a single goroutine that reads until
-// newline; the timeout is the only way to abort it (the goroutine
-// is intentionally orphaned — when the caller drops the result the
-// goroutine's slice can no longer affect anything because r is
-// typically osStdin, which blocks anyway after the line arrives).
-func readLineWithTimeout(r io.Reader, d time.Duration) (string, bool) {
-	type result struct {
-		line string
-	}
-	ch := make(chan result, 1)
-	go func() {
-		br := bufio.NewReader(r)
-		line, _ := br.ReadString('\n')
-		ch <- result{strings.TrimRight(line, "\r\n")}
-	}()
-	select {
-	case res := <-ch:
-		return res.line, true
-	case <-time.After(d):
-		return "", false
-	}
 }
 
 func cmdLogout() int {
@@ -439,19 +355,20 @@ func cmdApps(args []string) int {
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "SLUG\tSTATUS\tDEPLOYMENT\tURL\tAUTH")
 	for _, a := range apps {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.Slug, formatAppListStatus(a.Status), formatAppDeploymentAvailability(a), canonicalAppURL(a), formatAppAuth(a))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.Slug, formatAppListStatus(a), formatAppDeploymentAvailability(a), canonicalAppURL(a), formatAppAuth(a))
 	}
 	_ = tw.Flush()
 	return 0
 }
 
 // formatAppListStatus names a parked app "parked", as ps, inspect and the
-// docs do; evicted_cold is the stored status and stays in --json.
-func formatAppListStatus(status string) string {
-	if status == "evicted_cold" {
-		return "parked"
+// docs do, with the reason when known ("parked: liveness failed");
+// evicted_cold is the stored status and stays in --json.
+func formatAppListStatus(a api.AppResponse) string {
+	if label := appParkedLabel(a); label != "" {
+		return label
 	}
-	return status
+	return a.Status
 }
 
 func formatAppDeploymentAvailability(a api.AppResponse) string {
@@ -866,6 +783,9 @@ func renderAPIError(w io.Writer, e *APIError) {
 	// rest of cmd/gregale — see output.go::writeStatus).
 	if p.Detail != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
+	}
+	if id := problemRequestID(p); id != "" {
+		_, _ = fmt.Fprintf(w, "  Request ID: %s\n", id)
 	}
 	if p.BindingsCheck != nil {
 		for _, blocker := range p.BindingsCheck.Blockers {

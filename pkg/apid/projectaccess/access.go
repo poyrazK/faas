@@ -252,14 +252,67 @@ func environmentDeleteAction(r *http.Request, store Store, project state.Project
 // releases (ADR-20261019071733 amendment 9): a developer already deploys to
 // it directly, so its branch hands them nothing new. Personal projects pass.
 func BranchParent(r *http.Request, parent state.ProjectEnvironment) *api.Problem {
-	if _, shared := From(r.Context()); !shared || !parent.Protected || state.IsProductionScope(parent.Slug) {
+	return ProtectedEnvironmentChange(r, parent, "branch a protected project environment")
+}
+
+// ProtectedEnvironmentChange refuses a company-project member without the
+// approve action a change that env's protection reserves for approvers:
+// copying it (a branch or a clone), approving a GitOps revision into it, or
+// overriding its GitOps state. Production is exempt as in BranchParent;
+// personal projects pass.
+func ProtectedEnvironmentChange(r *http.Request, env state.ProjectEnvironment, what string) *api.Problem {
+	if _, shared := From(r.Context()); !shared || !env.Protected || state.IsProductionScope(env.Slug) {
 		return nil
 	}
 	_, _, member, ok := authmw.PrincipalFrom(r)
 	if !ok || member == nil || !authz.Can(member.Role, authz.OrgActionApproveProjectEnvironment) {
-		return api.ErrOrgRoleForbidden("branch a protected project environment")
+		return api.ErrOrgRoleForbidden(what)
 	}
 	return nil
+}
+
+// MayApprove reports whether accountID is a current member of the active
+// organization orgID whose role may approve a protected project environment.
+// The browser review of a company project's promotion asks it of the
+// signed-in member, on the review page and again at the exchange.
+func MayApprove(ctx context.Context, store Store, orgID, accountID string) (bool, error) {
+	org, err := store.OrgByID(ctx, orgID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if org.Personal || org.DeletedPending || org.Status != state.OrgStatusActive && org.Status != state.OrgStatusPastDue {
+		return false, nil
+	}
+	member, err := store.OrgMemberByAccount(ctx, orgID, accountID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if member.RemovedAt != nil {
+		return false, nil
+	}
+	snapshot, err := store.OrgAccessSnapshot(ctx, orgID, accountID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return authz.Can(snapshot.Role, authz.OrgActionApproveProjectEnvironment), nil
+}
+
+// AuthorizeManifestAsyncRoutes refuses a company-project deploy whose manifest
+// declares async_routes (including an empty list, which clears them) unless
+// the member may manage app security: async routes are edge rules, which
+// POST /v1/apps/{slug}/edge-rules reserves for that action
+// (ADR-20261114090000).
+func AuthorizeManifestAsyncRoutes(ctx context.Context, audit authz.AuditEmitter) *api.Problem {
+	return authz.AuthorizeOrgAction(ctx, authz.OrgActionManageAppSecurity, audit)
 }
 
 func lookupProblem(err error) *api.Problem {

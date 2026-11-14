@@ -86,7 +86,9 @@ func orgProjectHTTP(t *testing.T, store state.Store, creator state.Account, do f
 		{"GET", "/v1/orgs/" + org.Slug + "/projects", nil, viewerHeaders, 200},
 		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "staging"}, developerHeaders, 201},
 		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "forbidden"}, viewerHeaders, 403},
-		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "refused-clone", FromEnvironment: "production"}, developerHeaders, 409},
+		// Copies stay in the project's owner (ADR-20261112230000); production is
+		// not protected against developers, so a developer may copy it.
+		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "copied", FromEnvironment: "production"}, developerHeaders, 201},
 		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "refused-full", FromEnvironment: "production", Full: true}, developerHeaders, 409},
 		{"POST", base + "/environments", api.CreateProjectEnvironmentRequest{Slug: "refused-protection", Protected: &protected}, developerHeaders, 403},
 		{"PATCH", base + "/environments/production", map[string]bool{"protected": false}, developerHeaders, 403},
@@ -242,7 +244,12 @@ func orgProjectSourceHTTP(t *testing.T, store state.Store, creator state.Account
 		t.Fatal(err)
 	}
 	member, headers := sharedAppMember(t, store, org, state.OrgRoleDeveloper, api.ScopesAdminOnly)
+	_, adminHeaders := sharedAppMember(t, store, org, state.OrgRoleAdmin, api.ScopesAdminOnly)
+	var postAs func(headers map[string]string, path, slug string, manifest ...string) *httptest.ResponseRecorder
 	post := func(path, slug string, manifest ...string) *httptest.ResponseRecorder {
+		return postAs(headers, path, slug, manifest...)
+	}
+	postAs = func(headers map[string]string, path, slug string, manifest ...string) *httptest.ResponseRecorder {
 		var body bytes.Buffer
 		mw := multipart.NewWriter(&body)
 		source, err := mw.CreateFormFile("source", "myapp.tar.gz")
@@ -282,9 +289,19 @@ func orgProjectSourceHTTP(t *testing.T, store state.Store, creator state.Account
 	if _, err := store.ProjectByOrgSlug(t.Context(), org.ID, "personal-data-attempt"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("refused binding partially created a project: %v", err)
 	}
-	async := post(base, "unsupported-async", "async_routes: []\n")
-	if async.Code != 409 {
-		t.Fatalf("unreviewed async manifest accepted: %d %s", async.Code, async.Body)
+	// Async routes are edge rules: a developer may not write them from a
+	// manifest, an admin may (ADR-20261114090000).
+	async := post(base, "developer-async", "async_routes: []\n")
+	if async.Code != http.StatusForbidden {
+		t.Fatalf("developer async manifest = %d %s; want 403", async.Code, async.Body)
+	}
+	if _, err := store.ProjectByOrgSlug(t.Context(), org.ID, "developer-async"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("refused async manifest partially created a project: %v", err)
+	}
+	// The admin passes the role check; this archive's manifest then yields no
+	// workloads, which the scanner reports on its own.
+	if admin := postAs(adminHeaders, base, "admin-async", "async_routes: []\n"); admin.Code == http.StatusForbidden || admin.Code == http.StatusConflict {
+		t.Fatalf("admin async manifest = %d %s; want past the role check", admin.Code, admin.Body)
 	}
 	project, err := store.ProjectByOrgSlug(t.Context(), org.ID, "new-company-project")
 	if err != nil || project.AccountID != org.ID {

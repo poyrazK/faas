@@ -58,6 +58,34 @@ func TestConfigRefusesUnsafeSettings(t *testing.T) {
 	}
 }
 
+func TestHostedToolInvocationDefaultsOff(t *testing.T) {
+	base := []string{"--state-key-file", "/k", "--oauth-redirect-uri", "http://localhost/callback"}
+	for _, enabled := range []bool{false, true} {
+		args := append([]string{}, base...)
+		if enabled {
+			args = append(args, "--allow-tool-invocation")
+		}
+		cfg, err := parse(t, args...)
+		if err != nil || cfg.allowToolInvocation != enabled {
+			t.Fatalf("invocation config: %+v %v", cfg, err)
+		}
+	}
+}
+
+func TestHostedToolPublishingDefaultsOff(t *testing.T) {
+	base := []string{"--state-key-file", "/k", "--oauth-redirect-uri", "http://localhost/callback"}
+	for _, enabled := range []bool{false, true} {
+		args := append([]string{}, base...)
+		if enabled {
+			args = append(args, "--allow-tool-publishing")
+		}
+		cfg, err := parse(t, args...)
+		if err != nil || cfg.allowToolPublishing != enabled || cfg.allowToolInvocation {
+			t.Fatalf("publishing config: %+v %v", cfg, err)
+		}
+	}
+}
+
 // The metrics listener serves the bridge's aggregate series beside the
 // process's, so memory can be watched against the unit's MemoryMax.
 func TestMetricsListenerServesBridgeAndProcessMetrics(t *testing.T) {
@@ -79,5 +107,17 @@ func TestMetricsListenerServesBridgeAndProcessMetrics(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("metrics lack %s", want)
 		}
+	}
+}
+
+func TestPrivateToolInvocationDefaultsOff(t *testing.T) {
+	base := []string{"--state-key-file", "/k", "--oauth-redirect-uri", "http://localhost/callback"}
+	cfg, err := parse(t, base...)
+	if err != nil || cfg.allowPrivateToolInvocation {
+		t.Fatal("private invocation enabled by default", err)
+	}
+	cfg, err = parse(t, append(base, "--allow-private-tool-invocation", "--allow-tool-invocation")...)
+	if err != nil || !cfg.allowPrivateToolInvocation || !cfg.allowToolInvocation || cfg.allowToolPublishing {
+		t.Fatal("private invocation flags widened publication", err)
 	}
 }

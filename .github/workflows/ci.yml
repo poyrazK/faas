@@ -49,10 +49,10 @@ permissions:
 env:
   # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
   # and the go.mod toolchain directive resolve to the same Go runtime.
-  # Go 1.26.10 fixes the reachable stdlib advisories reported by the
-  # October 2026 supply-chain gate (latest: GO-2026-6809, crypto/x509).
+  # Go 1.26.11 fixes the reachable stdlib advisories reported by the
+  # supply-chain gate (latest: GO-2026-6859, net/http MaxBytesReader race).
   # Keep all runtime/build pins aligned with the go.mod toolchain directive.
-  GO_VERSION: "1.26.10"
+  GO_VERSION: "1.26.11"
   # Bound cold CLI compilation just as the apid compiler guard below does.
   GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
   # vacuum is the OpenAPI ruleset linter used by `make spec-check`.
@@ -517,6 +517,9 @@ jobs:
 
       - name: cgroup metrics gate
         run: make cgroup-metrics-test
+
+      - name: Notification receiver metrics and receipt validation
+        run: make notification-receiver-metrics-test
 
       - name: observability go/no-go check tests
         run: make obs-gate-test
@@ -1102,14 +1105,16 @@ jobs:
             # 2026-10-27, 1243 s on 2026-10-29 and passed the 30m package
             # timeout on 2026-10-30 (run 40995340344); it is 501 s without
             # race or coverage. The job keeps 30 minutes past the package
-            # budget for race compilation and coverage upload.
-            test_timeout: 45m
+            # budget for race compilation and coverage upload. It took 2611 s
+            # and 2702 s on 2026-11-14 and then hit the 45m bound (run
+            # 43569561576), so the bounds are 60m and 90 minutes.
+            test_timeout: 60m
             # Shard b alone runs the PostgreSQL native verdict, starter TLS,
             # fixture and GitOps compilation gates before its tests: about
             # 28 minutes on 2026-10-18 (20 on 2026-10-17), ahead of a ~20
             # minute test step. 45 cancelled it mid-suite. The gates moved to
             # shard c when they reached 36 minutes (run 40420329172).
-            job_timeout_minutes: 75
+            job_timeout_minutes: 90
           - id: c
             label: PostgreSQL native and starter gates
             # Shard b's pre-test gates took 26 minutes on 2026-10-26 and 36 on
@@ -1846,7 +1851,7 @@ jobs:
     permissions:
       contents: read
     env:
-      GOVULNCHECK_VERSION: "1.7.0"
+      GOVULNCHECK_VERSION: "1.9.0"
       # Several contract gates compile the APID test package.
       GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
       GOMEMLIMIT: 2GiB
@@ -1888,6 +1893,15 @@ jobs:
         run: make environment-preflight-action-check
       - name: synthetic-canary alert payload tests
         run: make canary-alert-test
+
+      - name: synthetic-canary missing-run heartbeat tests
+        run: make canary-heartbeat-test
+
+      - name: post-deployment monitoring transport and workflow tests
+        run: make post-deployment-monitoring-test
+
+      - name: production monitoring qualification tests
+        run: make monitoring-qualification-test
       # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job
@@ -2246,6 +2260,17 @@ jobs:
       # page / warn / FaasWatchdog reach the receivers the role promises.
       - name: Alertmanager config check
         run: make alertmanager-config-check
+
+      - name: Notification delivery drill
+        run: NOTIFICATION_DRILL_REPORT="$RUNNER_TEMP/notification-drill.json" make notification-delivery-check
+
+      - name: Notification drill evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: notification-drill
+          path: ${{ runner.temp }}/notification-drill.json
+          if-no-files-found: error
+          retention-days: 7
 
   # Every promtool rule fixture, not a hand-picked list: an unlisted fixture
   # (slo_low_traffic) broke unnoticed when an alert changed. Each fixture

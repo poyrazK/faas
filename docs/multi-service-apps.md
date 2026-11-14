@@ -125,21 +125,18 @@ Gregale reads, in this order:
   `<name>` once there are two or more. Each builds from the module root, so
   shared `internal/` packages are included, and runs only its own binary. The
   plan shows it as `builds=cmd/<name>`. A root `main` package, a single
-  command or a root Dockerfile keeps the repository as one app
-  ([ADR-20261025134512](adr/20261025134512-go-module-commands-as-services.md)).
+  command or a root Dockerfile keeps the repository as one app.
 
 Datastore images in Compose (`postgres`, `redis`, `mysql`, `mongo` and similar)
 are not run as apps. Only `postgres` has a managed equivalent (below). For the
 others the plan says so and lists each service variable that points at them
 and will have no value, such as `api.REDIS_URL`; set those to an external
 provider before the first request. A GitHub push does not deploy a service
-whose variable is still unset, and its check names the variable
-([ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md)).
+whose variable is still unset, and its check names the variable.
 
 Where [managed PostgreSQL](managed-postgres.md) is available to your account, a
 `postgres` service becomes a managed database named `<project>-<service>` in
-production (for example `shop-db`), created and bound by the deploy
-([ADR-20261025111824](adr/20261025111824-compose-postgres-as-managed-database.md)).
+production (for example `shop-db`), created and bound by the deploy.
 Each service whose Compose variable points at it, such as
 `DATABASE_URL: postgres://app:secret@db:5432/app`, gets that variable bound;
 a service that only lists it in `depends_on` gets `DATABASE_URL`. The database
@@ -151,8 +148,7 @@ you already set on the app keeps its value, and a later deploy reuses the same
 database. Removing the service never deletes the database. In an organization-owned
 project the database belongs to the organization, and the deploy needs a role
 and key that may create and bind organization databases (`postgres:manage`);
-otherwise the plan lists the service with the reason `permission`
-([ADR-20261026151530](adr/20261026151530-compose-postgres-org-projects.md)).
+otherwise the plan lists the service with the reason `permission`.
 
 Each named environment gets a separate default database. Its name includes the
 project, environment and service with a short hash, and the plan shows the exact
@@ -170,18 +166,21 @@ Only a reviewed deploy (`gregale deploy`, the dashboard) creates the managed
 database. When a GitHub push adds a `postgres` service, the services that need
 its variable and have no value for it are not deployed by that push; their
 GitHub check says so. Run a reviewed deploy, or set the variable yourself, and
-the next push deploys them
-([ADR-20261103112845](adr/20261103112845-github-pushes-never-remove-or-strand-services.md)).
+the next push deploys them.
 
 ### Start order and migrations
 
-`depends_on` keeps its Compose meaning where Gregale can honour it
-([ADR-20261102192943](adr/20261102192943-compose-files-deploy-as-written.md)):
+`depends_on` keeps its Compose meaning where Gregale can honour it:
 
 - `condition: service_healthy` on another service holds this service's new
   release until that service's deployment is live: the one being deployed
-  with it, or the one already serving. A failed or rolled-back release of the
-  dependency does not block it.
+  with it, or the one already serving. If the dependency's release from the
+  same deploy fails, this service's release fails too (`dependency_failed`)
+  and its current release keeps serving, so the two never run mixed versions.
+  An earlier failed or rolled-back release of the dependency is not waited
+  for: the gate waits on the release deployed with it, or the one serving.
+  Services without `depends_on` release independently; use environment
+  release sets ([preview](env.md)) to switch them together.
 - `condition: service_healthy` on a datastore (`db: postgres:16`) is accepted as
   a plain dependency, because Gregale does not run the datastore as a service.
   The plan says so; have the service retry its connection until the database
@@ -253,8 +252,7 @@ so: removing `ports:` takes a service off the internet. The reverse is never
 automatic: a service that starts publishing ports stays internal, and the plan
 says how to publish it (`gregale app <slug> --visibility public`). A deploy to a
 named environment changes no visibility, which is app-wide. See
-[networking](networking.md) for changing it by hand
-([ADR-20261107090000](adr/20261107090000-preview-markers-reach-services-and-compose-visibility.md)).
+[networking](networking.md) for changing it by hand.
 
 A service listens on the container side of its first `ports:` mapping: with
 `ports: ["8080:3000"]`, Gregale sends requests to port 3000 and, unless you set
@@ -280,8 +278,7 @@ Like any service, it then parks when idle and wakes when called. Any other
 service without `ports:` is a background worker (`class=worker`): it runs all
 the time and a request never wakes it. When a web service lists a worker in
 `depends_on`, the plan warns, because Compose also uses `depends_on` for start
-order; if the web service does call it, add `expose:` or the URL
-([ADR-20261029120000](adr/20261029120000-called-compose-services-serve-requests.md)).
+order; if the web service does call it, add `expose:` or the URL.
 
 ## Call another service
 
@@ -307,8 +304,7 @@ production ([gregale dev](gregale-dev.md#call-the-other-apps)).
 A name is called in its DNS form: lower case, with `_` and `.` written as `-`.
 A Compose service `billing_api` is `http://billing-api.internal:10081`, and its
 dependents get `GREGALE_SERVICE_BILLING_API_URL` pointing there. The plan
-warns when a name cannot be called this way, or when two services share one
-([ADR-20261026170512](adr/20261026170512-service-dns-names.md)).
+warns when a name cannot be called this way, or when two services share one.
 
 Addresses from Docker, such as `http://billing:8080`, do not resolve on Gregale.
 A Compose `environment:` value that calls another service this way is imported
@@ -357,8 +353,7 @@ is off unless your operator has enabled it; see
 ## Without a Compose file
 
 A repository without Compose declares the same things in the `project:` block
-of the `gregale.yaml` at its root
-([ADR-20261107180000](adr/20261107180000-one-config-file.md)):
+of the `gregale.yaml` at its root:
 
 ```yaml
 project:
@@ -406,7 +401,7 @@ selected services whose Compose `environment:` names it, so one service's
 credentials do not reach the others. A key no service names goes to every
 selected service that has no value for it yet. A value that has not changed is
 not rewritten, and every service's secret limit is checked before the first
-write ([ADR-20261108090000](adr/20261108090000-project-deploy-config-correctness.md)).
+write.
 
 A value every service needs, such as a shared API key or log level, can be set
 once for the project instead of once per service. Every service of the
@@ -421,8 +416,7 @@ gregale environment config set shop production --file production.json --yes
 
 Deployments in the `default` scope read the `production` environment's values.
 See [Project environment secrets](secrets.md#project-environment-secrets) and
-[Shared project configuration](env.md#shared-project-configuration)
-([ADR-20261103172200](adr/20261103172200-project-service-delete-rollback-shared-values.md)).
+[Shared project configuration](env.md#shared-project-configuration).
 
 To copy the plain values from `environment:` instead of typing them again,
 opt in at the top of the Compose file:
@@ -445,11 +439,9 @@ project by its Docker name is imported as that service's Gregale address:
 service HTTPS is enabled; elsewhere an `https` value imports as the `http`
 address, and the plan says so), keeping the path. The service mesh forwards to the service's own port, so the Docker port
 is dropped; a value for a second listener of that service, or for another
-protocol, needs its address set by hand
-([ADR-20261026181020](adr/20261026181020-compose-service-address-import.md)).
+protocol, needs its address set by hand.
 These service addresses are imported even without `x-gregale-env-import`,
-because they are never credentials and the Docker address cannot work here
-([ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md)); every other plain value still needs the opt-in.
+because they are never credentials and the Docker address cannot work here; every other plain value still needs the opt-in.
 
 The plan lists imported names under **Imported from Compose**, names each
 rewritten address, and gives the reason beside each value it skips. Gregale
@@ -462,7 +454,6 @@ addresses, which a service added by the push needs to call its siblings, and
 leaves every other value to a reviewed deploy. Values in
 `compose.override.yaml` are imported too, so keep local-only settings out of an
 opted-in project.
-See [ADR-20261023085230](adr/20261023085230-compose-env-import.md).
 
 ## Rename, remove or detach a service
 
@@ -492,8 +483,7 @@ change before anything is applied:
   ```
 
   The plan shows one update, and the app keeps its environment values,
-  secrets, domains and URL
-  ([ADR-20261029090000](adr/20261029090000-compose-service-rename.md)). The
+  secrets, domains and URL. The
   service is then called by its new name, so services that call it list
   `accounts` in `depends_on` and read `GREGALE_SERVICE_ACCOUNTS_URL`. Without
   the hint, a rename is a removal and a new service, and the new app starts
@@ -549,8 +539,7 @@ service's route together.
 
 A pull request preview of a service under the `project` policy runs every
 service of the project that serves calls, built from the pull request's
-branch, so its calls reach the same pull request's siblings
-([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)).
+branch, so its calls reach the same pull request's siblings.
 Workers, jobs and scheduled services join only when a service lists them in
 `depends_on`, so a preview never consumes production work. Each preview
 service counts against the plan's pull request preview allowance.
@@ -582,7 +571,7 @@ credentials. It gets:
   ```
 
   It writes the value to each service's `pr-preview` scope; a service added
-  later needs the command again ([ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md)).
+  later needs the command again.
 
 `pr-preview` values override the PR's Compose values. See
 [preview environments](preview-environments.md#configuration).
@@ -603,8 +592,6 @@ lifecycle:
 ```
 
 See [cold wake](cold-wake.md#refresh-application-state-after-restore).
-Before [ADR-20261104221217](adr/20261104221217-project-service-settings-previews-and-datastores.md) project deploys and GitHub pushes ignored
-these settings.
 
 ## Databases and buckets in gregale.yaml
 
@@ -630,8 +617,7 @@ The plan lists them before you apply: databases under **Managed PostgreSQL
 gregale.yaml)**. Apply creates whatever is missing and binds it to its service
 after the services exist and before they build, so the first deployment
 starts with its keys. An entry without `create` binds an existing resource, and
-a missing one stops the plan before anything changes
-([ADR-20261106105015](adr/20261106105015-declarative-resources-connect-and-lifecycle-helpers.md)).
+a missing one stops the plan before anything changes.
 Deploys never delete a database or bucket. See
 [managed PostgreSQL](postgres.md#connect-an-app) for the database fields;
 object-storage bindings inject the bucket's S3 settings under

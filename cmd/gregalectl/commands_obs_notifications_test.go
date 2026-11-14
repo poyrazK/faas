@@ -36,6 +36,9 @@ func TestCmdObsNotificationHealth(t *testing.T) {
 	if code := cmdObsDispatch([]string{subObsNotificationHealth}); code != 0 || !strings.Contains(out.String(), "state=no_samples value=unknown") || !strings.Contains(out.String(), "state=healthy value=0") || !strings.Contains(out.String(), "per_episode_delivery=unknown") {
 		t.Fatalf("human: %d %s %s", code, out, stderr)
 	}
+	if !strings.Contains(out.String(), "receiver_health=unknown reason=server_does_not_report_receivers") {
+		t.Fatal("legacy server absence was not explicit")
+	}
 	out.Reset()
 	if code := cmdObsNotificationHealth([]string{"--json"}); code != 0 || !strings.Contains(out.String(), `"value": null`) {
 		t.Fatalf("json: %d %s %s", code, out, stderr)

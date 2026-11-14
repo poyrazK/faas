@@ -26,7 +26,7 @@ var dataAPIDiagnosticRoutes = []string{"rest", "rpc", "storage", "health", "sche
 // dataAPIDiagnosticCodes are the request codes the runtime logs
 // (templates/data-api/logging.mjs); TestDataAPIDiagnosticCodesMatchRuntime
 // keeps the two lists equal.
-var dataAPIDiagnosticCodes = []string{"origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity",
+var dataAPIDiagnosticCodes = []string{"storage_commit_unknown", "storage_sessions_unavailable", "storage_checksum_mismatch", "storage_session_conflict", "storage_part_conflict", "storage_session_limit", "storage_session_not_found", "storage_invalid_session", "storage_invalid_part", "storage_version_conflict", "change_hooks_unavailable", "change_hooks_busy", "change_hooks_observation_unavailable", "hooks_owner_required", "data_api_shared_budget_unavailable", "data_api_budget_identity_required", "origin_not_allowed", "not_found", "invalid_path", "method_not_allowed", "token_required", "token_invalid", "read_only_identity",
 	"serving_contract_unavailable", "data_api_unavailable", "data_api_refresh_paused", "data_api_refresh_unavailable", "data_api_overloaded", "data_api_rate_limited",
 	"data_api_concurrency_limited", "request_too_large", "response_too_large", "query_timeout", "request_deadline_exceeded", "schema_document_too_large",
 	"schema_contract_mismatch", "upstream_error", "public_read_not_allowed", "public_rpc_requires_get", "server_key_browser_forbidden", "server_key_permission_denied",
@@ -438,7 +438,7 @@ func (c *dataAPIDiagnosticsCollector) observe(content string) bool {
 		case "data_api_refresh_unavailable":
 			c.report.Failures.RefreshUnavailable++
 			c.report.Failures.Unavailable++
-		case "data_api_unavailable", "serving_contract_unavailable":
+		case "data_api_unavailable", "serving_contract_unavailable", "data_api_shared_budget_unavailable":
 			c.report.Failures.Unavailable++
 		case "schema_contract_mismatch":
 			c.report.Failures.ContractMismatch++

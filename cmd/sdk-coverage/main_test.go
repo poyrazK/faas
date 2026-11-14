@@ -29,16 +29,21 @@ func TestRuntimeConnectionReportsRemainWorkloadOnly(t *testing.T) {
 	if err := yaml.Unmarshal(data, &document); err != nil {
 		t.Fatal(err)
 	}
+	for path, security := range map[string]string{
+		"/v1/runtime/data-api/connection-observations": "dataAPIConnectionsWorkloadIdentity",
+		"/v1/runtime/data-api/budget":                  "dataAPIBudgetWorkloadIdentity",
+	} {
+		operation := document.Paths[path].Post
+		if !operation.Internal || len(operation.Security) != 1 || len(operation.Security[0]) != 1 {
+			t.Fatalf("SDK exception for %s requires the private workload contract: %+v", path, operation)
+		}
+		if _, ok := operation.Security[0][security]; !ok {
+			t.Fatalf("SDK exception for %s requires the dedicated workload audience", path)
+		}
+	}
 	const runtimePath = "/v1/runtime/data-api/connection-observations"
-	operation := document.Paths[runtimePath].Post
-	if !operation.Internal || len(operation.Security) != 1 || len(operation.Security[0]) != 1 {
-		t.Fatalf("SDK exception requires the private workload contract: %+v", operation)
-	}
-	if _, ok := operation.Security[0]["dataAPIConnectionsWorkloadIdentity"]; !ok {
-		t.Fatal("SDK exception requires the dedicated workload audience")
-	}
 	const budgetPath = "/v1/apps/{slug}/data-api/connection-budget"
-	spec := map[string]map[string]any{runtimePath: {"post": true}, budgetPath: {"get": true}}
+	spec := map[string]map[string]any{runtimePath: {"post": true}, "/v1/runtime/data-api/budget": {"post": true}, budgetPath: {"get": true}}
 	if report := analyze(spec, map[string]bool{"GetAppDataAPIConnectionBudgets": true}); !report.ok() {
 		t.Fatalf("workload-only report should not require an account SDK method: %v", report.missing)
 	}
@@ -116,6 +121,43 @@ func TestGitOpsRecoveryRoutesRequireTheirTypedClients(t *testing.T) {
 			methods[tc.method] = true
 			if len(report.missing) != 1 || !strings.Contains(report.missing[0], tc.route+" →") {
 				t.Fatalf("missing client implementation escaped the coverage gate: %v", report.missing)
+			}
+		})
+	}
+}
+
+// Tool publication and credential routes keep actual typed clients mandatory.
+func TestToolAuthorityRoutesRequireTypedClients(t *testing.T) {
+	root, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := loadSpec(filepath.Join(root, specRelPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	methods, err := loadClientMethods(filepath.Join(root, sdkRelPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report := analyze(spec, methods); !report.ok() {
+		t.Fatalf("client coverage: %v", report.missing)
+	}
+	for _, tc := range []struct{ method, route string }{
+		{"BeginToolPublication", "PUT /v1/tool-publications/{id}"},
+		{"ExecutePrivateToolInvocation", "POST /v1/delegated-tool-invocations/{id}/execute"},
+		{"AuthorizeToolOAuthConnection", "POST /v1/tool-oauth-connections/{id}/authorization"},
+		{"RevokeToolOAuthConnection", "DELETE /v1/tool-oauth-connections/{id}"},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			if !methods[tc.method] {
+				t.Fatal("typed authority client is missing")
+			}
+			delete(methods, tc.method)
+			report := analyze(spec, methods)
+			methods[tc.method] = true
+			if len(report.missing) != 1 || !strings.Contains(report.missing[0], tc.route+" →") {
+				t.Fatalf("missing authority client escaped coverage: %v", report.missing)
 			}
 		})
 	}

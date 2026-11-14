@@ -116,6 +116,10 @@ type Loop struct {
 	// seal-domain identity first, then the fleet and host identities
 	// (current and previous during a rotation).
 	triggerSecretIdentities []*age.X25519Identity
+	// triggerConfigOpener, when set, opens a broker trigger's credentials
+	// by reference through the control plane's secretd instead of
+	// triggerSecretIdentities (ADR-20261110210000 slice 3g).
+	triggerConfigOpener TriggerConfigOpener
 	// recordRate caps the records each app's broker triggers take per
 	// second (ADR-20261101093015); nil leaves broker polls uncapped.
 	recordRate *TriggerRecordRateLimiter
@@ -622,6 +626,19 @@ func (l *Loop) WithGatewayHTTPClient(client *http.Client, baseURL string) *Loop 
 
 func (l *Loop) WithTriggerSecretIdentities(identities []*age.X25519Identity) *Loop {
 	l.triggerSecretIdentities = append([]*age.X25519Identity(nil), identities...)
+	return l
+}
+
+// TriggerConfigOpener opens a broker trigger's config with its credentials
+// by reference (app, trigger), somewhere other than this node.
+type TriggerConfigOpener func(ctx context.Context, appID, triggerID string) (json.RawMessage, error)
+
+// WithTriggerConfigOpener makes broker pollers take their credentials from
+// open (the control plane's secretd, ADR-20261110210000 slice 3g) instead of
+// opening the stored config with this node's identities. Broker triggers are
+// polled only by the app's owner, which secretd authorizes.
+func (l *Loop) WithTriggerConfigOpener(open TriggerConfigOpener) *Loop {
+	l.triggerConfigOpener = open
 	return l
 }
 

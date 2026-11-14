@@ -68,6 +68,8 @@
       "evidence": [
         {"kind": "test", "locator": "pkg/apid/apidserver/account_prehijack_test.go::TestMagicLinkFromSignupEndpointSignsIn"},
         {"kind": "test", "locator": "pkg/apid/apidserver/customer_support_test.go::TestCustomerSupportAuthenticatedRoutes"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/dashboard_support_test.go::TestCustomerSupportPortalBrowserRoutes"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/support_notifications_test.go::TestCustomerSupportNotificationRoutes"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_account_test.go::TestDashboardAccountExport_ReturnsAttachment"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_mfa_test.go::TestMFARecover_SendsBurnEmail"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_org_test.go::TestOrgUUID_Pin"},
@@ -558,6 +560,24 @@
         {"kind": "test", "locator": "pkg/mcphosting/oauth_test.go::TestOAuthDiscoveryDoesNotForwardTokens"},
         {"kind": "workflow", "locator": ".github/workflows/mcp-contract.yml"},
         {"kind": "runbook", "locator": "docs/ops/evidence/20261001-mcp-preview/README.md"},
+        {"kind": "runbook", "locator": "docs/mcp.md"}
+      ]
+    },
+    {
+      "id": "mcp-tool-authority",
+      "name": "Published tool authority and single dispatch",
+      "category": "security",
+      "description": "Published versions retain exact native identity, owner-issued grants enforce tool and credential scope, and invocation receipts prevent repeat dispatch after response loss or restart. Managed and guided OAuth credentials remain sealed in the account domain and are not exposed to delegated agents. These preview contracts do not replace deployed staging or live-provider qualification.",
+      "capabilities": ["mcp-hosted-tool-invocations", "mcp-tool-grants", "mcp-tool-invocations", "mcp-tool-registry"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/toolregistry/handlers_test.go::TestToolRegistryPostgres"},
+        {"kind": "test", "locator": "pkg/apid/toolregistry/grants_test.go::TestToolGrantsPostgres"},
+        {"kind": "test", "locator": "pkg/apid/toolregistry/invocations_test.go::TestToolInvocationsPostgres"},
+        {"kind": "test", "locator": "pkg/apid/toolregistry/delegated_invocations_test.go::TestDelegatedToolInvocationsPostgres"},
+        {"kind": "test", "locator": "pkg/apid/toolregistry/private_invocations_test.go::TestPrivateToolInvocationPostgres"},
+        {"kind": "test", "locator": "pkg/apid/toolregistry/managed_connections_test.go::TestManagedToolConnectionPostgres"},
+        {"kind": "test", "locator": "pkg/apid/toolregistry/guided_connections_test.go::TestGuidedToolConnectionPostgres"},
         {"kind": "runbook", "locator": "docs/mcp.md"}
       ]
     },

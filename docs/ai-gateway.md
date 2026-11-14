@@ -52,6 +52,9 @@ account during the preview; contact support to have it turned on for yours.
 - **Response cache.** Identical calls, streamed or not, can be answered from
   the gateway's cache. Usage shows cache hits and what the response cache and
   prompt caching saved.
+- **Semantic cache** (Pro and Scale). A call that asks the same thing in
+  other words can be answered from the response cache too. See
+  [Semantic cache](#semantic-cache).
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
@@ -112,6 +115,10 @@ restart.
   and Vertex take `--region`; Vertex takes its service-account key with
   `--key-file`.
 - `--no-env` leaves the app's settings alone.
+- The gateway serves **production** deployments only. `--scope` other than
+  `default` is refused: previews and other environments call the provider
+  directly with their own key (`gregale env set --env pr-preview
+  OPENAI_API_KEY=...`), outside the gateway's caps and reports.
 
 To do the same through the API:
 
@@ -150,7 +157,17 @@ on Pro and 300 s on Scale. Once a streamed answer starts, it may run for up
 to 30 minutes, as long as the provider sends something at least every 10
 minutes. A non-streamed answer has to arrive within the timeout, so stream
 long answers. `gregale ai request-policy <id>` shows and sets the timeout,
-rate and concurrency.
+rate and concurrency. Calls from outside Gregale with an access token wait at
+most 90 s for headers, whatever the timeout, because the public host sits
+behind a proxy that gives up at 100 s.
+
+A realtime (WebSocket) session holds one of the integration's concurrent
+calls for as long as it stays open.
+
+With retries on (`max_retries`), the gateway retries an AI call only when the
+provider cannot have run it: a connection that failed before the request was
+sent, or a `425`, `429`, `502` or `503` answer. A call the provider received
+is never sent twice.
 
 A call the provider received but never answered, because the timeout ran out
 or your app went away, counts toward your caps at its reservation: the
@@ -168,6 +185,8 @@ gregale ai content-policy <id> --moderation block --moderation-kind classifier \
   --moderation-integration <check-id> --moderation-model gpt-5-nano --moderation-categories prompt_injection
 gregale ai policy <id> --log-export on                  # to the app's log drains
 gregale ai policy <id> --prompt-cache on                # cache repeated Claude prompts
+gregale ai policy <id> --semantic-cache on --semantic-embedding-integration <openai-id> \
+  --semantic-embedding-model text-embedding-3-small      # answer reworded questions from the cache
 gregale ai routes set <route-id> --target <a> --target <b> --strategy weighted --weights 70,30
 gregale ai routes set <route-id> --target <a> --target <b> --strategy cost --max-ttfb-ms 1500
 gregale ai routes canary <route-id> --position 2 --percent 10
@@ -301,6 +320,36 @@ tools, quality flags, ratings and scores.
 Latency and the trace timeline come from the request log, so turn it on with
 `gregale ai policy <id> --request-log on`.
 
+### Semantic cache
+
+With the semantic cache on, a call the exact cache misses can still be
+answered from it when its last user message means the same as a cached
+call's. Everything else must match exactly: the model, system prompt,
+earlier turns, tools and parameters, and the calling app. By default each
+end user (`X-Gregale-AI-User`) has their own answers;
+`--semantic-share-users on` lets end users share them.
+
+- It needs the response cache (`response_cache_ttl_seconds` above 0) and a
+  Pro or Scale plan.
+- The gateway embeds the last user message through one of your OpenAI or
+  Gemini integrations, on that integration's key. Each candidate call the
+  exact cache misses costs one embedding call, shown in usage as
+  "Semantic cache embeddings".
+- A hit needs a cosine similarity of at least the threshold: 0.95 by
+  default, 0.85 to 0.99 with `--semantic-threshold`. Higher is safer. Two
+  differently worded questions can still need different answers, so turn
+  this on only where that risk is acceptable.
+- Chat completions, Responses, Claude messages and Gemini
+  `generateContent` calls are candidates when the last message is the
+  user's, is text only (no images, audio, files or tool results), is at most
+  8 KiB, and the conversation has at most 3 user messages. Batch calls and
+  calls sent with `Cache-Control: no-cache` are not.
+- A hit is billed like an exact cache hit and carries
+  `X-Gregale-AI-Cache: semantic` and `X-Gregale-AI-Similarity`. If the
+  embedding call fails or takes longer than 1 second, the call goes to the
+  provider.
+- Each outboundd node keeps its own index, in memory; a restart empties it.
+
 ## Limits and errors
 
 | Response | Meaning |
@@ -326,6 +375,7 @@ Latency and the trace timeline come from the request log, so turn it on with
 | `400 outbound_ai_translation_unsupported` | A route cannot translate this request for its target. |
 | `400 outbound_ai_content_flagged` | The moderation check found a blocked category. `X-Gregale-AI-Moderation` names it. |
 | `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. A `block` policy fails closed unless set with `--moderation-on-error allow`; a `flag` policy lets the call through. |
+| `429 outbound_ai_account_rate_limited` | The account's AI calls per second across all its integrations reached the plan limit (see Plans). Retry after a second. |
 | `401 outbound_access_token_invalid` | The access token is missing, unknown, revoked or expired. |
 | `403 outbound_ai_endpoint_unmetered` | The gateway cannot meter this call against your caps. `gregale ai policy <id> --allow-unmetered on` lets such calls through, outside the caps. |
 | `400 outbound_ai_batch_unreadable` | The gateway could not read the batch's requests to size them against your caps. |
@@ -343,16 +393,30 @@ alerts, the request log and captures each have their own retention; see the
 
 The AI gateway is included on **Hobby**, **Pro** and **Scale**. Your plan's
 outbound request policy (rate, burst and concurrency per integration) applies
-to AI calls too. Provider charges are billed by your provider to your own key;
+to AI calls too, and each account may make at most 40 (Hobby), 200 (Pro) or
+1,000 (Scale) AI calls per second across all its integrations, with bursts
+of twice that. Provider charges are billed by your provider to your own key;
 Gregale's cost figures are estimates from your price list or the built-in
 catalog, used for budgets and reports.
+
+Some models cost more for long prompts, and Claude's one-hour cache writes
+cost more than five-minute ones. Estimates include both: `gregale ai catalog`
+shows each model's long-context tier and one-hour cache-write price, and
+your own price list can set them per model, for example
+`--price model=claude,input=3,output=15,cache-write-1h=6,long-context=200000:200:150`
+(above 200,000 input tokens, input costs 2x and output 1.5x).
 
 ## Preview notes
 
 - Calls for one integration share its admission state, so very high call rates
-  are better spread across integrations.
+  are better spread across integrations, up to the account's AI rate.
+- Budget alerts are sent to the app's webhooks (`outbound.ai_budget.threshold`).
+  To get them by email, Slack or another notification channel, add an
+  `ai_budget_alerts` alert rule ([AI budget alerts](alerts.md#ai-budget-alerts)).
 - Captured content is redacted and kept for 3 days; turn capture on only for
-  traffic you may store. Reading it needs an API key with `secrets:read`.
+  traffic you may store. Reading it needs an API key with `secrets:read`;
+  replays and evaluations leave out answer texts for other keys and say so
+  with `content_withheld`.
 - The response cache keys a call by its body and headers, leaving out
   per-call telemetry such as `traceparent`, `baggage` and `user-agent`.
 - A moderation check costs one call of the check integration before each

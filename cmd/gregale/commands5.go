@@ -288,10 +288,10 @@ func cmdStatus(args []string) int {
 // flow as `gregale secrets set`; `--restart` opts into an immediate
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
-	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() {
+	if len(args) == 0 || (args[0] == "clone-status" || args[0] == "resume-automation") && !fullEnvironmentCloneCLI() {
 		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
 		if fullEnvironmentCloneCLI() {
-			usage = "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>"
+			usage = "usage: gregale env <create|clone-status|resume-automation|pull|push|diff|history|rollback>"
 		}
 		PrintUsage(os.Stderr, usage, "env")
 		return 1
@@ -305,6 +305,8 @@ func cmdEnv(args []string) int {
 		return envCreate(args[1:])
 	case "clone-status":
 		return envCloneStatus(args[1:])
+	case "resume-automation":
+		return envResumeAutomation(args[1:])
 	case "pull":
 		return envPull(args[1:])
 	case "push":
@@ -324,91 +326,6 @@ func cmdEnv(args []string) int {
 	return unknownSubcommandChoices(os.Stderr, "env", parent, args[0])
 }
 
-func envPull(args []string) int {
-	fs := newFlagSet("env pull", flag.ContinueOnError)
-	app := fs.String("app", "", "app slug")
-	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
-	out := fs.String("o", ".env", "output file (default .env)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if rejectUnexpectedFlagArgs(fs) {
-		return 1
-	}
-	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
-	if resolveErr == nil {
-		*app = resolvedApp
-	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
-		return printErr("Could not read local project context", resolveErr)
-	}
-	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [--env <name>] [-o .env] (or run `gregale link <project-slug>`)", "env")
-		return 1
-	}
-	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
-	if scopeErr != nil {
-		return printErr("Could not read local project context", scopeErr)
-	}
-	*scope = resolvedScope
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	resp, err := client.ListSecretsWithScope(context.Background(), *app, *scope)
-	if err != nil {
-		return printErr("List failed", err)
-	}
-	existing, readErr := os.ReadFile(*out)
-	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-		return printErr("Could not read existing .env", readErr)
-	}
-	present := envAssignmentKeys(existing)
-	var b strings.Builder
-	if len(existing) > 0 {
-		b.Write(existing)
-		if existing[len(existing)-1] != '\n' {
-			b.WriteByte('\n')
-		}
-	}
-	added := 0
-	for _, s := range resp.Secrets {
-		if _, ok := present[s.Key]; ok {
-			continue
-		}
-		// KEY-only template: the G2 boundary (§11) means the server
-		// never returns plaintext, so we intentionally write an empty
-		// value. The customer fills values by hand before `env push`.
-		fmt.Fprintf(&b, "%s=\n", s.Key)
-		added++
-	}
-	if err := os.WriteFile(*out, []byte(b.String()), 0o600); err != nil {
-		return printErr("Could not write .env", err)
-	}
-	if jsonOutput {
-		return jsonOut(writeJSON(struct {
-			AppSlug       string `json:"app_slug"`
-			Scope         string `json:"scope"`
-			OutputPath    string `json:"output_path"`
-			RemoteKeys    int    `json:"remote_key_count"`
-			AddedKeys     int    `json:"added_key_count"`
-			PreservedKeys int    `json:"preserved_key_count"`
-			KeyOnly       bool   `json:"key_only"`
-		}{*app, scopeOrDefault(*scope), *out, len(resp.Secrets), added, len(present), true}))
-	}
-	if len(resp.Secrets) == 0 && len(existing) == 0 {
-		PrintOK(osStdout, "Wrote empty %s (%s has no secrets)", *out, *app)
-		return 0
-	}
-	if len(existing) == 0 {
-		PrintOK(osStdout, "Wrote %d key(s) to %s (values intentionally blank — fill by hand)",
-			len(resp.Secrets), *out)
-	} else {
-		PrintOK(osStdout, "Added %d missing key(s) to %s; existing values and local keys were preserved",
-			added, *out)
-	}
-	return 0
-}
-
 func envAssignmentKeys(data []byte) map[string]struct{} {
 	keys := make(map[string]struct{})
 	for _, raw := range strings.Split(string(data), "\n") {
@@ -416,8 +333,11 @@ func envAssignmentKeys(data []byte) map[string]struct{} {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if pair, err := parseSecretsPair(line); err == nil {
-			keys[pair.Key] = struct{}{}
+		if pair, err := parseSecretsPair(stripDotenvExport(line)); err == nil {
+			key := strings.TrimSpace(pair.Key)
+			if api.ValidateSecretKey(key) == nil {
+				keys[key] = struct{}{}
+			}
 		}
 	}
 	return keys
@@ -1403,7 +1323,7 @@ func cmdDashboard(args []string) int {
 //	status       queue doctor view (depth, scaling, bindings, and liveness)
 //	peek         inspect up to N rows without draining
 //	dead-letter  rows that exhausted attempts
-//	ack          release a leased row
+//	ack          acknowledge a processed message's result
 //	setup        configure a simple push workload with queue-depth scaling
 //	bindings     manage first-class queue bindings
 func cmdQueueDispatch(args []string) int {
@@ -1417,8 +1337,8 @@ func cmdQueueDispatch(args []string) int {
 			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect up to N rows without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    release a leased row\n"+
-			"  setup <slug>           configure a push workload + queue-depth scaling\n"+
+			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
+			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
 			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		return 1
@@ -1454,8 +1374,8 @@ func cmdQueueDispatch(args []string) int {
 			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    release a leased row\n"+
-			"  setup <slug>           configure a push workload + queue-depth scaling\n"+
+			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
+			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
 			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		maybeSuggestSub(sug)

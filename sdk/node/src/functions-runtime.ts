@@ -10,7 +10,7 @@
 // Calls go over the private binding (`http://<slug>.internal:10081`), never
 // the public internet; the platform authorizes them by the calling VM, wakes
 // a parked callee, and the request's deadline and release travel with them.
-// `gregale functions types` declares each function's input and output in
+// `gregale function types` declares each function's input and output in
 // GregaleFunctions, so `functions.users.call` is typed.
 
 import { createGregaleFetch } from './release-context.js';
@@ -23,7 +23,7 @@ export const GREGALE_FUNCTION_CALL_HEADER = 'X-Gregale-Function-Call';
 export const GREGALE_FUNCTIONS_ENV = 'GREGALE_FUNCTIONS';
 
 /**
- * The functions this function may call, by name. `gregale functions types`
+ * The functions this function may call, by name. `gregale function types`
  * augments it from each function's input and output schema; without it every
  * name is callable with unknown input and output.
  */
@@ -55,9 +55,34 @@ export class FunctionCallError extends Error {
   }
 }
 
+/** Names the function that receives a send's completion. */
+export const GREGALE_ON_COMPLETE_HEADER = 'X-Gregale-On-Complete';
+/** Where a function reads the invocations it sent. */
+export const GREGALE_PLATFORM_API_URL = 'http://api.svc.gregale:10081';
+
+/** What a function reads about an invocation it sent. */
+export interface FunctionInvocationStatus {
+  id: string;
+  state: string;
+  done: boolean;
+  outcome?: string;
+  attempts: number;
+  result?: unknown;
+  error?: string;
+  completed_at?: string;
+}
+
 /** An accepted async invocation. */
-export interface FunctionInvocation {
+export interface FunctionInvocation<Out = unknown> {
   invocationId: string;
+  /** The invocation's current state, read from this function's VM. */
+  status(): Promise<FunctionInvocationStatus>;
+  /**
+   * Wait until the invocation finishes and return its result. A failed
+   * invocation raises FunctionCallError; timeoutMs (default 60 s) raises one
+   * with status 408 when it passes first.
+   */
+  wait(options?: { timeoutMs?: number; signal?: AbortSignal }): Promise<Out>;
 }
 
 /** One callable function. */
@@ -65,7 +90,15 @@ export interface FunctionClient<T extends FunctionTypes = FunctionTypes> {
   /** POST the input and return the parsed output. */
   call(input: T['input'], options?: FunctionCallOptions): Promise<T['output']>;
   /** Enqueue a durable async invocation and return at once. */
-  send(input: T['input'], options?: FunctionCallOptions): Promise<FunctionInvocation>;
+  send(input: T['input'], options?: FunctionSendOptions): Promise<FunctionInvocation<T['output']>>;
+}
+
+export interface FunctionSendOptions extends FunctionCallOptions {
+  /**
+   * A function that receives the completion when the invocation finishes:
+   * a name this function may call, or "self".
+   */
+  onComplete?: string;
 }
 
 export interface FunctionCallOptions {
@@ -92,6 +125,8 @@ export interface CreateFunctionsOptions {
   /** fetch used under the release transport. */
   fetch?: typeof globalThis.fetch;
   env?: Record<string, string | undefined>;
+  /** Where sent invocations are read; defaults to GREGALE_PLATFORM_API_URL. */
+  platformURL?: string;
 }
 
 /** Parses GREGALE_FUNCTIONS; a missing or malformed value is an empty map. */
@@ -123,6 +158,7 @@ export function createFunctions<M = GregaleFunctions>(options: CreateFunctionsOp
   const names = options.functions ?? functionsFromEnv(env);
   const baseURL = options.baseURL ?? ((slug: string) => functionBaseURL(slug, env));
   const fetchImpl = createGregaleFetch(options.fetch ?? globalThis.fetch);
+  const platformURL = (options.platformURL ?? env.GREGALE_PLATFORM_API_URL ?? GREGALE_PLATFORM_API_URL).replace(/\/+$/, '');
   const clients = new Map<string, FunctionClient>();
   const clientFor = (name: string): FunctionClient => {
     const cached = clients.get(name);
@@ -132,11 +168,12 @@ export function createFunctions<M = GregaleFunctions>(options: CreateFunctionsOp
       const known = Object.keys(names).sort();
       throw new Error(`function ${name} is not callable from here; ${known.length ? `callable: ${known.join(', ')}` : 'GREGALE_FUNCTIONS is not set'} (deploy the functions project, or add the app to calls:)`);
     }
-    const request = async (input: unknown, opts: FunctionCallOptions | undefined, async: boolean): Promise<Response> => {
+    const request = async (input: unknown, opts: FunctionSendOptions | undefined, async: boolean): Promise<Response> => {
       const path = opts?.path ?? '/';
       const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json', ...opts?.headers };
       headers[GREGALE_FUNCTION_CALL_HEADER] = '1';
       if (async) headers[GREGALE_INVOKE_HEADER] = 'async';
+      if (async && opts?.onComplete) headers[GREGALE_ON_COMPLETE_HEADER] = opts.onComplete;
       const res = await fetchImpl(baseURL(slug) + (path.startsWith('/') ? path : '/' + path), {
         method: 'POST', headers, body: JSON.stringify(input ?? null), ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -163,7 +200,7 @@ export function createFunctions<M = GregaleFunctions>(options: CreateFunctionsOp
         const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
         const id = body.invocation_id ?? body.id;
         if (typeof id !== 'string' || !id) throw new FunctionCallError(name, res.status, body, 'async invocation id missing');
-        return { invocationId: id };
+        return sentInvocation(name, id, platformURL, fetchImpl);
       },
     };
     clients.set(name, client);
@@ -179,3 +216,43 @@ export function createFunctions<M = GregaleFunctions>(options: CreateFunctionsOp
 
 /** The client for this function's siblings, from GREGALE_FUNCTIONS. */
 export const functions: FunctionsClient<GregaleFunctions> = createFunctions();
+
+/** The longest single long-poll the platform holds, in seconds. */
+const MAX_WAIT_SECONDS = 30;
+
+function sentInvocation<Out>(fn: string, id: string, platformURL: string, fetchImpl: typeof globalThis.fetch): FunctionInvocation<Out> {
+  const read = async (waitSeconds: number, signal?: AbortSignal): Promise<FunctionInvocationStatus> => {
+    const url = `${platformURL}/v1/invocations/${encodeURIComponent(id)}` + (waitSeconds > 0 ? `?wait=${waitSeconds}` : '');
+    const res = await fetchImpl(url, { headers: { accept: 'application/json' }, ...(signal ? { signal } : {}) });
+    const text = await res.text();
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = undefined;
+    }
+    if (!res.ok) {
+      const problem = body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : undefined;
+      throw new FunctionCallError(fn, res.status, problem, text);
+    }
+    return body as FunctionInvocationStatus;
+  };
+  return {
+    invocationId: id,
+    status: () => read(0),
+    async wait(options) {
+      const deadline = Date.now() + (options?.timeoutMs ?? 60_000);
+      for (;;) {
+        const left = Math.ceil((deadline - Date.now()) / 1000);
+        const status = await read(Math.max(0, Math.min(MAX_WAIT_SECONDS, left)), options?.signal);
+        if (status.done) {
+          if (status.state === 'completed') return status.result as Out;
+          throw new FunctionCallError(fn, 500, { code: 'function_invocation_failed', detail: status.error ?? status.state, invocation: status }, status.error ?? '');
+        }
+        if (Date.now() >= deadline) {
+          throw new FunctionCallError(fn, 408, { code: 'function_invocation_pending', detail: `invocation ${id} is still ${status.state}`, invocation: status }, '');
+        }
+      }
+    },
+  };
+}
