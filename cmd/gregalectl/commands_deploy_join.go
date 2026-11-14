@@ -606,20 +606,32 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	if opts.DryRun {
 		return report, nil
 	}
-	for name, path := range map[string]string{
+	retired, err := retiredComputeKeys(opts.AnsibleVarsFile,
+		m.ArtifactSigner.Enabled && m.ArtifactSigner.RetireComputeKey)
+	if err != nil {
+		return report, err
+	}
+	required := map[string]string{
 		"release-tarball":     opts.ReleaseTarball,
 		"bootstrap-binary":    opts.BootstrapBinary,
 		"cosign-binary":       opts.CosignBinary,
 		"pki-dir":             opts.PKISource,
-		"sign-key":            opts.SignKeySource,
 		"verify-key":          opts.VerifyKeySource,
 		"compute-db-env":      opts.ComputeDBEnvSource,
 		"storage-env":         opts.StorageEnvSource,
 		"imaged-storage-env":  opts.ImagedStorageEnvSource,
 		"runtime-bases-env":   opts.RuntimeBasesEnvSource,
-		"fleet-age-key":       opts.FleetAgeKeySource,
 		"fleet-age-recipient": opts.FleetAgeRecipientSource,
-	} {
+	}
+	// node_join.yml removes a retired key from the node instead of staging
+	// it, so the join needs that key only while it is not retired.
+	if !retired.signKey || opts.SignKeySource != "" {
+		required["sign-key"] = opts.SignKeySource
+	}
+	if !retired.fleetKey || opts.FleetAgeKeySource != "" {
+		required["fleet-age-key"] = opts.FleetAgeKeySource
+	}
+	for name, path := range required {
 		if path == "" {
 			return report, fmt.Errorf("--%s is required for apply", name)
 		}
@@ -697,8 +709,12 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	if err := validateRuntimeBasesEnv(opts.RuntimeBasesEnvSource, m.Release.RuntimeBaseRefs); err != nil {
 		return report, fmt.Errorf("--runtime-bases-env: %w", err)
 	}
-	if err := validateFleetAgePair(opts.FleetAgeKeySource, opts.FleetAgeRecipientSource); err != nil {
-		return report, err
+	if opts.FleetAgeKeySource != "" {
+		if err := validateFleetAgePair(opts.FleetAgeKeySource, opts.FleetAgeRecipientSource); err != nil {
+			return report, err
+		}
+	} else if _, err := secretbox.LoadRecipient(opts.FleetAgeRecipientSource); err != nil {
+		return report, fmt.Errorf("--fleet-age-recipient: %w", err)
 	}
 	if opts.AnsibleVarsFile != "" {
 		if _, err := os.Stat(opts.AnsibleVarsFile); err != nil {

@@ -20,14 +20,14 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	if deploymentID == "" {
 		return fmt.Errorf("githubd: deployment check: empty deployment id")
 	}
-	var commitSHA, kind, status, failure, repo, appSlug, previewOf, scope, appStatus, accountID string
+	var commitSHA, kind, status, failure, repo, appSlug, previewOf, scope, appStatus, accountID, appID, projectID string
 	var rolloutState, rolloutAbortedReason string
 	var canaryStep, canaryTotalSteps, trafficPercent int
 	var reason, tag, deployedBy string
 	var previewPRNumber, prNumber int
 	var installationID int64
 	err := pool.QueryRow(ctx, `
-		select a.account_id::text, coalesce(d.commit_sha, ''), d.kind, d.status, coalesce(d.error, ''), coalesce(d.scope, 'default'),
+		select a.account_id::text, a.id::text, coalesce(a.project_id::text, ''), coalesce(d.commit_sha, ''), d.kind, d.status, coalesce(d.error, ''), coalesce(d.scope, 'default'),
 		       coalesce(d.rollout_state, ''), coalesce(d.rollout_aborted_reason, ''),
 		       coalesce(d.canary_step, 0), coalesce(d.canary_total_steps, 0), coalesce(d.traffic_percent, 0),
 		       coalesce(d.reason, ''), coalesce(d.tag, ''), coalesce(nullif(d.deployed_by, ''), d.pusher_login, ''), coalesce(d.pr_number, 0),
@@ -50,7 +50,7 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 			order by updated_at desc limit 1
 		) preview_set on true
 		where d.id = $1`, deploymentID).Scan(
-		&accountID, &commitSHA, &kind, &status, &failure, &scope, &rolloutState, &rolloutAbortedReason,
+		&accountID, &appID, &projectID, &commitSHA, &kind, &status, &failure, &scope, &rolloutState, &rolloutAbortedReason,
 		&canaryStep, &canaryTotalSteps, &trafficPercent, &reason, &tag, &deployedBy, &prNumber,
 		&repo, &appSlug, &previewOf, &previewPRNumber, &appStatus, &installationID)
 	if err != nil {
@@ -106,6 +106,11 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	deploymentURL := githubd.DashboardDeploymentURL(appSlug, deploymentID)
 	logsURL := githubd.DashboardLogsURL(appSlug)
 	environmentURL := fmt.Sprintf("https://%s.%s", appSlug, domain)
+	if branch := pullRequestBranchURL(kind, previewOf, scope, projectID, appID); branch != "" {
+		// A branch preview builds the production app into the pull
+		// request's environment branch (ADR-20261113121342).
+		environmentURL = branch
+	}
 	environment := githubDeploymentEnvironment(kind, scope, appSlug, previewOf)
 	if err := checks.WriteGitHubDeploymentStatus(ctx, githubd.GitHubDeploymentUpdate{
 		LocalDeploymentID:     deploymentID,
@@ -214,6 +219,16 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		return nil
 	}
 	return checks.WriteScopedAppCheck(ctx, installationID, repo, commitSHA, appSlug, scope, phase, "", summary)
+}
+
+// pullRequestBranchURL is the stable branch URL of a pull request build of a
+// production app into its environment branch, or empty for any other
+// deployment.
+func pullRequestBranchURL(kind, previewOf, scope, projectID, appID string) string {
+	if kind != string(state.DeploymentKindPreview) || previewOf != "" || scope == "" || scope == string(state.DefaultEnvScope) {
+		return ""
+	}
+	return githubd.EnvironmentBranchWorkloadURL(projectID, scope, appID)
 }
 
 func validateDeploymentCheckTarget(deploymentID, kind, commitSHA, repo string, installationID int64) (bool, error) {

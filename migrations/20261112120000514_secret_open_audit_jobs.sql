@@ -12,7 +12,7 @@ ALTER TABLE secret_open_audit ALTER COLUMN app_id DROP NOT NULL;
 -- +goose StatementBegin
 DO $migration$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'secret_open_audit_subject_check') THEN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'secret_open_audit_subject_check' AND conrelid = 'secret_open_audit'::regclass) THEN
         ALTER TABLE secret_open_audit ADD CONSTRAINT secret_open_audit_subject_check
             CHECK ((app_id IS NULL) <> (job_id IS NULL)) NOT VALID;
     END IF;

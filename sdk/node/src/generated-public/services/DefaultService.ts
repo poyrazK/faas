@@ -7,6 +7,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class DefaultService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Get fire-now request state
    * Polling surface for the row that `POST /v1/crons/{id}/run`
@@ -23,7 +24,7 @@ export class DefaultService {
      */
     requestId: string,
   }): CancelablePromise<FireCronRequestResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/cron-fire-now-requests/{request_id}',
       path: {

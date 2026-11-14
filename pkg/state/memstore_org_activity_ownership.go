@@ -61,6 +61,9 @@ func orgOwnershipTransferMembersLocked(m *MemStore, orgID, fromAccountID, toAcco
 	if to.Role == OrgRoleOwner {
 		return OrgMembership{}, OrgMembership{}, ErrOrgLastOwner
 	}
+	if !m.mayOwnOrgLocked(toAccountID) {
+		return OrgMembership{}, OrgMembership{}, ErrOrgOwnerInactive
+	}
 	org, exists := m.orgs[orgID]
 	if !exists {
 		return OrgMembership{}, OrgMembership{}, ErrNotFound

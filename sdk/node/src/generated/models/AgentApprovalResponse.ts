@@ -39,6 +39,10 @@ export type AgentApprovalResponse = {
    */
   agent?: string;
   /**
+   * The id of the agent connection that asked, as GET /v1/agent-connections lists it.
+   */
+  connection_id?: string;
+  /**
    * When the agent first made the request.
    */
   created_at: string;

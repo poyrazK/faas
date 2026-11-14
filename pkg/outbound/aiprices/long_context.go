@@ -42,3 +42,17 @@ func LongContextTierFor(model string) (LongContextTier, bool) {
 	}
 	return LongContextTier{}, false
 }
+
+// CacheWrite1hFallback is the price of a one-hour cache write without a
+// price of its own: one-hour writes cost twice the input price (five-minute
+// ones 1.25 times, the cache-write price), so the higher of the two never
+// under-counts them.
+func CacheWrite1hFallback(cacheWrite, input int64) int64 {
+	return max(cacheWrite, 2*input)
+}
+
+// HasCacheWrite1h reports whether a catalog model's provider bills cache
+// writes kept for one hour: Claude, wherever it is served.
+func HasCacheWrite1h(model string) bool {
+	return strings.Contains(strings.ToLower(model), "claude")
+}

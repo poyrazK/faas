@@ -2360,6 +2360,12 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
 		}
 	}
+	// A parked app wakes through the lifecycle claim, which also clears its
+	// recoverable deployment parks; any other status is set as before.
+	if _, err := compareAndSetAppStatus(ctx, e.store, appID, state.AppEvictedCold, state.AppActive); err != nil {
+		release()
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: wake parked app %s: %w", appID, err)
+	}
 	active := state.AppActive
 	if _, err := e.store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &active}); err != nil {
 		release()

@@ -16,13 +16,14 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ExclusiveOperationsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List account-managed exclusive operation policies.
    * @returns ExclusiveWorkPolicyList Account policies and current revisions.
    * @throws ApiError
    */
   public static listExclusiveOperationPolicies(): CancelablePromise<ExclusiveWorkPolicyList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/operation-policies',
       errors: {
@@ -55,7 +56,7 @@ export class ExclusiveOperationsService {
      */
     name: string,
   }): CancelablePromise<ExclusiveWorkPolicyRecord> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/operation-policies/{name}',
       path: {
@@ -103,7 +104,7 @@ export class ExclusiveOperationsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ExclusiveWorkPolicyRecord> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/operation-policies/{name}',
       path: {
@@ -146,7 +147,7 @@ export class ExclusiveOperationsService {
      */
     id: string,
   }): CancelablePromise<ExclusiveTriggerBindingRecord> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/operation-trigger-bindings/{source}/{id}',
       path: {
@@ -188,7 +189,7 @@ export class ExclusiveOperationsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ExclusiveTriggerBindingRecord> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/account/operation-trigger-bindings/{source}/{id}',
       path: {
@@ -232,7 +233,7 @@ export class ExclusiveOperationsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/operation-trigger-bindings/{source}/{id}',
       path: {
@@ -284,7 +285,7 @@ export class ExclusiveOperationsService {
      */
     xGregaleRelease?: string,
   }): CancelablePromise<ExclusiveOperationAccepted> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/operations',
       path: {
@@ -336,7 +337,7 @@ export class ExclusiveOperationsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ExclusiveOperationAccepted> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/operations/tasks',
       path: {
@@ -402,7 +403,7 @@ export class ExclusiveOperationsService {
      */
     xGregaleRelease?: string,
   }): CancelablePromise<ExclusiveOperationAccepted> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/platform-tenants/{tenant_id}/apps/{slug}/operations',
       path: {
@@ -465,7 +466,7 @@ export class ExclusiveOperationsService {
      */
     xGregaleRelease?: string,
   }): CancelablePromise<ExclusiveOperationAccepted> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/apps/{slug}/operations',
       path: {
@@ -506,7 +507,7 @@ export class ExclusiveOperationsService {
      */
     id: string,
   }): CancelablePromise<(ExclusiveOperationRecord | CommitOperationResponse)> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/operations/{id}',
       path: {
@@ -536,7 +537,7 @@ export class ExclusiveOperationsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/operations/{id}/cancel',
       path: {
@@ -568,7 +569,7 @@ export class ExclusiveOperationsService {
      */
     id: string,
   }): CancelablePromise<ExclusiveOperationRecord> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/platform-tenant-self/operations/{id}',
       path: {
@@ -595,7 +596,7 @@ export class ExclusiveOperationsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/platform-tenant-self/operations/{id}/cancel',
       path: {

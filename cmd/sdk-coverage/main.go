@@ -613,6 +613,31 @@ var sdkMethodExclude = map[string]bool{
 //
 // Key = "<METHOD> <path>"; value = SDK method name.
 var methodRouteMap = map[string]string{
+	// Reviewed agent-tool publication, grants, invocation and execution credentials.
+	"DELETE /v1/tool-grants/{id}":                        "RevokeToolGrant",
+	"DELETE /v1/tool-oauth-connections/{id}":             "RevokeToolOAuthConnection",
+	"GET /v1/delegated-tool-connections/{grant}":         "GetDelegatedToolConnection",
+	"GET /v1/delegated-tool-invocations/{id}":            "GetDelegatedToolInvocation",
+	"GET /v1/tool-grants":                                "ListToolGrants",
+	"GET /v1/tool-grants/{id}":                           "GetToolGrant",
+	"GET /v1/tool-invocations/{id}":                      "GetToolInvocation",
+	"GET /v1/tool-oauth-connections":                     "ListToolOAuthConnections",
+	"GET /v1/tool-oauth-connections/{id}":                "GetToolOAuthConnection",
+	"GET /v1/tool-oauth-connections/{id}/authorization":  "GetToolOAuthAuthorization",
+	"GET /v1/tool-publications/{id}":                     "GetToolPublication",
+	"GET /v1/tool-registry":                              "SearchToolRegistry",
+	"GET /v1/tool-registry/{version}/tools/{name}":       "GetRegistryTool",
+	"POST /v1/delegated-tool-invocations/{id}/execute":   "ExecutePrivateToolInvocation",
+	"POST /v1/delegated-tool-invocations/{id}/{action}":  "DispatchDelegatedToolInvocation",
+	"POST /v1/tool-invocations/{id}/{action}":            "DispatchToolInvocation",
+	"POST /v1/tool-oauth-connections/{id}/authorization": "AuthorizeToolOAuthConnection",
+	"POST /v1/tool-publications/{id}/outcome":            "FinishToolPublication",
+	"PUT /v1/delegated-tool-invocations/{id}":            "BeginDelegatedToolInvocation",
+	"PUT /v1/tool-grants/{id}":                           "PutToolGrant",
+	"PUT /v1/tool-invocations/{id}":                      "BeginToolInvocation",
+	"PUT /v1/tool-oauth-connections/{id}":                "PutToolOAuthConnection",
+	"PUT /v1/tool-publications/{id}":                     "BeginToolPublication",
+
 	// Customer support uses typed personal and organization methods.
 	"GET /v1/support/tickets":                                   "ListSupportTickets",
 	"GET /v1/support/notifications":                             "ListSupportNotifications",
@@ -2808,6 +2833,8 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/orgs/{slug}/members/{user_id}":    "ChangeOrgMemberRole",
 	"DELETE /v1/orgs/{slug}/members/{user_id}":   "RemoveOrgMember",
 	"POST /v1/orgs/{slug}/transfer_ownership":    "TransferOrgOwnership",
+	"GET /v1/orgs/{slug}/security-policy":        "GetOrgSecurityPolicy", // literal hyphen; follows operationId getOrgSecurityPolicy (ADR-20261113180000)
+	"PUT /v1/orgs/{slug}/security-policy":        "PutOrgSecurityPolicy", // follows operationId putOrgSecurityPolicy
 	"GET /v1/invitations/{token}":                "PeekInvitation",
 	"POST /v1/invitations/{token}/accept":        "AcceptInvitation",
 	"DELETE /v1/orgs/{slug}/invitations/{token}": "RevokeInvitation",
@@ -3004,6 +3031,10 @@ func (r *reportT) print() {
 // Convenience aliases share a route with its checked path-shaped method.
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
+	"CancelDelegatedToolInvocation":        "POST /v1/delegated-tool-invocations/{id}/{action}",
+	"FinishDelegatedToolInvocation":        "POST /v1/delegated-tool-invocations/{id}/{action}",
+	"CancelToolInvocation":                 "POST /v1/tool-invocations/{id}/{action}",
+	"FinishToolInvocation":                 "POST /v1/tool-invocations/{id}/{action}",
 	"UpsertDevSession":                     "PUT /v1/dev/sessions/{project}",
 	"ListAppsSelected":                     "GET /v1/apps",
 	"ListManagedPostgresDatabasesSelected": "GET /v1/postgres/databases",

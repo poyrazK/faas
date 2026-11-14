@@ -89,3 +89,20 @@ func TestManagedPostgresCapBodyV1EgressHeld(t *testing.T) {
 		t.Fatalf("overage body:\n%s", body)
 	}
 }
+
+// ADR-20261110160000 amendment 2026-11-13: the egress hold is mailed per
+// database, and the email names it in the subject and the body.
+func TestManagedPostgresCapBodyV1EgressHeldNamesTheDatabase(t *testing.T) {
+	const gb = 1_000_000_000
+	n := mail.ManagedPostgresCapNotice{DatabaseName: "orders", Threshold: mail.ManagedPostgresCapEgressHeld,
+		UsedSeconds: 510 * gb, Allowance: 500 * gb, Ceiling: 500 * gb, ReachedAt: time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)}
+	subject, body, ok := mail.ManagedPostgresCapBodyV1("one@example.net", n)
+	if !ok || subject != "Managed PostgreSQL database orders is paused until next month" {
+		t.Fatalf("subject %q, ok %v", subject, ok)
+	}
+	for _, want := range []string{"Your database orders sent 510.0 GB by 2026-11-20 08:00 UTC", "with its own email"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+}
