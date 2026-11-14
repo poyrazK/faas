@@ -181,6 +181,8 @@ func (c durableQualificationConfig) factory(getenv func(string) string) managedp
 				closeNative()
 			}
 		}()
+		// managedpostgres.Factory carries no context; neon.New owns its broker dial lifetime.
+		//nolint:contextcheck // see above
 		registry, err := managedpostgres.Load(getenv, map[string]managedpostgres.Factory{"neon": func(config managedpostgres.BackendConfig, env func(string) string) (managedpostgres.Provider, error) {
 			provider, err := neon.New(config, env)
 			if err != nil {

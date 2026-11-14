@@ -27,6 +27,7 @@
         "/signup",
         "=/v1/account",
         "/v1/account/email",
+        "/v1/account/health",
         "/v1/account/mfa",
         "/v1/account/rate-limits",
         "/v1/account/security-activity",
@@ -5327,6 +5328,24 @@
       "routes": [
         "/v1/apps/{}/buckets/{}/s3-credentials",
         "/v1/orgs/{}/apps/{}/buckets/{}/s3-credentials"
+      ]
+    },
+    {
+      "id": "sales-referrals",
+      "name": "Sales and referrals",
+      "category": "account",
+      "description": "Staff sales pipeline, attributed signup links and customer referral codes.",
+      "maturity": "internal",
+      "plans": [],
+      "operator_flag": "FAAS_SALES_ENABLED",
+      "docs_url": "/docs/adr/20261103180000-sales-referrals",
+      "acceptance_test": "pkg/apid/apidserver/sales_test.go::TestSalesRoutesDefaultOff",
+      "routes": [
+        "/dashboard/referral-assets",
+        "/dashboard/referrals",
+        "/dashboard/sales",
+        "/v1/referrals",
+        "/v1/sales"
       ]
     },
     {

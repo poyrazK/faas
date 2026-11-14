@@ -316,6 +316,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp serve", "mcp serve"},
 	{"mcp connect", "mcp connect"},
 	{"mcp connection", "mcp connections"},
+	{"mcp server invocation run", "mcp invocation-run"},
 	{"mcp server", "mcp"},
 	{"mcp client tools", "mcp tools"},
 	{"mcp client call", "mcp call"},

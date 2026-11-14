@@ -554,6 +554,7 @@ from .automatic_route_check_last_error_code import AutomaticRouteCheckLastErrorC
 from .automatic_route_check_stale_reasons_item import AutomaticRouteCheckStaleReasonsItem
 from .automatic_route_check_state import AutomaticRouteCheckState
 from .before_checkpoint_hook import BeforeCheckpointHook
+from .begin_tool_publication_response import BeginToolPublicationResponse
 from .billing_cancel_response import BillingCancelResponse
 from .billing_catalog_entry import BillingCatalogEntry
 from .billing_catalog_entry_kind import BillingCatalogEntryKind
@@ -688,11 +689,15 @@ from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
 from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
 from .change_consumer_billing_plan_request import ChangeConsumerBillingPlanRequest
+from .change_delegated_tool_invocation_action import ChangeDelegatedToolInvocationAction
+from .change_delegated_tool_invocation_body_type_0 import ChangeDelegatedToolInvocationBodyType0
 from .change_managed_postgres_compute_policy_request import ChangeManagedPostgresComputePolicyRequest
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
+from .change_tool_invocation_action import ChangeToolInvocationAction
+from .change_tool_invocation_body_type_0 import ChangeToolInvocationBodyType0
 from .check_account_workflow_readiness_body import CheckAccountWorkflowReadinessBody
 from .check_platform_tenant_self_workflow_readiness_body import CheckPlatformTenantSelfWorkflowReadinessBody
 from .check_profile_regression_request import CheckProfileRegressionRequest
@@ -1278,6 +1283,7 @@ from .delayed_task_at_request_headers import DelayedTaskAtRequestHeaders
 from .delayed_task_at_request_payload import DelayedTaskAtRequestPayload
 from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
+from .delegated_tool_invocation_intent import DelegatedToolInvocationIntent
 from .delete_account_session_body import DeleteAccountSessionBody
 from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
 from .delete_exclusive_operation_trigger_binding_source import DeleteExclusiveOperationTriggerBindingSource
@@ -4489,6 +4495,7 @@ from .private_network_peering import PrivateNetworkPeering
 from .private_network_peering_list_response import PrivateNetworkPeeringListResponse
 from .private_network_peering_status import PrivateNetworkPeeringStatus
 from .private_network_status import PrivateNetworkStatus
+from .private_tool_invocation_request import PrivateToolInvocationRequest
 from .problem import Problem
 from .profile_attribution_comparison import ProfileAttributionComparison
 from .profile_attribution_quality import ProfileAttributionQuality
@@ -6028,6 +6035,48 @@ from .test_notification_channel_response import TestNotificationChannelResponse
 from .throttle_preview_row import ThrottlePreviewRow
 from .throttle_suggestion_row import ThrottleSuggestionRow
 from .throttle_suggestions_response import ThrottleSuggestionsResponse
+from .tool_grant_access import ToolGrantAccess
+from .tool_grant_credential import ToolGrantCredential
+from .tool_grant_credential_scope import ToolGrantCredentialScope
+from .tool_grant_intent import ToolGrantIntent
+from .tool_grant_page import ToolGrantPage
+from .tool_grant_record import ToolGrantRecord
+from .tool_invocation_delegation import ToolInvocationDelegation
+from .tool_invocation_intent import ToolInvocationIntent
+from .tool_invocation_intent_access_mode import ToolInvocationIntentAccessMode
+from .tool_invocation_outcome import ToolInvocationOutcome
+from .tool_invocation_outcome_code import ToolInvocationOutcomeCode
+from .tool_invocation_outcome_status import ToolInvocationOutcomeStatus
+from .tool_invocation_receipt import ToolInvocationReceipt
+from .tool_invocation_record import ToolInvocationRecord
+from .tool_invocation_record_status import ToolInvocationRecordStatus
+from .tool_invocation_target import ToolInvocationTarget
+from .tool_o_auth_authorization_request import ToolOAuthAuthorizationRequest
+from .tool_o_auth_authorization_request_action import ToolOAuthAuthorizationRequestAction
+from .tool_o_auth_authorization_response import ToolOAuthAuthorizationResponse
+from .tool_o_auth_authorization_response_state import ToolOAuthAuthorizationResponseState
+from .tool_o_auth_connection_status import ToolOAuthConnectionStatus
+from .tool_o_auth_connection_status_recovery_action import ToolOAuthConnectionStatusRecoveryAction
+from .tool_o_auth_connection_status_state import ToolOAuthConnectionStatusState
+from .tool_publication_check import ToolPublicationCheck
+from .tool_publication_check_status import ToolPublicationCheckStatus
+from .tool_publication_intent import ToolPublicationIntent
+from .tool_publication_intent_access_mode import ToolPublicationIntentAccessMode
+from .tool_publication_intent_tool_scopes import ToolPublicationIntentToolScopes
+from .tool_publication_outcome import ToolPublicationOutcome
+from .tool_publication_outcome_status import ToolPublicationOutcomeStatus
+from .tool_publication_record import ToolPublicationRecord
+from .tool_publication_record_evidence_origin import ToolPublicationRecordEvidenceOrigin
+from .tool_publication_record_status import ToolPublicationRecordStatus
+from .tool_registry_page import ToolRegistryPage
+from .tool_registry_tool import ToolRegistryTool
+from .tool_registry_tool_access_mode import ToolRegistryToolAccessMode
+from .tool_registry_tool_availability import ToolRegistryToolAvailability
+from .tool_registry_tool_evidence_origin import ToolRegistryToolEvidenceOrigin
+from .tool_registry_version import ToolRegistryVersion
+from .tool_registry_version_access_mode import ToolRegistryVersionAccessMode
+from .tool_registry_version_availability import ToolRegistryVersionAvailability
+from .tool_registry_version_evidence_origin import ToolRegistryVersionEvidenceOrigin
 from .trace import Trace
 from .trace_span import TraceSpan
 from .trace_span_attributes import TraceSpanAttributes
@@ -7038,6 +7087,7 @@ __all__ = (
     "AutomaticRouteCheckStaleReasonsItem",
     "AutomaticRouteCheckState",
     "BeforeCheckpointHook",
+    "BeginToolPublicationResponse",
     "BillingCancelResponse",
     "BillingCatalogEntry",
     "BillingCatalogEntryKind",
@@ -7170,11 +7220,15 @@ __all__ = (
     "CapabilityStatusPlansItem",
     "CapabilityStatusUnavailableReason",
     "ChangeConsumerBillingPlanRequest",
+    "ChangeDelegatedToolInvocationAction",
+    "ChangeDelegatedToolInvocationBodyType0",
     "ChangeManagedPostgresComputePolicyRequest",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
+    "ChangeToolInvocationAction",
+    "ChangeToolInvocationBodyType0",
     "CheckAccountWorkflowReadinessBody",
     "CheckedProjectReleaseManifest",
     "CheckedProjectReleaseManifestDeployments",
@@ -7732,6 +7786,7 @@ __all__ = (
     "DelayedTaskAtRequestPayload",
     "DelayedTaskResponse",
     "DelayedTaskResponseState",
+    "DelegatedToolInvocationIntent",
     "DeleteAccountSessionBody",
     "DeletedAppListResponse",
     "DeletedAppSummary",
@@ -10703,6 +10758,7 @@ __all__ = (
     "PrivateNetworkPeeringListResponse",
     "PrivateNetworkPeeringStatus",
     "PrivateNetworkStatus",
+    "PrivateToolInvocationRequest",
     "Problem",
     "ProfileAttributionComparison",
     "ProfileAttributionQuality",
@@ -12180,6 +12236,48 @@ __all__ = (
     "ThrottlePreviewRow",
     "ThrottleSuggestionRow",
     "ThrottleSuggestionsResponse",
+    "ToolGrantAccess",
+    "ToolGrantCredential",
+    "ToolGrantCredentialScope",
+    "ToolGrantIntent",
+    "ToolGrantPage",
+    "ToolGrantRecord",
+    "ToolInvocationDelegation",
+    "ToolInvocationIntent",
+    "ToolInvocationIntentAccessMode",
+    "ToolInvocationOutcome",
+    "ToolInvocationOutcomeCode",
+    "ToolInvocationOutcomeStatus",
+    "ToolInvocationReceipt",
+    "ToolInvocationRecord",
+    "ToolInvocationRecordStatus",
+    "ToolInvocationTarget",
+    "ToolOAuthAuthorizationRequest",
+    "ToolOAuthAuthorizationRequestAction",
+    "ToolOAuthAuthorizationResponse",
+    "ToolOAuthAuthorizationResponseState",
+    "ToolOAuthConnectionStatus",
+    "ToolOAuthConnectionStatusRecoveryAction",
+    "ToolOAuthConnectionStatusState",
+    "ToolPublicationCheck",
+    "ToolPublicationCheckStatus",
+    "ToolPublicationIntent",
+    "ToolPublicationIntentAccessMode",
+    "ToolPublicationIntentToolScopes",
+    "ToolPublicationOutcome",
+    "ToolPublicationOutcomeStatus",
+    "ToolPublicationRecord",
+    "ToolPublicationRecordEvidenceOrigin",
+    "ToolPublicationRecordStatus",
+    "ToolRegistryPage",
+    "ToolRegistryTool",
+    "ToolRegistryToolAccessMode",
+    "ToolRegistryToolAvailability",
+    "ToolRegistryToolEvidenceOrigin",
+    "ToolRegistryVersion",
+    "ToolRegistryVersionAccessMode",
+    "ToolRegistryVersionAvailability",
+    "ToolRegistryVersionEvidenceOrigin",
     "Trace",
     "TraceSpan",
     "TraceSpanAttributes",

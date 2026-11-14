@@ -422,6 +422,7 @@ touch them. The tables below map each earlier name.
 | `gregale mcp complete` | `gregale mcp client complete` |
 | `gregale mcp config` | `gregale mcp server export` |
 | `gregale mcp connections` | `gregale mcp connection` |
+| `gregale mcp invocation-run` | `gregale mcp server invocation run` |
 | `gregale mcp monitor provider-check` | `gregale mcp server monitor check` |
 | `gregale mcp prompt-get` | `gregale mcp client render` |
 | `gregale mcp prompts` | `gregale mcp client prompts` |

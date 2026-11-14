@@ -197,6 +197,13 @@ func toolsetIncludes(name, selected string) bool {
 	return false
 }
 
+// ToolsetOf reports the toolset of a management tool the server defines,
+// including tools only a hosted connection registers.
+func ToolsetOf(name string) (string, bool) {
+	set, ok := toolsetOf[name]
+	return set, ok
+}
+
 // ParseToolsets reads a comma-separated toolset list such as "core,diagnose".
 // An omitted selection uses core. All remains an explicit, durable selection.
 func ParseToolsets(spec string) ([]string, error) {
