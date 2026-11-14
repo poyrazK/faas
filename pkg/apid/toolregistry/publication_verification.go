@@ -261,7 +261,8 @@ func (e *PrivateExecutor) runPublicationVerification(ctx context.Context, accoun
 	if err != nil || bytes.Contains(catalog, []byte(token)) || len(escaped) > 2 && bytes.Contains(catalog, escaped[1:len(escaped)-1]) {
 		return
 	}
-	if len(catalog) > api.ToolPublicationCatalogMaxBytes {
+	if len(catalog) > api.ToolPublicationCatalogMaxBytes || !publicationVerificationFits(p, v, catalog) {
+		outcome.Code = "publication_evidence_too_large"
 		return
 	}
 	outcome.Code = "protocol_verification_failed"
@@ -285,4 +286,19 @@ func (e *PrivateExecutor) runPublicationVerification(ctx context.Context, accoun
 		checks = append(checks, api.ToolPublicationCheck{Name: c.Name, Status: c.Status})
 	}
 	outcome = api.ToolPublicationVerificationOutcome{OK: true, ProtocolVerified: true, Catalog: catalog, Checks: checks}
+}
+
+// The journal's SQL payload ceiling is the combined outcome and catalog budgets.
+// Reserve both retained catalogs and both check lists before running fixtures.
+// Indented JSON conservatively includes PostgreSQL's JSONB separator spacing.
+func publicationVerificationFits(p api.ToolPublicationRecord, v api.ToolPublicationVerification, catalog []byte) bool {
+	checks := make([]api.ToolPublicationCheck, 0, len(p.Intent.TestCases))
+	for _, name := range p.Intent.TestCases {
+		checks = append(checks, api.ToolPublicationCheck{Name: name, Status: "passed"})
+	}
+	v.Status, v.Outcome = "completed", &api.ToolPublicationVerificationOutcome{OK: true, ProtocolVerified: true, Catalog: catalog, Checks: checks}
+	p.Status, p.Verification, p.DeploymentSourceSHA256 = "completed", &v, v.DeploymentSourceSHA256
+	p.Outcome = &api.ToolPublicationOutcome{Status: "completed", DeploymentID: v.DeploymentID, CatalogSHA256: v.CatalogSHA256, Catalog: catalog, ProtocolVerified: true, Checks: checks}
+	data, err := json.MarshalIndent(p, "", " ")
+	return err == nil && len(data) <= api.ToolPublicationOutcomeMaxBytes+api.ToolPublicationCatalogMaxBytes
 }

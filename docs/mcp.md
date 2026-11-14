@@ -976,8 +976,9 @@ The API runs OAuth discovery, catalog, stateless protocol/readiness and behavior
 checks with the token held in its process. It checks the public candidate and
 exact replicas for the reviewed protocol versions. Only canonical catalog data,
 named checks and fixed failure-stage codes enter the receipt. Credential
-reflections in catalog data fail the check. The CLI receives the verification
-receipt, rechecks catalog fleet health and the serving baseline, and performs
+reflections in catalog data fail the check. Combined evidence that cannot fit the
+native journal fails before behavioral fixtures or promotion. The CLI receives
+the verification receipt, rechecks catalog fleet health and the serving baseline, and performs
 guarded promotion. Successful native finalization must match that verification
 and native deployment source. Builds and customer code still use ordinary builder
 and application VMs.

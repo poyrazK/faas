@@ -41,7 +41,9 @@ an accepted HTTP request may finish. The worker checks OAuth resource metadata,
 the exact reviewed catalog, public readiness and public/exact-replica stateless
 protocol qualification, behavioral fixtures and catalog integrity. Reports retain
 canonical schemas and named check outcomes, with fixed failure-stage codes.
-Known credential reflections in the catalog fail verification.
+Known credential reflections in the catalog fail verification. The API reserves
+space for both native and final publication evidence before behavioral fixtures;
+oversized combined records fail before any fixture or promotion.
 
 The CLI waits for this native receipt and rechecks the existing catalog fleet
 pin and serving baseline before guarded promotion. A successful hosted private
