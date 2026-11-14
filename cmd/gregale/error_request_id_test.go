@@ -16,6 +16,65 @@ import (
 
 const errorCorrelationID = "019a767e7f0070008000000000000001"
 
+func TestErrorRequestIDOnInvocationWaitRecovery(t *testing.T) {
+	for _, command := range []struct {
+		name  string
+		args  []string
+		posts int32
+	}{
+		{"standalone", []string{"invocation", "wait", "inv-correlation"}, 0},
+		{"submitted", []string{"invocation", "run", "api", "--wait"}, 1},
+	} {
+		for _, header := range []struct{ name, value, want string }{
+			{"valid", errorCorrelationID, errorCorrelationID},
+			{"invalid", "invalid-correlation", ""},
+			{"missing", "", ""},
+		} {
+			t.Run(command.name+"/"+header.name, func(t *testing.T) {
+				main.SetupConnectionProfiles(t)
+				t.Setenv("FAAS_TOKEN", main.TestAPIKey('a'))
+				var posts, gets atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodPost && r.URL.Path == "/v1/apps/api/invoke/async" {
+						posts.Add(1)
+						_ = json.NewEncoder(w).Encode(api.AsyncInvokeResponse{ID: "inv-correlation"})
+						return
+					}
+					if r.Method != http.MethodGet || r.URL.Path != "/v1/invocations/inv-correlation" {
+						t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+					}
+					gets.Add(1)
+					if header.value != "" {
+						w.Header().Set(api.RequestIDHeader, header.value)
+					}
+					w.Header().Set("Content-Type", "application/problem+json")
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_ = json.NewEncoder(w).Encode(api.Problem{Status: 503, Code: "service_unavailable", Title: "Try later"})
+				}))
+				defer server.Close()
+				t.Setenv("FAAS_API", server.URL)
+				out, stderr, restore := main.SwapIO(t)
+				defer restore()
+				code := main.Run(append([]string{"--json"}, command.args...))
+				var got struct {
+					Code      string `json:"code"`
+					RequestID string `json:"request_id"`
+					ExitCode  int    `json:"exit_code"`
+					Recovery  struct {
+						InvocationID string `json:"invocation_id"`
+					} `json:"recovery"`
+				}
+				if code != 3 || posts.Load() != command.posts || gets.Load() != 1 || out.Len() != 0 || json.Unmarshal([]byte(stderr()), &got) != nil || got.Code != "service_unavailable" || got.ExitCode != 3 || got.RequestID != header.want || got.Recovery.InvocationID != "inv-correlation" {
+					t.Fatalf("wait lost correlation or recovery: exit=%d posts=%d gets=%d stdout=%s stderr=%s", code, posts.Load(), gets.Load(), out.String(), stderr())
+				}
+				if header.want == "" && strings.Contains(stderr(), `"request_id"`) {
+					t.Fatalf("untrusted or missing request ID must be omitted: %s", stderr())
+				}
+			})
+		}
+	}
+}
+
 func TestErrorRequestIDAfterReadRetries(t *testing.T) {
 	for _, finalID := range []string{"019a767e7f0070008000000000000002", ""} {
 		t.Run("final="+finalID, func(t *testing.T) {

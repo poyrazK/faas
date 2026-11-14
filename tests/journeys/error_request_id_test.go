@@ -35,16 +35,27 @@ func TestErrorRequestIDIsolatedAPI(t *testing.T) {
 		name, body string
 		ids        []string
 		want       string
+		command    []string
 	}{
-		{"json", `{"status":503,"code":"service_unavailable","detail":"try later","request_id":"body-private"}`, []string{id}, id},
-		{"proxy", `<html>proxy-private</html>`, []string{id}, id},
-		{"missing", `{"status":503,"code":"service_unavailable","request_id":"019a767e7f0070008000000000000001"}`, nil, ""},
-		{"invalid", `{}`, []string{"header-private"}, ""},
-		{"duplicate", `{}`, []string{id, id}, ""},
+		{"json", `{"status":503,"code":"service_unavailable","detail":"try later","request_id":"body-private"}`, []string{id}, id, nil},
+		{"proxy", `<html>proxy-private</html>`, []string{id}, id, nil},
+		{"missing", `{"status":503,"code":"service_unavailable","request_id":"019a767e7f0070008000000000000001"}`, nil, "", nil},
+		{"invalid", `{}`, []string{"header-private"}, "", nil},
+		{"duplicate", `{}`, []string{id, id}, "", nil},
+		{"invocation wait", `{"status":503,"code":"service_unavailable"}`, []string{id}, id, []string{"invocation", "wait", "inv-correlation"}},
+		{"invocation wait missing", `{"status":503,"code":"service_unavailable","request_id":"body-private"}`, nil, "", []string{"invocation", "wait", "inv-correlation"}},
+		{"invocation wait duplicate", `{"status":503,"code":"service_unavailable"}`, []string{id, id}, "", []string{"invocation", "wait", "inv-correlation"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			path := "/v1/usage/summary"
+			command := tc.command
+			if command == nil {
+				command = []string{"billing", "usage", "summary"}
+			} else {
+				path = "/v1/invocations/inv-correlation"
+			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/v1/usage/summary" || r.Header.Get("Authorization") != "Bearer fp_correlation-private" {
+				if r.Method != http.MethodGet || r.URL.Path != path || r.Header.Get("Authorization") != "Bearer fp_correlation-private" {
 					t.Error("error correlation changed request target or credentials")
 				}
 				for _, value := range tc.ids {
@@ -56,7 +67,7 @@ func TestErrorRequestIDIsolatedAPI(t *testing.T) {
 			defer server.Close()
 			tg := &target{api: server.URL, cli: configured.cli, home: t.TempDir(), appsDomain: configured.appsDomain}
 			for _, mode := range []string{"--json", "--json=false"} {
-				result := tg.exec(t, "fp_correlation-private", tg.home, time.Minute, mode, "billing", "usage", "summary")
+				result := tg.exec(t, "fp_correlation-private", tg.home, time.Minute, append([]string{mode}, command...)...)
 				if result.exit != 3 || len(result.stdout) != 0 {
 					t.Fatalf("error output changed: exit=%d stderr=%s", result.exit, result.stderr)
 				}
@@ -65,12 +76,18 @@ func TestErrorRequestIDIsolatedAPI(t *testing.T) {
 						ID       string `json:"request_id"`
 						Category string `json:"category"`
 						Exit     int    `json:"exit_code"`
+						Recovery struct {
+							ID string `json:"invocation_id"`
+						} `json:"recovery"`
 					}
 					if err := json.Unmarshal(result.stderr, &problem); err != nil || problem.ID != tc.want || problem.Exit != 3 || problem.Category != "temporary_failure" {
 						t.Fatalf("invalid correlated error: %s", result.stderr)
 					}
 					if tc.want == "" && bytes.Contains(result.stderr, []byte(`"request_id"`)) {
 						t.Fatal("missing request ID should be omitted")
+					}
+					if tc.command != nil && problem.Recovery.ID != "inv-correlation" {
+						t.Fatalf("correlation replaced invocation recovery: %s", result.stderr)
 					}
 				} else if tc.want != "" {
 					if bytes.Count(result.stderr, []byte("Request ID: "+tc.want)) != 1 {

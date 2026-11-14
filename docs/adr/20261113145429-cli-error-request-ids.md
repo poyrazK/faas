@@ -29,6 +29,10 @@ or invalid headers, local validation failures and pre-response transport errors
 add no ID. Successful stdout, error codes, exit codes and retry policy retain
 their existing behavior. No additional API request is needed.
 
+Invocation-wait JSON errors retain the same validated correlation metadata
+alongside their structured recovery fields, for both standalone waits and
+submit-and-wait. They continue to use the dedicated wait exit-code contract.
+
 Each failed attempt is decoded independently. An exhausted retry reports the
 final response's ID; a final response without an ID never inherits an earlier
 one. JSON and non-JSON API error responses follow the same rule.
@@ -39,4 +43,5 @@ SDK tests cover header validation, decoder paths, problem-body and forwarding
 compatibility, and final-attempt identity. External CLI tests cover text and
 JSON output, redaction, credential-shaped IDs, missing IDs, successful output
 and local/transport errors. GA row 156 includes isolated built-CLI and read-only
-deployed API error journeys.
+deployed API error journeys. Invocation-wait coverage checks correlation and
+recovery together, including omission of missing or invalid headers.

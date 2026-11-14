@@ -19,7 +19,7 @@ func invokeIdempotencyKey(fs *flag.FlagSet, async bool, key string) (string, err
 		return "", nil
 	}
 	if !async {
-		return "", errors.New("requires --async")
+		return "", errors.New("requires --async or --wait")
 	}
 	key = strings.TrimSpace(key)
 	if key == "" {
