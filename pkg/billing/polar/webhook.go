@@ -156,10 +156,15 @@ func parsePolarEvent(payload []byte, eventID string, p *Provider) (billing.Event
 	if event.Type == billing.EventRefundProcessed {
 		if strings.HasPrefix(raw.Type, "refund.") {
 			event.ProviderRefundID = firstString(data, "id", "refund_id")
+			event.ChargeID = firstString(data, "order_id", nestedString(data, "order", "id"))
 		} else {
+			// order.refunded carries the Order itself: its id is the order,
+			// and it names no refund. The refund.created/updated deliveries
+			// record each refund; this one only audits the order (billing
+			// review R7-4), so a refund is never recorded twice.
 			event.ProviderRefundID = firstString(data, "refund_id")
+			event.ChargeID = firstString(data, "order_id", "id")
 		}
-		event.ChargeID = firstString(data, "order_id", nestedString(data, "order", "id"))
 		event.AmountCents = firstNumber(data, "amount", "refunded_amount", "amount_refunded")
 		event.RefundStatus = strings.ToLower(firstString(data, "status"))
 	} else if strings.HasPrefix(raw.Type, "order.") {
