@@ -208,4 +208,3 @@ func TestPgAsyncBacklogBytesMigrationNeverOvercounts(t *testing.T) {
 		t.Fatalf("after the drain counters %d, rows %d", counters, table)
 	}
 }
-
