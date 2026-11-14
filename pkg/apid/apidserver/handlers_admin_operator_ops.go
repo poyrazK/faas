@@ -112,7 +112,7 @@ func (s *server) postObsAccountRevertEmail(w http.ResponseWriter, r *http.Reques
 }
 
 // postObsAccountMakeOrgOwner makes the account the owner of ?org=<slug> when
-// the organization's owner cannot act (ADR 20261113180000).
+// the organization's owner cannot act (ADR 20261114170352).
 func (s *server) postObsAccountMakeOrgOwner(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	s.postObsAccountMutation(w, r, acct, "make-org-owner")
 }

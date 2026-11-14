@@ -129,7 +129,7 @@ type SnapshotRow struct {
 }
 
 // A member without two-factor authentication is not admitted to an
-// organization that requires it (ADR-20261113180000).
+// organization that requires it (ADR-20261114170352).
 func (q *Queries) Snapshot(ctx context.Context, db DBTX, arg SnapshotParams) (SnapshotRow, error) {
 	row := db.QueryRow(ctx, snapshot, arg.OrgID, arg.AccountID)
 	var i SnapshotRow

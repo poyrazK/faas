@@ -1090,6 +1090,7 @@ export type { RotateAppWebhookSecretRequest } from './RotateAppWebhookSecretRequ
 export type { RotateAppWebhookSecretResponse } from './RotateAppWebhookSecretResponse.js';
 export type { RotateDeployTokenRequest } from './RotateDeployTokenRequest.js';
 export type { RotateDeployTokenResponse } from './RotateDeployTokenResponse.js';
+export type { RotateKeyRequest } from './RotateKeyRequest.js';
 export type { RotateKeyResponse } from './RotateKeyResponse.js';
 export type { RotateOrgAPIKeyRequest } from './RotateOrgAPIKeyRequest.js';
 export type { RotateOrgAPIKeyResponse } from './RotateOrgAPIKeyResponse.js';
