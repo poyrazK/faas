@@ -2332,3 +2332,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261114182830: Node cache disk budget and reference-based retention](20261114182830-node-cache-budget-from-disk-and-retention.md) — accepted; filesystem-sized budget, unreferenced capture/base retention and live snapshots evicted last. Renumbered from the startup-window identifier collision.
 
 - [ADR-20261114190002: Customers see their own attention signals; sign-in refusals are recorded](20261114190002-customer-signal-hints-and-credential-refusals.md)
+
+- [ADR-20261114191709: Read-only recovery for CLI app health waits](20261114191709-cli-app-health-wait-recovery.md) — accepted; scoped inspection and continuation, preserved evidence, timing and exit contracts.
