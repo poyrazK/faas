@@ -1728,6 +1728,7 @@ var PrepareIssueOTLP = prepareIssueOTLP
 
 // Storage integration tests compile in the external unit (ADR-982).
 var SetupSecrets = setupSecrets
+var EnvironmentBranchSourceVersioned = environmentBranchSourceVersioned
 var SelectedObjectStorageVerification = selectedObjectStorageVerification
 
 func (r *fakeObjectProvider) Created() *[]string { return &r.created }

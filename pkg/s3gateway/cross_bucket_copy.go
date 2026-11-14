@@ -13,7 +13,7 @@ func copySourceContext(req requestContext) requestContext {
 	if req.copySource != nil {
 		req.bucket = *req.copySource
 	}
-	req.copySource, req.copyGrantID = nil, ""
+	req.copySource, req.copyGrantID, req.overlayCopyVersion = nil, "", ""
 	return req
 }
 
@@ -23,7 +23,10 @@ func (h *Handler) authorizeGatewayCopySource(w http.ResponseWriter, r *http.Requ
 	// Public UUID selectors take precedence even when a legacy bucket name
 	// happens to equal another bucket's ID. Never reinterpret a revoked source.
 	if source.Bucket == req.bucket.ID || source.Bucket == req.bucket.Name && !canonicalID {
-		return req, h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path)
+		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) {
+			return req, false
+		}
+		return h.overlayCopySource(w, r, req, source, part)
 	}
 	if !canonicalID {
 		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "The specified copy source does not exist.", r.URL.Path, req.requestID)
