@@ -628,7 +628,20 @@ func (r *Loop) DispatchWorkflowRetention(p0 context.Context)                    
 func (r *Loop) RunWorkflowSchedulesTick(p0 context.Context) error {
 	return r.runWorkflowSchedulesTick(p0)
 }
-func (r *Loop) WaitPrimes()         { r.waitPrimes() }
+func (r *Loop) WaitPrimes() { r.waitPrimes() }
+
+// DrainSupersededDeployment runs one pass of the graceful superseded drain.
+func (r *Loop) DrainSupersededDeployment(ctx context.Context, deploymentID string, deadline time.Time) {
+	r.drainSupersededDeployment(ctx, deploymentID, deadline)
+}
+
+// SetSupersededDrainPoll replaces the busy-instance recheck interval and
+// returns the restore.
+func SetSupersededDrainPoll(d time.Duration) func() {
+	old := supersededDrainPoll
+	supersededDrainPoll = d
+	return func() { supersededDrainPoll = old }
+}
 func (r *Loop) WorkPool() *workPool { return r.workPool() }
 func (r *Loop) XHandleNotification(p0 context.Context, p1 db.Notification) {
 	r.handleNotification(p0, p1)
@@ -767,7 +780,10 @@ func (r *fakeVMM) Mu() *sync.Mutex                  { return &r.mu }
 func (r *fakeVMM) Restores() *int                   { return &r.restores }
 func (r *fakeVMM) SleepFor() *time.Duration         { return &r.sleepFor }
 func (r *fakeVMM) SnapErr() *error                  { return &r.snapErr }
-func (r *fakeVMM) Snapshots() *int                  { return &r.snapshots }
+
+// SetColdBootHook runs h at the start of every CreateColdBoot.
+func (r *fakeVMM) SetColdBootHook(h func()) { r.coldBootHook = h }
+func (r *fakeVMM) Snapshots() *int          { return &r.snapshots }
 func (r *fakeVMM) StatsHook() *func(context.Context, string) (*StatsSnapshot, error) {
 	return &r.statsHook
 }
