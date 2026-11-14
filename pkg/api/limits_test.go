@@ -268,7 +268,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// replica caps are zero so ValidatePlan rejects any
 			// worker / service / job ExecutionMode. StopGracePeriod
 			// caps tighten to 15 s (ADR-138 §Decision 4).
-			DefaultStopGracePeriodS: 15, DefaultStartupDeadlineS: 15, DefaultMaxRetries: 3,
+			DefaultStopGracePeriodS: 15, DefaultStartupDeadlineS: 15, DefaultMaxRetries: 3, MaxStartupDeadlineS: 30,
 			WorkerReplicasMax: 0, ServiceReplicasMax: 0, JobMaxRuntimeS: 0,
 			// Issue #477 / ADR-079: Free stays on the no-signup-friction
 			// path — public-by-default. Bearer + basic both gated off.
@@ -440,7 +440,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// M-2 / ADR-137+138: Hobby's 30 s stop-grace, 30 s
 			// startup-deadline, 5-retry caps. Hobby unlocks worker
 			// (1) + service (3 replicas) + 5-min job runtime.
-			DefaultStopGracePeriodS: 30, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 5,
+			DefaultStopGracePeriodS: 30, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 5, MaxStartupDeadlineS: 30,
 			WorkerReplicasMax: 1, ServiceReplicasMax: 3, JobMaxRuntimeS: 300,
 			// Issue #475: Hobby gets 1 reserved-tier app.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 1,
@@ -606,7 +606,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// 10 retries); the startup deadline is the 30 s cold-boot
 			// window (ADR-138 amendment). 3 workers, 5 service
 			// replicas, 30-min job runtime.
-			DefaultStopGracePeriodS: 60, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 10,
+			DefaultStopGracePeriodS: 60, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 10, MaxStartupDeadlineS: 60,
 			WorkerReplicasMax: 3, ServiceReplicasMax: 5, JobMaxRuntimeS: 1800,
 			// Issue #475: Pro gets 2 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 2,
@@ -774,7 +774,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// 20 retries); the startup deadline is the 30 s cold-boot
 			// window (ADR-138 amendment). 10 workers, 20 service
 			// replicas, 1-h job runtime.
-			DefaultStopGracePeriodS: 120, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 20,
+			DefaultStopGracePeriodS: 120, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 20, MaxStartupDeadlineS: 120,
 			WorkerReplicasMax: 10, ServiceReplicasMax: 20, JobMaxRuntimeS: 3600,
 			// Issue #475: Scale gets 4 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 4,

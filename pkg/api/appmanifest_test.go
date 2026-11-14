@@ -213,19 +213,16 @@ func TestManifestValidate(t *testing.T) {
 		{"startup_deadline_s zero ok", AppManifest{
 			Entrypoint: []string{"x"},
 		}, true},
+		// ADR-20261114120000: every cold boot gets the app's deadline, so
+		// Scale accepts its 120 s startup window again (H12-10 capped it at
+		// 30 s while only the deploy prime did).
 		{"startup_deadline_s at scale cap ok", AppManifest{
 			Entrypoint:       []string{"x"},
-			StartupDeadlineS: 30, // the cold-boot window (ADR-138 amendment)
-		}, true},
-		// Hunt 12 H12-10: Scale accepted 120 s, and the app could then
-		// never cold boot (30 s window).
-		{"startup_deadline_s past the cold-boot window rejected", AppManifest{
-			Entrypoint:       []string{"x"},
-			StartupDeadlineS: 31,
-		}, false},
-		{"startup_deadline_s of the old Scale cap rejected", AppManifest{
-			Entrypoint:       []string{"x"},
 			StartupDeadlineS: 120,
+		}, true},
+		{"startup_deadline_s past the scale window rejected", AppManifest{
+			Entrypoint:       []string{"x"},
+			StartupDeadlineS: 121,
 		}, false},
 		{"startup_deadline_s over absolute cap rejected", AppManifest{
 			Entrypoint:       []string{"x"},
@@ -441,23 +438,22 @@ func TestManifestValidate_PerPlanTierTightening(t *testing.T) {
 		})
 	}
 
-	// StartupDeadlineS: table-driven per plan × value.
-	// Hobby cap = 30 s. Pro cap = 60 s. Scale cap = 120 s.
-	// Free cap = 15 s.
+	// StartupDeadlineS: table-driven per plan × value. The cap is the
+	// plan's startup window (ADR-20261114120000): Free and Hobby 30 s,
+	// Pro 60 s, Scale 120 s.
 	startupCases := []struct {
 		name string
 		plan Plan
 		val  int
 		ok   bool
 	}{
-		{"free_rejects_60s_startup", PlanFree, 60, false},   // Free cap=15
-		{"hobby_rejects_60s_startup", PlanHobby, 60, false}, // Hobby cap=30
-		// No plan accepts a startup longer than the 30 s cold-boot window
-		// (ADR-138 amendment, Hunt 12 H12-10).
-		{"pro_accepts_30s_startup", PlanPro, 30, true},
-		{"pro_rejects_60s_startup", PlanPro, 60, false},
-		{"scale_accepts_30s_startup", PlanScale, 30, true},
-		{"scale_rejects_120s_startup", PlanScale, 120, false},
+		{"free_accepts_30s_startup", PlanFree, 30, true},
+		{"free_rejects_31s_startup", PlanFree, 31, false},
+		{"hobby_rejects_60s_startup", PlanHobby, 60, false},
+		{"pro_accepts_60s_startup", PlanPro, 60, true},
+		{"pro_rejects_61s_startup", PlanPro, 61, false},
+		{"scale_accepts_120s_startup", PlanScale, 120, true},
+		{"scale_rejects_121s_startup", PlanScale, 121, false},
 	}
 	for _, tc := range startupCases {
 		t.Run(tc.name, func(t *testing.T) {
