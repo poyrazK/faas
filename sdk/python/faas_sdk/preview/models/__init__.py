@@ -2264,8 +2264,10 @@ from .git_hub_connection_verification import GitHubConnectionVerification
 from .git_hub_connection_verification_permissions import GitHubConnectionVerificationPermissions
 from .git_hub_deployment_policy import GitHubDeploymentPolicy
 from .git_hub_deployment_policy_patch import GitHubDeploymentPolicyPatch
+from .git_hub_deployment_policy_patch_preview_mode import GitHubDeploymentPolicyPatchPreviewMode
 from .git_hub_deployment_policy_patch_preview_service_policy import GitHubDeploymentPolicyPatchPreviewServicePolicy
 from .git_hub_deployment_policy_patch_production_trigger import GitHubDeploymentPolicyPatchProductionTrigger
+from .git_hub_deployment_policy_preview_mode import GitHubDeploymentPolicyPreviewMode
 from .git_hub_deployment_policy_preview_service_policy import GitHubDeploymentPolicyPreviewServicePolicy
 from .git_hub_deployment_policy_production_trigger import GitHubDeploymentPolicyProductionTrigger
 from .git_hub_install_activity import GitHubInstallActivity
@@ -4154,6 +4156,7 @@ from .outbound_ai_evaluation_list import OutboundAIEvaluationList
 from .outbound_ai_evaluation_state import OutboundAIEvaluationState
 from .outbound_ai_evaluation_target_stats import OutboundAIEvaluationTargetStats
 from .outbound_ai_evaluation_verdict_type_0 import OutboundAIEvaluationVerdictType0
+from .outbound_ai_long_context_tier import OutboundAILongContextTier
 from .outbound_ai_moderation import OutboundAIModeration
 from .outbound_ai_moderation_action import OutboundAIModerationAction
 from .outbound_ai_moderation_categories_item import OutboundAIModerationCategoriesItem
@@ -8727,8 +8730,10 @@ __all__ = (
     "GitHubConnectionVerificationPermissions",
     "GitHubDeploymentPolicy",
     "GitHubDeploymentPolicyPatch",
+    "GitHubDeploymentPolicyPatchPreviewMode",
     "GitHubDeploymentPolicyPatchPreviewServicePolicy",
     "GitHubDeploymentPolicyPatchProductionTrigger",
+    "GitHubDeploymentPolicyPreviewMode",
     "GitHubDeploymentPolicyPreviewServicePolicy",
     "GitHubDeploymentPolicyProductionTrigger",
     "GitHubInstallActivity",
@@ -10439,6 +10444,7 @@ __all__ = (
     "OutboundAIEvaluationState",
     "OutboundAIEvaluationTargetStats",
     "OutboundAIEvaluationVerdictType0",
+    "OutboundAILongContextTier",
     "OutboundAIModeration",
     "OutboundAIModerationAction",
     "OutboundAIModerationCategoriesItem",

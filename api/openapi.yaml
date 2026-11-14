@@ -87582,6 +87582,27 @@ components:
           minimum: 0
           maximum: 1000000000
           description: Charged per million audio output tokens; the output price when absent.
+        cache_write_1h_millicents_per_mtok:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000
+          description: >-
+            Charged per million tokens of cache writes kept for one hour. When absent they cost the higher of the
+            cache-write price and twice the input price.
+        long_context:
+          $ref: '#/components/schemas/OutboundAILongContextTier'
+    OutboundAILongContextTier:
+      type: object
+      description: >-
+        A higher price for a long prompt. When a call's input tokens (cached reads and cache writes included) exceed
+        above_input_tokens, its input-side prices are multiplied by input_percent/100 and its output prices by
+        output_percent/100.
+      required: [above_input_tokens, input_percent, output_percent]
+      properties:
+        above_input_tokens: { type: integer, format: int64, minimum: 1000, maximum: 2000000 }
+        input_percent: { type: integer, format: int64, minimum: 100, maximum: 1000 }
+        output_percent: { type: integer, format: int64, minimum: 100, maximum: 1000 }
     PutOutboundAIPricesRequest:
       type: object
       description: Replace an integration's price list. It takes effect immediately; earlier lists stay for costs already settled.
@@ -91067,6 +91088,16 @@ components:
           enum: [webhook, actions]
           default: webhook
           description: The single production deploy authority; GitHub App PR previews continue in either mode.
+        preview_mode:
+          type: string
+          enum: [app, branch]
+          default: app
+          description: |
+            How pull requests are previewed. `app` gives each previewed
+            workload its own preview app. `branch` makes environment branch
+            `pr-{N}` of production for each pull request and deploys the PR
+            head into it. Choosing `branch` needs the
+            platform to enable branch previews.
 
     GitHubDeploymentPolicyPatch:
       description: Partial replacement for a project's GitHub deployment policy.
@@ -91088,6 +91119,9 @@ components:
         production_trigger:
           type: string
           enum: [webhook, actions]
+        preview_mode:
+          type: string
+          enum: [app, branch]
 
     GitHubInstallMutationRequest:
       description: |
@@ -104456,6 +104490,10 @@ components:
         data: { description: Event data associated with this producer key. }
         time: { type: string, format: date-time, description: Original occurrence time; defaults to ingress time. }
         schemaversion: { type: string, maxLength: 64 }
+        environment:
+          type: string
+          maxLength: 40
+          description: Slug of the app's project environment the event belongs to; omitted is production. Only that environment's subscriptions receive the event.
     AppPublishEventResponse:
       type: object
       additionalProperties: false
@@ -104514,6 +104552,10 @@ components:
           type: string
           format: uuid
           deprecated: true
+        environmentid:
+          type: string
+          format: uuid
+          description: Project environment the event belongs to; omitted is production. Only that environment's subscriptions receive the event, and only production events start workflows.
 
     PublishEventResponse:
       description: Durable acceptance receipt for a published internal event.
@@ -108304,6 +108346,9 @@ components:
         work_action: { type: string, enum: [invoke, cancel_pending], description: "Action taken on a matching event." }
         ordered: { type: boolean, description: "Whether this subscription waits for earlier matching keyed deliveries before routing." }
         enabled: { type: boolean }
+        environment:
+          type: string
+          description: Project environment slug whose events the subscription receives; omitted is production.
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 

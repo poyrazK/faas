@@ -43,5 +43,9 @@ export type PublishEventRequest = {
    * @deprecated
    */
   account_id?: string;
+  /**
+   * Project environment the event belongs to; omitted is production. Only that environment's subscriptions receive the event, and only production events start workflows.
+   */
+  environmentid?: string;
 };
 

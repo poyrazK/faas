@@ -7608,7 +7608,9 @@
       "acknowledgment_lease_seconds",
       "app_id",
       "created_at",
+      "deployment_scope",
       "enabled",
+      "environment_id",
       "filter",
       "id",
       "routing_retry_policy",
@@ -7620,7 +7622,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "deployment_scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -8189,6 +8197,7 @@
       "preview_bot_prs",
       "preview_draft_prs",
       "preview_enabled",
+      "preview_mode",
       "preview_service_policy",
       "preview_ttl_hours",
       "production_trigger",
@@ -14298,12 +14307,16 @@
   {
     "table": "outbound_ai_price_entries",
     "columns": [
+      "cache_write_1h_millicents_per_mtok",
       "cache_write_millicents_per_mtok",
       "cached_input_audio_millicents_per_mtok",
       "cached_input_millicents_per_mtok",
       "input_audio_millicents_per_mtok",
       "input_image_millicents_per_mtok",
       "input_millicents_per_mtok",
+      "long_context_above_input_tokens",
+      "long_context_input_percent",
+      "long_context_output_percent",
       "millicents_per_audio_minute",
       "millicents_per_code_session_gb",
       "millicents_per_file_search",
@@ -16145,6 +16158,7 @@
       "parent_environment_id",
       "private_networks",
       "project_id",
+      "pull_request_number",
       "slot_id"
     ],
     "kind": "operational"

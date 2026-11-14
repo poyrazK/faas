@@ -108,6 +108,9 @@ type BuildSpec struct {
 	// sibling, rewritten to its Gregale address; apid sets the unset ones
 	// (ADR-20261105104500). Push events only.
 	ComposeServiceAddresses map[string]string
+	// EnvironmentBranch marks a pull request build of a production app into
+	// the pull request's environment branch, Scope (ADR-20261113121342).
+	EnvironmentBranch bool
 }
 
 // BuildEnqueuer is the seam githubd uses to schedule a build

@@ -26,6 +26,9 @@ class AppPublishEventRequest:
     time: datetime.datetime | Unset = UNSET
     """Original occurrence time; defaults to ingress time."""
     schemaversion: str | Unset = UNSET
+    environment: str | Unset = UNSET
+    """Slug of the app's project environment the event belongs to; omitted is production. Only that environment's
+    subscriptions receive the event."""
 
     def to_dict(self) -> dict[str, Any]:
         key = self.key
@@ -44,6 +47,8 @@ class AppPublishEventRequest:
 
         schemaversion = self.schemaversion
 
+        environment = self.environment
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -59,6 +64,8 @@ class AppPublishEventRequest:
             field_dict["time"] = time
         if schemaversion is not UNSET:
             field_dict["schemaversion"] = schemaversion
+        if environment is not UNSET:
+            field_dict["environment"] = environment
 
         return field_dict
 
@@ -87,6 +94,8 @@ class AppPublishEventRequest:
 
         schemaversion = d.pop("schemaversion", UNSET)
 
+        environment = d.pop("environment", UNSET)
+
         app_publish_event_request = cls(
             key=key,
             type_=type_,
@@ -94,6 +103,7 @@ class AppPublishEventRequest:
             expected_app_id=expected_app_id,
             time=time,
             schemaversion=schemaversion,
+            environment=environment,
         )
 
         return app_publish_event_request
