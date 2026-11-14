@@ -1,0 +1,13 @@
+{
+  "name": "gregale-e2e-debugger-probe",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "debug-entry.mjs",
+  "scripts": {
+    "start": "node debug-entry.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
