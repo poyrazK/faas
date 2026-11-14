@@ -2023,6 +2023,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "outbound_ai_quality.go"),        // ADR 20261021171712 quality signals
 		filepath.Join(root, "pkg", "api", "outbound_ai_deployments.go"),    // ADR 20261022153155 AI calls by deployment
 		filepath.Join(root, "pkg", "api", "outbound_ai_semantic_cache.go"), // ADR 20261112194947 semantic cache
+		filepath.Join(root, "pkg", "api", "outbound_ai_prompts.go"),        // ADR 20261114180740 managed prompts
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),

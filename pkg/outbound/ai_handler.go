@@ -129,6 +129,9 @@ type aiSettlement struct {
 	attempts int
 	started  time.Time
 	routeID  string
+	// prompt is the managed prompt version of a prompt call
+	// (ADR 20261114180740).
+	prompt promptCall
 	// endUser is the call's X-Gregale-AI-User value (ADR-994), and tags its
 	// X-Gregale-AI-Tags (ADR-1436).
 	endUser string
@@ -368,6 +371,7 @@ func (h *Handler) recordSettledAIUsage(ctx context.Context, integration Integrat
 	if settlement.route.tracked {
 		record.Route = aiRouteAttemptFor(settlement.route, outcome, timeToFirstByte)
 	}
+	record.Prompt = aiPromptAttemptFor(settlement.prompt, outcome, timeToFirstByte)
 	record.Export = aiLogExportFor(integration, record, settlement, timeToFirstByte, time.Now())
 	write := func(ctx context.Context) ([]AIBudgetAlert, error) {
 		if alerter, ok := h.Backend.(AIBudgetAlertRecorder); ok {
@@ -440,6 +444,20 @@ func aiRouteAttemptFor(attempt routeAttempt, outcome AIUsageOutcome, timeToFirst
 		return nil
 	}
 	record := &AIRouteAttemptRecord{RouteID: attempt.routeID, Position: attempt.position, Error: outcome == AIUsageOutcomeError}
+	if !record.Error && timeToFirstByte > 0 {
+		ttfb := timeToFirstByte.Milliseconds()
+		record.TTFBMS = &ttfb
+	}
+	return record
+}
+
+// aiPromptAttemptFor is a prompt call attempt's contribution to its
+// version's per-minute row, or nil for a call that is not a prompt call.
+func aiPromptAttemptFor(call promptCall, outcome AIUsageOutcome, timeToFirstByte time.Duration) *AIPromptAttemptRecord {
+	if !validUUID(call.promptID) || call.version < 1 {
+		return nil
+	}
+	record := &AIPromptAttemptRecord{PromptID: call.promptID, Version: call.version, Error: outcome == AIUsageOutcomeError}
 	if !record.Error && timeToFirstByte > 0 {
 		ttfb := timeToFirstByte.Milliseconds()
 		record.TTFBMS = &ttfb
