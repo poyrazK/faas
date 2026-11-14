@@ -1373,6 +1373,14 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			api.WriteProblem(w, api.ErrCapacity("could not seal public_auth credentials"))
 			return
 		}
+		// ADR-20261110210000 slice 3h: the edge checks the credential
+		// against a verifier keyed by this blob, never opening it. Written
+		// before the app row, so no edge ever sees a blob without one.
+		if err := s.putBasicAuthVerifier(r.Context(), sealed, req.PublicAuth.BasicUser, req.PublicAuth.BasicPass); err != nil {
+			s.log.Error("apid: basic auth verifier", "app_id", app.ID, "err", err)
+			api.WriteProblem(w, api.ErrCapacity("could not record public_auth credentials"))
+			return
+		}
 		publicAuthSealed = sealed
 	}
 	// ADR-118: parse the canonicalised CIDR list into []netip.Prefix

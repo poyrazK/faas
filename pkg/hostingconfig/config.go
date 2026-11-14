@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Config contains optional overrides for the inferred API run contract.
@@ -21,6 +23,12 @@ type Config struct {
 	Start  string `yaml:"start,omitempty"`
 	Port   int    `yaml:"port,omitempty"`
 	Health string `yaml:"health,omitempty"`
+	// ReadinessProbe is the primary app's steady-state traffic gate: an
+	// instance that fails it is taken out of routing and restored when it
+	// passes, without a restart. A deploy request's readiness_probe override
+	// wins. A liveness probe is deliberately not declarable here: a strict
+	// one is the usual cause of restart loops (see pkg/reposcan k8s_pod.go).
+	ReadinessProbe *api.DeploymentReadinessProbe `yaml:"readiness_probe,omitempty"`
 }
 
 // Validate checks the explicit values before they can affect a deployment.
@@ -45,6 +53,14 @@ func (c Config) Validate() error {
 		}
 		if len(health) > 1024 {
 			return fmt.Errorf("health must be at most 1024 characters")
+		}
+	}
+	if probe := c.ReadinessProbe; probe != nil {
+		if len(probe.Path) > 1024 || strings.ContainsRune(probe.Path, 0) {
+			return fmt.Errorf("readiness_probe.path must be at most 1024 characters with no NUL characters")
+		}
+		if problem := (&api.CreateDeploymentOverrides{ReadinessProbe: probe}).Validate(api.Limits{}); problem != nil {
+			return fmt.Errorf("%s", problem.Detail)
 		}
 	}
 	return nil

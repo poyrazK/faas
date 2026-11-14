@@ -9,6 +9,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class AuditService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List the caller's auth audit events.
    * Newest-first. Returns the customer's own security event timeline:
@@ -64,7 +65,7 @@ export class AuditService {
      */
     appId?: string,
   }): CancelablePromise<ListAuditEventsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/audit-events',
       query: {
@@ -103,7 +104,7 @@ export class AuditService {
      */
     id: string,
   }): CancelablePromise<AuditEventResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/audit-events/{id}',
       path: {
@@ -162,7 +163,7 @@ export class AuditService {
      */
     limit?: number,
   }): CancelablePromise<ListAuditLogResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/audit-log',
       query: {
@@ -232,7 +233,7 @@ export class AuditService {
      */
     includeAnonymous?: boolean,
   }): CancelablePromise<ListAuditLogResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/audit-log/all',
       query: {

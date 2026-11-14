@@ -518,6 +518,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/incidents/platform_alert/response-times":      true, // private retained-episode response analytics
 	"GET /v1/admin/obs/wakes/{wake_id}":                              true, // private one-wake event timeline (gregalectl obs wake)
 	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
+	"GET /v1/admin/obs/serving-health":                               true, // private serving-probe coverage evidence
 	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
 	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
 	"GET /v1/admin/obs/rule-coverage":                                true, // private explicitly selected rule coverage
@@ -1702,6 +1703,11 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "mcp_admission_history.go"),
 		filepath.Join(root, "pkg", "api", "mcp_convergence.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_monitor.go"),
+		filepath.Join(root, "pkg", "api", "tool_publications.go"),
+		filepath.Join(root, "pkg", "api", "tool_invocations.go"),
+		filepath.Join(root, "pkg", "api", "tool_grants.go"),
+		filepath.Join(root, "pkg", "api", "tool_connections.go"),
+		filepath.Join(root, "pkg", "api", "tool_authorization.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_observer.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_renewal.go"),
 		filepath.Join(root, "pkg", "api", "mcp_connection_health.go"),
@@ -1942,6 +1948,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "obs_recurrence.go"),
 		filepath.Join(root, "pkg", "api", "obs_collection_history.go"),
 		filepath.Join(root, "pkg", "api", "obs_notifications.go"),
+		filepath.Join(root, "pkg", "api", "obs_serving_health.go"),
 		filepath.Join(root, "pkg", "api", "obs_rule_health.go"),
 		filepath.Join(root, "pkg", "api", "obs_rule_coverage.go"),
 		filepath.Join(root, "pkg", "api", "obs_recording_coverage.go"),

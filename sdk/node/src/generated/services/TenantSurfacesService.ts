@@ -11,6 +11,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class TenantSurfacesService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List tenant surfaces on an app.
    * Returns every active tenant surface on the app. Soft-deleted
@@ -29,7 +30,7 @@ export class TenantSurfacesService {
      */
     slug: string,
   }): CancelablePromise<ListTenantSurfacesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/tenant-surfaces',
       path: {
@@ -70,7 +71,7 @@ export class TenantSurfacesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<TenantSurfaceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/tenant-surfaces',
       path: {
@@ -110,7 +111,7 @@ export class TenantSurfacesService {
      */
     id: string,
   }): CancelablePromise<TenantSurfaceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/tenant-surfaces/{id}',
       path: {
@@ -143,7 +144,7 @@ export class TenantSurfacesService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/tenant-surfaces/{id}',
       path: {
@@ -185,7 +186,7 @@ export class TenantSurfacesService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<TenantHostnameResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/tenant-surfaces/{id}/hostnames',
       path: {
@@ -231,7 +232,7 @@ export class TenantSurfacesService {
      */
     hostname: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/tenant-surfaces/{id}/hostnames/{hostname}',
       path: {

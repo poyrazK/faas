@@ -169,6 +169,13 @@ func TestHandlers_AgentRiskyRequestsNeedAPersonsApproval(t *testing.T) {
 	if rec := call(admin, http.MethodGet, "/v1/agent-approvals"); rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &listed) != nil || len(listed.Items) == 0 {
 		t.Fatalf("a person's pending list = %d %s", rec.Code, rec.Body)
 	}
+	// Each request names the connection that asked, as the connections
+	// list does, so a status can show what waits for each agent.
+	for _, item := range listed.Items {
+		if item.ConnectionID != agentKey.ID {
+			t.Fatalf("approval %s connection_id = %q, want %q", item.ID, item.ConnectionID, agentKey.ID)
+		}
+	}
 }
 
 // Key create records the approval categories an agent key chose; they apply

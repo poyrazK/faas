@@ -247,6 +247,31 @@
       plus am_heartbeat_url_file) to enable production notifications.
   when: am_dev_mode | bool
 
+- name: alertmanager — observe completed requests per receiver
+  ansible.builtin.include_role:
+    name: notification_receiver_metrics
+  when: not am_dev_mode | bool
+
+- name: alertmanager — stop receiver observations in dev mode
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - faas-notification-receiver-metrics.timer
+    - faas-notification-receiver-metrics.service
+  failed_when: false
+  when: am_dev_mode | bool
+
+- name: alertmanager — remove receiver observations in dev mode
+  ansible.builtin.file:
+    path: "/var/lib/node_exporter/textfile_collector/{{ item }}"
+    state: absent
+  loop:
+    - notification-receivers.prom
+    - notification-receiver-inventory.prom
+  when: am_dev_mode | bool
+
 - name: alertmanager — remove downloaded tarball
   ansible.builtin.file:
     path: "/tmp/alertmanager-{{ am_version }}.tar.gz"

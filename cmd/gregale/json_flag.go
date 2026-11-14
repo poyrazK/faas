@@ -317,10 +317,12 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 // flag" (Hunt 12 H12-27).
 func globalFlagPlacementHint(diagnostic, path string) string {
 	for _, global := range []struct{ name, example string }{
+		{"http-timeout", "--http-timeout 90s"},
 		{"debug-http", "--debug-http"},
 		{"non-interactive", "--non-interactive"},
 		{"wait-for-approval", "--wait-for-approval"},
 		{"profile", "--profile NAME"},
+		{"http-retries", "--http-retries 3"},
 	} {
 		if diagnostic == "unknown flag --"+global.name || strings.HasPrefix(diagnostic, "unknown flag --"+global.name+"=") {
 			return fmt.Sprintf("--%s is a global flag: put it before the command, as in 'gregale %s %s'", global.name, global.example, path)
@@ -490,7 +492,10 @@ func writeJSONProblem(p api.Problem) error {
 }
 
 func writeJSONProblemTo(w io.Writer, p api.Problem) error {
-	b, err := json.Marshal(p)
+	b, err := json.Marshal(struct {
+		api.Problem
+		RequestID string `json:"request_id,omitempty"`
+	}{Problem: p, RequestID: safeProblemRequestID(p)})
 	if err != nil {
 		return err
 	}
@@ -502,9 +507,10 @@ func writeJSONProblemTo(w io.Writer, p api.Problem) error {
 func writeJSONProblemWithExit(w io.Writer, p api.Problem, code int) error {
 	b, err := json.Marshal(struct {
 		api.Problem
-		Category string `json:"category"`
-		ExitCode int    `json:"exit_code"`
-	}{p, exitCategory(code), code})
+		Category  string `json:"category"`
+		ExitCode  int    `json:"exit_code"`
+		RequestID string `json:"request_id,omitempty"`
+	}{Problem: p, Category: exitCategory(code), ExitCode: code, RequestID: safeProblemRequestID(p)})
 	if err != nil {
 		return err
 	}

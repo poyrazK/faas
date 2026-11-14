@@ -60,6 +60,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ConsumersService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read your own month-to-date usage and spend with your consumer key.
    * For an app's customers, not operators. Authenticate with a consumer
@@ -77,7 +78,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<ConsumerBillingSummaryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/consumer-billing/{slug}',
       path: {
@@ -113,7 +114,7 @@ export class ConsumersService {
      */
     until?: string,
   }): CancelablePromise<ConsumerBillingUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/consumer-billing/{slug}/usage',
       path: {
@@ -144,7 +145,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<ConsumerBillingStatementsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/consumer-billing/{slug}/statements',
       path: {
@@ -170,7 +171,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<ConsumerBillingPlansResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/consumer-billing/{slug}/plans',
       path: {
@@ -201,7 +202,7 @@ export class ConsumersService {
     slug: string,
     requestBody: ChangeConsumerBillingPlanRequest,
   }): CancelablePromise<ConsumerBillingPlanChangeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/consumer-billing/{slug}/plan',
       path: {
@@ -238,7 +239,7 @@ export class ConsumersService {
     slug: string,
     requestBody?: CreateConsumerBillingPortalRequest,
   }): CancelablePromise<ConsumerBillingPortalResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/consumer-billing/{slug}/portal',
       path: {
@@ -275,7 +276,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<ConsumerBillingCloseResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/consumer-billing/{slug}/close',
       path: {
@@ -303,7 +304,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<ConsumerSignupFormResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/consumer-signup/{slug}',
       path: {
@@ -335,7 +336,7 @@ export class ConsumersService {
     slug: string,
     requestBody: CreateConsumerSignupRequest,
   }): CancelablePromise<CreateConsumerSignupResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/consumer-signup/{slug}',
       path: {
@@ -376,7 +377,7 @@ export class ConsumersService {
     signup: string,
     requestBody: CompleteConsumerSignupRequest,
   }): CancelablePromise<CompleteConsumerSignupResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/consumer-signup/{slug}/signups/{signup}/complete',
       path: {
@@ -410,7 +411,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<APIConsumerListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers',
       path: {
@@ -437,7 +438,7 @@ export class ConsumersService {
     slug: string,
     requestBody: CreateAPIConsumerRequest,
   }): CancelablePromise<APIConsumerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/consumers',
       path: {
@@ -469,7 +470,7 @@ export class ConsumersService {
      */
     consumerId: string,
   }): CancelablePromise<APIConsumerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}',
       path: {
@@ -500,7 +501,7 @@ export class ConsumersService {
      */
     consumerId: string,
   }): CancelablePromise<APIConsumerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/consumers/{consumer_id}',
       path: {
@@ -546,7 +547,7 @@ export class ConsumersService {
      */
     until?: string,
   }): CancelablePromise<APIConsumerUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage',
       path: {
@@ -597,7 +598,7 @@ export class ConsumersService {
      */
     until?: string,
   }): CancelablePromise<APIConsumerUsageQuoteResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage/quote',
       path: {
@@ -651,7 +652,7 @@ export class ConsumersService {
      */
     until: string,
   }): CancelablePromise<APIConsumerUsageCompletenessResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-completeness',
       path: {
@@ -688,7 +689,7 @@ export class ConsumersService {
      */
     consumerId: string,
   }): CancelablePromise<APIConsumerUsageStatementListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements',
       path: {
@@ -729,7 +730,7 @@ export class ConsumersService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<APIConsumerUsageStatementResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements',
       path: {
@@ -773,7 +774,7 @@ export class ConsumersService {
      */
     statementId: string,
   }): CancelablePromise<APIConsumerUsageStatementResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}',
       path: {
@@ -818,7 +819,7 @@ export class ConsumersService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<APIConsumerUsageStatementResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/finalize',
       path: {
@@ -860,7 +861,7 @@ export class ConsumersService {
      */
     statementId: string,
   }): CancelablePromise<APIConsumerUsageStatementHandoffResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff',
       path: {
@@ -907,7 +908,7 @@ export class ConsumersService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<APIConsumerUsageStatementHandoffResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff',
       path: {
@@ -951,7 +952,7 @@ export class ConsumersService {
      */
     statementId: string,
   }): CancelablePromise<StatementInvoiceExportResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice',
       path: {
@@ -1014,7 +1015,7 @@ export class ConsumersService {
     idempotencyKey?: string,
     requestBody?: CreateStatementInvoiceRequest,
   }): CancelablePromise<StatementInvoiceExportResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice',
       path: {
@@ -1050,7 +1051,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<APIConsumerRateCardListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/rate-cards',
       path: {
@@ -1088,7 +1089,7 @@ export class ConsumersService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<APIConsumerRateCardResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/rate-cards',
       path: {
@@ -1121,7 +1122,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<APIConsumerPlanListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumer-plans',
       path: {
@@ -1159,7 +1160,7 @@ export class ConsumersService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<APIConsumerPlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/consumer-plans',
       path: {
@@ -1200,7 +1201,7 @@ export class ConsumersService {
     planId: string,
     requestBody: UpdateAPIConsumerPlanLimitsRequest,
   }): CancelablePromise<APIConsumerPlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/consumer-plans/{plan_id}',
       path: {
@@ -1234,7 +1235,7 @@ export class ConsumersService {
      */
     consumerId: string,
   }): CancelablePromise<APIConsumerPlanAssignmentListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/plan-assignments',
       path: {
@@ -1275,7 +1276,7 @@ export class ConsumersService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<APIConsumerPlanAssignmentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/plan-assignments',
       path: {
@@ -1313,7 +1314,7 @@ export class ConsumersService {
      */
     consumerId: string,
   }): CancelablePromise<APIConsumerCreditListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/credits',
       path: {
@@ -1359,7 +1360,7 @@ export class ConsumersService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<APIConsumerCreditResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/credits',
       path: {
@@ -1403,7 +1404,7 @@ export class ConsumersService {
      */
     creditId: string,
   }): CancelablePromise<APIConsumerCreditResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/credits/{credit_id}',
       path: {
@@ -1435,7 +1436,7 @@ export class ConsumersService {
      */
     consumerId: string,
   }): CancelablePromise<APIConsumerSpendCapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/spend-cap',
       path: {
@@ -1476,7 +1477,7 @@ export class ConsumersService {
     consumerId: string,
     requestBody: PutAPIConsumerSpendCapRequest,
   }): CancelablePromise<APIConsumerSpendCapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/spend-cap',
       path: {
@@ -1511,7 +1512,7 @@ export class ConsumersService {
      */
     consumerId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/spend-cap',
       path: {
@@ -1542,7 +1543,7 @@ export class ConsumersService {
      */
     consumerId: string,
   }): CancelablePromise<APIConsumerTrialResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/trial',
       path: {
@@ -1580,7 +1581,7 @@ export class ConsumersService {
     consumerId: string,
     requestBody: PutAPIConsumerTrialRequest,
   }): CancelablePromise<APIConsumerTrialResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/trial',
       path: {
@@ -1616,7 +1617,7 @@ export class ConsumersService {
      */
     consumerId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/trial',
       path: {
@@ -1642,7 +1643,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<APIConsumerBillingPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumer-billing-policy',
       path: {
@@ -1675,7 +1676,7 @@ export class ConsumersService {
     slug: string,
     requestBody: PutAPIConsumerBillingPolicyRequest,
   }): CancelablePromise<APIConsumerBillingPolicyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/consumer-billing-policy',
       path: {
@@ -1704,7 +1705,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/consumer-billing-policy',
       path: {
@@ -1729,7 +1730,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<ConsumerSignupSettingsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumer-signup',
       path: {
@@ -1763,7 +1764,7 @@ export class ConsumersService {
     slug: string,
     requestBody: PutConsumerSignupRequest,
   }): CancelablePromise<ConsumerSignupSettingsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/consumer-signup',
       path: {
@@ -1793,7 +1794,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/consumer-signup',
       path: {
@@ -1818,7 +1819,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<ConsumerSignupListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumer-signups',
       path: {
@@ -1843,7 +1844,7 @@ export class ConsumersService {
      */
     slug: string,
   }): CancelablePromise<APIConsumerOverdueHoldListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumer-overdue-holds',
       path: {
@@ -1878,7 +1879,7 @@ export class ConsumersService {
      */
     consumerId: string,
   }): CancelablePromise<APIConsumerUsageAlertListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/usage-alerts',
       path: {
@@ -1909,7 +1910,7 @@ export class ConsumersService {
      */
     rateCardId: string,
   }): CancelablePromise<APIConsumerRateCardResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/rate-cards/{rate_card_id}',
       path: {
@@ -1940,7 +1941,7 @@ export class ConsumersService {
      */
     consumerId: string,
   }): CancelablePromise<ConsumerKeyListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/keys',
       path: {
@@ -1973,7 +1974,7 @@ export class ConsumersService {
     consumerId: string,
     requestBody: CreateConsumerKeyRequest,
   }): CancelablePromise<ConsumerKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/keys',
       path: {
@@ -2012,7 +2013,7 @@ export class ConsumersService {
      */
     keyId: string,
   }): CancelablePromise<ConsumerKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/consumers/{consumer_id}/keys/{key_id}',
       path: {

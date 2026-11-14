@@ -1,3 +1,12 @@
+{% if faas_seal_domain_edge_retired_on_compute | bool %}
+# Managed by the seal_domains role (ADR-20261110210000, retire compute
+# identities): this node holds no edge identity. gatewayd-internal checks
+# basic auth against verifiers, opens log drain headers through secretd and
+# leaves sealed edge-rule headers to the instance's vmmd; it refuses to start
+# while an edge, fleet or host identity is still loaded.
+[Service]
+Environment=FAAS_SEAL_DOMAIN_EDGE_RETIRED=true
+{% else %}
 # Managed by the seal_domains role (ADR 20261022111812): gatewayd-internal
 # opens app basic-auth credentials and log drain authentication headers with
 # the edge seal-domain identity. The fleet identity stays in the base unit
@@ -8,3 +17,4 @@ LoadCredential=faas_seal_domain_edge:/etc/faas/secrets/domains/edge.age
 LoadCredential=faas_seal_domain_edge_previous:/etc/faas/secrets/domains/edge.age.previous
 {% endif %}
 Environment=FAAS_SEAL_DOMAIN_EDGE_IDENTITY_PATH=%d/faas_seal_domain_edge
+{% endif %}

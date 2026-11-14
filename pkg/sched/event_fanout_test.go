@@ -425,6 +425,16 @@ func (s eventFanoutEnqueueFailureStore) AdmitPublishedEventRecipient(context.Con
 	return state.PublishedEventRoutingResult{}, &state.EventRecipientAdmissionError{FailureCode: state.EventFanoutFailureCodeInvocationEnqueueFailed, Retryable: true, Err: errors.New("temporary enqueue outage")}
 }
 
+// eventFanoutLegacyFilterStore admits recipients as the store does for a
+// subscription whose stored filter predates validation and cannot evaluate.
+type eventFanoutLegacyFilterStore struct {
+	MemStore *state.MemStore
+}
+
+func (s eventFanoutLegacyFilterStore) AdmitPublishedEventRecipient(context.Context, state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error) {
+	return state.PublishedEventRoutingResult{}, &state.EventRecipientAdmissionError{FailureCode: state.EventFanoutFailureCodeInvalidSubscription, Err: errors.New(`event: unsupported operator "$unsupported"`)}
+}
+
 func TestEventFanoutClassifiesTerminalRecipientFailures(t *testing.T) {
 	t.Run("invalid subscription", func(t *testing.T) {
 		ctx := context.Background()
@@ -438,7 +448,10 @@ func TestEventFanoutClassifiesTerminalRecipientFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		subscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", json.RawMessage(`{"data":{"missing":{"$unsupported":1}}}`))
+		// Upsert now refuses an invalid filter (#6783); a legacy row stored
+		// before that still reaches admission, which the store reports as a
+		// terminal invalid_subscription.
+		subscription, _, err := store.UpsertEventSubscription(ctx, accountID, app.ID, "orders", "created", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -450,7 +463,7 @@ func TestEventFanoutClassifiesTerminalRecipientFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		loop := &Loop{engine: &Engine{store: store}}
+		loop := &Loop{engine: &Engine{store: statetest.NewMem(eventFanoutLegacyFilterStore{MemStore: store})}}
 		if err := loop.routePublishedEventSnapshot(ctx, work); err != nil {
 			t.Fatalf("route snapshot: %v", err)
 		}

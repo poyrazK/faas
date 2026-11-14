@@ -50,16 +50,23 @@ func AppOutsideKeyProjects(key *state.APIKey, app state.App) bool {
 // the body or a stored session, and the key's own identity. Every other route
 // is closed to it until someone adds it here deliberately.
 var projectLimitedOpenRoutes = map[string]bool{
-	"GET /v1/apps":                         true,
-	"GET /v1/orgs/{slug}/apps":             true,
-	"GET /v1/projects":                     true,
-	"GET /v1/orgs/{organization}/projects": true,
-	"POST /v1/domains":                     true,
-	"POST /v1/crons":                       true,
-	"GET /v1/account":                      true,
-	"GET /v1/capabilities":                 true,
-	"PUT /v1/agent-connections/self":       true,
-	"DELETE /v1/agent-connections/self":    true,
+	"POST /v1/delegated-tool-invocations/{id}/execute": true,
+	"GET /v1/delegated-tool-connections/{grant}":       true,
+	"GET /v1/apps":                                      true,
+	"GET /v1/orgs/{slug}/apps":                          true,
+	"GET /v1/projects":                                  true,
+	"POST /v1/domains":                                  true,
+	"POST /v1/crons":                                    true,
+	"GET /v1/account":                                   true,
+	"GET /v1/capabilities":                              true,
+	"GET /v1/tool-registry":                             true,
+	"GET /v1/tool-registry/{version}/tools/{name}":      true,
+	"GET /v1/delegated-tool-invocations/{id}":           true,
+	"PUT /v1/delegated-tool-invocations/{id}":           true,
+	"POST /v1/delegated-tool-invocations/{id}/{action}": true,
+	"PUT /v1/agent-connections/self":                    true,
+	"DELETE /v1/agent-connections/self":                 true,
+	"GET /v1/orgs/{organization}/projects":              true,
 }
 
 // AppByIDResolver is the optional store seam that loads a deployment read's

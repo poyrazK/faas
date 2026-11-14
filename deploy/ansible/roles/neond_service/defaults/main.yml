@@ -6,8 +6,18 @@ faas_neond_enabled: false
 # (FAAS_MANAGED_POSTGRES_NEON_BROKER). Turn neond on first, check
 # neond_requests_total, then set this; false leaves apid calling Neon directly.
 faas_neond_broker: false
+# The variable apid's sealed.env holds the Neon key in (the managed
+# PostgreSQL config's secret_env "api-key"). With the broker on, the role
+# refuses to converge while /etc/faas/sealed.env still sets it: neond holds
+# the key, apid holds none (ADR-20261112160000 slice 3).
+faas_neond_apid_key_env: FAAS_NEON_API_KEY
+# neond's /metrics and /healthz, on loopback; Prometheus scrapes it as job
+# "neond".
+faas_neond_metrics_addr: "127.0.0.1:9114"
 # Neon project/branch/endpoint/snapshot/role deletes neond forwards per hour.
 faas_neond_destructive_per_hour: 300
+# Of those, how many may act on the projects of one account's databases.
+faas_neond_destructive_per_subject_per_hour: 60
 # Project keys (ADR-20261112160000 decision 3): the Neon organization ID the
 # admin key's service user administers (an org Admin's personal key). Set,
 # neond mints a key scoped to each project it creates and calls that

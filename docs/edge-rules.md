@@ -87,7 +87,7 @@ policy and `x-gregale-allow-callers` (see
 app itself when a caller must prove more than which app it is.
 
 Work the platform delivers on your account's behalf also skips edge rules:
-`gregale invoke` and other synchronous or asynchronous invocations
+`gregale invocation run` and other synchronous or asynchronous invocations
 (`POST /v1/apps/{slug}/invoke`), queue messages, delayed tasks, crons and
 exclusive operations. These requests are authorized by your account's
 credentials and scopes when they are created, not by the public edge, so an

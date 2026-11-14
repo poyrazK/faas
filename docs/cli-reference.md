@@ -8,7 +8,11 @@ App target: a command that takes `--app` and no other arguments also accepts the
 
 Earlier names: commands keep working under the names they had before the command tree (`gregale crons list` is `gregale cron list`); `gregale help --all --operator` lists them, and [The CLI command tree](cli-command-tree.md) maps each one.
 
-Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. With an agent key, put `--wait-for-approval` before the command to wait for a person to decide a request that needs approval, then retry it once, and `--agent-reason TEXT` (or `GREGALE_AGENT_REASON`) to tell that person what the request is for. Company projects: `gregale --org <slug> <command>` sends project commands to that organization's projects; command-local `--org` options keep their meaning. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. Put `--debug-http` before the command for metadata-only HTTP diagnostics on stderr. See [CLI configuration](cli-config.md) for connection profiles, environment precedence and HTTP diagnostics.
+Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. With an agent key, put `--wait-for-approval` before the command to wait for a person to decide a request that needs approval, then retry it once, and `--agent-reason TEXT` (or `GREGALE_AGENT_REASON`) to tell that person what the request is for. Company projects: `gregale --org <slug> <command>` sends project commands to that organization's projects; command-local `--org` options keep their meaning. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. Put `--debug-http` before the command for metadata-only HTTP diagnostics on stderr. Put `--http-timeout 90s` before the command to select a positive API request timeout; streams use it only while waiting for response headers. See [CLI configuration](cli-config.md) for connection profiles, environment precedence, HTTP timeouts and diagnostics.
+
+API errors: when the server supplies a valid correlation header, text errors show `Request ID: <id>` and JSON errors include optional `request_id`. Include it when reporting a failure; [CLI configuration](cli-config.md#request-ids-on-api-errors) explains validation and retry behavior.
+
+Read retries: put `--http-retries 3` before the command for up to three additional attempts on selected app, deployment and billing JSON reads. The default is zero; see [CLI configuration](cli-config.md#read-request-retries) for eligible requests, backoff and cancellation.
 
 | Command | What it does |
 |---|---|
@@ -20,7 +24,6 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`status`](#status) | Show what this checkout targets, or Gregale&#39;s platform status |
 | [`open`](#open) | Open an app&#39;s URL in your browser |
 | [`rollback`](#rollback) | Restore a previous deployment, or check an exact historical rollback |
-| [`invoke`](#invoke) | Call an app or function once to smoke-test it |
 | [`add`](#add) | Provision and bind managed resources to an app |
 | [`link`](#link) | Link this checkout to a Gregale project |
 | [`unlink`](#unlink) | Remove the linked project from this checkout |
@@ -39,7 +42,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`github`](#github) | Connect GitHub and bind apps to repositories |
 | [`registry`](#registry) | Manage registry credentials, signing keys and published images |
 | [`app`](#app) | Inspect, change, scale and operate apps |
-| [`invocation`](#invocation) | List, inspect, wait on and watch invocations |
+| [`invocation`](#invocation) | Run apps and functions, inspect calls and wait for results |
 | [`function`](#function) | Generate typed clients for calls between a project&#39;s functions |
 | [`env`](#env) | Set, list and sync an app&#39;s sealed variables |
 | [`domain`](#domain) | Manage custom domains |
@@ -115,7 +118,7 @@ gregale init --template hello-node --path ./my-api
 
 Deploy an app, function, or project
 
-`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--env <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--rollout <MODE>] [--override-freeze <REASON>] [--at <WHEN>] [--release-notify <CHANNEL,...>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--explain-files] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--env <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--rollout <MODE>] [--override-freeze <REASON>] [--at <WHEN>] [--release-notify <CHANNEL,...>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--readiness-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--explain-files] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.
 
@@ -192,6 +195,7 @@ RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Conne
 | `--rollback-on-5xx` | roll back after repeated first-wake 5xx responses |  |
 | `--queue-canary-binding <NAME>` | declare safe queue canary support for this deployment |  |
 | `--healthcheck-path <PATH>` | startup HTTP readiness path |  |
+| `--readiness-path <PATH>` | steady-state readiness HTTP path; failing instances leave routing |  |
 | `--healthcheck-grpc` | use standard gRPC health for startup readiness |  |
 | `--healthcheck-grpc-service <SERVICE>` | service name (requires --healthcheck-grpc; default: overall server) |  |
 | `--disable-startup-cpu-boost` | disable temporary CPU boost during VM startup |  |
@@ -793,25 +797,6 @@ Read an exact rollback operation
 Waiting never submits another rollback.
 
 With a switch ID in place of --operation, it shows a rollback that restores the database (`gregale rollback status &lt;slug&gt; &lt;switch-id&gt;`).
-
-
-## invoke
-
-Call an app or function once to smoke-test it
-
-`gregale invoke [<slug>] [--async] [--payload <J|@file|->] [--method <METHOD>] [--path <PATH>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--async` | return immediately with status_url |  |
-| `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
-| `--method <METHOD>` | HTTP method (default POST, or the function handler&#39;s) |  |
-| `--path <PATH>` | URL path (default /, or the function handler&#39;s) |  |
-| `--on-success-webhook <ID>` | app webhook id for completed invocation callbacks |  |
-| `--on-failure-webhook <ID>` | app webhook id for failed or dead-lettered callbacks |  |
-| `--work-policy <NAME>` | named app work policy for async invocation |  |
-| `--work-key <JSON>` | JSON scalar application key for async invocation |  |
-| `--work-fairness-key <JSON>` | JSON scalar fairness group for async invocation |  |
 
 
 ## add
@@ -3024,9 +3009,39 @@ Show policy convergence and fresh gateway traffic wiring
 
 ## invocation
 
-List, inspect, wait on and watch invocations
+Run apps and functions, inspect calls and wait for results
 
-`gregale invocation [<subcommand>] <id>`
+`gregale invocation [<subcommand>]`
+
+### invocation run
+
+Call an app or function once to smoke-test it
+
+`gregale invocation run [--async] [--wait] [--timeout <DURATION>] [--interval <DURATION>] [--idempotency-key <KEY>] [--payload <J|@file|->] [--method <METHOD>] [--path <PATH>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--async` | enqueue once and return status_url unless --wait |  |
+| `--wait` | wait for the invocation result; implies --async |  |
+| `--timeout <DURATION>` | local wait duration (default 0: until Ctrl-C); requires --wait |  |
+| `--interval <DURATION>` | time between status checks (default 1s); requires --wait |  |
+| `--idempotency-key <KEY>` | stable key for retrying the same submission within server retention; requires --async or --wait |  |
+| `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
+| `--method <METHOD>` | HTTP method (default POST, or the function handler&#39;s) |  |
+| `--path <PATH>` | URL path (default /, or the function handler&#39;s) |  |
+| `--on-success-webhook <ID>` | app webhook id for completed invocation callbacks |  |
+| `--on-failure-webhook <ID>` | app webhook id for failed or dead-lettered callbacks |  |
+| `--work-policy <NAME>` | named app work policy for async invocation |  |
+| `--work-key <JSON>` | JSON scalar application key for async invocation |  |
+| `--work-fairness-key <JSON>` | JSON scalar fairness group for async invocation |  |
+
+Examples:
+
+```sh
+gregale invocation run api --wait --timeout 2m --payload @request.json
+```
+
+Reuse an idempotency key only with the same async request within the server&#39;s 24-hour replay window. Use a new key for new work.
 
 ### invocation watch
 
