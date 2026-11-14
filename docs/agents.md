@@ -260,7 +260,10 @@ service or worker is priced for the replicas it starts with),
 `PATCH /v1/apps/{slug}` (including the `execution_mode`, `service_replicas`
 and `worker_replicas` that `gregale deploy` applies from `gregale.yaml`),
 `POST /v1/apps/{slug}/scaling`, `POST /v1/apps/{slug}/prewarm` and
-`PATCH /v1/deployments/{id}`.
+`PATCH /v1/deployments/{id}`. A source deploy (a Git source ref, a source
+tarball or an upload) applies the source's own `gregale.yaml` deployment
+settings, so it is priced for the replicas or warm floor they add before
+any of them is written.
 
 Creating an environment from another (`gregale env create --from`, a full
 clone, or an environment branch) is priced at the warm instances it copies:

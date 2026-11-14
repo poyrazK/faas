@@ -13,6 +13,11 @@ import (
 type sourceManifestSkipCronsKey struct{}
 
 func (s *server) stageSourceDeploymentManifest(r *http.Request, acct state.Account, app state.App, m *gregalemanifest.Manifest, rollout state.Deployment, applyTriggers bool) (sourceRefManifestStaged, *api.Problem) {
+	// Priced before any manifest row is written (ADR-20261111114059).
+	commitBudget, budgetProblem := s.chargeSourceManifest(r, acct, app)(m)
+	if budgetProblem != nil {
+		return sourceRefManifestStaged{}, budgetProblem
+	}
 	ctx := r.Context()
 	var intent *api.DeploymentCronStagingRequest
 	dark := rollout.TrafficPercentExplicit && rollout.TrafficPercent == 0 && rollout.CanaryTotalSteps == 0
@@ -41,6 +46,9 @@ func (s *server) stageSourceDeploymentManifest(r *http.Request, acct state.Accou
 	}
 	staged, problem := s.applySourceRefManifest(ctx, acct, app, m, rollout.Scope, applyTriggers)
 	staged.cronIntent = intent
+	if problem == nil {
+		commitBudget()
+	}
 	return staged, problem
 }
 
