@@ -7782,6 +7782,10 @@ type PlanWorkload struct {
 	// have no value in the selected environment: not configured on the app
 	// and not provided by the platform. Names only, never values.
 	UnsetEnvKeys []string `json:"unset_env_keys,omitempty"`
+	// SourceHosts are string literals in the workload's source that dial
+	// another service by its Compose name, which does not resolve on Gregale
+	// (ADR-20261112223000). At most a few per workload.
+	SourceHosts []PlanSourceHost `json:"source_hosts,omitempty"`
 	// UnsetEnvKeyReasons says why a Compose value for an UnsetEnvKeys name
 	// is not imported (ADR-20261023085230): not_opted_in, secret,
 	// service_address, local_address, interpolated, host_value, empty or
@@ -7963,6 +7967,14 @@ type QuotaBlock struct {
 // FeatureHint is one Gregale behavior or feature that applies to the scanned
 // source: what the plan will do, how to change it, and the exact commands
 // (ADR-20261112223000 §1). IDs are stable.
+// PlanSourceHost is one place source code dials a service by its Compose
+// name: the name, and the file and line that spell it.
+type PlanSourceHost struct {
+	Host string `json:"host"`
+	File string `json:"file"`
+	Line int    `json:"line"`
+}
+
 type FeatureHint struct {
 	ID        string   `json:"id"`
 	Workloads []string `json:"workloads,omitempty"`
