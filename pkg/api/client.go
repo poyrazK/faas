@@ -130,6 +130,9 @@ type Client struct {
 
 	http       *http.Client // 30s default — used for every JSON call
 	deployHTTP *http.Client // optional, used by DeployMultipart
+	// requestTimeoutExplicit prevents operation-specific defaults from
+	// extending a budget selected by NewClientWithRequestTimeout.
+	requestTimeoutExplicit bool
 
 	// cache powers `gregale completion <shell>` for the per-account
 	// positional completion paths (e.g. <slug> in `gregale app <slug>`).
@@ -470,7 +473,7 @@ func trafficPolicyRetryPause(err error, attempt int) (time.Duration, bool) {
 }
 
 func (c *Client) rollbackHTTP() *http.Client {
-	if c.http == nil || c.http.Timeout == 0 || c.http.Timeout >= rollbackRequestTimeout {
+	if c.requestTimeoutExplicit || c.http == nil || c.http.Timeout == 0 || c.http.Timeout >= rollbackRequestTimeout {
 		return c.http
 	}
 	copy := *c.http

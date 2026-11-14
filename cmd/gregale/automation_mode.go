@@ -32,6 +32,23 @@ func extractAutomationFlag(args []string) ([]string, error) {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if arg == "--http-timeout" || strings.HasPrefix(arg, "--http-timeout=") {
+			value := strings.TrimPrefix(arg, "--http-timeout=")
+			if arg == "--http-timeout" {
+				rest := args[i+1:]
+				if len(rest) == 0 {
+					return out, errors.New("--http-timeout requires a positive duration, such as 90s or 2m")
+				}
+				value = rest[0]
+				i++
+			}
+			if err := setHTTPRequestTimeout(value); err != nil {
+				// Do not let another global parser interpret or print the
+				// rejected duration, even when it resembles a flag.
+				return append(out, args[i+1:]...), err
+			}
+			continue
+		}
 		if arg == "--agent-reason" || strings.HasPrefix(arg, "--agent-reason=") {
 			value := strings.TrimPrefix(arg, "--agent-reason=")
 			if arg == "--agent-reason" {
