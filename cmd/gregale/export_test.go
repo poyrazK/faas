@@ -2894,3 +2894,12 @@ var DoctorCheckRuntimeOOM = doctorCheckRuntimeOOM
 // Readiness probe flag (2026-11-13).
 var ResolveDeployReadiness = resolveDeployReadiness
 var DeployProbeOverrides = deployProbeOverrides
+
+// UpdateAppCLISurface is one reviewed CLI surface of an API field.
+type UpdateAppCLISurface = updateAppCLISurface
+
+// DeployRequestCLISurfaces returns the deploy request's CLI surfaces.
+func DeployRequestCLISurfaces() map[string]UpdateAppCLISurface { return deployRequestCLISurfaces }
+
+// DeployOverridesCLISurfaces returns the deploy overrides' CLI surfaces.
+func DeployOverridesCLISurfaces() map[string]UpdateAppCLISurface { return deployOverridesCLISurfaces }
