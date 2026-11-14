@@ -360,6 +360,13 @@ func TestScheduledSnapshotRetainsLastGoodCaptureAndRecoversAcknowledgement(t *te
 	if _, err := s.Control(t.Context(), p.AccountID, p.ID, api.ControlDataPipelineRequest{ExpectedRevision: p.Revision, Action: "pause"}); err != nil {
 		t.Fatal(err)
 	}
+	targetAccess := w.Engine.Target
+	w.Engine.Target = func(ctx context.Context, account, id string, run func(*pgx.Conn, string) error) error {
+		if workQueryMillis(ctx) != api.DataPipelineVerificationQueryTimeout.Milliseconds() {
+			t.Error("optional work budget reduced lifecycle-control deadlines")
+		}
+		return targetAccess(ctx, account, id, run)
+	}
 	p = scheduledTick(t, store, w, p)
 	if p.State != "paused" {
 		t.Fatal("pause", p.State)
@@ -471,4 +478,46 @@ func TestScheduledSnapshotPublishesAllTablesUnderTheFinalFence(t *testing.T) {
 	if err = target.QueryRow(t.Context(), `SELECT (SELECT name FROM customers WHERE id=1),(SELECT total::text FROM orders WHERE id=2)`).Scan(&name, &total); err != nil || name != "before" || total != "-1" {
 		t.Fatal("partial multi-table publication escaped rollback", name, total, err)
 	}
+}
+
+func TestScheduledNativeVerificationHonorsWindowCancellationAndBatchBudget(t *testing.T) {
+	f := newNativeRecoveryFixture(t, `CREATE TABLE public.orders(id bigint PRIMARY KEY,value text); INSERT INTO public.orders SELECT i,'value' FROM generate_series(1,10000) i`)
+	now := time.Now().UTC()
+	minute := now.Hour()*60 + now.Minute()
+	c := &api.DataPipelineOperations{Version: 1, Workload: &api.DataPipelineWorkload{BatchesPerTick: 1, QueryTimeoutMillis: 2000, Window: &api.DataPipelineWorkWindow{StartMinuteUTC: (minute + 2) % 1440, EndMinuteUTC: (minute + 3) % 1440}}}
+	configure := func() {
+		t.Helper()
+		p := f.pipeline
+		if err := f.service.Operations(t.Context(), p.AccountID, p.ID, api.DataPipelineOperationsRequest{ExpectedRevision: p.Revision, Action: "configure", Config: c}); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		f.pipeline, err = f.store.Get(t.Context(), p.AccountID, p.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	configure()
+	f.control(t, "verify")
+	f.tick(t)
+	p := f.pipeline
+	if !p.VerifyRequested || p.VerificationProgress == nil || p.VerificationProgress.Rows != 0 {
+		t.Fatal("native verification ran outside the window", p.VerificationProgress)
+	}
+	if err := f.service.CancelVerification(t.Context(), p.AccountID, p.ID, p.Revision, p.VerificationProgress.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.tick(t)
+	if f.pipeline.VerifyRequested || f.pipeline.VerificationProgress.State != "cancelled" {
+		t.Fatal("work window prevented cancellation", f.pipeline.VerificationProgress)
+	}
+	c.Workload.Window = nil
+	configure()
+	f.control(t, "verify")
+	f.tick(t)
+	v := f.pipeline.VerificationProgress
+	if v == nil || v.Rows < 1 || v.Rows > api.DataPipelineVerificationChunkRows || !f.pipeline.VerifyRequested {
+		t.Fatal("native verification exceeded a one-batch tick", v)
+	}
+	awaitNativeWorkflow(t, f, func(p Pipeline) bool { return p.Verification == "passed" && !p.VerifyRequested })
 }

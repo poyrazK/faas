@@ -48,7 +48,7 @@ func (w *Worker) reconcilePipeline(ctx context.Context, p Pipeline) error {
 	if snapshotMode(p) {
 		timeout = api.DataPipelineSnapshotOperationTimeout
 	}
-	op, cancel := context.WithTimeout(workloadContext(ctx, p), timeout)
+	op, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if err := w.syncAuthMemberships(op, &p); err != nil {
 		return err

@@ -155,6 +155,7 @@ func reconcileSchema(ctx context.Context, p Pipeline, source *pgxpool.Pool, targ
 }
 
 func applySchema(ctx context.Context, p Pipeline, source *pgxpool.Pool, target *pgx.Conn, owner string, plan SchemaChange, current func(context.Context) error) error {
+	ctx = workloadContext(ctx, p)
 	if p.SchemaApproval != plan.ID || !plan.Supported {
 		return ErrConflict
 	}

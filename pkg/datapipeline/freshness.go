@@ -66,6 +66,9 @@ func pipelineHealth(p api.DataPipeline, now time.Time) *api.DataPipelineHealth {
 		}
 	case p.DesiredState == "paused" && p.State == "paused":
 		h.State, h.Code, h.Message, h.Recovery, h.Action = "inactive", "paused", "Sync is paused.", "Resume to continue replication; monitor retained WAL while paused.", "resume"
+		if p.Operations != nil && p.Operations.Snapshot != nil {
+			h.Recovery = "Resume to continue scheduled captures. The last successful capture is retained."
+		}
 		if p.ObservationFresh && retentionPressure(p) {
 			h.State, h.Code, h.Message = "attention", "retention_pressure", "Sync is paused and retained WAL is approaching the source safety limit."
 		}

@@ -90,6 +90,7 @@ func (e *Engine) observeQuality(ctx context.Context, p Pipeline, ob *Observation
 	if p.Operations == nil || p.Operations.Quality == nil || !workAllowed(p, time.Now()) {
 		return
 	}
+	ctx = workloadContext(ctx, p)
 	status := ob.OperationsStatus
 	if status == nil {
 		status = operationsStatus(p)

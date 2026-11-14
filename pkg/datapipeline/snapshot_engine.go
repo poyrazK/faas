@@ -167,6 +167,7 @@ func snapshotObserved(p Pipeline, status *api.DataPipelineOperationsStatus, ob *
 }
 
 func (e *Engine) copySnapshot(ctx context.Context, p Pipeline, target *pgx.Conn, owner, raw string, run *api.DataPipelineSnapshotStatus, current func(context.Context) error) (*api.DataPipelineSnapshotStatus, error) {
+	ctx = workloadContext(ctx, p)
 	source, err := e.connectSource(ctx, raw)
 	if err != nil {
 		return nil, &blocked{code: "snapshot_source_unavailable"}

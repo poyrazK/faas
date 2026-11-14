@@ -39,6 +39,9 @@ func tableSelectionView(p datapipeline.Pipeline, data dashboard.DataPipelinesDat
 func tableSelectionViews(pipelines []datapipeline.Pipeline, data dashboard.DataPipelinesData) []dashboard.DataPipelineTableSelection {
 	views := []dashboard.DataPipelineTableSelection{}
 	for _, p := range pipelines {
+		if p.Operations != nil && p.Operations.Snapshot != nil {
+			continue
+		}
 		if p.State == "deleted" {
 			continue
 		}

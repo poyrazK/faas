@@ -28,8 +28,20 @@ revision fields. Migrated-capacity tests cover connection-only snapshot holds an
 immutable import mode. OpenAPI parity and regenerated Node/Python SDKs preserve
 the preview-only pipeline surface.
 
-Check results and concise command output are collected beside this file as the
-validation completes. The existing full race-enabled pipeline acceptance remains
+The local TLS/native baseline passed: pipeline 591.015s, HTTP 28.758s, source
+adapter 0.374s and dashboard 0.563s. After the final configuration/safety-deadline
+fixes, the TLS snapshot/quality regressions and native verification window,
+cancellation and one-batch-budget regression passed again (10.746s). The final
+domain suite passed in 97.691s; HTTP/dashboard control checks also passed.
+The public CLI, apidserver, clone-registry and migrated-capacity checks passed
+(5.920s, 0.494s, 36.075s and 30.523s respectively). Source qualification is still
+operator-reviewed; the fixture does not establish a live provider allocation.
+
+Schema dump/migration and SQLC generation passed, along with OpenAPI AST parity,
+Node generation/build, Python generation/import/DTO round trip, migration online
+safety, test-store ownership, sealing/problem policy, text encoding, security-rule
+retention, ADR numbering and trimpath checks. Concise command output is collected
+beside this file. The existing full race-enabled pipeline acceptance remains
 available through `make test-data-pipeline`; local TLS acceptance in this evidence
 uses the same pinned fixtures without the race build.
 

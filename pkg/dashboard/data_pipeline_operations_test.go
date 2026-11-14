@@ -23,4 +23,7 @@ func TestPipelineScheduledControlsRenderEscapedWithRevisionAndCSRF(t *testing.T)
 	if strings.Contains(out.Body.String(), "<script>bad()</script>") {
 		t.Fatal("quality name was not escaped")
 	}
+	if strings.Contains(out.Body.String(), `name="control" value="verify"`) {
+		t.Fatal("snapshot offered a CDC verification action")
+	}
 }
