@@ -59,6 +59,7 @@ export type { AccountHealthDomain } from './AccountHealthDomain.js';
 export type { AccountHealthRequest } from './AccountHealthRequest.js';
 export type { AccountHealthRequests } from './AccountHealthRequests.js';
 export type { AccountHealthRestriction } from './AccountHealthRestriction.js';
+export type { AccountHealthSignal } from './AccountHealthSignal.js';
 export type { AccountLimits } from './AccountLimits.js';
 export type { AccountOverageCapResponse } from './AccountOverageCapResponse.js';
 export type { AccountProfileUpdate } from './AccountProfileUpdate.js';

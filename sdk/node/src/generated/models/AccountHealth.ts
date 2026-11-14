@@ -6,8 +6,9 @@ import type { AccountHealthDeployment } from './AccountHealthDeployment.js';
 import type { AccountHealthDomain } from './AccountHealthDomain.js';
 import type { AccountHealthRequests } from './AccountHealthRequests.js';
 import type { AccountHealthRestriction } from './AccountHealthRestriction.js';
+import type { AccountHealthSignal } from './AccountHealthSignal.js';
 /**
- * What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain problems and refused API requests.
+ * What may stop the calling account from working: restrictions with the next step, problems that keep recurring, failed deployments, custom-domain problems and refused API requests.
  */
 export type AccountHealth = {
   /**
@@ -15,13 +16,17 @@ export type AccountHealth = {
    */
   generated_at: string;
   /**
-   * Number of restrictions, failed deployments and domain issues; zero means nothing needs action.
+   * Number of restrictions, signals, failed deployments and domain issues; zero means nothing needs action.
    */
   attention: number;
   /**
    * Restrictions currently applied to the account, one per kind.
    */
   restrictions: Array<AccountHealthRestriction>;
+  /**
+   * Problems that keep recurring on the account, such as repeated failed deployments or out-of-memory stops, with the next step. Absent from older servers.
+   */
+  signals?: Array<AccountHealthSignal>;
   /**
    * Failed deployments from the last 7 days, newest first, at most 10.
    */
