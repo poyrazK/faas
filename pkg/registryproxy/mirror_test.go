@@ -46,7 +46,12 @@ func TestMirrorRefusesWhatIsNotAPull(t *testing.T) {
 	sd := &fakeSecretd{answers: map[string]string{"https://ghcr.io/v2/team/base/blobs/sha256:a?x=1": "layer"}}
 	srv := httptest.NewServer(&registryproxy.Mirror{Registry: "ghcr.io", Transport: (&registryproxy.Proxy{Client: sd}).ForBuild("build-1")})
 	defer srv.Close()
-	do := func(method, path string, header http.Header) (*http.Response, string) {
+	type answer struct {
+		status int
+		header http.Header
+		body   string
+	}
+	do := func(method, path string, header http.Header) answer {
 		t.Helper()
 		req, err := http.NewRequest(method, srv.URL+path, strings.NewReader(""))
 		if err != nil {
@@ -59,13 +64,13 @@ func TestMirrorRefusesWhatIsNotAPull(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		defer func() { _ = resp.Body.Close() }()
 		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		return resp, string(body)
+		return answer{status: resp.StatusCode, header: resp.Header, body: string(body)}
 	}
 
-	if resp, _ := do(http.MethodGet, "/v2/", nil); resp.StatusCode != 200 || resp.Header.Get("Docker-Distribution-API-Version") != "registry/2.0" {
-		t.Fatalf("version check = %d %v", resp.StatusCode, resp.Header)
+	if got := do(http.MethodGet, "/v2/", nil); got.status != 200 || got.header.Get("Docker-Distribution-API-Version") != "registry/2.0" {
+		t.Fatalf("version check = %d %v", got.status, got.header)
 	}
 	if len(sd.asked) != 0 {
 		t.Fatal("the version check reached secretd")
@@ -80,17 +85,17 @@ func TestMirrorRefusesWhatIsNotAPull(t *testing.T) {
 		"climbing out":     {http.MethodGet, "/v2/../token", http.StatusNotFound},
 		"unknown manifest": {http.MethodGet, "/v2/team/other/manifests/v1", http.StatusNotFound},
 	} {
-		if resp, _ := do(tc.method, tc.path, nil); resp.StatusCode != tc.want {
-			t.Errorf("%s = %d, want %d", name, resp.StatusCode, tc.want)
+		if got := do(tc.method, tc.path, nil); got.status != tc.want {
+			t.Errorf("%s = %d, want %d", name, got.status, tc.want)
 		}
 	}
 
 	// BuildKit's ns parameter is dropped, other query parameters kept, and
 	// a guest's Authorization header never reaches secretd.
-	resp, body := do(http.MethodGet, "/v2/team/base/blobs/sha256:a?ns=ghcr.io&x=1",
+	blob := do(http.MethodGet, "/v2/team/base/blobs/sha256:a?ns=ghcr.io&x=1",
 		http.Header{"Authorization": {"Bearer guest"}, "Range": {"bytes=0-"}})
-	if resp.StatusCode != 200 || body != "layer" {
-		t.Fatalf("blob = %d %q", resp.StatusCode, body)
+	if blob.status != 200 || blob.body != "layer" {
+		t.Fatalf("blob = %d %q", blob.status, blob.body)
 	}
 	last := sd.asked[len(sd.asked)-1]
 	if last.GetUrl() != "https://ghcr.io/v2/team/base/blobs/sha256:a?x=1" {
@@ -104,7 +109,7 @@ func TestMirrorRefusesWhatIsNotAPull(t *testing.T) {
 
 	// A refusal is a 502, never an anonymous pull by the mirror.
 	sd.refuse = true
-	if resp, _ := do(http.MethodGet, "/v2/team/base/blobs/sha256:a?x=1", nil); resp.StatusCode != http.StatusBadGateway {
-		t.Fatalf("refused pull = %d, want 502", resp.StatusCode)
+	if got := do(http.MethodGet, "/v2/team/base/blobs/sha256:a?x=1", nil); got.status != http.StatusBadGateway {
+		t.Fatalf("refused pull = %d, want 502", got.status)
 	}
 }

@@ -3464,6 +3464,7 @@
   {
     "table": "builds",
     "columns": [
+      "builder_node_name",
       "cache_key_sha256",
       "cache_status",
       "cancelled_at",
