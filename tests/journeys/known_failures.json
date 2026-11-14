@@ -1,5 +1,10 @@
 [
   {
+    "step": "TestHostedMCP/connection_status_shows_budget",
+    "bug": "production approvals carry no connection_id until #7241 is released, so mcp connection status lists no pending approvals for the agent; known until that release",
+    "since": "2026-11-14"
+  },
+  {
     "step": "TestPublicSurface/security_txt",
     "bug": "security.txt Canonical URL ends in 404; its Encryption URL serves an HTML page, not a PGP key",
     "since": "2026-10-26"

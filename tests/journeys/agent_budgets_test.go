@@ -41,7 +41,7 @@ func (j *hostedMCPJourney) budgetKey(t *testing.T) {
 	j.root.Cleanup(func() { j.tg.run(j.root, time.Minute, "key", "delete", id) })
 	j.budgetKeyID = id
 	budget := object(t, j.tg.ok(t, time.Minute, "mcp", "connection", "budget", id, "--set", "0").stdout)
-	if field(budget, "monthly_cents") != float64(0) {
+	if !zeroAt(budget, "monthly_cents") {
 		t.Fatalf("budget after --set 0 = %s", compact(budget))
 	}
 }
@@ -50,11 +50,10 @@ func (j *hostedMCPJourney) budgetKey(t *testing.T) {
 func (j *hostedMCPJourney) probeFloor(t *testing.T) int {
 	t.Helper()
 	got := jsonBody(t, j.tg.apiCall(http.MethodGet, "/v1/apps/"+j.probe, nil, j.adminKey(t)))
-	n, ok := got["min_instances"].(float64)
-	if !ok {
+	if field(got, "min_instances") == nil {
 		t.Fatalf("GET /v1/apps/%s has no min_instances: %s", j.probe, compact(got))
 	}
-	return int(n)
+	return int(num(got, "min_instances"))
 }
 
 // raiseFloor sends the agent's PATCH adding one warm instance to the probe,
@@ -87,7 +86,7 @@ func (j *hostedMCPJourney) budgetPreviewPricesFloor(t *testing.T) {
 	}
 	out := jsonBody(t, r)
 	if field(out, "preview") != true || field(out, "charged") != true || num(out, "added_cents") <= 0 ||
-		field(out, "needs_approval") != true || str(out, "approval_category") != "budget" || field(out, "budget_cents") != float64(0) {
+		field(out, "needs_approval") != true || str(out, "approval_category") != "budget" || !zeroAt(out, "budget_cents") {
 		t.Fatalf("budget preview = %s; want a charged cost past a zero budget, needing a budget approval", compact(out))
 	}
 	if got := j.probeFloor(t); got != floor {
@@ -128,7 +127,7 @@ func (j *hostedMCPJourney) budgetToolReports(t *testing.T) {
 	}
 	result := session.call(t, "tools/call", map[string]any{"name": "gregale_agent_budget", "arguments": map[string]any{}})
 	sc, _ := result["structuredContent"].(map[string]any)
-	if field(result, "isError") == true || sc == nil || field(sc, "monthly_cents") != float64(0) || field(sc, "spent_cents") != float64(0) {
+	if field(result, "isError") == true || sc == nil || !zeroAt(sc, "monthly_cents") || !zeroAt(sc, "spent_cents") {
 		t.Fatalf("gregale_agent_budget = %s; want a zero budget, nothing spent", compact(result))
 	}
 }
@@ -141,7 +140,7 @@ func (j *hostedMCPJourney) connectionStatusShowsBudget(t *testing.T) {
 	}
 	out := object(t, j.tg.ok(t, time.Minute, "mcp", "connection", "status", j.budgetKeyID).stdout)
 	items := asList(out["items"])
-	if len(items) != 1 || field(items[0], "budget.monthly_cents") != float64(0) {
+	if len(items) != 1 || !zeroAt(items[0], "budget.monthly_cents") {
 		t.Fatalf("mcp connection status = %s; want the key with a zero budget", compact(out))
 	}
 	if j.budgetApprovalID == "" {
@@ -153,4 +152,10 @@ func (j *hostedMCPJourney) connectionStatusShowsBudget(t *testing.T) {
 		}
 	}
 	t.Fatalf("mcp connection status lists no pending budget approval %s: %s", j.budgetApprovalID, compact(out))
+}
+
+// zeroAt reports that path holds the number 0; the harness decodes numbers
+// as json.Number, and a missing field is not zero.
+func zeroAt(v any, path string) bool {
+	return field(v, path) != nil && num(v, path) == 0
 }
