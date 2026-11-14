@@ -866,6 +866,9 @@ type Querier interface {
 	CountProjectEnvironmentClonePostgresVerificationReadBudgets(ctx context.Context, db DBTX, accountID pgtype.UUID) (CountProjectEnvironmentClonePostgresVerificationReadBudgetsRow, error)
 	// Crons of the source environment on project apps the clone does not copy.
 	CountProjectEnvironmentCloneUncapturedCrons(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedCronsParams) (int64, error)
+	// Event subscriptions of the source environment on project apps the clone
+	// does not copy.
+	CountProjectEnvironmentCloneUncapturedEventSubscriptions(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedEventSubscriptionsParams) (int64, error)
 	// The environment's key count and whether the written key is already one of them.
 	CountProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg CountProjectEnvironmentSecretsParams) (CountProjectEnvironmentSecretsRow, error)
 	CountProjectMigrations(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -2994,6 +2997,9 @@ type Querier interface {
 	// A copied cron starts disabled; clone_paused marks one the source ran.
 	InsertProjectEnvironmentCloneCron(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCronParams) error
 	InsertProjectEnvironmentCloneDatabase(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneDatabaseParams) (ManagedPostgresDatabase, error)
+	// A copied subscription starts disabled; clone_paused marks one the source
+	// ran. The scope guard resolves the stage's environment ID.
+	InsertProjectEnvironmentCloneEventSubscription(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneEventSubscriptionParams) error
 	InsertProjectEnvironmentCloneLayerPin(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneLayerPinParams) error
 	InsertProjectEnvironmentCloneMaterialization(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneMaterializationParams) error
 	InsertProjectEnvironmentCloneObjectCredentialPreparation(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneObjectCredentialPreparationParams) error
@@ -6526,6 +6532,10 @@ type Querier interface {
 	ReadProjectEnvironmentCloneDatabaseSource(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneDatabaseSourceParams) (ManagedPostgresDatabase, error)
 	ReadProjectEnvironmentCloneDeployedSettings(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ReadProjectEnvironmentCloneDeployedSettingsRow, error)
 	ReadProjectEnvironmentCloneEnvironmentPresence(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneEnvironmentPresenceParams) (ReadProjectEnvironmentCloneEnvironmentPresenceRow, error)
+	// An app's event subscriptions in one environment (ADR-20261104120000
+	// amendment 2026-11-14). A subscription a clone paused counts as enabled:
+	// resuming it would.
+	ReadProjectEnvironmentCloneEventSubscriptions(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneEventSubscriptionsParams) ([]ReadProjectEnvironmentCloneEventSubscriptionsRow, error)
 	ReadProjectEnvironmentCloneFlagScope(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneFlagScopeParams) (pgtype.UUID, error)
 	ReadProjectEnvironmentCloneInventoryPresent(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneInventoryPresentParams) ([]string, error)
 	ReadProjectEnvironmentCloneLegacySettings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneLegacySettingsParams) (ReadProjectEnvironmentCloneLegacySettingsRow, error)
@@ -7493,6 +7503,9 @@ type Querier interface {
 	// Enables the crons a clone paused in one environment; the enable clears
 	// clone_paused and anchors the schedule.
 	ResumeEnvironmentClonePausedCrons(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]ResumeEnvironmentClonePausedCronsRow, error)
+	// Enables the event subscriptions a clone paused in one environment; the
+	// enable clears clone_paused.
+	ResumeEnvironmentClonePausedEventSubscriptions(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]ResumeEnvironmentClonePausedEventSubscriptionsRow, error)
 	ResumeStoredWorkflowFailurePause(ctx context.Context, db DBTX, arg ResumeStoredWorkflowFailurePauseParams) error
 	// The first write of a key in a guard captures the row the guard replaces.
 	RetainAppConfigGuardSecret(ctx context.Context, db DBTX, arg RetainAppConfigGuardSecretParams) error

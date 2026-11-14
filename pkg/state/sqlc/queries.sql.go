@@ -11947,6 +11947,27 @@ func (q *Queries) CountProjectEnvironmentCloneUncapturedCrons(ctx context.Contex
 	return column_1, err
 }
 
+const countProjectEnvironmentCloneUncapturedEventSubscriptions = `-- name: CountProjectEnvironmentCloneUncapturedEventSubscriptions :one
+SELECT count(*)::bigint FROM event_subscriptions s JOIN apps a ON a.id = s.app_id
+WHERE a.project_id = $1::uuid AND a.status <> 'deleted'
+  AND s.deployment_scope = $2::text AND NOT (s.app_id = ANY($3::uuid[]))
+`
+
+type CountProjectEnvironmentCloneUncapturedEventSubscriptionsParams struct {
+	ProjectID pgtype.UUID
+	Scope     string
+	AppIds    []pgtype.UUID
+}
+
+// Event subscriptions of the source environment on project apps the clone
+// does not copy.
+func (q *Queries) CountProjectEnvironmentCloneUncapturedEventSubscriptions(ctx context.Context, db DBTX, arg CountProjectEnvironmentCloneUncapturedEventSubscriptionsParams) (int64, error) {
+	row := db.QueryRow(ctx, countProjectEnvironmentCloneUncapturedEventSubscriptions, arg.ProjectID, arg.Scope, arg.AppIds)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countProjectWorkerHealthPending = `-- name: CountProjectWorkerHealthPending :one
 SELECT COUNT(*)::bigint AS pending, COALESCE(EXTRACT(epoch FROM clock_timestamp()-MIN(created_at))*1000,0)::bigint AS oldest_age_ms FROM invocations WHERE app_id=$1::uuid AND queue_binding_id=$2::uuid
  AND deployment_scope='production' AND source='queue' AND state='pending' AND due_at<=clock_timestamp()
@@ -36998,6 +37019,44 @@ func (q *Queries) InsertProjectEnvironmentCloneDatabase(ctx context.Context, db 
 	return i, err
 }
 
+const insertProjectEnvironmentCloneEventSubscription = `-- name: InsertProjectEnvironmentCloneEventSubscription :exec
+INSERT INTO event_subscriptions(account_id, app_id, source, type, filter, enabled, clone_paused,
+    routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope)
+SELECT a.account_id, a.id, $1::text, $2::text, $3::jsonb, false,
+    $4::boolean, $5::jsonb, $6::text[],
+    $7::integer, $8::text
+FROM apps a WHERE a.id = $9::uuid
+`
+
+type InsertProjectEnvironmentCloneEventSubscriptionParams struct {
+	Source                     string
+	Type                       string
+	Filter                     []byte
+	ClonePaused                bool
+	RoutingRetryPolicy         []byte
+	SchemaVersions             []string
+	AcknowledgmentLeaseSeconds int32
+	Scope                      string
+	AppID                      pgtype.UUID
+}
+
+// A copied subscription starts disabled; clone_paused marks one the source
+// ran. The scope guard resolves the stage's environment ID.
+func (q *Queries) InsertProjectEnvironmentCloneEventSubscription(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneEventSubscriptionParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneEventSubscription,
+		arg.Source,
+		arg.Type,
+		arg.Filter,
+		arg.ClonePaused,
+		arg.RoutingRetryPolicy,
+		arg.SchemaVersions,
+		arg.AcknowledgmentLeaseSeconds,
+		arg.Scope,
+		arg.AppID,
+	)
+	return err
+}
+
 const insertProjectEnvironmentCloneLayerPin = `-- name: InsertProjectEnvironmentCloneLayerPin :exec
 INSERT INTO project_environment_clone_layer_pins(operation_id, app_id, storage_key, bytes)
 VALUES ($1::uuid, $2::uuid, $3::text, $4::bigint)
@@ -50654,7 +50713,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 }
 
 const listEnabledEventSubscriptionsForAccount = `-- name: ListEnabledEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id, s.clone_paused
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1 and s.enabled and a.status <> 'deleted'
@@ -50685,6 +50744,7 @@ func (q *Queries) ListEnabledEventSubscriptionsForAccount(ctx context.Context, d
 			&i.AcknowledgmentLeaseSeconds,
 			&i.DeploymentScope,
 			&i.EnvironmentID,
+			&i.ClonePaused,
 		); err != nil {
 			return nil, err
 		}
@@ -51296,7 +51356,7 @@ func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.C
 
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
-select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope, environment_id
+select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope, environment_id, clone_paused
 from event_subscriptions
 where app_id = $1
 order by created_at asc, id asc
@@ -51329,6 +51389,7 @@ func (q *Queries) ListEventSubscriptionsForApp(ctx context.Context, db DBTX, app
 			&i.AcknowledgmentLeaseSeconds,
 			&i.DeploymentScope,
 			&i.EnvironmentID,
+			&i.ClonePaused,
 		); err != nil {
 			return nil, err
 		}
@@ -53945,7 +54006,7 @@ func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX
 }
 
 const listMatchingEventSubscriptionsForAccount = `-- name: ListMatchingEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id, s.clone_paused
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1::uuid
@@ -54021,6 +54082,7 @@ func (q *Queries) ListMatchingEventSubscriptionsForAccount(ctx context.Context, 
 			&i.AcknowledgmentLeaseSeconds,
 			&i.DeploymentScope,
 			&i.EnvironmentID,
+			&i.ClonePaused,
 		); err != nil {
 			return nil, err
 		}
@@ -89212,6 +89274,62 @@ func (q *Queries) ReadProjectEnvironmentCloneEnvironmentPresence(ctx context.Con
 	return i, err
 }
 
+const readProjectEnvironmentCloneEventSubscriptions = `-- name: ReadProjectEnvironmentCloneEventSubscriptions :many
+SELECT source, type, filter, (enabled OR clone_paused)::boolean AS enabled, enabled AS stored_enabled,
+       routing_retry_policy, schema_versions, acknowledgment_lease_seconds
+FROM event_subscriptions
+WHERE app_id = $1::uuid AND deployment_scope = $2::text
+ORDER BY source, type, filter::text
+`
+
+type ReadProjectEnvironmentCloneEventSubscriptionsParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+type ReadProjectEnvironmentCloneEventSubscriptionsRow struct {
+	Source                     string
+	Type                       string
+	Filter                     []byte
+	Enabled                    bool
+	StoredEnabled              bool
+	RoutingRetryPolicy         []byte
+	SchemaVersions             []string
+	AcknowledgmentLeaseSeconds int32
+}
+
+// An app's event subscriptions in one environment (ADR-20261104120000
+// amendment 2026-11-14). A subscription a clone paused counts as enabled:
+// resuming it would.
+func (q *Queries) ReadProjectEnvironmentCloneEventSubscriptions(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneEventSubscriptionsParams) ([]ReadProjectEnvironmentCloneEventSubscriptionsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneEventSubscriptions, arg.AppID, arg.Scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneEventSubscriptionsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneEventSubscriptionsRow
+		if err := rows.Scan(
+			&i.Source,
+			&i.Type,
+			&i.Filter,
+			&i.Enabled,
+			&i.StoredEnabled,
+			&i.RoutingRetryPolicy,
+			&i.SchemaVersions,
+			&i.AcknowledgmentLeaseSeconds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneFlagScope = `-- name: ReadProjectEnvironmentCloneFlagScope :one
 SELECT e.id FROM project_environments e
 JOIN projects p ON p.id = e.project_id AND p.account_id = e.account_id
@@ -103882,6 +104000,39 @@ func (q *Queries) ResumeEnvironmentClonePausedCrons(ctx context.Context, db DBTX
 	items := []ResumeEnvironmentClonePausedCronsRow{}
 	for rows.Next() {
 		var i ResumeEnvironmentClonePausedCronsRow
+		if err := rows.Scan(&i.ID, &i.AppID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const resumeEnvironmentClonePausedEventSubscriptions = `-- name: ResumeEnvironmentClonePausedEventSubscriptions :many
+UPDATE event_subscriptions SET enabled = true, updated_at = now()
+WHERE environment_id = $1::uuid AND clone_paused AND NOT enabled
+RETURNING id, app_id
+`
+
+type ResumeEnvironmentClonePausedEventSubscriptionsRow struct {
+	ID    pgtype.UUID
+	AppID pgtype.UUID
+}
+
+// Enables the event subscriptions a clone paused in one environment; the
+// enable clears clone_paused.
+func (q *Queries) ResumeEnvironmentClonePausedEventSubscriptions(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]ResumeEnvironmentClonePausedEventSubscriptionsRow, error) {
+	rows, err := db.Query(ctx, resumeEnvironmentClonePausedEventSubscriptions, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ResumeEnvironmentClonePausedEventSubscriptionsRow{}
+	for rows.Next() {
+		var i ResumeEnvironmentClonePausedEventSubscriptionsRow
 		if err := rows.Scan(&i.ID, &i.AppID); err != nil {
 			return nil, err
 		}

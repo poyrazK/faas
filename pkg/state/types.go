@@ -801,6 +801,11 @@ type APIConsumerUsageEvent struct {
 	// the collapsed usage buckets.
 	Audit           *RequestAuditEvidence
 	DiscoveredRoute string // optional normalized method/template
+	// DiscoveredDeploymentID is the deployment that served DiscoveredRoute.
+	// A stage deployment's routes go to its environment's inventory, and
+	// the first-seen event carries that environment (ADR-20261104120000).
+	// Empty (older gateways) is production.
+	DiscoveredDeploymentID string
 	// BillingRoute is the bounded "METHOD /template" label of
 	// consumer-attributed traffic; its billable units are also kept per route
 	// so rate cards can weight routes (ADR-952).

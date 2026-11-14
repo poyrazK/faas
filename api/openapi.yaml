@@ -112771,14 +112771,19 @@ components:
 
     ResumeEnvironmentAutomationResponse:
       type: object
-      description: Crons enabled by resuming a stage's automation after a full environment clone.
-      required: [environment, crons_resumed, cron_ids]
+      description: Crons and event subscriptions enabled by resuming a stage's automation after a full environment clone.
+      required: [environment, crons_resumed, cron_ids, event_subscriptions_resumed, event_subscription_ids]
       properties:
         environment: { type: string, description: "Stage whose paused automation was enabled.", example: "staging" }
         crons_resumed: { type: integer, minimum: 0, description: "Number of crons enabled." }
         cron_ids:
           type: array
           description: Crons enabled by this call.
+          items: { type: string }
+        event_subscriptions_resumed: { type: integer, minimum: 0, description: "Number of event subscriptions enabled." }
+        event_subscription_ids:
+          type: array
+          description: Event subscriptions enabled by this call.
           items: { type: string }
     ProjectEnvironmentCloneOperationResponse:
       description: Durable clone progress within one account and project, excluding private source configuration and worker credentials.

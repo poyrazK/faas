@@ -2,9 +2,11 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/db"
 )
@@ -30,6 +32,17 @@ func recordDiscoveredRouteTx(ctx context.Context, tx pgx.Tx, event APIConsumerUs
 		return nil
 	}
 	when := discoveredAtFor(event)
+	environmentID, ok, err := discoveredRouteEnvironmentTx(ctx, tx, event)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// The serving stage is gone; its routes belong to no inventory.
+		return markDiscoveryRecordedTx(ctx, tx, event.EventID)
+	}
+	if environmentID != "" {
+		return recordEnvironmentRouteTx(ctx, tx, event, environmentID, route, when)
+	}
 	newRoute := false
 	updated, err := updateDiscoveredRouteTx(ctx, tx, event.AccountID, event.AppID, route, when)
 	if err != nil {
@@ -82,22 +95,122 @@ func recordDiscoveredRouteTx(ctx context.Context, tx pgx.Tx, event APIConsumerUs
 		}
 	}
 	if newRoute {
-		if err := appendDiscoveredRouteEventTx(ctx, tx, event.AccountID, event.AppID, route, when); err != nil {
+		if err := appendDiscoveredRouteEventTx(ctx, tx, event.AccountID, event.AppID, "", route, when); err != nil {
 			return err
 		}
 	}
+	return markDiscoveryRecordedTx(ctx, tx, event.EventID)
+}
+
+func markDiscoveryRecordedTx(ctx context.Context, tx pgx.Tx, eventID string) error {
 	if _, err := tx.Exec(ctx, `update api_consumer_usage_events
-		set discovery_recorded = true where event_id = $1::uuid`, event.EventID); err != nil {
+		set discovery_recorded = true where event_id = $1::uuid`, eventID); err != nil {
 		return fmt.Errorf("api discovery: mark usage receipt: %w", err)
 	}
 	return nil
 }
 
+// discoveredRouteEnvironmentTx returns the stage of the deployment that
+// served the route (ADR-20261104120000): "" for production, project-less
+// apps and older gateways that report no deployment, and ok=false when the
+// deployment's stage no longer exists.
+func discoveredRouteEnvironmentTx(ctx context.Context, tx pgx.Tx, event APIConsumerUsageEvent) (string, bool, error) {
+	if _, err := uuid.Parse(discoveredDeploymentFor(event)); err != nil {
+		return "", true, nil
+	}
+	var scope, environmentID string
+	err := tx.QueryRow(ctx, `select d.scope, coalesce((select e.id::text from project_environments e
+			where e.project_id = a.project_id and e.slug = d.scope), '')
+		from deployments d join apps a on a.id = d.app_id
+		where d.id = $1::uuid and d.app_id = $2::uuid and a.account_id = $3::uuid and a.project_id is not null`,
+		discoveredDeploymentFor(event), event.AppID, event.AccountID).Scan(&scope, &environmentID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", true, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("api discovery: read deployment environment: %w", err)
+	}
+	if IsProductionScope(scope) {
+		return "", true, nil
+	}
+	return environmentID, environmentID != "", nil
+}
+
+// recordEnvironmentRouteTx files a stage deployment's route in the stage's
+// own inventory, with the same bounds and first-seen event as production's.
+func recordEnvironmentRouteTx(ctx context.Context, tx pgx.Tx, event APIConsumerUsageEvent, environmentID, route string, when time.Time) error {
+	update := func(route string) (bool, error) {
+		result, err := tx.Exec(ctx, `update environment_api_routes
+			set first_seen = least(first_seen, $4::timestamptz),
+			    last_seen = greatest(last_seen, $4::timestamptz),
+			    request_count = request_count + 1
+			where environment_id = $1::uuid and app_id = $2::uuid and route_template = $3`,
+			environmentID, event.AppID, route, when)
+		if err != nil {
+			return false, fmt.Errorf("api discovery: update stage route: %w", err)
+		}
+		return result.RowsAffected() == 1, nil
+	}
+	newRoute := false
+	updated, err := update(route)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtextextended($1::text, 0))`, event.AppID+":"+environmentID); err != nil {
+			return fmt.Errorf("api discovery: lock stage inventory: %w", err)
+		}
+		if updated, err = update(route); err != nil {
+			return err
+		}
+	}
+	if !updated {
+		if route != discoveredRouteOverflow {
+			var count int
+			if err := tx.QueryRow(ctx, `select count(*) from environment_api_routes
+				where environment_id = $1::uuid and app_id = $2::uuid and route_template <> $3`,
+				environmentID, event.AppID, discoveredRouteOverflow).Scan(&count); err != nil {
+				return fmt.Errorf("api discovery: count stage routes: %w", err)
+			}
+			if count >= DiscoveredRouteLimit {
+				route = discoveredRouteOverflow
+				if updated, err = update(route); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if !updated {
+		result, err := tx.Exec(ctx, `insert into environment_api_routes
+			(account_id, app_id, environment_id, route_template, first_seen, last_seen, request_count)
+			select $1::uuid, $2::uuid, $3::uuid, $4, $5, $5, 1 from apps
+			where id = $2::uuid and account_id = $1::uuid
+			on conflict (environment_id, app_id, route_template) do nothing`,
+			event.AccountID, event.AppID, environmentID, route, when)
+		if err != nil {
+			return fmt.Errorf("api discovery: insert stage route: %w", err)
+		}
+		if result.RowsAffected() == 1 {
+			newRoute = route != discoveredRouteOverflow
+		} else if updated, err = update(route); err != nil {
+			return err
+		} else if !updated {
+			return fmt.Errorf("api discovery: app is not owned by account")
+		}
+	}
+	if newRoute {
+		if err := appendDiscoveredRouteEventTx(ctx, tx, event.AccountID, event.AppID, environmentID, route, when); err != nil {
+			return err
+		}
+	}
+	return markDiscoveryRecordedTx(ctx, tx, event.EventID)
+}
+
 // appendDiscoveredRouteEventTx writes the first-seen route event and both
 // wakeups inside the route-allocation transaction. A retry can neither
 // duplicate the event nor commit a route without its durable fanout record.
-func appendDiscoveredRouteEventTx(ctx context.Context, tx pgx.Tx, accountID, appID, route string, firstSeen time.Time) error {
-	eventPayload, noticePayload, err := apiRouteDiscoveredPayloads(accountID, appID, route, firstSeen)
+func appendDiscoveredRouteEventTx(ctx context.Context, tx pgx.Tx, accountID, appID, environmentID, route string, firstSeen time.Time) error {
+	eventPayload, noticePayload, err := apiRouteDiscoveredPayloads(accountID, appID, environmentID, route, firstSeen)
 	if err != nil {
 		return fmt.Errorf("api discovery: encode route event: %w", err)
 	}
@@ -124,8 +237,12 @@ func appendDiscoveredRouteEventTx(ctx context.Context, tx pgx.Tx, accountID, app
 			return fmt.Errorf("api discovery: notify event fanout: %w", err)
 		}
 	}
-	if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyAPIRouteDiscovered, string(noticePayload)); err != nil {
-		return fmt.Errorf("api discovery: notify dashboard: %w", err)
+	// The dashboard lists production's inventory; a stage's routes stay out
+	// of it.
+	if environmentID == "" {
+		if _, err := tx.Exec(ctx, `select pg_notify($1, $2)`, db.NotifyAPIRouteDiscovered, string(noticePayload)); err != nil {
+			return fmt.Errorf("api discovery: notify dashboard: %w", err)
+		}
 	}
 	return nil
 }

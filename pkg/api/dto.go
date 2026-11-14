@@ -4897,6 +4897,11 @@ type ResumeEnvironmentAutomationResponse struct {
 	Environment  string   `json:"environment"`
 	CronsResumed int      `json:"crons_resumed"`
 	CronIDs      []string `json:"cron_ids"`
+	// EventSubscriptionsResumed and EventSubscriptionIDs are the event
+	// subscriptions the call enabled (ADR-20261104120000 amendment
+	// 2026-11-14).
+	EventSubscriptionsResumed int      `json:"event_subscriptions_resumed"`
+	EventSubscriptionIDs      []string `json:"event_subscription_ids"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a

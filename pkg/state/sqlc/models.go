@@ -5042,6 +5042,16 @@ type EntityOutboxAcceptance struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type EnvironmentApiRoute struct {
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	EnvironmentID pgtype.UUID
+	RouteTemplate string
+	FirstSeen     pgtype.Timestamptz
+	LastSeen      pgtype.Timestamptz
+	RequestCount  int64
+}
+
 type EnvironmentBindingReleaseReceipt struct {
 	ReleaseID  pgtype.UUID
 	GraphID    pgtype.UUID
@@ -6078,6 +6088,7 @@ type EventSubscription struct {
 	AcknowledgmentLeaseSeconds int32
 	DeploymentScope            string
 	EnvironmentID              pgtype.UUID
+	ClonePaused                bool
 }
 
 type EventSubscriptionCapacityCommand struct {

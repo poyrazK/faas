@@ -7821,6 +7821,40 @@ UPDATE crons SET enabled = true
 WHERE environment_id = sqlc.arg(environment_id)::uuid AND clone_paused AND NOT enabled
 RETURNING id, app_id;
 
+-- name: ReadProjectEnvironmentCloneEventSubscriptions :many
+-- An app's event subscriptions in one environment (ADR-20261104120000
+-- amendment 2026-11-14). A subscription a clone paused counts as enabled:
+-- resuming it would.
+SELECT source, type, filter, (enabled OR clone_paused)::boolean AS enabled, enabled AS stored_enabled,
+       routing_retry_policy, schema_versions, acknowledgment_lease_seconds
+FROM event_subscriptions
+WHERE app_id = sqlc.arg(app_id)::uuid AND deployment_scope = sqlc.arg(scope)::text
+ORDER BY source, type, filter::text;
+
+-- name: CountProjectEnvironmentCloneUncapturedEventSubscriptions :one
+-- Event subscriptions of the source environment on project apps the clone
+-- does not copy.
+SELECT count(*)::bigint FROM event_subscriptions s JOIN apps a ON a.id = s.app_id
+WHERE a.project_id = sqlc.arg(project_id)::uuid AND a.status <> 'deleted'
+  AND s.deployment_scope = sqlc.arg(scope)::text AND NOT (s.app_id = ANY(sqlc.arg(app_ids)::uuid[]));
+
+-- name: InsertProjectEnvironmentCloneEventSubscription :exec
+-- A copied subscription starts disabled; clone_paused marks one the source
+-- ran. The scope guard resolves the stage's environment ID.
+INSERT INTO event_subscriptions(account_id, app_id, source, type, filter, enabled, clone_paused,
+    routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope)
+SELECT a.account_id, a.id, sqlc.arg(source)::text, sqlc.arg(type)::text, sqlc.arg(filter)::jsonb, false,
+    sqlc.arg(clone_paused)::boolean, sqlc.narg(routing_retry_policy)::jsonb, sqlc.arg(schema_versions)::text[],
+    sqlc.arg(acknowledgment_lease_seconds)::integer, sqlc.arg(scope)::text
+FROM apps a WHERE a.id = sqlc.arg(app_id)::uuid;
+
+-- name: ResumeEnvironmentClonePausedEventSubscriptions :many
+-- Enables the event subscriptions a clone paused in one environment; the
+-- enable clears clone_paused.
+UPDATE event_subscriptions SET enabled = true, updated_at = now()
+WHERE environment_id = sqlc.arg(environment_id)::uuid AND clone_paused AND NOT enabled
+RETURNING id, app_id;
+
 -- name: ReadProjectEnvironmentCloneObjectMutationAuthority :one
 SELECT coalesce(attempt_count = 0 AND lease_token IS NULL, false)::boolean AS legacy_allowed,
        coalesce(lease_token = nullif(sqlc.arg(worker_token)::text, '')::uuid
