@@ -980,8 +980,14 @@ func (e *Engine) budgetForWake(in bootInput) time.Duration {
 	if e.bootBudget != nil {
 		return e.bootBudget(in.initState)
 	}
+	// A cold boot, or a restore that may fall back to one, gets the app's
+	// startup window (ADR-20261114120000).
+	extension := primeStartupExtension(in.spec.StartupDeadlineS)
 	if in.haveSnap && in.snapKey != "" {
-		return ColdBootTimeout
+		return ColdBootTimeout + extension
+	}
+	if in.initState == state.StateColdBooting {
+		return e.budgetFor(in.initState) + extension
 	}
 	return e.budgetFor(in.initState)
 }

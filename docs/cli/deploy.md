@@ -480,6 +480,14 @@ lifecycle:
   request_timeout_s: 20
 ```
 
+`startup_deadline_s` is how long the app may take to become ready on every
+cold boot, not only the first. It defaults to 30 s (15 s on Free) and may be
+raised to the plan's startup window: 30 s on Free and Hobby, 60 s on Pro,
+120 s on Scale. An app that needs longer than the gateway's default 30 s
+request hold should also set `scaling.wake_max_queue_wait_seconds` (up to
+120) so its first request waits for the boot instead of getting a 503 with
+`Retry-After`.
+
 The equivalent one-off override is `gregale deploy --execution-mode worker`.
 For a worker that consumes a queue, the `worker:` block declares the mode and
 its queue scaling together; see [Workers](../workers.md).

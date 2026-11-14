@@ -182,10 +182,10 @@ var catalog = map[string]Render{
 		Title: "Application startup timeout",
 		Hint:  "your app didn't become ready in time",
 		Why:   "the application did not satisfy its configured readiness check before the startup deadline; the app's startup deadline (`startup_deadline_s` in gregale.yaml, `--startup-deadline-s` on deploy) controls this window, while its idle timeout controls parking",
-		// The deadline cannot exceed the cold-boot window every later wake must
-		// meet (H12-10), so "raise the deadline" was advice no app could follow
-		// (Hunt 14 H14-4).
-		Fix: fmt.Sprintf("• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• listen first and defer expensive initialization: the app must answer within %d s, the cold-boot window every later wake must also meet, and `startup_deadline_s` cannot be raised above it", api.ColdBootReadyWindowS),
+		// Every later cold boot gets the same deadline (H12-10,
+		// ADR-20261114120000), so name the plan windows rather than an
+		// open-ended "raise the deadline" (Hunt 14 H14-4).
+		Fix: "• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• listen first and defer expensive initialization: " + startupWindowCopy("answer", "every later cold boot gets the same window"),
 	},
 	api.CodeAppStartupCrash: {
 		Title: "Application exited during startup",
@@ -387,18 +387,30 @@ const rawTCPServerFix = "• a raw TCP server (Redis, PostgreSQL, a message brok
 
 // startupFailureGuidance uses only known phase markers emitted by fcvm/schedd.
 // Raw error text can contain guest output; never interpolate it into guidance.
+// startupWindowCopy states how long an app may take to start: the spec
+// cold-boot window by default, and the plan windows startup_deadline_s may
+// raise it to (ADR-20261114120000).
+func startupWindowCopy(verb, tail string) string {
+	pro, scale := api.MustLimitsFor(api.PlanPro).MaxStartupDeadlineS, api.MustLimitsFor(api.PlanScale).MaxStartupDeadlineS
+	text := fmt.Sprintf("the app must %s within its startup deadline, %d s by default; `startup_deadline_s` can raise it to %d s on Pro and %d s on Scale, not above", verb, api.ColdBootReadyWindowS, pro, scale)
+	if tail != "" {
+		text += ", and " + tail
+	}
+	return text
+}
+
 func startupFailureGuidance(detail string) (why, fix string) {
 	for _, field := range strings.Fields(detail) {
 		switch strings.TrimRight(field, ":;,") {
 		case "startup_phase=guest_startup":
-			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", fmt.Sprintf("• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• listen first and defer expensive initialization: the app must answer within %d s, and `startup_deadline_s` cannot be raised above that\n%s", api.ColdBootReadyWindowS, rawTCPServerFix)
+			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", fmt.Sprintf("• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• listen first and defer expensive initialization: %s\n%s", startupWindowCopy("answer", ""), rawTCPServerFix)
 		case "startup_phase=handler_healthcheck":
 			if strings.Contains(detail, "answered without HTTP") {
 				return "The app accepted the readiness probe on its serving port and answered with something other than HTTP, as a raw TCP server (Redis, PostgreSQL, a message broker) does. A source build must answer HTTP on that port.", rawTCPServerFix
 			}
-			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", fmt.Sprintf("• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• report ready sooner: the app must be ready within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
+			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", fmt.Sprintf("• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• report ready sooner: %s", startupWindowCopy("be ready", ""))
 		case "startup_phase=image_healthcheck":
-			return "The image's command healthcheck did not produce a fresh successful result for this boot or restore. A listening port alone cannot pass this check.", fmt.Sprintf("• run the declared HEALTHCHECK inside the image with its configured user, working directory and environment\n• verify the check executable and required dependencies exist\n• review command timeouts, retries and startup grace: the check must pass within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
+			return "The image's command healthcheck did not produce a fresh successful result for this boot or restore. A listening port alone cannot pass this check.", fmt.Sprintf("• run the declared HEALTHCHECK inside the image with its configured user, working directory and environment\n• verify the check executable and required dependencies exist\n• review command timeouts, retries and startup grace: %s", startupWindowCopy("pass its check", ""))
 
 		}
 	}
