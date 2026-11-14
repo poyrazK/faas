@@ -4710,6 +4710,14 @@ func (c *Client) RotateKey(ctx context.Context, id string) (RotateKeyResponse, e
 	return out, c.do(ctx, "POST", "/v1/keys/"+id+"/rotate", nil, &out)
 }
 
+// RotateKeyWithGrace rotates a key and sets, for this rotation only, how
+// many days the old key keeps working. 0 revokes the old key at once; use
+// it when the key leaked.
+func (c *Client) RotateKeyWithGrace(ctx context.Context, id string, graceWindowDays int) (RotateKeyResponse, error) {
+	var out RotateKeyResponse
+	return out, c.do(ctx, "POST", "/v1/keys/"+id+"/rotate", RotateKeyRequest{GraceWindowDays: &graceWindowDays}, &out)
+}
+
 // GetGraceWindow returns the customer's per-account rotation
 // grace-window override (issue #189 / IAM-5). days=null means
 // "no override" — the rotation handler uses the plan default.
@@ -6621,6 +6629,20 @@ func (c *Client) RemoveOrgMember(ctx context.Context, slug, accountID string) er
 func (c *Client) TransferOrgOwnership(ctx context.Context, slug string, req TransferOwnershipRequest) (OrgResponse, error) {
 	var out OrgResponse
 	return out, c.do(ctx, "POST", "/v1/orgs/"+slug+"/transfer_ownership", req, &out)
+}
+
+// GetOrgSecurityPolicy returns the organization's security policy, such
+// as whether members must use two-factor authentication.
+func (c *Client) GetOrgSecurityPolicy(ctx context.Context, slug string) (OrgSecurityPolicy, error) {
+	var out OrgSecurityPolicy
+	return out, c.do(ctx, "GET", "/v1/orgs/"+slug+"/security-policy", nil, &out)
+}
+
+// PutOrgSecurityPolicy replaces the organization's security policy. Only
+// an owner can change it, after a fresh step-up.
+func (c *Client) PutOrgSecurityPolicy(ctx context.Context, slug string, req OrgSecurityPolicy) (OrgSecurityPolicy, error) {
+	var out OrgSecurityPolicy
+	return out, c.do(ctx, "PUT", "/v1/orgs/"+slug+"/security-policy", req, &out)
 }
 
 // PeekInvitation is a read-only lookup that returns the invitation

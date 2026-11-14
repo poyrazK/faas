@@ -238,6 +238,42 @@ prove that it exists or is still running. No recovery ID is invented for a
 missing or invalid submission receipt. Agents should read these fields instead
 of parsing the human hint. The CLI never executes the recovery command itself.
 
+## Workflow wait recovery
+
+`gregale --json workflow wait RUN_ID` and `workflow run/resume/retry --wait`
+emit structured Problems on stderr when waiting stops with an error. The
+existing Workflow run object stays on stdout when an accepted or verified
+snapshot is available; no new stdout wrapper is introduced. Standalone waits
+also keep their last verified snapshot if a later permanent API read fails.
+If no snapshot was obtained, stdout remains empty.
+
+The Problem's optional `recovery` contains `run_id`, `inspect_command` and
+`resume_command`. For example, a wait using the staging profile, a 10-minute
+deadline and a 30-second polling interval supplies these commands:
+
+```sh
+gregale --profile staging workflow status 11111111-1111-4111-8111-111111111111
+gregale --profile staging workflow wait 11111111-1111-4111-8111-111111111111 --timeout 10m0s --poll-interval 30s
+```
+
+Continuing a wait uses `workflow wait`, including after an original `workflow
+resume --wait` or `workflow retry --wait`. The commands only read status; they
+never repeat the original mutation or forward its input or idempotency key.
+They retain the selected profile, local timeout and polling interval, and use
+the exact resolved UUID even after selecting `latest`. Retain the same endpoint
+and credential overrides. An unverified acceptance does not invent a recovery
+ID; a caller-supplied target does not itself prove acceptance or current state.
+
+Overall deadline expiry exits `124` with `workflow_wait_timeout`; Ctrl-C exits
+`130` with `workflow_wait_interrupted` and leaves execution unchanged. Permanent
+API errors preserve their server code, status, remediation, valid request ID
+and existing exit classification. Transient HTTP 408/429, server, transport
+and malformed-response errors retain the existing polling behavior. A local
+deadline or interruption carries no invented correlation from an earlier
+transient failure. Successful and unsuccessful terminal outcomes keep their
+existing exit behavior, including exit `1` for failed/cancelled/dead or unknown
+terminal state. Diagnostic text and recovery metadata redact credentials.
+
 ## Request IDs on API errors
 
 When an API failure includes one valid `X-Faas-Request-Id`, normal text errors

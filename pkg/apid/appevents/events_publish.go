@@ -1,6 +1,7 @@
 package appevents
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -52,6 +53,10 @@ func (s *Service) PublishEvent(w http.ResponseWriter, r *http.Request, acct stat
 		problem = s.PublishRateProblem(acct, 1)
 	}
 	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	if envelope.EnvironmentID, problem = s.PublishEnvironment(r.Context(), acct.ID, req.EnvironmentID); problem != nil {
 		api.WriteProblem(w, problem)
 		return
 	}
@@ -164,4 +169,26 @@ func (s *Service) ValidateEventSchemaForIngress(w http.ResponseWriter, r *http.R
 	s.Host.Logger().Error("event schema lookup failed", "source", logsanitize.Field(envelope.Source), "type", logsanitize.Field(envelope.Type), "err", logsanitize.FieldAny(err))
 	api.WriteProblem(w, api.ErrCapacity("failed to validate event schema"))
 	return false
+}
+
+// PublishEnvironment validates the environment an account-level publish names
+// and returns the envelope's environment: "" for production
+// (ADR-20261104120000). An environment of another account is not found.
+func (s *Service) PublishEnvironment(ctx context.Context, accountID, requested string) (string, *api.Problem) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return "", nil
+	}
+	store, ok := s.Host.Store().(state.EventEnvironmentStore)
+	if !ok {
+		return "", api.ErrInternal("event environment store")
+	}
+	environment, err := store.AccountEventEnvironment(ctx, accountID, requested)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", api.ErrValidation("environmentid must name a project environment of this account")
+	}
+	if err != nil {
+		return "", api.ErrCapacity("failed to resolve event environment")
+	}
+	return environment, nil
 }

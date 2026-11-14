@@ -109,6 +109,10 @@ type githubdBridge struct {
 	// previewDatabases sets up a PR preview build's managed PostgreSQL
 	// databases (ADR-20261102123523); nil sets up none.
 	previewDatabases func(context.Context, state.Account, api.Plan, state.App) error
+	// prBranches serves branch-backed PR previews (ADR-20261113121342); nil
+	// answers their RPCs Unimplemented, so githubd falls back to app
+	// previews.
+	prBranches pullRequestBranches
 }
 
 // bridgeSettingsApplier is server.applyBridgeSourceSettings. push names the
@@ -245,6 +249,10 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 			return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: invalid deployment_scope %q", req.DeploymentScope)
 		}
 	}
+	if req.EnvironmentBranch && (req.EventKind != githubdpb.EnqueueBuildEventKind_EVENT_KIND_PULL_REQUEST ||
+		req.PullRequestNumber <= 0 || req.DeploymentScope == "" || g.prBranches == nil) {
+		return nil, status.Error(codes.InvalidArgument, "EnqueueBuild: an environment branch build needs a pull request, its branch scope and branch previews")
+	}
 	if req.GithubSourceRef != "" || req.GithubInstallationId != 0 {
 		if req.GithubSourceRef == "" || req.GithubInstallationId <= 0 ||
 			req.EventKind != githubdpb.EnqueueBuildEventKind_EVENT_KIND_PUSH ||
@@ -285,6 +293,15 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if err := g.checkSourcePlanLimit(ctx, req.AccountId, req.SourceBytes); err != nil {
 		return nil, err
 	}
+	if req.EnvironmentBranch {
+		if err := g.prBranches.pullRequestBranchBuild(ctx, app, req.DeploymentScope, int(req.PullRequestNumber)); err != nil {
+			return nil, err
+		}
+	}
+	// previewApp is a build of a PR preview app. A branch build is a PR
+	// build of the production app into the pull request's branch: the
+	// preview-app steps below would act on production (ADR-20261113121342).
+	previewApp := eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview && !req.EnvironmentBranch
 
 	// Source-path allowlist (issue #432 phase 5 review follow-up):
 	// the unix-socket DAC is the only auth in v1.0 (ADR-015), but
@@ -379,7 +396,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	}
 	// A preview build waits for its databases before it spends the deploy
 	// window, so the retries while one provisions cost no deploys.
-	if eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+	if previewApp {
 		if err := g.preparePreviewDatabases(ctx, acct, resource.Plan, app); err != nil {
 			return nil, err
 		}
@@ -403,7 +420,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	// ADR-20261028090000: a PR preview builds with its production app's
 	// pr-preview values and secrets. The production store always implements
 	// previewconfig.Store; the narrow unit-test stubs do not.
-	if configStore, ok := g.store.(previewconfig.Store); ok && eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
+	if configStore, ok := g.store.(previewconfig.Store); ok && previewApp {
 		synced, err := previewconfig.SyncFromParent(ctx, configStore, app)
 		if err != nil {
 			return nil, status.Errorf(codes.Unavailable, "EnqueueBuild: preview values: %v", err)
@@ -585,7 +602,9 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	}
 	params.SourcePath = spooled
 	undoSettings := func(context.Context) {}
-	if g.applySettings != nil && manifest != nil {
+	// A branch build serves the branch's copied settings: the pull request's
+	// gregale.yaml would otherwise change the production app's.
+	if g.applySettings != nil && manifest != nil && !req.EnvironmentBranch {
 		updated, undo, problem := g.applySettings(ctx, resource, app, pushSettingsManifest(manifest, params), sourcePush{Scope: req.DeploymentScope, Pusher: req.Pusher})
 		if problem != nil {
 			if spooled != req.SourcePath {
@@ -901,7 +920,7 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error, githubSubscriptions func(context.Context, string, string, api.GitHubPullRequestEvent) error) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error, githubSubscriptions func(context.Context, string, string, api.GitHubPullRequestEvent) error, prBranches pullRequestBranches) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
 		store:       store,
 		notif:       notif,
@@ -917,6 +936,7 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		previewDatabases: previewDatabases,
 
 		githubSubscriptions: githubSubscriptions,
+		prBranches:          prBranches,
 	})
 }
 

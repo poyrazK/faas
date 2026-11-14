@@ -286,3 +286,12 @@ instant 503 "Wake queue wait budget exceeded".
 - The prime extension code stays and is inert at these caps; raising a cap
   above the window again requires the extended cold-boot wakes described
   above. `pkg/sched/cold_boot_window_test.go` pins the caps to the window.
+
+## Amendment (2026-11-14): per-plan startup window on every cold boot
+
+[ADR-20261114120000](20261114120000-per-plan-startup-window.md) lifts the
+2026-10-22 cap. Ordinary wakes no longer wait on the scheduler's main loop, so
+every cold boot now gets the app's startup deadline in its RPC budget and its
+watchdog reprieve, not only the deploy prime. Each plan's cap is
+`Limits.MaxStartupDeadlineS`: Free and Hobby 30 s, Pro 60 s, Scale 120 s.
+`MaxAppManifestStartupDeadlineS` is 120. The defaults are unchanged.

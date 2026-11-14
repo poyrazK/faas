@@ -2559,6 +2559,13 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// ADR 20261022111812: once the seal_domains role stages the edge
 	// domain, its identity opens basic-auth credentials and log drain
 	// headers ahead of the fleet and host identities.
+	edgeRetired, err := edgeRetiredFromEnv(osGetenv)
+	if err != nil {
+		return err
+	}
+	if edgeRetired {
+		log.Info("edge identity retired on this node: edge values open through secretd, verifiers and vmmd")
+	}
 	edgeDomainIdentities, err := loadEdgeSealDomain(osGetenv)
 	if err != nil {
 		return err

@@ -622,6 +622,36 @@ type AccountAbuseHoldStore interface {
 	ReleaseAccountAbuseHold(ctx context.Context, accountID string) (released bool, err error)
 }
 
+// AccountSignupFacts is what an account looked like when it signed up
+// (ADR-20261113160000). SignupIP and UserAgent are cleared once the row is
+// older than api.SignupFactsPersonalRetention (ReducedAt is then set).
+type AccountSignupFacts struct {
+	AccountID       string
+	Method          string
+	SignupIP        string
+	UserAgent       string
+	Country         string
+	ASN             uint32
+	ASNOrg          string
+	EmailDomain     string
+	DisposableEmail bool
+	CreatedAt       time.Time
+	ReducedAt       *time.Time
+}
+
+// AccountSignupFactsStore records and reads AccountSignupFacts. Both PgStore
+// and MemStore implement it; callers type-assert.
+type AccountSignupFactsStore interface {
+	// RecordAccountSignupFacts stores the facts unless the account already
+	// has a record; the first sign-up wins.
+	RecordAccountSignupFacts(ctx context.Context, facts AccountSignupFacts) error
+	// AccountSignupFacts returns ErrNotFound for an account without a record.
+	AccountSignupFacts(ctx context.Context, accountID string) (AccountSignupFacts, error)
+	// ReduceAccountSignupFacts clears SignupIP and UserAgent on up to batch
+	// records created before cutoff and returns how many it reduced.
+	ReduceAccountSignupFacts(ctx context.Context, cutoff, now time.Time, batch int) (int64, error)
+}
+
 // AccountAbuseStrikeStore records abuse recycles against a resource owner
 // (account or organization) for the account abuse hold escalation
 // (ADR-20261113133500). The count is shared by every schedd and survives

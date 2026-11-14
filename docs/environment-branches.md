@@ -109,6 +109,39 @@ object-storage commands list only the objects the branch wrote itself.
 
 Only a `live` branch can join private networks.
 
+## Pull request previews
+
+A project connected to GitHub can preview each pull request as a branch of
+production instead of as preview apps:
+
+```sh
+gregale github setup --preview-mode branch
+```
+
+- Opening a pull request makes branch `pr-<number>` of production. Each push
+  builds the pull request's head into it. The branch keeps its data across
+  pushes; `gregale environment branch <project> pr-<number> --reset` copies
+  production again, and the preview URL stays the same.
+- The branch runs with production's configuration and secrets. The pull
+  request's `gregale.yaml` changes its code, not the app settings.
+- Each push moves the branch's expiry to the preview TTL from now, up to the
+  branch's longest lifetime. Closing the pull request deletes the branch
+  24 hours later.
+- A push rebuilds only the workloads whose files changed; the others keep
+  serving their last build. A change to a shared file rebuilds them all.
+- Turning previews off, disconnecting the repository or uninstalling the
+  GitHub App deletes the project's pull request branches within a minute.
+  Branches you made yourself are not touched.
+- Previews count against the branch limit below. Past it, or when Gregale
+  cannot make the branch, the pull request gets an app preview and its check
+  run says why.
+- Pull requests from forks are never previewed: a branch holds production's
+  secrets.
+
+Branch previews are not yet available to every account. While they are not
+enabled, `--preview-mode branch` is refused with
+`409 environment_branch_unavailable`.
+
 ## Plans and limits
 
 | Plan | Branches at once |

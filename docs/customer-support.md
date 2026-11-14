@@ -49,7 +49,11 @@ A staff ticket page shows a **Customer account** panel beside the conversation
 current restrictions (suspension, abuse holds, unverified email, overage cap,
 platform release pause), failed deployments from the last 7 days with their error,
 custom domain problems, enabled previews, and the API errors the customer was
-refused in the last 24 hours, counted by problem code. For an organization case
+refused in the last 24 hours, counted by problem code. Refusals the sign-in
+layer returns are included when the credential names the account: a revoked or
+expired API key or deploy token, a suspended account, or a key limited to other
+projects (ADR-20261114190002). An unknown key or a request without credentials
+names no account and is not recorded. For an organization case
 the panel describes the member who opened it. The panel never shows an email and
 loads only after the roster check for the ticket; if it cannot be loaded the
 conversation still works.
@@ -209,7 +213,17 @@ either:
   `not_needed` or `false_positive`, plus an optional note.
 
 Both need a fresh step-up. A signal that clears with no action is marked
-`resolved_on_own`. The page's "Last 30 days" table shows, per kind, how many
+`resolved_on_own`.
+
+Customers see their own open signals of four kinds on their account health page
+and in `GET /v1/account/health`, under "Keeps going wrong" (ADR-20261114190002):
+`deploy_failing`, `app_oom`, `jobs_failing` and `limit_pressure`, each with
+customer wording and a next step. The wording is built from the signal's subject
+and count, never from the staff detail. The other kinds stay staff-only: domain,
+refused-request and payment problems already have their own sections on that
+page, and boot failures can have platform causes. Dismissing a signal also hides
+it from the customer, so dismiss a `platform_issue` or `false_positive` signal
+before the customer reads it as their fault. The page's "Last 30 days" table shows, per kind, how many
 signals led to contact, how many were false positives and the median time
 to act; use it before changing thresholds in `pkg/api/limits.go`. Treat many
 signals of one kind at once as a platform problem

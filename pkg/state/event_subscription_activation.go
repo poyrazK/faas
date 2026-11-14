@@ -242,7 +242,8 @@ func (m *MemStore) applyEventSubscriptionIntentLocked(intent memEventSubscriptio
 	}
 	now := time.Now().UTC()
 	for key, subscription := range m.eventSubscriptions {
-		if !sameMemUUID(subscription.AppID, intent.AppID) {
+		// Only production's subscriptions are production's to reconcile.
+		if !sameMemUUID(subscription.AppID, intent.AppID) || subscription.DeploymentScope != "" {
 			continue
 		}
 		want := declared[canonicalMemUUID(subscription.ID)]

@@ -3,27 +3,31 @@ package dashboard
 import "github.com/onebox-faas/faas/pkg/api"
 
 type DataPipelinesData struct {
-	Alerts                    []DataPipelineAlerts
-	Readers                   []DataPipelineReaders
-	DataAPIEnabled            bool
-	AuthApps                  []DataPipelineAuthApp
-	SetupEnabled              bool
-	Setups                    []DataPipelineSetupItem
-	Enabled                   bool
-	ReadersEnabled            bool
-	VerificationCancelEnabled bool
-	CSRFToken                 string
-	ConnectionID              string
-	ConnectionRevision        int64
-	RefreshSeconds            int
-	Connections               []api.DataConnection
-	Check                     *api.DataConnectionCheck
-	Pipelines                 []api.DataPipeline
-	SchemaChanges             []DataPipelineSchemaChange
-	TableSelections           []DataPipelineTableSelection
-	Verifications             []DataPipelineVerificationItem
-	Databases                 []ManagedPostgresDatabaseItem
-	Message                   string
+	SetupPlan                                  *api.DataPipelineSetupPlan
+	FreshnessMin, FreshnessMax, IndexBudgetMax int64
+	NeonSteps                                  []string
+	MembershipLimit                            int
+	Alerts                                     []DataPipelineAlerts
+	Readers                                    []DataPipelineReaders
+	DataAPIEnabled                             bool
+	AuthApps                                   []DataPipelineAuthApp
+	SetupEnabled                               bool
+	Setups                                     []DataPipelineSetupItem
+	Enabled                                    bool
+	ReadersEnabled                             bool
+	VerificationCancelEnabled                  bool
+	CSRFToken                                  string
+	ConnectionID                               string
+	ConnectionRevision                         int64
+	RefreshSeconds                             int
+	Connections                                []api.DataConnection
+	Check                                      *api.DataConnectionCheck
+	Pipelines                                  []api.DataPipeline
+	SchemaChanges                              []DataPipelineSchemaChange
+	TableSelections                            []DataPipelineTableSelection
+	Verifications                              []DataPipelineVerificationItem
+	Databases                                  []ManagedPostgresDatabaseItem
+	Message                                    string
 }
 
 type DataPipelineAlerts struct {
@@ -102,8 +106,11 @@ type DataPipelineVerificationItem struct {
 
 // Reader previews contain JWT subjects and table names, never credentials.
 type DataPipelineReaders struct {
-	PipelineID, Name, ID, State, CurrentInput string
-	Revision                                  int64
-	Current, Added, Removed, Tables           []string
-	CanRequest, CanApprove, CanDiscard        bool
+	Tenant                                            bool
+	TenantColumn                                      string
+	Memberships, AddedMemberships, RemovedMemberships []api.DataPipelineTenantMembership
+	PipelineID, Name, ID, State, CurrentInput         string
+	Revision                                          int64
+	Current, Added, Removed, Tables                   []string
+	CanRequest, CanApprove, CanDiscard                bool
 }

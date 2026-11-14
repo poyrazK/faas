@@ -120,6 +120,46 @@ func TestEnvironmentBranches(t *testing.T) {
 		t.Logf("metric environment_branch_first_request_s=%.1f", time.Since(start).Seconds())
 	})
 
+	var expiresAt time.Time
+	s.check("status_names_the_branch", func(t *testing.T) {
+		doc := object(t, tg.runWithEnvOK(t, branchesCLI, time.Minute, "environment", "branch", project, branch, "--status").stdout)
+		workloads := asSlice(field(doc, "branch.workloads"))
+		if str(doc, "branch.parent") != "production" || len(workloads) != 1 ||
+			strings.TrimSuffix(str(workloads[0], "url"), "/") != branchURL {
+			t.Fatalf("status = %s; want a branch of production serving at %s", compact(doc), branchURL)
+		}
+		var err error
+		if expiresAt, err = time.Parse(time.RFC3339, str(doc, "branch.expires_at")); err != nil {
+			t.Fatalf("status expires_at %q: %v", str(doc, "branch.expires_at"), err)
+		}
+	})
+
+	s.check("extend_moves_the_expiry", func(t *testing.T) {
+		doc := object(t, tg.runWithEnvOK(t, branchesCLI, time.Minute, "environment", "branch", project, branch, "--extend", "3h").stdout)
+		extended, err := time.Parse(time.RFC3339, str(doc, "branch.expires_at"))
+		if err != nil || !extended.After(expiresAt) || extended.Before(time.Now().Add(2*time.Hour)) {
+			t.Fatalf("extend = %s (%v); want an expiry about 3h from now, after %s", compact(doc), err, expiresAt)
+		}
+	})
+
+	s.step("reset_keeps_the_url", func(t *testing.T) {
+		// ADR-20261031193635 amendment 2026-11-12: a reset makes the branch
+		// again from production, and its workloads keep their URLs.
+		res := tg.runWithEnv(t, branchesCLI, 3*time.Minute, "environment", "branch", project, branch, "--reset")
+		if res.exit != 0 {
+			t.Fatalf("reset failed (exit %d): %s", res.exit, tg.redact(res.problem()))
+		}
+		doc := object(t, res.stdout)
+		workloads := asSlice(field(doc, "branch.workloads"))
+		if len(workloads) != 1 || strings.TrimSuffix(str(workloads[0], "url"), "/") != branchURL {
+			t.Fatalf("reset = %s; want the workload still at %s", compact(doc), branchURL)
+		}
+		eventually(t, "the reset branch serves at its URL", 3*time.Minute, 2*time.Second, func() (bool, string) {
+			r := get(branchURL + "/")
+			return r.status == 200 && strings.Contains(string(r.body), `"service":"web"`), r.String()
+		})
+	})
+
 	s.step("delete_branch", func(t *testing.T) {
 		res := tg.runWithEnv(t, branchesCLI, 2*time.Minute, "environment", "delete", project, branch, "--yes")
 		if res.exit != 0 {

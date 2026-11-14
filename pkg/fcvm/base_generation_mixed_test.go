@@ -75,7 +75,7 @@ func mixedNode(t *testing.T, cache *storage.LocalCacheBackend, generation string
 // bootMixed runs vmmd's admission gate and returns the base bytes the node
 // would attach as drive0.
 func bootMixed(ctx context.Context, m *Manager, cache *storage.LocalCacheBackend) (string, error) {
-	if err := m.bringUpScanCheck(ctx, mixedBaseKey); err != nil {
+	if _, err := m.bringUpScanCheck(ctx, mixedBaseKey); err != nil {
 		return "", err
 	}
 	rc, err := cache.Get(ctx, mixedBaseKey)

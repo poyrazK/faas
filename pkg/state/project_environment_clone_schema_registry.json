@@ -21,6 +21,23 @@
     "kind": "operational"
   },
   {
+    "table": "account_signup_facts",
+    "columns": [
+      "account_id",
+      "asn",
+      "asn_org",
+      "country",
+      "created_at",
+      "disposable_email",
+      "email_domain",
+      "method",
+      "reduced_at",
+      "signup_ip",
+      "user_agent"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "account_billing_connections",
     "columns": [
       "account_id",
@@ -3476,6 +3493,7 @@
       "id",
       "kind",
       "log_path",
+      "not_before",
       "source_bytes",
       "started_at",
       "status"
@@ -5090,8 +5108,10 @@
       "created_at",
       "database_id",
       "desired_state",
+      "freshness_target_seconds",
       "generation",
       "id",
+      "index_change",
       "initialized",
       "lease_token",
       "lease_until",
@@ -5106,6 +5126,7 @@
       "revision",
       "schema_approval",
       "schema_change",
+      "serving_config",
       "source_connection_id",
       "state",
       "tables",
@@ -7608,7 +7629,9 @@
       "acknowledgment_lease_seconds",
       "app_id",
       "created_at",
+      "deployment_scope",
       "enabled",
+      "environment_id",
       "filter",
       "id",
       "routing_retry_policy",
@@ -7620,7 +7643,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "deployment_scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -8189,6 +8218,7 @@
       "preview_bot_prs",
       "preview_draft_prs",
       "preview_enabled",
+      "preview_mode",
       "preview_service_policy",
       "preview_ttl_hours",
       "production_trigger",
@@ -12872,6 +12902,7 @@
   {
     "table": "object_inventory_schedule",
     "columns": [
+      "active_since",
       "attempt_at",
       "bucket_id",
       "mutated_at",
@@ -14065,6 +14096,16 @@
     "kind": "account_identity"
   },
   {
+    "table": "org_security_policies",
+    "columns": [
+      "org_id",
+      "require_mfa",
+      "updated_at",
+      "updated_by_account_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "org_memberships",
     "columns": [
       "access_revision",
@@ -14298,12 +14339,16 @@
   {
     "table": "outbound_ai_price_entries",
     "columns": [
+      "cache_write_1h_millicents_per_mtok",
       "cache_write_millicents_per_mtok",
       "cached_input_audio_millicents_per_mtok",
       "cached_input_millicents_per_mtok",
       "input_audio_millicents_per_mtok",
       "input_image_millicents_per_mtok",
       "input_millicents_per_mtok",
+      "long_context_above_input_tokens",
+      "long_context_input_percent",
+      "long_context_output_percent",
       "millicents_per_audio_minute",
       "millicents_per_code_session_gb",
       "millicents_per_file_search",
@@ -16145,6 +16190,7 @@
       "parent_environment_id",
       "private_networks",
       "project_id",
+      "pull_request_number",
       "slot_id"
     ],
     "kind": "operational"

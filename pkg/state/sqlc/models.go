@@ -178,6 +178,20 @@ type AccountPassword struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type AccountSignupFact struct {
+	AccountID       pgtype.UUID
+	Method          string
+	SignupIp        *netip.Addr
+	UserAgent       pgtype.Text
+	Country         pgtype.Text
+	Asn             pgtype.Int8
+	AsnOrg          pgtype.Text
+	EmailDomain     string
+	DisposableEmail bool
+	CreatedAt       pgtype.Timestamptz
+	ReducedAt       pgtype.Timestamptz
+}
+
 // Accounts whose combined billable overage (compute plus live secondary meters) reached overage_cap_cents this UTC month. Written by meterd, read by schedd (ADR-20261026120843).
 type AccountSpendCapHold struct {
 	AccountID     pgtype.UUID
@@ -2682,6 +2696,7 @@ type Build struct {
 	CancelledByDeploymentCascade bool
 	CacheStatus                  pgtype.Text
 	CacheKeySha256               pgtype.Text
+	NotBefore                    pgtype.Timestamptz
 	CoalescedWith                pgtype.UUID
 }
 
@@ -3946,36 +3961,39 @@ type DataConnectionCheck struct {
 }
 
 type DataPipeline struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	Name                 string
-	SourceConnectionID   pgtype.UUID
-	DatabaseID           pgtype.UUID
-	Tables               []byte
-	ReadSubjects         []byte
-	DesiredState         string
-	State                string
-	Revision             int64
-	ObservedRevision     int64
-	Generation           int64
-	Reason               string
-	TablesReady          int32
-	RetainedWalBytes     pgtype.Int8
-	ObservedAt           pgtype.Timestamptz
-	Verification         string
-	VerifiedAt           pgtype.Timestamptz
-	Initialized          bool
-	VerifyRequested      bool
-	LeaseToken           string
-	LeaseUntil           pgtype.Timestamptz
-	RetryAt              pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	AppliedThroughAt     pgtype.Timestamptz
-	SchemaApproval       string
-	SchemaChange         []byte
-	VerificationProgress []byte
-	ReaderChange         []byte
-	WalRetention         []byte
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	Name                   string
+	SourceConnectionID     pgtype.UUID
+	DatabaseID             pgtype.UUID
+	Tables                 []byte
+	ReadSubjects           []byte
+	DesiredState           string
+	State                  string
+	Revision               int64
+	ObservedRevision       int64
+	Generation             int64
+	Reason                 string
+	TablesReady            int32
+	RetainedWalBytes       pgtype.Int8
+	ObservedAt             pgtype.Timestamptz
+	Verification           string
+	VerifiedAt             pgtype.Timestamptz
+	Initialized            bool
+	VerifyRequested        bool
+	LeaseToken             string
+	LeaseUntil             pgtype.Timestamptz
+	RetryAt                pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+	AppliedThroughAt       pgtype.Timestamptz
+	SchemaApproval         string
+	SchemaChange           []byte
+	VerificationProgress   []byte
+	ReaderChange           []byte
+	WalRetention           []byte
+	ServingConfig          []byte
+	FreshnessTargetSeconds int64
+	IndexChange            []byte
 }
 
 type DataPipelineAlert struct {
@@ -6076,6 +6094,8 @@ type EventSubscription struct {
 	RoutingRetryPolicy         []byte
 	SchemaVersions             []string
 	AcknowledgmentLeaseSeconds int32
+	DeploymentScope            string
+	EnvironmentID              pgtype.UUID
 }
 
 type EventSubscriptionCapacityCommand struct {
@@ -6759,6 +6779,7 @@ type GithubDeployPolicy struct {
 	ProductionTrigger    string
 	PreviewBotPrs        bool
 	PreviewDraftPrs      bool
+	PreviewMode          string
 }
 
 type GithubDeployment struct {
@@ -10450,11 +10471,12 @@ type ObjectDeletion struct {
 }
 
 type ObjectInventorySchedule struct {
-	BucketID   pgtype.UUID
-	AttemptAt  pgtype.Timestamptz
-	ObservedAt pgtype.Timestamptz
-	QuietAfter pgtype.Timestamptz
-	MutatedAt  pgtype.Timestamptz
+	BucketID    pgtype.UUID
+	AttemptAt   pgtype.Timestamptz
+	ObservedAt  pgtype.Timestamptz
+	QuietAfter  pgtype.Timestamptz
+	MutatedAt   pgtype.Timestamptz
+	ActiveSince pgtype.Timestamptz
 }
 
 type ObjectLifecycleScan struct {
@@ -11217,6 +11239,13 @@ type OrgMembership struct {
 	AccessRevision     int64
 }
 
+type OrgSecurityPolicy struct {
+	OrgID              pgtype.UUID
+	RequireMfa         bool
+	UpdatedByAccountID pgtype.UUID
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type OutboundAdmissionLease struct {
 	LeaseID                  pgtype.UUID
 	IntegrationID            pgtype.UUID
@@ -11398,6 +11427,10 @@ type OutboundAiPriceEntry struct {
 	InputAudioMillicentsPerMtok       pgtype.Int8
 	CachedInputAudioMillicentsPerMtok pgtype.Int8
 	OutputAudioMillicentsPerMtok      pgtype.Int8
+	CacheWrite1hMillicentsPerMtok     pgtype.Int8
+	LongContextAboveInputTokens       pgtype.Int8
+	LongContextInputPercent           pgtype.Int4
+	LongContextOutputPercent          pgtype.Int4
 }
 
 type OutboundAiPriceList struct {
@@ -12875,6 +12908,7 @@ type ProjectEnvironmentBranch struct {
 	CreatedAt           pgtype.Timestamptz
 	PrivateNetworks     string
 	SlotID              pgtype.UUID
+	PullRequestNumber   pgtype.Int4
 }
 
 // ADR-20261031193635 overlay buckets owned by an environment branch; purged and deleted after the branch is gone.

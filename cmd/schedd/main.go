@@ -776,6 +776,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
+	if retired, err := deliveryRetiredFromEnv(os.Getenv, deliveryViaSecretd, scheddHostAgeKeyDir()); err != nil {
+		return err
+	} else if retired {
+		log.Info("delivery identity retired on this node: delivery values open through secretd")
+	}
 	if grantRPC != nil {
 		grantor := sched.NewSecretGrantor(grantRPC, ownerNodeID, vmmRouter.NodeName, appRunsOn(engine.Ledger()), log)
 		vmmRouter.WithSecretGrantor(grantor)
