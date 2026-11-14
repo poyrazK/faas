@@ -1194,7 +1194,7 @@ var cliCommands = []cliCommand{
 				{Name: "no-wait", Short: "print the evaluation without waiting for its verdict", Bool: true},
 				{Name: "timeout", Short: "how long to wait for the verdict (default 30m)", Value: "duration"},
 			}},
-			{Name: "prompts", Short: "Manage versioned prompts apps call by name, with canaries and evaluations", Notes: []string{"Push a prompt file, diff and render versions, make one live, roll back, canary or evaluate a version."}, Positionals: []string{"<list|get|push|diff|render|promote|rollback|canary|stats|evaluate|rm>", "[<name>|<file>]", "[<version>]"}, Flags: []cliFlag{
+			{Name: "prompts", Short: "Manage versioned prompts that apps call by name", Notes: []string{"Push a prompt file, diff and render versions, make one live, roll back, canary or evaluate a version."}, Positionals: []string{"<list|get|push|diff|render|promote|rollback|canary|stats|evaluate|rm>", "[<name>|<file>]", "[<version>]"}, Flags: []cliFlag{
 				{Name: "version", Short: "get or render: this version instead of the live one", Value: "N"},
 				{Name: "live", Short: "push: make the pushed version live", Bool: true},
 				{Name: "name", Short: "push: prompt name (default: the file's name field)", Value: "NAME"},

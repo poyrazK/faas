@@ -203,13 +203,13 @@ func formatPromptVersion(version api.OutboundAIPromptVersion) string {
 
 // promptFile is the file `push` reads, as YAML or JSON.
 type promptFile struct {
-	Name        string                        `json:"name" yaml:"name"`
-	Description *string                       `json:"description" yaml:"description"`
-	Messages    []api.OutboundAIPromptMessage `json:"messages" yaml:"messages"`
-	Defaults    map[string]string             `json:"defaults" yaml:"defaults"`
-	Target      api.OutboundAIPromptTarget    `json:"target" yaml:"target"`
-	Params      map[string]any                `json:"params" yaml:"params"`
-	Note        string                        `json:"note" yaml:"note"`
+	Name        string                        `json:"name"`
+	Description *string                       `json:"description"`
+	Messages    []api.OutboundAIPromptMessage `json:"messages"`
+	Defaults    map[string]string             `json:"defaults"`
+	Target      api.OutboundAIPromptTarget    `json:"target"`
+	Params      api.OutboundAIPromptParams    `json:"params"`
+	Note        string                        `json:"note"`
 }
 
 func readPromptFile(path string) (string, api.PushOutboundAIPromptVersionRequest, error) {
@@ -217,22 +217,22 @@ func readPromptFile(path string) (string, api.PushOutboundAIPromptVersionRequest
 	if err != nil {
 		return "", api.PushOutboundAIPromptVersionRequest{}, err
 	}
-	var file promptFile
-	if err := yaml.Unmarshal(raw, &file); err != nil {
+	// YAML is a superset of JSON. Decode it generically and re-encode it as
+	// JSON so the API types' json tags (integration_id, max_tokens) apply.
+	var generic any
+	if err := yaml.Unmarshal(raw, &generic); err != nil {
 		return "", api.PushOutboundAIPromptVersionRequest{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-	var params api.OutboundAIPromptParams
-	if len(file.Params) > 0 {
-		encoded, err := json.Marshal(file.Params)
-		if err == nil {
-			err = json.Unmarshal(encoded, &params)
-		}
-		if err != nil {
-			return "", api.PushOutboundAIPromptVersionRequest{}, fmt.Errorf("params in %s: %w", path, err)
-		}
+	var file promptFile
+	encoded, err := json.Marshal(generic)
+	if err == nil {
+		err = json.Unmarshal(encoded, &file)
+	}
+	if err != nil {
+		return "", api.PushOutboundAIPromptVersionRequest{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return file.Name, api.PushOutboundAIPromptVersionRequest{Description: file.Description, Messages: file.Messages,
-		Defaults: file.Defaults, Target: file.Target, Params: params, Note: file.Note}, nil
+		Defaults: file.Defaults, Target: file.Target, Params: file.Params, Note: file.Note}, nil
 }
 
 func (c aiPromptsCLI) push(args []string) int {
