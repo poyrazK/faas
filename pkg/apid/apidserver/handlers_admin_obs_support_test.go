@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -268,5 +269,76 @@ func TestCustomerSignalMetricsCountWithoutSink(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(m.open.WithLabelValues(api.AttentionKindDeployFailing)); got != 0 {
 		t.Fatalf("deploy_failing gauge=%v, want reset to 0", got)
+	}
+}
+
+// TestRecordCredentialRefusalsAttributesAuthFailures pins
+// ADR-20261114090000: refusals the auth middleware returns before the
+// account handler runs are recorded for the credential's account once, and
+// a credential that names no account records nothing.
+func TestRecordCredentialRefusalsAttributesAuthFailures(t *testing.T) {
+	ctx := context.Background()
+	e := newObsEnv(t, api.ScopesReadSurface, "ops@faas.dev", "customer@faas.dev")
+	var captured []customererrors.Event
+	e.s.customerErrorSink = func(event customererrors.Event) { captured = append(captured, event) }
+
+	// A handler refusal is recorded once, by the inner layer.
+	if rec := e.do(t, "GET", "/v1/apps/missing-app", nil, nil); rec.Code < 400 || len(captured) != 1 {
+		t.Fatalf("handler refusal: status=%d captured=%+v", rec.Code, captured)
+	}
+
+	// A suspended account is refused by the middleware itself.
+	captured = nil
+	if err := e.store.UpdateAccountStatus(ctx, e.acct.ID, state.AccountSuspended); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.do(t, "GET", "/v1/apps", nil, map[string]string{api.RequestIDHeader: "req-suspended"})
+	if rec.Code != http.StatusPaymentRequired || len(captured) != 1 {
+		t.Fatalf("suspended: status=%d captured=%+v", rec.Code, captured)
+	}
+	if got := captured[0]; got.AccountID != e.acct.ID || got.Code != api.CodeBillingPastDue || got.Route != "GET /v1/apps" || got.RequestID != "req-suspended" {
+		t.Fatalf("suspended event = %+v", got)
+	}
+	if err := e.store.UpdateAccountStatus(ctx, e.acct.ID, state.AccountActive); err != nil {
+		t.Fatal(err)
+	}
+
+	// A revoked key still names its account.
+	captured = nil
+	keys, err := e.store.ListAPIKeys(ctx, e.acct.ID)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("keys = %+v, %v", keys, err)
+	}
+	if _, err := e.store.RevokeOrgAPIKey(ctx, keys[0].OrgID, keys[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	rec = e.do(t, "GET", "/v1/apps/shop", nil, nil)
+	code := rec.Header().Get(api.ErrorCodeHeader)
+	if rec.Code != http.StatusUnauthorized || code == "" || len(captured) != 1 {
+		t.Fatalf("revoked: status=%d code=%q captured=%+v", rec.Code, code, captured)
+	}
+	if got := captured[0]; got.AccountID != e.acct.ID || got.Code != code || got.AppSlug != "shop" {
+		t.Fatalf("revoked event = %+v", got)
+	}
+
+	// An unknown key and a missing credential name no account.
+	captured = nil
+	unknown, _, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, auth := range []string{"Bearer " + unknown, ""} {
+		req := httptest.NewRequest("GET", "/v1/apps", nil)
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rec := httptest.NewRecorder()
+		e.h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%q: status=%d", auth, rec.Code)
+		}
+	}
+	if len(captured) != 0 {
+		t.Fatalf("refusals without an account were recorded: %+v", captured)
 	}
 }

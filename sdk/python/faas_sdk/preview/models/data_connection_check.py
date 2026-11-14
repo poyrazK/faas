@@ -35,6 +35,9 @@ class DataConnectionCheck:
     checks: list[DataConnectionIssue]
     tables: list[DataSourceTable]
     created_at: datetime.datetime
+    source_provider_hint: str | Unset = UNSET
+    """Hostname-derived setup hint; never a qualification or admission grant."""
+    source_guidance_url: str | Unset = UNSET
     requested_tables: list[str] | Unset = UNSET
     """Exact discovery selection retained across queueing and worker completion."""
     search: str | Unset = UNSET
@@ -70,6 +73,10 @@ class DataConnectionCheck:
             tables.append(tables_item)
 
         created_at = self.created_at.isoformat()
+
+        source_provider_hint = self.source_provider_hint
+
+        source_guidance_url = self.source_guidance_url
 
         requested_tables: list[str] | Unset = UNSET
         if not isinstance(self.requested_tables, Unset):
@@ -108,6 +115,10 @@ class DataConnectionCheck:
                 "created_at": created_at,
             }
         )
+        if source_provider_hint is not UNSET:
+            field_dict["source_provider_hint"] = source_provider_hint
+        if source_guidance_url is not UNSET:
+            field_dict["source_guidance_url"] = source_guidance_url
         if requested_tables is not UNSET:
             field_dict["requested_tables"] = requested_tables
         if search is not UNSET:
@@ -158,6 +169,10 @@ class DataConnectionCheck:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        source_provider_hint = d.pop("source_provider_hint", UNSET)
+
+        source_guidance_url = d.pop("source_guidance_url", UNSET)
+
         requested_tables = cast(list[str], d.pop("requested_tables", UNSET))
 
         search = d.pop("search", UNSET)
@@ -200,6 +215,8 @@ class DataConnectionCheck:
             checks=checks,
             tables=tables,
             created_at=created_at,
+            source_provider_hint=source_provider_hint,
+            source_guidance_url=source_guidance_url,
             requested_tables=requested_tables,
             search=search,
             capacity=capacity,

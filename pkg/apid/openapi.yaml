@@ -28458,6 +28458,9 @@ paths:
                 dev_source_deleted:
                   type: string
                   description: "JSON string array of canonical archive paths removed since dev_source_base."
+                dev_source_build_now:
+                  type: string
+                  description: "Set to true to build this sync at once even when it reaches the running instance as a live patch. Without it, such a sync's build waits until the developer stops saving and a later sync replaces it."
                 dockerfile:
                   type: boolean
                 runtime:
@@ -40923,8 +40926,8 @@ paths:
         Deletes the branch and creates it again from its parent with the same
         slug, egress, private-network mode and time to live. Its workloads
         are published from the parent's current builds and its data is copied
-        again as of now. Work done in the branch is discarded, and its
-        workloads get new URLs. A branch with branches of its own cannot be
+        again as of now. Work done in the branch is discarded; its
+        workloads keep their URLs. A branch with branches of its own cannot be
         reset.
       responses:
         '200':
@@ -72065,6 +72068,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /v1/data/pipelines/{id}/tenant-readers:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Pipeline whose tenant membership preview or approval is being managed.
+    post:
+      summary: Preview or approve an exact tenant membership change
+      operationId: changeDataPipelineTenantReaders
+      tags:
+      - data_pipelines
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineTenantReadersRequest'
+      responses:
+        '202':
+          description: Tenant membership preview saved or approved for atomic mirror policy reconciliation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Problem returned by changeDataPipelineTenantReaders after account, credential or pipeline validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
   /v1/sales/inquiries/challenge:
     get:
       x-internal: true
@@ -72170,6 +72207,203 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/data/pipeline-setups/plan:
+    post:
+      operationId: planDataPipelineSetup
+      summary: Preview durable setup resources and billing
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: Preview durable setup resources and billing response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineSetupPlan'
+        default:
+          description: Validation or availability problem for planDataPipelineSetup.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineSetupRequest'
+  /v1/data/pipeline-setups:
+    post:
+      operationId: createDataPipelineSetup
+      summary: Save a resumable mirror and Data API setup
+      tags:
+      - data_pipelines
+      responses:
+        '202':
+          description: Save a resumable mirror and Data API setup response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineSetup'
+        default:
+          description: Validation or availability problem for createDataPipelineSetup.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineSetupRequest'
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+    get:
+      operationId: listDataPipelineSetups
+      summary: List saved pipeline setup jobs
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: List saved pipeline setup jobs response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineSetupList'
+        default:
+          description: Validation or availability problem for listDataPipelineSetups.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/pipeline-setups/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Owned resource receiving getDataPipelineSetup requests.
+      schema:
+        type: string
+        format: uuid
+    get:
+      operationId: getDataPipelineSetup
+      summary: Inspect durable pipeline setup progress
+      tags:
+      - data_pipelines
+      responses:
+        '200':
+          description: Inspect durable pipeline setup progress response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineSetup'
+        default:
+          description: Validation or availability problem for getDataPipelineSetup.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/data/pipeline-setups/{id}/control:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Owned resource receiving controlDataPipelineSetup requests.
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: controlDataPipelineSetup
+      summary: Retry or cancel a saved pipeline setup
+      tags:
+      - data_pipelines
+      responses:
+        '202':
+          description: Retry or cancel a saved pipeline setup response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipelineSetup'
+        default:
+          description: Validation or availability problem for controlDataPipelineSetup.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineSetupControlRequest'
+  /v1/data/pipelines/{id}/freshness:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Owned resource receiving configureDataPipelineFreshness requests.
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: configureDataPipelineFreshness
+      summary: Configure checkpoint freshness confirmation
+      tags:
+      - data_pipelines
+      responses:
+        '202':
+          description: Configure checkpoint freshness confirmation response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Validation or availability problem for configureDataPipelineFreshness.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineFreshnessRequest'
+  /v1/data/pipelines/{id}/indexes:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Owned resource receiving changeDataPipelineIndexes requests.
+      schema:
+        type: string
+        format: uuid
+    post:
+      operationId: changeDataPipelineIndexes
+      summary: Preview and approve bounded mirror indexes
+      tags:
+      - data_pipelines
+      responses:
+        '202':
+          description: Preview and approve bounded mirror indexes response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Validation or availability problem for changeDataPipelineIndexes.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineIndexRequest'
 
 components:
 
@@ -73034,6 +73268,334 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    DataPipelineFreshness:
+      type: object
+      additionalProperties: false
+      description: Read-time confirmation of an applied checkpoint against the owner freshness target. Old confirmation is not measured replication lag; an idle source may already be caught
+        up.
+      required:
+      - target_seconds
+      - state
+      - message
+      properties:
+        target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: DataPipelineFreshness uses zero to disable confirmation alerts; enabled targets must be at least 15 seconds.
+        state:
+          type: string
+        confirmed_through_at:
+          type: string
+          format: date-time
+        confirmation_age_seconds:
+          type: integer
+          format: int64
+        message:
+          type: string
+    DataPipelineFreshnessRequest:
+      type: object
+      additionalProperties: false
+      description: Revision-fenced freshness configuration. Zero disables the target; enabled targets range from 15 to 86400 whole seconds. Existing health webhook destinations receive debounced
+        freshness_unconfirmed incidents.
+      required:
+      - expected_revision
+      - target_seconds
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: DataPipelineFreshnessRequest uses zero to disable confirmation alerts; enabled targets must be at least 15 seconds.
+    DataPipelineSetupRequest:
+      type: object
+      additionalProperties: false
+      description: Immutable durable setup intent. Repeating exactly the same normalized name and selections recovers the saved job and resource IDs. Source discovery must already include
+        the selected tables; the worker refreshes credentials and capacity before allocating resources.
+      required:
+      - name
+      - source_connection_id
+      - tables
+      properties:
+        name:
+          type: string
+        source_connection_id:
+          type: string
+          format: uuid
+        database_id:
+          type: string
+          format: uuid
+        region:
+          type: string
+        tables:
+          type: array
+          items:
+            type: string
+        read_subjects:
+          type: array
+          items:
+            type: string
+        serving:
+          $ref: '#/components/schemas/DataPipelineServing'
+        freshness_target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: DataPipelineSetupRequest uses zero to disable confirmation alerts; enabled targets must be at least 15 seconds.
+        data_api_name:
+          type: string
+        auth_app_id:
+          type: string
+          format: uuid
+    DataPipelineSetupPlan:
+      type: object
+      additionalProperties: false
+      description: Read-only resource and billing preview. No mirror or app is allocated and no capacity is reserved. Limits and billing implications are not a fixed-price invoice; source-provider
+        compute charges are separate.
+      required:
+      - name
+      - creates_mirror
+      - creates_data_api
+      - billing_notes
+      properties:
+        name:
+          type: string
+        creates_mirror:
+          type: boolean
+        creates_data_api:
+          type: boolean
+        existing_setup_id:
+          type: string
+          format: uuid
+        database_id:
+          type: string
+          format: uuid
+        region:
+          type: string
+        storage_limit_bytes:
+          type: integer
+          format: int64
+        restore_window_seconds:
+          type: integer
+          format: int64
+        freshness_target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: DataPipelineSetupPlan uses zero to disable confirmation alerts; enabled targets must be at least 15 seconds.
+        connection_check:
+          $ref: '#/components/schemas/DataConnectionCheck'
+        billing_notes:
+          type: array
+          items:
+            type: string
+    DataPipelineSetup:
+      type: object
+      additionalProperties: false
+      description: Account-owned durable setup progress with public recovery IDs. Cancellation retains allocated resources for separate management. Private provider plans and credentials
+        are never returned.
+      required:
+      - id
+      - request
+      - database_id
+      - state
+      - phase
+      - revision
+      - progress
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        request:
+          $ref: '#/components/schemas/DataPipelineSetupRequest'
+        database_id:
+          type: string
+          format: uuid
+        pipeline_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+        phase:
+          type: string
+        reason:
+          type: string
+        revision:
+          type: integer
+          format: int64
+        data_api_app_id:
+          type: string
+          format: uuid
+        deployment_id:
+          type: string
+          format: uuid
+        endpoint:
+          type: string
+        region:
+          type: string
+        storage_limit_bytes:
+          type: integer
+          format: int64
+        progress:
+          type: string
+        recovery:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    DataPipelineSetupList:
+      type: object
+      additionalProperties: false
+      description: DataPipelineSetupList wire representation for pipeline operation.
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineSetup'
+    DataPipelineSetupControlRequest:
+      type: object
+      additionalProperties: false
+      description: DataPipelineSetupControlRequest wire representation for pipeline operation.
+      required:
+      - expected_revision
+      - action
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        action:
+          type: string
+          enum:
+          - retry
+          - cancel
+    DataPipelineIndexOrder:
+      type: object
+      additionalProperties: false
+      description: DataPipelineIndexOrder wire representation for pipeline operation.
+      required:
+      - column
+      properties:
+        column:
+          type: string
+        descending:
+          type: boolean
+    DataPipelineIndexRequest:
+      type: object
+      additionalProperties: false
+      description: Structured mirror query shape with no SQL or filter values. preview queues metadata inspection; approve accepts only a frozen advice_id; discard clears unapproved advice.
+        At most four keys including the tenant policy expression.
+      required:
+      - expected_revision
+      - action
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        action:
+          type: string
+          enum:
+          - preview
+          - approve
+          - discard
+        advice_id:
+          type: string
+        table:
+          type: string
+        filters:
+          type: array
+          items:
+            type: string
+          maxItems: 4
+        order_by:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineIndexOrder'
+          maxItems: 4
+        max_index_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 33554432
+    DataPipelineIndexKey:
+      type: object
+      additionalProperties: false
+      description: DataPipelineIndexKey wire representation for pipeline operation.
+      required:
+      - column
+      properties:
+        column:
+          type: string
+        descending:
+          type: boolean
+        tenant_expression:
+          type: boolean
+    DataPipelineIndexAdvice:
+      type: object
+      additionalProperties: false
+      description: Frozen metadata-based mirror index advice. Size is a conservative estimate, not measured query performance. Explicit approval permits a transactional build for tables
+        up to 64 MiB, indexes up to 32 MiB, at most eight owned indexes per pipeline, with a two-second deadline and 250 ms lock timeout. Failures roll back and require a fresh preview.
+      required:
+      - id
+      - state
+      - preview_revision
+      - table
+      - keys
+      - can_apply
+      - message
+      properties:
+        id:
+          type: string
+        state:
+          type: string
+        preview_revision:
+          type: integer
+          format: int64
+        table:
+          type: string
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineIndexKey'
+          maxItems: 4
+        index_name:
+          type: string
+        statement:
+          type: string
+        table_bytes:
+          type: integer
+          format: int64
+        estimated_index_bytes:
+          type: integer
+          format: int64
+        storage_budget_bytes:
+          type: integer
+          format: int64
+        applied_bytes:
+          type: integer
+          format: int64
+        can_apply:
+          type: boolean
+        reason:
+          type: string
+        message:
+          type: string
     SupportContext:
       type: object
       additionalProperties: false
@@ -91410,16 +91972,20 @@ components:
           description: Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
 
     AccountHealth:
-      description: "What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain problems and refused API requests."
+      description: "What may stop the calling account from working: restrictions with the next step, problems that keep recurring, failed deployments, custom-domain problems and refused API requests."
       type: object
       required: [generated_at, attention, restrictions, failed_deployments, domain_issues, refused_requests]
       properties:
         generated_at: { type: string, format: date-time, description: When the checks ran. }
-        attention: { type: integer, description: "Number of restrictions, failed deployments and domain issues; zero means nothing needs action." }
+        attention: { type: integer, description: "Number of restrictions, signals, failed deployments and domain issues; zero means nothing needs action." }
         restrictions:
           type: array
           description: Restrictions currently applied to the account, one per kind.
           items: { $ref: '#/components/schemas/AccountHealthRestriction' }
+        signals:
+          type: array
+          description: "Problems that keep recurring on the account, such as repeated failed deployments or out-of-memory stops, with the next step. Absent from older servers."
+          items: { $ref: '#/components/schemas/AccountHealthSignal' }
         failed_deployments:
           type: array
           description: Failed deployments from the last 7 days, newest first, at most 10.
@@ -91447,6 +92013,21 @@ components:
         action: { type: string, description: Label of the next step. }
         action_url: { type: string, description: Dashboard path for the next step. }
         since: { type: string, format: date-time, description: "When the restriction started, when known." }
+    AccountHealthSignal:
+      description: "A problem that keeps recurring, in customer wording, with the next step when there is one."
+      type: object
+      required: [kind, subject, title, detail, since]
+      properties:
+        kind:
+          type: string
+          enum: [deploy_failing, app_oom, jobs_failing, limit_pressure]
+          description: Stable signal identifier.
+        subject: { type: string, description: "What the signal is about: an app slug, a scheduled job name or a problem code." }
+        title: { type: string, description: Short headline for the signal. }
+        detail: { type: string, description: What keeps happening and how to fix it. }
+        action: { type: string, description: Label of the link that fixes the signal. }
+        action_url: { type: string, description: Dashboard path of the page that fixes the signal. }
+        since: { type: string, format: date-time, description: When Gregale first detected the problem. }
     AccountHealthDeployment:
       description: A failed deployment with the error and fix hint the build or rollout reported.
       type: object
@@ -97853,7 +98434,7 @@ components:
           description: Optional placement region; omitted uses the platform default.
 
     DevPatchPreview:
-      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have been applied as a live source patch to the deployment that was live at upload time (phase 1). It is a measurement only; the normal developer build always runs.
+      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync can be applied as a live source patch to the deployment that was live at upload time and, when it was published as one, whether its build waits for the developer to stop saving.
       type: object
       required:
         - eligible
@@ -97892,6 +98473,10 @@ components:
           format: int64
           minimum: 1
           description: Set when this sync published a live patch; poll getDevPatchStatus with it.
+        build_deferred_until:
+          type: string
+          format: date-time
+          description: Set when this sync's build waits behind its live patch. The build starts at this time unless a later sync replaces it first; a patch that fails to apply starts it at once.
     DevPatchStatusResponse:
       description: Delivery state of one developer live patch.
       type: object
@@ -114120,6 +114705,10 @@ components:
             type: string
             enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
           description: "For an unset_env_keys name with a Compose value, why that value is not imported. Never values."
+        source_hosts:
+          type: array
+          items: { $ref: '#/components/schemas/PlanSourceHost' }
+          description: "String literals in the workload's source that dial another service by its Compose name, which does not resolve on Gregale. At most a few per workload."
         imported_env_keys:
           type: array
           items: { type: string }
@@ -114332,6 +114921,14 @@ components:
         observed: { type: integer, format: int64 }
         docs_url: { type: string }
 
+    PlanSourceHost:
+      type: object
+      description: "One place source code dials a service by its Compose name."
+      required: [host, file, line]
+      properties:
+        host: { type: string, description: "The Compose service name the code uses as a host." }
+        file: { type: string, description: "Repository-relative path of the file." }
+        line: { type: integer, description: "1-based line number." }
     FeatureHint:
       description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable."
       type: object
@@ -139864,6 +140461,12 @@ components:
       - tables
       - created_at
       properties:
+        source_provider_hint:
+          type: string
+          description: Hostname-derived setup hint; never a qualification or admission grant.
+        source_guidance_url:
+          type: string
+          format: uri
         requested_tables:
           type: array
           maxItems: 16
@@ -139978,6 +140581,9 @@ components:
       - columns
       - issues
       properties:
+        column_selection_supported:
+          type: boolean
+          description: A valid explicit column selection may omit incompatible non-key columns; all table-level checks still apply.
         name:
           type: string
           maxLength: 63
@@ -140003,6 +140609,8 @@ components:
       - nullable
       - primary_key
       properties:
+        unsupported:
+          type: boolean
         name:
           type: string
           maxLength: 63
@@ -140085,7 +140693,7 @@ components:
           description: Replacement verified-TLS URL with an explicit password for the existing source host, database and username.
             addresses must be operator-qualified.
     CreateDataPipelineRequest:
-      description: Selected public tables, dedicated destination and explicitly authorized JWT readers. A fresh passing connection check for the current source credential and all selected tables is required; otherwise returns data_connection_check_required.
+      description: Selected public tables, dedicated destination and explicitly authorized JWT readers. Supply read_subjects for whole-table access, or serving.tenant_access with owner-managed memberships and no read_subjects. Explicit columns must cover every table and retain all primary-key and tenant columns. A fresh passing connection check for the current source credential and all selected tables is required; otherwise returns data_connection_check_required.
       type: object
       additionalProperties: false
       required:
@@ -140093,8 +140701,15 @@ components:
       - source_connection_id
       - database_id
       - tables
-      - read_subjects
       properties:
+        freshness_target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: Initial checkpoint confirmation target for the new pipeline; use zero to disable it, or 15 to 86400 seconds.
+        serving:
+          $ref: '#/components/schemas/DataPipelineServing'
         name:
           type: string
           minLength: 3
@@ -140119,9 +140734,83 @@ components:
             type: string
             minLength: 1
             maxLength: 256
-          minItems: 1
-          maxItems: 32
+          minItems: 0
+          maxItems: 128
           uniqueItems: true
+    DataPipelineServing:
+      description: Versioned serving contract. Columns are immutable and affect publication, mirror schema and recovery. Omit columns for all-column replication. Tenant access uses owner-managed subject memberships; JWT tenant claims grant nothing. At least columns or tenant_access is required. A missing version defaults to 1 at creation.
+      type: object
+      additionalProperties: false
+      properties:
+        version:
+          type: integer
+          enum: [1]
+          default: 1
+        columns:
+          type: object
+          description: Every selected table maps to 1–128 unique columns, including all primary keys and the tenant column. Names are bounded to 63 UTF-8 bytes.
+          maxProperties: 16
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 128
+            uniqueItems: true
+            items: {type: string, minLength: 1, maxLength: 63}
+        tenant_access:
+          $ref: '#/components/schemas/DataPipelineTenantAccess'
+    DataPipelineTenantAccess:
+      description: Row access through a text, varchar or UUID column present on every selected table. Memberships match verified JWT sub values exactly. Empty memberships revoke every reader.
+      type: object
+      additionalProperties: false
+      required: [column, memberships]
+      properties:
+        column: {type: string, minLength: 1, maxLength: 63}
+        memberships:
+          type: array
+          maxItems: 256
+          uniqueItems: true
+          description: At most 128 distinct subjects. Tenant and subject values are bounded to 256 UTF-8 bytes.
+          items:
+            $ref: '#/components/schemas/DataPipelineTenantMembership'
+    DataPipelineTenantMembership:
+      description: One account-owner-authorized subject and tenant pair.
+      type: object
+      additionalProperties: false
+      required: [subject, tenant]
+      properties:
+        subject: {type: string, minLength: 1, maxLength: 256}
+        tenant: {type: string, minLength: 1, maxLength: 256}
+    DataPipelineTenantChange:
+      description: Frozen membership preview. Approval applies this exact after set atomically at the mirror before catalog acknowledgement.
+      type: object
+      additionalProperties: false
+      required: [id, state, preview_revision, before, after]
+      properties:
+        id: {type: string}
+        state: {type: string, enum: [preview, approved, applied]}
+        preview_revision: {type: integer, format: int64, minimum: 1}
+        before:
+          type: array
+          maxItems: 256
+          items: {$ref: '#/components/schemas/DataPipelineTenantMembership'}
+        after:
+          type: array
+          maxItems: 256
+          items: {$ref: '#/components/schemas/DataPipelineTenantMembership'}
+    DataPipelineTenantReadersRequest:
+      description: Account-owner-only, revision-fenced membership preview, approval or discard. Preview supplies the complete replacement membership array. Approve supplies only the saved change_id; grace permits strict membership reductions only.
+      type: object
+      additionalProperties: false
+      required: [expected_revision, action]
+      properties:
+        expected_revision: {type: integer, format: int64, minimum: 1}
+        action: {type: string, enum: [preview, approve, discard]}
+        change_id: {type: string}
+        memberships:
+          type: array
+          maxItems: 256
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/DataPipelineTenantMembership'}
     ControlDataPipelineRequest:
       description: Optimistic revision fence and requested pipeline lifecycle action.
       type: object
@@ -140163,6 +140852,20 @@ components:
       - verification
       - created_at
       properties:
+        freshness_target_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 86400
+          description: Current owner-configured checkpoint confirmation target; zero means disabled and enabled targets range from 15 to 86400 seconds.
+        freshness:
+          $ref: '#/components/schemas/DataPipelineFreshness'
+        index_advice:
+          $ref: '#/components/schemas/DataPipelineIndexAdvice'
+        serving:
+          $ref: '#/components/schemas/DataPipelineServing'
+        tenant_change:
+          $ref: '#/components/schemas/DataPipelineTenantChange'
         wal_retention:
           $ref: '#/components/schemas/DataPipelineWALRetention'
         applied_through_at:
@@ -140209,7 +140912,7 @@ components:
             minLength: 1
             maxLength: 256
           minItems: 0
-          maxItems: 32
+          maxItems: 128
           uniqueItems: true
         desired_state:
           type: string

@@ -27,7 +27,7 @@ func cmdProjectsEnvironmentBranch(args []string) int {
 	list := fs.Bool("list", false, "list the parent's branches instead of creating one")
 	status := fs.Bool("status", false, "show the branch: its parent, expiry, data, database copies and workloads")
 	extend := fs.String("extend", "", "move the branch's expiry to this long from now, such as 48h (at most 30 days after its creation, 7 with database copies)")
-	reset := fs.Bool("reset", false, "make the branch again from its parent with its settings; work done in it is discarded and its workloads get new URLs")
+	reset := fs.Bool("reset", false, "make the branch again from its parent with its settings; work done in it is discarded and its workloads keep their URLs")
 	egress := fs.String("egress", "", "outbound traffic: live (default), contained (only the branch's own services) or simulated (contained, and it can seed rehearsals)")
 	privateNetworks := fs.String("private-networks", "", "off (default): the branch's workloads stay off their private networks; join: they join them with addresses of their own (live egress only)")
 	if err := fs.Parse(flags); err != nil || !environmentBranchArgsValid(*list, *status, *reset, *extend != "", len(positional)) {
