@@ -21,6 +21,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 import uuid
 
 from staging_canary import Canary, CanaryFailure, https_url, jwt_claims, private_file, source_environment
@@ -40,6 +41,14 @@ FAULTS = {
 OBSERVATION_MAX_AGE = 90
 RETENTION_MAX_BYTES = 1 << 30
 RETENTION_WARNING_BYTES = RETENTION_MAX_BYTES * 4 // 5
+
+
+def validate_source_provider(raw: str, provider: str) -> None:
+    if provider != "neon":
+        return
+    host = (urllib.parse.urlsplit(raw).hostname or "").lower().rstrip(".")
+    if not host.endswith(".neon.tech") or host.split(".")[0].endswith("-pooler"):
+        raise CanaryFailure("direct_neon_source_required")
 
 
 def utc() -> str:
@@ -92,6 +101,7 @@ def prerequisites(args) -> list[str]:
                 raise CanaryFailure("empty_private_file")
             if "source_url" in field:
                 source_environment(value)
+                validate_source_provider(value, getattr(args, "source_provider", "postgresql"))
             elif field != "control_token_file":
                 jwt_claims(value)
         except (OSError, ValueError, CanaryFailure):
@@ -125,6 +135,7 @@ class Qualification(Canary):
         if executable_digest(self.args.adapter) != self.adapter_sha256:
             raise CanaryFailure("adapter_changed_during_run")
         request = {"version": 1, "run_id": self.run_id, "nonce": nonce, "action": action,
+                   "source_provider_kind": getattr(self.args, "source_provider", "postgresql"),
                    "pipeline_id": self.args.pipeline, "source_connection_id": self.args.connection,
                    "database_id": self.args.database, "admission_database_id": self.args.admission_database,
                    "backend_fingerprint": self.args.backend_fingerprint, "data_api_url": self.args.data_api_url,
@@ -246,6 +257,9 @@ class Qualification(Canary):
         if not source_version.isdigit() or not 160000 <= int(source_version) < 170000:
             raise CanaryFailure("postgres_16_source_required")
         self.source_version = int(source_version)
+        self.source_provider_kind = getattr(self.args, "source_provider", "postgresql")
+        if self.source_provider_kind == "neon" and receipt.get("source_provider_kind") != "neon":
+            raise CanaryFailure("neon_source_provider_evidence_required")
         self.target_version = receipt.get("target_postgres_version")
         if (receipt.get("provider_kind") != "neon" or type(self.target_version) is not int
                 or not 160000 <= self.target_version < 170000):
@@ -410,6 +424,8 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=240)
     parser.add_argument("--hold-seconds", type=int, default=5)
     parser.add_argument("--check-config", action="store_true")
+    parser.add_argument("--source-provider", choices=("postgresql", "neon"), default="postgresql",
+                        help="expected source provider; Neon requires direct URLs and reviewed adapter evidence")
     args = parser.parse_args()
     # Reserve a private output BEFORE any remote action so a bad/existing report
     # path cannot leave a live run without its resource identifiers.
@@ -419,6 +435,7 @@ def main() -> int:
     report = {"version": 1, "run_id": runner.run_id, "started_at": runner.started_at,
               "state": "blocked", "production_ready": False, "pilot_ready": False,
               "expected_provider_kind": "neon", "operator_review": "required", "capacity_qualification": "operator_review_required",
+              "expected_source_provider_kind": args.source_provider,
               "blockers": blockers, "phases": runner.phases}
     with os.fdopen(os.dup(report_fd), "w") as initial:
         json.dump({"version": 1, "run_id": runner.run_id, "state": "running",
@@ -441,6 +458,7 @@ def main() -> int:
                       adapter_sha256=runner.adapter_sha256, control_manifest_sha256=getattr(runner, "control_manifest_sha256", None), backend_fingerprint=args.backend_fingerprint,
                       active_faults=list(runner.active_faults), restore_failures=runner.restore_failures,
                       source_postgres_version=getattr(runner, "source_version", None),
+                      source_provider_kind=getattr(runner, "source_provider_kind", None),
                       target_postgres_version=getattr(runner, "target_version", None), provider_kind=getattr(runner, "provider_kind", None))
         if getattr(runner, "unexpected_pipeline_id", None):
             report["unexpected_pipeline_id"] = runner.unexpected_pipeline_id

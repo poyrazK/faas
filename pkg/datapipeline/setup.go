@@ -15,6 +15,7 @@ import (
 // SetupRequest is immutable customer intent, containing no credentials.
 // Empty DatabaseID requests a new dedicated mirror.
 type SetupRequest struct {
+	Serving            *api.DataPipelineServing `json:"Serving,omitempty"`
 	Name               string
 	SourceConnectionID string
 	DatabaseID         string
@@ -89,14 +90,15 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 	if target == "" {
 		target = uuid.NewString()
 	}
-	normalized := normalize(api.CreateDataPipelineRequest{Name: r.Name, SourceConnectionID: r.SourceConnectionID, DatabaseID: target, Tables: r.Tables, ReadSubjects: r.ReadSubjects})
-	if err := ValidateCreate(normalized); err != nil {
+	input := api.CreateDataPipelineRequest{Serving: r.Serving, Name: r.Name, SourceConnectionID: r.SourceConnectionID, DatabaseID: target, Tables: r.Tables, ReadSubjects: r.ReadSubjects}
+	if err := ValidateCreate(input); err != nil {
 		return Setup{}, err
 	}
 	if len(r.Region) > 63 || (r.DatabaseID != "" && r.Region != "") {
 		return Setup{}, ErrInvalid
 	}
-	r.Tables, r.ReadSubjects = normalized.Tables, normalized.ReadSubjects
+	normalized := normalize(input)
+	r.Tables, r.ReadSubjects, r.Serving = normalized.Tables, normalized.ReadSubjects, normalized.Serving
 	if (r.DataAPIName == "") != (r.AuthAppID == "") || (r.DataAPIName != "" && (!api.ValidAppSlug(r.DataAPIName) || api.IsReservedAppSlug(r.DataAPIName) || !validID(r.AuthAppID))) {
 		return Setup{}, ErrInvalid
 	}
@@ -132,7 +134,7 @@ func (s *Service) StartSetup(ctx context.Context, account string, r SetupRequest
 	// current credentials, compatibility and capacity before provisioning.
 	selection := check.DataConnectionCheck
 	selection.Fresh, selection.State = true, "passed"
-	if checkSelection(selection, r.Tables) != nil {
+	if ValidateServingSelection(selection, r.Tables, r.Serving) != nil {
 		return Setup{}, ErrCheckRequired
 	}
 	setup := Setup{ID: uuid.NewString(), AccountID: account, Request: r, DatabaseID: target}
@@ -266,7 +268,7 @@ func (s *Service) advanceSetup(ctx context.Context, job *Setup) error {
 			job.Phase = "starting"
 		}
 	case "starting":
-		p, err := s.Create(ctx, job.AccountID, api.CreateDataPipelineRequest{Name: job.Request.Name, SourceConnectionID: job.Request.SourceConnectionID, DatabaseID: job.DatabaseID, Tables: job.Request.Tables, ReadSubjects: job.Request.ReadSubjects})
+		p, err := s.Create(ctx, job.AccountID, api.CreateDataPipelineRequest{Name: job.Request.Name, SourceConnectionID: job.Request.SourceConnectionID, DatabaseID: job.DatabaseID, Tables: job.Request.Tables, ReadSubjects: setupCreationSubjects(job.Request), Serving: job.Request.Serving})
 		if errors.Is(err, ErrCheckRequired) {
 			job.Phase = "checking_mirror"
 			return nil
@@ -311,7 +313,7 @@ func (s *Service) setupCheck(ctx context.Context, job Setup, database string) (b
 		if check.State != "passed" {
 			return false, &blocked{code: "connection_check_blocked"}
 		}
-		if err = sourceSetupCheck(check.DataConnectionCheck, job.Request.Tables); err != nil {
+		if err = sourceServingSetupCheck(check.DataConnectionCheck, job.Request.Tables, job.Request.Serving); err != nil {
 			return false, err
 		}
 		if database != "" && (check.Capacity == nil || check.Capacity.State != "ready") {

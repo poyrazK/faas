@@ -23592,6 +23592,28 @@ $$;
 
 
 --
+-- Name: pipeline_serving_worker_claim(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.pipeline_serving_worker_claim() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE serving boolean;
+BEGIN
+ IF TG_TABLE_NAME='data_pipelines' THEN
+  serving := NEW.serving_config<>'{}'::jsonb;
+ ELSE
+  serving := coalesce(NEW.request->'Serving','null'::jsonb)<>'null'::jsonb;
+ END IF;
+ IF serving AND NEW.lease_token<>'' AND NEW.lease_token IS DISTINCT FROM OLD.lease_token
+ AND current_setting('gregale.pipeline_worker_protocol',true) IS DISTINCT FROM 'customer-serving-v1' THEN
+  RETURN NULL;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: populate_legacy_status_incident_public_fields(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -37422,7 +37444,7 @@ CREATE TABLE public.data_pipeline_setups (
     CONSTRAINT data_pipeline_setups_phase_check CHECK ((phase = ANY (ARRAY['checking_source'::text, 'provisioning'::text, 'checking_mirror'::text, 'starting'::text, 'syncing'::text, 'configuring_api'::text, 'deploying_api'::text, 'waiting_api'::text, 'api_failed'::text]))),
     CONSTRAINT data_pipeline_setups_pipeline_id_check CHECK (((pipeline_id = ''::text) OR (pipeline_id ~ '^[0-9a-f-]{36}$'::text))),
     CONSTRAINT data_pipeline_setups_reason_check CHECK ((reason ~ '^[a-z0-9_]{0,80}$'::text)),
-    CONSTRAINT data_pipeline_setups_request_check CHECK (((jsonb_typeof(request) = 'object'::text) AND (octet_length((request)::text) <= 32768))),
+    CONSTRAINT data_pipeline_setups_request_v2_check CHECK (((jsonb_typeof(request) = 'object'::text) AND (octet_length((request)::text) <= 2097152))),
     CONSTRAINT data_pipeline_setups_revision_check CHECK ((revision > 0)),
     CONSTRAINT data_pipeline_setups_state_check CHECK ((state = ANY (ARRAY['working'::text, 'blocked'::text, 'ready'::text, 'cancelled'::text])))
 );
@@ -37463,20 +37485,23 @@ CREATE TABLE public.data_pipelines (
     verification_progress jsonb DEFAULT '{}'::jsonb NOT NULL,
     reader_change jsonb DEFAULT '{}'::jsonb NOT NULL,
     wal_retention jsonb DEFAULT '{}'::jsonb NOT NULL,
+    serving_config jsonb DEFAULT '{}'::jsonb NOT NULL,
     CONSTRAINT data_pipelines_check CHECK (((observed_revision >= 0) AND (observed_revision <= revision))),
     CONSTRAINT data_pipelines_desired_state_check CHECK ((desired_state = ANY (ARRAY['running'::text, 'paused'::text, 'deleted'::text]))),
     CONSTRAINT data_pipelines_generation_check CHECK ((generation > 0)),
     CONSTRAINT data_pipelines_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'::text)),
-    CONSTRAINT data_pipelines_read_subjects_v2_check CHECK (((jsonb_typeof(read_subjects) = 'array'::text) AND ((jsonb_array_length(read_subjects) >= 0) AND (jsonb_array_length(read_subjects) <= 32)))),
-    CONSTRAINT data_pipelines_reader_change_check CHECK (((jsonb_typeof(reader_change) = 'object'::text) AND (octet_length((reader_change)::text) <= 131072) AND ((reader_change = '{}'::jsonb) OR ((reader_change ->> 'State'::text) = ANY (ARRAY['preview'::text, 'approved'::text, 'applied'::text]))))),
+    CONSTRAINT data_pipelines_read_subjects_v3_check CHECK (((jsonb_typeof(read_subjects) = 'array'::text) AND ((jsonb_array_length(read_subjects) >= 0) AND (jsonb_array_length(read_subjects) <= 128)))),
+    CONSTRAINT data_pipelines_reader_change_v2_check CHECK (((jsonb_typeof(reader_change) = 'object'::text) AND (octet_length((reader_change)::text) <= 2097152) AND ((reader_change = '{}'::jsonb) OR ((reader_change ->> 'State'::text) = ANY (ARRAY['preview'::text, 'approved'::text, 'applied'::text]))))),
     CONSTRAINT data_pipelines_reason_check CHECK ((reason ~ '^[a-z0-9_]{0,80}$'::text)),
     CONSTRAINT data_pipelines_retained_wal_bytes_check CHECK ((retained_wal_bytes >= 0)),
     CONSTRAINT data_pipelines_revision_check CHECK ((revision > 0)),
     CONSTRAINT data_pipelines_schema_approval_check CHECK (((schema_approval = ''::text) OR (schema_approval ~ '^[a-f0-9]{64}$'::text))),
     CONSTRAINT data_pipelines_schema_change_check CHECK (((jsonb_typeof(schema_change) = 'object'::text) AND (octet_length((schema_change)::text) <= 4194304))),
+    CONSTRAINT data_pipelines_serving_config_check CHECK (((jsonb_typeof(serving_config) = 'object'::text) AND (octet_length((serving_config)::text) <= 2097152))),
     CONSTRAINT data_pipelines_state_check CHECK ((state = ANY (ARRAY['validating'::text, 'copying'::text, 'catching_up'::text, 'live'::text, 'paused'::text, 'blocked'::text, 'deleting'::text, 'deleted'::text, 'resync_required'::text]))),
     CONSTRAINT data_pipelines_tables_check CHECK (((jsonb_typeof(tables) = 'array'::text) AND ((jsonb_array_length(tables) >= 1) AND (jsonb_array_length(tables) <= 16)))),
     CONSTRAINT data_pipelines_tables_ready_check CHECK (((tables_ready >= 0) AND (tables_ready <= 16))),
+    CONSTRAINT data_pipelines_tenant_reader_change_check CHECK ((((serving_config -> 'tenant_access'::text) IS NULL) OR (reader_change = '{}'::jsonb) OR (COALESCE((reader_change ->> 'Tenant'::text), ''::text) = 'true'::text))),
     CONSTRAINT data_pipelines_verification_check CHECK ((verification = ANY (ARRAY['unknown'::text, 'pending'::text, 'passed'::text, 'mismatch'::text, 'inconclusive'::text]))),
     CONSTRAINT data_pipelines_verification_progress_check CHECK (((jsonb_typeof(verification_progress) = 'object'::text) AND (octet_length((verification_progress)::text) <= 4194304)))
 );
@@ -89831,6 +89856,20 @@ CREATE TRIGGER data_pipeline_setup_source_guard BEFORE DELETE ON public.data_pip
 --
 
 CREATE TRIGGER data_pipeline_setup_target_guard BEFORE INSERT OR UPDATE OF account_id, database_id, request, state ON public.data_pipeline_setups FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_setup_target_guard();
+
+
+--
+-- Name: data_pipeline_setups data_pipeline_setups_serving_claim; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_setups_serving_claim BEFORE UPDATE OF lease_token ON public.data_pipeline_setups FOR EACH ROW EXECUTE FUNCTION public.pipeline_serving_worker_claim();
+
+
+--
+-- Name: data_pipelines data_pipelines_serving_claim; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipelines_serving_claim BEFORE UPDATE OF lease_token ON public.data_pipelines FOR EACH ROW EXECUTE FUNCTION public.pipeline_serving_worker_claim();
 
 
 --

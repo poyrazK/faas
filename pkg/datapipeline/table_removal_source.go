@@ -25,7 +25,7 @@ func liveRemovalRelations(p Pipeline, remaining bool) []relation {
 // table must still match, including source RLS and replica-identity eligibility.
 func checkLiveRemovalSource(ctx context.Context, p Pipeline, source sourceMetadata, remaining bool) error {
 	for _, before := range liveRemovalRelations(p, remaining) {
-		actual, table, err := inspectSourceTable(ctx, source, before.Name)
+		actual, table, err := inspectPipelineTable(ctx, p, source, before.Name)
 		if err != nil {
 			return err
 		}

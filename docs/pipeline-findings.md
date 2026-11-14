@@ -7,6 +7,18 @@ reproductions below describe the investigated baseline, not the repaired behavio
 Keep these IDs and their evidence when reviewing or extending the fixes. No
 production deployment or provider qualification is implied.
 
+The next agreed customer batch is tracked separately under
+[ADR-20261113160716](adr/20261113160716-pipeline-tenant-serving-and-projections.md):
+
+| Item | Customer problem | Implementation and remaining qualification |
+| --- | --- | --- |
+| CUST-001 | Customer portals need row access per tenant instead of trusting a subject with every row. | Implemented versioned owner-managed memberships, frozen approval, atomic RLS/receipt, source-independent revocation and N-1 claim fences. Local core/native checks passed; full CI tracked in PR #7219. |
+| CUST-002 | Mirrors copy source columns customers do not want to serve or store. | Implemented immutable per-table publication/mirror projection, required key retention, projected checks/verification/repair/resync. Local core/native checks passed; full CI tracked in PR #7219. |
+| CUST-003 | Generic source setup leaves Neon users with pooled-connection errors and unclear operational costs. | Offline CLI/dashboard guide, direct-endpoint diagnostics and source-aware qualification runner. Actual Neon source qualification remains pending configured staging credentials and reviewed fault controls; the finite WAL byte-cap requirement still applies. |
+
+The other roadmap opportunities below remain future work. This batch does not
+enable production or imply that the source provider has passed the live drill.
+
 The reviewed baseline is commit `46aad2a12e4d1be39d0948b6942cb18d8e71d0b2` **plus
 the existing, uncommitted first batch**: retention-aware alerts, explicit gated-read
 errors, and table discovery. Its design is recorded in
@@ -548,8 +560,8 @@ alone is not a reproduced bug:
   dashboard, API, CLI, and SDK surfaces.
 - Make verification cost and source write-lock/load impact clearer and more
   controllable within the existing bounded verification model.
-- Explore finer access rules than a trusted whole-dataset subject list, while
-  preserving fail-closed RLS and explicit approval (related to PIPE-009).
+- Tenant access beyond trusted whole-dataset subjects is implemented in CUST-001,
+  with fail-closed RLS and explicit membership approval (related to PIPE-009).
 - Offer destination index/query advice for read workloads, with explicit storage
   and replication-write cost tradeoffs.
 

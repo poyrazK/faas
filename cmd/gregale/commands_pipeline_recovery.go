@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 
 	"github.com/google/uuid"
@@ -31,6 +32,7 @@ func pipelineID(id string) string {
 // An accepted pipeline already owns its destination and capacity. Recover its
 // exact intent before performing probes meant for an empty, unused mirror.
 func recoverPipelineCreate(ctx context.Context, client *api.Client, request api.CreateDataPipelineRequest, database, region string) (api.DataPipeline, bool, error) {
+	request = datapipeline.NormalizeCreateRequest(request)
 	list, err := client.ListDataPipelines(ctx)
 	if err != nil {
 		return api.DataPipeline{}, false, err
@@ -43,7 +45,7 @@ func recoverPipelineCreate(ctx context.Context, client *api.Client, request api.
 		if err != nil {
 			return api.DataPipeline{}, false, err
 		}
-		if p.Name != request.Name || p.DesiredState == "deleted" || p.State == "deleted" || pipelineID(p.SourceConnectionID) != pipelineID(request.SourceConnectionID) || !samePipelineSelection(p.Tables, request.Tables) || !samePipelineSelection(p.ReadSubjects, request.ReadSubjects) {
+		if p.Name != request.Name || p.DesiredState == "deleted" || p.State == "deleted" || pipelineID(p.SourceConnectionID) != pipelineID(request.SourceConnectionID) || !samePipelineSelection(p.Tables, request.Tables) || !samePipelineSelection(p.ReadSubjects, request.ReadSubjects) || !samePipelineServing(p.Serving, request.Serving) {
 			return api.DataPipeline{}, false, errors.New("the pipeline name already belongs to a different or deleted intent; inspect pipeline status or use a new name")
 		}
 		if database != "" {
@@ -73,4 +75,10 @@ func recoverPipelineCreate(ctx context.Context, client *api.Client, request api.
 		return p, true, nil
 	}
 	return api.DataPipeline{}, false, nil
+}
+
+func samePipelineServing(a, b *api.DataPipelineServing) bool {
+	a = datapipeline.NormalizeCreateRequest(api.CreateDataPipelineRequest{Serving: a}).Serving
+	b = datapipeline.NormalizeCreateRequest(api.CreateDataPipelineRequest{Serving: b}).Serving
+	return reflect.DeepEqual(a, b)
 }

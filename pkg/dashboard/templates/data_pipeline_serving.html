@@ -1,0 +1,21 @@
+{{define "pipeline-membership-fields"}}
+<div data-membership-editor>
+<p>Map each verified user subject to the tenant values they may read. Token tenant claims do not grant access. Leave every row empty to revoke all memberships.</p>
+{{range .}}<div data-membership-row><label>User subject <input name="tenant_subject" value="{{.Subject}}" maxlength="256"></label><label>Tenant value <input name="tenant_value" value="{{.Tenant}}" maxlength="256"></label><button type="button" data-remove-membership>Remove mapping</button></div>{{end}}
+<div data-membership-row><label>User subject <input name="tenant_subject" maxlength="256"></label><label>Tenant value <input name="tenant_value" maxlength="256"></label><button type="button" data-remove-membership>Remove mapping</button></div>
+<button type="button" data-add-membership>Add another mapping</button>
+</div>
+{{end}}
+
+{{define "pipeline-serving-fields"}}
+<fieldset><legend>Choose reader access</legend>
+<label>Access mode <select name="access_mode"><option value="trusted">Trusted readers of every selected row</option><option value="tenant">Tenant-specific customer access</option></select></label>
+<div data-trusted-fields><label>Trusted user subjects, separated by commas <input name="read_subjects"></label><p>Each listed subject may read every row in every selected table.</p></div>
+<div data-tenant-fields><label>Tenant column in every selected table <input name="tenant_column" value="tenant_id" maxlength="63"></label><p>Use a text, varchar or UUID column. Each row is visible only through an approved user/tenant mapping.</p>{{template "pipeline-membership-fields"}}</div>
+</fieldset>
+<fieldset><legend>Choose columns to copy</legend>
+<label>Column mode <select name="column_mode"><option value="all">All columns, with existing schema approvals</option><option value="selected">Only explicitly selected columns</option></select></label>
+<p>Explicit selection includes every primary-key column and your tenant column. Unselected columns are not copied into this mirror. To change an explicit selection later, create a newly reviewed pipeline.</p>
+{{range .Tables}}{{$table := .Name}}<details><summary>Columns for {{$table}}</summary><fieldset><legend>{{$table}}</legend>{{range .Columns}}<label><input type="checkbox" name="columns.{{$table}}" value="{{.Name}}" {{if .Unsupported}}disabled{{else}}checked{{end}} {{if .PrimaryKey}}disabled{{end}}> {{.Name}}{{if .PrimaryKey}} (required primary key){{end}}{{if .Unsupported}} (unsupported){{end}}</label>{{if .PrimaryKey}}<input type="hidden" name="columns.{{$table}}" value="{{.Name}}">{{end}}{{end}}</fieldset></details>{{end}}
+</fieldset>
+{{end}}

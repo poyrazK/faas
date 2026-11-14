@@ -17,10 +17,12 @@ import (
 
 func cmdPipeline(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale pipeline <connection|create|list|status|wait|pause|resume|resync|verify|delete>", "pipeline")
+		PrintUsage(os.Stderr, "usage: gregale pipeline <connection|create|access|list|status|wait|pause|resume|resync|verify|delete>", "pipeline")
 		return 1
 	}
 	switch args[0] {
+	case "access":
+		return cmdPipelineTenantAccess(args[1:])
 	case "connection":
 		return cmdPipelineConnection(args[1:])
 	case "create":
@@ -41,16 +43,26 @@ func cmdPipeline(args []string) int {
 	case "status", "wait", "pause", "resume", "resync", "verify", "delete":
 		return cmdPipelineControl(args[0], args[1:])
 	default:
-		return printErr("Unknown pipeline command", errors.New("use connection, create, list, status, wait, pause, resume, resync, verify or delete"))
+		return printErr("Unknown pipeline command", errors.New("use connection, create, access, list, status, wait, pause, resume, resync, verify or delete"))
 	}
 }
 
 func cmdPipelineConnection(args []string) int {
 	if len(args) == 0 {
-		return printErr("Missing connection command", errors.New("use add, list, check, tables, rotate or delete"))
+		return printErr("Missing connection command", errors.New("use guide, add, list, check, tables, rotate or delete"))
 	}
 	if args[0] == "check" || args[0] == "tables" {
 		return cmdPipelineConnectionCheck(args[0], args[1:])
+	}
+	if args[0] == "guide" {
+		fs := newFlagSet("pipeline connection guide", flag.ContinueOnError)
+		if err := parseInterspersed(fs, args[1:]); err != nil {
+			return 1
+		}
+		if fs.NArg() != 1 || fs.Arg(0) != "neon" {
+			return printErr("Unknown provider guide", errors.New("use pipeline connection guide neon"))
+		}
+		return jsonOut(writeJSON(datapipeline.NeonSourceGuide()))
 	}
 	fs := newFlagSet("pipeline connection "+args[0], flag.ContinueOnError)
 	var file string
@@ -119,7 +131,7 @@ func cmdPipelineConnection(args []string) int {
 		}
 		return 0
 	default:
-		return printErr("Unknown connection command", errors.New("use add, list, check, tables, rotate or delete"))
+		return printErr("Unknown connection command", errors.New("use guide, add, list, check, tables, rotate or delete"))
 	}
 }
 
@@ -131,6 +143,7 @@ func cmdPipelineCreate(args []string) int {
 	region := fs.String("region", "", "placement for an automatically created mirror")
 	tables := fs.String("tables", "", "comma-separated public table names")
 	subjects := fs.String("read-subjects", "", "comma-separated application JWT subjects allowed to read the mirror")
+	servingFile := fs.String("serving-file", "", "JSON serving contract with column selection and optional tenant memberships")
 	wait := fs.Bool("wait", false, "wait until initial copying and catch-up complete")
 	timeout := fs.Duration("timeout", 10*time.Minute, "maximum provisioning and pipeline wait (maximum 1h)")
 	apiName := unreleasedStringFlag(fs, "api", "deploy a read-only Data API after initial sync")
@@ -138,17 +151,25 @@ func cmdPipelineCreate(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || ((*connection == "") == (*sourceFile == "")) || *tables == "" || *subjects == "" || *timeout <= 0 || *timeout > time.Hour || (*apiName != "" && (*authApp == "" || !api.ValidAppSlug(*apiName))) {
-		return printErr("Invalid pipeline", errors.New("supply NAME, one of --connection/--url-file, --tables and --read-subjects; --api also requires --auth"))
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || ((*connection == "") == (*sourceFile == "")) || *tables == "" || *timeout <= 0 || *timeout > time.Hour || (*apiName != "" && (*authApp == "" || !api.ValidAppSlug(*apiName))) {
+		return printErr("Invalid pipeline", errors.New("supply NAME, one of --connection/--url-file, --tables, and --read-subjects or a tenant --serving-file; --api also requires --auth"))
 	}
 	if *apiName != "" && api.IsReservedAppSlug(*apiName) {
 		return printErr("Invalid Data API name", errors.New("choose an app name that is not reserved by Gregale"))
+	}
+	serving, err := readPipelineServing(*servingFile)
+	if err != nil {
+		return printErr("Could not read serving contract", err)
+	}
+	readers := []string{}
+	if *subjects != "" {
+		readers = strings.Split(*subjects, ",")
 	}
 	validationID := *connection
 	if validationID == "" {
 		validationID = uuid.NewString()
 	}
-	validation := api.CreateDataPipelineRequest{Name: fs.Arg(0), SourceConnectionID: validationID, DatabaseID: validationID, Tables: strings.Split(*tables, ","), ReadSubjects: strings.Split(*subjects, ",")}
+	validation := api.CreateDataPipelineRequest{Name: fs.Arg(0), SourceConnectionID: validationID, DatabaseID: validationID, Tables: strings.Split(*tables, ","), ReadSubjects: readers, Serving: serving}
 	if err := datapipeline.ValidateCreate(validation); err != nil {
 		return printErr("Invalid pipeline", err)
 	}
@@ -198,14 +219,14 @@ func cmdPipelineCreate(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	recovered, found, err := recoverPipelineCreate(ctx, client, api.CreateDataPipelineRequest{Name: fs.Arg(0), SourceConnectionID: *connection, Tables: strings.Split(*tables, ","), ReadSubjects: strings.Split(*subjects, ",")}, *database, *region)
+	recovered, found, err := recoverPipelineCreate(ctx, client, api.CreateDataPipelineRequest{Name: fs.Arg(0), SourceConnectionID: *connection, Tables: strings.Split(*tables, ","), ReadSubjects: readers, Serving: serving}, *database, *region)
 	if err != nil {
 		return printErr("Could not recover existing pipeline", err)
 	}
 	if found {
 		return finishPipelineCreate(ctx, client, recovered, *wait, *apiName, *authApp)
 	}
-	if err = checkConnectionForCreate(ctx, client, *connection, "", strings.Split(*tables, ",")); err != nil {
+	if err = checkConnectionForCreate(ctx, client, *connection, "", strings.Split(*tables, ","), serving); err != nil {
 		return printErr("Source compatibility check failed before mirror provisioning", err)
 	}
 	var db api.ManagedPostgresDatabase
@@ -229,11 +250,11 @@ func cmdPipelineCreate(args []string) int {
 	if err != nil {
 		return printErr("Mirror is retained; retry with --database "+db.ID, err)
 	}
-	if err = checkConnectionForCreate(ctx, client, *connection, db.ID, strings.Split(*tables, ",")); err != nil {
+	if err = checkConnectionForCreate(ctx, client, *connection, db.ID, strings.Split(*tables, ","), serving); err != nil {
 		return printErr("Mirror check failed; database is retained as "+db.ID, err)
 	}
-	req := api.CreateDataPipelineRequest{Name: fs.Arg(0), SourceConnectionID: *connection, DatabaseID: db.ID, Tables: strings.Split(*tables, ","), ReadSubjects: strings.Split(*subjects, ",")}
-	p, err := client.CreateDataPipeline(api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("pipeline", req.Name, db.ID, *connection)), req)
+	req := api.CreateDataPipelineRequest{Name: fs.Arg(0), SourceConnectionID: *connection, DatabaseID: db.ID, Tables: strings.Split(*tables, ","), ReadSubjects: readers, Serving: serving}
+	p, err := client.CreateDataPipeline(api.ContextWithIdempotencyKey(ctx, pipelineCreateKey(req)), req)
 	if err != nil {
 		return printErr("Mirror is retained; retry with --database "+db.ID, err)
 	}

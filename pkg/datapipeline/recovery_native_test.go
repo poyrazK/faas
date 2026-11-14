@@ -28,7 +28,7 @@ type nativeRecoveryFixture struct {
 	raw, role             string
 }
 
-func newNativeRecoveryFixture(t *testing.T, initialSQL string) *nativeRecoveryFixture {
+func newNativeRecoveryFixture(t *testing.T, initialSQL string, serving ...*api.DataPipelineServing) *nativeRecoveryFixture {
 	t.Helper()
 	raw := os.Getenv("DATA_PIPELINE_TEST_DSN")
 	if raw == "" {
@@ -119,8 +119,19 @@ func newNativeRecoveryFixture(t *testing.T, initialSQL string) *nativeRecoveryFi
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixturePassingCheck(t, f.store, account, f.connection)
-	created, err := f.service.Create(ctx, account, api.CreateDataPipelineRequest{Name: "recovery-orders", SourceConnectionID: f.connection.ID, DatabaseID: uuid.NewString(), Tables: []string{"orders"}, ReadSubjects: []string{"alice"}})
+	req := api.CreateDataPipelineRequest{Name: "recovery-orders", SourceConnectionID: f.connection.ID, DatabaseID: uuid.NewString(), Tables: []string{"orders"}, ReadSubjects: []string{"alice"}}
+	if len(serving) > 0 {
+		req.Serving = serving[0]
+		if req.Serving.TenantAccess != nil {
+			req.ReadSubjects = nil
+		}
+	}
+	_, metadata, err := inspectSourceTable(ctx, f.source, "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixturePassingCheck(t, f.store, account, f.connection, metadata)
+	created, err := f.service.Create(ctx, account, req)
 	if err != nil {
 		t.Fatal(err)
 	}

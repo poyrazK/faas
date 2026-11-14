@@ -27,6 +27,12 @@ def arguments(**overrides):
 
 
 class QualificationTests(unittest.TestCase):
+    def test_neon_source_requires_direct_provider_hostname(self):
+        q.validate_source_provider("postgres://u:p@ep-example.eu.aws.neon.tech/db?sslmode=verify-full", "neon")
+        for host in ("ep-example-pooler.eu.aws.neon.tech", "ep-example.neon.tech.evil.example", "postgres.example"):
+            with self.assertRaisesRegex(CanaryFailure, "direct_neon_source_required"):
+                q.validate_source_provider("postgres://u:p@" + host + "/db?sslmode=verify-full", "neon")
+
     def test_prerequisites_fail_closed_without_remote_calls(self):
         with patch.dict(os.environ, {}, clear=True), patch("subprocess.run") as remote:
             missing = q.prerequisites(arguments())

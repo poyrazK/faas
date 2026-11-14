@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func readerPredicate(subjects []string) string {
@@ -21,12 +22,21 @@ func readerPredicate(subjects []string) string {
 func readerAuthority(ctx context.Context, p Pipeline, tx receiptSQL, exclusive bool) ([]string, string, int64, error) {
 	if _, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS gregale_pipeline.reader_access(
  pipeline_id uuid PRIMARY KEY REFERENCES gregale_pipeline.mirrors(pipeline_id) ON DELETE CASCADE,
- generation bigint NOT NULL,revision bigint NOT NULL DEFAULT 0,change_id text NOT NULL DEFAULT '',subjects text[] NOT NULL)`); err != nil {
+ generation bigint NOT NULL,revision bigint NOT NULL DEFAULT 0,change_id text NOT NULL DEFAULT '',subjects text[] NOT NULL,tenant_access jsonb NOT NULL DEFAULT '{}')`); err != nil {
 		return nil, "", 0, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO gregale_pipeline.reader_access(pipeline_id,generation,subjects)
- SELECT pipeline_id,generation,$3::text[] FROM gregale_pipeline.mirrors WHERE pipeline_id=$1 AND generation=$2 AND NOT retiring
- ON CONFLICT DO NOTHING`, p.ID, p.Generation, p.ReadSubjects); err != nil {
+	var installed bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid='gregale_pipeline.reader_access'::regclass AND attname='tenant_access' AND NOT attisdropped)`).Scan(&installed); err != nil {
+		return nil, "", 0, err
+	}
+	if !installed {
+		if _, err := tx.Exec(ctx, `ALTER TABLE gregale_pipeline.reader_access ADD COLUMN tenant_access jsonb NOT NULL DEFAULT '{}'`); err != nil {
+			return nil, "", 0, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO gregale_pipeline.reader_access(pipeline_id,generation,subjects,tenant_access)
+ SELECT pipeline_id,generation,$3::text[],$4::jsonb FROM gregale_pipeline.mirrors WHERE pipeline_id=$1 AND generation=$2 AND NOT retiring
+ ON CONFLICT DO NOTHING`, p.ID, p.Generation, p.ReadSubjects, tenantJSON(tenantAccess(p))); err != nil {
 		return nil, "", 0, err
 	}
 	lock := " FOR SHARE"
@@ -47,7 +57,10 @@ func applyReaders(ctx context.Context, p Pipeline, target *pgx.Conn, current fun
 	if c == nil || c.State != "approved" {
 		return nil, nil
 	}
-	if p.DesiredState == "deleted" && !readerSubset(c.Before, c.After) {
+	if p.DesiredState == "deleted" && !readerReduction(*c) {
+		return nil, ErrConflict
+	}
+	if c.Tenant != (tenantAccess(p) != nil) || (c.Tenant && (!validMemberships(c.BeforeMemberships) || !validMemberships(c.AfterMemberships) || !slices.Equal(c.Before, membershipSubjects(c.BeforeMemberships)) || !slices.Equal(c.After, membershipSubjects(c.AfterMemberships)))) {
 		return nil, ErrConflict
 	}
 	if c.Generation != p.Generation || c.ID != readerChangeID(p, *c) || !validReaders(c.After) {
@@ -64,6 +77,27 @@ func applyReaders(ctx context.Context, p Pipeline, target *pgx.Conn, current fun
 	subjects, id, revision, err := readerAuthority(ctx, p, tx, true)
 	if err != nil {
 		return nil, err
+	}
+	access, err := authorityTenant(ctx, p, tx, subjects)
+	if err != nil {
+		return nil, err
+	}
+	if c.Tenant {
+		expected := c.BeforeMemberships
+		if id == c.ID {
+			expected = c.AfterMemberships
+		}
+		if access == nil || !slices.Equal(access.Memberships, expected) {
+			return nil, ErrConflict
+		}
+	}
+	afterAccess := access
+	if c.Tenant {
+		afterAccess = &api.DataPipelineTenantAccess{Column: access.Column, Memberships: c.AfterMemberships}
+	}
+	predicate := readerPredicate(c.After)
+	if afterAccess != nil {
+		predicate = tenantReaderPredicate(afterAccess)
 	}
 	if revision > p.Revision || id == c.ID && !slices.Equal(subjects, c.After) {
 		return nil, ErrConflict
@@ -120,12 +154,12 @@ func applyReaders(ctx context.Context, p Pipeline, target *pgx.Conn, current fun
 				return nil, err
 			}
 			if !closed {
-				if _, err = tx.Exec(ctx, "ALTER POLICY gregale_pipeline_read ON "+tableIdent(table.name)+" USING ("+readerPredicate(c.After)+")"); err != nil {
+				if _, err = tx.Exec(ctx, "ALTER POLICY gregale_pipeline_read ON "+tableIdent(table.name)+" USING ("+predicate+")"); err != nil {
 					return nil, err
 				}
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE gregale_pipeline.reader_access SET subjects=$3,change_id=$4,revision=$5 WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation, c.After, c.ID, p.Revision); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE gregale_pipeline.reader_access SET subjects=$3,change_id=$4,revision=$5,tenant_access=$6::jsonb WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation, c.After, c.ID, p.Revision, tenantJSON(afterAccess)); err != nil {
 			return nil, err
 		}
 	}

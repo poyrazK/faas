@@ -10,6 +10,7 @@ import type { DataConnectionCheck } from '../models/DataConnectionCheck.js';
 import type { DataConnectionList } from '../models/DataConnectionList.js';
 import type { DataPipeline } from '../models/DataPipeline.js';
 import type { DataPipelineList } from '../models/DataPipelineList.js';
+import type { DataPipelineTenantReadersRequest } from '../models/DataPipelineTenantReadersRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { RequestDataConnectionCheck } from '../models/RequestDataConnectionCheck.js';
 import type { RotateDataConnectionRequest } from '../models/RotateDataConnectionRequest.js';
@@ -236,6 +237,32 @@ export class DataPipelinesService {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/data/pipelines/{id}/control',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Preview or approve an exact tenant membership change
+   * @returns Problem Problem returned by changeDataPipelineTenantReaders after account, credential or pipeline validation.
+   * @returns DataPipeline Tenant membership preview saved or approved for atomic mirror policy reconciliation.
+   * @throws ApiError
+   */
+  public static changeDataPipelineTenantReaders({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Pipeline whose tenant membership preview or approval is being managed.
+     */
+    id: string,
+    requestBody: DataPipelineTenantReadersRequest,
+  }): CancelablePromise<Problem | DataPipeline> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/data/pipelines/{id}/tenant-readers',
       path: {
         'id': id,
       },

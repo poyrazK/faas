@@ -72065,6 +72065,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /v1/data/pipelines/{id}/tenant-readers:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Pipeline whose tenant membership preview or approval is being managed.
+    post:
+      summary: Preview or approve an exact tenant membership change
+      operationId: changeDataPipelineTenantReaders
+      tags:
+      - data_pipelines
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataPipelineTenantReadersRequest'
+      responses:
+        '202':
+          description: Tenant membership preview saved or approved for atomic mirror policy reconciliation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataPipeline'
+        default:
+          description: Problem returned by changeDataPipelineTenantReaders after account, credential or pipeline validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
   /v1/sales/inquiries/challenge:
     get:
       x-internal: true
@@ -139849,6 +139883,12 @@ components:
       - tables
       - created_at
       properties:
+        source_provider_hint:
+          type: string
+          description: Hostname-derived setup hint; never a qualification or admission grant.
+        source_guidance_url:
+          type: string
+          format: uri
         requested_tables:
           type: array
           maxItems: 16
@@ -139963,6 +140003,9 @@ components:
       - columns
       - issues
       properties:
+        column_selection_supported:
+          type: boolean
+          description: A valid explicit column selection may omit incompatible non-key columns; all table-level checks still apply.
         name:
           type: string
           maxLength: 63
@@ -139988,6 +140031,8 @@ components:
       - nullable
       - primary_key
       properties:
+        unsupported:
+          type: boolean
         name:
           type: string
           maxLength: 63
@@ -140070,7 +140115,7 @@ components:
           description: Replacement verified-TLS URL with an explicit password for the existing source host, database and username.
             addresses must be operator-qualified.
     CreateDataPipelineRequest:
-      description: Selected public tables, dedicated destination and explicitly authorized JWT readers. A fresh passing connection check for the current source credential and all selected tables is required; otherwise returns data_connection_check_required.
+      description: Selected public tables, dedicated destination and explicitly authorized JWT readers. Supply read_subjects for whole-table access, or serving.tenant_access with owner-managed memberships and no read_subjects. Explicit columns must cover every table and retain all primary-key and tenant columns. A fresh passing connection check for the current source credential and all selected tables is required; otherwise returns data_connection_check_required.
       type: object
       additionalProperties: false
       required:
@@ -140078,8 +140123,9 @@ components:
       - source_connection_id
       - database_id
       - tables
-      - read_subjects
       properties:
+        serving:
+          $ref: '#/components/schemas/DataPipelineServing'
         name:
           type: string
           minLength: 3
@@ -140104,9 +140150,83 @@ components:
             type: string
             minLength: 1
             maxLength: 256
-          minItems: 1
-          maxItems: 32
+          minItems: 0
+          maxItems: 128
           uniqueItems: true
+    DataPipelineServing:
+      description: Versioned serving contract. Columns are immutable and affect publication, mirror schema and recovery. Omit columns for all-column replication. Tenant access uses owner-managed subject memberships; JWT tenant claims grant nothing. At least columns or tenant_access is required. A missing version defaults to 1 at creation.
+      type: object
+      additionalProperties: false
+      properties:
+        version:
+          type: integer
+          enum: [1]
+          default: 1
+        columns:
+          type: object
+          description: Every selected table maps to 1–128 unique columns, including all primary keys and the tenant column. Names are bounded to 63 UTF-8 bytes.
+          maxProperties: 16
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 128
+            uniqueItems: true
+            items: {type: string, minLength: 1, maxLength: 63}
+        tenant_access:
+          $ref: '#/components/schemas/DataPipelineTenantAccess'
+    DataPipelineTenantAccess:
+      description: Row access through a text, varchar or UUID column present on every selected table. Memberships match verified JWT sub values exactly. Empty memberships revoke every reader.
+      type: object
+      additionalProperties: false
+      required: [column, memberships]
+      properties:
+        column: {type: string, minLength: 1, maxLength: 63}
+        memberships:
+          type: array
+          maxItems: 256
+          uniqueItems: true
+          description: At most 128 distinct subjects. Tenant and subject values are bounded to 256 UTF-8 bytes.
+          items:
+            $ref: '#/components/schemas/DataPipelineTenantMembership'
+    DataPipelineTenantMembership:
+      description: One account-owner-authorized subject and tenant pair.
+      type: object
+      additionalProperties: false
+      required: [subject, tenant]
+      properties:
+        subject: {type: string, minLength: 1, maxLength: 256}
+        tenant: {type: string, minLength: 1, maxLength: 256}
+    DataPipelineTenantChange:
+      description: Frozen membership preview. Approval applies this exact after set atomically at the mirror before catalog acknowledgement.
+      type: object
+      additionalProperties: false
+      required: [id, state, preview_revision, before, after]
+      properties:
+        id: {type: string}
+        state: {type: string, enum: [preview, approved, applied]}
+        preview_revision: {type: integer, format: int64, minimum: 1}
+        before:
+          type: array
+          maxItems: 256
+          items: {$ref: '#/components/schemas/DataPipelineTenantMembership'}
+        after:
+          type: array
+          maxItems: 256
+          items: {$ref: '#/components/schemas/DataPipelineTenantMembership'}
+    DataPipelineTenantReadersRequest:
+      description: Account-owner-only, revision-fenced membership preview, approval or discard. Preview supplies the complete replacement membership array. Approve supplies only the saved change_id; grace permits strict membership reductions only.
+      type: object
+      additionalProperties: false
+      required: [expected_revision, action]
+      properties:
+        expected_revision: {type: integer, format: int64, minimum: 1}
+        action: {type: string, enum: [preview, approve, discard]}
+        change_id: {type: string}
+        memberships:
+          type: array
+          maxItems: 256
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/DataPipelineTenantMembership'}
     ControlDataPipelineRequest:
       description: Optimistic revision fence and requested pipeline lifecycle action.
       type: object
@@ -140148,6 +140268,10 @@ components:
       - verification
       - created_at
       properties:
+        serving:
+          $ref: '#/components/schemas/DataPipelineServing'
+        tenant_change:
+          $ref: '#/components/schemas/DataPipelineTenantChange'
         wal_retention:
           $ref: '#/components/schemas/DataPipelineWALRetention'
         applied_through_at:
@@ -140194,7 +140318,7 @@ components:
             minLength: 1
             maxLength: 256
           minItems: 0
-          maxItems: 32
+          maxItems: 128
           uniqueItems: true
         desired_state:
           type: string

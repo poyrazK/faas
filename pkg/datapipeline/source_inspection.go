@@ -122,7 +122,7 @@ func inspectSourceTable(ctx context.Context, source sourceMetadata, name string)
 			col.Unsupported = true
 			add("source_column_unsupported", "Column cannot be replicated", "Use a supported builtin type and a stored, nongenerated column.", col.Name)
 		}
-		table.Columns = append(table.Columns, api.DataSourceColumn{Name: col.Name, Type: col.Type, Nullable: !col.NotNull, PrimaryKey: col.Key})
+		table.Columns = append(table.Columns, api.DataSourceColumn{Name: col.Name, Type: col.Type, Nullable: !col.NotNull, PrimaryKey: col.Key, Unsupported: !supported})
 		r.Columns = append(r.Columns, col)
 		hasKey = hasKey || col.Key
 	}
@@ -135,5 +135,6 @@ func inspectSourceTable(ctx context.Context, source sourceMetadata, name string)
 	if len(r.Columns) > api.DataPipelineColumnsMax {
 		add("source_column_unsupported", "Table exceeds the column limit", "Select a table with at most 128 columns.", "")
 	}
+	table.ColumnSelectionSupported = tableProjectionSupported(table)
 	return r, table, nil
 }
