@@ -2415,6 +2415,8 @@ type RegressionComparison struct {
 	Cur, Prev          string
 	CurStart, CurEnd   time.Time
 	PrevStart, PrevEnd time.Time
+	OwnStart, OwnEnd   time.Time
+	SideBySide         bool
 }
 
 func ChooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now time.Time) (RegressionComparison, bool) {
@@ -2422,8 +2424,11 @@ func ChooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now ti
 	return RegressionComparison{
 		Cur: c.cur.DeploymentID.String(), Prev: c.prev.DeploymentID.String(),
 		CurStart: c.curStart, CurEnd: c.curEnd, PrevStart: c.prevStart, PrevEnd: c.prevEnd,
+		OwnStart: c.ownStart, OwnEnd: c.ownEnd, SideBySide: c.sideBySide(),
 	}, ok
 }
+
+var MergeRegressionBaselines = mergeRegressionBaselines
 
 var DebugEvidenceLogWindow = debugEvidenceLogWindow
 
