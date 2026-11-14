@@ -468,6 +468,17 @@ func (tg *target) ok(t *testing.T, timeout time.Duration, args ...string) cliRes
 	return res
 }
 
+// runWithEnvOK is runWithEnv that fails the test on a non-zero exit.
+func (tg *target) runWithEnvOK(t *testing.T, extra []string, timeout time.Duration, args ...string) cliResult {
+	t.Helper()
+	res := tg.runWithEnv(t, extra, timeout, args...)
+	if res.exit != 0 {
+		t.Fatalf("gregale %s failed (exit %d): %s\nstdout: %s", strings.Join(args, " "), res.exit,
+			tg.redact(res.problem()), tg.redact(tail(string(res.stdout), 2000)))
+	}
+	return res
+}
+
 // objects decodes the CLI's JSON output: one document (scalars print
 // indented JSON) or NDJSON (slices print one object per line).
 func objects(t *testing.T, out []byte) []map[string]any {

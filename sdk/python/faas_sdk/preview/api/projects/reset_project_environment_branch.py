@@ -88,8 +88,8 @@ def sync_detailed(
      Deletes the branch and creates it again from its parent with the same
     slug, egress, private-network mode and time to live. Its workloads
     are published from the parent's current builds and its data is copied
-    again as of now. Work done in the branch is discarded, and its
-    workloads get new URLs. A branch with branches of its own cannot be
+    again as of now. Work done in the branch is discarded; its
+    workloads keep their URLs. A branch with branches of its own cannot be
     reset.
 
     Args:
@@ -127,8 +127,8 @@ def sync(
      Deletes the branch and creates it again from its parent with the same
     slug, egress, private-network mode and time to live. Its workloads
     are published from the parent's current builds and its data is copied
-    again as of now. Work done in the branch is discarded, and its
-    workloads get new URLs. A branch with branches of its own cannot be
+    again as of now. Work done in the branch is discarded; its
+    workloads keep their URLs. A branch with branches of its own cannot be
     reset.
 
     Args:
@@ -161,8 +161,8 @@ async def asyncio_detailed(
      Deletes the branch and creates it again from its parent with the same
     slug, egress, private-network mode and time to live. Its workloads
     are published from the parent's current builds and its data is copied
-    again as of now. Work done in the branch is discarded, and its
-    workloads get new URLs. A branch with branches of its own cannot be
+    again as of now. Work done in the branch is discarded; its
+    workloads keep their URLs. A branch with branches of its own cannot be
     reset.
 
     Args:
@@ -198,8 +198,8 @@ async def asyncio(
      Deletes the branch and creates it again from its parent with the same
     slug, egress, private-network mode and time to live. Its workloads
     are published from the parent's current builds and its data is copied
-    again as of now. Work done in the branch is discarded, and its
-    workloads get new URLs. A branch with branches of its own cannot be
+    again as of now. Work done in the branch is discarded; its
+    workloads keep their URLs. A branch with branches of its own cannot be
     reset.
 
     Args:
