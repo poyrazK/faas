@@ -123,6 +123,19 @@ func (s *server) getAppUsage(w http.ResponseWriter, r *http.Request, acct state.
 	})
 }
 
+// parseLedgerUsageWindow is parseUsageWindow for the per-minute consumer and
+// platform-tenant ledgers. Those ledgers are live, so an omitted until
+// defaults to the next UTC midnight and the window includes today's
+// requests; parseUsageWindow's default ends at the start of today and hid
+// them (ChronoLake finding 32). A caller-supplied until keeps the usual snap.
+func parseLedgerUsageWindow(r *http.Request, now time.Time) (time.Time, time.Time, *api.Problem) {
+	if r.URL.Query().Get("until") == "" {
+		now = now.UTC()
+		now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+	}
+	return parseUsageWindow(r, now)
+}
+
 // parseUsageWindow resolves the (since, until) half-open window
 // from the URL query string. BOTH bounds default to a trailing
 // 30d window ending at UTC midnight; BOTH bounds clamp to

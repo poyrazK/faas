@@ -105,6 +105,25 @@ func (q *Queries) EventCircuitGetForApp(ctx context.Context, db DBTX, arg EventC
 	return i, err
 }
 
+const eventCircuitProbeLease = `-- name: EventCircuitProbeLease :one
+SELECT lease_until FROM event_fanout_recipients
+WHERE outbox_id=$1::bigint AND subscription_id=$2::text
+ AND claim_token=$3::uuid AND state='processing'
+`
+
+type EventCircuitProbeLeaseParams struct {
+	OutboxID       int64
+	SubscriptionID string
+	ClaimToken     pgtype.UUID
+}
+
+func (q *Queries) EventCircuitProbeLease(ctx context.Context, db DBTX, arg EventCircuitProbeLeaseParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, eventCircuitProbeLease, arg.OutboxID, arg.SubscriptionID, arg.ClaimToken)
+	var lease_until pgtype.Timestamptz
+	err := row.Scan(&lease_until)
+	return lease_until, err
+}
+
 const eventCircuitProbeOutcome = `-- name: EventCircuitProbeOutcome :one
 SELECT (recipient_progress->$1::text)::jsonb AS progress FROM event_fanout_outbox
 WHERE id=$2::bigint AND account_id=$3::uuid

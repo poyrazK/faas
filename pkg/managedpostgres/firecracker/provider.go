@@ -49,6 +49,10 @@ type Scheduler interface {
 	CaptureDatabaseSnapshot(ctx context.Context, in *scheddpb.CaptureDatabaseSnapshotRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseSnapshot, error)
 	GetDatabaseSnapshot(ctx context.Context, in *scheddpb.DatabaseSnapshotRef, opts ...grpc.CallOption) (*scheddpb.DatabaseSnapshot, error)
 	DeleteDatabaseSnapshot(ctx context.Context, in *scheddpb.DatabaseSnapshotRef, opts ...grpc.CallOption) (*scheddpb.DeleteDatabaseSnapshotResponse, error)
+	// HoldDatabase and SetDatabaseComputeQuota carry the compute cap and
+	// the delete grace period's hold (compute_cap.go).
+	HoldDatabase(ctx context.Context, in *scheddpb.HoldDatabaseRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
+	SetDatabaseComputeQuota(ctx context.Context, in *scheddpb.SetDatabaseComputeQuotaRequest, opts ...grpc.CallOption) (*scheddpb.DatabaseRuntime, error)
 }
 
 // Verifiers publishes role verifiers to pgproxyd; *dbcreds.VerifierStore
@@ -91,6 +95,9 @@ type Config struct {
 	// ADR-650): DML on schema api only, under the Data API's statement
 	// timeout.
 	DataAPI bool
+	// Session issues direct session logins (the backend's session_enabled,
+	// ADR-20261110120000).
+	Session bool
 }
 
 // MinCredentialKeyBytes is the shortest accepted credential key.
@@ -112,10 +119,10 @@ const (
 func ParseConfig(backend managedpostgres.BackendConfig) (Config, error) {
 	s := backend.Settings
 	cfg := Config{
-		Region: backend.Region, HostSuffix: strings.TrimPrefix(strings.ToLower(s[settingHostSuffix]), "."), DataAPI: backend.DataAPIEnabled,
+		Region: backend.Region, HostSuffix: strings.TrimPrefix(strings.ToLower(s[settingHostSuffix]), "."), DataAPI: backend.DataAPIEnabled, Session: backend.SessionEnabled,
 		// Every major database nodes build bases for by default (the
 		// database_vmmd role's pins); postgres_majors narrows it.
-		Port: 5432, TLSMode: "verify-full", Database: "gregale", Majors: []int{14, 15, 16, 17, 18}, MaxStorageBytes: 100 << 30,
+		Port: 5432, TLSMode: "verify-full", Database: "gregale", Majors: []int{15, 16, 17, 18}, MaxStorageBytes: 100 << 30,
 		Classes: map[managedpostgres.ServiceClass]shape{
 			managedpostgres.ClassDevelopment: {vcpus: 1, memMiB: 512},
 			managedpostgres.ClassBurstable:   {vcpus: 2, memMiB: 1024},
@@ -219,6 +226,9 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		}
 	}
 	access := []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly, managedpostgres.CredentialMigration}
+	if p.cfg.Session {
+		access = append(access, managedpostgres.CredentialSession)
+	}
 	if p.cfg.DataAPI {
 		access = append(access, managedpostgres.CredentialDataAPI)
 	}
@@ -382,6 +392,13 @@ func (p *Provider) specFor(rt *scheddpb.DatabaseRuntime) managedpostgres.Spec {
 		}
 	}
 	return spec
+}
+
+var _ managedpostgres.UpdateObserver = (*Provider)(nil)
+
+// ObserveUpdate reads schedd's configuration and resize-pending state.
+func (p *Provider) ObserveUpdate(ctx context.Context, req managedpostgres.UpdateRequest) (managedpostgres.ObservedDatabase, error) {
+	return p.Inspect(ctx, req.ResourceID)
 }
 
 // Update changes a database's class, storage limit or compute policy in
@@ -557,10 +574,14 @@ func (p *Provider) IssueCredentials(ctx context.Context, req managedpostgres.Cre
 		ProviderIdentityID: role, Username: role, Password: password, Database: p.cfg.Database, TLSMode: p.cfg.TLSMode,
 		// The pooled endpoint shares a few server connections among many
 		// clients, transaction by transaction; runtime credentials use it,
-		// migrations the direct one.
+		// migrations the direct one. Read-only credentials use the pooled
+		// read-only endpoint, served by the database's standby while it
+		// holds every acknowledged commit, else by the primary (ADR-1027
+		// amendment 2026-11-11).
 		Endpoints: []managedpostgres.Endpoint{
 			{Role: managedpostgres.EndpointDirect, Host: req.ProviderResourceID + "." + p.cfg.HostSuffix, Port: p.cfg.Port},
 			{Role: managedpostgres.EndpointPooled, Host: req.ProviderResourceID + "-pooler." + p.cfg.HostSuffix, Port: p.cfg.Port},
+			{Role: managedpostgres.EndpointReadOnly, Host: req.ProviderResourceID + "-ro-pooler." + p.cfg.HostSuffix, Port: p.cfg.Port},
 		},
 	}
 	return material, material.Validate()

@@ -209,11 +209,14 @@ func nativeRefreshCatalog(t *testing.T, f *nativeRecoveryFixture) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.store.pool.Exec(t.Context(), string(schema)+`;CREATE TABLE notification_outbox(id bigserial PRIMARY KEY,channel text NOT NULL,payload text NOT NULL,available_at timestamptz NOT NULL,state text NOT NULL DEFAULT 'pending',attempts int NOT NULL DEFAULT 0,last_error text,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),delivered_at timestamptz)`); err != nil {
+	if _, err = f.store.pool.Exec(t.Context(), string(schema)); err != nil {
 		t.Fatal(err)
 	}
 	app := uuid.NewString()
 	if _, err = f.store.pool.Exec(t.Context(), `INSERT INTO apps VALUES($1,$2,'review-api','active')`, app, f.pipeline.AccountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.store.pool.Exec(t.Context(), `INSERT INTO deployments VALUES($1,$2,'live','default')`, uuid.NewString(), app); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = f.store.pool.Exec(t.Context(), `INSERT INTO managed_postgres_bindings VALUES($1,$2,$3,$4,'default','read_only','ready')`, uuid.NewString(), f.pipeline.AccountID, f.pipeline.DatabaseID, app); err != nil {

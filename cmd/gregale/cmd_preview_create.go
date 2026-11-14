@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
@@ -91,9 +92,9 @@ func cmdPreviewCreate(args []string) int {
 	if *idempotencyKey != "" {
 		deployCtx = api.ContextWithIdempotencyKey(deployCtx, deployOperationIdempotencyKey(*idempotencyKey, "preview-deploy"))
 	}
-	dep, err := client.DeployFromSourceRef(deployCtx, previewApp.Slug, api.SourceRefDeployRequest{
+	dep, err := deployPreviewSource(deployCtx, client, previewApp.Slug, api.SourceRefDeployRequest{
 		Repo: *repo, Ref: *ref, Format: "tarball", DeployedBy: resolveDeployedBy(""), PRNumber: *prNumber,
-	})
+	}, time.Duration(*timeoutSeconds)*time.Second)
 	if err != nil {
 		return printErr("Could not deploy preview", err)
 	}
@@ -120,6 +121,46 @@ func cmdPreviewCreate(args []string) int {
 		openPreviewURL(*openURL, previewURL)
 	}
 	return code
+}
+
+// deployPreviewSource queues the preview's deployment, waiting up to wait
+// while apid answers that the preview's managed PostgreSQL databases are
+// still provisioning (ADR-20261102123523): the deployment's release command
+// needs their URLs. apid never replays a 503, so a resend under the same
+// Idempotency-Key is answered afresh.
+func deployPreviewSource(ctx context.Context, client *Client, slug string, req api.SourceRefDeployRequest, wait time.Duration) (api.DeploymentResponse, error) {
+	deadline := time.Now().Add(wait)
+	waiting := false
+	for {
+		dep, err := client.DeployFromSourceRef(ctx, slug, req)
+		pause, ok := previewDatabaseRetryPause(err)
+		if !ok || time.Now().Add(pause).After(deadline) {
+			return dep, err
+		}
+		if !waiting && !jsonOutput {
+			PrintProgress(osStderr, "Waiting for the preview's managed PostgreSQL database")
+		}
+		waiting = true
+		select {
+		case <-ctx.Done():
+			return dep, err
+		case <-time.After(pause):
+		}
+	}
+}
+
+// previewDatabaseRetryPause reports whether err is apid holding a preview
+// deployment for its databases, and how long to wait before resending.
+func previewDatabaseRetryPause(err error) (time.Duration, bool) {
+	var apiErr *api.APIError
+	if !errors.As(err, &apiErr) || apiErr.Problem.Code != api.CodePreviewDatabaseProvisioning {
+		return 0, false
+	}
+	pause := api.PreviewDatabaseRetryAfter
+	if seconds := apiErr.Problem.RetryAfterSeconds; seconds != nil {
+		pause = time.Duration(*seconds) * time.Second
+	}
+	return min(max(pause, 100*time.Millisecond), 30*time.Second), true
 }
 
 func writePreviewCreateJSON(client *Client, app api.AppResponse, appURL string, dep api.DeploymentResponse, deadline time.Duration) int {

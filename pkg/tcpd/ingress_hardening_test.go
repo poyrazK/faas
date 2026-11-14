@@ -147,6 +147,17 @@ func TestCachedRouteResolverDoesNotCacheErrors(t *testing.T) {
 
 type countingInstanceSource struct {
 	apps, listeners, domains, deployments, instances atomic.Int32
+	accounts, orgs                                   atomic.Int32
+}
+
+func (s *countingInstanceSource) AccountByID(context.Context, string) (state.Account, error) {
+	s.accounts.Add(1)
+	return state.Account{ID: "account", Status: state.AccountActive}, nil
+}
+
+func (s *countingInstanceSource) OrgByID(context.Context, string) (state.Org, error) {
+	s.orgs.Add(1)
+	return state.Org{}, state.ErrNotFound
 }
 
 func (s *countingInstanceSource) AppByID(context.Context, string) (state.App, error) {
@@ -181,6 +192,8 @@ func TestCachedInstanceSourceKeepsAdmissionChecksFresh(t *testing.T) {
 	source := NewCachedInstanceSource(next, time.Minute)
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
+		_, _ = source.AccountByID(ctx, "account")
+		_, _ = source.OrgByID(ctx, "org")
 		_, _ = source.AppByID(ctx, "app")
 		_, _ = source.TCPListenerByAppAndName(ctx, "app", "echo")
 		_, _ = source.DomainByName(ctx, "example.com")
@@ -193,6 +206,8 @@ func TestCachedInstanceSourceKeepsAdmissionChecksFresh(t *testing.T) {
 		"app":         {next.apps.Load(), 3},
 		"listener":    {next.listeners.Load(), 3},
 		"instances":   {next.instances.Load(), 3},
+		"account":     {next.accounts.Load(), 3},
+		"org":         {next.orgs.Load(), 3},
 	} {
 		if tc.got != tc.want {
 			t.Fatalf("%s lookups = %d, want %d", name, tc.got, tc.want)

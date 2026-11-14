@@ -40,3 +40,31 @@ func TestMemStoreListDeploymentsWithStatus(t *testing.T) {
 		t.Fatalf("ListDeploymentsWithStatus = %v, want %v", ids, want)
 	}
 }
+
+// TestMemStoreListDeploymentsWithStatusForNode mirrors the Pg contract for
+// O32's node-scoped listing.
+func TestMemStoreListDeploymentsWithStatusForNode(t *testing.T) {
+	t.Parallel()
+	m := NewMemStore()
+	m.mu.Lock()
+	m.computeNodes["mine"] = ComputeNode{ID: "mine", Active: true}
+	m.computeNodes["other"] = ComputeNode{ID: "other", Active: true}
+	m.computeNodes["retired"] = ComputeNode{ID: "retired", Active: false}
+	for _, node := range []string{"mine", "other", "retired"} {
+		m.apps[node] = App{ID: node, Status: AppActive, NodeID: node}
+		m.deployments[node] = Deployment{ID: node, AppID: node, Status: DeployLive}
+	}
+	m.mu.Unlock()
+	got, err := m.ListDeploymentsWithStatusForNode(context.Background(), "mine", DeployLive)
+	if err != nil {
+		t.Fatalf("ListDeploymentsWithStatusForNode: %v", err)
+	}
+	ids := make([]string, 0, len(got))
+	for _, d := range got {
+		ids = append(ids, d.ID)
+	}
+	slices.Sort(ids)
+	if want := []string{"mine", "retired"}; !slices.Equal(ids, want) {
+		t.Fatalf("ListDeploymentsWithStatusForNode = %v, want %v", ids, want)
+	}
+}

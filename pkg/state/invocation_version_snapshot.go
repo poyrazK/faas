@@ -279,7 +279,7 @@ func (s memInvocationVersionReader) GetWorkflowOutboundAttempt(_ context.Context
 
 func (s memInvocationVersionReader) InvocationTargetAllowed(_ context.Context, app, scope string, target InvocationTarget) (bool, error) {
 	instance, exists := s.store.instances[target.InstanceID]
-	if !exists || instance.AppID != app || instance.DeploymentID != target.DeploymentID || instance.NodeID != target.NodeID || instance.State != string(StateRunning) || IsFork(instance.Mode) {
+	if !exists || instance.AppID != app || instance.DeploymentID != target.DeploymentID || instance.NodeID != target.NodeID || instance.State != string(StateRunning) || NeverServes(instance.Mode) {
 		return false, nil
 	}
 	dep, exists := s.store.deployments[target.DeploymentID]

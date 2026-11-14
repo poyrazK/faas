@@ -15,11 +15,12 @@ import (
 )
 
 // startCapabilityFlags keeps the product capability flags current
-// (ADR-20261023115741) and returns the per-account decision githubd uses to
-// ignore pushes and pull requests for a capability that is off. githubd knows
-// only the bound account, so flags it consumes take account rules alone.
-// Until the first reconcile succeeds, tier defaults decide.
-func startCapabilityFlags(ctx context.Context, store state.Store, pool *pgxpool.Pool, log *slog.Logger) (func(capability, accountID string) bool, error) {
+// (ADR-20261023115741) and returns the decision githubd uses to ignore pushes
+// and pull requests for a capability that is off. The subject carries the
+// resource's organization and plan, so organization and plan rules apply as
+// they do in apid (ADR-20261105090226). Until the first reconcile succeeds,
+// tier defaults decide.
+func startCapabilityFlags(ctx context.Context, store state.Store, pool *pgxpool.Pool, log *slog.Logger) (func(capability string, subject platformflags.Subject) bool, error) {
 	set := platformflags.NewSet(capflags.Bootstrap(os.Getenv))
 	decider, err := capflags.Load(set.Snapshot)
 	if err != nil {
@@ -36,7 +37,7 @@ func startCapabilityFlags(ctx context.Context, store state.Store, pool *pgxpool.
 			log.Error("githubd: platform flag watcher stopped", "err", err)
 		}
 	}()
-	return func(capability, accountID string) bool {
-		return decider.Enabled(capability, platformflags.Subject{AccountID: accountID})
+	return func(capability string, subject platformflags.Subject) bool {
+		return decider.Enabled(capability, subject)
 	}, nil
 }

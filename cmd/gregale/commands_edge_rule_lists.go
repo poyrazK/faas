@@ -30,7 +30,9 @@ func cmdEdgeRuleLists(args []string) int {
 		return cmdEdgeRuleListsCreate(args[1:])
 	case subUpdate:
 		return cmdEdgeRuleListsUpdate(args[1:])
-	case subRm:
+	case subRm, "delete":
+		// The reference and usage document `delete` (the command tree's verb);
+		// `rm` stays for existing scripts (ChronoLake finding 35).
 		return cmdEdgeRuleListsRm(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown edge-rule-lists subcommand %q\n", args[0])
@@ -211,11 +213,14 @@ func cmdEdgeRuleListsUpdate(args []string) int {
 func cmdEdgeRuleListsRm(args []string) int {
 	fs := newFlagSet("edge-rule-lists rm", flag.ContinueOnError)
 	app := edgeRuleListAppFlag(fs)
+	// `edge rule delete` needs --yes; rule-list delete refused it (Hunt 32
+	// H32-60). It is accepted here and still does not prompt.
+	fs.Bool("yes", false, "accepted for consistency with edge rule delete; does not prompt")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale edge rule-list delete <name>", "edge-rule-lists")
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list delete <name> [--yes]", "edge-rule-lists")
 		return 1
 	}
 	name := fs.Arg(0)

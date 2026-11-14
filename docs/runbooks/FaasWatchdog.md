@@ -71,6 +71,16 @@ and a heartbeat (`alertmanager — refuse a silent control plane`).
 
 ## Check
 
+The manual [monitoring qualification procedure](../ops/monitoring-qualification.md)
+records production-route firing/recovery receipts and a separate external
+deadline test without stopping or silencing the live watchdog.
+
+For a repeatable local routing, recovery and missed-heartbeat drill, run
+`make notification-delivery-check` in the pinned monitoring tool environment.
+It uses isolated loopback processes and webhook receivers; see
+[notification delivery evidence](../ops/notification-delivery.md). The local
+report does not establish receipt by this deployed external monitor.
+
 ```bash
 systemctl is-enabled alertmanager; systemctl is-active alertmanager
 amtool --alertmanager.url=http://127.0.0.1:9094 alert query alertname=FaasWatchdog

@@ -515,32 +515,39 @@ func TestCmdBillingCancel_Success(t *testing.T) {
 
 // TestCmdBillingCancel_AlreadyCancelledFriendlyHint: server
 // returns 409 + code=billing_already_cancelled; CLI renders the
-// hint instead of the SDK error.
+// hint instead of the SDK error. apid before the code fix sent
+// code=conflict with billing_already_cancelled as the title, so
+// the hint never showed; the CLI still recognizes that shape.
 func TestCmdBillingCancel_AlreadyCancelledFriendlyHint(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/billing/cancel", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(api.Problem{
-			Status: http.StatusConflict,
-			Code:   "billing_already_cancelled",
-			Title:  "No active subscription to cancel",
-			Detail: "this account has no active subscription to cancel",
+	for _, tc := range []struct{ name, code, title string }{
+		{"code", api.CodeBillingAlreadyCancelled, "Nothing to do"},
+		{"earlier_apid", api.CodeConflict, "billing_already_cancelled"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/v1/billing/cancel", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(api.Problem{
+					Status: http.StatusConflict, Code: tc.code, Title: tc.title,
+					Detail: "this account has no subscription to cancel",
+				})
+			})
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+
+			stderr, restore := main.CaptureStderr(t)
+			defer restore()
+			if code := main.CmdBillingCancel([]string{"--yes"}); code != 5 {
+				t.Errorf("cmdBillingCancel already-cancelled = %d, want 5", code)
+			}
+			if !strings.Contains(stderr.String(), "No active subscription to cancel") {
+				t.Errorf("stderr missing friendly hint; got: %q", stderr.String())
+			}
 		})
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-
-	t.Setenv("FAAS_API", srv.URL)
-	t.Setenv("FAAS_TOKEN", "fp_live_x")
-
-	stderr, restore := main.CaptureStderr(t)
-	defer restore()
-	if code := main.CmdBillingCancel([]string{"--yes"}); code != 5 {
-		t.Errorf("cmdBillingCancel already-cancelled = %d, want 5", code)
-	}
-	if !strings.Contains(stderr.String(), "No active subscription") {
-		t.Errorf("stderr missing friendly hint; got: %q", stderr.String())
 	}
 }
 

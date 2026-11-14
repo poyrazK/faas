@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -103,7 +104,8 @@ def _retry_after_seconds(response: httpx.Response) -> float | None:
     if raw is None:
         return None
     try:
-        return float(raw)
+        delay = float(raw)
+        return delay if math.isfinite(delay) and delay >= 0 else None
     except ValueError:
         return None
 
@@ -114,8 +116,8 @@ class RetryTransport(httpx.BaseTransport):
     exponential backoff.
 
     `max_attempts=0` is a true identity (the wrapped transport runs
-    once). `backoff=0` retries with no inter-attempt sleep (useful
-    in tests).
+    once). Nonpositive backoff uses 100ms. At most eight retries are made,
+    with exponential delays capped at eight seconds.
     """
 
     def __init__(
@@ -125,8 +127,8 @@ class RetryTransport(httpx.BaseTransport):
         backoff: float = 0.5,
     ) -> None:
         self._transport = transport
-        self._max_attempts = max_attempts
-        self._backoff = backoff
+        self._max_attempts = max(0, min(int(max_attempts), 8))
+        self._backoff = min(backoff, 8.0) if math.isfinite(backoff) and backoff > 0 else 0.1
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         if self._max_attempts <= 0:
@@ -143,8 +145,12 @@ class RetryTransport(httpx.BaseTransport):
                 response.read()
             if not _is_retryable(response) or attempts > self._max_attempts:
                 return response
+            sleep_for = max(_retry_after_seconds(response) or 0, delay)
+            # A socket timeout does not bound time.sleep. Surface a longer
+            # server cooldown intact so the caller can schedule another try.
+            if sleep_for > 8.0:
+                return response
             response.close()
-            sleep_for = _retry_after_seconds(response) or delay
             time.sleep(sleep_for)
             delay = min(delay * 2, 8.0)
 
@@ -270,8 +276,8 @@ class AsyncRetryTransport(httpx.AsyncBaseTransport):
         backoff: float = 0.5,
     ) -> None:
         self._transport = transport
-        self._max_attempts = max_attempts
-        self._backoff = backoff
+        self._max_attempts = max(0, min(int(max_attempts), 8))
+        self._backoff = min(backoff, 8.0) if math.isfinite(backoff) and backoff > 0 else 0.1
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         if self._max_attempts <= 0:
@@ -288,8 +294,10 @@ class AsyncRetryTransport(httpx.AsyncBaseTransport):
                 await response.aread()
             if not _is_retryable(response) or attempts > self._max_attempts:
                 return response
-            response.close()
-            sleep_for = _retry_after_seconds(response) or delay
+            sleep_for = max(_retry_after_seconds(response) or 0, delay)
+            if sleep_for > 8.0:
+                return response
+            await response.aclose()
             await asyncio.sleep(sleep_for)
             delay = min(delay * 2, 8.0)
 

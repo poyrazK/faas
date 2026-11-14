@@ -78,10 +78,7 @@ func (m *MemStore) dispatchMultipartPart(ctx context.Context, b ObjectBucket, id
 	}
 	d.dispatched = true
 	m.objectMultipartPartWriters[key] = d
-	if m.objectMutations == nil {
-		m.objectMutations = map[string]ObjectBucketMutation{}
-	}
-	m.objectMutations[d.receipt.ID] = d.receipt
+	m.putObjectMutationLocked(d.receipt)
 	return d.receipt, nil
 }
 
@@ -110,7 +107,7 @@ func (m *MemStore) FinishObjectMultipartPartMutation(ctx context.Context, r Obje
 		d.settled = true
 		m.objectMultipartPartWriters[key] = d
 		m.settleMultipartPartLocked(key.upload, key.part)
-		delete(m.objectMutations, r.ID)
+		m.dropObjectMutationLocked(r.ID)
 		return nil
 	}
 	return ErrConflict
@@ -167,7 +164,7 @@ func (m *MemStore) SettleAbandonedObjectMultipartPartWriters(ctx context.Context
 		d.settled = true
 		m.objectMultipartPartWriters[key] = d
 		m.settleMultipartPartLocked(id, key.part)
-		delete(m.objectMutations, d.receipt.ID)
+		m.dropObjectMutationLocked(d.receipt.ID)
 		settled++
 	}
 	return settled, nil

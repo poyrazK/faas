@@ -1,0 +1,18 @@
+[Unit]
+Description=Gregale kernel lockdown and module lock (ADR-20261107220000)
+Documentation=https://github.com/poyrazK/faas/blob/main/docs/runbooks/kernel-lockdown.md
+DefaultDependencies=no
+# Modules the boot itself needs are loaded first; everything after runs
+# under lockdown.
+After=systemd-modules-load.service local-fs.target
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+ConditionPathExists=/sys/kernel/security/lockdown
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/faas-kernel-lockdown
+
+[Install]
+WantedBy=sysinit.target

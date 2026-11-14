@@ -55,6 +55,7 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	// measured at 130 ms resume_hook is 1024 MB, and comparing the two
 	// without saying so overstates how good the platform looks.
 	memMiB := benchMemMiB(t)
+	vcpus := benchVCPUs(t)
 
 	// Self-contained fixture: the harness must run from a plain
 	// `make test-metal` on any designated acceptance host, not only from
@@ -183,7 +184,7 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	// wake does after the idle reaper has parked the app.
 	if _, err := m.ColdBoot(ctx, ColdBootRequest{
 		Instance: instance, Plan: "pro", BaseKey: base, LayerKey: layer,
-		VcpuCount: 2, MemSizeMiB: memMiB, AccountID: account,
+		VcpuCount: vcpus, MemSizeMiB: memMiB, AccountID: account,
 	}); err != nil {
 		t.Fatalf("prime cold boot: %v", err)
 	}
@@ -197,7 +198,7 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 	// loop mount of drive1, after it they share one. With the default of 0 the
 	// harness measures the single-writer (resolver only) shape.
 	apiEnv := benchAPIEnvEntries(t)
-	t.Logf("guest: %d MiB", memMiB)
+	t.Logf("guest: %d MiB, %d vCPU", memMiB, vcpus)
 	t.Logf("pre-boot writers this run: resolver + %d api env keys", len(apiEnv))
 
 	// FAAS_RESTORE_BENCH_TOUCH_BASE=1 bumps the base's mtime before every
@@ -240,7 +241,7 @@ func TestMetalRestoreTimingBench(t *testing.T) {
 		started := time.Now()
 		out, err := m.Wake(ctx, WakeRequest{
 			Instance: instance, Plan: "pro", BaseKey: base, LayerKey: layer,
-			VcpuCount: 2, MemSizeMiB: memMiB, Snapshot: snap,
+			VcpuCount: vcpus, MemSizeMiB: memMiB, Snapshot: snap,
 			APIEnvEntries: apiEnv, AccountID: account,
 		})
 		if err != nil {
@@ -704,6 +705,21 @@ func benchLayerMiB(t *testing.T) int {
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 16 || n > 4096 {
 		t.Fatalf("FAAS_RESTORE_BENCH_LAYER_MIB=%q must be an integer in [16,4096]", raw)
+	}
+	return n
+}
+
+// benchVCPUs sets the guest's vCPU count. FAAS_RESTORE_BENCH_VCPUS defaults to
+// 2, the Free/Hobby/Pro topology, so earlier runs stay comparable.
+func benchVCPUs(t *testing.T) int {
+	t.Helper()
+	raw := os.Getenv("FAAS_RESTORE_BENCH_VCPUS")
+	if raw == "" {
+		return 2
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 8 {
+		t.Fatalf("FAAS_RESTORE_BENCH_VCPUS=%q must be an integer in [1,8]", raw)
 	}
 	return n
 }

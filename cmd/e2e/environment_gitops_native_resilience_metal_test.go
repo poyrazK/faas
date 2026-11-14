@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 const gitOpsNextBody = "reviewed next revision"
@@ -47,6 +50,7 @@ func (j *nativeGitOpsJourney) run(t *testing.T) {
 		// Activation is deliberately distinct from serving: a real customer
 		// queue delivery is required before this mixed graph can be applied.
 		j.waitActivated(t, j.source.ApprovedRevisionID, j.source.Generation)
+		j.waitWorkerRunning(t)
 		firstDelivery := j.sendQueue(t, 0)
 		j.bindingID = firstDelivery.QueueBindingID
 		j.waitQueue(t, firstDelivery, false)
@@ -209,6 +213,11 @@ func (j *nativeGitOpsJourney) approve(t *testing.T, sha string) api.ApproveEnvir
 	return approved
 }
 
+// statusUnavailableTolerance bounds how long the status API may keep answering
+// its retryable 503 (a store read that failed or timed out) before the journey
+// fails. A single 503 in thousands of polls is part of the status contract.
+const statusUnavailableTolerance = 30 * time.Second
+
 func (j *nativeGitOpsJourney) waitStatus(t *testing.T, phase string, timeout time.Duration, ready func(api.EnvironmentGitOpsStatusResponse) bool) api.EnvironmentGitOpsStatusResponse {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), timeout)
@@ -216,25 +225,144 @@ func (j *nativeGitOpsJourney) waitStatus(t *testing.T, phase string, timeout tim
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	var last api.EnvironmentGitOpsStatusResponse
+	var unavailableSince time.Time
 	for {
 		j.checkTraffic(t)
-		var err error
-		last, err = j.client.GetEnvironmentGitOps(ctx, j.project.Slug, "production")
+		current, err := j.client.GetEnvironmentGitOps(ctx, j.project.Slug, "production")
 		if err != nil {
+			// A deadline that cancels this call must still report the last
+			// status that was actually read, not an empty response.
 			if ctx.Err() != nil {
-				t.Fatalf("%s timed out: source=%+v evidence=%+v", phase, last.Source, last.WorkloadEvidence)
+				t.Fatalf("%s timed out: source=%+v evidence=%+v%s", phase, last.Source, last.WorkloadEvidence, j.timeoutDiagnostics(t, last))
 			}
-			t.Fatalf("%s status: %v", phase, err)
-		}
-		if ready(last) {
-			return last
+			var apiErr *api.APIError
+			if !errors.As(err, &apiErr) || apiErr.Problem.Code != api.CodeCapacity {
+				t.Fatalf("%s status: %v", phase, err)
+			}
+			if unavailableSince.IsZero() {
+				unavailableSince = time.Now()
+			}
+			if time.Since(unavailableSince) > statusUnavailableTolerance {
+				t.Fatalf("%s status unavailable for over %s: %v", phase, statusUnavailableTolerance, err)
+			}
+			t.Logf("GitOps native resilience: %s status retryable: %v", phase, err)
+		} else {
+			unavailableSince = time.Time{}
+			last = current
+			if ready(last) {
+				return last
+			}
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("%s timed out: source=%+v evidence=%+v", phase, last.Source, last.WorkloadEvidence)
+			t.Fatalf("%s timed out: source=%+v evidence=%+v%s", phase, last.Source, last.WorkloadEvidence, j.timeoutDiagnostics(t, last))
 		case <-ticker.C:
 		}
 	}
+}
+
+// timeoutDiagnostics reports what the status response leaves out: the latest
+// GitOps runs, and the graph, qualification, release and deployment rows
+// behind them. The per-test schema is dropped at cleanup, so this is the only
+// record. Query failures are reported, not fatal.
+func (j *nativeGitOpsJourney) timeoutDiagnostics(t *testing.T, last api.EnvironmentGitOpsStatusResponse) string {
+	t.Helper()
+	var b strings.Builder
+	runs := slices.Clone(last.Runs)
+	slices.SortFunc(runs, func(x, y api.EnvironmentGitOpsRun) int { return y.StartedAt.Compare(x.StartedAt) })
+	for _, run := range runs[:min(len(runs), 6)] {
+		fmt.Fprintf(&b, "\n  run gen=%d status=%s code=%q started=%s", run.Generation, run.Status, run.ErrorCode, run.StartedAt.Format(time.RFC3339))
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(t.Context()), 10*time.Second)
+	defer cancel()
+	queries := []struct {
+		name, sql string
+		args      []any
+	}{
+		{"graph", `SELECT id::text, generation::text, phase, error_code, coalesce(prepared_at::text, '')
+			FROM environment_workload_graphs WHERE source_id=$1 ORDER BY created_at`, []any{j.source.ID}},
+		{"qualification", `SELECT q.resource, q.phase, q.attempt::text, coalesce(q.lease_until::text, ''), q.worker_id
+			FROM environment_workload_qualification_requests q JOIN environment_workload_graphs g ON g.id=q.graph_id
+			WHERE g.source_id=$1 ORDER BY q.resource`, []any{j.source.ID}},
+		{"release", `SELECT r.id::text, r.active::text, r.created_at::text, m.app_id::text, m.deployment_id::text
+			FROM project_release_sets r JOIN project_release_members m ON m.release_id=r.id
+			WHERE r.project_id=$1 AND r.environment_slug='production' ORDER BY r.created_at`, []any{j.project.ID}},
+		{"deployment", `SELECT id::text, app_id::text, status, created_at::text, ''
+			FROM deployments WHERE app_id = ANY($1::uuid[]) ORDER BY created_at`, []any{[]string{j.app.ID, j.worker.ID}}},
+		// A pass that never finishes leaves no run record: show what every
+		// non-idle session waits on and who blocks it.
+		{"session", `SELECT pid::text, state || ' ' || coalesce(wait_event_type, '') || '/' || coalesce(wait_event, ''),
+			coalesce(extract(epoch FROM clock_timestamp() - xact_start)::int::text, ''), array_to_string(pg_blocking_pids(pid), ','),
+			left(regexp_replace(query, '\s+', ' ', 'g'), 200)
+			FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND state <> 'idle'
+			ORDER BY xact_start NULLS LAST`, nil},
+	}
+	for _, q := range queries {
+		rows, err := j.h.Pool.Query(ctx, q.sql, q.args...)
+		if err != nil {
+			fmt.Fprintf(&b, "\n  %s: %v", q.name, err)
+			continue
+		}
+		for rows.Next() {
+			var c [5]string
+			if err := rows.Scan(&c[0], &c[1], &c[2], &c[3], &c[4]); err != nil {
+				fmt.Fprintf(&b, "\n  %s: %v", q.name, err)
+				break
+			}
+			fmt.Fprintf(&b, "\n  %s %s", q.name, strings.Join(c[:], " "))
+		}
+		if err := rows.Err(); err != nil {
+			fmt.Fprintf(&b, "\n  %s: %v", q.name, err)
+		}
+		rows.Close()
+	}
+	b.WriteString(j.apidGitOpsGoroutines(ctx))
+	return b.String()
+}
+
+// apidGitOpsGoroutines returns this run's apid stacks that are inside the
+// GitOps worker, read from its root-only pprof socket (ADR-20261023200002).
+// A pass blocked without a log line shows up here.
+func (j *nativeGitOpsJourney) apidGitOpsGoroutines(ctx context.Context) string {
+	pid, err := j.h.APIDPID()
+	if err != nil {
+		return "\n  apid goroutines: " + err.Error()
+	}
+	for _, socket := range []string{fmt.Sprintf("@%sapid.%d", wire.DebugProfileSocketPrefix, pid), "@" + wire.DebugProfileSocketPrefix + "apid"} {
+		client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "unix", socket)
+			}}}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://apid/debug/pprof/goroutine?debug=2", nil)
+		if err != nil {
+			return "\n  apid goroutines: " + err.Error()
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+		_ = resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			continue
+		}
+		var b strings.Builder
+		shown := 0
+		for _, stack := range strings.Split(string(body), "\n\n") {
+			if shown == 4 || !strings.Contains(stack, "environmentgitops") && !strings.Contains(stack, "environment_gitops") {
+				continue
+			}
+			lines := strings.Split(stack, "\n")
+			fmt.Fprintf(&b, "\n  goroutine (%s):\n    %s", socket, strings.Join(lines[:min(len(lines), 40)], "\n    "))
+			shown++
+		}
+		if shown == 0 {
+			fmt.Fprintf(&b, "\n  goroutine (%s): no GitOps worker stack", socket)
+		}
+		return b.String()
+	}
+	return "\n  apid goroutines: no reachable pprof socket"
 }
 
 func (j *nativeGitOpsJourney) waitActivated(t *testing.T, revision string, generation int64) api.EnvironmentGitOpsStatusResponse {
@@ -277,13 +405,19 @@ func (j *nativeGitOpsJourney) waitQueue(t *testing.T, accepted api.QueueSendResp
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
+	// A bound queue's environment is its binding's: the invocation keeps no
+	// environment of its own (validateBoundQueueEnvironment).
+	binding, err := j.store.QueueBindingHistoryByID(ctx, j.worker.AccountID, j.worker.ID, accepted.QueueBindingID)
+	if err != nil || binding.EnvironmentID != j.source.EnvironmentID || binding.DeploymentScope != "production" {
+		t.Fatalf("accepted queue binding is not the environment's: %+v %v", binding, err)
+	}
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		j.checkTraffic(t)
 		invocation, err := j.store.InvocationByID(ctx, accepted.ID)
 		if err != nil || invocation.AppID != j.worker.ID || invocation.Source != state.InvocationQueue ||
-			invocation.EnvironmentID != j.source.EnvironmentID || invocation.DeploymentScope != "production" ||
+			invocation.EnvironmentID != "" && invocation.EnvironmentID != j.source.EnvironmentID || invocation.DeploymentScope != "production" ||
 			invocation.QueueName != "orders" || invocation.QueueBindingID != accepted.QueueBindingID {
 			t.Fatalf("accepted queue identity changed: %+v %v", invocation, err)
 		}
@@ -332,6 +466,39 @@ func (j *nativeGitOpsJourney) assertGatewayBody(t *testing.T, expected string) {
 	body, status := doGetWithHost(t, j.h.HTTPClient(), gatewayAppURL(j.h, j.app.Slug), j.app.Slug+".apps.test.example", 30*time.Second)
 	if status != http.StatusOK || !strings.Contains(string(body), expected) {
 		t.Fatalf("healthy gateway lost its selected revision: status=%d body=%s", status, body)
+	}
+}
+
+// waitWorkerRunning waits for the activated graph's worker to run before the
+// first customer delivery. On the n2 acceptance host a worker cold boot takes
+// 20-50 s, longer than the queue's retry window (five attempts in about 20 s),
+// so a delivery sent earlier dead-letters before any worker can take it. This
+// is a native acceptance limitation (ADR 20261023093000 acceptance record);
+// without a running worker after five minutes the delivery is sent anyway.
+func (j *nativeGitOpsJourney) waitWorkerRunning(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		// A customer worker: a running instance of a live deployment. The
+		// graph's qualification workers also run, but never take deliveries.
+		var running int
+		err := j.h.Pool.QueryRow(ctx, `SELECT count(*) FROM instances i
+			JOIN deployments d ON d.id=i.deployment_id AND d.status='live'
+			WHERE i.app_id=$1 AND i.state=$2
+			  AND NOT EXISTS(SELECT 1 FROM environment_qualification_executions e WHERE e.instance_id=i.id)`,
+			j.worker.ID, string(state.StateRunning)).Scan(&running)
+		if err == nil && running > 0 {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Logf("GitOps native resilience: no running worker after 5m (last read error %v); sending the first delivery anyway", err)
+			return
+		case <-ticker.C:
+		}
 	}
 }
 

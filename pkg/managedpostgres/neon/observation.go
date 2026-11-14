@@ -90,6 +90,6 @@ func (p *Provider) Observe(ctx context.Context, providerResourceID string) (mana
 		}
 		status = managedpostgres.ProviderStatusFailed
 	}
-	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, Status: status,
+	return managedpostgres.ObservedDatabase{ProviderResourceID: providerResourceID, DataResourceID: ref.projectID + "/" + selected.ID, Status: status,
 		ComputeState: computeState(primary.CurrentState), Spec: p.observedSpec(metadata.project.Project, primary)}, nil
 }

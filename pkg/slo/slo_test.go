@@ -30,8 +30,8 @@ func TestQueries(t *testing.T) {
 		wantTotal string
 	}{
 		{state.SLO{AppID: "app-1", SLI: state.SLIAvailability},
-			`sum(increase(gateway_requests_total{app="app-1",code=~"2.."}[1h] @ 1760000000)) or vector(0)`,
-			`sum(increase(gateway_requests_total{app="app-1",code=~"2..|5.."}[1h] @ 1760000000)) or vector(0)`},
+			`sum(increase(gateway_request_duration_seconds_count{app="app-1",class="2xx"}[1h] @ 1760000000)) or vector(0)`,
+			`sum(increase(gateway_request_duration_seconds_count{app="app-1",class=~"2xx|5xx"}[1h] @ 1760000000)) or vector(0)`},
 		{state.SLO{AppID: "app-1", SLI: state.SLILatency, LatencyThresholdMS: 250},
 			`sum(increase(gateway_request_duration_seconds_bucket{app="app-1",le="0.25"}[1h] @ 1760000000)) or vector(0)`,
 			`sum(increase(gateway_request_duration_seconds_count{app="app-1"}[1h] @ 1760000000)) or vector(0)`},
@@ -77,7 +77,7 @@ func TestBudgetMath(t *testing.T) {
 
 func TestCountsClampsAndRounds(t *testing.T) {
 	prom := &fakeProm{fn: func(q string) (float64, error) {
-		if strings.Contains(q, `code=~"2.."`) && !strings.Contains(q, "5..") {
+		if strings.Contains(q, `class="2xx"`) {
 			return 100.6, nil // extrapolated good above total
 		}
 		return 100.2, nil
@@ -96,7 +96,7 @@ func TestRollupFillsMissingHoursOldestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	prom := &fakeProm{fn: func(q string) (float64, error) {
-		if strings.Contains(q, "5..") {
+		if strings.Contains(q, "5xx") {
 			return 10, nil
 		}
 		return 9, nil

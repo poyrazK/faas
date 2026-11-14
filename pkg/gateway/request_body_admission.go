@@ -216,7 +216,12 @@ func admitRequestBodyBudgeted(w http.ResponseWriter, r *http.Request, limit int6
 	// closes it exactly once; every attempt, including the first, proxies a
 	// NopCloser. When retry is disabled nothing calls GetBody and r.Body stays
 	// the owning body, which is byte-identical to the pre-ADR-201 path.
-	if spool != nil {
+	if total == 0 {
+		// An empty body (an empty chunked upload) is no body: the forwarder
+		// then sends none instead of pumping an empty stream.
+		r.Body = http.NoBody
+		r.GetBody = func() (io.ReadCloser, error) { return http.NoBody, nil }
+	} else if spool != nil {
 		if _, err := spool.Seek(0, io.SeekStart); err != nil {
 			cleanupSpool()
 			api.WriteProblem(w, api.ErrInternal("request body admission storage is unavailable"))

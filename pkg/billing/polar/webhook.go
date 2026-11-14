@@ -333,7 +333,20 @@ func polarInvoice(eventType string, data map[string]any) *billing.InvoiceData {
 		AmountPaidCents:   amountPaid,
 		Currency:          strings.ToLower(firstString(data, "currency", "price_currency")),
 		PDFAvailable:      boolValue(data["is_invoice_generated"]) || firstString(data, "invoice_pdf", "invoice_url", "pdf_url") != "",
+		// The discount Polar applied, so a credit discount is drawn from the
+		// subject's credits once its order exists (ADR-20261104212028).
+		ProviderDiscountID: orderDiscountID(data),
+		DiscountCents:      max(firstNumber(data, "discount_amount"), 0),
 	}
+}
+
+// orderDiscountID is the discount on an order: discount_id, or the nested
+// discount object's id.
+func orderDiscountID(data map[string]any) string {
+	if id := firstString(data, "discount_id"); id != "" {
+		return id
+	}
+	return nestedString(data, "discount", "id")
 }
 
 func invoiceStatus(eventType, providerStatus string) string {

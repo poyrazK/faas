@@ -50,7 +50,7 @@ func (s *server) setAppSecretReference(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	app, snapshot, store, ok := s.secretReferenceContext(w, r, acct)
-	if !ok {
+	if !ok || s.protectedSecretReferenceProblem(w, r, app, snapshot) {
 		return
 	}
 	var request api.PutAppSecretReferenceRequest
@@ -71,6 +71,19 @@ func (s *server) setAppSecretReference(w http.ResponseWriter, r *http.Request, a
 		Environment: snapshot.Target.Scope, Key: key, Reference: request.Reference})
 }
 
+// protectedSecretReferenceProblem answers 409 when a reference write targets a
+// protected environment other than production: a reference changes a
+// variable's value at the next wake, like an env write (ADR-20261019071733
+// amendment 11). It reports whether it answered.
+func (s *server) protectedSecretReferenceProblem(w http.ResponseWriter, r *http.Request, app state.App, snapshot state.AppEnvironmentSecretReferenceSnapshot) bool {
+	problem := protectedEnvironmentConfigProblem(r.Context(), s.store, app.AccountID, app.ProjectID, snapshot.Target.Scope)
+	if problem == nil {
+		return false
+	}
+	api.WriteProblem(w, problem)
+	return true
+}
+
 func (s *server) deleteAppSecretReference(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	key := r.PathValue("key")
 	if problem := api.ValidateEnvKey(key); problem != nil {
@@ -78,7 +91,7 @@ func (s *server) deleteAppSecretReference(w http.ResponseWriter, r *http.Request
 		return
 	}
 	app, snapshot, store, ok := s.secretReferenceContext(w, r, acct)
-	if !ok {
+	if !ok || s.protectedSecretReferenceProblem(w, r, app, snapshot) {
 		return
 	}
 	if err := store.RemoveAppEnvironmentSecretReference(r.Context(), snapshot.Target, key); err != nil {

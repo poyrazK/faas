@@ -163,8 +163,8 @@ func TestToolsetDescribesGregaleSleep(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &toolset); err != nil || w.Code != http.StatusOK {
 		t.Fatalf("toolset = %d %s", w.Code, w.Body)
 	}
-	if toolset.Name != "gregale" || toolset.Endpoint != "https://api.example.test/v1/agent-tools/invoke" || len(toolset.Tools) != 2 ||
-		toolset.Tools[0].Name != "gregale_sleep" || toolset.Tools[1].Name != "gregale_run" || toolset.Tools[0].InputSchema["type"] != "object" {
+	if toolset.Name != "gregale" || toolset.Endpoint != "https://api.example.test/v1/agent-tools/invoke" || len(toolset.Tools) != 3 ||
+		toolset.Tools[0].Name != "gregale_sleep" || toolset.Tools[1].Name != "gregale_run" || toolset.Tools[2].Name != "gregale_github_subscribe" || toolset.Tools[0].InputSchema["type"] != "object" {
 		t.Fatalf("toolset %+v", toolset)
 	}
 

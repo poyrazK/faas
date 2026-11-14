@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-func checkDevSource(source string, config devSourceConfig) int {
-	summary := buildDevSetupDoctorSummary(source, config.shape)
+func checkDevSource(source string, config devSourceConfig, configuration *devConfiguration) int {
+	summary := buildDevSetupDoctorSummary(source, config.shape, configuration)
 	if summary.Errors > 0 {
 		var reasons []string
 		for _, check := range summary.Checks {

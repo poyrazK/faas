@@ -124,7 +124,7 @@ func readTestCircuitCounter(ctx context.Context, client *http.Client, baseURL st
 		return 0, errors.New("invalid counter URL")
 	}
 	if spec.As != "" {
-		token := keys[spec.As]
+		token := testHTTPConsumerKey(keys, spec.As)
 		if token == "" {
 			return 0, errors.New("counter consumer credential unavailable")
 		}

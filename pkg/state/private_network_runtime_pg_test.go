@@ -36,6 +36,15 @@ func TestPgPrivateMemberOwnershipAndScope(t *testing.T) {
 	if first.Address == second.Address || !first.Service.IsValid() || second.Service.IsValid() {
 		t.Fatalf("ownership: %+v %+v", first, second)
 	}
+	withdraw, err := store.EnsurePrivateNetworkMember(ctx, account, app, network.ID, "first", false)
+	if err != nil || withdraw.Service.IsValid() || withdraw.WithdrawService != first.Service {
+		t.Fatalf("withdrawal identity: %+v %v", withdraw, err)
+	}
+	unowned, err := store.EnsurePrivateNetworkMember(ctx, account, app, network.ID, "second", false)
+	if err != nil || unowned.Service.IsValid() || unowned.WithdrawService.IsValid() {
+		t.Fatalf("non-owner withdrawal identity: %+v %v", unowned, err)
+	}
+
 	if err := store.ReleasePrivateNetworkAddress(ctx, account, network.ID, "app", app); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("claimed service released: %v", err)
 	}

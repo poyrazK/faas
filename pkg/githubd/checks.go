@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/githubscope"
 	"io"
 	"log/slog"
 	"net/http"
@@ -273,6 +274,12 @@ func (c *ChecksAPI) writeCheckRunForInstallation(ctx context.Context, installati
 }
 
 func (c *ChecksAPI) writeCheckRunWithToken(ctx context.Context, token, repoFullName, commitSHA, checkName string, payload checkRunRequest) error {
+	if tag := githubscope.Tag(ctx); tag != "" {
+		checkName += " / " + tag
+		payload.Name = checkName
+		payload.ExternalID += "/" + tag
+	}
+
 	method := http.MethodPost
 	endpoint := fmt.Sprintf("%s/repos/%s/check-runs", GitHubAPI, repoFullName)
 	existingID := int64(0)
@@ -1016,7 +1023,18 @@ func (c *ChecksAPI) ownPreviewComment(comment previewIssueComment, marker string
 	if comment.ID == 0 || comment.User.Type != "Bot" || !strings.Contains(comment.Body, marker) {
 		return false
 	}
-	return c.AppID == 0 || comment.PerformedViaGitHubApp == nil || comment.PerformedViaGitHubApp.ID == c.AppID
+	return attributedToApp(c.AppID, comment.PerformedViaGitHubApp)
+}
+
+// attributedToApp reports whether a bot comment may be this App's. GitHub
+// attributes a comment made with an App's installation token to that App;
+// another App's attribution, including github-actions for a workflow's
+// GITHUB_TOKEN, rules it out. A comment GitHub attributes to no App stays
+// adoptable so an existing status comment is not duplicated.
+func attributedToApp(appID int64, performedVia *struct {
+	ID int64 `json:"id"`
+}) bool {
+	return appID == 0 || performedVia == nil || performedVia.ID == appID
 }
 
 // UpsertPreviewComment keeps one customer-facing preview status comment per
@@ -1191,7 +1209,7 @@ func WriteCheckCoalesced(ctx context.Context, c ChecksWriter, repoFullName, comm
 	if c == nil {
 		return nil
 	}
-	key := repoFullName + "@" + commitSHA
+	key := repoFullName + "@" + commitSHA + "@" + githubscope.Account(ctx)
 	checksCoalesceMu.Lock()
 	last, seen := checksCoalesceCache[key]
 	checksCoalesceMu.Unlock()

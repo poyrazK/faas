@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    footer { color: #888; font-size: 0.85rem; padding: 2rem 0; border-top: 1px solid #ddd; margin-top: 2rem; }
+    .muted, small { color: #888; }
+    .ok { border: 1px solid #16a34a; border-radius: 6px; padding: 0.75rem 1rem; }
+    .issue { border: 1px solid #ddd; border-left: 4px solid #dc2626; border-radius: 6px; padding: 0.75rem 1rem; margin: 0.75rem 0; }
+    .issue h3 { margin: 0 0 0.35rem; font-size: 1rem; }
+    .issue p { margin: 0.25rem 0; }
+    code { font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+    table { border-collapse: collapse; width: 100%; margin: 0.75rem 0 1.5rem; }
+    th, td { border-bottom: 1px solid #ddd; padding: 0.5rem 0.4rem; text-align: left; vertical-align: top; }
+    .scroll { overflow-x: auto; }
+    @media (max-width: 700px) { body { padding: 0 1rem; } table { font-size: 0.85rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav aria-label="Main">
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+      <a href="/dashboard/support">Support</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <h1>Account health</h1>
+    {{with .Data}}
+    <p class="muted">Checked {{.GeneratedAt.UTC.Format "02 Jan 2006, 15:04 UTC"}}.</p>
+    {{if eq .Attention 0}}<p class="ok" role="status">Nothing needs your attention.{{if .RefusedRequests.Total}} Some API requests were refused recently; see below.{{end}}</p>{{end}}
+    {{with .Unavailable}}<p class="muted" role="status">Some checks could not be loaded right now ({{range $i, $s := .}}{{if $i}}, {{end}}{{$s}}{{end}}). Reload to try again.</p>{{end}}
+
+    {{if .Restrictions}}<section aria-labelledby="restrictions"><h2 id="restrictions">Account</h2>
+      {{range .Restrictions}}<article class="issue"><h3>{{.Title}}</h3><p>{{.Detail}}</p>{{with .Since}}<p><small>Since {{.UTC.Format "02 Jan 2006, 15:04 UTC"}}</small></p>{{end}}{{if .ActionURL}}<p><a href="{{.ActionURL}}">{{.Action}} →</a></p>{{end}}</article>{{end}}
+    </section>{{end}}
+
+    {{if .FailedDeployments}}<section aria-labelledby="deployments"><h2 id="deployments">Failed deployments, last 7 days</h2>
+      {{range .FailedDeployments}}<article class="issue"><h3>{{if .AppSlug}}<a href="/dashboard/apps/{{.AppSlug}}/deployments/{{.DeploymentID}}">{{.AppSlug}}</a>{{else}}<code>{{.DeploymentID}}</code>{{end}}{{with .ErrorCode}} · <code>{{.}}</code>{{end}}</h3>
+        {{with .Error}}<p>{{.}}</p>{{end}}{{with .Hint}}<p><strong>How to fix:</strong> {{.}}</p>{{end}}
+        <p><small>{{.CreatedAt.UTC.Format "02 Jan 2006, 15:04 UTC"}}</small> · <a href="/dashboard/support?app_id={{.AppID}}&amp;deployment_id={{.DeploymentID}}#new-ticket">Contact support about this</a></p></article>{{end}}
+    </section>{{end}}
+
+    {{if .DomainIssues}}<section aria-labelledby="domains"><h2 id="domains">Custom domains</h2>
+      {{range .DomainIssues}}<article class="issue"><h3><code>{{.Domain}}</code></h3><p>{{.Problem}}{{with .CertError}}: {{.}}{{end}}</p>
+        {{if .AppSlug}}<p><a href="/dashboard/apps/{{.AppSlug}}/domains/{{.Domain}}/doctor">Run the domain doctor →</a></p>{{end}}</article>{{end}}
+    </section>{{end}}
+
+    <section aria-labelledby="refused"><h2 id="refused">Refused API requests, last {{.RefusedRequests.WindowHours}} hours</h2>
+    {{if .RefusedRequests.Total}}
+      <p>{{.RefusedRequests.Total}} requests were refused. Each response carried a problem code explaining why.</p>
+      <ul>{{range .RefusedRequests.ByCode}}<li><code>{{.Code}}</code> × {{.Count}} <small>last {{.LastAt.UTC.Format "02 Jan 15:04 UTC"}}</small></li>{{end}}</ul>
+      <div class="scroll"><table><caption class="muted">Most recent refused requests</caption><thead><tr><th scope="col">Time</th><th scope="col">Request</th><th scope="col">Code</th><th scope="col">Request ID</th><th scope="col"><span class="muted">Help</span></th></tr></thead><tbody>
+      {{range .RefusedRequests.Recent}}<tr><td>{{.OccurredAt.UTC.Format "02 Jan 15:04:05"}}</td><td><code>{{.Route}}</code>{{with .AppSlug}}<br><small>{{.}}</small>{{end}}</td><td><code>{{.Code}}</code></td><td>{{with .RequestID}}<code>{{.}}</code>{{else}}<span class="muted">—</span>{{end}}</td><td>{{with .RequestID}}<a href="/dashboard/support?request_id={{.}}#new-ticket">Ask support</a>{{end}}</td></tr>{{end}}
+      </tbody></table></div>
+    {{else}}<p class="muted">No API requests were refused.</p>{{end}}
+    </section>
+    {{end}}
+  </main>
+  <footer>onebox faas · account health</footer>
+</body>
+</html>

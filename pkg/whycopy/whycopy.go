@@ -59,6 +59,11 @@ type Render struct {
 	Observed func(observed any) (why, fix string)
 }
 
+// ReleaseTaskLeaseExpired is the app-task failure code schedd's sweep records
+// when a running task's worker lease expires: the command started and its
+// outcome is unknown (ADR-1448 amendment 1 calls it uncertain).
+const ReleaseTaskLeaseExpired = "lease_expired"
+
 const (
 	executionModeConflictWhy = "a worker must keep running without listening on a port, and a job must run to completion without serving; at startup your app did the other thing (the detail shows the port it bound or the code it exited with)"
 	executionModeConflictFix = "• set `execution_mode` in gregale.yaml to match the app: `request` or `service` for a server, `worker` for a long-running consumer, `job` for a run-to-completion task\n• or change the start command so the process matches the mode you declared"
@@ -132,9 +137,9 @@ var catalog = map[string]Render{
 	},
 	api.CodeAppRuntimeOOM: {
 		Title: "Container out of memory",
-		Hint:  "your app exceeded the plan's RAM cap and was killed",
+		Hint:  "your app used more than its RAM limit and was killed",
 		Why:   "the cgroup memory controller killed the process because it exceeded memory.max (plan + 8 MB); the kernel OOM-killer fired inside the microVM",
-		Fix:   "• upgrade to a plan with more RAM\n• trim in-memory state (caches, buffers, large request bodies held in memory)",
+		Fix:   "• raise the app's memory: `gregale app <app> --ram <MB>` (your account plan sets the per-app maximum)\n• trim in-memory state (caches, buffers, large request bodies held in memory)",
 		Observed: func(observed any) (why, fix string) {
 			if observed == nil {
 				return "", ""
@@ -152,8 +157,8 @@ var catalog = map[string]Render{
 			}
 			return fmt.Sprintf("the cgroup memory controller killed the process at %d MB (plan cap %d MB + 8 MB overhead); the kernel OOM-killer fired inside the microVM",
 					v.PeakMB, v.PlanMB),
-				fmt.Sprintf("• upgrade from a %d MB plan to a plan with at least %d MB of RAM\n• trim in-memory state (caches, buffers, large request bodies held in memory)",
-					v.PlanMB, v.PeakMB+8)
+				fmt.Sprintf("• raise the app's memory from %d MB to at least %d MB, e.g. `gregale app <app> --ram %d` (your account plan sets the per-app maximum)\n• trim in-memory state (caches, buffers, large request bodies held in memory)",
+					v.PlanMB, v.PeakMB+8, OOMSuggestedRAMMB(v.PeakMB, v.PlanMB))
 		},
 	},
 	api.CodeDepInstallFailed: {
@@ -187,6 +192,12 @@ var catalog = map[string]Render{
 		Hint:  "your app crashed before it became ready",
 		Why:   "your app's process exited before it accepted traffic, after any restarts its restart policy allows; the last lines it printed are in the error detail",
 		Fix:   "• read the error in the detail (`gregale logs <slug>` has the full startup log)\n• run the start command locally with the same environment to reproduce\n• check that every required env var and secret is set (`gregale secrets list --app <slug>`)",
+	},
+	api.CodeFunctionInitFailed: {
+		Title: "Function init failed",
+		Hint:  "your function's init hook failed before it became ready",
+		Why:   "init runs in every worker before the worker is ready, so the deployment is not snapshotted with setup half done; it threw, and its error is in the detail (an init that never finishes fails as app_startup_timeout instead)",
+		Fix:   "• read the error in the detail (`gregale logs <slug>` has the full startup log)\n• run the function with `gregale dev --local` to reproduce\n• keep init to setup that can finish within the startup deadline, and check every env var and secret it reads is set",
 	},
 	api.CodeExecutionModeConflict: {
 		Title: "Execution mode conflict",
@@ -248,8 +259,24 @@ var catalog = map[string]Render{
 	api.CodeBuildInfrastructure: {
 		Title: "Build could not run",
 		Hint:  "a platform problem stopped the build; your code did not cause it",
-		Why:   "the build failed in Gregale's build infrastructure (builder VM, build disk, or control plane) before your build steps could finish",
+		Why:   "the build failed in Gregale's build infrastructure (builder VM, build disk, or control plane), or a toolchain or package registry download the build tooling needs failed upstream, before your build steps could finish",
 		Fix:   "• deploy again; the build is retried from the start\n• if it keeps failing, contact support with the deployment id",
+	},
+	api.CodeReleaseInfrastructure: {
+		Title: "Release command could not run",
+		Hint:  "a platform problem stopped the release task; your release command did not cause it",
+		Why:   "Gregale could not prepare the release task's environment in time, lost the task's result channel, or got an invalid answer from the task VM, so the release command did not run to a result; the previous deployment is still live",
+		Fix:   "• deploy again; the release task runs from the start\n• if the release command changes data, read `gregale release summary <deployment-id>` first: when the result channel broke, the command may have run\n• if it keeps failing, contact support with the deployment id",
+		// observed is the release task's failure code. After a worker lease
+		// expired the command may have finished, and the next release
+		// command waits until a person records a check (ADR-1448).
+		Observed: func(observed any) (why, fix string) {
+			if code, _ := observed.(string); code != ReleaseTaskLeaseExpired {
+				return "", ""
+			}
+			return "Gregale lost track of the release task after your release command started, so whether it finished, and what it changed, is unknown; the previous deployment is still live",
+				"• check what the release command changed (for a migration, the database's migration table)\n• record the check with `gregale release resolve <deployment-id> --app <slug> --note TEXT`; until then no later release command runs\n• then deploy again; if it happens again, contact support with the deployment id"
+		},
 	},
 	api.CodeAppLayerTooBig: {
 		Title: "App too large",
@@ -306,21 +333,22 @@ func Decorate(p *api.Problem, code string, observed any) *api.Problem {
 	if row.Hint != "" {
 		p.Hint = row.Hint
 	}
+	why, fix := row.Why, row.Fix
 	if observed != nil && row.Observed != nil {
-		why, fix := row.Observed(observed)
-		if why != "" {
-			p.Why = why
+		// An empty templated half keeps the static one.
+		w, f := row.Observed(observed)
+		if w != "" {
+			why = w
 		}
-		if fix != "" {
-			p.Fix = fix
+		if f != "" {
+			fix = f
 		}
-	} else {
-		if row.Why != "" {
-			p.Why = row.Why
-		}
-		if row.Fix != "" {
-			p.Fix = row.Fix
-		}
+	}
+	if why != "" {
+		p.Why = why
+	}
+	if fix != "" {
+		p.Fix = fix
 	}
 	if code == api.CodeAppStartupTimeout {
 		if why, fix := startupFailureGuidance(p.Detail); why != "" {
@@ -352,14 +380,22 @@ func Codes() []string {
 	return out
 }
 
+// rawTCPServerFix is the way out for a server that speaks its own TCP
+// protocol: a directly deployed image is ready once its port accepts
+// connections, with no HTTP probe (ADR-20261112223000 §2).
+const rawTCPServerFix = "• a raw TCP server (Redis, PostgreSQL, a message broker) never answers HTTP: deploy its published image with `gregale deploy --image <image>@sha256:<digest> --name <slug>`, which is ready once the port accepts connections, then keep it private with `gregale app <slug> --visibility internal --ports <name>=tcp:<port>:internal`"
+
 // startupFailureGuidance uses only known phase markers emitted by fcvm/schedd.
 // Raw error text can contain guest output; never interpolate it into guidance.
 func startupFailureGuidance(detail string) (why, fix string) {
 	for _, field := range strings.Fields(detail) {
 		switch strings.TrimRight(field, ":;,") {
 		case "startup_phase=guest_startup":
-			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", fmt.Sprintf("• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• listen first and defer expensive initialization: the app must answer within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
+			return "The guest did not answer the readiness probe before the startup deadline. This does not establish that an HTTP health endpoint returned an unhealthy response.", fmt.Sprintf("• check `gregale logs <slug>` for process launch, image user, permissions and initialization failures\n• verify the expected listener and bind address\n• listen first and defer expensive initialization: the app must answer within %d s, and `startup_deadline_s` cannot be raised above that\n%s", api.ColdBootReadyWindowS, rawTCPServerFix)
 		case "startup_phase=handler_healthcheck":
+			if strings.Contains(detail, "answered without HTTP") {
+				return "The app accepted the readiness probe on its serving port and answered with something other than HTTP, as a raw TCP server (Redis, PostgreSQL, a message broker) does. A source build must answer HTTP on that port.", rawTCPServerFix
+			}
 			return "The application answered readiness probes but did not report ready before the startup deadline. HTTP readiness requires a 2xx response; gRPC readiness requires SERVING.", fmt.Sprintf("• verify the configured readiness path or gRPC service and allow unauthenticated probes\n• check startup logs and required dependencies\n• report ready sooner: the app must be ready within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
 		case "startup_phase=image_healthcheck":
 			return "The image's command healthcheck did not produce a fresh successful result for this boot or restore. A listening port alone cannot pass this check.", fmt.Sprintf("• run the declared HEALTHCHECK inside the image with its configured user, working directory and environment\n• verify the check executable and required dependencies exist\n• review command timeouts, retries and startup grace: the check must pass within %d s, and `startup_deadline_s` cannot be raised above that", api.ColdBootReadyWindowS)
@@ -367,4 +403,17 @@ func startupFailureGuidance(detail string) (why, fix string) {
 		}
 	}
 	return "", ""
+}
+
+// OOMSuggestedRAMMB is the memory to suggest after an out-of-memory kill at
+// peakMB on a planMB limit: double the limit, and never less than the peak
+// plus the 8 MB in-VM overhead, rounded up to 128 MB. Doubling leaves room
+// for runtimes such as the JVM whose peak exceeds steady use; the kill only
+// shows the limit was too small, not by how much. Zero when neither is known.
+func OOMSuggestedRAMMB(peakMB, planMB int) int {
+	want := max(planMB*2, peakMB+8)
+	if want <= 8 {
+		return 0
+	}
+	return (want + 127) / 128 * 128
 }

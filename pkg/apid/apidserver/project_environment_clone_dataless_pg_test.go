@@ -176,13 +176,16 @@ func TestPGDatalessFullCloneRefusesUncopyableSource(t *testing.T) {
 	d := newFullCloneFixture(t, false)
 	d.open(runtimeconfig.KeyFullEnvironmentClones, fullCloneAdmissionKey)
 	app := (*d.f.Apps())[0]
-	if _, err := (*d.f.Store()).CreateCron(d.t.Context(), app.ID, "*/5 * * * *", "/tick", true); err != nil {
+	// Crons are copied paused (ADR-20261104120000); outbound app webhooks
+	// still have no clone strategy.
+	if _, err := (*d.f.Store()).CreateAppWebhook(d.t.Context(), state.AppWebhook{AppID: app.ID, AccountID: d.acct.ID,
+		TargetURL: "https://hooks.example.test/deploys", SecretSealed: []byte("sealed"), Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	rec := d.admit("stage", "cron")
+	rec := d.admit("stage", "webhook")
 	var problem api.Problem
 	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || rec.Code != http.StatusConflict || problem.Code != api.CodeFullEnvironmentCloneUnavailable ||
-		len(problem.Errors) != 1 || problem.Errors[0].Field != "resource_coverage.crons" || problem.Errors[0].Got != state.CloneBlockerStrategyUnavailable {
+		len(problem.Errors) != 1 || problem.Errors[0].Field != "resource_coverage.app_webhooks" || problem.Errors[0].Got != state.CloneBlockerStrategyUnavailable {
 		t.Fatalf("refusal = %d %s, %v", rec.Code, rec.Body.String(), err)
 	}
 	if _, err := (*d.f.Store()).ProjectEnvironmentBySlug(d.t.Context(), d.acct.ID, d.project.ID, "stage"); !errors.Is(err, state.ErrNotFound) {

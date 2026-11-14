@@ -57,7 +57,9 @@ type Service struct {
 	limiters map[string]*rate.Limiter
 }
 
-// limiterCap bounds the per-prefix limiter map; it is reset when full.
+// limiterCap bounds the per-prefix limiter map. When it is full, idle
+// limiters (back at full burst) are dropped first; the map is never reset,
+// which wiped the limits of real keys too (bug hunt H15).
 const limiterCap = 10000
 
 func (s *Service) now() time.Time {
@@ -71,15 +73,40 @@ func (s *Service) now() time.Time {
 func (s *Service) allow(prefix string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.limiters == nil || len(s.limiters) >= limiterCap {
+	if s.limiters == nil {
 		s.limiters = map[string]*rate.Limiter{}
 	}
 	limiter, ok := s.limiters[prefix]
 	if !ok {
+		if len(s.limiters) >= limiterCap {
+			s.evictLimitersLocked()
+		}
 		limiter = rate.NewLimiter(rate.Limit(float64(api.ConsumerBillingRequestsPerMinute)/60), api.ConsumerBillingBurst)
 		s.limiters[prefix] = limiter
 	}
 	return limiter.Allow()
+}
+
+// evictLimitersLocked drops limiters that are back at full burst, which
+// remember nothing, then ones with tokens left, and only then ones that are
+// refusing their key, down to nine tenths of the cap.
+func (s *Service) evictLimitersLocked() {
+	now := time.Now()
+	for prefix, l := range s.limiters {
+		if l.TokensAt(now) >= float64(api.ConsumerBillingBurst) {
+			delete(s.limiters, prefix)
+		}
+	}
+	for _, throttled := range []bool{false, true} {
+		for prefix, l := range s.limiters {
+			if len(s.limiters) < limiterCap*9/10 {
+				return
+			}
+			if throttled || l.TokensAt(now) >= 1 {
+				delete(s.limiters, prefix)
+			}
+		}
+	}
 }
 
 // caller is the app and consumer a request's key resolved to.

@@ -62,6 +62,7 @@ func (s *Service) PutSaved(w http.ResponseWriter, r *http.Request, acct state.Ac
 		s.Host.Logger().WarnContext(r.Context(), "save log search failed", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not save the log search"))
 	default:
+		s.Host.Audit(r.Context(), "log_saved_search.saved", acct.ID, map[string]any{"app_id": app.ID, "name": saved.Name, "query": saved.Query})
 		httpkit.WriteJSON(w, http.StatusOK, savedSearchDTO(saved))
 	}
 }
@@ -80,6 +81,7 @@ func (s *Service) DeleteSaved(w http.ResponseWriter, r *http.Request, acct state
 		s.Host.Logger().WarnContext(r.Context(), "delete saved log search failed", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not delete the saved log search"))
 	default:
+		s.Host.Audit(r.Context(), "log_saved_search.deleted", acct.ID, map[string]any{"app_id": app.ID, "name": r.PathValue("name")})
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

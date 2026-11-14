@@ -24,10 +24,10 @@ type staleComputeViewStore struct {
 }
 
 // Instances the ledger has not seen fill the owner node's vCPU budget.
-// Placement chooses that node; the durable reservation, which sums every
-// live instance under the node lock, refuses it, and the wake goes to the
-// peer instead of overbooking the node.
-func TestDurableReservationRefusesUnseenVCPU(t *testing.T) {
+// Placement chooses that node, and the durable reservation, which sums every
+// live instance under the node lock, admits it on memory: CPU never refuses
+// work (ADR-20261109172421), so the wake stays on the owner.
+func TestDurableReservationIgnoresUnseenVCPU(t *testing.T) {
 	ctx := context.Background()
 	mem := state.NewMemStore()
 	existing, err := mem.ListComputeNodes(ctx, true)
@@ -39,7 +39,7 @@ func TestDurableReservationRefusesUnseenVCPU(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	vcpus := api.MustLimitsFor(api.PlanPro).VCPU
+	vcpus := api.SizeVCPUs(256) // a node's vCPU budget holds two of these instances
 	f := &failoverFleet{store: mem, ctx: ctx, vmm: newRefusingVMM(nil), ops: wire.NewOpsMetrics("schedd")}
 	// The owner has more physical CPU, so CPU-first ranking and the owner
 	// preference both pick it.
@@ -55,7 +55,7 @@ func TestDurableReservationRefusesUnseenVCPU(t *testing.T) {
 	}
 	f.e = sched.XNewEngine(t, statetest.NewStore(&staleComputeViewStore{Store: mem}), f.vmm, &sched.FakeNotifier{}, "1.10.0").
 		WithOwnerNodeID(f.nodes[0].ID).WithOpsMetrics(f.ops)
-	owner, peer := f.nodes[0], f.nodes[1]
+	owner := f.nodes[0]
 
 	other := f.app(t, api.PlanPro, 256, 5)
 	dep, err := mem.LiveDeployment(ctx, other.ID)
@@ -70,9 +70,9 @@ func TestDurableReservationRefusesUnseenVCPU(t *testing.T) {
 
 	res, err := f.e.Wake(ctx, f.app(t, api.PlanPro, 256, 1).ID, "", "", sched.TriggerCronSched)
 	if err != nil {
-		t.Fatalf("wake with the peer free: %v", err)
+		t.Fatalf("wake with the owner past its vCPU budget: %v", err)
 	}
-	if res.NodeID != peer.ID {
-		t.Fatalf("wake placed on %s, want the peer %s: the owner's vCPU budget is full", res.NodeID, peer.ID)
+	if res.NodeID != owner.ID {
+		t.Fatalf("wake placed on %s, want the owner %s: its memory has room", res.NodeID, owner.ID)
 	}
 }

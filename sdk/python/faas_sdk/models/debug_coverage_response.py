@@ -43,6 +43,12 @@ class DebugCoverageResponse:
     """Observed coverage for one debugger signal. Requests are weighted by collapsed-row count."""
     oldest_telemetry_at: datetime.datetime | Unset = UNSET
     latest_telemetry_at: datetime.datetime | Unset = UNSET
+    requests_not_retained: int | Unset = UNSET
+    """Requests the app's request analytics counted in the window's whole
+    minutes that the debugger did not keep, because the plan's
+    per-minute debugger row limit turned them away. A lower bound;
+    absent when request analytics do not cover the window.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,6 +84,8 @@ class DebugCoverageResponse:
         if not isinstance(self.latest_telemetry_at, Unset):
             latest_telemetry_at = self.latest_telemetry_at.isoformat()
 
+        requests_not_retained = self.requests_not_retained
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -100,6 +108,8 @@ class DebugCoverageResponse:
             field_dict["oldest_telemetry_at"] = oldest_telemetry_at
         if latest_telemetry_at is not UNSET:
             field_dict["latest_telemetry_at"] = latest_telemetry_at
+        if requests_not_retained is not UNSET:
+            field_dict["requests_not_retained"] = requests_not_retained
 
         return field_dict
 
@@ -146,6 +156,8 @@ class DebugCoverageResponse:
         else:
             latest_telemetry_at = datetime.datetime.fromisoformat(_latest_telemetry_at)
 
+        requests_not_retained = d.pop("requests_not_retained", UNSET)
+
         debug_coverage_response = cls(
             app_id=app_id,
             since=since,
@@ -161,6 +173,7 @@ class DebugCoverageResponse:
             guest_evidence=guest_evidence,
             oldest_telemetry_at=oldest_telemetry_at,
             latest_telemetry_at=latest_telemetry_at,
+            requests_not_retained=requests_not_retained,
         )
 
         debug_coverage_response.additional_properties = d

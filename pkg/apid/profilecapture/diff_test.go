@@ -110,6 +110,28 @@ func TestCaptureDiffRejectsUnreadyBase(t *testing.T) {
 	}
 }
 
+// Capture data is guest-supplied, so an apid parses a bounded number of
+// captures at once and refuses the rest as busy instead of queueing them.
+func TestCaptureMergesAreBoundedPerAPID(t *testing.T) {
+	svc, host, acct := newService(t, api.PlanPro, true)
+	c := readyCapture(t, host, acct, []string{api.ProfileKindHeap}, time.Now().UTC(),
+		state.ProfileCaptureBlob{Kind: api.ProfileKindHeap, ProcessID: "7", Profile: heapBlob(t, "grow", 1000)})
+	release := svc.HoldMergeSlots()
+	for _, target := range []string{"/view", "/pprof"} {
+		rec := serve(svc, acct, http.MethodGet, "/v1/apps/capture/profiles/captures/"+c.ID+target, "")
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Fatalf("%s with every merge slot taken = %d: %s", target, rec.Code, rec.Body)
+		}
+	}
+	if _, busy, _ := svc.MergeBlobs(nil, api.ProfileKindHeap); !busy {
+		t.Fatal("MergeBlobs ran with every slot taken")
+	}
+	release()
+	if rec := serve(svc, acct, http.MethodGet, "/v1/apps/capture/profiles/captures/"+c.ID+"/view", ""); rec.Code != http.StatusOK {
+		t.Fatalf("view after release = %d: %s", rec.Code, rec.Body)
+	}
+}
+
 func TestComparableAndCommonKind(t *testing.T) {
 	heap := api.ProfileCapture{ID: "a", Status: api.ProfileCaptureReady, Kinds: []string{api.ProfileKindHeap}}
 	both := api.ProfileCapture{ID: "b", Status: api.ProfileCaptureReady, Kinds: []string{api.ProfileKindCPU, api.ProfileKindHeap}}

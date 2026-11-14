@@ -275,6 +275,30 @@ func (tx *trafficPolicyMutationTx) Rollback(ctx context.Context) error {
 	return tx.Tx.Rollback(ctx)
 }
 
+// trafficAnalysisTimeoutAttempts bounds retries of a whole traffic mutation
+// whose policy analysis ran out of time. The analysis normally takes 10-16 ms;
+// it exceeds its 2 s budget only while the database stalls, and an app delete
+// then failed outright (prod 2026-11-09 12:25 and 13:04).
+const trafficAnalysisTimeoutAttempts = 3
+
+// retryTrafficAnalysisTimeout reruns op, a complete transaction, when its
+// traffic policy analysis exceeded a time budget. Any other error, including
+// a policy the analysis rejected, returns at once.
+func retryTrafficAnalysisTimeout(ctx context.Context, op func() error) error {
+	for attempt := 1; ; attempt++ {
+		err := op()
+		var analysis *TrafficPolicyAnalysisError
+		if !errors.As(err, &analysis) || analysis.Scope != "time" && analysis.Scope != "database_time" || attempt == trafficAnalysisTimeoutAttempts {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(time.Duration(attempt) * 500 * time.Millisecond):
+		}
+	}
+}
+
 func boundedTrafficPolicyAnalysis(ctx context.Context, analyze func(context.Context) error) error {
 	start := time.Now()
 	bounded, cancel := context.WithTimeout(ctx, api.TrafficPolicyAnalysisTimeout)

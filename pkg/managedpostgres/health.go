@@ -9,6 +9,8 @@ import (
 // DatabaseObserver must only read provider metadata. It must never connect to
 // PostgreSQL, wake compute, repair permissions, or mutate provider resources.
 // Inspect remains the lifecycle boundary, including restore security cleanup.
+// Observe receives the pinned dataset identity when available, or the legacy
+// lifecycle selector otherwise. Its result must identify that same resource.
 type DatabaseObserver interface {
 	Observe(context.Context, string) (ObservedDatabase, error)
 }

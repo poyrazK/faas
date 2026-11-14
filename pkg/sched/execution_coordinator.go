@@ -281,7 +281,19 @@ func (c *ExecutionCoordinator) claimNext(ctx context.Context) (state.ExecutionCl
 	if !ok {
 		return c.store.ClaimExecution(ctx, c.config.Owner, claimedAt, c.config.LeaseDuration)
 	}
-	accounts, err := queueStore.ListExecutionQueueAccounts(ctx, claimedAt, c.config.QueueAccountLimit)
+	var accounts []state.ExecutionQueueAccount
+	var err error
+	if cursorStore, ok := c.store.(state.ExecutionQueueCursorStore); ok {
+		c.fairMu.Lock()
+		after := c.fairCursor
+		c.fairMu.Unlock()
+		accounts, err = cursorStore.ListExecutionQueueAccountsAfter(ctx, claimedAt, after, c.config.QueueAccountLimit)
+		if err == nil && len(accounts) == 0 && after != "" {
+			accounts, err = cursorStore.ListExecutionQueueAccountsAfter(ctx, claimedAt, "", c.config.QueueAccountLimit)
+		}
+	} else {
+		accounts, err = queueStore.ListExecutionQueueAccounts(ctx, claimedAt, c.config.QueueAccountLimit)
+	}
 	if err != nil {
 		return state.ExecutionClaim{}, fmt.Errorf("sched: list execution queue accounts: %w", err)
 	}
@@ -484,6 +496,9 @@ func (c *ExecutionCoordinator) processClaim(parent context.Context, claim state.
 		c.recordExecutionFailure(claim.Runtime, "execute")
 	}
 	clear(payload.Sealed)
+	if outputSink != nil && executeErr == nil {
+		executeErr = outputSink.Flush(workCtx)
+	}
 	destroyErr := c.destroy(parent, claim.ID, claim.Runtime, session)
 	signal := stopLeaseMonitor()
 	if destroyErr != nil {

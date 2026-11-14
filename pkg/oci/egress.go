@@ -191,13 +191,20 @@ var (
 // layer still leaves the other holding).
 func EgressDialContext(parent *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	if parent == nil {
-		parent = &net.Dialer{}
+		parent = &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
 	}
 	resolver := parent.Resolver
 	if resolver == nil {
 		resolver = net.DefaultResolver
 	}
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		// Include DNS in the dial budget; net.Dialer.Timeout alone starts
+		// after this explicit, policy-checked resolution.
+		if parent.Timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, parent.Timeout)
+			defer cancel()
+		}
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, fmt.Errorf("oci: egress: bad addr %q: %w", addr, err)
@@ -283,10 +290,12 @@ const (
 // the request past the dial-time guard.
 func newEgressTransport(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {
 	return &http.Transport{
-		DialContext:         dial,
-		IdleConnTimeout:     EgressIdleConnTimeout,
-		MaxIdleConns:        EgressMaxIdleConns,
-		MaxIdleConnsPerHost: EgressMaxIdleConnsPerHost,
+		DialContext:           dial,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		IdleConnTimeout:       EgressIdleConnTimeout,
+		MaxIdleConns:          EgressMaxIdleConns,
+		MaxIdleConnsPerHost:   EgressMaxIdleConnsPerHost,
 	}
 }
 
@@ -309,7 +318,7 @@ func NewEgressHTTPClientAllowLoopback() *http.Client {
 	if !EgressAllowLoopbackFromEnv() {
 		return nil
 	}
-	return &http.Client{Transport: newEgressTransport((&net.Dialer{}).DialContext)}
+	return &http.Client{Transport: newEgressTransport((&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext)}
 }
 
 // EgressAllowLoopbackFromEnv reports whether the dial-time SSRF

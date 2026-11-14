@@ -16,6 +16,9 @@ import (
 // Policy maps a refusal from an owner's own policy write; the exact witness
 // scope and observed value belong to the caller. Other errors return fallback.
 func Policy(err error, fallback *api.Problem) *api.Problem {
+	if errors.Is(err, state.ErrProjectReleaseRollbackRequired) {
+		return api.ErrProjectReleaseRollbackRequired()
+	}
 	var binding *state.TrafficPolicyBindingError
 	if errors.As(err, &binding) {
 		return AppBinding(err, fallback)

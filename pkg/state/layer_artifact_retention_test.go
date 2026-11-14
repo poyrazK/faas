@@ -241,6 +241,11 @@ func cloneLayerRetentionSurvivesSourceRetirement(t *testing.T, s layerRetentionT
 			t.Fatalf("prepared target lost artifact retention: %t, %v", eligible, err)
 		}
 	}
+	// The prepared target is still pending: it is cancelled before it can
+	// be hidden (deploy review 2026-11-10, D1).
+	if _, _, err := s.CancelDeploymentTx(ctx, target.ID, "test", state.CancelReasonUser); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.ClearDeployment(ctx, target.ID, "test"); err != nil {
 		t.Fatal(err)
 	}

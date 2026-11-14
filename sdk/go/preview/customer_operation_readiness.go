@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/internal/api"
+	"github.com/gregale-dev/gregale-go/internal/api"
 )
 
 // CustomerOperationReadinessError carries unmet requirements without committing business writes.

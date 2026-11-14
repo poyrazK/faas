@@ -1,0 +1,46 @@
+▶ change hooks record committed changes and only the relay reads them
+  ✔ enable refuses tables it cannot hook (13.08111ms)
+  ✔ the serving login stays within the data_api contract (29.075927ms)
+  ✔ serving writes record events without seeing them (90.945464ms)
+  ✔ one relay claims at a time, in order, and settles its own claim (33.551004ms)
+  ✔ an expired lease passes to another relay (1115.069286ms)
+  ✔ the owner retries or discards failed events (13.058072ms)
+  ✔ a partitioned table records changes under its own name (14.789666ms)
+  ✔ rows over 64 KiB are left out of the event (18.338774ms)
+  ✔ claims and settlements reject malformed arguments (6.40075ms)
+  ✔ schema versions are captured at write time and upgrade is repeatable (25.61156ms)
+✔ change hooks record committed changes and only the relay reads them (1592.528973ms)
+✔ capture stops recording at the backlog bound and resumes as changes publish (117.708521ms)
+✔ changes left out at the bound are noted, and the owner can drop what waits (181.443948ms)
+✔ change events turn on with an HTTPS platform origin and the local workload identity (4.614454ms)
+✔ a recorded change becomes a deterministic event (1.881528ms)
+✔ publications stay within the event and byte bounds (27.540586ms)
+✔ settlement stops at the first event that may succeed later (0.573669ms)
+✔ the catalog check names what a migration still has to add (0.254922ms)
+✔ background work borrows only a free admission slot (0.341674ms)
+✔ the relay claims, publishes in order and settles (55.588586ms)
+✔ the relay carries the SQL deadline and refresh claims the engine expects (16.548278ms)
+✔ a retryable failure holds the rest back with growing backoff (16.553367ms)
+{"time":"2026-11-11T16:00:36.804Z","level":"error","event":"data_api_change_event_rejected"}
+{"time":"2026-11-11T16:00:36.818Z","level":"error","event":"data_api_change_event_rejected"}
+✔ rejections become failed events; unreachable platforms keep events waiting (43.125271ms)
+{"time":"2026-11-11T16:00:36.845Z","level":"error","event":"data_api_change_hooks_not_production"}
+✔ a runtime the platform refuses (a stage) returns its claim and stops (6.057877ms)
+✔ an idle relay backs off, never queues for the engine and changes identity after a restore (29.679424ms)
+✔ the gateway hides the change event table and wakes the relay after writes (29.614502ms)
+✔ the relay reports delivery from its table, when it changes and as a heartbeat (14.343177ms)
+✔ changes left out at the backlog bound are reported with when it last happened (14.028071ms)
+✔ failing publications are reported as retrying at once (12.304706ms)
+✔ published changes are reported with when they last published (9.681171ms)
+✔ a platform without the report route is not asked again (24.875621ms)
+✔ a drain waits until the relay has nothing more to do (28.081781ms)
+✔ only a platform cron drains, and only with hooks on (14.054986ms)
+✔ change relay preserves the captured schema version on every retry (0.257878ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 34
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2000.005639

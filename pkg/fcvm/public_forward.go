@@ -105,6 +105,9 @@ func (m *Manager) PublicForwardTarget(instance string) (*netns.PublicForwardTarg
 	defer m.mu.Unlock()
 	inst := m.live[instance]
 	if inst == nil {
+		inst = m.restoredQualificationTargetLocked(instance)
+	}
+	if inst == nil {
 		return nil, errors.New("public forward instance is not live")
 	}
 	if inst.publicForwardTarget == nil {

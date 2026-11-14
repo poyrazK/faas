@@ -56,3 +56,36 @@ func TestSummarizeSpanBoundsCustomerData(t *testing.T) {
 		}
 	}
 }
+
+// Only the attributes the debugger reads are stored, a URL keeps only its
+// origin, and a Redis command keeps only its verb.
+func TestSummarizeSpanStoresOnlyDependencyAttributes(t *testing.T) {
+	span := summarizeSpan(&tracepb.Span{
+		TraceId: traceID(1), SpanId: []byte{1, 2, 3, 4, 5, 6, 7, 8}, Name: "GET",
+		Attributes: []*commonpb.KeyValue{
+			stringAttr("http.request.method", "GET"),
+			stringAttr("url.full", "https://user:pw@api.stripe.com/v1/customers/cus_123?token=secret"),
+			stringAttr("enduser.id", "alice@example.com"),
+			stringAttr("http.request.header.authorization", "Bearer abc"),
+			stringAttr("app.cart_id", "cart-9"),
+			stringAttr("http.response.status_code", "200"),
+		},
+	})
+	want := map[string]string{"http.request.method": "GET", "url.full": "https://api.stripe.com", "http.response.status_code": "200"}
+	if len(span.Attributes) != len(want) {
+		t.Fatalf("stored attributes = %v, want only %v", span.Attributes, want)
+	}
+	for key, value := range want {
+		if span.Attributes[key] != value {
+			t.Errorf("%s = %q, want %q", key, span.Attributes[key], value)
+		}
+	}
+
+	redis := summarizeSpan(&tracepb.Span{
+		TraceId: traceID(1), SpanId: []byte{2, 2, 3, 4, 5, 6, 7, 8}, Name: "SET",
+		Attributes: []*commonpb.KeyValue{stringAttr("db.system", "redis"), stringAttr("db.statement", "SET session:abc123 eyJhbGciOi")},
+	})
+	if redis.DBStatement != "SET ? ?" {
+		t.Errorf("redis statement = %q, want the command only", redis.DBStatement)
+	}
+}

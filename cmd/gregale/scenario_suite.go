@@ -83,6 +83,14 @@ func cmdTestSuite(path, name string, options testSuiteOptions, failFast bool, re
 		// mistaken for SDK transport failures by the generic error renderer.
 		return printErr("Invalid test suite", &exitErr{msg: err.Error(), code: 1})
 	}
+	inputs := []string{path}
+	for _, s := range scenarios {
+		inputs = append(inputs, s.DataPath)
+		inputs = append(inputs, testScenarioInputPaths(s.Scenario, s.ManifestDir)...)
+	}
+	if err := validateTestReportInputs(inputs, reportPath, junitPath, htmlPath); err != nil {
+		return printErr("Invalid test report paths", err)
+	}
 	if options.Validate {
 		return validatePreparedTestSuite(name, scenarios)
 	}
@@ -152,16 +160,27 @@ func prepareTestSuiteMember(member testSuiteMember, scenario testScenario, dir s
 	if dataPath != "" && !filepath.IsAbs(dataPath) {
 		dataPath = filepath.Join(dir, dataPath)
 	}
+	prepared.DataPath = dataPath
 	cases, fields, err := readTestData(dataPath)
 	if err != nil {
 		return prepared, fmt.Errorf("case data: %w", err)
 	}
 	prepared.Cases = cases
-	if err := validateTestHTTPRequestsWithData(scenario, fields); err != nil {
+	httpScenario := scenario
+	if !options.Load {
+		httpScenario.Load = nil
+	}
+	if err := validateTestHTTPRequestsWithData(httpScenario, fields); err != nil {
+		return prepared, err
+	}
+	if err := prepareTestSuiteEngine(&prepared, member, options); err != nil {
+		return prepared, err
+	}
+	if err := validateTestScenarioExecution(scenario, prepared.Engine, prepared.Profiles...); err != nil {
 		return prepared, err
 	}
 	if options.Validate || prepared.Engine == "real-vm" {
-		if _, err := collectTestValidationForEngine(map[string]testScenario{member.Scenario: scenario}, dir, member.Scenario, prepared.Engine); err != nil {
+		if _, err := collectTestValidationForEngine(map[string]testScenario{member.Scenario: scenario}, dir, member.Scenario, prepared.Engine, prepared.Profiles...); err != nil {
 			return prepared, err
 		}
 	} else {
@@ -172,9 +191,6 @@ func prepareTestSuiteMember(member testSuiteMember, scenario testScenario, dir s
 		if _, err := resolveDeploySourceDir(dir, source); err != nil {
 			return prepared, err
 		}
-	}
-	if err := prepareTestSuiteEngine(&prepared, member, options); err != nil {
-		return prepared, err
 	}
 	return prepared, nil
 }
@@ -285,7 +301,7 @@ func estimateTestSuiteWorkloadMinutes(scenarios []testPreparedScenario, repeat i
 func validatePreparedTestSuite(name string, scenarios []testPreparedScenario) int {
 	results := make([]testValidationResult, 0, len(scenarios))
 	for _, scenario := range scenarios {
-		validation, err := collectTestValidationForEngine(map[string]testScenario{scenario.Name: scenario.Scenario}, scenario.ManifestDir, scenario.Name, scenario.Engine)
+		validation, err := collectTestValidationForEngine(map[string]testScenario{scenario.Name: scenario.Scenario}, scenario.ManifestDir, scenario.Name, scenario.Engine, scenario.Profiles...)
 		if err != nil {
 			return printErr("Invalid scenario source", err)
 		}

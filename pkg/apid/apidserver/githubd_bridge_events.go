@@ -21,7 +21,7 @@ func (b *githubdBridge) PublishGitHubEvent(ctx context.Context, req *githubdpb.P
 	if !ok {
 		return nil, status.Error(codes.Unavailable, "github events need the Postgres store")
 	}
-	events := agents.GitHubEvents{Store: store, Allowed: b.agentSteps, Notify: b.notifyEventPublished}
+	events := agents.GitHubEvents{Store: store, Allowed: b.agentSteps, Notify: b.notifyEventPublished, Subscriptions: b.githubSubscriptions}
 	result, err := events.Publish(ctx, req.GetDeliveryId(), req.GetInstallationId(), req.GetEventType(), req.GetData())
 	switch {
 	case errors.Is(err, api.ErrGitHubEventInvalid):

@@ -2,14 +2,10 @@
 
 Gregale stamps every incoming request with a W3C
 [`traceparent`](https://www.w3.org/TR/trace-context/) header and
-forwards the request-scoped context to your function (issue #555
-layer 4). You can opt into OpenTelemetry auto-instrumentation and
+forwards the request-scoped context to your function. You can opt into OpenTelemetry auto-instrumentation and
 the platform's trace will join your spans, all the way to the OTLP
 collector you point at
 `OTEL_EXPORTER_OTLP_ENDPOINT`.
-
-This page is the operator's quick-start; the spec contract is in
-`docs/faas_implementation_spec.md` §16 (tracing).
 
 ## What the platform gives you
 
@@ -26,7 +22,7 @@ This page is the operator's quick-start; the spec contract is in
 - **Response correlation**: the public edge returns
   `X-Gregale-Trace-Id` with the canonical 32-character trace id and sends the
   same platform-owned header to the guest. Use that value with
-  `gregale trace <trace-id>` to query the account trace index for retained,
+  `gregale debug trace <trace-id>` to query the account trace index for retained,
   redacted evidence across the apps in your account.
 - **Lifetime**: the trace_id is minted at the gateway (or carried
   in from the inbound `traceparent`); the span_id identifies the
@@ -75,8 +71,25 @@ A process's environment is fixed when it starts, so an instance woken from a
 snapshot keeps the values of the instance that booted the workload. The app,
 deployment, tenant, commit, tag, created-at and image values stay correct
 because a snapshot belongs to one deployment, but `FAAS_INSTANCE_ID` and
-`FAAS_NODE_ID` can name an earlier instance or another node. Read the serving
-instance and node from the per-request headers below instead.
+`FAAS_NODE_ID` can name an earlier instance or another node. `FAAS_REGION`
+can name another region for the same reason.
+
+To read the serving instance from anywhere in the process, including
+background work outside a request, read the JSON file named by
+`FAAS_INSTANCE_IDENTITY_FILE` (`/run/guest-init/identity.json`):
+
+```json
+{"instance_id":"…","node_id":"…","region":"…","source":"resume","updated_at":"2026-11-07T12:00:00Z"}
+```
+
+guest-init writes it at boot and replaces it atomically on every snapshot
+resume, before the userspace reseed and the app's `after_restore` callback
+run, so the first request after a restore already sees the new values.
+`source` is `boot` until a resume has replaced the boot values. Read the file
+when you need the value rather than caching it at startup; an `after_restore`
+handler is a good place to refresh a cached copy. Sidecars that run in their
+own root filesystem do not get the file. Inside a request, the per-request
+headers below carry the same values.
 
 The gateway also forwards the request-scoped `X-Faas-Request-Id`, app,
 deployment, tenant, instance, node, region, commit, deployment-tag,
@@ -86,9 +99,8 @@ middleware. Platform request telemetry, errors, traces, and streamed/log-drain
 records retain the same deployment identity automatically.
 
 You do not need to read or write `TRACEPARENT` for the platform's
-own spans to work — the platform's `sched.wake`, `vmmd.create_*`,
-`guest.resume`, and `guest.readiness` spans are joined on the same
-trace_id automatically (issue #555 layer 3, merged).
+own spans to work — the platform's wake, restore, resume and readiness
+spans are joined on the same trace_id automatically.
 
 ## Auto-instrumentation: Node 22 / 24
 
@@ -199,13 +211,13 @@ propagator in the parent image doesn't silently drop the join.
 ## Platform-owned outbound integrations
 
 Requests sent through Gregale's configured outbound integrations
-(`/i/{integration_id}/...`) are instrumented by `outboundd` without any
+(`/i/{integration_id}/...`) are instrumented by Gregale without any
 application SDK setup. The platform emits a bounded integration span named
 `outbound.<integration-name>` (or `outbound.integration` when the configured
 name is not a safe label), plus a child HTTP client span with the method,
 destination host, response status, network lifecycle events, duration, and
 error state. A classified integration span is retained with its trusted tenant
-identity only long enough to route it through apid's spans-writer; the identity
+identity only long enough to route it to your account's traces; the identity
 is stripped before persistence. Route analytics can therefore show the
 outbound provider wait alongside other platform-owned dependencies. W3C trace
 context is injected into the provider request, so a caller that already has an
@@ -249,9 +261,8 @@ Authorized service-proxy spans are also sent through Gregale's trusted
 telemetry channel and attached to the matching retained request in the
 production debugger. This path is enabled by default and does not require a
 customer API key, a customer OTLP exporter, or an operator-configured external
-collector. `FAAS_OTEL_SPANS_WRITER_ENABLED=false` disables both the customer
-OTLP writer and this platform-owned retention path; `FAAS_OTEL_FLUSH_INTERVAL`
-controls their coalescing cadence (30 seconds by default).
+collector. These spans are delivered in batches, so they can take up to about
+30 seconds to appear.
 
 When the caller propagates its inbound `traceparent`, the service dependency is
 nested under that original request and appears in the same waterfall. When the
@@ -272,7 +283,7 @@ dispatch path with bounded spans for `gregale.trigger.poll`,
 `gregale.invocation`. Retry and dead-letter outcomes are represented by
 `gregale.trigger.retry` and `gregale.trigger.dlq` spans.
 
-The schedd uses the first valid record context as the batch parent and records a
+Gregale uses the first valid record context as the batch parent and records a
 small capped set of additional record contexts as span links when a batch mixes
 producers. If a broker record has no valid W3C context, the platform still emits
 the trigger spans from the scheduler cycle. Event payloads, item identifiers,
@@ -284,7 +295,7 @@ invocation envelope. A delivery restores that context before dispatch, so the
 queue hop remains part of the same trace. `GET /v1/account/traces/{trace_id}`
 returns retained request evidence, safe HTTP access-log events, and a safe
 queue lifecycle projection. The trace lookup uses tenant-scoped trace-id
-filtering for the durable HTTP log ledger; `gregale trace <trace-id>` renders
+filtering for the durable HTTP log ledger; `gregale debug trace <trace-id>` renders
 the correlated events without client-side app fan-out. The command
 `gregale logs <app> --trace <trace-id>` selects the HTTP access events for one
 app and supports the usual route/status filters.
@@ -303,21 +314,21 @@ remains visible separately.
 
 ## Platform-to-guest transport
 
-The vmmd HTTP bridge emits a platform-owned client span for the host-side
-transport into the selected guest instance. The span records the bridge kind,
+Gregale emits a platform-owned client span for the hop into the selected
+instance. The span records the bridge kind,
 wire protocol, guest application protocol, bounded guest port, instance ID,
 response status, duration, and transport errors. It does not record request
 paths, query strings, headers, bodies, or credentials.
 
-This span covers the platform-to-guest hop only. Direct guest-to-internet TCP
-flows bypass the HTTP bridge; observing those flows requires a separate
-kernel-level flow telemetry implementation and is not inferred from this span.
+This span covers the platform-to-instance hop only. Connections your app opens
+to the internet are not traced unless your own OpenTelemetry SDK instruments
+them.
 
 ## What the platform does NOT do
 
 - **No library pre-installation.** The runner image ships with
   the standard library only. You bring your own OTel SDK. The
-  runner sandbox is small (130 MB fleet target, ADR-040); we do
+  runner sandbox is small (130 MB fleet target); we do
   not pay for a 30 MB SDK on disk per app when most apps will
   not opt in.
 - **No auto-detection.** Set `OTEL_EXPORTER_OTLP_ENDPOINT` in
@@ -338,28 +349,7 @@ kernel-level flow telemetry implementation and is not inferred from this span.
   parent's `SampledFlag=true` is what reaches your SDK, so
   every child span you create is recorded.
 
-## Platform trace query
-
-If you have observer access to the box, `GET /v1/traces/{trace_id}`
-returns the gatewayd-public platform span tree retained by that
-instance's bounded in-memory ring (24 hours or 100k entries, whichever
-comes first). It is not a durable or fleet-wide trace store. The shape
-is the [`Trace` schema](../../api/openapi.yaml) — every platform span carries
-`trace_id`, `span_id`, `parent_span_id`, `name`, `start_time`,
-`end_time`, `status`, and an `attributes` map (`app_id`,
-`deployment_id`, `instance_id`, etc.).
-
-Customer-created spans require OTLP export and are inspected in the
-configured collector. The customer OTLP ingest path summarizes those
-spans into request telemetry rather than adding them to this local ring.
-
-```bash
-curl -sH "X-Faas-Trace-Auth: $OBSERVER_TOKEN" \
-  https://faas.example.com/v1/traces/4bf92f3577b34da6a3ce929d0e0e4736 | jq
-```
-
 ## See also
 
-- `docs/faas_implementation_spec.md` §16 — tracing contract
-- `docs/adr/` — architectural decisions (PR #617 / issue #555)
+- [Request tracing](../tracing.md)
 - W3C TraceContext: https://www.w3.org/TR/trace-context/

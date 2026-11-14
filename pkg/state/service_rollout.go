@@ -24,6 +24,7 @@ const (
 // completed. Gateway identities are node names from the bounded compute-node
 // registry, never request-derived labels.
 type ServiceRolloutHandoff struct {
+	RetiringInstanceIDs     []string                       `json:"retiring_instance_ids,omitempty"`
 	BindingsCheck           *api.ServiceRolloutBindingGate `json:"bindings_check,omitempty"`
 	Action                  string                         `json:"action,omitempty"`
 	Phase                   string                         `json:"phase,omitempty"`

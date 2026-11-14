@@ -224,6 +224,15 @@ elif [[ -f /etc/faas/sealed.env ]]; then
           || grep -qsE \"^[[:space:]]*${polar_product}_product_id[[:space:]]*=[[:space:]]+\\\"[^\\\"]+\\\"\" /etc/faas/apid.toml /etc/faas/meterd.toml 2>/dev/null
       "
     done
+    # A production deployment refuses Polar's sandbox: a sandbox checkout
+    # pays with a test card and still grants a paid plan. apid and meterd
+    # refuse it at boot too (billing/loader ErrPolarSandboxInProduction).
+    if grep -qsE "^Environment=FAAS_ENVIRONMENT=[Pp]roduction$" /etc/systemd/system/faas-apid.service.d/zz-faas-environment.conf; then
+      check "Polar sandbox is off in production" bash -c '
+        ! grep -qE "^FAAS_POLAR_SANDBOX=(1|true)$" /etc/faas/sealed.env \
+          && ! grep -qsE "^[[:space:]]*sandbox[[:space:]]*=[[:space:]]*true" /etc/faas/apid.toml /etc/faas/meterd.toml
+      '
+    fi
   elif [[ "${effective_billing_provider}" == "paddle" ]]; then
     check "sealed.env has FAAS_PADDLE_API_KEY" bash -c '
       grep -q "^FAAS_PADDLE_API_KEY=pdl_" /etc/faas/sealed.env

@@ -28,8 +28,8 @@ func (r EventRecoveryRequest) validateWorkflowRouting() error {
 	if r.ParentJobID != "" || r.Mode != "" && r.Mode != "routing" || r.Outcome != "" || r.SubscriptionID != "" || r.EventSource != "" || r.EventType != "" || r.FailureCode != "" || r.MinAgeSeconds != 0 || r.IncludeNonRetryable {
 		return fmt.Errorf("workflow_routing cannot be combined with parent, execution or backlog filters")
 	}
-	if strings.TrimSpace(p.Name) == "" || len(p.Name) > EventBacklogFilterMaxBytes || p.PublishedVersion < 1 || strings.TrimSpace(p.Source) == "" || len(p.Source) > EventBacklogFilterMaxBytes || len(p.Events) < 1 || len(p.Events) > AutomationRecoveryBatchMaxRuns || r.RequestID == "" {
-		return fmt.Errorf("workflow_routing requires name, published_version, source, 1..%d events and request_id", AutomationRecoveryBatchMaxRuns)
+	if strings.TrimSpace(p.Name) == "" || len(p.Name) > EventBacklogFilterMaxBytes || p.PublishedVersion < 1 || strings.TrimSpace(p.Source) == "" || len(p.Source) > EventBacklogFilterMaxBytes || len(p.Events) < 1 || len(p.Events) > StoredWorkflowRecoveryBatchMaxRuns || r.RequestID == "" {
+		return fmt.Errorf("workflow_routing requires name, published_version, source, 1..%d events and request_id", StoredWorkflowRecoveryBatchMaxRuns)
 	}
 	seen := map[string]bool{}
 	for _, t := range p.Events {

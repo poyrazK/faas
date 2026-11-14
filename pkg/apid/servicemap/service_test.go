@@ -120,7 +120,7 @@ func TestGetServiceMapGates(t *testing.T) {
 		wantCode int
 		wantProb string
 	}{
-		{name: "disabled", enabled: false, plan: api.PlanHobby, wantCode: http.StatusServiceUnavailable, wantProb: "service_map_unavailable"},
+		{name: "disabled", enabled: false, plan: api.PlanHobby, wantCode: http.StatusForbidden, wantProb: "service_map_unavailable"},
 		{name: "free plan", enabled: true, plan: api.PlanFree, wantCode: http.StatusPaymentRequired, wantProb: api.CodePlanPerAppMetricsNotAllowed},
 		{name: "invalid range", enabled: true, plan: api.PlanHobby, query: "range=99y", wantCode: http.StatusBadRequest, wantProb: api.CodeValidation},
 	} {

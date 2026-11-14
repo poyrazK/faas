@@ -70,15 +70,21 @@ The condition is two O(1) ledger reads, so it adds no query to the wake hot
 path:
 
 ```
-the target deployment currently has NO instances   (it is the new revision)
-AND the app has at least one instance              (an older revision is serving)
+the original environment has serving instances outside the target deployment
 ```
 
 This is true only while two revisions overlap. When the rollout finishes and
 the old revision's instances are reaped, the target deployment holds the
-instances itself, the first condition goes false, and the grant retires on
+instances itself, the condition goes false, and the grant retires on
 its own. Nothing has to expire it, and there is no rollout-state column to
 read or keep consistent.
+
+The grant remains available while admitting later replicas of the replacement
+cohort. Restricting it to the first candidate replica can deadlock a valid
+multi-replica service at its concurrency ceiling. The aggregate limit remains
+`max_concurrency + 1`, shared across every overlapping revision; this does not
+grant an extra slot per replica or revision. ADR-208 describes the acknowledged
+traffic steps that release predecessor slots for the rest of the cohort.
 
 An empty deployment id returns false: without a target we cannot distinguish
 a rollout from ordinary scale-out, and the safe answer is the plain plan cap.

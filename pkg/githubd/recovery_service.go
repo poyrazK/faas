@@ -62,6 +62,13 @@ func NewRecoveryService(base githubdgrpc.Service, deliveries WebhookRecoveryStor
 	return &RecoveryService{Service: base, deliveries: deliveries, checks: checks}
 }
 
+func (s *RecoveryService) ListInstallableReposContext(ctx context.Context, accountID string, installationID int64) ([]githubdgrpc.Repo, error) {
+	if catalog, ok := s.Service.(githubdgrpc.RepositoryCatalogService); ok {
+		return catalog.ListInstallableReposContext(ctx, accountID, installationID)
+	}
+	return s.ListInstallableRepos(accountID, installationID)
+}
+
 func (s *RecoveryService) ListRecoveryQueueItems(ctx context.Context, status string, limit int) (githubdgrpc.RecoveryQueueItems, error) {
 	deliveries, err := s.deliveries.ListWebhookDeliveries(ctx, status, limit)
 	if err != nil {
@@ -160,4 +167,14 @@ func (s *RecoveryService) GetAppActivity(ctx context.Context, accountID, appID s
 		})
 	}
 	return out, nil
+}
+
+func (s *RecoveryService) GetInstallationAccess(ctx context.Context, accountID string, installID int64) (githubdgrpc.InstallationAccess, error) {
+	service, ok := s.Service.(interface {
+		GetInstallationAccess(context.Context, string, int64) (githubdgrpc.InstallationAccess, error)
+	})
+	if !ok {
+		return githubdgrpc.InstallationAccess{}, status.Error(codes.Unimplemented, "GitHub verification unavailable")
+	}
+	return service.GetInstallationAccess(ctx, accountID, installID)
 }

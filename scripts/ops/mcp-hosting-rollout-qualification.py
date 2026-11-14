@@ -54,7 +54,7 @@ def prepare(starter, destination):
         write_json(config_path, config)
         tasks_path = target / 'tasks.js'
         source = tasks_path.read_text()
-        marker = 'export const mcpTaskHandlers = Object.freeze({'
+        marker = "registerMcpTaskHandler('build_report', {"
         if source.count(marker) != 1:
             raise ValueError('Unsupported starter handler registry')
         tasks_path.write_text(source.split(marker)[0] + fixture.replace('__GENERATION__', 'old' if name == 'worker-old' else 'candidate'))

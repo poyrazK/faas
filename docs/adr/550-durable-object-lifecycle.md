@@ -52,9 +52,11 @@ Establish the mutation fence before the final exact-key history, age and tag
 check. An old listing must never delete an intervening new current object.
 Enumerate keys
 without retaining a native version continuation identity across deletion.
-Noncurrent age uses the successor's creation time; sole expired markers require
+S3 noncurrent age uses the successor's creation time; sole expired markers require
 complete key history. Retained immutable versions use exact owned selectors.
 Mutable-selector acknowledgment loss remains conservatively fenced.
+GCS uses its native archival timestamp and can expire retained generations even
+when no live generation remains (ADR-628). Missing archival age fails closed.
 
 Receipt IDs are stable for the same scan and target. Replay after reconstruction
 preserves the original scan token and cannot authorize another dispatch. Before

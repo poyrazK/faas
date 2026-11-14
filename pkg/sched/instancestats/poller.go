@@ -134,8 +134,11 @@ type Poller struct {
 	// CPUSaturationHandler queues automatic CPU captures of instances held
 	// at their CPU quota (ADR-1155). Nil keeps the poller observation-only.
 	CPUSaturationHandler CPUSaturationHandler
-	cpuSaturationMu      sync.Mutex
-	cpuSaturation        map[string]*cpuSaturationEpisode
+	cpuSaturation        cpuEpisodes
+	// CPUAbuseHandler acts on instances pinned at their CPU quota for
+	// api.CPUAbuseSustainedAfter (ADR-20261112120603). Nil disables it.
+	CPUAbuseHandler CPUAbuseHandler
+	cpuAbuse        cpuEpisodes
 	// PauseLedger records the quiet pauses each node reports for billing
 	// (ADR-20261023171905). Nil leaves the ledger untouched.
 	PauseLedger *PauseLedger
@@ -437,6 +440,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
 		p.watchCPUSaturation(ctx, rows)
+		p.watchCPUAbuse(ctx, rows)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -466,6 +470,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
 	p.watchCPUSaturation(ctx, rows)
+	p.watchCPUAbuse(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per
 	// (app, node). The wire side collapses NaN for absent
 	// values; instancestats passes NaN through so the rollup
@@ -628,6 +633,7 @@ func (p *Poller) decodeTelemetrySnapshot(
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
 			QuietPaused:      in.QuietPaused,
+			IdleLadderLevel:  in.IdleLadderLevel,
 			Frozen:           in.Frozen,
 			QuietPause:       in.QuietPause,
 			CPU:              Unknown,
@@ -725,7 +731,7 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 		snap, err = p.Router.Stats(callCtx, node.ID)
 	} else {
 		var vmm sched.VMM
-		vmm, err = p.Dialer.Dial(callCtx, node.TargetURL, p.TLS)
+		vmm, err = p.Dialer.Dial(callCtx, node.TargetURL, wire.ExpectPeerCN(p.TLS, node.Name))
 		if err != nil {
 			p.Log.Warn("instance stats dial failed", "node_id", node.ID, "err", err)
 			if p.Metrics != nil {
@@ -917,6 +923,7 @@ func (p *Poller) decodeStatsSnapshot(
 			AppID:            durable.AppID,
 			InflightRequests: in.InflightRequests,
 			QuietPaused:      in.QuietPaused,
+			IdleLadderLevel:  in.IdleLadderLevel,
 			Frozen:           in.Frozen,
 			QuietPause:       in.QuietPause,
 			CPU:              Unknown,

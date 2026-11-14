@@ -38,17 +38,19 @@ func applySourceComposeHealthcheck(config oci.Config, override *api.ComposeHealt
 	return config, nil
 }
 
-// recordSourceHealthcheck stores whether the built image's effective
-// HEALTHCHECK, from its Dockerfile or a frozen Compose override, is a command
-// check. When it is, the scheduler requires a fresh pass before readiness and
-// drives recovery from it, exactly as for a prebuilt image (ADR-683, ADR-684,
-// ADR-20261024100000). A build without one writes nothing.
-func (h *Handler) recordSourceHealthcheck(ctx context.Context, dep *state.Deployment, manifest api.AppManifest) error {
+// recordSourceRuntimeProfile hands the built image's port and effective
+// command HEALTHCHECK to the scheduler before snapshot priming. Source
+// inference cannot see ports inherited from a base image. Explicit deployment
+// overrides remain authoritative, as on the registry-image path.
+func (h *Handler) recordSourceRuntimeProfile(ctx context.Context, dep *state.Deployment, manifest api.AppManifest) error {
 	required := imageManifestHealthcheckRequired(manifest.Healthcheck)
-	if frameworkprofile.RequiresSourceImageHealthcheck(dep.InferredProfile) == required {
+	profile, _ := persistedProfile(*dep)
+	portChanged := dep.OverridePort == 0 && manifest.Port != 0 && profile.Port != manifest.Port
+	healthcheckChanged := frameworkprofile.RequiresSourceImageHealthcheck(dep.InferredProfile) != required
+	if !portChanged && !healthcheckChanged {
 		return nil
 	}
-	// Merge the verdict into the profile as stored, keeping fields this binary
+	// Merge runtime facts into the profile as stored, keeping fields this binary
 	// does not know. A build whose profile inference failed has none; start
 	// one the way an image deployment does.
 	fields := map[string]json.RawMessage{}
@@ -57,13 +59,21 @@ func (h *Handler) recordSourceHealthcheck(ctx context.Context, dep *state.Deploy
 			return fmt.Errorf("imaged: decode source runtime profile: %w", err)
 		}
 	}
+	if fields == nil {
+		fields = map[string]json.RawMessage{}
+	}
 	if _, ok := fields["version"]; !ok {
 		fields["version"] = json.RawMessage(strconv.Quote(frameworkprofile.Version))
 	}
 	if _, ok := fields["framework"]; !ok {
 		fields["framework"] = json.RawMessage(`"unknown"`)
 	}
-	fields["image_healthcheck_required"] = json.RawMessage(strconv.FormatBool(required))
+	if portChanged {
+		fields["port"] = json.RawMessage(strconv.Itoa(manifest.Port))
+	}
+	if healthcheckChanged {
+		fields["image_healthcheck_required"] = json.RawMessage(strconv.FormatBool(required))
+	}
 	raw, err := json.Marshal(fields)
 	if err != nil {
 		return fmt.Errorf("imaged: encode source runtime profile: %w", err)

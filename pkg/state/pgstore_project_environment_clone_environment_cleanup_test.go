@@ -265,8 +265,9 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 	expected := []string{
 		"app_binding_release_policies.scope",
 		"app_binding_release_policy_history.scope",
-		"app_config_guards.scope",    // Closed and open config guard windows are change history; app_envs already blocks while configuration remains.
-		"app_config_revisions.scope", // Append-only configuration revision history.
+		"app_config_guards.scope",      // Closed and open config guard windows are change history; app_envs already blocks while configuration remains.
+		"app_config_revisions.scope",   // Append-only configuration revision history.
+		"app_env_batch_receipts.scope", // Retained receipt of an env batch apply.
 		"app_environment_route_budgets.environment_id",
 		"app_environment_route_budgets.scope",
 		"app_environment_secret_ref_suppressions.environment_id",
@@ -279,6 +280,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_mcp_readiness_policies.scope",       // Per-environment readiness gate configuration blocks scope cleanup.
 		"app_mcp_readiness_policy_history.scope", // Append-only policy audit history is retained evidence.
 		"app_runtime_config_scope_changes.scope",
+		"app_scaling_receipts.scope", // Retained receipt of a scaling request.
 		"app_secret_revocations.scope",
 		"app_secret_runtime_reload_observations.scope",
 		"app_secrets.scope",
@@ -286,6 +288,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_webhooks.scope",
 		"application_standard_assignments.scope", // ADR-595 hierarchy level (organization/project/application), not an environment.
 		"binding_verification_runs.scope",        // Retained verification evidence blocks deployment and scope cleanup.
+		"crons.deployment_scope",                 // Environment crons have their own clone lifecycle (#7134).
+		"crons.environment_id",
 		"custom_domains.environment_id",
 		"customer_operation_approval_forms.scope",
 		"customer_operation_concurrency_policies.scope",
@@ -297,6 +301,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"data_upstreams.deployment_scope",
 		"data_upstreams.scope",
 		"deployment_openapi_snapshots.scope",
+		"deployment_promotion_receipts.environment_id", // Retained promotion evidence.
+		"deployment_promotion_receipts.scope",
 		"deployment_rollback_operations.scope",
 		"deployment_rollbacks.scope", // Rollback outcome history; deployment_rollback_operations blocks in-flight work.
 		"deployment_route_policy_snapshots.scope",
@@ -304,6 +310,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"deployments.scope",
 		"dev_bridge_sessions.environment_id",
 		"dev_bridge_sessions.scope",
+		"environment_deployment_cron_activations.deployment_scope", // App-scoped cron activation state, removed with the app.
+		"environment_deployment_cron_states.deployment_scope",
 		"environment_external_field_owners.environment_id",
 		"environment_git_sources.environment_id",
 		"environment_gitops_runtime_effects.environment_slug",
@@ -341,6 +349,12 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"production_lifecycle_reviews.scope",                 // Retained historical deployment review evidence.
 		"project_binding_verification_runs.environment_slug", // Scope-only verification receipts block metadata cleanup.
 		"project_environment_approvals.environment_slug",
+		"project_environment_branch_buckets.environment_id", // Branch overlays outlive the environment so their copies can be reclaimed.
+		"project_environment_branch_buckets.environment_slug",
+		"project_environment_branch_databases.environment_id", // Branch database copies outlive the environment so they can be reclaimed.
+		"project_environment_branch_databases.environment_slug",
+		"project_environment_branch_deployments.environment_id", // Cascades with the branch row.
+		"project_environment_branches.environment_id",           // A child branch blocks cleanup; its own row cascades.
 		"project_environment_cleanup_jobs.environment_slug",
 		"project_environment_clone_configuration_ownership.environment_id",
 		"project_environment_clone_deployment_cleanups.environment_id",
@@ -359,8 +373,10 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"project_environment_clone_postgres_verifications.scope",
 		"project_environment_config_versions.environment_slug",
 		"project_environment_edge_policies.environment_slug",
+		"project_environment_promotion_receipts.environment_id", // Retained promotion receipts.
 		"project_environment_qualifications.environment_slug",
 		"project_environment_queue_runtime_sets.environment_id",
+		"project_environment_rollback_receipts.environment_id", // Retained rollback receipts.
 		"project_environment_route_policies.environment_slug",
 		"project_environment_secrets.environment_slug", // ADR-1139: a trigger deletes them with the environment row.
 		"project_environment_workload_heads.environment_id",

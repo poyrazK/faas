@@ -230,3 +230,37 @@ func TestCmdAppExecShellRequiresOneCommandString(t *testing.T) {
 		t.Fatalf("stderr = %q", errOut())
 	}
 }
+
+// TestCmdAppExecStdoutCarriesOnlyCommandOutput pins Hunt 32 H32-78: the
+// "Task … succeeded" status line went to stdout, so `exec … > file` captured
+// it with the command's output, and the truncation notice was glued to the
+// end of an output line that had no trailing newline.
+func TestCmdAppExecStdoutCarriesOnlyCommandOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(appTaskCLIReceipt))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"2bdd4251-f567-4a48-9f66-a155bbfa7751","app_id":"0123456789abcdef0123456789abcdef","deployment_id":"abcdef0123456789abcdef0123456789","deployment_scope":"default","kind":"manual","command":["bin/task"],"command_shell":false,"status":"succeeded","timeout_seconds":30,"max_output_bytes":2048,"stdout_tail":"aaaa","stderr_tail":"","output_truncated":true,"exit_code":0,"created_at":"2026-09-23T00:00:00Z","updated_at":"2026-09-23T00:00:01Z","finished_at":"2026-09-23T00:00:01Z"}`))
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	out, errOut, restore := main.SwapIO(t)
+	defer restore()
+
+	if code := main.CmdAppExec("my-app", []string{"--poll-interval", "1ms", "--wait-timeout", "1s", "--", "bin/task"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if got := out.String(); got != "aaaa" {
+		t.Fatalf("stdout = %q, want only the command output", got)
+	}
+	stderr := errOut()
+	if !strings.Contains(stderr, "succeeded (deployment=") {
+		t.Errorf("stderr missing the status line: %q", stderr)
+	}
+	if !strings.HasPrefix(stderr[strings.Index(stderr, ")."):], ").\n\n") || !strings.Contains(stderr, "truncated at 2048 bytes") || !strings.Contains(stderr, "--max-output-bytes up to 16777216") {
+		t.Errorf("truncation notice must start on its own line and name the bound: %q", stderr)
+	}
+}

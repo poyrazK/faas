@@ -8,6 +8,19 @@
 faas_cp_slice_memory_max: 6144M
 faas_cp_slice_cpu_quota: 400%
 
+# The CPUWeight every per-plan tenant sub-slice gets (ADR-20261109172421 §3):
+# one value, so no plan outranks another on a busy host. 16 was Scale's
+# weight, so Scale instances keep their share beside faas-tenant-ibridge.slice
+# (weight 100) and the other plans rise to it.
+faas_tenant_plan_slice_cpu_weight: 16
+
+# faas-tenant-ibridge.slice's CPUWeight. With flat tenant cgroups
+# (ADR-20261109172421 step 6.5) the bridges compete with every instance's
+# cpu.weight (ram_mb / 16, about 3,000 for a full 47.6 GB host), so 1000
+# keeps a quarter of a saturated host available to them; they take only
+# what forwarding needs.
+faas_tenant_ibridge_cpu_weight: 1000
+
 # faas-obs.slice limits (ADR-20261023124955 §1). Prometheus, Alertmanager and
 # Grafana (and, once enabled, Loki and Promtail) run here instead of in
 # system.slice, whose 2,048 MB budget is for the OS. The memory cap fences
@@ -21,3 +34,13 @@ faas_obs_slice_memory_max: 3584M
 faas_obs_slice_cpu_weight: 20
 faas_obs_slice_cpu_quota: 100%
 faas_obs_slice_io_weight: 20
+
+# user.slice weights (ADR-20261023124955 amendment 2026-11-06). Operator and
+# Ansible SSH sessions run in user.slice, which at the default weight (100)
+# competed as an equal with all of system.slice, PostgreSQL included. On
+# production-us in the week to 2026-11-06, whenever the 2-vCPU control plane
+# was above 1.5 busy cores, user.slice averaged 0.42 cores, more than
+# PostgreSQL (0.36). A low weight lets PostgreSQL and the daemons win under
+# contention; an otherwise idle host still gives a session every core.
+faas_user_slice_cpu_weight: 20
+faas_user_slice_io_weight: 20

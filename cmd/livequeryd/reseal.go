@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/livequery/liveserver"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/state/livekeys"
@@ -44,6 +45,7 @@ func runReseal(ctx context.Context, log *slog.Logger) error {
 	}
 	cfg.MaxConns = 2
 	cfg.ConnConfig.RuntimeParams["application_name"] = "faas-livequeryd-reseal"
+	dbbounds.ConfigureTimeouts(cfg)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("livequeryd: control-plane pool: %w", err)

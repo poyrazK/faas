@@ -123,6 +123,11 @@ func (c *Client) IncrementAppError(ctx context.Context) (AppErrorStream, error) 
 	return &appErrorStream{stream: stream}, nil
 }
 
+// RecordHTTPIssue retries an Issues occurrence without replaying legacy counts.
+func (c *Client) RecordHTTPIssue(ctx context.Context, req *apidpb.IncrementAppErrorRequest) (*apidpb.IncrementAppErrorResponse, error) {
+	return c.cli.RecordHTTPIssue(ctx, req)
+}
+
 // Close shuts down the underlying gRPC connection. Safe to call
 // multiple times; subsequent calls are no-ops.
 func (c *Client) Close() error {

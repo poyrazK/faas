@@ -39,6 +39,7 @@ FAAS_API="${FAAS_API:-https://api.gregale.dev}"
 FAAS_APPS_DOMAIN="${FAAS_APPS_DOMAIN:-gregale.dev}"
 DEPLOY_TIMEOUT_SECONDS="${DEPLOY_TIMEOUT_SECONDS:-1200}"
 INFRA_RETRY_DELAY_SECONDS="${INFRA_RETRY_DELAY_SECONDS:-30}"
+POLICY_RETRY_DELAY_SECONDS="${POLICY_RETRY_DELAY_SECONDS:-20}"
 CONTINUITY_PROBE_INTERVAL_SECONDS="${CONTINUITY_PROBE_INTERVAL_SECONDS:-2}"
 # ACCEPTANCE_NODE selects the per-node canary below instead of the fleet gate.
 ACCEPTANCE_NODE="${ACCEPTANCE_NODE:-}"
@@ -108,18 +109,39 @@ deploy_attempt() {
 		--yes --no-require-authn --reason production-release-acceptance >"$output" 2>"$output.stderr"
 }
 
-# deploy_one retries an infrastructure-class failure exactly once. On rc.243
-# the first function build failed with failure_class=infra ("builderd: vm exit
-# 1") less than a minute after the last node activated, and the same deploy
-# passed 276 s later. A release defect still fails the gate on its first
-# attempt; the retried failure's evidence is printed before it is replaced.
+# policy_check_timed_out reports whether a failed deployment was refused only
+# because apid's traffic policy check ran out of time: a 422
+# traffic_policy_too_complex that carries retry_after_seconds, which apid sets
+# for a time ceiling and not for a size one. With FAAS_JSON the CLI writes the
+# problem as one JSON line on stderr after its own four resends.
+policy_check_timed_out() {
+	local output="$1"
+	[[ -s "$output.stderr" ]] || return 1
+	jq -R -e 'fromjson? | select(.code == "traffic_policy_too_complex" and .retry_after_seconds != null)' \
+		"$output.stderr" >/dev/null 2>&1
+}
+
+# deploy_one retries a transient failure exactly once. On rc.243 the first
+# function build failed with failure_class=infra ("builderd: vm exit 1") less
+# than a minute after the last node activated, and the same deploy passed 276 s
+# later. On rc.322 both round-3 node-canary deploys were refused 422
+# traffic_policy_too_complex ("ran out of time") on every one of the CLI's four
+# resends while the control plane was busy with the node's activation; the
+# refusal saves nothing, so a later resend is safe. A release defect still
+# fails the gate on its first attempt; the retried failure's evidence is
+# printed before it is replaced.
 deploy_one() {
-	local template="$1" slug="$2" output="$3" rc=0
+	local template="$1" slug="$2" output="$3" rc=0 delay="" why=""
 	deploy_attempt "$template" "$slug" "$output" || rc=$?
 	if (( rc != 0 )) && jq -e '.failure_class == "infra"' "$output" >/dev/null 2>&1; then
-		echo "acceptance deployment ${slug} hit an infrastructure-class failure; retrying once in ${INFRA_RETRY_DELAY_SECONDS}s" >&2
+		delay="$INFRA_RETRY_DELAY_SECONDS" why="an infrastructure-class failure"
+	elif (( rc != 0 )) && policy_check_timed_out "$output"; then
+		delay="$POLICY_RETRY_DELAY_SECONDS" why="a traffic policy check that ran out of time"
+	fi
+	if [[ -n "$delay" ]]; then
+		echo "acceptance deployment ${slug} hit ${why}; retrying once in ${delay}s" >&2
 		report_failed_deploy "$slug" "$output" "$rc"
-		sleep "$INFRA_RETRY_DELAY_SECONDS"
+		sleep "$delay"
 		rc=0
 		deploy_attempt "$template" "$slug" "$output" || rc=$?
 	fi

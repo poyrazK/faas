@@ -108,12 +108,13 @@ func controlMultipartURLE2E(t *testing.T, s *apidserver.Server, st state.Store, 
 		}
 		requested = nil
 	}
+	beforeInitiation := usage()
 	u, err := client.CreateObjectMultipartUpload(ctx, "encrypted-journal", b.ID, api.CreateObjectMultipartUploadRequest{Key: "encrypted", SizeBytes: 3, ContentType: "application/octet-stream", Encryption: requested})
 	if err != nil || u.State != state.ObjectMultipartActive || u.Encryption == nil || u.Encryption.KeyID != selection.KeyID {
 		t.Fatal("control encrypted initiation", u, err)
 	}
 	stored, err := st.(state.ObjectMultipartUploadStore).GetObjectMultipartUpload(ctx, acct.ID, b.AppID, b.ID, u.ID)
-	if err != nil || !stored.FixedAdmission || usage().CapacityBytes != 3 || usage().CapacityKeys != 1 || usage().Authorizations != 1 {
+	if err != nil || !stored.FixedAdmission || usage().CapacityBytes != 3 || usage().CapacityKeys != 1 || usage().Authorizations != beforeInitiation.Authorizations+1 {
 		t.Fatal("creation did not atomically reserve the declared object", stored, usage(), err)
 	}
 	if useDefault {
@@ -127,7 +128,7 @@ func controlMultipartURLE2E(t *testing.T, s *apidserver.Server, st state.Store, 
 			t.Fatal(err)
 		}
 	}
-	if replay, e := client.CreateObjectMultipartUpload(ctx, "encrypted-journal", b.ID, api.CreateObjectMultipartUploadRequest{Key: "encrypted", SizeBytes: 3, ContentType: "application/octet-stream", Encryption: requested}); e != nil || replay.ID != u.ID || usage().Authorizations != 1 {
+	if replay, e := client.CreateObjectMultipartUpload(ctx, "encrypted-journal", b.ID, api.CreateObjectMultipartUploadRequest{Key: "encrypted", SizeBytes: 3, ContentType: "application/octet-stream", Encryption: requested}); e != nil || replay.ID != u.ID || usage().Authorizations != beforeInitiation.Authorizations+1 {
 		t.Fatal("creation replay spent capacity or authorization", replay, usage(), e)
 	}
 	scoped, hash, _ := api.GenerateAPIKey()

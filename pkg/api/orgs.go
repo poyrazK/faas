@@ -263,26 +263,30 @@ type OrgWithRole struct {
 type OrgMemberResponse struct {
 	AccountID string `json:"account_id"`
 	Email     string `json:"email"`
-	Role      string `json:"role"`
-	JoinedAt  string `json:"joined_at"`
+	// DisplayName is the member's optional name; omitted when unset.
+	DisplayName string `json:"display_name,omitempty"`
+	Role        string `json:"role"`
+	JoinedAt    string `json:"joined_at"`
 }
 
 // OrgMemberRow is the typed counterpart, joined with the account row.
 type OrgMemberRow struct {
-	AccountID string
-	Email     string
-	Role      string
-	JoinedAt  time.Time
+	AccountID   string
+	Email       string
+	DisplayName string
+	Role        string
+	JoinedAt    time.Time
 }
 
 // OrgMemberResponseFromRow renders a typed OrgMemberRow as the
 // wire-shaped OrgMemberResponse.
 func OrgMemberResponseFromRow(r OrgMemberRow) OrgMemberResponse {
 	return OrgMemberResponse{
-		AccountID: r.AccountID,
-		Email:     r.Email,
-		Role:      r.Role,
-		JoinedAt:  FormatAlertTime(r.JoinedAt),
+		AccountID:   r.AccountID,
+		Email:       r.Email,
+		DisplayName: r.DisplayName,
+		Role:        r.Role,
+		JoinedAt:    FormatAlertTime(r.JoinedAt),
 	}
 }
 
@@ -424,4 +428,12 @@ func ValidateOrgSlug(slug string) string {
 		return "slug must be lowercase alphanumeric and may contain dashes"
 	}
 	return ""
+}
+
+// OrgSecurityPolicy is GET/PUT /v1/orgs/{slug}/security-policy (ADR
+// 20261113180000). RequireMFA keeps members without two-factor
+// authentication out of the organization until they turn it on.
+type OrgSecurityPolicy struct {
+	RequireMFA bool   `json:"require_mfa"`
+	UpdatedAt  string `json:"updated_at,omitempty"`
 }

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/internal/api"
+	"github.com/gregale-dev/gregale-go/internal/api"
 )
 
 func usableCreation(s snapshot) error {

@@ -38,6 +38,8 @@ faas_legacy_units:
 faas_control_plane_observability_units:
   - prometheus.service
   - alertmanager.service
+  - faas-notification-receiver-metrics.service
+  - faas-notification-receiver-metrics.timer
   - grafana-server.service
   # ADR-20261023124955 §2: Loki runs on the control plane only.
   - loki.service

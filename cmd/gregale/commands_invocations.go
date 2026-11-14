@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -82,7 +83,7 @@ func cmdInvocationsWait(args []string) int {
 	if err := fs.Parse(flagArgs); err != nil {
 		return 1
 	}
-	if len(positional) != 1 || fs.NArg() != 0 || *timeout < 0 || *interval <= 0 {
+	if len(positional) != 1 || fs.NArg() != 0 || validateInvocationWaitDurations(*timeout, *interval) != nil {
 		PrintUsage(os.Stderr, invocationWaitCmdUsage, invocationCmdDocsTopic)
 		return 1
 	}
@@ -105,8 +106,19 @@ func cmdInvocationsWait(args []string) int {
 		PrintProgress(osStderr, "Waiting for invocation %s…", id)
 	}
 	inv, err := waitForInvocation(ctx, client, id, *interval)
+	return renderInvocationWaitOutcome(ctx, id, inv, err, false)
+}
+
+func renderInvocationWaitOutcome(ctx context.Context, id string, inv api.Invocation, err error, accepted bool) int {
 	if err != nil {
 		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			if accepted || jsonOutput {
+				return renderInvocationWaitProblem(api.Problem{
+					Code: "invocation_wait_interrupted", Title: "Invocation wait interrupted",
+					Detail: fmt.Sprintf("stopped waiting for invocation %s; it may still be running", id),
+					Hint:   invocationResumeHint(id), DocsURL: cliDocsURL,
+				}, 130, id)
+			}
 			return 130
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -123,9 +135,12 @@ func cmdInvocationsWait(args []string) int {
 				Hint:    fmt.Sprintf("Inspect it with 'gregale invocation get %s'.", id),
 				DocsURL: cliDocsURL,
 			}
+			if accepted {
+				problem.Hint = invocationResumeHint(id)
+			}
 			// The CLI wait deadline keeps its conventional exit status; it
 			// does not cancel the durable invocation on the server.
-			_ = renderInvocationWaitProblem(problem, 124)
+			_ = renderInvocationWaitProblem(problem, 124, id)
 			return 124
 		}
 		var remote *APIError
@@ -136,9 +151,13 @@ func cmdInvocationsWait(args []string) int {
 			} else if remote.Problem.Status >= 500 {
 				code = 3
 			}
-			return renderInvocationWaitProblem(remote.Problem, code)
+			problem := diagnosticProblem(remote.Problem)
+			if accepted {
+				problem.Hint = strings.TrimSpace(problem.Hint + " " + invocationResumeHint(id))
+			}
+			return renderInvocationWaitProblem(problem, code, id)
 		}
-		return printErr("Could not wait for invocation", err)
+		return renderInvocationWaitError(err, id, accepted)
 	}
 
 	if code := renderInvocationWaitResult(inv); code != 0 {
@@ -156,6 +175,9 @@ func waitForInvocation(ctx context.Context, client *api.Client, id string, inter
 		inv, err := client.GetInvocation(ctx, id)
 		if err != nil {
 			return latest, err
+		}
+		if inv.ID != id {
+			return latest, errors.New("invocation status response does not match the requested ID")
 		}
 		latest = inv
 		if invocationStateTerminal(inv.State) {
@@ -260,7 +282,7 @@ func cmdInvocationsList(args []string) int {
 		return 0
 	}
 	for _, inv := range resp.Invocations {
-		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path, appLabel(slugs, inv.AppID), inv.Source)
+		_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", inv.ID, inv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), inv.State, inv.Method, inv.Path, appLabel(slugs, inv.AppID), invocationSourceLabel(inv))
 	}
 	if resp.NextBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", resp.NextBefore)
@@ -354,7 +376,7 @@ func renderInvocation(w io.Writer, inv api.Invocation) {
 	if inv.InstanceID != "" {
 		_, _ = fmt.Fprintf(w, "Instance:   %s\n", inv.InstanceID)
 	}
-	_, _ = fmt.Fprintf(w, "Source:     %s\n", inv.Source)
+	_, _ = fmt.Fprintf(w, "Source:     %s\n", invocationSourceLabel(inv))
 	_, _ = fmt.Fprintf(w, "State:      %s\n", inv.State)
 	_, _ = fmt.Fprintf(w, "Method:     %s\n", inv.Method)
 	_, _ = fmt.Fprintf(w, "Path:       %s\n", inv.Path)
@@ -430,14 +452,19 @@ func oneLine(s string) string {
 	return b.String()
 }
 
-// Invocation wait retains its dedicated exit contract instead of the shared
-// HTTP mapping. Encode the actual returned status in machine diagnostics.
-func renderInvocationWaitProblem(problem api.Problem, code int) int {
-	problem = diagnosticProblem(problem)
-	if jsonOutput {
-		_ = writeJSONProblemWithExit(osStderr, problem, code)
-	} else {
-		renderAPIError(osStderr, &APIError{Problem: problem})
+// invocationSourceLabel names a synchronous `gregale invoke` sync_invoke. The
+// row is stored with the async source and retry_policy.sync_invoke, so lists
+// showed every sync call as async_invoke (Hunt 33 H33-16). --json keeps the
+// stored values.
+func invocationSourceLabel(inv api.Invocation) string {
+	if inv.Source != "async_invoke" || len(inv.RetryPolicyJSON) == 0 {
+		return inv.Source
 	}
-	return code
+	var policy struct {
+		SyncInvoke bool `json:"sync_invoke"`
+	}
+	if json.Unmarshal(inv.RetryPolicyJSON, &policy) == nil && policy.SyncInvoke {
+		return "sync_invoke"
+	}
+	return inv.Source
 }

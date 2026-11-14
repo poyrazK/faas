@@ -66,6 +66,7 @@
     }
     .oauth-link:hover { border-color: var(--fg); color: var(--fg); }
 
+    .terms { margin: 1.25rem 0 0; font-size: 0.8rem; color: var(--muted); }
     .signup { margin: 1.75rem 0 0; font-size: 0.85rem; color: var(--muted); }
 
     .flash, .errorbox {
@@ -100,6 +101,13 @@
       <p class="forgot"><a href="/login/forgot">Forgot password?</a></p>
     </form>
 
+    <form method="POST" action="/login/magic-link" class="magic-link">
+      <label for="magic-email">Or sign in with a link sent to your email
+        <input id="magic-email" name="email" type="email" required autocomplete="email">
+      </label>
+      <button type="submit">Email me a sign-in link</button>
+    </form>
+
     {{if .Auth}}{{if or .Auth.GoogleEnabled .Auth.GitHubEnabled}}
     <div class="providers">
       {{if .Auth.GoogleEnabled}}<a class="oauth-link" href="/v1/auth/google{{with .Data}}{{with index . "Next"}}?next={{.}}{{end}}{{end}}">Continue with Google</a>{{end}}
@@ -107,6 +115,9 @@
     </div>
     {{end}}{{end}}
 
+    {{if .Auth}}{{if .Auth.TermsPublished}}
+    <p class="terms">By continuing, you agree to the <a href="/terms">Terms of Service</a> and acknowledge the <a href="/privacy">Privacy Policy</a>.</p>
+    {{end}}{{end}}
     <p class="signup">No account? <a href="{{with .Data}}{{with index . "SignupURL"}}{{.}}{{else}}/signup{{end}}{{else}}/signup{{end}}">Sign up</a></p>
   </main>
 </body>

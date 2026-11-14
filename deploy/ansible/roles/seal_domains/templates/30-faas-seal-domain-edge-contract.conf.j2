@@ -1,0 +1,8 @@
+# Managed by the seal_domains role (ADR 20261022111812): the edge domain's
+# contract step. An empty LoadCredential= drops what the base unit loads
+# (fleet.age and host.age); this drop-in sorts before the optional
+# credentials (40-*) and the domain identity (60-*), which load after it.
+# gatewayd-internal then opens edge values with the domain identity alone.
+[Service]
+LoadCredential=
+UnsetEnvironment=FAAS_HOST_KEY_PATH

@@ -15,5 +15,10 @@ func TestDisabledPreviewsSayRetryingWillNotHelp(t *testing.T) {
 		if problem.Hint != PreviewNotEnabledHint {
 			t.Errorf("%s hint = %q, want %q", name, problem.Hint, PreviewNotEnabledHint)
 		}
+		// ChronoLake finding 33: a 503 made clients classify the gate as
+		// a temporary failure and retry it.
+		if problem.Status != 403 {
+			t.Errorf("%s status = %d, want 403 (not retryable)", name, problem.Status)
+		}
 	}
 }

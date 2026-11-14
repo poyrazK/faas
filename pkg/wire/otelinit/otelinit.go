@@ -239,14 +239,17 @@ func Init(ctx context.Context, cfg Config, log *slog.Logger) (*Handle, error) {
 			rate = parsed
 		}
 	}
-	// Sampler chain: ParentBased(DeploymentAware(TraceIDRatioBased(rate))).
+	// Sampler chain: DependencyAlways(ParentBased(DeploymentAware(TraceIDRatioBased(rate)))).
 	// ParentBased is the outer wrapper so child spans inherit the
 	// parent's SampledFlag (W3C parent-trace invariant). The
 	// DeploymentAware wrapper only sees root spans and either forces
 	// RecordAndSample inside the per-deployment window or delegates
 	// to TraceIDRatioBased (issue #555 acceptance #5).
+	// Dependency spans are recorded whatever the ratio decided for their
+	// parent (NewDependencyAlways), so a ratio below 1 thins request spans
+	// without losing the dependency views built from the others.
 	root := sdktrace.TraceIDRatioBased(rate)
-	sampler := sdktrace.ParentBased(NewDeploymentAware(root, WithCounter(counter)))
+	sampler := NewDependencyAlways(sdktrace.ParentBased(NewDeploymentAware(root, WithCounter(counter))))
 
 	providerOptions := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),

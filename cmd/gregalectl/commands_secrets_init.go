@@ -54,10 +54,11 @@ import (
 
 	"filippo.io/age"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/releaseinstall"
 	"github.com/onebox-faas/faas/pkg/secretbox"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Canonical installation paths for the four post-bootstrap secrets.
@@ -682,6 +683,8 @@ func openPgPoolFromDSN(dsn string) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse dsn: %w", err)
 	}
+	cfg.MaxConns = 2
+	dbbounds.ConfigureTimeouts(cfg)
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open pgxpool: %w", err)

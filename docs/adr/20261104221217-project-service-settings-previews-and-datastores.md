@@ -1,0 +1,41 @@
+# ADR-20261104221217: Project services keep their gregale.yaml settings; project-wide preview values; sibling addresses import by default; unmanaged datastores and project deletes are explained
+
+- **Status:** accepted
+- **Date:** 2026-11-04
+- **Owner:** apid, githubd and CLI maintainers
+- **Amends:** ADR-050 (projects), ADR-20261023085230 (opt-in Compose environment import), ADR-20261028090000 (PR preview values), ADR-20261103112845 (GitHub pushes never strand services)
+- **Decision:**
+  - **A service's own `gregale.yaml` settings apply on project and GitHub deploys.**
+    - Project applies (`applyBuildsForAddedChangedOrdered`) and the githubd bridge (`EnqueueBuild`) now apply the file's `lifecycle` block (`after_restore`, `before_checkpoint`, restart policy, timeouts, replicas), `scaling` and `retry_policy`.
+    - They use the code single-app deploys already use (`applySourceManifestSettings`, extracted from `applySourceRefManifest`), before the deployment row exists, so imaged bakes the hooks into the deployment.
+    - A failed enqueue undoes them (`rollbackSourceRefManifest`).
+    - A setting the plan or validation refuses fails that service's apply, or the push's check, with the reason.
+    - Routes, event triggers, crons and work policies keep their current per-path handling.
+  - **Project-wide pull request preview values.** `gregale project preview-secrets set|unset <project>` writes a key to the `pr-preview` scope of every service of the project, through the per-app secrets API. `pr-preview` stays reserved as a project environment name. A service added later needs the command again.
+  - **Sibling service addresses import without the opt-in.**
+    - A Compose `environment:` value that calls another service of the project over HTTP or WebSocket by its Docker host is imported as that service's Gregale address on reviewed deploys, without `x-gregale-env-import`. An example is `BILLING_URL: http://billing:8080/v1`, imported as `http://billing.svc.gregale:10081/v1` (ADR-20261026181020).
+    - The rewrite rules are unchanged: credentials in the URL, other schemes and non-project hosts are never rewritten.
+    - Every other plain value still needs the opt-in. Kubernetes workloads keep their annotation.
+  - **Unmanaged datastores are explained.**
+    - For each Compose datastore apply does not provide, the plan's `managed[].unbound` lists the selected services' keys that point at it and will have no value (`api.REDIS_URL`). For datastores other than postgres, the plan also warns that Gregale does not run it and has no managed equivalent.
+    - A GitHub push does not deploy a service whose key for any Compose datastore is unset, as it already did for postgres. Its check says to set the key to an external provider.
+    - `not_provisioned_reason` keeps its closed postgres-only enum.
+  - **`gregale project rm --yes` refuses while services call each other.**
+    - Detaching a project's services ends their service-name resolution at once. The CLI therefore refuses unless `--detach-services` is given, and names the calls (from the delete preview's `depends_on`).
+    - `--dry-run` lists the same calls.
+- **Why:** A review of the multi-service path (2026-11-04) found:
+  - **Settings ignored.** A project service's `gregale.yaml` lifecycle settings were validated and then ignored on project and GitHub deploys. A service holding a database pool could not register the `after_restore` reconnect hook.
+  - **Previews.** Preview values had to be set once per service, because project environment values cannot target previews.
+  - **Docker addresses.** A Compose project's sibling URLs (`http://billing:8080`) did not resolve and were not imported without the opt-in, so a typical repository deployed with every inter-service call broken.
+  - **Datastores.** `redis`, `mysql`, `rabbitmq` and similar services were listed in the plan without a reason, and their consumers deployed without the variable.
+  - **Project delete.** `project rm --yes` silently broke every call between the project's services.
+- **Consequences:**
+  - A project or GitHub deploy can change an app's lifecycle, scaling and retry settings, as a single-app deploy of the same directory already did. Settings are app-wide, so a push to a non-production environment changes them for production too, as single-app deploys do.
+  - Existing Compose projects get their sibling addresses imported on the next reviewed deploy, where the key is still unset; values already set are never overwritten.
+  - Pushes hold services that point at an unprovided datastore and have no value for it; they were starting broken.
+  - `unbound` is a new optional field on `PlanManaged`; older clients ignore it.
+- **Rejected alternatives:**
+  - **A `pr-preview` project environment.** Its values would reach code under review through the environment machinery, which ADR-20261028090000 kept apart. It would also need new storage.
+  - **Resolve bare Docker names in guests.** Each service listens on its own port behind the mesh, so `billing:8080` would need DNS plus a listener per Docker port; importing the address covers the Compose case.
+  - **A new `not_provisioned_reason` value.** Generated SDKs with the closed enum would reject plans that carry it.
+  - **Refuse `DELETE /v1/projects/{slug}` on the server.** The dashboard and API users may detach on purpose; the CLI guard covers the common path. A server-side guard can follow if it is needed.

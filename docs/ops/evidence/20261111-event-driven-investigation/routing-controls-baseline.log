@@ -1,0 +1,22 @@
+=== RUN   TestEventFanoutClassifiesTerminalRecipientFailures
+=== RUN   TestEventFanoutClassifiesTerminalRecipientFailures/invalid_subscription
+=== RUN   TestEventFanoutClassifiesTerminalRecipientFailures/target_unavailable
+--- PASS: TestEventFanoutClassifiesTerminalRecipientFailures (0.00s)
+    --- PASS: TestEventFanoutClassifiesTerminalRecipientFailures/invalid_subscription (0.00s)
+    --- PASS: TestEventFanoutClassifiesTerminalRecipientFailures/target_unavailable (0.00s)
+=== RUN   TestEventFanoutMarksTransientEnqueueFailureRetryableAfterExhaustion
+--- PASS: TestEventFanoutMarksTransientEnqueueFailureRetryableAfterExhaustion (0.00s)
+=== RUN   TestRoutePublishedEventUsesApplicationWorkLane
+--- PASS: TestRoutePublishedEventUsesApplicationWorkLane (0.00s)
+=== RUN   TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting
+=== RUN   TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting/memory
+=== RUN   TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting/postgres
+--- PASS: TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting (18.10s)
+    --- PASS: TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting/memory (0.00s)
+    --- PASS: TestEventRecipientRoutingSelectiveRecoveryIntegratedRouting/postgres (18.10s)
+=== RUN   TestNATSBrokerPoolConnectsOncePerURL
+--- PASS: TestNATSBrokerPoolConnectsOncePerURL (0.00s)
+=== RUN   TestEventClaimKeeperRenewsUntilStopped
+--- PASS: TestEventClaimKeeperRenewsUntilStopped (0.02s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/sched	18.178s

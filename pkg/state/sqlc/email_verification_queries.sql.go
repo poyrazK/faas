@@ -37,6 +37,21 @@ func (q *Queries) ConsumeEmailVerificationToken(ctx context.Context, db DBTX, to
 	return id, err
 }
 
+const emailVerificationTokenAccount = `-- name: EmailVerificationTokenAccount :one
+SELECT t.account_id FROM email_verification_tokens t
+WHERE t.token_hash=$1 AND t.consumed_at IS NULL AND t.expires_at>clock_timestamp()
+`
+
+// The account a usable verification link belongs to, without consuming it:
+// the link verifies only from a browser signed in to that account
+// (ADR 20261109120000).
+func (q *Queries) EmailVerificationTokenAccount(ctx context.Context, db DBTX, tokenHash []byte) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, emailVerificationTokenAccount, tokenHash)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
 const issueEmailVerificationToken = `-- name: IssueEmailVerificationToken :exec
 INSERT INTO email_verification_tokens(token_hash,account_id,expires_at) VALUES($1,$2,$3)
 ON CONFLICT(token_hash) DO NOTHING

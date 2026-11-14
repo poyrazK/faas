@@ -2929,13 +2929,18 @@ func TestPg_GitHubInstallForAccount_OnDeleteCascade(t *testing.T) {
 	if err := s.UpsertGitHubInstall(ctx, inst); err != nil {
 		t.Fatalf("UpsertGitHubInstall: %v", err)
 	}
-	// Delete the account — installs must go with it (CASCADE).
+	// Delete the account, then its unused personal namespace as the account
+	// purge does (DeleteUnusedPersonalNamespace). Installations key on the
+	// resource namespace since #6959, so they go with the namespace (CASCADE).
 	if _, err := pool.Exec(ctx, `delete from accounts where id = $1::uuid`, acctID); err != nil {
 		t.Fatalf("delete account: %v", err)
 	}
+	if _, err := pool.Exec(ctx, `delete from resource_namespaces where id = $1::uuid`, acctID); err != nil {
+		t.Fatalf("delete personal namespace: %v", err)
+	}
 	_, err = s.GitHubInstallForAccount(ctx, acctID)
 	if !errors.Is(err, state.ErrNotFound) {
-		t.Errorf("expected ErrNotFound after account delete (CASCADE), got %v", err)
+		t.Errorf("expected ErrNotFound after account purge (CASCADE), got %v", err)
 	}
 }
 

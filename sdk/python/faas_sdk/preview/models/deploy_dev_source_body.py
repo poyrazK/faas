@@ -31,6 +31,8 @@ class DeployDevSourceBody:
     """Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC
     health selector."""
     source_root: str | Unset = UNSET
+    """Build directory within the developer-source archive. Empty or omitted inherits the app's configured root;
+    '.' selects the archive root."""
     scope: str | Unset = UNSET
     """Named environment scope read by the deployment; omitted uses default."""
     workflows: str | Unset = UNSET

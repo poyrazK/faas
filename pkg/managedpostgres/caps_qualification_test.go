@@ -1,5 +1,6 @@
 // adr: 20261025094915 — enforcement turns on only with staging evidence that
-// the provider suspends at a quota in the ledger's unit and period.
+// the consumption report is current and in the ledger's unit and period, and
+// that the hold stops a database (amendment 2026-11-05).
 package managedpostgres
 
 import (
@@ -13,8 +14,8 @@ import (
 )
 
 func completeComputeCapEvidence() ComputeCapEvidence {
-	return ComputeCapEvidence{PeriodStartsAtUTCMonth: true, CounterInComputeUnits: true, ComputeUnitRatioPermille: 1000,
-		SuspendedAtQuota: true, RefusedWhileSuspended: true, ResumedAfterRaise: true, StorageLimitPreserved: true}
+	return ComputeCapEvidence{PeriodStartsAtUTCMonth: true, ReportCurrent: true, ReportInComputeUnits: true, ComputeUnitRatioPermille: 1000,
+		SuspendedWhileHeld: true, RefusedWhileHeld: true, ResumedAfterRelease: true, StorageLimitPreserved: true}
 }
 
 func testCapQualification(backend Backend) *ComputeCapQualification {
@@ -49,10 +50,11 @@ func TestComputeCapEvidenceNeedsEveryObservation(t *testing.T) {
 	}
 	for _, drop := range []func(*ComputeCapEvidence){
 		func(e *ComputeCapEvidence) { e.PeriodStartsAtUTCMonth = false },
-		func(e *ComputeCapEvidence) { e.CounterInComputeUnits = false },
-		func(e *ComputeCapEvidence) { e.SuspendedAtQuota = false },
-		func(e *ComputeCapEvidence) { e.RefusedWhileSuspended = false },
-		func(e *ComputeCapEvidence) { e.ResumedAfterRaise = false },
+		func(e *ComputeCapEvidence) { e.ReportCurrent = false },
+		func(e *ComputeCapEvidence) { e.ReportInComputeUnits = false },
+		func(e *ComputeCapEvidence) { e.SuspendedWhileHeld = false },
+		func(e *ComputeCapEvidence) { e.RefusedWhileHeld = false },
+		func(e *ComputeCapEvidence) { e.ResumedAfterRelease = false },
 		func(e *ComputeCapEvidence) { e.StorageLimitPreserved = false },
 	} {
 		evidence := completeComputeCapEvidence()
@@ -97,9 +99,12 @@ func TestComputeCapQualificationArtifact(t *testing.T) {
 			a.Checks = append(a.Checks, QualificationCheck{Name: "cleanup_resource"})
 		},
 		"no checks":        func(a *ComputeCapQualification) { a.Checks = nil },
-		"missing evidence": func(a *ComputeCapQualification) { a.Evidence.ResumedAfterRaise = false },
-		"unknown version":  func(a *ComputeCapQualification) { a.Version = 2 },
-		"never completed":  func(a *ComputeCapQualification) { a.CompletedAt = time.Time{} },
+		"missing evidence": func(a *ComputeCapQualification) { a.Evidence.ResumedAfterRelease = false },
+		"unknown version":  func(a *ComputeCapQualification) { a.Version = 3 },
+		// Version 1 proved the provider's quota, which no longer stops a
+		// database (amendment 2026-11-05).
+		"version 1":       func(a *ComputeCapQualification) { a.Version = 1 },
+		"never completed": func(a *ComputeCapQualification) { a.CompletedAt = time.Time{} },
 	} {
 		artifact := testCapQualification(backend)
 		mutate(artifact)
@@ -133,7 +138,7 @@ func TestQualifyProviderRunsTheComputeCapProbeOnlyWhenAsked(t *testing.T) {
 			var provider Provider = p
 			switch kind {
 			case "incomplete":
-				p.evidence.SuspendedAtQuota = false
+				p.evidence.SuspendedWhileHeld = false
 			case "provider error":
 				p.probeErr = ErrUnavailable
 			case "missing prober":
@@ -178,7 +183,7 @@ func TestCapEnforcerOnNeedsQualification(t *testing.T) {
 		t.Fatalf("on without qualification: %v", err)
 	}
 	failed := testCapQualification(backend)
-	failed.Evidence.RefusedWhileSuspended = false
+	failed.Evidence.RefusedWhileHeld = false
 	if _, err := NewCapEnforcer(registry, &capTestStore{}, CapEnforcerOptions{Mode: CapEnforcementOn, Ceiling: ceiling, Qualification: failed}); err == nil {
 		t.Fatal("on with failed evidence started")
 	}

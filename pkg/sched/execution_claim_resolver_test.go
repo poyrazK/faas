@@ -89,7 +89,7 @@ func TestExecutionClaimResolverBuildsPayloadFreeRestoreEnvelope(t *testing.T) {
 	if got.KernelKey != "kernel/1.10.0" || got.BaseKey != "base/runner-node22-amd64.ext4" || got.LayerKey != "execution/node22-amd64.ext4" {
 		t.Fatalf("artifact keys = %+v", got)
 	}
-	if got.VcpuCount != 2 || got.MemSizeMiB != 128 || got.CPUMillicores != 250 {
+	if got.VcpuCount != 1 || got.MemSizeMiB != 128 || got.CPUMillicores != 250 { // a 128 MB execution has its size's one vCPU
 		t.Fatalf("machine shape = %+v", got)
 	}
 	if claim.LeaseToken == nil || got.LeaseToken != *claim.LeaseToken || len(got.OutboundIntegrationIDs) != 1 ||

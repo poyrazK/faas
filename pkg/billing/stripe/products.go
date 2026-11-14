@@ -120,6 +120,11 @@ func (c *Client) SyncCustomerBillingInfo(ctx context.Context, acct state.Account
 	// Stripe manages tax IDs through the customer tax_ids sub-resource;
 	// tax_id_data is accepted on customer creation but not on update.
 	updateParams.TaxIDData = nil
+	if acct.BillingAddress == "" {
+		// An omitted address preserves Stripe's current value. Customer
+		// updates require an explicit empty form value to clear it.
+		updateParams.AddExtra("address", "")
+	}
 	if _, err := c.api.Customers.Update(acct.ProviderCustomerID, updateParams); err != nil {
 		return fmt.Errorf("stripex: Customers.Update account %s: %w", acct.ID, err)
 	}

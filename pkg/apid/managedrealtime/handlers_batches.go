@@ -8,6 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
 	"net/http"
+	"unicode/utf8"
 )
 
 func (s *Service) PublishManagedRealtimeChannelBatch(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -41,6 +42,10 @@ func (s *Service) PublishManagedRealtimeChannelBatch(w http.ResponseWriter, r *h
 		data, err := base64.StdEncoding.DecodeString(msg.DataBase64)
 		if err != nil || len(data) > 4096 || ep.MaxMessageBytes > 0 && int64(len(data)) > ep.MaxMessageBytes {
 			api.WriteProblem(w, api.ErrRealtimeInvalid("invalid batch payload or endpoint size limit"))
+			return
+		}
+		if !msg.Binary && !utf8.Valid(data) {
+			api.WriteProblem(w, api.ErrRealtimeInvalidText())
 			return
 		}
 		ttl := req.TTLSeconds

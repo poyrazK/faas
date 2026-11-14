@@ -289,3 +289,118 @@ Tests: `TestExplicitAppWakeLeavesTheLoopGoroutine`,
 `TestExplicitAppWakeLeavesAnotherNodesApp`,
 `TestExplicitAppWakeSettlesItsOutboxRow`,
 `TestDurableReplayDefersAnotherNodesWake`.
+
+## Amendment (2026-11-05): bounded recovery scans retain progress
+
+Snapshot-prime recovery retains its candidate offset between ticks while
+keeping its four-page, 256-row work budget. The stale-deployment reconciler
+likewise retains its offset across 64-row sweeps. Both advance past skipped
+rows and wrap after a short or empty page, revisiting rows whose eligibility
+changed or whose position shifted after concurrent removals. The offsets are
+process-local progress hints; a restart begins a new pass. Candidate eligibility,
+ownership, release-task fences and cancellation guards remain authoritative.
+This prevents persistent approval holds or queued builds at the front of the
+candidate list from starving unrelated deployment recovery.
+
+### Delayed prime work and attempt ownership (2026-11-05)
+
+A retained deployment artifact is not authority to start a superseded worker.
+Snapshot priming checks the current lifecycle before admission, rechecks its
+artifact and stage-start identity before VM boot, and fences runtime publication
+against that same attempt under the store's ownership locks. A deployment that
+is superseded during boot cannot publish its provisional instance as RUNNING;
+the scheduler destroys it and releases the reservation. Re-priming a historical
+rollback resets its stage clock, so stale work for the previous attempt cannot
+publish into or fail the replacement attempt. Existing active legacy prime
+callers retain their lifecycle contract. Durable notification replay remains a
+hint and never changes these checks.
+
+### Prime replay and failure ownership (2026-11-05)
+
+A LIVE deployment whose readiness stage is complete does not authorize another
+boot when a prime hint is replayed. An explicit rollback resets snapshot_prepare
+and its clock, authorizing a fresh attempt. Active legacy prime callers retain
+their existing stage contract.
+
+Prime errors retain the attempt that executed them, including typed startup
+problems and retry classification. Before persisting a failure, schedd verifies
+that the current row still belongs to that attempt. The store repeats that check
+under its write lock and commits failure status and stage finalization together.
+A requeued attempt therefore cannot inherit the previous boot's failure. A
+watchdog diagnostic can still be refined when its failed stage history proves
+it belongs to that same attempt.
+
+A RUNNING worker whose runtime proof is stale cannot suppress prime recovery
+while its deployment is still snapshotting. Recovery checks the current
+attempt, configuration, app owner and instance identity under the store locks,
+then withdraws only that stale worker as DRAINING before destroying it. This
+prevents readiness promotion racing the cleanup. Capacity remains accounted
+until teardown commits; interrupted teardown resumes on a later recovery pass.
+Only then may the existing prime dispatcher admit fresh capacity. Fresh workers
+and in-flight boots retain their existing protection against duplicate primes.
+
+Prime allocation is also serialized across scheduler processes by a separate
+per-deployment lock, independent of imaged's activation lock. Replaying a hint
+for the same preparation resumes its existing outcome instead of executing
+customer code again. A completed capture retains its private activation message,
+original runtime fence and wake identity in the same transaction that parks the
+instance. An ephemeral-secret prime retains its no-snapshot readiness message
+with its STOPPED transition instead. Worker readiness can be reconstructed from
+the existing RUNNING instance's current runtime proof.
+
+Notification enqueue failure leaves these handoffs recoverable, rather than
+failing a successful deployment. Periodic recovery and duplicate hints replay
+the retained message without booting another VM; a lost completion acknowledgment
+also releases the stale local capacity reservation. Requeued preparations,
+changed artifacts, replaced wakes and changed runtime inputs cannot reuse this
+evidence. Legacy parked captures without a retained handoff may be primed again
+when recovery cannot find their publication. Imaged remains the sole owner of
+snapshot publication and traffic activation.
+
+
+### RUNNING prime capture recovery and session capacity (2026-11-06)
+
+A scheduler can die after runtime publication commits RUNNING but before the
+request/service prime starts capture. A healthy VM is neither a watchdog
+transient nor a divergence candidate, and service mode has no idle reaper.
+Periodic recovery therefore dispatches RUNNING primes as well as completed
+captures. Under the app and deployment-prime locks, Prime resumes capture on
+the original VM, retaining its preparation, runtime proof and wake identity.
+A capture barrier left by the crashed prime is cleared before reacquisition;
+active exclusive-operation leases still prevent capture.
+The ordinary park path retires changed runtime inputs or incompatible RAM
+before capture. Unavailable inputs leave the VM and its capacity intact;
+busy exclusive operations and uncertain handoffs remain recoverable. Capture
+errors retain the normal prime failure classification. Workers retain their
+existing readiness reconstruction and guarded stale-worker retirement.
+
+In pooled fleets, schedd's direct session pool reserves seven connections:
+one notification hub, four background prime locks, one inline overflow prime
+lock and one short session operation. Worker concurrency and pool sizing share
+`api.SnapshotPrimeConcurrentSlots`; `api.SnapshotPrimeInlineSlots` records the
+existing single inline dispatch slot. Per-compute direct capacity rises from
+11 to 16 in the PostgreSQL capacity role, including imaged's existing extra
+session. Converge that capacity plan before upgrading schedd. Ordinary query
+pool sizes, deployment ownership locks and the dispatcher overflow policy are
+unchanged.
+
+
+### Readiness evidence and activation-failure ownership (2026-11-06)
+
+Ephemeral-secret readiness retains the stopped request/service prime as its
+recipient. Promotion rechecks that recipient's wake, node, start time and runtime
+configuration proof under the existing app/deployment/instance locks. A stopped
+instance from an older preparation cannot satisfy a requeued rollback, even if
+its configuration is unchanged. Completed LIVE activation remains idempotent.
+
+All active snapshot and no-snapshot activation paths bind their preparation and
+runtime inputs before verification. Both generic failure writers honor that
+context in the final failure transaction, locking environment, app and deployment
+before any stage, error, traffic or outcome writes. A contract, source-reference
+or route-removal verdict from a timed-out preparation cannot fail its replacement.
+Failure writes also recheck the readiness recipient and its runtime proof when
+present, so an obsolete readiness hint cannot authorize an activation failure.
+Obsolete failure verdicts are acknowledged without emitting a failed state for
+the new preparation. Existing failure callers without activation context retain
+their legacy contract; scheduler prime failures keep their separate attempt guard.
+No schema or notification-payload change is required.

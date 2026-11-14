@@ -1,0 +1,29 @@
+{
+  "name": "@gregale/sandbox-e2b",
+  "version": "0.0.0",
+  "private": true,
+  "description": "An E2B-compatible client for Gregale sandbox sessions (ADR-20261027090013 §12). Written from E2B's public documentation; not affiliated with E2B. Not published until sandbox sessions launch.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "engines": {
+    "node": ">=22.10.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test:build": "tsc -p tsconfig.test.json",
+    "test": "npm run test:build && node --test --test-concurrency=1 'dist-test/test/**/*.test.js'"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.0",
+    "typescript": "5.6.3"
+  }
+}

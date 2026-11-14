@@ -69,6 +69,13 @@ API write receipt surface. No real-provider qualification is required here.
 
 ## Acceptance
 
+SDK-issued presigned uploads may place metadata, tagging and checksum fields
+in the canonical query instead of headers. After verifying the signature, the
+gateway applies those fields to the existing metadata and integrity validation.
+Duplicate query values, case aliases and conflicting header/query values fail
+before dispatch. The URL remains intact for capability checks, and unsigned
+header additions remain refused.
+
 Memory and PostgreSQL fixtures cover atomic issuance, descriptor cloning,
 inventory isolation, old gateway admission fences, current grants/issuer
 deletion, concurrent single dispatch and settlement after revocation. Local

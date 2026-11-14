@@ -12,12 +12,15 @@ import (
 )
 
 func registerContextCatalog(s *mcp.Server, m *management) {
+	registerSavedPlanPrompts(s, m)
+	registerSavedPlanResources(s, m)
 	for _, r := range []*mcp.Resource{
 		{URI: "gregale://context", Name: "gregale_connection", Description: "Consented connection metadata; no credentials.", MIMEType: "application/json"},
 		{URI: "gregale://default/inventory", Name: "gregale_default_inventory", Description: "Bounded default-scope app inventory; requires default read consent.", MIMEType: "application/json"},
 	} {
 		s.AddResource(r, m.readContextResource)
 	}
+	s.AddResource(&mcp.Resource{URI: errorContractURI, Name: "gregale_error_contract", Description: "JSON Schema of every tool error: code, message, recovery.", MIMEType: "application/schema+json"}, readErrorContract)
 	s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "gregale://projects/{project}/environments/{environment}/inventory", Name: "gregale_environment_inventory", MIMEType: "application/json"}, m.readContextResource)
 	s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: regressionResourceTemplate, Name: "gregale_app_regressions", Description: "Bounded app-wide native-visible regression snapshot across environments; separate diagnostic consent required. Disappearance does not prove recovery. Explicit modern subscriptions invalidate this snapshot; reread after changes or reconnecting.", MIMEType: "application/json"}, m.readContextResource)
 	for _, view := range []string{"release", "health", "budgets"} {

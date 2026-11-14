@@ -27,6 +27,17 @@ func (e *Engine) reconcileTableCancellation(ctx context.Context, p Pipeline, raw
 	if err != nil {
 		return err
 	}
+	// Recover the committed phase even if an earlier failed operation left
+	// the catalog observation ahead of the native receipt.
+	c.Stage = stage
+	if c.Kind == "live" {
+		if err = checkLiveRemovalSource(ctx, p, source, stage != ""); err != nil {
+			return err
+		}
+		if err = checkRecordedSourceStorage(ctx, p, source, target, liveRemovalRelations(p, stage != "")); err != nil {
+			return err
+		}
+	}
 	if stage == "" && c.State != "approved" && c.Kind == "" {
 		var finished bool
 		if err = target.QueryRow(ctx, `SELECT table_stage='complete' AND schema_change=$2 AND schema_phase='' FROM gregale_pipeline.mirrors WHERE pipeline_id=$1 AND generation=$3`, p.ID, p.SchemaApproval, p.Generation).Scan(&finished); err != nil {
@@ -47,7 +58,7 @@ func (e *Engine) reconcileTableCancellation(ctx context.Context, p Pipeline, raw
 	if err != nil {
 		return err
 	}
-	if err = ensureSubscription(ctx, p, source, target, conninfo); err != nil {
+	if err = ensureSubscription(ctx, p, source, target, conninfo, current); err != nil {
 		return err
 	}
 	native, err := cancellationNativeRelations(ctx, p, target)
@@ -119,18 +130,21 @@ func (e *Engine) reconcileTableCancellation(ctx context.Context, p Pipeline, raw
 		}
 	}
 	ob.Reason = tableRetirementReason(c, "retiring")
+	var nextStage string
 	switch stage {
 	case "":
 		if c.Kind == "live" {
 			if err = previewLiveRemoval(ctx, p, source, target); err != nil {
 				return err
 			}
+			err = beginLiveRemoval(ctx, p, source, target, current)
+		} else {
+			err = beginTableCancellation(ctx, p, target, current)
 		}
-		err = beginTableCancellation(ctx, p, target, current)
-		c.Stage = "retiring"
+		nextStage = "retiring"
 	case "retiring":
 		err = retireCancelledRelation(ctx, p, source, target, current)
-		c.Stage = "detached"
+		nextStage = "detached"
 	case "detached":
 		members, memberErr := cancellationMembership(ctx, p, source)
 		if memberErr != nil {
@@ -140,7 +154,7 @@ func (e *Engine) reconcileTableCancellation(ctx context.Context, p Pipeline, raw
 			return ErrConflict
 		}
 		err = archiveCancelledTable(ctx, p, target, current)
-		c.Stage = "archived"
+		nextStage = "archived"
 	case "archived":
 		return e.finishTableCancellation(ctx, p, source, target, ob, current)
 	default:
@@ -149,6 +163,7 @@ func (e *Engine) reconcileTableCancellation(ctx context.Context, p Pipeline, raw
 	if err != nil {
 		return err
 	}
+	c.Stage = nextStage
 	return observeAppliedProgress(ctx, p, source, target, ob)
 }
 
@@ -198,7 +213,12 @@ func (e *Engine) finishTableCancellation(ctx context.Context, p Pipeline, source
 	if stage == "refreshing" {
 		stage = "copying"
 	}
-	if err = completeTableCancellation(ctx, p, target, &result, stage, current); err != nil {
+	if p.SchemaChange.Cancellation.Kind == "live" {
+		err = completeLiveRemoval(ctx, p, source, target, &result, stage, current)
+	} else {
+		err = completeTableCancellation(ctx, p, target, &result, stage, current)
+	}
+	if err != nil {
 		return err
 	}
 	ob.TablesReady = ready

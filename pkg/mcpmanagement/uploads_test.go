@@ -7,6 +7,8 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -258,5 +260,67 @@ func TestUploadsBelongToTheirGrantAndAccount(t *testing.T) {
 	store.receive(rec, httptest.NewRequest(http.MethodPut, strings.TrimPrefix(url, "https://api.gregale.test"), strings.NewReader("more than eight bytes")))
 	if rec.Code != http.StatusRequestEntityTooLarge || big.received {
 		t.Fatalf("oversized upload = %d", rec.Code)
+	}
+}
+
+// The free-space floor is tested with an explicit stub; other tests must not
+// fail because the machine running them is short of disk.
+func init() {
+	defaultFreeBytes = func(string) (int64, error) { return 1 << 50, nil }
+}
+
+// Uploads and plan directories share one per-account budget of items and
+// bytes, the bridge has a total, and nothing is staged below the free-space
+// floor; the bridge-wide refusal names itself (bug hunt H92).
+func TestUploadStagingIsBoundedPerAccountAndOnDisk(t *testing.T) {
+	store, err := newUploadStore(filepath.Join(t.TempDir(), "uploads"), "https://api.gregale.test/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.freeBytes = func(string) (int64, error) { return 1 << 50, nil }
+	code := func(err error) string {
+		var ie *inputError
+		if errors.As(err, &ie) {
+			return ie.code
+		}
+		return fmt.Sprint(err)
+	}
+
+	// A create, upload and plan loop: plan directories count too.
+	for i := range maxStagedPerAccount {
+		if _, err := store.newDir("account-1", 1<<20); err != nil {
+			t.Fatalf("plan %d: %v", i, err)
+		}
+	}
+	if _, _, err := store.create("grant-a", "account-1", "alpha", 1<<20); code(err) != "upload_capacity" {
+		t.Fatalf("upload past the account's staged items = %v, want upload_capacity", err)
+	}
+	if _, err := store.newDir("account-2", maxStagedBytesPerAccount+1); code(err) != "upload_capacity" {
+		t.Fatalf("plan past the account's bytes = %v, want upload_capacity", err)
+	}
+	// The bridge total: many accounts, each within its own share.
+	held := int64(4 << 20)
+	for i := 0; ; i++ {
+		_, err := store.newDir(fmt.Sprintf("acct-%d", i), maxStagedBytesPerAccount)
+		if err == nil {
+			held += maxStagedBytesPerAccount
+			continue
+		}
+		if code(err) != "upload_service_busy" || held+maxStagedBytesPerAccount <= maxStagedBytes {
+			t.Fatalf("plan %d = %v with %d bytes held, want upload_service_busy past %d", i, err, held, maxStagedBytes)
+		}
+		break
+	}
+
+	floor, err := newUploadStore(filepath.Join(t.TempDir(), "floor"), "https://api.gregale.test/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	floor.freeBytes = func(string) (int64, error) { return uploadFreeFloor + 1<<20, nil }
+	if _, _, err := floor.create("grant-a", "account-1", "alpha", 2<<20); code(err) != "upload_service_busy" {
+		t.Fatalf("upload below the free-space floor = %v, want upload_service_busy", err)
+	}
+	if _, _, err := floor.create("grant-a", "account-1", "alpha", 1<<10); err != nil {
+		t.Fatalf("small upload above the floor: %v", err)
 	}
 }

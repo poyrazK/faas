@@ -283,6 +283,13 @@ The event stream is backed by a bounded control-plane replay log. It does not
 provide a persistent guest workspace: each run still uses a fresh microVM and
 its ephemeral scratch filesystem is destroyed before terminal acknowledgement.
 
+If a watcher falls behind the retained log, the stream emits a `gap` event
+with `execution_id` and `through_sequence` before continuing at the oldest
+retained event. The CLI warns about the missing output; JSON watchers receive
+the gap as an event. Read the complete stored stdout/stderr from the terminal
+receipt with `gregale sandbox get RUN_ID`. The receipt's `output_truncated`
+describes the execution's output byte limit, independently of replay retention.
+
 `GET /v1/executions/capabilities` is a read-only account-scoped preflight for
 agents. Its profile matrix describes the API contract and declared package
 set, while `limits` contains plan-specific resource bounds and fixed bundle and

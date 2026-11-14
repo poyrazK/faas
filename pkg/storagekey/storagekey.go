@@ -45,6 +45,13 @@ func AgentRunLayerForArch(arch string) string {
 	return "base/agent-layer-v1-" + arch + ".ext4"
 }
 
+// SandboxLayerForArch is where imaged publishes the platform sandbox layer,
+// drive1 holding only the sandbox marker (ADR-20261027090013 §2). guest-init
+// takes exactly one mode marker, so sessions cannot share the agent layer.
+func SandboxLayerForArch(arch string) string {
+	return "base/sandbox-layer-v1-" + arch + ".ext4"
+}
+
 // AppLayer is the key of a per-app drive1 ext4 layer:
 // apps/<slug>/<deploymentID>.ext4.
 func AppLayer(slug, deploymentID string) string {
@@ -76,6 +83,57 @@ func JobLayer(jobID string) string {
 // preserve the OCI backend's jobs/<tag>.ext4 layout.
 func JobLayerAttempt(jobID, artifactID string) string {
 	return "jobs/" + jobID + "__" + artifactID + ".ext4"
+}
+
+// IsJobLayer reports whether key is a materialized job image's key,
+// JobLayer or JobLayerAttempt with UUID IDs: the only artifacts vmmd boots
+// as a seller-image sandbox session's drive1 (ADR-20261027090013).
+func IsJobLayer(key string) bool {
+	name, ok := strings.CutPrefix(key, "jobs/")
+	if !ok {
+		return false
+	}
+	if name, ok = strings.CutSuffix(name, ".ext4"); !ok {
+		return false
+	}
+	job, artifact, attempt := strings.Cut(name, "__")
+	return canonicalUUID(job) && (!attempt || canonicalUUID(artifact))
+}
+
+// IsSandboxTemplateLayer reports whether key is a sandbox template build's
+// full-rootfs artifact, AppLayer of a template build app
+// (api.IsSandboxTemplateAppSlug) and a UUID deployment
+// (ADR-20261027090013).
+func IsSandboxTemplateLayer(key string) bool {
+	rest, ok := strings.CutPrefix(key, "apps/")
+	if !ok {
+		return false
+	}
+	slug, file, ok := strings.Cut(rest, "/")
+	if !ok || !api.IsSandboxTemplateAppSlug(slug) {
+		return false
+	}
+	dep, ok := strings.CutSuffix(file, ".ext4")
+	return ok && canonicalUUID(dep)
+}
+
+// canonicalUUID reports whether s is a lowercase hyphenated UUID.
+func canonicalUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch {
+		case i == 8 || i == 13 || i == 18 || i == 23:
+			if c != '-' {
+				return false
+			}
+		case '0' <= c && c <= '9', 'a' <= c && c <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // SnapshotMem is the key of a deployment's snapshot memory blob (the RAM
@@ -193,4 +251,39 @@ func ParentBaseAliases() []string {
 		out = append(out, BaseForArch(ParentBaseRuntime, a))
 	}
 	return out
+}
+
+// Warm sandbox session snapshots (ADR-20261027090013 §12). A preset's
+// snapshot holds only platform drives, so every account's sessions share
+// it; a template's holds the account's own image, so its namespace names
+// the account and no other account's session restores it.
+const sandboxPresetSnapshotNamespace = "sandbox-preset"
+
+// SandboxSnapshotNamespace is the capture namespace of a session's warm
+// snapshot: accountID's own for an image session, the shared preset one
+// otherwise.
+func SandboxSnapshotNamespace(accountID string, image bool) string {
+	if image {
+		return "sandbox-template-" + accountID
+	}
+	return sandboxPresetSnapshotNamespace
+}
+
+// IsSandboxSnapshotKey reports whether key is a capture memory key a session
+// of accountID may restore (snap/<namespace>/captures/<id>/v2/mem).
+func IsSandboxSnapshotKey(key, accountID string, image bool) bool {
+	rest, ok := strings.CutPrefix(key, "snap/"+SandboxSnapshotNamespace(accountID, image)+"/captures/")
+	id, ok2 := strings.CutSuffix(rest, "/v2/mem")
+	return ok && ok2 && id != "" && !strings.ContainsAny(id, "/.")
+}
+
+// SandboxImageIdentity is what a session image's warm snapshot is kept
+// under: a template's build app (every build of one template shares its
+// snapshot slot, so a rebuild replaces it), or the image key itself.
+func SandboxImageIdentity(imageKey string) string {
+	if IsSandboxTemplateLayer(imageKey) {
+		dir, _, _ := strings.Cut(strings.TrimPrefix(imageKey, "apps/"), "/")
+		return "apps/" + dir
+	}
+	return imageKey
 }

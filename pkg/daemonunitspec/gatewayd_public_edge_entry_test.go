@@ -146,3 +146,21 @@ print(Environment(trim_blocks=True).from_string(pathlib.Path(sys.argv[1]).read_t
 		}
 	})
 }
+
+// The role removes the hand-made direct-entry drop-in before systemd reloads:
+// its certificate files would stop an edge whose certificate comes from the
+// database from starting.
+func TestGatewaydPublicEdgeRemovesHandMadeDirectDropIn(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), "deploy", "ansible", "roles", "gatewayd_public_edge_service", "tasks", "enable.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	enable := string(body)
+	remove := strings.Index(enable, "60-faas-edge-direct.conf\n    state: absent")
+	if remove < 0 {
+		t.Fatal("the role must remove the hand-made 60-faas-edge-direct.conf drop-in")
+	}
+	if reload := strings.Index(enable, "reload systemd before enabling the edge"); reload < 0 || remove > reload {
+		t.Fatal("the hand-made drop-in must go before systemd reloads the edge")
+	}
+}

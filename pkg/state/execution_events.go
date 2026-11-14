@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/internal/utf8chunk"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -54,9 +55,7 @@ func (m *MemStore) AppendExecutionEvent(_ context.Context, accountID, executionI
 		CreatedAt:   at.UTC(),
 	}
 	m.executionEvents[executionID] = append(m.executionEvents[executionID], event)
-	if events := m.executionEvents[executionID]; len(events) > executionEventReplayLimit {
-		m.executionEvents[executionID] = append([]ExecutionEvent(nil), events[len(events)-executionEventReplayLimit:]...)
-	}
+	m.pruneExecutionEventsLocked(executionID)
 	return cloneExecutionEvent(event), nil
 }
 
@@ -67,9 +66,20 @@ func (m *MemStore) appendExecutionEventLocked(accountID, executionID string, eve
 	m.nextExecutionEventID++
 	event := ExecutionEvent{ExecutionID: executionID, AccountID: accountID, Sequence: m.nextExecutionEventID, Type: eventType, Payload: append(json.RawMessage(nil), payload...), CreatedAt: at.UTC()}
 	m.executionEvents[executionID] = append(m.executionEvents[executionID], event)
-	if events := m.executionEvents[executionID]; len(events) > executionEventReplayLimit {
-		m.executionEvents[executionID] = append([]ExecutionEvent(nil), events[len(events)-executionEventReplayLimit:]...)
+	m.pruneExecutionEventsLocked(executionID)
+}
+
+func (m *MemStore) pruneExecutionEventsLocked(executionID string) {
+	events := m.executionEvents[executionID]
+	if len(events) <= executionEventReplayLimit {
+		return
 	}
+	if m.executionEventPrunedThrough == nil {
+		m.executionEventPrunedThrough = make(map[string]int64)
+	}
+	cut := len(events) - executionEventReplayLimit
+	m.executionEventPrunedThrough[executionID] = events[cut-1].Sequence
+	m.executionEvents[executionID] = append([]ExecutionEvent(nil), events[cut:]...)
 }
 
 func (m *MemStore) ListExecutionEvents(_ context.Context, accountID, executionID string, afterSequence int64, limit int) ([]ExecutionEvent, error) {
@@ -87,7 +97,15 @@ func (m *MemStore) ListExecutionEvents(_ context.Context, accountID, executionID
 	}
 	events := m.executionEvents[executionID]
 	out := make([]ExecutionEvent, 0, minInt(limit, len(events)))
+	if through := m.executionEventPrunedThrough[executionID]; through > afterSequence {
+		payload, _ := json.Marshal(map[string]any{"execution_id": executionID, "through_sequence": through})
+		out = append(out, ExecutionEvent{ExecutionID: executionID, AccountID: accountID, Sequence: through,
+			Type: ExecutionEventGap, Payload: payload, CreatedAt: events[0].CreatedAt})
+	}
 	for _, event := range events {
+		if len(out) == limit {
+			break
+		}
 		if event.Sequence <= afterSequence {
 			continue
 		}
@@ -149,20 +167,14 @@ func forEachExecutionOutputEvent(row Execution, fn func(ExecutionEventType, json
 			// JSON escaping can expand arbitrary UTF-8 considerably; keep
 			// chunks well below the event cap so the encoded envelope stays
 			// bounded even for non-ASCII output.
-			end := start + ExecutionEventMaxBytes/8
-			if end > len(row.Stdout) {
-				end = len(row.Stdout)
-			}
+			end := start + utf8chunk.Prefix([]byte(row.Stdout[start:]), ExecutionEventMaxBytes/8, true)
 			fn(ExecutionEventStdout, executionOutputPayload(row.Stdout[start:end]))
 			start = end
 		}
 	}
 	if row.Stderr != "" {
 		for start := 0; start < len(row.Stderr); {
-			end := start + ExecutionEventMaxBytes/8
-			if end > len(row.Stderr) {
-				end = len(row.Stderr)
-			}
+			end := start + utf8chunk.Prefix([]byte(row.Stderr[start:]), ExecutionEventMaxBytes/8, true)
 			fn(ExecutionEventStderr, executionOutputPayload(row.Stderr[start:end]))
 			start = end
 		}

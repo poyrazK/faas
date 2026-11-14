@@ -54,6 +54,9 @@ func usageExportJob(backend Backend, store state.ObjectStorageProviderUsageStore
 	if serviceName == "" || applicationKey == "" || applicationSecret == "" || consumerKey == "" {
 		return UsageExportJob{}, fmt.Errorf("object storage: backend %s has incomplete ovh usage credentials", backend.ID)
 	}
+	if backend.Usage.RequestLogCoveragePath == "" {
+		return UsageExportJob{}, fmt.Errorf("object storage: backend %s requires qualified request_log_coverage_path: %w", backend.ID, ErrOVHRequestMetricsMissing)
+	}
 	client := &OVHUsageClient{
 		ServiceName: serviceName, ApplicationKey: applicationKey,
 		ApplicationSecret: applicationSecret, ConsumerKey: consumerKey,
@@ -85,8 +88,10 @@ func usageExportJob(backend Backend, store state.ObjectStorageProviderUsageStore
 				return nil, err
 			}
 			return OVHAccessLogRequestMetrics{
+				BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
 				Store: logStore, LogBucket: backend.Usage.RequestLogBucket,
 				LogPrefix: backend.Usage.RequestLogPrefix,
+				Coverage:  ovhAccessLogCoverageFile(backend.Usage.RequestLogCoveragePath),
 			}.Metrics(ctx, periodStart, observedAt, buckets)
 		},
 		Source: "ovh-public-cloud+server-access-logs",
@@ -94,7 +99,9 @@ func usageExportJob(backend Backend, store state.ObjectStorageProviderUsageStore
 	return UsageExportJob{
 		BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
 		ReportPath: backend.UsageReportsPath, Exporter: periodUsageExporter{exporter: exporter},
-		CoverageLag: time.Hour,
+		// Native lastUpdate supplies the observation; request coverage must
+		// independently reach it. Never backdate a newer cumulative snapshot.
+		CoverageLag: 0,
 	}, nil
 }
 

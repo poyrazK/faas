@@ -29,6 +29,25 @@ func TestOwnerDSNPinsSearchPath(t *testing.T) {
 	if config.RuntimeParams["search_path"] != ownerSearchPath || config.Host != "direct.invalid" || config.User != ownerLogin {
 		t.Fatalf("owner session = host %s user %s params %v; want the direct endpoint with search_path %q", config.Host, config.User, config.RuntimeParams, ownerSearchPath)
 	}
+	// The owner session crosses the public internet: material saying
+	// sslmode=require must still verify the endpoint's certificate and name,
+	// and must not fall back to plaintext.
+	if config.TLSConfig == nil || config.TLSConfig.InsecureSkipVerify || config.TLSConfig.ServerName != "direct.invalid" || len(config.Fallbacks) != 0 {
+		t.Fatalf("owner session TLS = %+v fallbacks %d; want verify-full against direct.invalid", config.TLSConfig, len(config.Fallbacks))
+	}
+}
+
+// Credentials Gregale delivers to customer apps keep the TLS mode Neon gave;
+// only the platform's own sessions are pinned to verify-full.
+func TestPlatformTLSModeLeavesCustomerMaterial(t *testing.T) {
+	material := managedpostgres.CredentialMaterial{Username: "gregale_app", Password: "secret", Database: "app", TLSMode: "require",
+		Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointDirect, Host: "direct.invalid", Port: 5432}}}
+	if _, err := probeDSN(material); err != nil {
+		t.Fatal(err)
+	}
+	if material.TLSMode != "require" {
+		t.Fatalf("probeDSN changed the material's TLS mode to %q", material.TLSMode)
+	}
 }
 
 // dsnRuntimeConnect dials the fixture database with the startup parameters

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/orgbilling"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -24,17 +25,19 @@ func (s *server) getFinancialCosts(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, s.financialFailure(r, "costs", err))
 		return
 	}
-	invoices, err := s.store.ListInvoicesForAccount(r.Context(), acct.ID, &start, time.Time{}, api.MaxFOCUSExportInvoices+1)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not read billing invoices"))
-		return
-	}
-	if len(invoices) > api.MaxFOCUSExportInvoices {
-		api.WriteProblem(w, api.ErrValidation("invoice history exceeds the financial report limit"))
-		return
-	}
-	for _, invoice := range invoices {
-		report.Invoices = append(report.Invoices, invoiceResponse(invoice))
+	if orgbilling.CanReadInvoices(r, acct) {
+		invoices, err := s.store.ListInvoicesForAccount(r.Context(), acct.ID, &start, time.Time{}, api.MaxFOCUSExportInvoices+1)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read billing invoices"))
+			return
+		}
+		if len(invoices) > api.MaxFOCUSExportInvoices {
+			api.WriteProblem(w, api.ErrValidation("invoice history exceeds the financial report limit"))
+			return
+		}
+		for _, invoice := range invoices {
+			report.Invoices = append(report.Invoices, invoiceResponse(invoice))
+		}
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	writeJSON(w, http.StatusOK, report)

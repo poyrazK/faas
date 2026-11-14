@@ -302,6 +302,9 @@ func (m *MemStore) AdmitCustomDomainTLSHost(_ context.Context, a CustomDomainTLS
 // The previous claimant's list must not decide which names get the new
 // claim's certificates. The admission ledger stays, as on delete.
 func forgetCustomDomainTLSHostsTx(ctx context.Context, tx pgx.Tx, domain string) error {
+	if err := sqlc.New().ClearCustomDomainCertificateAttempt(ctx, tx, domain); err != nil {
+		return fmt.Errorf("forget custom-domain certificate attempt: %w", err)
+	}
 	if err := sqlc.New().ClearCustomDomainProbeObservation(ctx, tx, domain); err != nil {
 		return err
 	}
@@ -319,6 +322,7 @@ func forgetCustomDomainTLSHostsTx(ctx context.Context, tx pgx.Tx, domain string)
 // ledger has no foreign key and stays. Callers hold m.mu.
 func (m *MemStore) dropCustomDomainTLSHostsLocked(domain string) {
 	domain = strings.ToLower(domain)
+	delete(m.customDomainCertRetries, domain)
 	if obs, ok := m.doctorObs[domain]; ok && obs.SurfaceID == "" {
 		delete(m.doctorObs, domain)
 	}

@@ -88,7 +88,7 @@ func (r WorkflowRecoveryCancellationRequest) Validate() error {
 		}
 	}
 
-	if r.Position < 1 || r.Position > AutomationRecoveryBatchMaxRuns || r.ExpectedResumeCount == nil || *r.ExpectedResumeCount < 1 || *r.ExpectedResumeCount > WorkflowRunMaxResumes || len(strings.TrimSpace(r.Reason)) == 0 {
+	if r.Position < 1 || r.Position > StoredWorkflowRecoveryBatchMaxRuns || r.ExpectedResumeCount == nil || *r.ExpectedResumeCount < 1 || *r.ExpectedResumeCount > WorkflowRunMaxResumes || len(strings.TrimSpace(r.Reason)) == 0 {
 		return fmt.Errorf("provide an admitted position, expected resume count and reason")
 	}
 	return (EventRecoveryControlRequest{Reason: r.Reason}).Validate()

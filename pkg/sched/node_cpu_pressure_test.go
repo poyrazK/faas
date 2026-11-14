@@ -121,7 +121,7 @@ func TestCPUPressurePlacementPrefersAnotherNode(t *testing.T) {
 }
 
 // On a pressured node the ledger withholds the measured CPU discount, so
-// the gates count every booking and the refusal says why.
+// the budgets count every booking and the would-be refusal says why.
 func TestCPUPressureAdmissionCountsEveryBooking(t *testing.T) {
 	fill := func(pressured bool) (int, error) {
 		sample := &fakeCPUSample{}
@@ -132,12 +132,16 @@ func TestCPUPressureAdmissionCountsEveryBooking(t *testing.T) {
 			clock.tick()
 			sample.measureAll(admitted, 0, clock.now())
 			clock.tick()
-			if err := l.Admit(quietReq(admitted)); err != nil {
+			r := quietReq(admitted)
+			if err := l.XCPUOverBudget(r); err != nil {
 				return admitted, err
+			}
+			if err := l.Admit(r); err != nil {
+				t.Fatalf("admit %d: %v", admitted, err)
 			}
 			admitted++
 			if admitted > 100 {
-				t.Fatal("admission never refused")
+				t.Fatal("admission never passed a budget")
 			}
 		}
 	}

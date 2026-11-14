@@ -23,6 +23,12 @@ func TestFeatureLeavesStayOutOfTheRequiredSets(t *testing.T) {
 	for _, feature := range Features() {
 		for _, box := range []string{"control-plane", "compute-only", "single-box"} {
 			roles := FeatureRoles(feature, box)
+			if box == "control-plane" && FeatureComputeOnly(feature) {
+				if len(roles) != 0 {
+					t.Errorf("%s: the control plane carries %d leaves of a compute-only feature", feature, len(roles))
+				}
+				continue
+			}
 			if len(roles) == 0 {
 				t.Fatalf("%s: %s carries no leaf", feature, box)
 			}

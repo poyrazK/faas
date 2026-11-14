@@ -13,6 +13,7 @@ func (m *MemStore) saveObjectBucketObjectLockLocked(j ObjectBucketObjectLock) {
 		m.objectBucketObjectLock = map[string]ObjectBucketObjectLock{}
 	}
 	m.objectBucketObjectLock[j.BucketID] = cloneObjectBucketObjectLock(j)
+	m.markObjectBucketMutatedLocked(j.BucketID)
 }
 
 func (m *MemStore) ownedObjectBucketObjectLockLocked(account, app, bucket string) (ObjectBucketObjectLock, error) {

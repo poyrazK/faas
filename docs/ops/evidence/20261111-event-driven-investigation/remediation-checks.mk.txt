@@ -1,0 +1,23 @@
+# Run from the repository root after creating /tmp/gregale-event-audit.
+# Uses Makefile GO_TEST and GO_DEV_ENV memory/cache flags.
+EVENT_REPAIR_LINT_CACHE ?= /tmp/gregale-event-audit/lint-cache
+.PHONY: verify-event-state verify-event-api verify-event-scheduler verify-event-server verify-event-cli verify-event-bridge
+verify-event-state:
+	$(GO_TEST) -count=1 -timeout=10m ./pkg/state -run '^(TestExternalTriggerReplay|TestEventRoutingHistoryCoalescesCapacityWithoutChangingCheckpoint)' -v > /tmp/gregale-event-audit/state-final.log 2>&1
+verify-event-api:
+	$(GO_TEST) -count=1 ./pkg/apid/appevents ./pkg/apid/dataapievents ./pkg/eventcontract > /tmp/gregale-event-audit/api-final-focused.log 2>&1
+verify-event-scheduler:
+	NATS_TEST_URL=nats://127.0.0.1:14222 $(GO_TEST) -count=1 ./pkg/sched -run '^(Test(EventReliability|BrokerReliability|Kafka|NATS|Redis|EventRecipientRouting|EventWorkflowRecipientRouting)|TestTerminalKafkaRedelivery)' -v > /tmp/gregale-event-audit/scheduler-final.log 2>&1
+verify-event-server:
+	$(GO_TEST) -count=1 ./pkg/apid/apidserver -run '^Test(Trigger|CreateTrigger|UpdateTrigger|BatchCreateTrigger|DeadLetter|Account.*DeadLetter|EventRouteDeadLetter|ErrTrigger)' -v > /tmp/gregale-event-audit/server-final.log 2>&1
+verify-event-cli:
+	$(GO_TEST) -count=1 ./cmd/gregale -run '^TestDataAPIHooks' -v > /tmp/gregale-event-audit/cli-final.log 2>&1
+verify-event-bridge:
+	$(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) python3 docs/ops/evidence/20261111-event-driven-investigation/run_repros.py bridge > /tmp/gregale-event-audit/bridge-final.log 2>&1
+.PHONY: verify-event-spec
+verify-event-spec:
+	$(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) $(MAKE) spec-sync docs-links-check sdk-spec-check > /tmp/gregale-event-audit/spec-parity.log 2>&1
+	$(GO_TEST) -count=1 -run TestSpecCompliance ./scripts/ci/speccompliance >> /tmp/gregale-event-audit/spec-parity.log 2>&1
+.PHONY: verify-event-final-lint
+verify-event-final-lint:
+	$(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) GOLANGCI_LINT_CACHE=$(EVENT_REPAIR_LINT_CACHE) $(GO) tool golangci-lint run --allow-serial-runners --timeout=20m ./pkg/apid/appevents ./pkg/sched > /tmp/gregale-event-audit/lint-recheck.log 2>&1

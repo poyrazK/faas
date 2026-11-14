@@ -27,6 +27,10 @@ func tcpListenerFixture(t *testing.T) (*state.MemStore, context.Context, state.A
 
 func TestMemStoreTCPListenerLifecycleAndRouteLookup(t *testing.T) {
 	m, ctx, account, app := tcpListenerFixture(t)
+	manifest := state.AppManifest{Ports: []api.WorkloadPort{{Name: "postgres", Port: 5432}}}
+	if _, err := m.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
 	created, err := m.CreateTCPListener(ctx, state.TCPListener{
 		AccountID: account.ID, AppID: app.ID, ListenerName: "Postgres",
 		GuestPort: 5432, PublicPort: 40123, Enabled: true,

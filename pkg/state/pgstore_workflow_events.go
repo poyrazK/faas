@@ -117,7 +117,7 @@ func admitEventWorkflowTx(ctx context.Context, queries *sqlc.Queries, tx pgx.Tx,
 		}
 		return "", false, fmt.Errorf("%w: %w", ErrWorkflowEventDefinitionInvalid, err)
 	}
-	paused, latched, err := automationFailureBlocksAdmissionPG(ctx, tx, recipient.AppID, run.WorkflowName, time.Now().UTC())
+	paused, latched, err := storedWorkflowFailureBlocksAdmissionPG(ctx, tx, recipient.AppID, run.WorkflowName, time.Now().UTC())
 	if err != nil {
 		return "", false, err
 	}

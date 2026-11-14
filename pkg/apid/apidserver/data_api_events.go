@@ -28,3 +28,13 @@ func (s *server) admitDataAPIChangeEvents(_ context.Context, acct state.Account,
 	}
 	return s.appEvents.PublishRateProblem(acct, events)
 }
+
+// reportDataAPIChangeStatus is the private change hook delivery report route
+// (ADR-20261022121642 amendment 1); workload identity only.
+func (s *server) reportDataAPIChangeStatus(w http.ResponseWriter, r *http.Request) {
+	handler := dataapievents.StatusHandler{Verifier: s.workloadVerifier, Store: s.store}
+	if s.dataAPIUsage != nil {
+		handler.Reports = s.dataAPIUsage
+	}
+	handler.ServeHTTP(w, r)
+}

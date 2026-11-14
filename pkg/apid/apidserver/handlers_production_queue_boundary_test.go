@@ -141,6 +141,13 @@ func TestProductionQueueAPIRejectsStageMessagesAndNotifications(t *testing.T) {
 			t.Fatalf("API changed stage: %+v %v", after, err)
 		}
 	}
+	// Ack accepts a processed message only (Hunt 32 H32-44).
+	if _, err := store.ClaimInvocation(ctx, prod.ID, "", 300); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteInvocation(ctx, prod.ID, []byte(`{"production":true}`)); err != nil {
+		t.Fatal(err)
+	}
 	prodDead, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: acct.ID, Source: state.InvocationQueue, DueAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)

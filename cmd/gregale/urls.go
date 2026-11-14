@@ -23,7 +23,9 @@ const (
 // topics that do not have their own page use the consolidated CLI reference.
 // docsPageSlugs lists the pages the docs site actually serves. Every other
 // topic falls back to the CLI reference: 76 of 78 per-command help links
-// pointed at pages that do not exist (issue #3362).
+// pointed at pages that do not exist (issue #3362). A page
+// docs/customer-pages.json marks unpublished is not served either
+// (object-storage and executions answered 404).
 var docsPageSlugs = map[string]struct{}{
 	"cli":                    {},
 	"compliance":             {},
@@ -32,12 +34,9 @@ var docsPageSlugs = map[string]struct{}{
 	"deploy-from-source":     {},
 	"dpa":                    {},
 	"egress-denylist":        {},
-	"executions":             {},
-	"object-storage":         {},
 	"plans":                  {},
 	"preview-environments":   {},
 	"responsible-disclosure": {},
-	"runtime-go":             {},
 	"runtime-node":           {},
 	"runtime-python":         {},
 	"scale-to-zero":          {},

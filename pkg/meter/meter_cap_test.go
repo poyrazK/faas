@@ -46,6 +46,7 @@ func TestRunQuotaOnce_EgressCountsTowardOverageCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &recordingEgressProvider{mode: billing.MeterDeliveryLive}
+	electEgressOverage(t, ctx, store, acct.ID)
 	ops := wire.NewOpsMetrics("meter_test_egress_cap")
 	cfg := &meter.Config{}
 	cfg.Defaults()

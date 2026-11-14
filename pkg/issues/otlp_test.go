@@ -20,6 +20,52 @@ func exceptionAttrs() []*commonpb.KeyValue {
 	return []*commonpb.KeyValue{{Key: "exception.type", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "DateFormatError"}}}, {Key: "exception.message", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "failure for alice@example.com"}}}}
 }
 
+func TestIssueOTLPHTTPContextSupportsFallbackGrouping(t *testing.T) {
+	now := time.Now().UTC()
+	stringAttr := func(key, value string) *commonpb.KeyValue {
+		return &commonpb.KeyValue{Key: key, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: value}}}
+	}
+	intAttr := func(key string, value int64) *commonpb.KeyValue {
+		return &commonpb.KeyValue{Key: key, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: value}}}
+	}
+	attrs := append(exceptionAttrs(), stringAttr("gregale.issue.grouping_strategy", FailureSiteStrategy))
+	makeTrace := func(route string, status int64) []byte {
+		raw, err := protojson.Marshal(&tracecollector.ExportTraceServiceRequest{ResourceSpans: []*tracepb.ResourceSpans{{ScopeSpans: []*tracepb.ScopeSpans{{Spans: []*tracepb.Span{{TraceId: bytes.Repeat([]byte{1}, 16), SpanId: bytes.Repeat([]byte{2}, 8), Attributes: []*commonpb.KeyValue{stringAttr("http.route", route), intAttr("http.response.status_code", status)}, Events: []*tracepb.Span_Event{{Name: "exception", TimeUnixNano: uint64(now.UnixNano()), Attributes: attrs}}}}}}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	var fingerprints []string
+	for _, raw := range [][]byte{makeTrace("/checkout", 500), makeTrace("/refund", 500), makeTrace("/checkout", 502)} {
+		events, err := ExtractOTLP(raw, "traces")
+		if err != nil || len(events) != 1 || events[0].Route == "" || events[0].HTTPStatus == 0 {
+			t.Fatalf("missing HTTP context: %+v %v", events, err)
+		}
+		retry, err := ExtractOTLP(raw, "traces")
+		if err != nil || retry[0].EventID != events[0].EventID {
+			t.Fatal("unstable event identity")
+		}
+		_, fp, _, err := Normalize(events[0], now, api.PlanHobby.IssueLimits())
+		if err != nil {
+			t.Fatal(err)
+		}
+		fingerprints = append(fingerprints, fp)
+	}
+	if fingerprints[0] == fingerprints[1] || fingerprints[0] == fingerprints[2] {
+		t.Fatalf("HTTP fallback collapsed distinct failures: %v", fingerprints)
+	}
+	logAttrs := append(attrs, stringAttr("http.route", "/jobs"), intAttr("http.status_code", 503))
+	raw, err := protojson.Marshal(&logscollector.ExportLogsServiceRequest{ResourceLogs: []*logspb.ResourceLogs{{ScopeLogs: []*logspb.ScopeLogs{{LogRecords: []*logspb.LogRecord{{TimeUnixNano: uint64(now.UnixNano()), Attributes: logAttrs}}}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs, err := ExtractOTLP(raw, "logs")
+	if err != nil || len(logs) != 1 || logs[0].Route != "/jobs" || logs[0].HTTPStatus != 503 {
+		t.Fatalf("log context: %+v %v", logs, err)
+	}
+}
+
 // adr: 1111
 func TestIssueOTLPGroupingControlsAcrossSignals(t *testing.T) {
 	now := time.Now().UTC()

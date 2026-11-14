@@ -82,6 +82,9 @@ func TestSetupNormalizesCurrentAndLegacyRequestUUIDs(t *testing.T) {
 			t.Fatal("legacy UUID spelling blocked setup recovery", retry, err)
 		}
 	}
+	if _, err = store.pool.Exec(ctx, `UPDATE data_pipeline_setups SET phase='starting' WHERE id=$1`, first.ID); err != nil {
+		t.Fatal(err)
+	}
 	finishSetupCheck(t, store, account, api.DataConnection{ID: canonical.SourceConnectionID, Revision: 1}, canonical.DatabaseID)
 	p, err := service.Create(ctx, account, api.CreateDataPipelineRequest{Name: request.Name, SourceConnectionID: request.SourceConnectionID, DatabaseID: request.DatabaseID, Tables: request.Tables, ReadSubjects: request.ReadSubjects})
 	if err != nil || p.DatabaseID != first.DatabaseID {

@@ -47,6 +47,10 @@ func EnqueueAsyncRoute(ctx context.Context, store AsyncRouteInvocationStore, req
 		DeadlineAt:             req.DeadlineAt,
 		OnSuccessDestinationID: req.OnSuccessWebhook,
 		OnFailureDestinationID: req.OnFailureWebhook,
+		EdgeJWTIssuer:          req.EdgeJWT.Issuer,
+		EdgeJWTSubject:         req.EdgeJWT.Subject,
+		SentByAppID:            req.SentByAppID,
+		OnCompleteAppID:        req.OnCompleteAppID,
 	}, req.Scope)
 	if err != nil {
 		return AsyncRouteAccepted{}, err

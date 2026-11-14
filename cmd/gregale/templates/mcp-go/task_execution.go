@@ -59,11 +59,13 @@ func (runtime *mcpTaskRuntime) claim(ctx context.Context) (*durableMCPTask, erro
 	if err := runtime.lockExecution(ctx, tx); err != nil {
 		return nil, err
 	}
-	// A reduced budget must also settle queued retries. Input and drain resumes
-	// continue an existing attempt, so they remain eligible under the new budget.
+	// Settle cancellation before recovering an expired lease. A reduced budget
+	// also settles queued retries, but input and drain resumes keep their attempt.
 	if _, err := tx.Exec(ctx, `UPDATE gregale_mcp_tasks SET status=CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled' ELSE 'failed' END,
 		updated_at=clock_timestamp(),lease_token=NULL,lease_expires_at=NULL,next_attempt_at=NULL,resume_pending=false
-		WHERE namespace=$1 AND attempt_count >= $2 AND ((status='running' AND lease_expires_at<=clock_timestamp()) OR (status='queued' AND NOT resume_pending))`, runtime.namespace, runtime.execution.maxAttempts); err != nil {
+		WHERE namespace=$1 AND (cancel_requested_at IS NOT NULL OR attempt_count >= $2)
+		AND ((status='running' AND lease_expires_at<=clock_timestamp())
+		     OR (status='queued' AND (cancel_requested_at IS NOT NULL OR NOT resume_pending)))`, runtime.namespace, runtime.execution.maxAttempts); err != nil {
 		return nil, err
 	}
 	params := []any{runtime.namespace, runtime.execution.maxAttempts, runtime.execution.maxRunning, runtime.execution.maxRunningPerOwner}
@@ -75,6 +77,7 @@ func (runtime *mcpTaskRuntime) claim(ctx context.Context) (*durableMCPTask, erro
 	query := fmt.Sprintf(`WITH candidate AS (
 		SELECT queued.namespace,queued.task_id FROM gregale_mcp_tasks AS queued
 		WHERE queued.namespace=$1 AND queued.expires_at>clock_timestamp()
+		AND queued.cancel_requested_at IS NULL
 		AND (queued.attempt_count<$2 OR (queued.status='queued' AND queued.resume_pending))
 		AND (%s)
 		AND ((queued.status='queued' AND (queued.next_attempt_at IS NULL OR queued.next_attempt_at<=clock_timestamp()))
@@ -86,11 +89,12 @@ func (runtime *mcpTaskRuntime) claim(ctx context.Context) (*durableMCPTask, erro
 		ORDER BY queued.created_at,queued.task_id FOR UPDATE OF queued SKIP LOCKED LIMIT 1)
 		UPDATE gregale_mcp_tasks AS task SET status='running',attempt_count=task.attempt_count+CASE WHEN task.resume_pending THEN 0 ELSE 1 END,
 		resume_pending=false,next_attempt_at=NULL,lease_token=gen_random_uuid(),lease_expires_at=clock_timestamp()+interval '30 seconds',updated_at=clock_timestamp()
-		FROM candidate WHERE task.namespace=candidate.namespace AND task.task_id=candidate.task_id
-		RETURNING task.task_id::text,task.tool_name,task.handler_version,task.status,task.created_at,task.updated_at,task.expires_at,task.attempt_count,task.lease_token::text,task.cancel_requested_at,task.arguments_encrypted,task.input_methods,task.result_encrypted,task.error_encrypted,task.input_state_encrypted`, strings.Join(filters, " OR "))
+		FROM candidate WHERE task.namespace=candidate.namespace AND task.task_id=candidate.task_id AND task.cancel_requested_at IS NULL
+		RETURNING task.task_id::text,task.tool_name,task.handler_version,task.status,task.created_at,task.updated_at,task.expires_at,task.attempt_count,task.lease_token::text,task.cancel_requested_at,task.arguments_encrypted,task.input_methods,task.result_encrypted,task.error_encrypted,task.input_state_encrypted,task.output_schema`, strings.Join(filters, " OR "))
 	var task durableMCPTask
 	var args, result, taskError, inputs []byte
-	err = tx.QueryRow(ctx, query, params...).Scan(&task.ID, &task.ToolName, &task.HandlerVersion, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.ExpiresAt, &task.AttemptCount, &task.LeaseToken, &task.CancelAt, &args, &task.InputMethods, &result, &taskError, &inputs)
+	task.leaseDeadline = time.Now().Add(mcpTaskLeaseDuration)
+	err = tx.QueryRow(ctx, query, params...).Scan(&task.ID, &task.ToolName, &task.HandlerVersion, &task.Status, &task.CreatedAt, &task.UpdatedAt, &task.ExpiresAt, &task.AttemptCount, &task.LeaseToken, &task.CancelAt, &args, &task.InputMethods, &result, &taskError, &inputs, &task.OutputSchema)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, tx.Commit(ctx)
 	}
@@ -131,9 +135,10 @@ func (runtime *mcpTaskRuntime) heartbeatTask(ctx context.Context, task *durableM
 		return false, err
 	}
 	var cancelled bool
-	err = tx.QueryRow(ctx, `UPDATE gregale_mcp_tasks SET lease_expires_at=clock_timestamp()+interval '30 seconds'
+	err = tx.QueryRow(ctx, taskLeaseInstantSQL+`UPDATE gregale_mcp_tasks SET lease_expires_at=instant.now+interval '30 seconds'
+		FROM instant
 		WHERE namespace=$1 AND task_id=$2::uuid AND lease_token=$3::uuid AND status='running'
-		AND lease_expires_at>clock_timestamp() AND expires_at>clock_timestamp()
+		AND lease_expires_at>instant.now AND expires_at>instant.now
 		RETURNING cancel_requested_at IS NOT NULL`, runtime.namespace, task.ID, task.LeaseToken).Scan(&cancelled)
 	if err != nil {
 		return false, err

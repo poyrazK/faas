@@ -37,12 +37,17 @@ func queueMessageRetention(plan api.Plan) (time.Duration, bool) {
 }
 
 // queueMessageWaitStart is when a pending message's retention started: its
-// send, or its last replay from the dead letter.
+// send, its last replay from the dead letter, or when a retry or nack delay
+// last made it due (ADR-20261112200000), whichever is latest.
 func queueMessageWaitStart(inv Invocation) time.Time {
-	if inv.LastReplayedAt != nil && inv.LastReplayedAt.After(inv.CreatedAt) {
-		return *inv.LastReplayedAt
+	start := inv.CreatedAt
+	if inv.LastReplayedAt != nil && inv.LastReplayedAt.After(start) {
+		start = *inv.LastReplayedAt
 	}
-	return inv.CreatedAt
+	if inv.DueAt.After(start) {
+		start = inv.DueAt
+	}
+	return start
 }
 
 func (s *PgStore) ExpirePendingQueueMessages(ctx context.Context, now time.Time, limit int) (int, error) {
@@ -69,6 +74,18 @@ func (s *PgStore) ExpirePendingQueueMessages(ctx context.Context, now time.Time,
 	return len(rows), err
 }
 
+// invocationOwnerSuspendedLocked mirrors the expiry sweep's status filter: a
+// suspended owner's pending queue messages wait for its reactivation.
+func (m *MemStore) invocationOwnerSuspendedLocked(ownerID string) bool {
+	if account, ok := m.accounts[ownerID]; ok {
+		return account.Status == AccountSuspended
+	}
+	if org, ok := m.orgs[ownerID]; ok {
+		return org.Status == OrgStatusSuspended
+	}
+	return false
+}
+
 func (m *MemStore) ExpirePendingQueueMessages(_ context.Context, now time.Time, limit int) (int, error) {
 	if limit <= 0 {
 		limit = 500
@@ -81,7 +98,7 @@ func (m *MemStore) ExpirePendingQueueMessages(_ context.Context, now time.Time, 
 			continue
 		}
 		plan, ok := m.invocationOwnerPlanLocked(inv.AccountID)
-		if !ok {
+		if !ok || m.invocationOwnerSuspendedLocked(inv.AccountID) {
 			continue
 		}
 		if retention, ok := queueMessageRetention(plan); ok && queueMessageWaitStart(inv).Before(now.Add(-retention)) {

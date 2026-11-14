@@ -27,6 +27,7 @@ func TestMultipartDeployPreservesRolloutAndEnvironment(t *testing.T) {
 		{name: "startup CPU boost disabled", ann: DeployAnnotations{DisableStartupCPUBoost: boolPtr(true)}, wantField: "disable_startup_cpu_boost", wantValue: "true"},
 		{name: "revision environment override", ann: DeployAnnotations{OverrideEnv: map[string]string{"MCP_CATALOG_EXPECTED_SHA256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}, wantField: "override_env", wantValue: `{"MCP_CATALOG_EXPECTED_SHA256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`},
 		{name: "sidecar", ann: DeployAnnotations{Sidecars: Sidecars{{Name: "otel", Image: "registry.example.com/otel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Type: SidecarTypeSidecar}}}, wantField: "sidecars", wantValue: `[{"name":"otel","image":"registry.example.com/otel@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","type":"sidecar"}]`},
+		{name: "liveness probe", ann: DeployAnnotations{LivenessProbe: &DeploymentLivenessProbe{Path: DataAPILivenessPath}}, wantField: "liveness_probe", wantValue: `{"path":"/livez"}`},
 		{name: "companion", ann: DeployAnnotations{Companions: Companions{{Name: "otel", Preset: "opentelemetry", Type: SidecarTypeSidecar}}}, wantField: "companions", wantValue: `[{"name":"otel","preset":"opentelemetry","type":"sidecar"}]`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

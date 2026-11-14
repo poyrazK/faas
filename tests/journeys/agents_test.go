@@ -19,7 +19,10 @@ import (
 // It runs once per template: agent-stateless-node (a hand-written loop) and
 // agent-infinity-rust (Infinity's step mode, its tool answering in RAP).
 // The Infinity agent also sleeps with gregale_sleep (step 5), parks, and
-// wakes on the platform's own tool result.
+// wakes on the platform's own tool result, and calls gregale_run with the
+// app's workload token: for an agent the account does not have, Gregale's
+// refusal comes back as the call's tool result, which only an invocation
+// that carried the app's credential gets.
 
 // agentThreadWait bounds one slice's way from an inbox publish to its row:
 // a wake, a realtime trigger dispatch and one Postgres transaction.
@@ -45,7 +48,7 @@ type agentShape struct {
 	// result is the tool's answer for one message or tool call.
 	result func(j *agentJourney, messageID string) []byte
 	// sleeps: the template loads Gregale's toolset and calls
-	// gregale_sleep for "sleep N".
+	// gregale_sleep for "sleep N" and gregale_run for "run AGENT".
 	sleeps bool
 }
 
@@ -143,6 +146,7 @@ func statelessAgent(t *testing.T, tg *target, shape agentShape) {
 		s.step("agent_sleeps", j.sleeps)
 		s.step("sleeping_agent_parks", func(t *testing.T) { tg.ok(t, 2*time.Minute, "app", "park", j.app) })
 		s.step("agent_wakes", j.wakes)
+		s.step("agent_runs_with_its_credential", j.runsWithCredential)
 	}
 }
 
@@ -299,6 +303,29 @@ func (j *agentJourney) wakes(t *testing.T) {
 		for _, m := range messages {
 			if str(m, "content.text") == want {
 				return len(messages) == 4, compact(messages)
+			}
+		}
+		return false, compact(messages)
+	})
+}
+
+// agentRunMissing is an agent no journey account has.
+const agentRunMissing = "e2e-no-such-agent"
+
+// runsWithCredential asks the agent to run an agent the account does not
+// have. gregale_run answers an invocation that carries the app's workload
+// token with the refusal as the call's tool result; one without a
+// credential gets a 401, which the runtime turns into a different error
+// result.
+func (j *agentJourney) runsWithCredential(t *testing.T) {
+	thread := j.threadID + "-run"
+	j.publish(t, thread, "g-1", "run "+agentRunMissing+" hello")
+	want := "gregale_run answered: gregale_run: Agent not found"
+	eventually(t, "the agent's gregale_run answer", agentThreadWait, 5*time.Second, func() (bool, string) {
+		messages := threadMessages(j.threadView(t, thread))
+		for _, m := range messages {
+			if strings.HasPrefix(str(m, "content.text"), want) {
+				return true, compact(messages)
 			}
 		}
 		return false, compact(messages)

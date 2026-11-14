@@ -14,7 +14,7 @@ import (
 func installV1ScalarContract(t *testing.T, e *Engine) {
 	t.Helper()
 	definitions := timezoneRowContract(previousRowContractSchema()) + "\n" + strings.ReplaceAll(captureContract, "__CURRENT_ROW_CONTRACT__", "true")
-	begin := strings.Replace(embeddedFunction(retentionContract, "begin_operation")[0], ",gregale_repair.type_fingerprint(e.relation,true),3);", ",gregale_repair.type_fingerprint(e.relation,true),1);", 1)
+	begin := strings.Replace(embeddedFunction(retentionContract, "begin_operation")[0], ",gregale_repair.type_fingerprint(e.relation,true),4);", ",gregale_repair.type_fingerprint(e.relation,true),1);", 1)
 	definitions += "\n" + begin
 	for _, name := range []string{"create_plan", "apply_plan"} {
 		part := embeddedFunction(retentionContract, name)[0]

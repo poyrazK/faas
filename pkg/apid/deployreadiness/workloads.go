@@ -95,6 +95,15 @@ func checkWorkload(ctx context.Context, r *report, store Reader, account state.A
 			available[key] = true
 		}
 	}
+	inheritanceApp := state.App{WorkloadName: w.Name}
+	if app != nil {
+		inheritanceApp = *app
+	} else {
+		inheritanceApp.ProjectID, _ = r.identities["project"].(string)
+	}
+	if !loadProjectRuntimeKeys(ctx, r, store, account.ID, inheritanceApp, baseline, req.Environment, available) {
+		return
+	}
 	for _, dependency := range w.DependsOn {
 		for _, target := range req.Workloads {
 			if target.Workload.Name == dependency {
@@ -152,6 +161,7 @@ func loadRuntimeKeys(ctx context.Context, r *report, store Reader, account strin
 			secretKeys[secret.Key] = true
 		}
 		r.identities["secret_keys:"+app.WorkloadName] = secretKeys
+		r.identities["secret_grants:"+app.WorkloadName] = snapshot.SecretGrants.OverrideEnvSecrets
 		return true
 	}
 	variables, envErr := store.ListAppEnvInScope(ctx, account, app.ID, environment)

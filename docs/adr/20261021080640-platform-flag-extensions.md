@@ -37,6 +37,7 @@ Realtimed has no database pool. Rather than give it one, apid decides the realti
 - apid gates its own API surfaces for them per request. It sends each endpoint's decisions in the registration's `previews` field, but only once an operator has written one of these flags, so older realtime nodes, which refuse unknown fields, keep accepting registrations.
 - A realtime node keeps its environment switch as a capability, so a preview is on only when the node enables it and the decision allows it.
 - Upgrade realtime nodes before writing these flags.
+- apid also requires the nodes to serve the preview (amendment of 2026-11-09 below).
 
 **Pending, with the product-area gates:** `FAAS_OPERATION_CONCURRENCY_ACCOUNTS` (ADR-20261018210500) and `FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS` (ADR-20261019001500). Both are enforced inside the state layer as well as in apid, so a flag needs a release check injected into the store rather than a handler change.
 
@@ -120,3 +121,19 @@ Operators asked to control which accounts and companies use which feature, for e
 - **Store opt-ins in a new table loaded by every watcher.** That needs a second delivery path and new receipts. The per-flag row reuses both.
 - **Reuse the customer Flags auto-advancer code.** It is tied to per-environment flag versions and per-request flag evidence, and it never pauses. Its patterns are reused (a window since the last version, conflict as a no-op, a system audit actor).
 - **Give realtimed a database pool for flags.** apid already syncs endpoint configuration to it, and the decision can travel with that.
+
+## Amendment of 2026-11-09: apid releases a realtime preview only where the nodes serve it
+
+**Found on production.** The four realtime preview flags were released to an account while `FAAS_REALTIME_*_PREVIEW_ENABLED` was off on both compute nodes. apid gated its routes on the flag alone, so it answered as if the features worked while the nodes ignored them: an access revocation returned 200 and was not enforced, a subscription ticket was issued (201) and then refused at connect (401), and occupancy reads failed with 503. A revocation that reports success but changes nothing is a security defect, not a rollout detail.
+
+**Decision.**
+- Each realtime node lists the previews it serves in the `X-Faas-Realtime-Node-Previews` header of its endpoint inventory (`GET /internal/endpoints`): `access`, `occupancy`, `resume` and `tickets`. A preview counts only when its switch is on **and** what it reads is wired (access reader, history reader, ticket reader), and tickets also need resume, matching what the node checks at connect.
+- apid already reads every active node's inventory in the 30-second endpoint reconcile. It records each node's list and, for a released preview, answers a ticket, access or occupancy request as the feature being off (its 404) when any node that answered in the last two minutes leaves the preview out.
+- The node switch stays the capability and the platform flag stays the per-account release; apid now enforces their conjunction itself instead of relying on the operator to keep them in step.
+
+**Compatibility.** The header is new and optional. A node that predates it sends none; apid reads that as unknown and keeps the decision to the flag, as before. Nodes that have not answered the inventory recently do not count, so one unreachable node does not switch a preview off for everyone; it is not serving connections either. An older apid ignores the header.
+
+**Rejected.**
+- *Release the preview to every account the flag names and let the node decide per connection.* The broken API surfaces are on apid (ticket issue, access writes, occupancy reads); the node never sees them.
+- *Derive the node switch from the platform flag.* The switch records that the node is ready (readers wired, migrations applied), which the flag cannot know.
+- *Refuse to write the flag while the nodes lack the capability.* Nodes change after the flag is written (restart with a different environment, a new node joining), so the check must run at request time.

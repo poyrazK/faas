@@ -277,10 +277,43 @@ func (r *Runner) syncJob(ctx context.Context, job state.SnapshotReplicaJob) erro
 	if fetchDrive {
 		r.shareDriveWithLayer(ctx, job, driveKey)
 	}
+	if driveKey != "" {
+		r.replicateBackingIdentity(ctx, job)
+	}
 	// Every node holding the snapshot gets a job, the capturing node included,
 	// and revalidation repeats it, so this also reaches existing snapshots.
 	r.offerMemoryShare(job)
 	return nil
+}
+
+// replicateBackingIdentity caches a v2 capture's ADR-510 backing identity
+// (`…/backing`) with the rest of the replica. vmmd reads it before every
+// restore; without it a replica restored on this node still read it from
+// shared storage on the wake path (~340 ms on production-us, 2026-11-05).
+// It is best-effort and never changes the replica's verdict: a capture from
+// before ADR-510 has none and is refused at restore anyway, and a failed
+// read only leaves the restore to read it remotely. Revalidation repeats
+// it, so replicas made before this change gain the identity too; the object
+// is a few hundred bytes, so unlike the snapshot files it is fetched again
+// when missing.
+func (r *Runner) replicateBackingIdentity(ctx context.Context, job state.SnapshotReplicaJob) {
+	key := state.SnapshotBackingKey(state.Snapshot{StorageKey: job.StorageKey})
+	if key == "" {
+		return
+	}
+	if cached, known, err := storage.CachedLocally(r.backend, key); err != nil || !known || cached {
+		return
+	}
+	rc, err := r.backend.Get(ctx, key)
+	if err == nil {
+		_, err = io.Copy(io.Discard, rc)
+		if closeErr := rc.Close(); err == nil {
+			err = closeErr
+		}
+	}
+	if err != nil && !storage.IsNotFound(err) {
+		r.log.Warn("snapshothipd: cache snapshot backing identity", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "key", key, "err", err)
+	}
 }
 
 // shareUnchangedBlocks is storage.ShareUnchangedBlocks; tests observe it.

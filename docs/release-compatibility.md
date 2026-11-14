@@ -130,6 +130,12 @@ fleet runs that release. Rolling back past it means turning the variable off
 first. Every other request stays on HTTP/1.1, so an older gatewayd-public
 behind an h2c-enabled Caddy fails gRPC only.
 
+A new manifest key follows the same rule. An older gregalectl rejects a
+manifest key it does not know, so the deployment manifest gains the key only
+after a release whose gregalectl reads it has shipped; rolling back past that
+release means removing the key first. Feature stages in the manifest, such as
+`service_tcp` (ADR-576), turn on one stage per rollout and off in reverse.
+
 **Headers and trailers between gateways are part of the N±1 contract.**
 gatewayd-public runs on the control-plane host and moves with the
 control-plane stage, so for a whole rollout it sits in front of N-1 compute
@@ -148,6 +154,14 @@ budget. `TestPublicTrafficSecurityFollowsItsPeers`,
 `TestPublicProxyServesAPlainN1Answer` (`pkg/gateway`) hold the public hop to
 this. A new header requirement needs the same fleet gate or an opt-in
 negotiation, plus a case in those tests.
+
+**Policy data the edge reads is part of the contract too.** apid writes edge
+rules before the gateways upgrade, so a new field that changes what a rule
+does must not be written until every gateway reads it. ADR-20261108110000
+sealed header values as an empty `value` plus `secret_id`; an N-1 gateway
+ignored `secret_id` and sent the header empty. apid now seals only while every
+gateway reports `edge_header_secrets` in its traffic runtime report, a
+capability tied to the reporting boot so a rolled-back gateway stops counting.
 
 ## Gate 1: version skew (CI, every pull request)
 
@@ -343,6 +357,15 @@ The linter rejects an `expand` migration that does any of these:
   does not create again;
 - drops a column default.
 
+A `RENAME` or `DROP` that a migration assembles at run time (`EXECUTE
+format(...)` or a concatenated string inside a function or `DO` block) is a
+`dynamic-ddl` finding whatever the class: the linter cannot check the previous
+release's references to objects it only knows at run time. Write those
+statements literally, or waive the finding with the reason the previous
+release does not read them. Migration `20261107145315064` renamed eleven
+tables that way; the previous release kept reading the old names until its
+daemons restarted, and deployments failed for five minutes.
+
 What no linter sees is the author's claim to make: a trigger function's
 `pg_notify` payload, whether the previous release's writes satisfy a new
 CHECK or foreign key, a backfill that changes a value's meaning, and DDL
@@ -369,6 +392,11 @@ The reference check is a word grep. It skips `migrations/`, every
 appears only in a comment still counts. Waive that case and say so.
 
 ## Gate 3: post-deploy SLO gate (deploy workflows)
+
+The canonical platform rollout additionally runs the read-only
+[post-deployment monitoring verifier](ops/post-deployment-monitoring.md) after
+its recovery step. It checks fresh serving and notification evidence and retains
+a report; its failures cannot trigger that earlier rollback path.
 
 `scripts/ci/slo_gate.py` watches Prometheus for a set time after a unit
 deploy. Its exit status tells the workflow whether to promote the unit or

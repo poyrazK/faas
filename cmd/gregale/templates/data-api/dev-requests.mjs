@@ -1,6 +1,7 @@
 import { open, lstat, writeFile, rename, unlink } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { randomBytes, createHash } from 'node:crypto'
+import { decodeJsonCell } from './csv-export.mjs'
 
 export const requestLimit = 65536
 const fields = (value, allowed) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).every(key => allowed.includes(key))
@@ -54,7 +55,7 @@ export function requestStore(path, options = {}) {
         let length = 0
         while (length < buffer.length) { const { bytesRead } = await file.read(buffer, length, buffer.length - length, length); if (!bytesRead) break; length += bytesRead }
         if (length > maxBytes) throw new Error('Request collection exceeds 64 KiB.')
-        value = validate(JSON.parse(buffer.subarray(0, length).toString('utf8')), options)
+        value = validate(decodeJsonCell(buffer.subarray(0, length).toString('utf8')), options)
       } finally { await file.close() }
     } catch (error) {
       if (error.code !== 'ENOENT' || required) throw new Error('Cannot read data-api.requests.json; check its format, size and file type.')

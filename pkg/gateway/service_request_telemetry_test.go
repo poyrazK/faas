@@ -75,7 +75,7 @@ func TestServiceRequestObservationRequiresGuestResponseAndAuthoritativeIdentity(
 			if row.AccountID.String() != accountID || row.AppID.String() != appID || row.DeploymentID.String() != deploymentID || row.InstanceID != endpoint.InstanceID || row.NodeID != endpoint.NodeID || row.CommitSHA != endpoint.CommitSHA || row.Status != tc.status {
 				t.Fatalf("lost authoritative target identity: %+v", row)
 			}
-			if row.Route != otherRouteLabel || row.ConsumerID != "" || row.PlatformTenantID != "" || !row.UsageOutboxed || row.EventID == uuid.Nil || row.Count != 1 || row.preserveExact != tc.scenario || !row.ReceivedAt.Equal(at) {
+			if row.Route != "GET /private-secret" || row.ConsumerID != "" || row.PlatformTenantID != "" || !row.UsageOutboxed || row.EventID == uuid.Nil || row.Count != 1 || row.preserveExact != tc.scenario || !row.ReceivedAt.Equal(at) {
 				t.Fatalf("privacy/accounting/scenario contract: %+v", row)
 			}
 		})

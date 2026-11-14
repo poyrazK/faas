@@ -174,7 +174,13 @@ func historyResponseKey(key string, encoding types.EncodingType) (string, error)
 }
 
 func nextHistoryCursor(old s3HistoryCursor, out *s3.ListObjectVersionsOutput, prefix string) (string, error) {
+	if out == nil || out.IsTruncated == nil {
+		return "", ErrUnavailable
+	}
 	if !aws.ToBool(out.IsTruncated) {
+		if aws.ToString(out.NextKeyMarker) != "" || aws.ToString(out.NextVersionIdMarker) != "" {
+			return "", ErrUnavailable
+		}
 		return "", nil
 	}
 	key, err := historyResponseKey(aws.ToString(out.NextKeyMarker), out.EncodingType)

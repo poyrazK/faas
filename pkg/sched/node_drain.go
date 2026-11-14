@@ -56,7 +56,7 @@ func drainWithdrawsRoutes(ins state.Instance) bool {
 	case state.InstanceModeWorker, state.InstanceModeJob:
 		return false
 	}
-	return !state.IsFork(ins.Mode)
+	return !state.NeverServes(ins.Mode)
 }
 
 // retireForDrain is the runtime-config retirement (retireRuntimeConfigInstance)

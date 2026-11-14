@@ -36,7 +36,9 @@ SELECT coalesce(l.id,o.id)::uuid AS id FROM object_buckets b JOIN orgs o ON o.id
 WHERE b.id=sqlc.arg(bucket_id)::uuid AND b.account_id=sqlc.arg(account_id)::uuid;
 
 -- name: ObjectStorageLockLegacyIdentity :exec
-SELECT id FROM accounts WHERE id=$1 FOR UPDATE;
+-- NO KEY UPDATE for the same reason as ObjectUsageLockAccount: foreign-key
+-- inserts naming the account must not wait for an object job.
+SELECT id FROM accounts WHERE id=$1 FOR NO KEY UPDATE;
 
 -- name: ObjectStorageSubject :one
 SELECT object_storage_usage_subject(b.org_id,b.account_id)::uuid AS subject

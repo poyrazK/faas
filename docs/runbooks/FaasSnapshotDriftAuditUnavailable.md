@@ -2,7 +2,7 @@
 
 ## Symptom
 
-The hourly snapshot inventory did not complete, so `snapshot_disk_drift_total` cannot be interpreted as a clean result.
+The hourly snapshot inventory failed on two consecutive ticks (an hour or more without a complete inventory), so `snapshot_disk_drift_total` cannot be interpreted as a clean result. One failed tick, such as a short database timeout burst, does not alert. The alert is internal: the audit never starts or stops customer work, so it does not change the public status page.
 
 ## Check
 

@@ -1,38 +1,19 @@
 # Data Processing Addendum (DPA)
 
 <!--
-  Operator-facing template notes (PR #83 review #16):
-
-  1. Placeholders use Go html/template action syntax ({{...}}).
-     The dashboard route at /dashboard/account/dpa renders this
-     file through html/template, which means the body MUST be
-     syntactically valid template input. The {{...}} placeholders
-     already in this file work because html/template treats them
-     as plain text outside any {{...}} action. Adding a real
-     {{if ...}}, {{range ...}}, or {{ $x := ... }} DIRECTIVE
-     (rather than a placeholder) will be parsed and executed at
-     render time — keep this template logic-free. Operator-only
-     Go-template-style placeholders (the {{ALL_CAPS}} shape above)
-     are fine; do not switch to {{ .Foo }} or {{ range ... }}.
-
-  2. The body is rendered inside <pre class="dpa"> (see
-     pkg/dashboard/templates/dpa.html). HTML in the body is shown
-     as text — the operator should not rely on HTML formatting;
-     markdown-style text is the right shape.
-
-  3. Keep this file small. Production deploys ship
-     FAAS_DPA_PATH pointing at /etc/faas/dpa.md; the in-repo copy
-     is the dev fallback and the source of truth the operator
-     customises.
+  Maintainer notes (not shown to customers): docs/ops/legal-documents-operator-notes.md.
 -->
 
-**Effective date:** {{EFFECTIVE_DATE}}
-**Customer:** {{CUSTOMER_NAME}}
-**Jurisdiction:** {{JURISDICTION}}
+**Parties:** Gregale ("Processor") and the customer that accepted the
+Gregale Terms of Service ("Controller").
+**Effective:** from the date the Controller accepted the Terms of
+Service, for as long as they apply.
 
-This Data Processing Addendum ("DPA") supplements the master services
-agreement between Gregale ("Processor", the platform operator)
-and {{CUSTOMER_NAME}} ("Controller", the customer) and reflects the
+This Data Processing Addendum ("DPA") supplements the Gregale Terms of
+Service (the "master agreement", https://gregale.dev/terms) between
+Gregale ("Processor", the platform operator) and the customer that
+accepted them ("Controller"). It forms part of the master agreement
+and needs no separate signature. It reflects the
 parties' agreement with respect to the Processing of Personal Data
 by Processor on behalf of Controller in connection with the Gregale FaaS
 service.
@@ -58,7 +39,7 @@ keeping (tax invoices: 7 years).
 - Routing inbound HTTP requests to the appropriate microVM
   instance.
 - Aggregating per-minute usage (RAM-seconds + request count) for
-  billing purposes (spec §10).
+  billing purposes.
 - Sending transactional email related to the service (account
   changes, billing alerts, deletion grace notice).
 - Only on Controller's instruction (Pro and Scale): restoring a copy
@@ -80,12 +61,12 @@ keeping (tax invoices: 7 years).
 
 - Account data: email address, billing-provider customer ID, plan tier.
 - App data: app slug, deployment artifacts, runtime env vars
-  (sealed at rest with the host X25519 key, spec §11/G2).
+  (sealed at rest with the host X25519 key).
 - Usage data: per-minute aggregate of (app, instance, request
   count, RAM-seconds). No request bodies or response bodies are
   retained beyond the in-flight transit window.
 - Operational logs: request path, status code, host IP, timing —
-  retained for 30 days for security incident response (spec §11).
+  retained for 30 days for security incident response.
 - Application logs: what Controller's applications write to standard
   output and standard error, which can contain any personal data an
   application chooses to log. Held in memory while an instance runs,
@@ -147,7 +128,7 @@ Processor shall:
 - Make available to Controller all information necessary to
   demonstrate compliance with Article 28 GDPR.
 
-## 6. Data subject rights (spec §11 / G6)
+## 6. Data subject rights
 
 Controller may at any time exercise the following rights on behalf
 of data subjects via the documented Gregale endpoints:
@@ -158,7 +139,7 @@ of data subjects via the documented Gregale endpoints:
 | Right to erasure (Art. 17) | `DELETE /v1/account` (30-day grace) |
 | Right to restriction (Art. 18) | `POST /v1/account/restore` cancels a pending erasure |
 | Right to portability (Art. 20) | `GET /v1/account/export` returns the JSON bundle |
-| Right to object (Art. 21) | Contact support@gregale.dev |
+| Right to object (Art. 21) | Contact gregale@gregale.dev |
 
 The DPA itself is publicly available at
 `GET /v1/account/dpa` (no auth required) so prospects can read it
@@ -169,41 +150,29 @@ before signing up.
 The current sub-processor list is published at
 https://gregale.dev/docs/dpa/subprocessors for advance notification
 of additions and replacements (30-day notice, see paragraph below);
-the executed sub-processor set for any signed DPA is the list
-enumerated in this section at the time of signature, and the
+the sub-processor set that applies when the Controller accepts this
+DPA is the list enumerated in this section at that time, and the
 notification URL is the channel by which Processor signals
 upcoming changes.
 
-- **Postgres hosting** (database): single-tenant managed Postgres
-  with encryption at rest + TLS in transit. Daily encrypted
-  snapshots retained 30 days.
-- **Polar** (billing): public-release merchant of record. Polar receives
-  customer email, plan and subscription metadata, and calendar-month net
-  metered usage; Polar handles payment data and applicable merchant-of-record
-  tax obligations under its own controls. The default is Polar when
-  `FAAS_BILLING_PROVIDER` is empty or `=polar`.
-- **Paddle** (billing compatibility provider, explicit opt-in): the provider
-  switch (`FAAS_BILLING_PROVIDER=paddle`) selects Paddle for deployments that
-  already use it. Paddle receives the same billing data and its catalog is
-  managed in the Paddle dashboard. Stripe remains an explicit legacy opt-in
-  through `FAAS_BILLING_PROVIDER=stripe`. The §10 (breach notification) and
-  §11 (data return on termination) obligations bind Processor regardless of the
-  billing provider in use.
-- **Resend / Postmark** (transactional email): receives recipient
-  address + subject + body. Email bodies contain no end-user
-  personal data — they target the account holder only. Today the
-  platform default is `log` (writes to slog; no third-party
-  processing of customer email). Production wires
-  `FAAS_MAIL_TRANSPORT=resend` or `=postmark` to send real email.
-- **Hetzner Storage Box** (off-host encrypted backups): the Postgres
-  backup cron (`deploy/ansible/roles/postgres_backup/tasks/main.yml`)
-  pushes an encrypted pg_dump to the customer's storage box via
-  rclone. Backups are encrypted with the operator's host X25519
-  age recipient (the key sealed at `/etc/faas/secrets/host.age`,
-  ADR-020) **before** transit; the storage box sees ciphertext
-  only. The customer's own storage box is the Processor-side
-  target; Processor holds the decryption key but does not access
-  backup contents absent a Controller-initiated restore request.
+- **OVHcloud** (infrastructure hosting, US): dedicated bare-metal servers
+  that run Gregale's control plane, compute nodes, managed Postgres and
+  storage for the public release. Gregale administers the servers;
+  customer secrets are sealed with host keys before storage.
+- **Google Cloud** (infrastructure hosting, US, us-east1): Compute Engine
+  and Cloud Storage host the current production fleet during the public
+  beta, and a standby and test environments afterwards.
+- **Cloudflare** (DNS, reverse proxy, CDN, DDoS and firewall protection):
+  every request to Gregale and to customer apps passes through Cloudflare,
+  which sees request metadata (IP address, headers, URL) and carries
+  request and response bodies in transit.
+- **Polar** (billing): merchant of record. Polar receives customer email,
+  plan and subscription metadata, and monthly metered usage; it handles
+  payment data and merchant-of-record tax obligations under its own
+  controls.
+- **Resend** (transactional email): receives the recipient address,
+  subject and body of account emails, which go to the account holder
+  only, and reports bounces and complaints back to Gregale.
 - **Google** (OAuth identity provider): account holders who choose
   Google login exchange the OAuth subject (`sub`) and a verified
   email address — and the optional profile name and avatar URL —
@@ -214,21 +183,25 @@ upcoming changes.
   email address, and the login handle — and the optional name and
   avatar URL — at `POST /v1/auth/github/callback`. No repo list,
   no contact list, no org list. Scopes are `read:user user:email`.
-- **GitHub Checks API + install-token exchange** (outbound from
-  githubd): the `githubd` daemon is the only outbound caller to
-  `api.github.com`. The outbound traffic carries SHA-only commit
-  metadata (Checks) and OAuth install-token exchange — no
-  customer PII. Inbound webhook reception at
-  `POST /webhooks/github` is HMAC-SHA-256 verified
-  (`X-Hub-Signature-256`, constant-time compare) before any
-  payload is consumed.
+- **GitHub App** (deploys from GitHub): a single Processor service is the
+  only outbound caller to `api.github.com`. It fetches the source of
+  repositories a customer connects to build their deployments, posts
+  Checks results keyed by commit SHA and exchanges installation tokens.
+  Inbound webhooks at `POST /webhooks/github` are HMAC-SHA-256 verified
+  before any payload is consumed.
+- **Vercel** (website hosting): serves the gregale.dev website,
+  documentation and web front end, and sees website visitors' request
+  metadata. Account data and applications are not stored there.
+- **Amazon Web Services** (test environments): runs test and development
+  environments with test accounts and synthetic data only; production
+  customer data is not copied there.
 
 Processor shall notify Controller at least 30 days before adding a
 new sub-processor. Controller may object on reasonable
 data-protection grounds; the parties shall work in good faith to
 resolve the objection before the change takes effect.
 
-## 8. Security measures (spec §11)
+## 8. Security measures
 
 Processor implements the technical and organisational measures
 required by Art. 32 GDPR, including:
@@ -245,16 +218,16 @@ required by Art. 32 GDPR, including:
 - virtio-rng on every guest so restored snapshots don't reuse RNG
   state.
 - Customer secrets sealed at rest with the host X25519 key
-  (pkg/secretbox, ADR-020). Plaintext VALUES never touch PG.
+  so plaintext values are never stored in the database.
 - Crash snapshots encrypted on the capturing host before they are
   stored (age, a fresh X25519 key per snapshot sealed to the fleet
   key), so no unencrypted copy is ever written to storage; a decrypted
   copy exists only on the host running a fork of the snapshot, for that
-  fork, and is deleted with it (ADR-733).
+  fork, and is deleted with it.
 - Production forks run with all outbound network access blocked and
   are never routed production traffic; opening one requires a key
   with secret-read scope and MFA, and every create, access and delete
-  is written to the audit log (ADR-732).
+  is written to the audit log.
 - TLS 1.3 in transit; HSTS + Strict CSP on the dashboard.
 
 Full security checklist lives at https://gregale.dev/docs/security.
@@ -291,20 +264,14 @@ delete all Personal Data from its systems, including any copies,
 within 30 days, save where retention is required by applicable law
 (tax invoices, anti-money-laundering records).
 
-## 12. Governing law ({{JURISDICTION}})
+## 12. Governing law
 
-This DPA is governed by the laws of {{JURISDICTION}}. Any dispute
-arising out of or in connection with this DPA shall be subject to
-the exclusive jurisdiction of the courts of {{JURISDICTION}},
+This DPA is governed by the same law, and disputes arising out of or
+in connection with it go to the same courts, as the master agreement,
 without prejudice to data subjects' rights to bring claims in their
 own jurisdiction under Art. 79 GDPR.
 
 ---
 
-**Signatures**
-
-Controller: _________________________  Date: ____________
-
-Processor: __________________________  Date: ____________
-
-— Gregale, {{EFFECTIVE_DATE}}
+This DPA is accepted together with the Terms of Service. A Controller
+that needs a countersigned copy can request one at gregale@gregale.dev.

@@ -41,6 +41,11 @@ service AppErrors {
   // transient DB failure on one record returns ResourceExhausted
   // for that single response — the stream continues.
   rpc IncrementAppError(stream IncrementAppErrorRequest) returns (stream IncrementAppErrorResponse);
+
+  // RecordHTTPIssue retries only the idempotent Issues occurrence. It never
+  // increments the legacy app-error counter, whose outcome can be ambiguous
+  // after a broken stream. Older apid versions return Unimplemented.
+  rpc RecordHTTPIssue(IncrementAppErrorRequest) returns (IncrementAppErrorResponse);
 }
 
 // IncrementAppErrorRequest is one error record from the gateway edge.
@@ -149,4 +154,9 @@ message IncrementAppErrorResponse {
   // outcome string but lets the gateway hot-path avoid a string
   // compare on every record.
   bool dedupe_merged = 3;
+
+  // "queued" means the receiver accepted the Issue for asynchronous work;
+  // "retry" asks a new gateway to retry the Issue alone after queue overflow.
+  // Empty means an older receiver or a record ineligible for Issues.
+  string issue_handoff = 4;
 }

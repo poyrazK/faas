@@ -23,7 +23,7 @@ type ReaderChange struct {
 }
 
 func validReaders(subjects []string) bool {
-	if len(subjects) == 0 || len(subjects) > api.DataPipelineSubjectsMax {
+	if len(subjects) > api.DataPipelineSubjectsMax {
 		return false
 	}
 	seen := map[string]bool{}
@@ -130,7 +130,7 @@ func (s *PostgresStore) Readers(ctx context.Context, account, id string, revisio
 		if !CanChangeReaders(p) {
 			return ErrConflict
 		}
-		after := slices.Clone(subjects)
+		after := append([]string{}, subjects...)
 		slices.Sort(after)
 		if slices.Equal(after, p.ReadSubjects) {
 			return ErrInvalid

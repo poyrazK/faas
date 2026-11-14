@@ -2,10 +2,10 @@
 
 This release candidate includes the implemented financial visibility and
 budget-planning surfaces from ADR-566, active monitored notifications and
-compute-only `stop_previews`, strict app/job gross compute reservations, and shared
+compute-only `stop_previews`, strict app/job/project/environment gross compute reservations, and shared
 account net compute funding optionally combined with interface egress. This branch
 is a local release candidate; native VM acceptance and publication are still
-required. Other stopping actions and strict scopes remain deferred.
+required. Other stopping actions remain deferred.
 
 ## Customer-visible scope
 
@@ -33,12 +33,16 @@ required. Other stopping actions and strict scopes remain deferred.
 ## Release limits
 
 Budget activation accepts `mode=monitored` with `action=notify`, or
-`action=stop_previews` with the compute meter alone. Strict app/job `gross_usage`
+`action=stop_previews` with the compute meter alone. Strict app/job/project/environment `gross_usage`
 compute and account `net_usage` compute (optionally `[compute, egress]`) support
 `suspend_workloads`, zero drain and no alert thresholds. Initial activation
 requires quiet covered workloads, complete accounting, recorded account
 allowances, and capable native owners. Combined policies check the sum of both
-meters against one paid limit with separate quantity allowances. Other enabled
+meters against one paid limit with separate quantity allowances.
+Compute funding pins the smallest historical time-weighted hour-segment allowance
+for the month; later upgrades do not erase paid commitments or mint execution
+funding. This conservative bound can be higher than invoice costs. See
+[cost-control delivery safety](adr/20261111140000-cost-control-delivery-safety.md). Other enabled
 responses return HTTP 422 `financial_budget_activation_unavailable`. Disabled
 drafts neither stop workloads nor send spending notifications. Notification
 policies report active monitoring while `enforcement_ready` remains false. Financial totals cover recorded supported
@@ -53,8 +57,12 @@ reports partial coverage with `compute:missing_scope_attribution`; it does not
 present an unallocated amount as complete zero spending. Account and app
 subtotals still include the retained charges.
 
-The release excludes other stopping actions, strict project/environment scopes,
-app/job net reservations, scoped egress-only reservations and full-invoice hard
+Project funding shares a book across the project's apps. Environment funding
+covers attributed environment deployments; unattributed warm-capacity floors
+remain outside that scope and appear as partial coverage in previews.
+
+The release excludes other stopping actions, app/job/project/environment net
+reservations, scoped egress-only reservations and full-invoice hard
 ceilings. Byte credits include a framing margin; unused or uncertain credits
 commit in full after physical retirement. Budget commitments can exceed invoice
 usage, which continues to use measured bytes. A funded period pins its recorded

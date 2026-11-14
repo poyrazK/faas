@@ -21,6 +21,7 @@ const (
 	defaultCallbackAttempts     = 3
 	defaultCallbackRetryBackoff = 100 * time.Millisecond
 	maxCallbackRetryBackoff     = 5 * time.Second
+	defaultCallbackTimeout      = 10 * time.Second
 )
 
 // HTTPHooks turns lifecycle events into ordinary POST callbacks. It is kept
@@ -339,6 +340,11 @@ func (h HTTPHooks) deliver(ctx context.Context, event Event) (callbackResponse, 
 			return http.ErrUseLastResponse
 		}}
 	}
+	clientCopy := *client
+	if _, bounded := ctx.Deadline(); !bounded && clientCopy.Timeout <= 0 {
+		clientCopy.Timeout = defaultCallbackTimeout
+	}
+	client = &clientCopy
 	attempts := h.MaxAttempts
 	if attempts <= 0 {
 		attempts = defaultCallbackAttempts
@@ -604,6 +610,7 @@ func (m *Manager) internalHandler() http.Handler {
 		case strings.HasPrefix(path, "callbacks/dead-letters/"):
 			m.handleCallbackDeadLetterRoute(w, r, strings.TrimPrefix(path, "callbacks/dead-letters/"))
 		case path == "endpoints" && r.Method == http.MethodGet:
+			w.Header().Set(NodePreviewsHeader, strings.Join(m.NodePreviews(), ","))
 			writeJSON(w, http.StatusOK, m.EndpointIDs())
 		case path == "endpoints" && r.Method == http.MethodPost:
 			m.handleEndpointCreate(w, r)

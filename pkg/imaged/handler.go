@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/abusescan"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -36,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/registryproxy"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -104,7 +106,12 @@ type Handler struct {
 	// layerDigests remembers the digest of each layer this process just
 	// published, so the deploy scan does not hash the same bytes again.
 	layerDigests *publishedLayerDigests
-	log          *slog.Logger
+	// layerReuse is the app layer reuse index (ADR-20261112170911); nil
+	// turns reuse off.
+	layerReuse       *layerReuseIndex
+	layerReuseMetric *prometheus.CounterVec
+	guestInitDigests fileDigests
+	log              *slog.Logger
 	// profilingOnDemand stamps dormant guest collectors into manifests for
 	// plans that include profiling (ADR-1155, FAAS_PROFILING_ON_DEMAND).
 	profilingOnDemand bool
@@ -262,6 +269,10 @@ type Handler struct {
 	// reuse, so every renewal scans.
 	scannerIdentityProbe func(context.Context) (installedScanner, error)
 	scannerIdentityCache scannerIdentityCache
+	// scannerInstallStamp describes the installed scanner binary and
+	// database files; while it is unchanged a probed identity is kept past
+	// api.ScannerIdentityCacheTTL. Nil keeps the one-minute cache.
+	scannerInstallStamp func() string
 	// scannerDBUpdater refreshes the vulnerability database outside any scan.
 	scannerDBUpdater func(context.Context) error
 	// Active entries live only for a job; restart reconstructs work from durable
@@ -345,6 +356,10 @@ type Handler struct {
 	// place of the secretbox identities: the build seal-domain identity
 	// first, then the fleet and host identities (ADR 20261022111812).
 	registryIdentities []*age.X25519Identity
+	// registryProxy, when set, pulls private images through the control
+	// plane's secretd (ADR-20261110210000 slice 3j-2): this node never
+	// opens an app's registry password.
+	registryProxy *registryproxy.Proxy
 	// baseConvergence (ADR-567) tracks the bases this daemon staged so the
 	// convergence loop can keep each local copy byte-identical to the
 	// shared publication.
@@ -444,8 +459,30 @@ func (h *Handler) imageSignaturePublishers(ctx context.Context, app state.App) (
 // reads. Only a missing attachment is classified as missing; registry failures
 // remain failures. The signed source may be an index whose verified child is
 // selected by the resolver (ADR-435).
+//
+// The caller fails the deployment with the returned error. A missing or
+// untrusted signature returns a typed problem, so the deployment carries
+// deploy_signature_invalid with a fix instead of deploy_failed and raw cosign
+// text; a registry or database blip is retried a few times before it fails a
+// deploy that is otherwise fine (deploy-path review P6).
 func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep state.Deployment, ref, expectedDigest string, auth *oci.BasicAuth) (cosign.ImageSignatureProof, error) {
-	proof, err := h.checkImageSignatureProof(ctx, app, ref, auth)
+	var (
+		proof cosign.ImageSignatureProof
+		err   error
+	)
+	for attempt := 0; ; attempt++ {
+		proof, err = h.checkImageSignatureProof(ctx, app, ref, auth)
+		if err == nil || !transientSignatureError(err) || attempt >= len(externalVerifyRetryDelays) || ctx.Err() != nil {
+			break
+		}
+		if h.log != nil {
+			h.log.Warn("imaged: image signature verification failed transiently; retrying", "deployment", dep.ID, "attempt", attempt+1, "err", err)
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(externalVerifyRetryDelays[attempt]):
+		}
+	}
 	if err == nil && proof.SubjectDigest != expectedDigest {
 		err = fmt.Errorf("%w: verified subject differs from selected source", cosign.ErrSignatureInvalid)
 	}
@@ -454,18 +491,41 @@ func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep s
 	}
 	switch {
 	case errors.Is(err, cosign.ErrSignatureMissing):
-		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_missing: no signature for ref")
 		h.emitSignatureAudit(ctx, "app.signature_missing", app, dep, ref, "")
+		return cosign.ImageSignatureProof{}, errors.Join(signatureProblem(app.Slug, ref, false), err)
 	case errors.Is(err, cosign.ErrSignatureInvalid):
-		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_invalid: no trusted publisher matched")
 		h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, ref, "")
+		return cosign.ImageSignatureProof{}, errors.Join(signatureProblem(app.Slug, ref, true), err)
 	case errors.Is(err, errTrustedPublishersUnavailable):
-		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_verify: trusted publisher list unavailable")
+		return cosign.ImageSignatureProof{}, fmt.Errorf("signature_verify: trusted publisher list unavailable: %w", err)
 	default:
-		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_verify: registry error")
 		h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, ref, "")
+		return cosign.ImageSignatureProof{}, fmt.Errorf("signature_verify: registry error: %w", err)
 	}
-	return cosign.ImageSignatureProof{}, err
+}
+
+// externalVerifyRetryDelays are the waits between attempts when a go-live
+// check against an outside service (the image registry, the trusted-publisher
+// read, GitHub's branch head) fails for a reason that says nothing about the
+// deployment itself.
+var externalVerifyRetryDelays = []time.Duration{time.Second, 3 * time.Second, 9 * time.Second}
+
+// transientSignatureError reports a verification failure that says nothing
+// about the image: the registry or the trusted-publisher read failed.
+func transientSignatureError(err error) bool {
+	return !errors.Is(err, cosign.ErrSignatureMissing) && !errors.Is(err, cosign.ErrSignatureInvalid) &&
+		!errors.Is(err, context.Canceled)
+}
+
+// signatureProblem is the customer-facing refusal of an unsigned or
+// untrusted image.
+func signatureProblem(slug, ref string, untrusted bool) *api.Problem {
+	if untrusted {
+		return api.ErrDeploySignatureInvalid("image " + ref + " is signed, but by no trusted publisher of " + slug).
+			WithHint("List the app's trusted publishers with `gregale trusted-publishers list --app " + slug + "`, then sign the image with one of their keys or add the publisher that signed it.")
+	}
+	return api.ErrDeploySignatureInvalid("image " + ref + " has no signature, and " + slug + " requires signed images").
+		WithHint("Sign the image digest with a trusted publisher's key (for example `cosign sign --key <key> " + ref + "`) and deploy again; list the publishers with `gregale trusted-publishers list --app " + slug + "`.")
 }
 
 // emitSignatureAudit fires the audit row for verify failures. Mirrors
@@ -803,14 +863,19 @@ func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
 	if h.postCaptureMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
 		h.ops.Registry().Unregister(h.postCaptureMetrics)
 	}
+	if h.layerReuseMetric != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.layerReuseMetric)
+	}
 	h.ops = ops
 	h.handoffMetrics = nil
 	h.preparationMetrics = nil
 	h.postCaptureMetrics = nil
+	h.layerReuseMetric = nil
 	if ops != nil && ops.Registry() != nil {
 		h.handoffMetrics = newBuildImageHandoffMetrics(ops.Registry())
 		h.preparationMetrics = newImagePreparationProgressMetrics(ops.Registry())
 		h.postCaptureMetrics = newPostCaptureMetrics(ops.Registry())
+		h.layerReuseMetric = newLayerReuseMetric(ops.Registry())
 	}
 	return h
 }
@@ -946,6 +1011,13 @@ func (h *Handler) WithSecretboxIdentity(ident *age.X25519Identity) *Handler {
 // passwords. Crash captures keep the secretbox identities.
 func (h *Handler) WithRegistryIdentities(identities []*age.X25519Identity) *Handler {
 	h.registryIdentities = identities
+	return h
+}
+
+// WithRegistryProxy pulls apps' private images through secretd instead of
+// opening their registry passwords here (ADR-20261110210000 slice 3j-2).
+func (h *Handler) WithRegistryProxy(p *registryproxy.Proxy) *Handler {
+	h.registryProxy = p
 	return h
 }
 
@@ -1223,6 +1295,12 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	}
 	defer cleanup()
 	markScanPhase(ctx, "stage")
+	// Grype runs while the artifact is hashed rather than after it: each took
+	// about 7 s on production and the deploy waited for both in turn
+	// (deploy-path review P15). The hash still decides reuse, which cancels
+	// the scan; the stop runs before cleanup removes the staged artifact.
+	scan := h.startDeployGrype(ctx, scanDir)
+	defer scan.stop()
 	artifactDigest, artifactErr := h.scanArtifactDigest(be, storagekey.AppLayer(scanLayer(app.Slug, dep)), scanDir)
 	markScanPhase(ctx, "digest")
 	if artifactErr != nil {
@@ -1236,10 +1314,12 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		result = h.reusableDeployScan(ctx, app, dep, artifactDigest)
 	}
 	if result != nil {
+		scan.stop()
 		markScanPhase(ctx, "reuse")
 	} else {
-		result, err = h.runGrype(ctx, scanDir)
+		result, err = scan.wait()
 		h.lastDeployScanner.record(result, err, time.Now())
+		markScanPhase(ctx, "scan_wait")
 	}
 	if err != nil {
 		// Fail the scan, not the deploy. Log the grype error
@@ -1315,7 +1395,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
 		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown,
 		"reused_from", result.ReusedFrom,
-	}, timing.attrs()...)...)
+	}, append(timing.attrs(), scan.phaseAttrs()...)...)...)
 	return checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
 }
 
@@ -2161,6 +2241,16 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		if held, err := h.holdReleaseCommandForApproval(ctx, app, dep); err != nil || held {
 			return err
 		}
+		// ADR-20261022140000 amendment 2: no release command starts during
+		// the break-glass pause, whenever its release was created.
+		if held, err := h.holdReleaseCommandForPause(ctx, dep); err != nil || held {
+			return err
+		}
+		// ADR-1448 amendment 1: no release command after one whose effect
+		// on the database is unknown, until a person checks it.
+		if closed, err := h.failAfterUncertainRelease(ctx, app, dep); err != nil || closed {
+			return err
+		}
 		task, err := h.ensureReleaseTask(ctx, app, dep)
 		if errors.Is(err, errReleaseDeploymentClosed) {
 			return nil
@@ -2168,6 +2258,7 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		if err != nil {
 			return err
 		}
+		h.retireOutpacedReleases(ctx, dep)
 		wait, err := h.applyReleaseTaskOutcome(ctx, dep, task)
 		if err != nil || wait {
 			return err
@@ -2283,7 +2374,22 @@ func (h *Handler) applyReleaseTaskOutcome(ctx context.Context, dep state.Deploym
 		if task.FailureMessage != nil && *task.FailureMessage != "" {
 			detail += ": " + *task.FailureMessage
 		}
-		if _, err := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeReleaseCommandFailed, detail); err != nil {
+		// Hunt 32 H32-12: the failure named neither the exit code nor where
+		// the output is. The output itself stays out of the deployment error,
+		// which reaches notifications; the task receipt keeps it.
+		if task.ExitCode != nil {
+			detail += fmt.Sprintf(" (exit code %d; the task's captured output is in its receipt, GET /v1/apps/{slug}/tasks/%s)", *task.ExitCode, task.ID)
+		}
+		var err error
+		if task.Status == state.AppTaskFailed && task.FailureCode != nil && releaseTaskInfrastructureFailure(*task.FailureCode) {
+			// The platform could not run or observe the command; the
+			// customer's command is not what failed.
+			explained := whycopy.Decorate(&api.Problem{Code: api.CodeReleaseInfrastructure}, api.CodeReleaseInfrastructure, *task.FailureCode)
+			_, err = h.store.SetDeploymentFailedEx(ctx, dep.ID, api.CodeReleaseInfrastructure, detail, explained.Hint, explained.Why, explained.Fix, nil)
+		} else {
+			_, err = h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeReleaseCommandFailed, detail)
+		}
+		if err != nil {
 			return true, fmt.Errorf("imaged: fail deployment after release task: %w", err)
 		}
 		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
@@ -2376,6 +2482,9 @@ func (h *Handler) handleAppTaskChanged(ctx context.Context, payload db.AppTaskCh
 // parsed ref ensures a customer can never accidentally widen the
 // credential to a different registry by manipulating a request body.
 func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host string) (*oci.BasicAuth, error) {
+	if h.registryProxy != nil {
+		return h.proxiedRegistryAuth(ctx, app, host)
+	}
 	identities := h.registryCredentialIdentities()
 	if len(identities) == 0 {
 		return nil, nil
@@ -2578,6 +2687,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
+	}
+	if err := h.store.SetDeploymentBeforeCheckpointHook(ctx, dep.ID, manifest.BeforeCheckpoint != nil); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "persist before_checkpoint hook")
+		return fmt.Errorf("imaged: persist before_checkpoint hook: %w", err)
 	}
 	profile := frameworkprofile.Profile{Version: frameworkprofile.Version, Framework: "unknown"}
 	if len(dep.InferredProfile) != 0 {
@@ -3247,7 +3360,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyFunctionConcurrency(h.stampPostgresPool(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app, acct), app)
+	manifest = applyFunctionInputSchema(applyFunctionCallables(applyFunctionConcurrency(h.stampPostgresPool(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app, acct), app), app), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -3259,6 +3372,10 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
+	}
+	if err := h.store.SetDeploymentBeforeCheckpointHook(ctx, dep.ID, manifest.BeforeCheckpoint != nil); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "persist before_checkpoint hook")
+		return fmt.Errorf("imaged: persist before_checkpoint hook: %w", err)
 	}
 	// Source builds arrive with a builderd-produced local OCI archive in
 	// dep.RootfsPath. Keep the original source tarball for the customer
@@ -3470,9 +3587,17 @@ func manifestFromImageConfig(cfg oci.ImageConfig) (api.AppManifest, error) {
 // (buildLocalOCIAppLayer in local_oci.go) share the exact same
 // seeding rule — the F8 fixup consolidates what was duplicated.
 func applyContainerDefaults(m *api.AppManifest) {
+	applyContainerHealthDefault(m)
+	applyContainerEnvDefaults(m)
+}
+
+func applyContainerHealthDefault(m *api.AppManifest) {
 	if m.Healthz == "" {
 		m.Healthz = defaultHealthzPath
 	}
+}
+
+func applyContainerEnvDefaults(m *api.AppManifest) {
 	if m.Env == nil {
 		m.Env = make(map[string]string, 1)
 	}
@@ -3614,12 +3739,34 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		h.log.Info("imaged: snapshot publication skipped for inactive deployment", "deployment_id", dep.ID, "status", dep.Status)
 		return h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier})
 	}
+	if ready == nil && dep.DeletedAt != nil {
+		// A deleted stage cannot resolve runtime policy from its replacement.
+		// Discard this unreferenced capture before attempting that lookup.
+		if err := h.discardStaleSnapshotCapture(ctx, state.Snapshot{DeploymentID: dep.ID, StorageKey: snapshot.StorageKey, Tier: snapshot.Tier}); err != nil {
+			return err
+		}
+		return fmt.Errorf("imaged: snapshot deployment was deleted: %w", state.ErrNotFound)
+	}
 	if dep.EnvironmentWorkloadHeld() {
 		return fmt.Errorf("imaged: %w: environment workload graph is not qualified", state.ErrInvalidArgument)
 	}
 	app, err := state.AppForDeployment(ctx, h.store, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: load app for deployment activation: %w", err)
+	}
+	if dep.Status != state.DeployLive && !dep.Status.IsTerminal() {
+		valuesStore, ok := h.store.(state.RuntimeAppValuesStore)
+		if !ok {
+			return errors.New("imaged: deployment activation requires runtime configuration values")
+		}
+		values, err := valuesStore.RuntimeAppValuesForDeployment(ctx, app.AccountID, dep.AppID, dep.ID)
+		if err != nil {
+			return fmt.Errorf("imaged: load snapshot activation inputs: %w", err)
+		}
+		ctx, err = state.WithDeploymentActivationAttempt(ctx, dep, values)
+		if err != nil {
+			return fmt.Errorf("imaged: bind snapshot activation attempt: %w", err)
+		}
 	}
 
 	if ready != nil {
@@ -3633,11 +3780,16 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		if ready.ExecutionMode != mode {
 			return fmt.Errorf("imaged: deployment_ready mode mismatch: payload=%q app=%q", ready.ExecutionMode, mode)
 		}
-		if ready.NoSnapshotReason == "rehearsal_cold_start" {
+		switch ready.NoSnapshotReason {
+		case "rehearsal_cold_start":
 			if err := h.validateColdStartActivation(ctx, app, dep, *ready); err != nil {
 				return err
 			}
-		} else {
+		case state.EnvironmentBranchActivationReason:
+			if err := h.validateEnvironmentBranchActivation(ctx, dep, *ready, mode); err != nil {
+				return err
+			}
+		default:
 			switch mode {
 			case api.ExecutionModeWorker:
 				if ready.NoSnapshotReason != "" {
@@ -3656,6 +3808,10 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
 					ins.Mode != string(state.InstanceModeWorker) || ins.State != string(state.StateRunning) {
 					return fmt.Errorf("imaged: worker readiness proof does not match a running worker instance")
+				}
+				ctx, err = state.WithWorkerDeploymentActivation(ctx, dep, ins.ID)
+				if err != nil {
+					return err
 				}
 			case api.ExecutionModeJob:
 				if ready.NoSnapshotReason != "" {
@@ -3688,6 +3844,10 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
 					ins.Mode != string(wantMode) || ins.State != string(state.StateStopped) {
 					return fmt.Errorf("imaged: ephemeral-secret readiness proof does not match a stopped %s instance", mode)
+				}
+				ctx, err = state.WithEphemeralDeploymentActivation(ctx, dep, ins)
+				if err != nil {
+					return err
 				}
 			default:
 				return fmt.Errorf("imaged: execution mode %q requires snapshot activation unless authorized ephemeral-secret readiness is supplied", mode)
@@ -3754,7 +3914,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		stored, createErr := h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt)
 		created := createErr == nil
-		if errors.Is(createErr, state.ErrSnapshotRuntimeStale) {
+		if errors.Is(createErr, state.ErrSnapshotRuntimeStale) || errors.Is(createErr, state.ErrDeploymentActivationStale) {
 			h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
 			h.log.Info("imaged: discarded stale snapshot capture", "deployment", snapshot.DeploymentID,
 				"source_instance", snapshot.SourceInstanceID, "tier", snap.Tier)
@@ -3793,7 +3953,7 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 					"missing_drive", unrestorable, "retired_fc_version", stored.FCVersion,
 					"capture_fc_version", snap.FCVersion)
 				retired := stored.ID
-				if stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt); errors.Is(createErr, state.ErrSnapshotRuntimeStale) {
+				if stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(ctx, snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt); errors.Is(createErr, state.ErrSnapshotRuntimeStale) || errors.Is(createErr, state.ErrDeploymentActivationStale) {
 					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
 					h.log.Info("imaged: discarded stale snapshot capture after retirement", "deployment", snapshot.DeploymentID,
 						"source_instance", snapshot.SourceInstanceID, "tier", snap.Tier)
@@ -3923,6 +4083,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		}
 		detail := contractErr.Error()
 		_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail)
+		if errors.Is(markErr, state.ErrDeploymentActivationStale) {
+			return nil
+		}
 		if markErr != nil {
 			h.log.Warn("api contract gate: mark deployment failed", "deployment_id", dep.ID, "err", markErr)
 		}
@@ -3993,6 +4156,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	var promoteErr error
 	if !checkedRollback && dep.GitHubSourceRef != "" {
 		stale, verifyErr := h.gitHubSourceRefIsStale(ctx, dep)
+		if stale && verifyErr == nil {
+			// A newer push of the branch already has its own deployment:
+			// this one was overtaken, not broken. Failing it put a red
+			// "faas / build" check on the older commit (deploy-path review
+			// P11). Without a newer deployment the branch moved under a
+			// one-off deploy, which still fails as stale.
+			if superseded, err := h.supersedeOutpacedRelease(ctx, dep); err != nil {
+				return err
+			} else if superseded {
+				return nil
+			}
+		}
 		if stale || verifyErr != nil {
 			code := api.CodeSourceRefStale
 			detail := fmt.Sprintf("GitHub branch %q no longer points to deployment commit %s", dep.GitHubSourceRef, dep.CommitSHA)
@@ -4001,10 +4176,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				detail = "could not verify GitHub source branch before promotion: " + verifyErr.Error()
 			}
 			if _, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail); markErr != nil {
+				if errors.Is(markErr, state.ErrDeploymentActivationStale) {
+					return nil
+				}
 				return fmt.Errorf("imaged: mark unverified GitHub source ref failed: %w", markErr)
 			}
 			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
 			return nil
+		}
+	}
+	if !checkedRollback {
+		if frozen, err := h.refuseReleaseFrozenSinceDeploy(ctx, dep); err != nil || frozen {
+			return err
 		}
 	}
 	recovering, _ := ctx.Value(mcpTaskRecoveryContextKey{}).(bool)
@@ -4025,6 +4208,22 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		promoteErr = h.store.MarkDeploymentLive(state.WithPreparedRollbackPromotion(ctx), dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
+	}
+	if errors.Is(promoteErr, state.ErrDeploymentActivationStale) {
+		h.log.Info("imaged: activation verification belongs to an earlier attempt", "deployment_id", dep.ID)
+		return nil
+	}
+	if errors.Is(promoteErr, state.ErrRollbackCrossesRelease) || errors.Is(promoteErr, state.ErrRollbackTargetDatabaseRestored) {
+		code, detail := api.CodeRollbackCrossesRelease, "Release commands started after this rollback was reviewed. Review migration history and submit a new rollback with acknowledgement."
+		if errors.Is(promoteErr, state.ErrRollbackTargetDatabaseRestored) {
+			code, detail = api.CodeRollbackTargetDatabaseRestored, "This deployment's release command was undone by a database restore."
+		}
+		failed, err := h.store.SetDeploymentFailed(ctx, dep.ID, code, detail)
+		if err != nil {
+			return fmt.Errorf("imaged: record rollback release refusal: %w", err)
+		}
+		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, failed.Status)
+		return nil
 	}
 	if errors.Is(promoteErr, state.ErrDeploymentSuperseded) {
 		h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeploySuperseded)
@@ -4051,6 +4250,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		var routeRemovalBlocker *state.RouteRemovalBlockedError
 		if errors.As(promoteErr, &routeRemovalBlocker) {
 			_, markErr := h.store.SetDeploymentFailed(ctx, dep.ID, api.CodeRouteRemovalRequired, routeRemovalBlocker.Error())
+			if errors.Is(markErr, state.ErrDeploymentActivationStale) {
+				return nil
+			}
 			if markErr != nil {
 				return fmt.Errorf("imaged: record route removal blocker: %w", markErr)
 			}

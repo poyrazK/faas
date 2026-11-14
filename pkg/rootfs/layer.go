@@ -216,7 +216,7 @@ func applyLayer(dst string, tr *tar.Reader, opts layerApplyOptions) error {
 		// branch. resolveEntryPath performs the stronger containment and
 		// symlink-ancestor checks once the archive name has passed this
 		// traversal guard.
-		if !strings.Contains(archiveName, "..") {
+		if !hasParentComponent(archiveName) {
 			// codeql[go/path-injection] false-positive: resolveEntryPath rejects
 			// absolute names, then clamps every ancestor symlink inside dst.
 			replaceWhiteouts := opts.preserveWhiteouts && (supportedOverlayEntry(hdr.Typeflag) || opaque || strings.HasPrefix(filepath.Base(archiveName), whiteoutPrefix))
@@ -735,6 +735,21 @@ const maxSymlinkHops = 40
 // regular-file entry landing on an existing symlink must clobber the link,
 // not write through it. Every ANCESTOR component is resolved and clamped
 // inside root by resolveWithin.
+// hasParentComponent reports whether a tar entry name has a ".." path
+// component. Only a whole component can climb out of a directory: a name
+// that merely contains two dots, such as usr/share/man/man1/..1.gz,
+// "foo..bar" or "...", is an ordinary file name that real base images ship.
+// Matching the substring instead rejected every image carrying such a file
+// (Hunt 34 H34-47).
+func hasParentComponent(name string) bool {
+	for _, part := range strings.Split(name, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 func resolveEntryPath(root, name string) (string, error) {
 	return resolveLayerEntryPath(root, name, false)
 }

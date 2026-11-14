@@ -21,5 +21,9 @@ export type PlanManaged = {
    * Why apply does not provide a Compose postgres service. Omitted for other datastores and when provision is set.
    */
   not_provisioned_reason?: 'unavailable' | 'plan' | 'quota' | 'unsupported' | 'configured' | 'not_referenced' | 'permission';
+  /**
+   * Selected services' keys that point at this datastore and will have no value, as service.KEY. Omitted when none.
+   */
+  unbound?: Array<string>;
 };
 

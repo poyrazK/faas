@@ -108,6 +108,15 @@ const (
 	workInstanceFailure workKind = "instance_failure"
 	workJobsReaper      workKind = "jobs_reaper"
 	workCronFireNow     workKind = "cron_fire_now"
+	// workCronSweep is the minute's cron sweep and its resumed passes,
+	// workRecentLoad the one-second gateway scrape behind scale-in,
+	// workOperatorIntents the operator-intent drain (a force park can wait
+	// 90 s on vmmd) and workHeartbeat the node probe (5 s per unanswered
+	// ping). Each held the select loop (ADR 20261104091530).
+	workCronSweep       workKind = "cron_sweep"
+	workRecentLoad      workKind = "recent_load"
+	workOperatorIntents workKind = "operator_intents"
+	workHeartbeat       workKind = "heartbeat"
 	// workInstanceEnforcement runs the stats tick's per-instance actions:
 	// disk-pressure and egress-abuse recycles (app lock plus a destroy) and
 	// CPU saturation captures (ADR 20261104143005).
@@ -124,6 +133,7 @@ var workKinds = []workKind{
 	workTargets, workFloor, workPrewarm, workRetention, workWorkflowRetention, workTriggersRetention,
 	workAppPark, workAppDelete,
 	workInstanceFailure, workJobsReaper, workCronFireNow,
+	workCronSweep, workRecentLoad, workOperatorIntents, workHeartbeat,
 	workInstanceEnforcement,
 }
 
@@ -245,6 +255,17 @@ var workSpecs = map[workKind]workSpec{
 	// One fire-now drain at a time. A run-now that arrives during a drain
 	// asks for one more pass; the minute safety tick covers anything else.
 	workCronFireNow: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	// One cron pass at a time, so the minute's tried set has one writer. A
+	// tick or a resume that arrives during a pass runs once after it.
+	workCronSweep: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	// One scrape at a time; a second that fires during a slow scrape is
+	// dropped and the next second reads the cumulative counters again.
+	workRecentLoad: {slots: 1, overflow: overflowDrop},
+	// Intents run one after another, as before. One that arrives during a
+	// drain asks for one more; the 30 s safety tick covers anything else.
+	workOperatorIntents: {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	// One probe pass at a time; the next 30 s tick probes again.
+	workHeartbeat: {slots: 1, overflow: overflowDrop},
 	// Keyed by action and instance. An action is recorded as taken only when
 	// it succeeds, so a dropped one is submitted again by the next 200 ms
 	// tick that still sees the condition.

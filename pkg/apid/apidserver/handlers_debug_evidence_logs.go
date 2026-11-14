@@ -20,8 +20,8 @@ func (s *server) debugEvidenceLogs(ctx context.Context, accountID, appID string,
 	if request.TraceID == nil || *request.TraceID == "" {
 		return lines, false
 	}
-	received, err := time.Parse(time.RFC3339Nano, request.ReceivedAt)
-	if err != nil {
+	since, until, ok := debugEvidenceLogWindow(request)
+	if !ok {
 		return lines, false
 	}
 	events, more, err := s.store.ListLogEvents(ctx, state.LogEventFilter{
@@ -29,8 +29,8 @@ func (s *server) debugEvidenceLogs(ctx context.Context, accountID, appID string,
 		AppID:     appID,
 		Source:    state.LogEventSourceRuntime,
 		TraceID:   *request.TraceID,
-		Since:     received.Add(-debugger.EvidenceLogWindowBefore),
-		Until:     received.Add(time.Duration(request.LatencyMS)*time.Millisecond + debugger.EvidenceLogWindowAfter),
+		Since:     since,
+		Until:     until,
 		Limit:     debugger.EvidenceLogMaxLines,
 	})
 	if err != nil {
@@ -47,4 +47,61 @@ func (s *server) debugEvidenceLogs(ctx context.Context, accountID, appID string,
 		})
 	}
 	return debugger.EvidenceLogs(inputs), more
+}
+
+// debugEvidenceLogWindow bounds the log read for one request. The gateway
+// stamps a row when the request finishes, so the request started its latency
+// earlier: a stream that ran for ten minutes logged from its start, not from a
+// minute before its end (ADR-127 amendment 2026-11-05).
+func debugEvidenceLogWindow(request api.DebugTelemetryRequestItem) (time.Time, time.Time, bool) {
+	finished, err := time.Parse(time.RFC3339Nano, request.ReceivedAt)
+	if err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	latency := time.Duration(max(request.LatencyMS, 0)) * time.Millisecond
+	return finished.Add(-latency - debugger.EvidenceLogWindowBefore), finished.Add(debugger.EvidenceLogWindowAfter), true
+}
+
+// debugRequestsNotRetainedSettle leaves the newest minutes out of the
+// comparison: a gateway retries a row the ingest cap turned away, so a
+// recent shortfall may still be filled.
+const debugRequestsNotRetainedSettle = 2 * time.Minute
+
+// debugRequestsNotRetained says how many requests in the window the app's
+// request analytics counted but the debugger did not keep, because the
+// plan's per-minute debugger row limit turned them away (ADR-127 amendment
+// 2026-11-05). It compares whole minutes inside the window, so it is a lower
+// bound, and answers nil when analytics do not cover the window or the store
+// cannot tell.
+func (s *server) debugRequestsNotRetained(ctx context.Context, appID string, from, until time.Time) *int64 {
+	counter, ok := s.store.(state.RequestAnalyticsCounter)
+	if !ok {
+		return nil
+	}
+	bucketFrom, bucketUntil, ok := debugRequestsNotRetainedMinutes(from, until)
+	if !ok {
+		return nil
+	}
+	missing, covered, err := counter.RequestsNotRetained(ctx, appID, bucketFrom, bucketUntil)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("debug coverage: requests not retained unavailable", "app_id", appID, "err", err)
+		}
+		return nil
+	}
+	if !covered {
+		return nil
+	}
+	return &missing
+}
+
+// debugRequestsNotRetainedMinutes is the whole, settled minutes inside a
+// window.
+func debugRequestsNotRetainedMinutes(from, until time.Time) (time.Time, time.Time, bool) {
+	bucketFrom := from.Truncate(time.Minute)
+	if bucketFrom.Before(from) {
+		bucketFrom = bucketFrom.Add(time.Minute)
+	}
+	bucketUntil := until.Add(-debugRequestsNotRetainedSettle).Truncate(time.Minute)
+	return bucketFrom, bucketUntil, bucketUntil.After(bucketFrom)
 }

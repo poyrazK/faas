@@ -122,7 +122,7 @@ func readTestPoolSnapshot(ctx context.Context, client *http.Client, baseURL stri
 		return nil, errors.New("invalid pool observation URL")
 	}
 	if spec.As != "" {
-		token := keys[spec.As]
+		token := testHTTPConsumerKey(keys, spec.As)
 		if token == "" {
 			return nil, errors.New("pool observation consumer credential unavailable")
 		}
@@ -213,10 +213,11 @@ func monitorTestPoolExhaustion(ctx context.Context, baseURL string, env []string
 		if ctx.Err() != nil {
 			return samples
 		}
-		if clock.phaseAt(time.Now()) != phase {
+		finished := time.Now()
+		if clock.phaseAt(finished) != phase {
 			continue
 		}
-		sample := testPoolSample{At: at, Phase: phase, Snapshot: snapshot}
+		sample := testPoolSample{At: finished, Phase: phase, Snapshot: snapshot}
 		if err != nil {
 			sample.Error = err.Error()
 		}
@@ -317,10 +318,11 @@ func checkTestPoolAfterDrain(ctx context.Context, baseURL string, env []string, 
 	defer client.CloseIdleConnections()
 	var healthy time.Time
 	for {
-		at := time.Now()
 		pollCtx, stop := context.WithTimeout(drainCtx, 250*time.Millisecond)
 		snapshot, err := readTestPoolSnapshot(pollCtx, client, baseURL, spec, testHTTPConsumerKeys(env))
 		stop()
+		// Health is observed when the response completes, after its HTTP latency.
+		at := time.Now()
 		e.Snapshot = snapshot
 		if err != nil {
 			e.Error = err.Error()
@@ -339,11 +341,11 @@ func checkTestPoolAfterDrain(ctx context.Context, baseURL string, env []string, 
 		} else {
 			healthy = time.Time{}
 		}
-		if !healthy.IsZero() && healthy.Sub(started) <= within && time.Since(healthy) >= sustain {
+		if !healthy.IsZero() && healthy.Sub(started) <= within && at.Sub(healthy) >= sustain {
 			e.Passed = true
 			return e
 		}
-		if time.Since(started) > within && (healthy.IsZero() || healthy.Sub(started) > within) {
+		if at.Sub(started) > within && (healthy.IsZero() || healthy.Sub(started) > within) {
 			e.Error = "pool permits or queued waiters did not drain within the deadline, or required cancellation evidence is missing"
 			return e
 		}

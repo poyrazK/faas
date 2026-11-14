@@ -63,7 +63,7 @@ func instrumentedPool(t *testing.T, addr string) *pgxpool.Pool {
 	}
 	cfg.MaxConns = 1
 	cfg.MinConns = 0
-	instrumentAcquires(cfg)
+	ConfigureTimeouts(cfg)
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("NewWithConfig: %v", err)

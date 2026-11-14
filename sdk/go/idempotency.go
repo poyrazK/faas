@@ -38,6 +38,12 @@ func WithIdempotencyKey(ctx context.Context, key IdempotencyKey) context.Context
 	return context.WithValue(ctx, idempotencyKeyCtxKey{}, key)
 }
 
+// WithoutIdempotencyKey preserves cancellation and deadlines while suppressing
+// an inherited mutation key for an independent read.
+func WithoutIdempotencyKey(ctx context.Context) context.Context {
+	return context.WithValue(ctx, idempotencyKeyCtxKey{}, IdempotencyKey(""))
+}
+
 // idempotencyKeyFromContext extracts the key. Returns "" if absent.
 func idempotencyKeyFromContext(ctx context.Context) IdempotencyKey {
 	v, _ := ctx.Value(idempotencyKeyCtxKey{}).(IdempotencyKey)

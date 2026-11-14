@@ -57,9 +57,9 @@ func (s *server) issueCredit(w http.ResponseWriter, r *http.Request, acct state.
 		api.WriteProblem(w, prob)
 		return
 	}
-	if s.billingProvider == nil || !s.billingProvider.Capabilities().Has(billing.CapRefund) {
+	if s.billingProvider == nil || (s.creditDiscounts == nil && !s.billingProvider.Capabilities().Has(billing.CapRefund)) {
 		api.WriteProblem(w, api.ErrBillingNotImplemented(
-			"credits require a billing provider with idempotent refund support"))
+			"credits require a billing provider with credit discounts or idempotent refund support"))
 		return
 	}
 	targetID := r.PathValue("id")
@@ -124,6 +124,7 @@ func (s *server) issueCredit(w http.ResponseWriter, r *http.Request, acct state.
 		"actor_email": acct.Email,
 		"reason":      logsanitize.Field(req.Reason),
 	})
+	s.syncCreditDiscountAsync(r.Context(), targetID)
 	writeJSON(w, http.StatusCreated, api.AccountCreditResponse{
 		ID:             credit.ID,
 		AccountID:      credit.AccountID,

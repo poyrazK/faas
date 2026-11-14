@@ -85,9 +85,14 @@ func (s *InstallationSyncer) SyncOnce(ctx context.Context) (InstallationSyncSumm
 		s.observe(summary, err)
 		return summary, fmt.Errorf("githubd: list installations: %w", err)
 	}
-	summary.Installations = len(installs)
 	errs := make([]error, 0)
+	seen := make(map[int64]bool)
 	for _, install := range installs {
+		if seen[install.InstallationID] {
+			continue
+		}
+		seen[install.InstallationID] = true
+		summary.Installations++
 		if ctx.Err() != nil {
 			errs = append(errs, ctx.Err())
 			break

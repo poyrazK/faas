@@ -53,6 +53,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -81,6 +86,8 @@ def sync_detailed(
     the next rotation observes the new value. `days=0` is atomic
     rotation (no grace); `days=null` (or omission) clears the
     override and falls back to the plan default.
+    A failed save returns retryable 503 without invalidating the cache
+    or emitting a successful change audit event.
 
     Args:
         body (SetGraceWindowRequest): Body of PATCH /v1/account/keys/grace_window_days. `days` is
@@ -118,6 +125,8 @@ def sync(
     the next rotation observes the new value. `days=0` is atomic
     rotation (no grace); `days=null` (or omission) clears the
     override and falls back to the plan default.
+    A failed save returns retryable 503 without invalidating the cache
+    or emitting a successful change audit event.
 
     Args:
         body (SetGraceWindowRequest): Body of PATCH /v1/account/keys/grace_window_days. `days` is
@@ -150,6 +159,8 @@ async def asyncio_detailed(
     the next rotation observes the new value. `days=0` is atomic
     rotation (no grace); `days=null` (or omission) clears the
     override and falls back to the plan default.
+    A failed save returns retryable 503 without invalidating the cache
+    or emitting a successful change audit event.
 
     Args:
         body (SetGraceWindowRequest): Body of PATCH /v1/account/keys/grace_window_days. `days` is
@@ -185,6 +196,8 @@ async def asyncio(
     the next rotation observes the new value. `days=0` is atomic
     rotation (no grace); `days=null` (or omission) clears the
     override and falls back to the plan default.
+    A failed save returns retryable 503 without invalidating the cache
+    or emitting a successful change audit event.
 
     Args:
         body (SetGraceWindowRequest): Body of PATCH /v1/account/keys/grace_window_days. `days` is

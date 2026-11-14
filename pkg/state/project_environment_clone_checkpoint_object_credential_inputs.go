@@ -25,7 +25,9 @@ type ProjectEnvironmentCloneCheckpointObjectCredentialBucket struct {
 }
 type ProjectEnvironmentCloneCheckpointObjectCredentialSlot struct {
 	SourceCredentialID, Label, Permission, ManagedAppID, TargetScope, ManagedPrefix string
-	SecretKeys                                                                      []string
+	// KeyPrefix keeps the source binding's object key scope (ADR-20261106114500).
+	KeyPrefix  string
+	SecretKeys []string
 }
 type ProjectEnvironmentCloneCheckpointObjectCredentialInputStore interface {
 	ProjectEnvironmentCloneCheckpointObjectCredentialInputs(context.Context, ProjectEnvironmentCloneLease, ProjectEnvironmentCloneCheckpointReleaseObservation) (ProjectEnvironmentCloneCheckpointObjectCredentialInputs, error)
@@ -80,7 +82,7 @@ func checkpointObjectCredentialInputs(op ProjectEnvironmentCloneOperation, views
 					return zero, ErrConflict
 				}
 				credentials[c.ID] = true
-				slot := ProjectEnvironmentCloneCheckpointObjectCredentialSlot{SourceCredentialID: c.ID, Label: c.Label, Permission: c.Permission, ManagedAppID: c.ManagedAppID, ManagedPrefix: c.ManagedPrefix, SecretKeys: []string{}}
+				slot := ProjectEnvironmentCloneCheckpointObjectCredentialSlot{SourceCredentialID: c.ID, Label: c.Label, Permission: c.Permission, ManagedAppID: c.ManagedAppID, ManagedPrefix: c.ManagedPrefix, KeyPrefix: c.KeyPrefix, SecretKeys: []string{}}
 				if c.ManagedAppID == "" {
 					if c.ManagedScope != "" || c.ManagedPrefix != "" {
 						return zero, ErrConflict

@@ -1,0 +1,10 @@
+✔ preflight refuses removal of a key still needed by a retained legacy task (329.706666ms)
+ℹ preflight accepted missing key=false; claim authentication failed=true; retained queue=[{"status":"queued","attempt_count":0},{"status":"queued","attempt_count":0}]; restoring retained key recovers the task=true
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 466.320683

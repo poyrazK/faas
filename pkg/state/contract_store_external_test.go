@@ -20,11 +20,23 @@ type contractTestStore interface {
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
 	state.AccountAbuseHoldStore
+	state.AccountAbuseStrikeStore
 	state.AgentClientStore
 	state.OrgAgentStore
 	state.KeyProjectLimitStore
+	state.AgentApprovalStore
+	state.AgentApprovalNotificationStore
+	state.AgentApprovalChannelStore
+	state.AgentActivityStore
+	state.AgentBudgetStore
+	state.AgentUndoStore
+	state.NotificationChannelStore
+	state.AppPrivateNetworkAttachmentStore
 	state.AppWorkPolicyStore
 	state.ObjectStorageCeilingGrantStore
+	state.ObjectStorageOverCeilingStore
+	state.ComplimentaryAccountStore
+	state.CreditDiscountStore
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
 	state.ComputeNodeReadinessStore
@@ -51,6 +63,8 @@ type contractTestStore interface {
 	state.EventStorageUsageStore
 	state.EventSubscriptionControlStore
 	state.EventSubscriptionStore
+	state.EventSubscriptionScopeStore
+	state.EventEnvironmentStore
 	state.EventSubscriptionReconcileStore
 	state.EventSubscriptionActivationStore
 	state.EventWorkBindingStore
@@ -93,6 +107,9 @@ type contractTestStore interface {
 	state.ObjectBucketWriteFenceStore
 	state.ObjectReadAdmissionStore
 	state.ObjectCapacityStore
+	state.ObjectInventoryBacklogStore
+	state.ObjectInventoryQueueStore
+	state.ObjectInventoryVerificationStore
 	state.ObjectInventoryScanStore
 	state.ObjectMultipartCompletionStore
 	state.ObjectMultipartTransferStore
@@ -134,6 +151,16 @@ type contractTestStore interface {
 	state.ProjectEnvironmentCloneValuesStore
 	state.ProjectEnvironmentCloneWorkerLeaseStore
 	state.ProjectEnvironmentCloneWorkloadStore
+	state.ProjectEnvironmentBranchStore
+	state.ProjectEnvironmentBranchDataStore
+	state.ProjectEnvironmentBranchBucketStore
+	state.ObjectBucketOverlayStore
+	state.EnvironmentBranchDeploymentReader
+	state.EnvironmentBranchCaptureStore
+	state.EnvironmentBranchCaptureObjectStore
+	state.EnvironmentBranchEgressStore
+	state.EnvironmentBranchObjectRelayStore
+	state.EnvironmentBranchSeedStore
 	state.ProjectEnvironmentPromotionFeatureFlagStore
 	state.ProjectEnvironmentPromotionReleaseSetStore
 	state.ProjectEnvironmentPromotionWorkloadSpecStore

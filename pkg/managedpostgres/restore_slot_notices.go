@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -61,6 +62,10 @@ func validRestoreSlotNotice(n RestoreSlotNotice) bool {
 
 // RecordRestoreSlotNotice implements RestoreSlotNoticeStore.
 func (s *PostgresStore) RecordRestoreSlotNotice(ctx context.Context, n RestoreSlotNotice) (bool, error) {
+	return recordPostgresRestoreSlotNotice(ctx, s.catalog, n)
+}
+
+func recordPostgresRestoreSlotNotice(ctx context.Context, catalog sqlc.DBTX, n RestoreSlotNotice) (bool, error) {
 	id, err := postgresUUID(n.DatabaseID)
 	if err != nil || !validRestoreSlotNotice(n) {
 		return false, ErrInvalid
@@ -69,7 +74,7 @@ func (s *PostgresStore) RecordRestoreSlotNotice(ctx context.Context, n RestoreSl
 	if !n.RestorableUntil.IsZero() {
 		restorable = databaseNullableTime(n.RestorableUntil)
 	}
-	recorded, err := new(sqlc.Queries).RecordManagedPostgresRestoreSlotNotice(ctx, s.catalog, sqlc.RecordManagedPostgresRestoreSlotNoticeParams{
+	recorded, err := new(sqlc.Queries).RecordManagedPostgresRestoreSlotNotice(ctx, catalog, sqlc.RecordManagedPostgresRestoreSlotNoticeParams{
 		DatabaseID: id, Kind: n.Kind, SlotUntil: databaseNullableTime(n.SlotUntil), RestorableUntil: restorable,
 		RecordedAt: databaseNullableTime(n.RecordedAt)})
 	if err != nil {
@@ -112,6 +117,10 @@ func (s *MemoryStore) RecordRestoreSlotNotice(_ context.Context, n RestoreSlotNo
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.recordRestoreSlotNoticeLocked(n)
+}
+
+func (s *MemoryStore) recordRestoreSlotNoticeLocked(n RestoreSlotNotice) (bool, error) {
 	if _, ok := s.databases[n.DatabaseID]; !ok {
 		return false, ErrNotFound
 	}
@@ -122,6 +131,18 @@ func (s *MemoryStore) RecordRestoreSlotNotice(_ context.Context, n RestoreSlotNo
 	s.restoreSlotNotices[key] = RestoreSlotNotice{DatabaseID: n.DatabaseID, Kind: n.Kind, SlotUntil: n.SlotUntil.UTC(),
 		RestorableUntil: n.RestorableUntil.UTC(), RecordedAt: n.RecordedAt.UTC()}
 	return true, nil
+}
+
+// An expiry notice belongs to a delete scheduled after the slot ended.
+// PurgeAfter retains the schedule time even when later holds update the row;
+// a customer delete before expiry must not become a slot-expiry email.
+func restoreSlotExpiryNotice(database Database, now time.Time) (RestoreSlotNotice, bool) {
+	if database.State != StateDeleting || database.RestoreSlotUntil.IsZero() || !database.PurgeAfter.After(now) ||
+		database.PurgeAfter.Add(-api.ManagedPostgresDeleteGracePeriod).Before(database.RestoreSlotUntil) {
+		return RestoreSlotNotice{}, false
+	}
+	return RestoreSlotNotice{DatabaseID: database.ID, Kind: RestoreSlotNoticeExpired, SlotUntil: database.RestoreSlotUntil,
+		RestorableUntil: database.PurgeAfter, RecordedAt: now}, true
 }
 
 // UnmailedRestoreSlotNotices implements RestoreSlotNoticeStore.

@@ -111,7 +111,9 @@ func TestProjectDependencyActivationOutboxRecovery(t *testing.T) {
 			}
 			restarted := newHandler()
 			if outcome == "during_smoke" {
-				restarted.WithHostingSmoke(func(ctx context.Context, _ state.App, _ state.Deployment) (apihostingreceipt.SmokeResult, error) {
+				restarted.WithHostingSmoke(func(_ context.Context, _ state.App, _ state.Deployment) (apihostingreceipt.SmokeResult, error) {
+					// Fail the dependency independently of the candidate's guarded
+					// activation context, as another deployment worker would.
 					_, err := store.SetDeploymentFailed(ctx, dependency.ID, api.CodeImageManifestInvalid, "dependency failed during candidate smoke")
 					return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeVerified, Path: "/healthz", StatusCode: http.StatusOK}, err
 				})

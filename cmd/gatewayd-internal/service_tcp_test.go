@@ -272,3 +272,78 @@ func serviceTCPRejected(t *testing.T, metrics *gateway.Metrics, reason string) f
 	}
 	return 0
 }
+
+func TestServiceTCPPinnedPortsResolverRetainedRelease(t *testing.T) {
+	store := state.NewMemStore()
+	ctx := t.Context()
+	acct, err := store.CreateAccount(ctx, "pinned-port@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: acct.ID, Slug: "pinned-ports"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, WorkloadName: "db", Slug: "db", Type: state.AppTypeApp, Runtime: "image", RAMMB: 128, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600, Ports: []api.WorkloadPort{{Name: "stats", Port: 9100}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := state.WorkloadSettingsFromApp(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.PutProjectEnvironmentWorkloadSpec(ctx, acct.ID, project.ID, "production", app.ID, 0, settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending, Scope: "production", OverridePort: 5432})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, old.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, "production", 1800, []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: old.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	// Later desired listeners belong to the new release, not the retained pin.
+	manifest := app.Manifest
+	manifest.Ports = []api.WorkloadPort{{Name: "stats", Port: 9200}}
+	app, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending, Scope: "production", OverridePort: 6379})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, current.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublishProjectReleaseSet(ctx, acct.ID, project.ID, "production", 1800, []state.ProjectReleaseMember{{AppID: app.ID, DeploymentID: current.ID}}); err != nil {
+		t.Fatal(err)
+	}
+	if retained, err := store.DeploymentByID(ctx, old.ID); err != nil || retained.Status != state.DeployLive || retained.TrafficPercent != 0 {
+		t.Fatalf("expected retained release: %+v %v", retained, err)
+	}
+	live, err := store.LiveDeployments(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ports := serviceTCPPorts(app, live); !slices.Equal(ports, []int{6379, 9200}) {
+		t.Fatalf("ordinary ports: %v", ports)
+	}
+	resolve := newServiceTCPPinnedPortsResolver(store)
+	if ports, err := resolve(ctx, app.ID, old.ID); err != nil || !slices.Equal(ports, []int{5432, 9100}) {
+		t.Fatalf("retained ports: %v %v", ports, err)
+	}
+	if _, err := resolve(ctx, "another-app", old.ID); err == nil {
+		t.Fatal("cross-app pin accepted")
+	}
+	if err := store.SetDeploymentParked(ctx, old.ID, string(state.ParkReasonSecurityScanRegressed), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolve(ctx, app.ID, old.ID); !errors.Is(err, gateway.ErrServiceTCPTargetUnavailable) {
+		t.Fatalf("quarantined pin accepted: %v", err)
+	}
+}

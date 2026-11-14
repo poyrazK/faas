@@ -204,6 +204,88 @@ func validateDistinctTestReportPaths(paths ...string) error {
 	return nil
 }
 
+func validateTestReportInputs(inputs []string, outputs ...string) error {
+	if err := validateDistinctTestReportPaths(outputs...); err != nil {
+		return err
+	}
+	for _, output := range outputs {
+		for _, input := range inputs {
+			aliases, err := testReportPathAliases(output, input)
+			if err != nil {
+				return fmt.Errorf("resolve report input path: %w", err)
+			}
+			if aliases {
+				return fmt.Errorf("report output %q would overwrite test input %q", output, input)
+			}
+		}
+	}
+	return validateTestReportDestinations(outputs...)
+}
+
+func testScenarioInputPaths(scenario testScenario, manifestDir string) []string {
+	source := scenario.Source
+	if !filepath.IsAbs(source) {
+		source = filepath.Join(manifestDir, source)
+	}
+	var files []string
+	if scenario.Behavior != nil {
+		files = append(files, scenario.Behavior.Fixtures...)
+		files = append(files, scenario.Behavior.Observers...)
+	}
+	if scenario.ObjectsFixture != nil {
+		for _, fixture := range scenario.ObjectsFixture.Fixtures {
+			files = append(files, fixture.File)
+		}
+	}
+	if scenario.PostgresFixture != nil {
+		files = append(files, scenario.PostgresFixture.Fixture)
+	}
+	for i, file := range files {
+		files[i] = filepath.Join(source, filepath.FromSlash(file))
+	}
+	return files
+}
+
+// Probe without truncating existing reports or leaving new destination files.
+// Final writes still handle errors, since a destination can change during a run.
+func validateTestReportDestinations(paths ...string) error {
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		info, err := os.Stat(path)
+		if err == nil {
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("report output %q must be a regular file", path)
+			}
+			file, err := os.OpenFile(path, os.O_WRONLY, 0o600)
+			if err == nil {
+				err = file.Close()
+			}
+			if err != nil {
+				return fmt.Errorf("open report output %q: %w", path, err)
+			}
+			continue
+		}
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect report output %q: %w", path, err)
+		}
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("report output %q points to an unavailable file", path)
+		}
+		probe, err := os.CreateTemp(filepath.Dir(path), ".gregale-report-check-*")
+		if err != nil {
+			return fmt.Errorf("check report output %q: %w", path, err)
+		}
+		closeErr := probe.Close()
+		removeErr := os.Remove(probe.Name())
+		if err := errors.Join(closeErr, removeErr); err != nil {
+			return fmt.Errorf("check report output %q: %w", path, err)
+		}
+	}
+	return nil
+}
+
 func testReportPathAliases(path, other string) (bool, error) {
 	if path == "" || other == "" {
 		return false, nil

@@ -58,7 +58,7 @@ func (q *Queries) ServiceWakeAheadEnabled(ctx context.Context, db DBTX, appID pg
 const serviceWakeAheadFleetResidency = `-- name: ServiceWakeAheadFleetResidency :one
 SELECT
     COALESCE((SELECT SUM(ram_mb + $1::integer) FROM instances
-              WHERE state IN ('waking', 'cold_booting', 'running', 'draining', 'warm')), 0)::bigint AS resident_mb,
+              WHERE state IN ('waking', 'cold_booting', 'running', 'draining', 'warm', 'snapshotting')), 0)::bigint AS resident_mb,
     COALESCE((SELECT SUM(admission_ceiling_mb) FROM compute_nodes WHERE active), 0)::bigint AS ceiling_mb
 `
 

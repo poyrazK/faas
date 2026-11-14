@@ -61,7 +61,7 @@ func authenticationHint() string {
 // older than the server, or a feature not released to the account
 // (ADR-20261023115741).
 func missingRouteHint() string {
-	return "This gregale (" + wire.Version + ") may be newer or older than the server, or the feature is not enabled for your account. Check the CLI release with gregale version; curl -fsSL https://get.gregale.dev | sh installs the current one."
+	return "This gregale (" + wire.Version + ") may be newer or older than the server, or the feature is not enabled for your account. Check the CLI release with gregale version; gregale update installs the current one."
 }
 
 // Supply fallbacks without replacing server-specific remediation or codes.
@@ -103,7 +103,19 @@ func diagnosticProblem(p api.Problem) api.Problem {
 
 // Walk all string fields, including nested validation/binding findings. The
 // round trip copies the report, leaving the SDK's original Problem untouched.
-func redactProblem(p api.Problem) api.Problem {
+func redactProblem(p api.Problem) (safe api.Problem) {
+	redact := errorTextRedactor()
+	id := problemRequestID(p)
+	if id != "" && redact(id) != id {
+		id = ""
+	}
+	// The JSON copy intentionally drops private client metadata. Preserve
+	// only the validated, non-secret correlation ID, including on fallback.
+	defer func() {
+		if id != "" {
+			safe = *safe.WithRequestID(id)
+		}
+	}()
 	data, err := json.Marshal(p)
 	if err != nil {
 		return api.Problem{Status: p.Status, Code: p.Code, Title: "Request failed"}
@@ -114,7 +126,6 @@ func redactProblem(p api.Problem) api.Problem {
 	if decoder.Decode(&value) != nil {
 		return api.Problem{Status: p.Status, Code: p.Code, Title: "Request failed"}
 	}
-	redact := errorTextRedactor()
 	var walk func(any) any
 	walk = func(v any) any {
 		switch node := v.(type) {
@@ -135,11 +146,24 @@ func redactProblem(p api.Problem) api.Problem {
 	if err != nil {
 		return api.Problem{Status: p.Status, Code: p.Code, Title: "Request failed"}
 	}
-	var safe api.Problem
 	if json.Unmarshal(data, &safe) != nil {
 		return api.Problem{Status: p.Status, Code: p.Code, Title: "Request failed"}
 	}
 	return safe
+}
+
+func problemRequestID(p api.Problem) string {
+	return p.RequestID()
+}
+
+// JSON writers can also receive locally assembled problems without passing
+// through diagnosticProblem. Validate and apply credential redaction here too.
+func safeProblemRequestID(p api.Problem) string {
+	id := problemRequestID(p)
+	if id != "" && redactErrorText(id) != id {
+		return ""
+	}
+	return id
 }
 
 // authorizationRefusal reports whether a 403 is about who is asking. Plan

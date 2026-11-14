@@ -95,6 +95,37 @@ func deploySessionDir(c *Client) (string, error) {
 	return filepath.Join(base, "gregale", "deploys", deployConnection(c)), nil
 }
 
+// preflightDeploySessionStorage proves the deploy-session directory is
+// writable before a deploy changes anything remotely. The session was first
+// written after the app was created, so a read-only state directory left a
+// new app behind with "Could not save deploy session" and no word on whether
+// to retry or pick another name (CLI journey 2026-11-05, #6625).
+func preflightDeploySessionStorage(c *Client) error {
+	dir, err := deploySessionDir(c)
+	if err == nil {
+		err = os.MkdirAll(dir, 0o700)
+	}
+	if err == nil {
+		var probe *os.File
+		if probe, err = os.CreateTemp(dir, ".preflight-*"); err == nil {
+			name := probe.Name()
+			_ = probe.Close()
+			_ = os.Remove(name)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("the local deploy-session directory is not writable (%w); nothing was created or deployed. Set XDG_STATE_HOME to a writable directory and run the command again", err)
+	}
+	return nil
+}
+
+// appExistsNothingDeployed tells the customer what a failure after app
+// creation left behind: the app exists, nothing was deployed, and the same
+// command reuses the app rather than creating another.
+func appExistsNothingDeployed(slug string, err error) error {
+	return fmt.Errorf("%w; app %s exists but nothing was deployed. Fix the error and run the same command again: it reuses %s", err, slug, slug)
+}
+
 func validDeploySessionID(id string) bool {
 	decoded, err := hex.DecodeString(id)
 	return err == nil && len(decoded) == 16 && strings.ToLower(id) == id

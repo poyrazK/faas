@@ -33,6 +33,9 @@ func TestGCSVersionListingCapturedNativeEncoding(t *testing.T) {
 		if page.Items[i].Key != key || page.Items[i].ProviderVersionID != id || page.Items[i].IsLatest != (i == 1) {
 			t.Fatal("native generation identity changed", page.Items[i])
 		}
+		if page.Items[i].NoncurrentSince.IsZero() != (i == 1) {
+			t.Fatal("native archival timestamp was lost", page.Items[i])
+		}
 	}
 }
 

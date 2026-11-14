@@ -48,3 +48,30 @@ func TestPostReleaseDecisionValidates(t *testing.T) {
 		t.Fatalf("decision = %+v", d)
 	}
 }
+
+// Hunt 32 H32-33: a whole-app p95 regression driven by a route the
+// predecessor never served does not roll back; the shared routes decide, and
+// only with enough requests on both sides.
+func TestConfirmPostReleaseLatency(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		release     canary.HealthWindow
+		predecessor canary.HealthWindow
+		want        bool
+	}{
+		{"shared routes as fast as before", canary.HealthWindow{Requests: 31, P95LatencyMS: 45}, canary.HealthWindow{Requests: 400, P95LatencyMS: 40}, false},
+		{"shared routes slower", canary.HealthWindow{Requests: 31, P95LatencyMS: 800}, canary.HealthWindow{Requests: 400, P95LatencyMS: 40}, true},
+		{"too few shared release requests", canary.HealthWindow{Requests: 19, P95LatencyMS: 800}, canary.HealthWindow{Requests: 400, P95LatencyMS: 40}, false},
+		{"no shared routes", canary.HealthWindow{}, canary.HealthWindow{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rule, reason, regressed := ConfirmPostReleaseLatency(tc.release, tc.predecessor)
+			if regressed != tc.want {
+				t.Fatalf("regressed = %v (%s %q), want %v", regressed, rule, reason, tc.want)
+			}
+			if regressed && (rule != api.RolloutRuleAbortPostReleaseP95 || reason == "") {
+				t.Fatalf("confirmed regression = %s %q, want the post-release p95 rule with a reason", rule, reason)
+			}
+		})
+	}
+}

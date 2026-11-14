@@ -126,6 +126,9 @@ func (s *Service) ruleForUpdate(ctx context.Context, acct state.Account, id stri
 	if err != nil || row.AccountID != acct.ID {
 		return state.EdgeRule{}, notFound
 	}
+	if prob := s.StoredRuleReachProblem(ctx, row); prob != nil {
+		return state.EdgeRule{}, prob
+	}
 	if row.AttackMode() {
 		return state.EdgeRule{}, api.ErrEdgeRuleConflict("this is the app's attack-mode rule; extend it or switch it off with " +
 			"PUT or DELETE /v1/apps/{slug}/edge-protection/attack-mode (gregale edge-rules attack-mode)")
@@ -192,6 +195,10 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if !ok {
 		return m, api.ErrCapacity("plan limits not loaded")
 	}
+	action := withPenalty(ActionFromBody(req.Kind, req.Action), req.Penalty)
+	if prob := s.sealHeaderSecrets(ctx, app, &action, nil); prob != nil {
+		return m, prob
+	}
 	convergence, err := s.PrepareEdgeRuleMutation(ctx, app.ID, "", "created", req.MatchHost)
 	if err != nil {
 		return m, api.ErrCapacity("edge-rule fleet convergence is unavailable; no rule was created")
@@ -214,7 +221,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		Priority:     priority,
 		Enabled:      enabled,
 		Kind:         state.EdgeRuleKind(req.Kind),
-		Action:       withPenalty(ActionFromBody(req.Kind, req.Action), req.Penalty),
+		Action:       action,
 		CorsPresetID: presetID,
 		// ValidateMode (ADR-128 D1): the top-level wire
 		// field is the source of truth for kind=validate.
@@ -278,6 +285,21 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 
 func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.EdgeRule, req api.UpdateEdgeRuleRequest, check precondition) (ruleMutation, *api.Problem) {
 	var m ruleMutation
+	unlock, err := s.LockEdgeRuleMutations(ctx, []string{row.AppID})
+	if err != nil {
+		return m, api.ErrCapacity("edge-rule mutation lock is unavailable; the rule was not updated")
+	}
+	defer unlock(context.WithoutCancel(ctx))
+	// The row read by the caller identifies the lock only. Re-read before
+	// authorizing or computing invalidation hosts, since another edit may
+	// have moved the rule while this request waited for the lock.
+	row, prob := s.ruleForUpdate(ctx, acct, row.ID)
+	if prob != nil {
+		return m, prob
+	}
+	if prob := s.appBoundUpdateHostProblem(ctx, row.AppID, row.MatchHost); prob != nil {
+		return m, prob
+	}
 	// Validate the optional fields if present.
 	if req.MatchHost != nil {
 		if prob := api.ValidateEdgeRuleMatchHost(*req.MatchHost); prob != nil {
@@ -292,6 +314,9 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 			return m, api.ErrValidation("match_path must start with '/' and be ≤ 2048 chars")
 		}
 		if prob := TemplatedMatchPathProblem(*req.MatchPath); prob != nil {
+			return m, prob
+		}
+		if prob := api.ValidateEdgeRuleMatchPath(*req.MatchPath); prob != nil {
 			return m, prob
 		}
 	}
@@ -419,7 +444,17 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 	if req.MatchHost != nil {
 		hosts = append(hosts, *req.MatchHost)
 	}
-	convergence, err := s.PrepareEdgeRuleMutation(ctx, row.AppID, row.ID, "updated", hosts...)
+	params := penaltyUpdateParams(row, req, edgeRuleUpdateParamsFrom(req, row.Kind))
+	if params.Action != nil {
+		app, appErr := s.Host.Store().AppByID(ctx, row.AppID)
+		if appErr != nil {
+			return m, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
+		}
+		if prob := s.sealHeaderSecrets(ctx, app, params.Action, &row); prob != nil {
+			return m, prob
+		}
+	}
+	convergence, err := s.PrepareEdgeRuleMutationLocked(ctx, row.AppID, row.ID, "updated", unlock, hosts...)
 	if err != nil {
 		return m, api.ErrCapacity("edge-rule fleet convergence is unavailable; the rule was not updated")
 	}
@@ -431,7 +466,7 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 			return m, checkProb
 		}
 	}
-	updated, err := s.Host.Store().UpdateEdgeRule(ctx, row.ID, penaltyUpdateParams(row, req, edgeRuleUpdateParamsFrom(req, row.Kind)))
+	updated, err := s.Host.Store().UpdateEdgeRule(ctx, row.ID, params)
 	if err != nil {
 		convergence.Abort(ctx)
 		if errors.Is(err, state.ErrNotFound) {

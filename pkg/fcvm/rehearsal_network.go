@@ -49,9 +49,13 @@ func (m *Manager) InstanceExternalActionIdentity(ctx context.Context, instance s
 		return "", "", errors.New("external action instance is not live")
 	}
 	appID, accountID, contained, qualification := inst.AppID, inst.AccountID, inst.Net.RehearsalRunID != "", inst.QualificationOnly
+	branchContained := inst.Net.EnvironmentBranchContained
 	m.mu.Unlock()
 	if contained {
 		return "", "", ErrRehearsalExternalActionDenied
+	}
+	if branchContained {
+		return "", "", ErrEnvironmentBranchExternalActionDenied
 	}
 	if qualification {
 		return "", "", ErrQualificationExternalActionDenied
@@ -80,6 +84,9 @@ func (m *Manager) bootingExternalActionIdentity(ctx context.Context, instance st
 	}
 	if booting.contained {
 		return "", "", ErrRehearsalExternalActionDenied
+	}
+	if booting.branchContained {
+		return "", "", ErrEnvironmentBranchExternalActionDenied
 	}
 	if booting.qualification {
 		return "", "", ErrQualificationExternalActionDenied
@@ -200,7 +207,7 @@ func (m *Manager) ensureRehearsalNetwork(ctx context.Context, inst *Instance) er
 		}
 		return m.runNftCommands(scope, nc.Netns, nc.RehearsalNftCommands())
 	}
-	return nil
+	return m.ensureEnvironmentBranchNetwork(ctx, inst)
 }
 
 func (m *Manager) resumeWithRehearsalNetwork(ctx context.Context, inst *Instance) error {

@@ -69,10 +69,14 @@ func newDeployRecovery(stage, slug, deploymentID, key string, timeout time.Durat
 	return r
 }
 
+// failedDeploymentRecovery points at the failed deployment's build/deploy log.
+// It has no --explain: a deployment that never served prints the same log and
+// failure reason without it, and --explain is refused under --json, which the
+// starter AGENTS.md puts before every command (#6635).
 func failedDeploymentRecovery(slug string, dep api.DeploymentResponse) *deployRecovery {
 	r := newDeployRecovery("deployment", slug, dep.ID, "", 0, false)
 	r.ResumeCommand = ""
-	r.NextCommand = recoveryCLI() + " logs " + recoveryArgument(slug) + " --deployment " + recoveryArgument(dep.ID) + " --explain"
+	r.NextCommand = recoveryCLI() + " logs " + recoveryArgument(slug) + " --deployment " + recoveryArgument(dep.ID)
 	r.Hint = "The deployment reached a failed terminal state. Read its evidence before submitting a corrected deployment."
 	return r
 }

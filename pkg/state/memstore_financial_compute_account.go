@@ -75,13 +75,17 @@ func (t *memFinancialComputeTxn) accountReady() bool {
 			}
 		}
 	}
+	// An account cap covers what the account pays for: organization-paid
+	// apps need not be quiet (ADR-20261107160000).
 	for _, i := range m.instances {
-		if (m.apps[i.AppID].AccountID == t.account || m.jobs[i.JobID].AccountID == t.account) && State(i.State).CountsForRAM() {
+		app := m.apps[i.AppID]
+		if (app.AccountID == t.account && !m.computeOrgPaidLocked(app) || m.jobs[i.JobID].AccountID == t.account) && State(i.State).CountsForRAM() {
 			return false
 		}
 	}
 	for _, task := range m.appTasks {
-		if m.apps[task.AppID].AccountID == t.account && (task.Status == "running" || task.Status == "restoring") {
+		app := m.apps[task.AppID]
+		if app.AccountID == t.account && !m.computeOrgPaidLocked(app) && (task.Status == "running" || task.Status == "restoring") {
 			return false
 		}
 	}
@@ -106,6 +110,7 @@ func (t *memFinancialComputeTxn) initializeAccount() error {
 	}
 	month := financial.ComputeMonth(t.now)
 	b, err := t.book("", month)
+	newBook := errors.Is(err, ErrNotFound)
 	if errors.Is(err, ErrNotFound) {
 		b = financial.ComputeBook{AccountID: t.account, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0)}
 	} else if err != nil {
@@ -137,7 +142,11 @@ func (t *memFinancialComputeTxn) initializeAccount() error {
 		quantity += e.Quantity
 	}
 	b.QuantityCommitted = max(b.QuantityCommitted, quantity)
-	b.AllowanceGranted = max(b.AllowanceGranted, grant)
+	if newBook {
+		b.AllowanceGranted = grant
+	} else {
+		b.AllowanceGranted = min(b.AllowanceGranted, grant)
+	}
 	if err := computeAccountReprice(&b); err != nil {
 		return err
 	}

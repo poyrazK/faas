@@ -50,13 +50,27 @@ func (p *Provider) IssueLiveLogin(ctx context.Context, request managedpostgres.L
 	if request.Publication == "" {
 		return managedpostgres.LiveLogin{}, managedpostgres.ErrInvalid
 	}
+	legacy, err := p.liveLegacyRole(request)
+	if err != nil {
+		return managedpostgres.LiveLogin{}, err
+	}
 	owner, role, err := p.liveOwner(ctx, request.ProviderResourceID)
 	if err != nil {
 		return managedpostgres.LiveLogin{}, err
 	}
+	if legacy != nil {
+		role.liveLegacyScope = legacy.scope
+	}
 	password, err := p.liveLoginManager().Issue(ctx, owner, role, request.Publication)
 	if err != nil {
 		return managedpostgres.LiveLogin{}, credentialSQLError(err)
+	}
+	if legacy != nil {
+		// Keep the slot and its WAL position while replacing the old login.
+		// The catalog stores the replacement under its existing recovery lock.
+		if err := p.liveLoginManager().Revoke(ctx, owner, *legacy, ""); err != nil {
+			return managedpostgres.LiveLogin{}, credentialSQLError(err)
+		}
 	}
 	login := liveLogin(role)
 	// A replication connection needs the compute itself, not the pooler.
@@ -67,7 +81,9 @@ func (p *Provider) IssueLiveLogin(ctx context.Context, request managedpostgres.L
 		}
 	}
 	material := managedpostgres.CredentialMaterial{ProviderIdentityID: login.name, Username: login.name, Password: password,
-		Database: owner.Database, TLSMode: owner.TLSMode, Endpoints: direct}
+		// livequeryd is the platform's own client, so it verifies the
+		// endpoint's certificate whatever sslmode Neon's URI suggests.
+		Database: owner.Database, TLSMode: platformTLSMode, Endpoints: direct}
 	ref, _ := parseResourceRef(request.ProviderResourceID)
 	return managedpostgres.LiveLogin{CredentialMaterial: material, Awake: neonAwake(ref.projectID, direct)}, nil
 }
@@ -88,6 +104,10 @@ func neonAwake(projectID string, endpoints []managedpostgres.Endpoint) string {
 
 // RevokeLiveLogin implements managedpostgres.LiveLoginIssuer.
 func (p *Provider) RevokeLiveLogin(ctx context.Context, request managedpostgres.LiveLoginRequest) error {
+	legacy, err := p.liveLegacyRole(request)
+	if err != nil {
+		return err
+	}
 	owner, role, err := p.liveOwner(ctx, request.ProviderResourceID)
 	if errors.Is(err, managedpostgres.ErrNotFound) {
 		return nil
@@ -95,7 +115,27 @@ func (p *Provider) RevokeLiveLogin(ctx context.Context, request managedpostgres.
 	if err != nil {
 		return err
 	}
+	if legacy != nil {
+		// Stop both possible walsenders before dropping their shared slot.
+		if err := p.liveLoginManager().Revoke(ctx, owner, role, ""); err != nil {
+			return credentialSQLError(err)
+		}
+		return credentialSQLError(p.liveLoginManager().Revoke(ctx, owner, *legacy, request.Slot))
+	}
 	return credentialSQLError(p.liveLoginManager().Revoke(ctx, owner, role, request.Slot))
+}
+
+func (p *Provider) liveLegacyRole(request managedpostgres.LiveLoginRequest) (*credentialRole, error) {
+	if request.LegacyResourceID == "" {
+		return nil, nil
+	}
+	target, err := parseResourceRef(request.ProviderResourceID)
+	legacy, legacyErr := parseResourceRef(request.LegacyResourceID)
+	if err != nil || legacyErr != nil || target.branchID == "" || legacy.branchID != "" || target.projectID != legacy.projectID {
+		return nil, managedpostgres.ErrInvalid
+	}
+	role := p.credentialRole(managedpostgres.CredentialRequest{ProviderResourceID: request.LegacyResourceID, Access: managedpostgres.CredentialReadOnly})
+	return &role, nil
 }
 
 func (p *Provider) liveLoginManager() liveLoginManager {
@@ -258,9 +298,14 @@ func (m *sqlLiveLogins) Revoke(ctx context.Context, owner managedpostgres.Creden
 // bindingMarkers are the markers of the binding logins a live query may read
 // as in role's database.
 func bindingMarkers(role credentialRole) []string {
-	out := make([]string, 0, 3)
-	for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadOnly, managedpostgres.CredentialReadWrite, managedpostgres.CredentialDataAPI} {
-		out = append(out, "gregale:credential:v1:"+role.scope+":"+string(access))
+	out := make([]string, 0, 8)
+	for _, scope := range []string{role.scope, role.liveLegacyScope} {
+		if scope == "" {
+			continue
+		}
+		for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadOnly, managedpostgres.CredentialReadWrite, managedpostgres.CredentialDataAPI, managedpostgres.CredentialSession} {
+			out = append(out, "gregale:credential:v1:"+scope+":"+string(access))
+		}
 	}
 	return out
 }

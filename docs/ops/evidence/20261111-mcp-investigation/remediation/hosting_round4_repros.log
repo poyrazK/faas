@@ -1,0 +1,20 @@
+=== RUN   TestInvestigationSchemaLiteralDataDoesNotHideTools
+=== RUN   TestInvestigationSchemaLiteralDataDoesNotHideTools/default
+=== RUN   TestInvestigationSchemaLiteralDataDoesNotHideTools/examples
+=== RUN   TestInvestigationSchemaLiteralDataDoesNotHideTools/const
+=== RUN   TestInvestigationSchemaLiteralDataDoesNotHideTools/enum
+--- PASS: TestInvestigationSchemaLiteralDataDoesNotHideTools (0.01s)
+    --- PASS: TestInvestigationSchemaLiteralDataDoesNotHideTools/default (0.00s)
+    --- PASS: TestInvestigationSchemaLiteralDataDoesNotHideTools/examples (0.00s)
+    --- PASS: TestInvestigationSchemaLiteralDataDoesNotHideTools/const (0.00s)
+    --- PASS: TestInvestigationSchemaLiteralDataDoesNotHideTools/enum (0.00s)
+=== RUN   TestInvestigationCatalogAcceptsStandardMetadata
+=== RUN   TestInvestigationCatalogAcceptsStandardMetadata/resource
+=== RUN   TestInvestigationCatalogAcceptsStandardMetadata/template
+=== RUN   TestInvestigationCatalogAcceptsStandardMetadata/prompt
+--- PASS: TestInvestigationCatalogAcceptsStandardMetadata (0.01s)
+    --- PASS: TestInvestigationCatalogAcceptsStandardMetadata/resource (0.01s)
+    --- PASS: TestInvestigationCatalogAcceptsStandardMetadata/template (0.01s)
+    --- PASS: TestInvestigationCatalogAcceptsStandardMetadata/prompt (0.00s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/mcphosting	0.396s

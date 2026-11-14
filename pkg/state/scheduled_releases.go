@@ -41,9 +41,16 @@ type ScheduledRelease struct {
 	OutcomeCode       string
 	OutcomeDetail     string
 	ScheduledBy       string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	StartedAt         *time.Time
+	// ScheduledByAccountID and ScheduledByKeyID name who scheduled the
+	// release: the acting account and, for an API key, the key. The worker
+	// checks at release_at that they may still deploy the app (and lift the
+	// freezes the schedule overrides). Empty on schedules recorded before
+	// the check existed, which start without it.
+	ScheduledByAccountID string
+	ScheduledByKeyID     string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	StartedAt            *time.Time
 	// Revision is the release's deployment revision, read with the schedule.
 	Revision int
 }
@@ -80,6 +87,8 @@ type ScheduledReleaseStore interface {
 	ListScheduledReleases(ctx context.Context, accountID, appID string, limit int) ([]ScheduledRelease, error)
 	// DueScheduledReleases lists pending schedules due at now, oldest first.
 	DueScheduledReleases(ctx context.Context, now time.Time, limit int) ([]ScheduledRelease, error)
+	// DueScheduledReleasesPage resumes after cursor, excluding the cursor row.
+	DueScheduledReleasesPage(ctx context.Context, now time.Time, limit int, cursor ReleaseScanCursor) ([]ScheduledRelease, error)
 	// FinishScheduledRelease ends a pending schedule without starting it
 	// (ErrNotFound when it is no longer pending).
 	FinishScheduledRelease(ctx context.Context, id, state, code, detail string, now time.Time) (ScheduledRelease, error)
@@ -252,12 +261,22 @@ func (m *MemStore) ListScheduledReleases(_ context.Context, accountID, appID str
 	return out, nil
 }
 
-func (m *MemStore) DueScheduledReleases(_ context.Context, now time.Time, limit int) ([]ScheduledRelease, error) {
+func (m *MemStore) DueScheduledReleases(ctx context.Context, now time.Time, limit int) ([]ScheduledRelease, error) {
+	return m.DueScheduledReleasesPage(ctx, now, limit, ReleaseScanCursor{})
+}
+
+func (m *MemStore) DueScheduledReleasesPage(_ context.Context, now time.Time, limit int, cursor ReleaseScanCursor) ([]ScheduledRelease, error) {
+	if _, _, err := cursor.parameters(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []ScheduledRelease
 	for _, s := range m.scheduledReleases {
-		if s.State == ScheduledReleasePending && !s.ReleaseAt.After(now) {
+		if s.State == ScheduledReleasePending && !s.ReleaseAt.After(now) && cursor.includes(s.ReleaseAt, s.ID) {
 			out = append(out, m.withRevisionLocked(s))
 		}
 	}

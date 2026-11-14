@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ObjectStorageCharge } from './ObjectStorageCharge.js';
+import type { ObjectStorageOverCeilingDeletion } from './ObjectStorageOverCeilingDeletion.js';
 import type { ObjectStoragePolicy } from './ObjectStoragePolicy.js';
 import type { ObjectStorageUsage } from './ObjectStorageUsage.js';
 /**
@@ -20,5 +21,6 @@ export type ObjectStorageUsageResponse = {
    * UTC month boundary at which shadow/live handling starts. Periods before it are never charged.
    */
   billing_from?: string;
+  over_ceiling?: ObjectStorageOverCeilingDeletion;
 };
 

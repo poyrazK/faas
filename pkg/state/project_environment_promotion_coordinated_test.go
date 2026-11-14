@@ -71,8 +71,9 @@ func completeCoordinatedMigration(t *testing.T, f *promotionSnapshotFixture) {
 	requirePromotionSnapshot(t, err)
 	_, err = f.store.(PromotionMigrationRuntimeStore).RegisterPromotionMigrationRuntime(ctx, task, node.ID)
 	requirePromotionSnapshot(t, err)
-	_, err = tasks.MarkAppTaskRunning(ctx, task.ID, *task.LeaseToken, at.Add(time.Millisecond))
+	task, err = tasks.MarkAppTaskRunning(ctx, task.ID, *task.LeaseToken, at.Add(time.Millisecond))
 	requirePromotionSnapshot(t, err)
+	at = task.UpdatedAt
 	exit := 0
 	_, err = tasks.CompleteAppTask(ctx, CompleteAppTaskParams{ID: task.ID, LeaseToken: *task.LeaseToken, Status: AppTaskSucceeded, ExitCode: &exit, FinishedAt: at.Add(2 * time.Millisecond)})
 	requirePromotionSnapshot(t, err)

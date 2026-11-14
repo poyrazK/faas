@@ -67,3 +67,24 @@ reviewed release actions. An agent can't find any of it on its own:
   2 GB.
 - **A plugin with `--allow-writes` on by default:** release actions should be
   an explicit choice per user, as ADR-1238 requires for writes.
+
+## Amendment 1 (2026-11-06): the plugin uses the hosted server
+
+Decision 3 and the plugin consequence above describe the plugin before
+ADR-20261026195952. Since #5697 and #6437, `.mcp.json` names only
+`https://api.gregale.dev/mcp` over HTTP. The person signs in once in the
+browser and chooses there what the agent may do, which tools it gets and
+which apps it may use; the plugin runs nothing locally and holds no
+credential. Writes need that consent rather than `--allow-writes`.
+
+The hosted sign-in defaults to the `core` toolset (ADR-20261026152009). A
+skill may name a tool outside `core` only in a list item or paragraph that
+also gives the `gregale` CLI command for the same answer, so the skill works
+on a default connection. The deploy skill verifies with `gregale invoke`, because
+`app_url` answers 401 for a new app on paid plans.
+
+Decision 4 now reads: `cmd/gregale/claude_plugin_test.go` checks that
+`.mcp.json` names only the hosted server, that every `gregale` command and
+subcommand in the page, the AGENTS.md template and the skills is a customer
+command, that every `gregale_*` tool they name is registered, and that every
+non-`core` tool a skill names has a CLI fallback in the same item.

@@ -140,7 +140,7 @@ func ResolveImageRunCommand(imageEntrypoint, imageCmd []string, entrypoint, args
 func ErrImageRunCacheFull(plan Plan, limit, observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeImageRunCacheFull,
 		"Image run cache full",
-		fmt.Sprintf("the %s plan caches %d images for image runs and all %d have queued or running work; wait for a run to finish or delete a runner job.",
+		fmt.Sprintf("the %s plan caches %d images for image runs and all %d have queued or running work or a live sandbox session; wait for a run or session to finish or delete a runner job.",
 			plan, limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#jobs")

@@ -1,6 +1,6 @@
 package preview
 
-import "github.com/poyrazK/faas/sdk/go/internal/api"
+import "github.com/gregale-dev/gregale-go/internal/api"
 
 // Dev Bridge is an operator-gated development capability. Creation returns
 // secrets once; callers must not log or persist them.

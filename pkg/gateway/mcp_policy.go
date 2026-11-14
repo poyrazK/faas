@@ -179,7 +179,7 @@ func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	var envelope map[string]json.RawMessage
-	if json.Unmarshal(body, &envelope) != nil {
+	if json.Unmarshal(body, &envelope) != nil || !mcpPolicyFieldsUnambiguous(body, "method", "params") {
 		return http.StatusBadRequest, "A single JSON-RPC method is required"
 	}
 	readString := func(fields map[string]json.RawMessage, key string) string {
@@ -195,6 +195,20 @@ func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string
 	if raw := envelope["params"]; len(raw) != 0 && json.Unmarshal(raw, &params) != nil {
 		return http.StatusBadRequest, "MCP params must be an object"
 	}
+	var fields []string
+	switch method {
+	case "tools/call", "prompts/get":
+		fields = []string{"name"}
+	case "resources/read", "resources/subscribe", "resources/unsubscribe":
+		fields = []string{"uri"}
+	case "completion/complete":
+		fields = []string{"ref"}
+	case "subscriptions/listen":
+		fields = []string{"notifications"}
+	}
+	if len(fields) > 0 && len(envelope["params"]) > 0 && !mcpPolicyFieldsUnambiguous(envelope["params"], fields...) {
+		return http.StatusBadRequest, "Ambiguous MCP request parameters"
+	}
 	allowed := true
 	switch method {
 	case "tools/call":
@@ -205,6 +219,9 @@ func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string
 		allowed = api.MCPResourceAllowed(p.ResourceScopes, readString(params, "uri"), scopes)
 	case "completion/complete":
 		var ref map[string]json.RawMessage
+		if len(params["ref"]) > 0 && !mcpPolicyFieldsUnambiguous(params["ref"], "type", "name", "uri") {
+			return http.StatusBadRequest, "Ambiguous MCP completion reference"
+		}
 		_ = json.Unmarshal(params["ref"], &ref)
 		if readString(ref, "type") == "ref/prompt" {
 			allowed = api.MCPEntryAllowed(p.PromptScopes, readString(ref, "name"), scopes)
@@ -213,7 +230,7 @@ func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string
 		}
 	case "subscriptions/listen":
 		var notifications map[string]json.RawMessage
-		if json.Unmarshal(params["notifications"], &notifications) != nil {
+		if json.Unmarshal(params["notifications"], &notifications) != nil || !mcpPolicyFieldsUnambiguous(params["notifications"], "resourceSubscriptions") {
 			return http.StatusBadRequest, "Invalid subscription filters"
 		}
 		var resources []string
@@ -228,4 +245,47 @@ func mcpPolicyRequest(r *http.Request, p *api.MCPResourcePolicy, scopes []string
 		return http.StatusForbidden, "Catalog entry is unavailable to this caller"
 	}
 	return 0, ""
+}
+
+// Security-relevant protocol fields must have one canonical spelling. Go's
+// struct decoder matches names case-insensitively while map lookups do not;
+// forwarding ambiguous bytes could authorize a different request than the guest
+// executes. Arguments and unrelated extension fields remain untouched.
+func mcpPolicyFieldsUnambiguous(body []byte, protected ...string) bool {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	token, err := decoder.Token()
+	if err != nil {
+		return false
+	}
+	if token == nil { // A null optional params object has no fields.
+		return true
+	}
+	if token != json.Delim('{') {
+		return false
+	}
+	seen := make(map[string]bool, len(protected))
+	for decoder.More() {
+		token, err = decoder.Token()
+		if err != nil {
+			return false
+		}
+		key, ok := token.(string)
+		if !ok {
+			return false
+		}
+		for _, name := range protected {
+			if strings.EqualFold(key, name) {
+				if key != name || seen[name] {
+					return false
+				}
+				seen[name] = true
+			}
+		}
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return false
+		}
+	}
+	_, err = decoder.Token()
+	return err == nil
 }

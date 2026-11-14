@@ -3,11 +3,14 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type minuteCollapseFixture struct {
@@ -164,6 +167,24 @@ func TestRequestTelemetryMinutesBoundShipsOldestMinuteEarly(t *testing.T) {
 	}
 	if dropped := m.trimReady(1); len(dropped) != 2 || len(m.ready) != 1 {
 		t.Fatalf("trim dropped %d and kept %d, want 2 dropped and 1 kept", len(dropped), len(m.ready))
+	}
+}
+
+// adr: 127 — amendment 2026-11-10: traced non-5xx requests keep their own row
+// up to GatewayRequestTelemetryTracedExactPerBucket a bucket-minute, so their
+// guest spans have a row to merge into. At the server-error cap of 5 a busy
+// traced app dropped spans all day (prod 2026-11-09).
+func TestRequestTelemetryMinutesKeepTracedRequestsExact(t *testing.T) {
+	m := newRequestTelemetryMinutes()
+	app := uuid.New()
+	minute := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	traced := api.GatewayRequestTelemetryTracedExactPerBucket
+	for i := range traced + 3 {
+		m.add(RequestTelemetryRow{AppID: app, Route: "GET /checkout", Method: "GET", Status: 200, LatencyMS: 13, Count: 1,
+			TraceID: fmt.Sprintf("%032x", i+1), ReceivedAt: minute.Add(time.Duration(i+1) * time.Second), exactSample: true})
+	}
+	if len(m.ready) != traced || len(m.rows) != 1 || m.rows[0].Count != 3 {
+		t.Fatalf("ready=%d open=%+v, want %d traced rows ready and the other 3 folded", len(m.ready), m.rows, traced)
 	}
 }
 

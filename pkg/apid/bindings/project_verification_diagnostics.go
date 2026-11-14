@@ -63,7 +63,7 @@ func (b ProjectVerificationRunBackend) Diagnose(ctx context.Context, id string) 
 
 		runs = append(runs, observed)
 	}
-	apps, err := b.Catalog.AppsForProject(ctx, b.AccountID, b.Project.ID)
+	apps, err := ProjectReleaseApps(ctx, b.Catalog, b.AccountID, b.Project.ID, b.Environment)
 	if err != nil {
 		out.Complete = false
 		out.Blockers = append(out.Blockers, diagnosticBlocker("graph_inventory_unavailable", "Current project membership could not be read.", "retry_diagnostics"))

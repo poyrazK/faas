@@ -38,7 +38,18 @@ type CliAuthCodeResponse struct {
 	// never Code, so guessing the short code a user approves yields nothing
 	// (bug hunt 2026-10-28 H67).
 	DeviceCode string `json:"device_code,omitempty"`
+	// Loopback is true when the server took the request's LoopbackPort: URL
+	// then opens a one-click approval page that sends a fresh device code to
+	// http://127.0.0.1:<port>/callback, and DeviceCode no longer exchanges
+	// once the code is approved that way (ADR-20261111170000). A CLI that
+	// sees false falls back to the typed-code flow.
+	Loopback bool `json:"loopback,omitempty"`
 }
+
+// CliAuthLoopbackCallbackPath is the path the CLI serves on 127.0.0.1 for
+// the one-click login. The browser arrives with ?code=<the short code>&
+// device_code=<64 hex>.
+const CliAuthLoopbackCallbackPath = "/callback"
 
 // CliAuthExchangeRequest is the CLI's poll body: DeviceCode for a code
 // minted with one, else Code (CLIs that predate device codes).
@@ -65,6 +76,10 @@ type CliAuthCodeRequest struct {
 	// Device asks for a CLI login code bound to a device code
 	// (CliAuthCodeResponse.DeviceCode).
 	Device bool `json:"device,omitempty"`
+	// LoopbackPort, with Device, asks for a one-click login: the CLI listens
+	// on 127.0.0.1:LoopbackPort (1024-65535) and receives the device code
+	// from the approving browser instead of the user typing the code.
+	LoopbackPort int `json:"loopback_port,omitempty"`
 }
 
 const CliAuthPurposeMCPRead = "mcp-read"

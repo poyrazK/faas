@@ -80,6 +80,7 @@ func OrgList(d OrgDeps) httpkit.AccountHandler {
 			item := response(k, clients[k.ID], prefixes[k.ID])
 			item.Member = members[k.AccountID]
 			item.Projects = d.projects(r.Context(), k.ID)
+			item.Approvals = d.approvals(r.Context(), k)
 			out.Items = append(out.Items, item)
 		}
 		httpkit.WriteJSON(w, http.StatusOK, out)
@@ -168,7 +169,7 @@ func (d OrgDeps) revokeWhere(r *http.Request, acct state.Account, orgID, reason 
 
 // GetPolicy handles GET /v1/orgs/{slug}/agent-policy.
 func GetPolicy(d OrgDeps) httpkit.AccountHandler {
-	return func(w http.ResponseWriter, r *http.Request, _ state.Account) {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		orgID, ok := d.activeOrg(w, r, authz.OrgActionView)
 		if !ok {
 			return
@@ -183,7 +184,12 @@ func GetPolicy(d OrgDeps) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrCapacity("could not read the agent policy"))
 			return
 		}
-		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, 0))
+		channels, err := boundChannelNames(r.Context(), d.Store, acct.ID, orgID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read the approval channels"))
+			return
+		}
+		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, 0, channels))
 	}
 }
 
@@ -205,7 +211,20 @@ func PutPolicy(d OrgDeps) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrCapacity("agent policies unavailable"))
 			return
 		}
-		policy, err := store.SetOrgAgentPolicy(r.Context(), state.OrgAgentPolicy{OrgID: orgID, AgentsAllowed: *req.AgentsAllowed, AllowedScopes: *req.AllowedScopes, UpdatedBy: acct.ID})
+		approvals, prob := d.policyApprovals(r.Context(), store, orgID, req.ApprovalCategories)
+		var maxBudget *int64
+		if prob == nil {
+			maxBudget, prob = policyMaxBudget(r.Context(), store, orgID, req)
+		}
+		if prob == nil && req.ApprovalChannels != nil {
+			// The caller's own channels get the organization's requests (ADR-20261107140000 §3).
+			prob = setApprovalChannels(r.Context(), d.Store, acct.ID, orgID, *req.ApprovalChannels)
+		}
+		if prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+		policy, err := store.SetOrgAgentPolicy(r.Context(), state.OrgAgentPolicy{OrgID: orgID, AgentsAllowed: *req.AgentsAllowed, AllowedScopes: *req.AllowedScopes, ApprovalCategories: approvals, MaxAgentBudgetCents: maxBudget, UpdatedBy: acct.ID})
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not save the agent policy"))
 			return
@@ -216,15 +235,19 @@ func PutPolicy(d OrgDeps) httpkit.AccountHandler {
 			api.WriteProblem(w, api.ErrCapacity("the policy is saved, but some agent connections it no longer allows could not be revoked; retry"))
 			return
 		}
-		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, revoked))
+		channels, _ := boundChannelNames(r.Context(), d.Store, acct.ID, orgID)
+		httpkit.WriteJSON(w, http.StatusOK, policyResponse(policy, revoked, channels))
 	}
 }
 
-func policyResponse(policy state.OrgAgentPolicy, revoked int) api.OrgAgentPolicyResponse {
+func policyResponse(policy state.OrgAgentPolicy, revoked int, channels []string) api.OrgAgentPolicyResponse {
 	out := api.OrgAgentPolicyResponse{AgentsAllowed: policy.AgentsAllowed, AllowedScopes: slices.Clone(policy.AllowedScopes), Revoked: revoked}
+	out.ApprovalChannels = append([]string{}, channels...)
 	if out.AllowedScopes == nil {
 		out.AllowedScopes = []string{}
 	}
+	out.ApprovalCategories = append([]string{}, policy.ApprovalCategories...)
+	out.MaxAgentBudgetCents = policy.MaxAgentBudgetCents
 	if !policy.UpdatedAt.IsZero() {
 		out.UpdatedAt = policy.UpdatedAt.UTC().Format(time.RFC3339)
 	}
@@ -240,4 +263,45 @@ func joinScopes() string {
 		out += scope
 	}
 	return out
+}
+
+// policyMaxBudget is the agent budget ceiling a policy change sets: the
+// requested one, none when cleared, or the current one when the request
+// names neither (ADR-20261111114059).
+func policyMaxBudget(ctx context.Context, store state.OrgAgentStore, orgID string, req api.OrgAgentPolicyRequest) (*int64, *api.Problem) {
+	switch {
+	case req.ClearMaxAgentBudget && req.MaxAgentBudgetCents != nil:
+		return nil, api.ErrValidation("set max_agent_budget_cents or clear_max_agent_budget, not both")
+	case req.ClearMaxAgentBudget:
+		return nil, nil
+	case req.MaxAgentBudgetCents != nil:
+		if c := *req.MaxAgentBudgetCents; c < 0 || c > api.MaxAgentBudgetCents {
+			return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid agent budget ceiling",
+				"max_agent_budget_cents must be between 0 and the maximum").WithLimit(api.MaxAgentBudgetCents, c)
+		}
+		return req.MaxAgentBudgetCents, nil
+	}
+	current, err := store.OrgAgentPolicy(ctx, orgID)
+	if err != nil {
+		return nil, api.ErrCapacity("could not load the agent policy")
+	}
+	return current.MaxAgentBudgetCents, nil
+}
+
+// policyApprovals is the floor a policy change sets: the requested
+// categories, or the current ones when the request names none
+// (ADR-20261104140058).
+func (d OrgDeps) policyApprovals(ctx context.Context, store state.OrgAgentStore, orgID string, requested *[]string) ([]string, *api.Problem) {
+	if requested == nil {
+		current, err := store.OrgAgentPolicy(ctx, orgID)
+		if err != nil {
+			return nil, api.ErrCapacity("could not load the agent policy")
+		}
+		return current.ApprovalCategories, nil
+	}
+	categories, err := api.NormalizeAgentApprovalCategories(*requested)
+	if err != nil {
+		return nil, api.ErrValidation(err.Error())
+	}
+	return categories, nil
 }

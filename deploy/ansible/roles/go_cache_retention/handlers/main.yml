@@ -1,0 +1,13 @@
+- name: detect systemd availability (go cache retention)
+  listen: daemon-reload go cache retention
+  ansible.builtin.stat:
+    path: /run/systemd/system
+  register: go_cache_trim_systemd
+  failed_when: false
+
+- name: daemon-reload go cache retention
+  listen: daemon-reload go cache retention
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: go_cache_trim_systemd.stat.exists | bool
+  failed_when: false

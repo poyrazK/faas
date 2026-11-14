@@ -98,3 +98,86 @@ func (s *PgStore) SyncRealtimeNodeConnections(ctx context.Context, node string, 
 	}
 	return remote, nil
 }
+
+// RealtimeEndpointConnections is one capped endpoint's open realtime
+// connections. A node reports every endpoint it serves that has its own
+// max_connections, with zero when it holds none, so it learns the other
+// nodes' counts before its first connection.
+type RealtimeEndpointConnections struct {
+	EndpointID  string `json:"endpoint_id"`
+	Connections int64  `json:"connections"`
+}
+
+// RealtimeEndpointConnectionSyncStore exchanges per-endpoint connection
+// counts. It runs after SyncRealtimeNodeConnections in the same sync, which
+// records the node.
+type RealtimeEndpointConnectionSyncStore interface {
+	SyncRealtimeNodeEndpointConnections(ctx context.Context, node string, counts []RealtimeEndpointConnections) ([]RealtimeEndpointConnections, error)
+}
+
+// ValidateRealtimeEndpointConnectionSync checks one node's endpoint snapshot:
+// every endpoint at most once, counts never negative.
+func ValidateRealtimeEndpointConnectionSync(node string, counts []RealtimeEndpointConnections) error {
+	if len(node) == 0 || len(node) > 253 || len(counts) > api.RealtimeConnectionSyncMaxEndpoints {
+		return ErrRealtimeConnectionSyncInvalid
+	}
+	seen := make(map[uuid.UUID]bool, len(counts))
+	for _, c := range counts {
+		id, err := uuid.Parse(c.EndpointID)
+		if err != nil || seen[id] || c.Connections < 0 || c.Connections > math.MaxInt32 {
+			return ErrRealtimeConnectionSyncInvalid
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
+// SyncRealtimeNodeEndpointConnections replaces node's per-endpoint counts
+// with the nonzero ones in counts and returns the other nodes' fresh counts
+// for every endpoint in counts. The node must already be recorded by
+// SyncRealtimeNodeConnections.
+func (s *PgStore) SyncRealtimeNodeEndpointConnections(ctx context.Context, node string, counts []RealtimeEndpointConnections) ([]RealtimeEndpointConnections, error) {
+	if err := ValidateRealtimeEndpointConnectionSync(node, counts); err != nil {
+		return nil, err
+	}
+	all := make([]pgtype.UUID, 0, len(counts))
+	open := make([]pgtype.UUID, 0, len(counts))
+	values := make([]int32, 0, len(counts))
+	for _, c := range counts {
+		id := realtimeUsageUUID(c.EndpointID)
+		all = append(all, id)
+		if c.Connections > 0 {
+			open = append(open, id)
+			values = append(values, int32(c.Connections))
+		}
+	}
+	q := connsqlc.New()
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("state: sync realtime endpoint connections: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := q.ClearNodeEndpointConnectionsExcept(ctx, tx, connsqlc.ClearNodeEndpointConnectionsExceptParams{NodeName: node, EndpointIds: open}); err != nil {
+		return nil, fmt.Errorf("state: sync realtime endpoint connections: clear: %w", err)
+	}
+	if err := q.UpsertNodeEndpointConnections(ctx, tx, connsqlc.UpsertNodeEndpointConnectionsParams{NodeName: node, EndpointIds: open, Counts: values}); err != nil {
+		return nil, fmt.Errorf("state: sync realtime endpoint connections: upsert: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("state: sync realtime endpoint connections: %w", err)
+	}
+	if len(all) == 0 {
+		return nil, nil
+	}
+	rows, err := q.ReadRemoteNodeEndpointConnections(ctx, s.pool, connsqlc.ReadRemoteNodeEndpointConnectionsParams{
+		NodeName: node, EndpointIds: all, StaleSeconds: api.RealtimeConnectionSyncStaleAfter.Seconds(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("state: sync realtime endpoint connections: read remote: %w", err)
+	}
+	remote := make([]RealtimeEndpointConnections, 0, len(rows))
+	for _, row := range rows {
+		remote = append(remote, RealtimeEndpointConnections{EndpointID: row.EndpointID, Connections: row.Connections})
+	}
+	return remote, nil
+}

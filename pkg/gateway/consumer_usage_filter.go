@@ -22,6 +22,30 @@ func platformFailureUnbillable(r *http.Request, status int) bool {
 	return !guestResponded
 }
 
+// gatewayRefusalUnbillable reports whether a request ended in a 4xx that the
+// guest never started answering: the gateway refused it (gateway-enforced
+// authentication, an edge rule, a route rate limit or quota, a malformed
+// request) after the consumer or tenant was already identified. The customer's
+// application did not run, so the refusal carries zero billable units, like
+// the consumer-plan and tenant-budget refusals that suppress usage explicitly
+// (ADR-1306). A 4xx the guest itself returned is still billable.
+// ADR-20261107170000.
+func gatewayRefusalUnbillable(r *http.Request, status int) bool {
+	if status < http.StatusBadRequest || status >= http.StatusInternalServerError {
+		return false
+	}
+	_, guestResponded := FirstByteFrom(r)
+	return !guestResponded
+}
+
+// usageUnbillable is the billing rule: a response the guest never started
+// answering is not billed, whatever its error status. It is deliberately
+// separate from platformErrorForSLO, which counts only 5xx: a gateway refusal
+// is the platform working, not failing.
+func usageUnbillable(r *http.Request, status int) bool {
+	return platformFailureUnbillable(r, status) || gatewayRefusalUnbillable(r, status)
+}
+
 // platformErrorForSLO reports whether a response counts in
 // gateway_platform_errors_total, which feeds the public availability SLO
 // (FaasApiAvailabilityLow, the status page). It is platformFailureUnbillable

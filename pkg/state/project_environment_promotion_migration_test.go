@@ -172,6 +172,7 @@ func testPromotionMigrationMode(t *testing.T, factory func(*testing.T) Store, co
 			}
 			task, err = tasks.MarkAppTaskRunning(ctx, task.ID, *task.LeaseToken, at.Add(5*time.Millisecond))
 			requirePromotionSnapshot(t, err)
+			at = task.UpdatedAt
 			exit := 0
 			status := AppTaskSucceeded
 			if scenario == "failed" {

@@ -1,0 +1,20 @@
+=== RUN   TestEventRoutingHistoryCoalescesCapacityWithoutChangingCheckpoint
+=== RUN   TestEventRoutingHistoryCoalescesCapacityWithoutChangingCheckpoint/memory
+=== RUN   TestEventRoutingHistoryCoalescesCapacityWithoutChangingCheckpoint/postgres
+--- PASS: TestEventRoutingHistoryCoalescesCapacityWithoutChangingCheckpoint (62.57s)
+    --- PASS: TestEventRoutingHistoryCoalescesCapacityWithoutChangingCheckpoint/memory (0.06s)
+    --- PASS: TestEventRoutingHistoryCoalescesCapacityWithoutChangingCheckpoint/postgres (62.50s)
+=== RUN   TestExternalTriggerReplayGuards
+=== RUN   TestExternalTriggerReplayGuards/memory
+=== RUN   TestExternalTriggerReplayGuards/memory/active_claim
+=== RUN   TestExternalTriggerReplayGuards/postgres
+=== RUN   TestExternalTriggerReplayGuards/postgres/active_claim
+--- PASS: TestExternalTriggerReplayGuards (1.97s)
+    --- PASS: TestExternalTriggerReplayGuards/memory (0.00s)
+        --- PASS: TestExternalTriggerReplayGuards/memory/active_claim (0.00s)
+    --- PASS: TestExternalTriggerReplayGuards/postgres (1.96s)
+        --- PASS: TestExternalTriggerReplayGuards/postgres/active_claim (0.02s)
+=== RUN   TestExternalTriggerReplayMigrationPreservesRecoveryAndRedactsSecrets
+--- PASS: TestExternalTriggerReplayMigrationPreservesRecoveryAndRedactsSecrets (1.67s)
+PASS
+ok  	github.com/onebox-faas/faas/pkg/state	66.275s

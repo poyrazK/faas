@@ -114,8 +114,11 @@ type Login struct {
 	Sealed    []byte
 	Recipient string
 	Identity  string
-	Slot      string
-	Awake     string
+	// DataResourceID records which dataset authorized this login. Older
+	// writers leave it empty; recovery upgrades project-based logins once.
+	DataResourceID string
+	Slot           string
+	Awake          string
 	// Signature is the writer signature over the sealed login; nil stores
 	// an unsigned row.
 	Signature []byte
@@ -169,14 +172,21 @@ func (s *Store) Enable(ctx context.Context, accountID, databaseID string, key Ne
 		if err != nil || login == nil {
 			return err
 		}
-		err = s.q.UpsertLiveLogin(ctx, tx, sqlc.UpsertLiveLoginParams{DatabaseID: databaseID, AccountID: accountID,
-			SealedLogin: login.Sealed, Recipient: login.Recipient, ProviderIdentityID: login.Identity, Slot: login.Slot, Awake: login.Awake,
-			SealedLoginSig: login.Signature})
-		if err != nil {
-			return fmt.Errorf("livekeys: store login: %w", err)
-		}
-		return nil
+		return s.storeLogin(ctx, tx, accountID, databaseID, login)
 	})
+}
+
+func (s *Store) storeLogin(ctx context.Context, tx pgx.Tx, accountID, databaseID string, login *Login) error {
+	count, err := s.q.UpsertLiveLogin(ctx, tx, sqlc.UpsertLiveLoginParams{DatabaseID: databaseID, AccountID: accountID,
+		SealedLogin: login.Sealed, Recipient: login.Recipient, ProviderIdentityID: login.Identity, Slot: login.Slot, Awake: login.Awake,
+		SealedLoginSig: login.Signature, DataResourceID: login.DataResourceID})
+	if err != nil {
+		return fmt.Errorf("livekeys: store login: %w", err)
+	}
+	if count != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // LoginOf returns a database's login, without its sealed connection string,

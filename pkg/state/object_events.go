@@ -86,6 +86,12 @@ func (m *MemStore) publishObjectEventLocked(account, identity, typ string, data 
 	if err != nil {
 		return err
 	}
+	// The same company reach as subscriptions (ADR-20261025211616).
+	if data.AppID != "" {
+		if recipients, err = m.recipientsInProducerReachLocked(account, eventcontract.AppProducer(data.AppID), recipients); err != nil {
+			return err
+		}
+	}
 	accountUUID, err := uuid.Parse(account)
 	if err != nil {
 		return err

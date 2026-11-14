@@ -10,7 +10,9 @@ import (
 	"regexp"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 )
 
@@ -165,6 +167,7 @@ func operatorPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	cfg.MinConns, cfg.MinIdleConns = 0, 0
 	cfg.ConnConfig.ConnectTimeout = api.InternalMailAPITimeout
 	cfg.ConnConfig.RuntimeParams["application_name"] = "faas-apid-mail-outbox"
+	dbbounds.ConfigureTimeouts(cfg)
 	return pgxpool.NewWithConfig(ctx, cfg)
 }
 

@@ -29,7 +29,8 @@
         "application_secret_env": "GREGALE_OVH_APPLICATION_SECRET",
         "consumer_key_env": "GREGALE_OVH_CONSUMER_KEY",
         "request_log_bucket": "replace-with-dedicated-ovh-access-log-bucket",
-        "request_log_prefix": "gregale/"
+        "request_log_prefix": "gregale/",
+        "request_log_coverage_path": "/var/spool/faas/object-storage-usage/managed-virginia-v1.coverage.json"
       },
       "allowed_origins": ["https://gregale.dev"]
     }

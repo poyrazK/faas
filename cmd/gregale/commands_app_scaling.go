@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -20,7 +21,7 @@ func cmdAppScaling(slug string, args []string) int {
 	revision := fs.Int64("expected-revision", -1, "revision returned by app scaling")
 	ram := fs.Int("ram", 0, "RAM in MB")
 	cpu := fs.Int("cpu-millicores", 0, "CPU allowance in millicores")
-	concurrency := fs.Int("max-concurrency", 0, "maximum instance count")
+	concurrency := fs.Int("max-concurrency", 0, "most instances the app runs at once")
 	minimum := fs.Int("min", 0, "minimum warm instance count, including zero")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -47,7 +48,9 @@ func cmdAppScaling(slug string, args []string) int {
 	}
 	if write {
 		if p := req.Validate(); p != nil {
-			return printErr("Invalid scaling arguments", fmt.Errorf("provide --expected-app-id, --request-id, --expected-revision and at least one scaling setting"))
+			// Name the field that failed: a zero --expected-app-id was
+			// reported as missing flags (Hunt 32 H32-60).
+			return printErr("Invalid scaling arguments", fmt.Errorf("%s; a write needs --expected-app-id, --request-id, --expected-revision and at least one scaling setting", appScalingFlagNames.Replace(p.Detail)))
 		}
 	}
 	client, err := authedClient()
@@ -69,3 +72,12 @@ func cmdAppScaling(slug string, args []string) int {
 	}
 	return jsonOut(writeJSON(out))
 }
+
+// appScalingFlagNames spells the request's JSON fields as this command's
+// flags in validation messages.
+var appScalingFlagNames = strings.NewReplacer(
+	"expected_environment_id", "--expected-environment-id",
+	"expected_app_id", "--expected-app-id",
+	"expected_revision", "--expected-revision",
+	"request_id", "--request-id",
+)

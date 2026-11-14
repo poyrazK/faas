@@ -76,6 +76,10 @@ func (s *LocalStore) Window(databaseID string) int64 {
 // Prune removes what restoring to cutoff or later does not need, from the
 // archive this node keeps (and those files' bucket copies).
 func (s *TieredStore) Prune(ctx context.Context, databaseID string, cutoff time.Time) (PruneResult, error) {
+	cutoff, err := s.heldCutoff(ctx, databaseID, cutoff)
+	if err != nil {
+		return PruneResult{}, err
+	}
 	s.maint.Lock()
 	defer s.maint.Unlock()
 	return s.prune(ctx, databaseID, cutoff, false)
@@ -101,27 +105,38 @@ func (s *TieredStore) PruneBucket(ctx context.Context, databaseID string, window
 	if s.now != nil {
 		now = s.now
 	}
+	cutoff, err := s.heldCutoff(ctx, databaseID, now().Add(-retention))
+	if err != nil {
+		return PruneResult{}, err
+	}
 	s.maint.Lock()
 	defer s.maint.Unlock()
-	return s.prune(ctx, databaseID, now().Add(-retention), true)
+	return s.prune(ctx, databaseID, cutoff, true)
 }
 
 // DefaultMinRetention is the retention floor when none is configured.
 const DefaultMinRetention = 24 * time.Hour
 
-// prune removes backups older than the anchor and WAL before its start
-// segment. bucket widens the catalog and the files to the bucket's.
-func (s *TieredStore) prune(ctx context.Context, databaseID string, cutoff time.Time, bucket bool) (PruneResult, error) {
-	var res PruneResult
-	// A hold keeps its point restorable past the retention period.
+// heldCutoff verifies both hold inventories before taking maint: a slow
+// mirror may defer deletion, but must not block primary archive uploads.
+func (s *TieredStore) heldCutoff(ctx context.Context, databaseID string, cutoff time.Time) (time.Time, error) {
 	floor, held, err := s.holdFloor(ctx, databaseID)
 	if err != nil {
-		return res, fmt.Errorf("dbarchive: read holds: %w", err)
+		return time.Time{}, fmt.Errorf("dbarchive: read holds: %w", err)
 	}
 	if held && floor.Before(cutoff) {
 		cutoff = floor
 	}
+	return cutoff, nil
+}
+
+// prune removes backups older than the anchor and WAL before its start
+// segment. cutoff already accounts for both tiers' holds; the caller
+// holds maint. bucket widens the catalog and the files to the bucket's.
+func (s *TieredStore) prune(ctx context.Context, databaseID string, cutoff time.Time, bucket bool) (PruneResult, error) {
+	var res PruneResult
 	var backups []BackupManifest
+	var err error
 	if bucket {
 		backups, err = s.ListAllBackups(ctx, databaseID)
 	} else {
@@ -246,8 +261,6 @@ func (s *TieredStore) remove(ctx context.Context, databaseID, path, key string) 
 // max(its restore window, minRetention). It goes on past a failing
 // database and returns the first error.
 func (s *TieredStore) PruneAll(ctx context.Context, now time.Time, minRetention time.Duration) (PruneResult, error) {
-	s.maint.Lock()
-	defer s.maint.Unlock()
 	var total PruneResult
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -259,7 +272,7 @@ func (s *TieredStore) PruneAll(ctx context.Context, now time.Time, minRetention 
 			continue
 		}
 		retention := max(time.Duration(s.Window(e.Name()))*time.Second, minRetention)
-		res, err := s.prune(ctx, e.Name(), now.Add(-retention), false)
+		res, err := s.Prune(ctx, e.Name(), now.Add(-retention))
 		total.add(res)
 		if err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("dbarchive: prune %s: %w", e.Name(), err)

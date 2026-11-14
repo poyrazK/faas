@@ -1,6 +1,6 @@
 -- Advisory reads only. Never refresh a document, approval, or receipt.
 CREATE OR REPLACE FUNCTION gregale_repair.validate_plan(plan uuid, expected_scope jsonb, expected_digest text) RETURNS jsonb
-LANGUAGE plpgsql STABLE SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET jit = 'off' AS $$
+LANGUAGE plpgsql STABLE SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET lc_monetary = 'C' SET jit = 'off' AS $$
 DECLARE p gregale_repair.plans; e gregale_repair.enrollments; item jsonb; current_version text; values_match boolean;
  issues jsonb:='[]'; rows jsonb:='[]'; checked integer:=0; unchanged integer:=0; reason text;
  schema_changed boolean:=false;
@@ -20,7 +20,7 @@ BEGIN
   schema_changed:=NOT FOUND;
   BEGIN
    IF NOT schema_changed THEN
-    schema_changed:=e.fingerprint_datestyle IS NULL OR e.fingerprint_intervalstyle IS NULL OR __TYPE_CONTRACT_CHANGED__ OR __CASCADING_ENROLLED_FIELDS__ OR e.fingerprint_timezone IS NULL OR e.fingerprint IS DISTINCT FROM p.document->>'schema_fingerprint' OR
+    schema_changed:=e.fingerprint_datestyle IS NULL OR e.fingerprint_intervalstyle IS NULL OR e.fingerprint_monetary IS NULL OR __TYPE_CONTRACT_CHANGED__ OR __CASCADING_ENROLLED_FIELDS__ OR e.fingerprint_timezone IS NULL OR e.fingerprint IS DISTINCT FROM p.document->>'schema_fingerprint' OR
      e.fingerprint IS DISTINCT FROM gregale_repair.fingerprint(e.relation) OR __UNSUPPORTED_ENROLLED_EXPRESSIONS__ OR __LOSSY_ENROLLED_TYPES__ OR __UNPROVEN_PLAN__ OR
      NOT EXISTS(SELECT 1 FROM pg_class WHERE oid=e.relation AND NOT relrowsecurity AND NOT relforcerowsecurity);
    END IF;

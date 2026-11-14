@@ -16,6 +16,9 @@ const TOKEN_REFRESH_MARGIN_MS = 60_000;
 const MAX_BACKOFF_MS = 30_000;
 // A call may not outlive its server-side wait by more than this.
 const CALL_SLACK_MS = 10_000;
+// Acks and lease extensions that come due within this window share one call
+// of up to MAX_BATCH receipts, so a busy consumer makes far fewer requests.
+const SETTLE_BATCH_WINDOW_MS = 20;
 
 export interface QueueMessage<T = unknown> {
   readonly id: string;
@@ -71,6 +74,38 @@ interface SettleResponse {
   failed: { receipt: string; reason: string }[];
 }
 
+// ReceiptBatch gathers receipts for one settle verb and applies them in one
+// call: each caller learns whether its own receipt still held its message.
+class ReceiptBatch {
+  private pending: { receipt: string; resolve: (held: boolean) => void; reject: (error: unknown) => void }[] = [];
+  private timer?: ReturnType<typeof setTimeout>;
+
+  constructor(private readonly apply: (receipts: string[]) => Promise<string[]>) {}
+
+  add(receipt: string): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      this.pending.push({ receipt, resolve, reject });
+      if (this.pending.length >= MAX_BATCH) this.flush();
+      else this.timer ??= setTimeout(() => this.flush(), SETTLE_BATCH_WINDOW_MS);
+    });
+  }
+
+  private flush(): void {
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    const batch = this.pending.splice(0);
+    if (batch.length === 0) return;
+    this.apply(batch.map(item => item.receipt)).then(
+      succeeded => {
+        const held = new Set(succeeded);
+        for (const item of batch) item.resolve(held.has(item.receipt));
+      },
+      error => {
+        for (const item of batch) item.reject(error);
+      });
+  }
+}
+
 /** Leases and handles queue messages until stopped. */
 export class GregaleQueueConsumer<T = unknown> {
   private readonly leasesURL: URL;
@@ -84,6 +119,9 @@ export class GregaleQueueConsumer<T = unknown> {
   private readonly inFlight = new Set<Promise<void>>();
   private running?: Promise<void>;
   private token?: { value: string; refreshAt: number };
+  private readonly acks = new ReceiptBatch(receipts => this.settleMany(':ack', receipts, {}));
+  private readonly extensions = new ReceiptBatch(receipts =>
+    this.settleMany(':extend', receipts, { visibility_timeout_seconds: this.visibility }));
 
   constructor(private readonly options: QueueConsumerOptions, private readonly handler: QueueHandler<T>) {
     const base = new URL(options.apiURL ?? process.env.GREGALE_API_URL ?? DEFAULT_GREGALE_API_URL);
@@ -99,7 +137,11 @@ export class GregaleQueueConsumer<T = unknown> {
     if (!(Number.isInteger(this.wait) && this.wait >= 0 && this.wait <= MAX_WAIT_SECONDS)) throw new Error('waitSeconds must be 0-20');
     if (!(Number.isInteger(this.retryDelay) && this.retryDelay >= 0)) throw new Error('retryDelaySeconds must be a non-negative integer');
     if (!options.apiKey) {
-      this.identityURL = new URL(options.identityEndpoint ?? process.env.FAAS_WORKLOAD_IDENTITY_ENDPOINT ?? '');
+      const endpoint = options.identityEndpoint ?? process.env.FAAS_WORKLOAD_IDENTITY_ENDPOINT ?? '';
+      if (!endpoint || !URL.canParse(endpoint)) {
+        throw new Error('No workload identity endpoint (FAAS_WORKLOAD_IDENTITY_ENDPOINT); pass apiKey outside a Gregale VM');
+      }
+      this.identityURL = new URL(endpoint);
       if (this.identityURL.protocol !== 'http:' || !['127.0.0.1', '[::1]', 'localhost'].includes(this.identityURL.hostname)) {
         throw new Error('Workload identity endpoint must be loopback HTTP; pass apiKey outside a Gregale VM');
       }
@@ -161,7 +203,7 @@ export class GregaleQueueConsumer<T = unknown> {
   private async process(leased: LeasedMessage): Promise<void> {
     const lost = new AbortController();
     const heartbeat = setInterval(() => {
-      this.settle(':extend', leased.receipt, { visibility_timeout_seconds: this.visibility })
+      this.extensions.add(leased.receipt)
         .then(held => { if (!held) lost.abort(new Error('Queue lease lost')); })
         .catch(error => this.report(error));
     }, (this.visibility * 1000) / 2);
@@ -185,7 +227,7 @@ export class GregaleQueueConsumer<T = unknown> {
     try {
       const held = failed
         ? await this.settle(':nack', leased.receipt, { error: errorText(failure), delay_seconds: this.retryDelay })
-        : await this.settle(':ack', leased.receipt, {});
+        : await this.acks.add(leased.receipt);
       if (!held) this.report(new Error(`Queue lease for message ${leased.id} expired before it was settled`));
     } catch (error) {
       this.report(error);
@@ -194,8 +236,13 @@ export class GregaleQueueConsumer<T = unknown> {
 
   /** Applies one receipt; false when the receipt no longer owns its message. */
   private async settle(verb: string, receipt: string, extra: Record<string, unknown>): Promise<boolean> {
-    const out = await this.call<SettleResponse>(verb, { receipts: [receipt], ...extra }, 0);
-    return Array.isArray(out.succeeded) && out.succeeded.includes(receipt);
+    return (await this.settleMany(verb, [receipt], extra)).includes(receipt);
+  }
+
+  /** Applies receipts in one call and returns those that still held their messages. */
+  private async settleMany(verb: string, receipts: string[], extra: Record<string, unknown>): Promise<string[]> {
+    const out = await this.call<SettleResponse>(verb, { receipts, ...extra }, 0);
+    return Array.isArray(out.succeeded) ? out.succeeded : [];
   }
 
   private async call<R>(verb: string, body: unknown, waitMs: number, stop?: AbortSignal): Promise<R> {
@@ -215,7 +262,9 @@ export class GregaleQueueConsumer<T = unknown> {
     if (this.options.apiKey) return this.options.apiKey;
     if (this.token && Date.now() < this.token.refreshAt) return this.token.value;
     const response = await this.fetchImpl(this.identityURL!, { redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(5000) });
-    if (!response.ok) throw new Error('Queue workload identity unavailable');
+    if (!response.ok) {
+      throw new Error(`Queue workload identity unavailable (${response.status}): this platform may not issue workload tokens; pass apiKey (a key with queues:consume) instead`);
+    }
     const token = await response.json() as { access_token?: unknown; expires_in?: unknown };
     if (typeof token.access_token !== 'string' || !token.access_token || token.access_token.length > 8192) throw new Error('Invalid workload identity');
     const lifetimeMs = typeof token.expires_in === 'number' && token.expires_in > 0 ? token.expires_in * 1000 : 300_000;

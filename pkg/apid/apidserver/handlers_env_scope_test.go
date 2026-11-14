@@ -457,6 +457,17 @@ func TestProtectedEnvironmentRefusesDirectConfigWrites(t *testing.T) {
 	refused("secret set", e.Do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/secrets/TOKEN?scope=preprod", api.PutAppSecretRequest{Value: "s3cret"}, nil))
 	refused("project config", e.Do(t, http.MethodPut, "/v1/projects/"+project.Slug+"/environments/preprod/config",
 		api.UpdateProjectEnvironmentConfigRequest{Values: json.RawMessage(`{"MODE":"x"}`)}, nil))
+	// The batch, rollback, reference and shared-secret routes write the same
+	// values and were open (apps/projects review 2026-11-10, P8).
+	revision := int64(1)
+	refused("env batch", e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/env/batch?scope=preprod",
+		api.EnvBatchRequest{RequestID: "6f1c2a3e-1111-4222-8333-944455556661", ExpectedRevision: &revision, Values: map[string]string{"MODE": "x"}}, nil))
+	refused("config rollback", e.Do(t, http.MethodPost, "/v1/apps/"+app.Slug+"/config/rollback?scope=preprod", api.ConfigRollbackRequest{Revision: 1}, nil))
+	refused("secret reference set", e.Do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/secret-references/DB_URL?environment=preprod",
+		api.PutAppSecretReferenceRequest{Reference: "secret:OTHER"}, nil))
+	refused("secret reference delete", e.Do(t, http.MethodDelete, "/v1/apps/"+app.Slug+"/secret-references/DB_URL?environment=preprod", nil, nil))
+	refused("project shared secret", e.Do(t, http.MethodPut, "/v1/projects/"+project.Slug+"/environments/preprod/secrets/TOKEN",
+		api.SetProjectEnvironmentSharedSecretRequest{Value: "s3cret"}, nil))
 	for _, scope := range []string{"production", "default", "qa"} {
 		if rec := e.Do(t, http.MethodPut, "/v1/apps/"+app.Slug+"/env/MODE?scope="+scope, api.PutAppEnvRequest{Value: "x"}, nil); rec.Code != http.StatusOK {
 			t.Fatalf("env set in %s = %d %s, want it allowed", scope, rec.Code, rec.Body)

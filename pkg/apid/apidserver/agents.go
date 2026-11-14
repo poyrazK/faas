@@ -58,6 +58,9 @@ func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	if runs, ok := h.Store.(agents.RunCallbackStore); ok {
 		h.RunCallbacks = runs
 	}
+	if subs, ok := h.Store.(agents.GitHubSubscriptionStore); ok {
+		h.GitHubSubscriptions = subs
+	}
 	if s.sessions != nil {
 		if signer, err := agents.NewCallbackSigner(s.sessions.BindingKey()); err == nil {
 			h.Callbacks = signer
@@ -343,4 +346,14 @@ func (s *server) cancelAgentRun(w http.ResponseWriter, r *http.Request, acct sta
 	if h, ok := s.agentHandlers(w); ok {
 		h.CancelRun(w, r, acct)
 	}
+}
+
+// deliverGitHubSubscriptions publishes a GitHub event githubd forwarded to
+// the agent threads subscribed to it with gregale_github_subscribe
+// (ADR-20261030125501 §4).
+func (s *server) deliverGitHubSubscriptions(ctx context.Context, accountID, deliveryID string, event api.GitHubPullRequestEvent) error {
+	if s.agentAPI == nil {
+		return nil
+	}
+	return s.agentAPI.DeliverGitHubEvent(ctx, accountID, deliveryID, event)
 }

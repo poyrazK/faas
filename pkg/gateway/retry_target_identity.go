@@ -32,7 +32,11 @@ func platformIdentityForTarget(ctx context.Context, request *http.Request, app A
 // Empty provenance must overwrite initial span attributes after a replay.
 // The ordinary identity attributes omit empty values at span creation.
 func completionTargetAttributes(target Target) []attribute.KeyValue {
-	return []attribute.KeyValue{
+	return appendCompletionTargetAttributes(make([]attribute.KeyValue, 0, 8), target)
+}
+
+func appendCompletionTargetAttributes(dst []attribute.KeyValue, target Target) []attribute.KeyValue {
+	return append(dst,
 		attribute.String("deployment_id", target.DeploymentID),
 		attribute.String("instance_id", target.InstanceID),
 		attribute.String("node_id", target.NodeID),
@@ -41,5 +45,5 @@ func completionTargetAttributes(target Target) []attribute.KeyValue {
 		attribute.String("deployment_tag", target.DeploymentTag),
 		attribute.String("deployment_created_at", target.DeploymentCreatedAt),
 		attribute.String("image_digest", target.ImageDigest),
-	}
+	)
 }

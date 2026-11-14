@@ -22,11 +22,32 @@ func TestSnapshotPrimeObservationUnknownAndHeldPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	app, d := sched.PrimeObservationCandidate(t, s, account.ID, "unknown", nil)
-	for _, raw := range []string{`{"current":"snapshot_prepare"}`, `{"current":"snapshot_prepare","current_started_at":"yesterday"}`, `{"current":"snapshot_prepare","current_started_at":"2026-02-30T12:00:00Z"}`, `{"current":"snapshot_prepare","current_started_at":"1970-01-01T00:00:00Z"}`, `{"current":null}`, `[]`,
-		`{"current":"snapshot_prepare","current_started_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano) + `"}`} {
-		if _, err := pool.Exec(ctx, "UPDATE deployments SET stage_state=$2::jsonb WHERE id=$1", d.ID, raw); err != nil {
+	// Historical corruption predates retry-intent preservation. Bypass only
+	// that trigger in this private database while creating the fixture, and
+	// restore it before exercising the normal observation path.
+	setLegacyStage := func(raw string) {
+		t.Helper()
+		tx, err := pool.Begin(ctx)
+		if err != nil {
 			t.Fatal(err)
 		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := tx.Exec(ctx, "ALTER TABLE deployments DISABLE TRIGGER deployments_retry_intent"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, "UPDATE deployments SET stage_state=$2::jsonb WHERE id=$1", d.ID, raw); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, "ALTER TABLE deployments ENABLE TRIGGER deployments_retry_intent"); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, raw := range []string{`{"current":"snapshot_prepare"}`, `{"current":"snapshot_prepare","current_started_at":"yesterday"}`, `{"current":"snapshot_prepare","current_started_at":"2026-02-30T12:00:00Z"}`, `{"current":"snapshot_prepare","current_started_at":"1970-01-01T00:00:00Z"}`, `{"current":null}`, `[]`,
+		`{"current":"snapshot_prepare","current_started_at":"` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano) + `"}`} {
+		setLegacyStage(raw)
 		got, err := s.SnapshotPrimeSnapshot(ctx, "")
 		if err != nil || got[state.SnapshotPrimeUnknown].Pending != 1 || got[state.SnapshotPrimeUnknown].UnknownAge != 1 || !got[state.SnapshotPrimeUnknown].OldestAt.IsZero() {
 			t.Fatalf("raw=%s snapshot=%+v err=%v", raw, got, err)

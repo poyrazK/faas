@@ -558,7 +558,7 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 	if err := errors.Join(flagErr, fenceProbe.Require(ctx), fenceProbe.Close()); err != nil || flags&unix.O_ACCMODE != unix.O_RDONLY {
 		t.Fatal("real restore fence acquired write authority or lost original target:", err)
 	}
-	loaded, err := v.loadNativeQualificationRestore(ctx, lease, version)
+	loaded, err := v.loadNativeQualificationRestore(ctx, lease, version, qualificationRestoreReceiptControl{})
 	if err != nil {
 		t.Fatal("real dedicated native load/resume/hook:", err)
 	}
@@ -608,7 +608,7 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 	if limit := nativeCaptureVMMemoryLimit(t, filepath.Join(cgroupRoot, ParentCgroupFor(lease.Plan), PerInstanceScope(lease.Instance))); limit != uint64(api.BillableRAMMB(frame.RAMMB))<<20 {
 		t.Fatal("native restore changed billable target memory fence", limit)
 	}
-	if _, err := v.loadNativeQualificationRestore(ctx, lease, version); err == nil {
+	if _, err := v.loadNativeQualificationRestore(ctx, lease, version, qualificationRestoreReceiptControl{}); err == nil {
 		t.Fatal("completed real restore was replayed")
 	}
 	nativeMetalRestoreMetadataCancellationProbe(t, ctx, lease, channels, blocked)

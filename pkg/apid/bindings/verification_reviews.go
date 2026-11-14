@@ -84,7 +84,7 @@ func (b VerificationRunBackend) Review(ctx context.Context, in api.ReviewBinding
 }
 func (b ProjectVerificationRunBackend) Review(ctx context.Context, in api.ReviewProjectBindingVerificationRequest) (api.ProjectBindingVerificationReview, error) {
 	out := api.ProjectBindingVerificationReview{Project: b.Project.Slug, Environment: b.Environment, ReviewedAt: time.Now().UTC(), Manifest: in.Manifest, ObjectStorageWrite: in.ObjectStorageWrite, QueuePublish: in.QueuePublish, Members: map[string]api.BindingVerificationReview{}, ReviewDigests: map[string]string{}, Blockers: []api.BindingCheckFinding{}, Ready: true}
-	apps, err := b.Catalog.AppsForProject(ctx, b.AccountID, b.Project.ID)
+	apps, err := ProjectReleaseApps(ctx, b.Catalog, b.AccountID, b.Project.ID, b.Environment)
 	if err != nil {
 		return out, err
 	}

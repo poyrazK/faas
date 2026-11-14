@@ -28,7 +28,7 @@ func (s *server) attachManagedPostgresOverage(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	enabled, err := s.managedPostgres.Overage(r.Context(), acct.ResourceOwnerID())
+	enabled, err := s.managedPostgresOverageOn(r.Context(), acct, acct.ResourceOwnerID())
 	if err != nil {
 		log.Warn("dashboard renderManagedPostgres: read overage", "account_id", acct.ID, "err", err)
 		return

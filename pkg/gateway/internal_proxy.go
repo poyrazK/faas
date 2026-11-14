@@ -886,7 +886,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	// Body copy bound to ctx — a hung upstream pins only the
 	// in-flight goroutine, not the listener.
-	if _, err := copyResponseBodyWithActivity(bodyCtx, w, resp.Body, touch); err != nil && !shutdownEnded.Load() && (!errors.Is(err, context.Canceled) || trafficRevocationCause(bodyCtx) != nil) {
+	if _, err := copyResponseBodyWithActivity(bodyCtx, w, resp.Body, resp.ContentLength, touch); err != nil && !shutdownEnded.Load() && (!errors.Is(err, context.Canceled) || trafficRevocationCause(bodyCtx) != nil) {
 		p.logger().Warn("internal body copy failed",
 			"target", p.Target.String(),
 			"err", err)
@@ -984,7 +984,7 @@ func isHopByHop(h string) bool {
 // The function owns src's lifecycle: defer Body.Close in the
 // caller is redundant after this change.
 func copyResponseBody(ctx context.Context, dst io.Writer, src io.ReadCloser) (int64, error) {
-	return copyResponseBodyWithActivity(ctx, dst, src, nil)
+	return copyResponseBodyWithActivity(ctx, dst, src, -1, nil)
 }
 
 // responseCopyBuffers recycles copyResponseBodyWithActivity's 32 KiB
@@ -996,7 +996,17 @@ var responseCopyBuffers = sync.Pool{New: func() any {
 	return &buf
 }}
 
-func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.ReadCloser, activity func()) (int64, error) {
+// copyResponseBodyWithActivity is copyResponseBody that calls activity after
+// each write.
+//
+// length is the body's declared length, or -1 when unknown. The chunk that
+// completes a declared length is not flushed on its own: the handler returns
+// right after, and the server sends those bytes with the end of the response
+// in one write. Over HTTP/2 each flush is its own TLS record and write
+// syscall, so a small response took three writes (headers, data, end of
+// stream) instead of one. A body of unknown length (SSE, chunked streams)
+// still flushes every chunk.
+func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.ReadCloser, length int64, activity func()) (int64, error) {
 	if w, ok := dst.(http.ResponseWriter); ok {
 		stop, err := armResponseWriteContext(ctx, w)
 		if err != nil {
@@ -1088,7 +1098,7 @@ func copyResponseBodyWithActivity(ctx context.Context, dst io.Writer, src io.Rea
 				if activity != nil && written > 0 {
 					activity()
 				}
-				if flusher != nil {
+				if flusher != nil && (length < 0 || total < length) {
 					flusher.Flush()
 				}
 			}

@@ -16,10 +16,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/datarepair"
+	dbbounds "github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -89,7 +89,7 @@ func cmdDataRepairLocal(verb string, args []string) int {
 	if dsn == "" {
 		return printErr("Repair database environment variable is empty", datarepair.ErrInvalid)
 	}
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := dbbounds.NewBoundedPool(ctx, dsn, 2)
 	if err != nil {
 		return printErr("Cannot configure repair database", datarepair.ErrUnavailable)
 	}

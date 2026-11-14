@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/dataapiops"
 	"github.com/onebox-faas/faas/pkg/dataapi"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
@@ -19,6 +20,8 @@ type DataAPIData struct {
 	// app secrets, so the dashboard shows presence and the CLI change.
 	Access     []DataAPISetting
 	ServerKeys []DataAPIServerKeySlot
+	Operations *dataapiops.Report
+	RequestID  string
 }
 
 // DataAPIUsageDay is one row of the usage table.
@@ -75,6 +78,7 @@ func DataAPIAccessSettings(slug string, keys map[string]bool) ([]DataAPISetting,
 	}
 	configure := "gregale data-api configure " + slug + " "
 	settings := []DataAPISetting{
+		{"Shared request budget", state("DATA_API_SHARED_BUDGET", "On", "Off"), configure + "--shared-budget requests=N,window=60s[,claim=tenant_id]|off"},
 		{"Public reads", state("DATA_API_PUBLIC_READ", "On", "Off"), configure + "--public-read SCHEMA.RELATION[,...] | --no-public-read"},
 		{"Public RPCs", state("DATA_API_PUBLIC_RPC", "On", "Off"), configure + "--public-rpc SCHEMA.FUNCTION[,...] | --no-public-rpc"},
 		{"Edge cache for public reads", state("DATA_API_PUBLIC_READ_MAX_AGE", "On", "Off"), configure + "--public-read-cache DURATION|off"},

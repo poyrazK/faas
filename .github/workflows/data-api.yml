@@ -7,10 +7,15 @@ on:
     # pull request; ci.yml runs this suite nightly and on dispatch.
     paths:
       - "pkg/apid/apidserver/managed_postgres_credentials*"
+      # The runtime, its starter and the CLI commands this suite drives.
+      - "cmd/gregale/templates/data-api/**"
+      - "cmd/gregale/templates/data-api-*/**"
+      - "cmd/gregale/commands_data_api*.go"
       - "pkg/managedpostgres/**"
       - "pkg/state/app_secret_delivery_policy*"
       - "pkg/gregalemanifest/**"
       - "sdk/data/**"
+      - "pkg/dataapi/integration/**"
       - "tests/data-api/**"
       - "examples/data-api-orders/**"
       - "examples/data-api-teams/**"
@@ -23,6 +28,7 @@ on:
       - "scripts/test-data-api-load.sh"
       - "scripts/*data-api*bundle*"
       - "scripts/test-data-api-packaging.sh"
+      - "scripts/test-data-api-integration.mjs"
       - "scripts/data-api-release*"
       - "scripts/archive-cli-binary.sh"
       - "scripts/ci/run-data-api-staging-canary.sh"
@@ -47,7 +53,7 @@ env:
 jobs:
   packaging:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       GOGC: 30
       GOMEMLIMIT: 2GiB
@@ -78,6 +84,8 @@ jobs:
           node-version: "22"
       - name: Verify release-candidate artifacts, installation, rollouts and RLS
         run: bash scripts/test-data-api-packaging.sh --out-dir "$RUNNER_TEMP/data-api-bundle"
+      - name: Verify typed data integration into an existing application
+        run: node scripts/test-data-api-integration.mjs "$RUNNER_TEMP/data-api-bundle"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-data-api-${{ github.sha }}

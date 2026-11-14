@@ -5,13 +5,28 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/ingressroute"
 	"github.com/onebox-faas/faas/pkg/tcpmetrics"
 )
+
+// tcpPeerAddr is the client address of a raw TCP connection.
+func tcpPeerAddr(addr net.Addr) (netip.Addr, bool) {
+	if tcp, ok := addr.(*net.TCPAddr); ok {
+		peer, ok := netip.AddrFromSlice(tcp.IP)
+		return peer.Unmap(), ok
+	}
+	if addr == nil {
+		return netip.Addr{}, false
+	}
+	ap, err := netip.ParseAddrPort(addr.String())
+	return ap.Addr().Unmap(), err == nil
+}
 
 // Forwarder is the transport seam implemented by gateway.TCPForwarder.
 type Forwarder interface {
@@ -188,7 +203,14 @@ func (s *Server) handle(ctx context.Context, conn net.Conn, session *tcpmetrics.
 		}
 		conn = secure
 	}
+	if peer, ok := tcpPeerAddr(conn.RemoteAddr()); ok {
+		ctx = ingressroute.WithPeer(ctx, peer)
+	}
 	target, err := s.Targets.ResolveTarget(ctx, route)
+	if errors.Is(err, ingressroute.ErrRefused) {
+		session.Reject("refused")
+		return fmt.Errorf("refuse app %q listener %q: %w", route.AppID, route.ListenerName, err)
+	}
 	if err != nil {
 		session.Reject("target_error")
 		return fmt.Errorf("resolve target for app %q listener %q: %w", route.AppID, route.ListenerName, err)

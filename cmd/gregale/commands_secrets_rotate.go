@@ -28,8 +28,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // secretsRotate handles `gregale secrets rotate --app <slug>
@@ -141,6 +144,9 @@ func secretsRotate(args []string) int {
 		return printErr("Not logged in", err)
 	}
 
+	if prob := rotateTargetMissing(client, *app, *scope, pair.Key); prob != nil {
+		return printErr("Nothing to rotate", prob)
+	}
 	printMutationTarget(*app, *scope, appSource, scopeSource)
 	resp, err := client.RotateSecretWithScope(context.Background(), *app, pair.Key, pair.Value, *scope)
 	if err != nil {
@@ -255,4 +261,16 @@ type secretsRotateReceipt struct {
 	InstanceID           string   `json:"instance_id,omitempty"`
 	AcknowledgedRuntimes *int     `json:"acknowledged_runtimes,omitempty"`
 	Warnings             []string `json:"warnings,omitempty"`
+}
+
+// rotateTargetMissing refuses a rotation of a key that is not set. The API
+// creates such a key, so a mistyped name silently added a new secret (Hunt
+// 32 H32-82); rotate replaces a secret and env set creates one. The check is
+// best effort: when the list cannot be read, the rotation proceeds.
+func rotateTargetMissing(client *api.Client, app, scope, key string) error {
+	existing, listErr := client.ListSecretsWithScope(context.Background(), app, scope)
+	if listErr == nil && !slices.Contains(secretMetadataKeys(&existing), key) {
+		return fmt.Errorf("%s is not set in scope %s of %s; rotate replaces an existing secret, create it with gregale env set %s=VALUE --app %s", key, scopeOrDefault(scope), app, key, app)
+	}
+	return nil
 }

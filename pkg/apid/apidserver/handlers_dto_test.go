@@ -40,6 +40,17 @@ func TestAppResponseSurfacesMaintenanceMode(t *testing.T) {
 	}
 }
 
+// TestAppResponseSurfacesEvictionPriority pins Hunt 32 H32-55: a PATCH to
+// reserved succeeded and was audited, but the response never carried the tier.
+func TestAppResponseSurfacesEvictionPriority(t *testing.T) {
+	s := &apidserver.Server{}
+	for stored, want := range map[string]string{"reserved": "reserved", "best_effort": "best_effort", "": "best_effort"} {
+		if got := s.AppResponse(state.App{EvictionPriority: stored}, api.PlanScale).EvictionPriority; got != want {
+			t.Errorf("stored %q: EvictionPriority = %q, want %q", stored, got, want)
+		}
+	}
+}
+
 func TestAppResponseSurfacesDeclaredServiceBindings(t *testing.T) {
 	s := &apidserver.Server{}
 	bindings := []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_BILLING_URL", Service: "billing"}}

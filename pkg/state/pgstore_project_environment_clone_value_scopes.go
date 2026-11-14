@@ -10,11 +10,15 @@ import (
 
 func projectCloneValueScopesTx(ctx context.Context, tx pgx.Tx, clone ProjectEnvironmentClone) ([]byte, error) {
 	queries := new(sqlc.Queries)
-	appIDs, err := queries.LockProjectEnvironmentCloneApps(ctx, tx, sqlc.LockProjectEnvironmentCloneAppsParams{
+	_, err := queries.LockProjectEnvironmentCloneApps(ctx, tx, sqlc.LockProjectEnvironmentCloneAppsParams{
 		AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID),
 	})
 	if err != nil {
 		return nil, mapErr(err)
+	}
+	appIDs, err := projectEnvironmentAppIDsDB(ctx, tx, clone.AccountID, clone.ProjectID, clone.SourceSlug)
+	if err != nil {
+		return nil, err
 	}
 	return projectCloneValueScopesForAppsDB(ctx, tx, clone, appIDs)
 }

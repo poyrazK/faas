@@ -25,6 +25,13 @@ func newNativeJailDeviceBackend(base string) nativeJailDeviceBackend {
 type linuxNativeJailInputs struct {
 	scope jailsetup.DeviceSetupScope
 	files []*os.File
+	// waitMntns and waitChroot are how long Prepare waited for the jailer to
+	// unshare its mount namespace and then to pivot into this jail's root.
+	waitMntns, waitChroot time.Duration
+}
+
+func (p *linuxNativeJailInputs) JailWaits() (mntns, chroot time.Duration) {
+	return p.waitMntns, p.waitChroot
 }
 
 func (p *linuxNativeJailInputs) Scope() jailsetup.DeviceSetupScope { return p.scope }
@@ -118,6 +125,8 @@ func (b linuxNativeJailDevices) Prepare(ctx context.Context, owner nativeLaunchR
 	if err != nil {
 		return nil, err
 	}
+	waitStart := time.Now()
+	var unshared time.Time // first observation of the jailer outside the host namespace
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -144,6 +153,9 @@ func (b linuxNativeJailDevices) Prepare(ctx context.Context, owner nativeLaunchR
 		if err := errors.Join(actualErr, expectedErr); err != nil {
 			return nil, errors.Join(err, namespace.Close(), originalRoot.Close())
 		}
+		if unshared.IsZero() && (identity.Inode != hostNS.Inode || identity.Device != hostNS.Device) {
+			unshared = time.Now()
+		}
 		if identity.Inode == hostNS.Inode && identity.Device == hostNS.Device || !os.SameFile(actualInfo, expectedInfo) {
 			if err := errors.Join(namespace.Close(), originalRoot.Close()); err != nil {
 				return nil, err
@@ -163,6 +175,10 @@ func (b linuxNativeJailDevices) Prepare(ctx context.Context, owner nativeLaunchR
 		}
 		tun := os.NewFile(uintptr(tunFD), "original-device-tun")
 		p := &linuxNativeJailInputs{files: []*os.File{originalRoot, namespace, process, tun}}
+		if unshared.IsZero() {
+			unshared = waitStart
+		}
+		p.waitMntns, p.waitChroot = unshared.Sub(waitStart), time.Since(unshared)
 		if err := b.completeScope(p, owner, proc, source); err != nil {
 			// Close the process descriptor here only once; the outer failure
 			// defer still owns it while inputs remain unpublished.

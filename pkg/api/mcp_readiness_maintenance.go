@@ -44,8 +44,21 @@ func ValidateMCPReadinessMaintenance(r CreateMCPReadinessMaintenanceRequest, now
 	if start.IsZero() {
 		start = now
 	}
-	if ValidateScope(MCPConnectionScope(r.Scope)) != nil || !ValidMCPMaintenanceReason(r.Reason) || !r.EndsAt.After(now) || !r.EndsAt.After(start) || r.EndsAt.Sub(start) > 30*24*time.Hour || start.Before(now.Add(-time.Minute)) {
-		return errors.New("use a valid environment, reason of 1–500 bytes, and a future end within 30 days of the start")
+	// Each failure names the field, so the CLI can say what to change
+	// instead of one sentence covering every rule (ADR-20261110090000).
+	switch {
+	case ValidateScope(MCPConnectionScope(r.Scope)) != nil:
+		return errors.New("environment is not a valid name")
+	case !ValidMCPMaintenanceReason(r.Reason):
+		return errors.New("reason must be 1–500 bytes of text")
+	case r.EndsAt.IsZero():
+		return errors.New("an end is required: give --end or --duration")
+	case start.Before(now.Add(-time.Minute)):
+		return errors.New("start is in the past")
+	case !r.EndsAt.After(now) || !r.EndsAt.After(start):
+		return errors.New("end must be after the start and in the future")
+	case r.EndsAt.Sub(start) > 30*24*time.Hour:
+		return errors.New("a window lasts at most 30 days (720h)")
 	}
 	return nil
 }

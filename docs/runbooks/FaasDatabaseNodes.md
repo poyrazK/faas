@@ -96,6 +96,12 @@ lives. A long outage fills volumes with WAL.
 refuses to start with an unreadable store directory or a bad `[remote]`
 block. Once it returns, PostgreSQL's archiver catches up by itself.
 
+Archive quota checks include bytes reserved by concurrent streams. WAL reserves
+its payload size; backups reserve compressed output and manifest bytes. Failed
+or cancelled writes release their reservations. A quota rejection can therefore
+mean another upload is still in flight. WAL can continue while a base backup is
+pending, subject to the same database quota.
+
 ## FaasDatabaseArchiveOffNodeStale (warn)
 
 `dbarchive_pending_oldest_seconds` is above 15 minutes: the oldest archive
@@ -105,9 +111,20 @@ the commits it holds would be lost too.
 1. `dbarchive_upload_errors_total` rising means uploads are failing.
    `journalctl -u faas-dbbackupd | grep "upload pass failed"` names the
    error, usually bucket credentials, endpoint reachability or a quota.
+   A failure stops that database's uploads for the pass; other databases
+   continue, and the failed files remain pending for retry. A backup's
+   manifest is never published before its data succeeds.
 2. With no upload errors, the node is producing archive faster than it
    uploads (`dbarchive_pending_files` keeps growing). Check the node's
    egress bandwidth.
+
+Archive objects over 64 MiB use streaming multipart uploads, including
+backups above S3's single-PUT size limit. Credentials for the primary and
+mirror need multipart write access and `s3:AbortMultipartUpload` in addition
+to their existing archive permissions. Failed uploads attempt to abort
+their parts; abort failures are included in the upload error. Configure
+bucket lifecycle cleanup for incomplete multipart uploads left by a
+process crash.
 
 ## FaasDatabaseArchiveOffsiteStale (warn)
 
@@ -123,14 +140,25 @@ bucket now would lose the restore points the mirror lacks.
    `corrupt off-site journal entry` error names a file under
    `<store_dir>/.offsite-journal/` that dbbackupd did not write. Move it
    aside, then investigate how it got there, since replay stops at it.
-2. With no errors, the node archives faster than it reaches the mirror
-   (`dbarchive_offsite_pending_files` keeps growing). Check egress to the
+2. With no errors, pending `delete` journal entries can be intentionally
+   deferred because mirror snapshot holds still need those recovery files.
+   Keep those entries: later hold releases can run past them, and the next
+   pass retries deletion. An unreadable hold or an unproven recovery anchor
+   also preserves data. If uploads are accumulating instead
+   (`dbarchive_offsite_pending_files` keeps growing), check egress to the
    mirror's provider.
+
+Retention checks holds in both buckets. Failed hold reads defer pruning
+and increment `dbarchive_prune_errors_total`; primary uploads continue.
+Repair the failing bucket access before expecting archive storage to shrink.
 
 ### Losing the bucket
 
-If the bucket, or its provider account, is gone for good, the mirror
-becomes the bucket:
+Restore reads already fall back to the mirror if the primary fails, returns
+an empty catalog, or lacks a backup consistent at the requested time. Holds
+in the mirror continue protecting recovery data. If the bucket, or its
+provider account, is gone for good, make the mirror the primary so archive
+writes and hold mutations can resume:
 
 1. On every database node, in dbbackupd.toml, move the `[offsite]`
    table's values into `[remote]` and drop `[offsite]`, or add a new

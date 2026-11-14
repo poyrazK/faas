@@ -150,7 +150,12 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 
 	raw := r.Header.Get("Authorization")
 	if strings.TrimSpace(raw) == "" {
-		if mode == api.ConsumerAuthModeOptional {
+		// A browser never sends credentials on a CORS preflight, so
+		// required mode would refuse every cross-origin call before the
+		// edge CORS rule or the app could answer it (Hunt 34 H34-36). The
+		// preflight carries no consumer and the real request is still
+		// checked.
+		if mode == api.ConsumerAuthModeOptional || isCORSPreflight(r) {
 			return true
 		}
 		api.WriteProblem(w, api.ErrConsumerKeyRequired())
@@ -189,7 +194,15 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		return false
 	}
 	prefix := consumerKeyPrefixFromPlaintext(token)
-	key, err := h.consumerAuthStore.ConsumerKeyByAppAndPrefix(r.Context(), app.AccountID, app.ID, prefix)
+	keyAppID := app.ID
+	key, err := h.consumerAuthStore.ConsumerKeyByAppAndPrefix(r.Context(), app.AccountID, keyAppID, prefix)
+	if errors.Is(err, ErrConsumerAuthNotFound) && app.IsPreview && app.ProductionAppID != "" {
+		// A preview keeps its production app's consumer-auth gate, so it
+		// accepts that app's consumers' keys; without them a required-mode
+		// preview refused every request (ADR-20261105090226).
+		keyAppID = app.ProductionAppID
+		key, err = h.consumerAuthStore.ConsumerKeyByAppAndPrefix(r.Context(), app.AccountID, keyAppID, prefix)
+	}
 	if err != nil {
 		if !errors.Is(err, ErrConsumerAuthNotFound) {
 			if h.log != nil {
@@ -225,7 +238,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 			return h.consumerAuthUnavailable(w, r, rec, app)
 		}
 	}
-	if !matched || key.AccountID != app.AccountID || key.AppID != app.ID || key.Prefix != prefix || key.ConsumerID == "" {
+	if !matched || key.AccountID != app.AccountID || key.AppID != keyAppID || key.Prefix != prefix || key.ConsumerID == "" {
 		h.keyLookups.fail(source)
 		api.WriteProblem(w, api.ErrConsumerKeyInvalid())
 		rec.status = http.StatusUnauthorized
@@ -252,7 +265,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	if consumer.ID != key.ConsumerID || consumer.AccountID != app.AccountID || consumer.AppID != app.ID {
+	if consumer.ID != key.ConsumerID || consumer.AccountID != app.AccountID || consumer.AppID != keyAppID {
 		api.WriteProblem(w, api.ErrConsumerKeyInvalid())
 		rec.status = http.StatusUnauthorized
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -277,7 +290,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 	authenticated.PlatformTenantID = consumer.PlatformTenantID
 	ctx := authmw.WithConsumer(r.Context(), authmw.ConsumerIdentity{
 		ID:     consumer.ID,
-		AppID:  app.ID,
+		AppID:  keyAppID,
 		KeyID:  key.ID,
 		Scopes: key.Scopes,
 	})
@@ -306,8 +319,19 @@ func consumerKeyPrefixFromPlaintext(token string) string {
 	return ""
 }
 
+// isCORSPreflight reports a browser CORS preflight: OPTIONS with an Origin
+// and the method the page wants to send.
+func isCORSPreflight(r *http.Request) bool {
+	return r.Method == http.MethodOptions && r.Header.Get("Origin") != "" &&
+		strings.TrimSpace(r.Header.Get("Access-Control-Request-Method")) != ""
+}
+
+// consumerScopeAllows maps a key's scopes to the request method. read covers
+// the safe methods GET, HEAD and OPTIONS: HEAD is GET without a body (edge
+// rules treat it the same way) and OPTIONS reads capabilities (Hunt 34
+// H34-37, ADR-120 amendment 2026-11-12).
 func consumerScopeAllows(scopes []string, method string) bool {
-	readOnly := method == http.MethodGet
+	readOnly := method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions
 	for _, scope := range scopes {
 		switch scope {
 		case "admin":

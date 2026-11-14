@@ -73,13 +73,19 @@ func TestQuietPauseAdmission(t *testing.T) {
 	sample := &fakeQuietSample{paused: map[string]struct{}{}}
 	l, clock := newQuietLedger(sample)
 	admitted := 0
+	// admit admits the next instance unless it would pass the vCPU budget,
+	// which only counts since ADR-20261109172421; it returns that refusal.
 	admit := func() error {
 		clock.tick()
-		err := l.Admit(quietReq(admitted))
-		if err == nil {
-			admitted++
+		r := quietReq(admitted)
+		if err := l.XCPUOverBudget(r); err != nil {
+			return err
 		}
-		return err
+		if err := l.Admit(r); err != nil {
+			t.Fatalf("admit %d: %v", admitted, err)
+		}
+		admitted++
+		return nil
 	}
 	// Without a sample the gates count every booking: 4 x 2 vCPU fill 8.
 	for i := 0; i < 4; i++ {
@@ -141,8 +147,8 @@ func TestQuietPauseAdmissionWithoutSwitch(t *testing.T) {
 			t.Fatalf("admit %d: %v", i, err)
 		}
 	}
-	if err := l.Admit(quietReq(4)); !isCapacityRefusal(err) {
-		t.Fatalf("admit beyond the budget with quiet pause admission off: %v", err)
+	if err := l.XCPUOverBudget(quietReq(4)); !isCapacityRefusal(err) {
+		t.Fatalf("admit beyond the budget with quiet pause admission off: %v, want past the budget", err)
 	}
 }
 
@@ -212,11 +218,14 @@ func TestQuietPauseAdmissionRandomTraffic(t *testing.T) {
 					}
 				}
 			}
-			if err := l.Admit(r); err != nil {
+			if err := l.XCPUOverBudget(r); err != nil {
 				if !isCapacityRefusal(err) {
 					t.Fatalf("step %d: %v", step, err)
 				}
 				continue
+			}
+			if err := l.Admit(r); err != nil {
+				t.Fatalf("step %d: %v", step, err)
 			}
 			if active+2 > quietVCPUBudget {
 				t.Fatalf("step %d: admitted with %d active vCPU + 2 over the %d budget", step, active, quietVCPUBudget)

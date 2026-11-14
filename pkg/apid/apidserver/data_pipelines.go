@@ -125,7 +125,7 @@ func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return errors.New("data pipelines: private identity unavailable")
 	}
-	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid-pipeline-worker")
+	pool, err := db.OpenWithAppName(db.WithBootWait(ctx), cfg.DBURL, "faas-apid-pipeline-worker")
 	if err != nil {
 		return errors.New("data pipelines: catalog unavailable")
 	}
@@ -150,6 +150,6 @@ func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 	}
 	store := datapipeline.NewPostgresStore(pool)
 	capacity := &datapipeline.CapacityObserver{Store: connectioncapacity.NewStore(pool), Qualifications: cfg.DataPipelines.Capacity, Target: service.PipelineCapacityTarget}
-	worker := &datapipeline.Worker{SetupTick: srv.dataPipelines.Service.SetupTick, Store: store, Identities: identities, Allowed: srv.dataPipelines.Service.Allowed, Engine: &datapipeline.Engine{RefreshSchema: store.RefreshSchema, Policy: policy, Target: service.WithPipelineSQL, Capacity: capacity, Admit: store.AdmitCapacity}}
+	worker := &datapipeline.Worker{SetupTick: srv.dataPipelines.Service.SetupTick, Store: store, Identities: identities, Allowed: srv.dataPipelines.Service.Allowed, Engine: &datapipeline.Engine{RefreshSchema: store.RefreshSchema, RefreshReadGate: store.RefreshReadGate, Policy: policy, Target: service.WithPipelineSQL, Capacity: capacity, Admit: store.AdmitCapacity}}
 	return worker.Run(ctx)
 }

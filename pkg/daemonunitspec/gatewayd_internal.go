@@ -96,6 +96,14 @@ func UnitGatewaydInternal() daemonunit.Unit {
 			// never push the daemon into its MemoryMax.
 			{Key: "GOGC", Value: "200"},
 			{Key: "GOMEMLIMIT", Value: "384MiB"},
+			// Record one request trace in ten. Recording every request's spans
+			// was ~15% of this daemon's CPU (prod profile 2026-11-10, 600
+			// req/s), and the daemon exports none of them: only dependency
+			// spans leave it, through apid, and otelinit records those
+			// whatever the ratio. Apps sample their own spans without regard to
+			// the gateway's flag (guest-init), and the trace ID header stays
+			// valid on every response. /etc/faas/otel.env overrides it.
+			{Key: "OTEL_TRACES_SAMPLER_ARG", Value: "0.1"},
 			// Request bodies over 1 MiB spool to TMPDIR. PrivateTmp puts /tmp
 			// on the host /tmp, tmpfs on some hosts, where spooled bytes
 			// count against MemoryMax; the state directory is on disk (bug

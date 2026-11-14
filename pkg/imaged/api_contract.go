@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -20,10 +19,10 @@ func (h *Handler) checkAPIContract(ctx context.Context, dep state.Deployment) er
 	return err
 }
 func (h *Handler) checkAPIContractContext(ctx context.Context, dep state.Deployment) (context.Context, error) {
-	if !api.ApiContractDiffEnabled() || !strings.EqualFold(strings.TrimSpace(dep.Scope), "prod") {
+	if !api.ApiContractDiffEnabled() || !openapidiff.IsProductionScope(dep.Scope) {
 		return ctx, nil
 	}
-	check, err := openapidiff.CheckLiveContract(ctx, h.store, dep.AppID, dep.ID, "prod", false)
+	check, err := openapidiff.CheckLiveContract(ctx, h.store, dep.AppID, dep.ID, dep.Scope, false)
 	if err != nil {
 		if errors.Is(err, openapidiff.ErrSnapshotBaselineMissing) {
 			return ctx, nil

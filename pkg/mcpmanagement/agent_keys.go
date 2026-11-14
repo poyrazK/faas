@@ -3,6 +3,7 @@ package mcpmanagement
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"slices"
@@ -22,19 +23,24 @@ import (
 type keyConnection struct {
 	// id names the connection's uploads and audit lines; it is derived from
 	// the key's hash, never the key.
-	id            string
-	planNamespace string
-	allowedApps   map[string]string
-	accountID     string
-	scopes        []string
-	client        *api.Client
-	server        *mcp.Server
-	management    *management
-	inflight      int
-	lastUsed      time.Time
+	id                string
+	planNamespace     string
+	allowedApps       map[string]string
+	publishingLimited bool
+	accountID         string
+	scopes            []string
+	client            *api.Client
+	server            *mcp.Server
+	management        *management
+	inflight          int
+	lastUsed          time.Time
 }
 
 var errKeyConnectionCapacity = errors.New("agent key connection capacity reached")
+
+// errKeyConnectionsPerAccount refuses an account's connection past its
+// share (bug hunt H101).
+var errKeyConnectionsPerAccount = errors.New("this account's agent key connections are at their limit")
 
 // agentKeyBearer reports whether a bearer token has the shape of a Gregale API
 // key rather than one of this bridge's OAuth tokens.
@@ -68,7 +74,30 @@ func (r *remoteServer) serveAgentKey(w http.ResponseWriter, req *http.Request, n
 		r.challenge(w)
 		return
 	}
-	server, release, err := r.holdKeyConnection(tokenHash(token), account.ID, account.KeyScopes, client, account.KeyApp)
+	if r.opts.AgentKeyToolsetSelection {
+		values := req.Header.Values(agentKeyToolsetsHeader)
+		if len(values) > 1 || len(values) == 1 && (len(values[0]) > 256 || strings.TrimSpace(values[0]) == "") {
+			oauthError(w, http.StatusBadRequest, "invalid_request", "Provide one non-empty Gregale-MCP-Toolsets header")
+			return
+		}
+		spec := ""
+		if len(values) == 1 {
+			spec = values[0]
+		}
+		selection, err := connectionToolsets(spec, r.opts.Toolsets)
+		if err != nil {
+			oauthError(w, http.StatusBadRequest, "invalid_request", "Selected toolsets are invalid or unavailable on this server")
+			return
+		}
+		req = req.WithContext(context.WithValue(req.Context(), agentKeyToolsetsContextKey{}, selection))
+	}
+	server, release, err := r.holdKeyConnection(tokenHash(token), account.ID, account.KeyScopes, client, account.KeyOrg != nil || len(account.KeyProjects) != 0, account.KeyApp)
+	if errors.Is(err, errKeyConnectionsPerAccount) {
+		w.Header().Set("Retry-After", "60")
+		oauthError(w, http.StatusTooManyRequests, "too_many_requests",
+			fmt.Sprintf("This account already has %d agent key connections in use; reuse a key or retry once one is idle", hostedKeyConnsPerAccount))
+		return
+	}
 	if err != nil {
 		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "Agent connection capacity reached; retry shortly")
 		return
@@ -79,7 +108,7 @@ func (r *remoteServer) serveAgentKey(w http.ResponseWriter, req *http.Request, n
 
 // holdKeyConnection returns the key's connection server, building it on first
 // use, and holds it for one request.
-func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string, client *api.Client, bindings ...*api.AppAgentBinding) (*mcp.Server, func(), error) {
+func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string, client *api.Client, publishingLimited bool, bindings ...*api.AppAgentBinding) (*mcp.Server, func(), error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var apps map[string]string
@@ -87,18 +116,25 @@ func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string
 		apps = map[string]string{bindings[0].Slug: bindings[0].ID}
 	}
 	c := r.keyConns[hash]
-	if c != nil && (c.accountID != accountID || !slices.Equal(c.scopes, scopes) || !maps.Equal(c.allowedApps, apps)) {
+	if c != nil && (c.accountID != accountID || !slices.Equal(c.scopes, scopes) || !maps.Equal(c.allowedApps, apps) || c.publishingLimited != publishingLimited) {
 		// A request already holding the old server keeps its own reference.
 		c = nil
 	}
 	if c == nil {
+		now := time.Now()
+		if r.opts.Hosted && r.accountKeyConnectionsLocked(accountID, hash) >= hostedKeyConnsPerAccount {
+			r.dropIdleKeyConnectionsLocked(now, keyConnIdleFloor, accountID)
+			if r.accountKeyConnectionsLocked(accountID, hash) >= hostedKeyConnsPerAccount {
+				return nil, nil, errKeyConnectionsPerAccount
+			}
+		}
 		if len(r.keyConns) >= r.capacity() {
-			r.dropIdleKeyConnectionsLocked(time.Now(), 0)
+			r.dropIdleKeyConnectionsLocked(now, keyConnIdleFloor, "")
 		}
 		if len(r.keyConns) >= r.capacity() {
 			return nil, nil, errKeyConnectionCapacity
 		}
-		c = &keyConnection{id: "gmcp_key_" + hash[:24], planNamespace: "agent-key/" + accountID + "/" + hash, accountID: accountID, scopes: slices.Clone(scopes), client: client, allowedApps: apps}
+		c = &keyConnection{id: "gmcp_key_" + hash[:24], planNamespace: "agent-key/" + accountID + "/" + hash, accountID: accountID, scopes: slices.Clone(scopes), client: client, allowedApps: apps, publishingLimited: publishingLimited}
 		r.keyConns[hash] = c
 	}
 	if c.server == nil {
@@ -126,20 +162,45 @@ func (r *remoteServer) holdKeyConnection(hash, accountID string, scopes []string
 // for consent; journals are isolated by the account and full credential hash.
 func (r *remoteServer) keyOptions(c *keyConnection) Options {
 	var capabilities []string
+	toolsets := r.opts.Toolsets
+	if r.opts.AgentKeyToolsetSelection && toolsets == nil {
+		toolsets = []string{ToolsetAll}
+	}
 	for _, scope := range []string{api.ScopeSecretsRequest, api.ScopeStorageManage, api.ScopeManagedPostgresManage, api.ScopeEnvWrite, api.ScopeUsageRead} {
 		if slices.Contains(c.scopes, scope) {
 			capabilities = append(capabilities, scope)
 		}
 	}
-	return Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: r.opts.Toolsets, Capabilities: capabilities, LocalCLI: r.grantCLI(c.client.Token()), uploads: r.uploads, agentKey: true, planStore: r.opts.StateStore, planNamespace: c.planNamespace, AllowedApps: c.allowedApps}
+	return Options{AllowPrivateToolInvocation: r.opts.AllowPrivateToolInvocation && r.opts.AllowToolInvocation && c.allowedApps == nil, AllowToolPublishing: r.opts.AllowToolPublishing && !c.publishingLimited, AllowToolInvocation: r.opts.AllowToolInvocation && c.allowedApps == nil, Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: c.accountID, grantID: c.id, Profile: "agent-key", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: c.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(c.scopes, api.ScopeDeployWrite), Toolsets: toolsets, Capabilities: capabilities, LocalCLI: r.grantCLI(c.accountID, c.client.Token()), uploads: r.uploads, agentKey: true, agentKeyToolsetSelection: r.opts.AgentKeyToolsetSelection, planStore: r.opts.StateStore, planNamespace: c.planNamespace, AllowedApps: c.allowedApps}
 }
 
-// dropIdleKeyConnectionsLocked forgets key connections unused for idle with
-// nothing in flight and nothing a rebuild would lose. Caller holds r.mu.
-func (r *remoteServer) dropIdleKeyConnectionsLocked(now time.Time, idle time.Duration) {
+// dropIdleKeyConnectionsLocked forgets key connections (of accountID, or
+// all when it is empty) unused for idle with nothing in flight and nothing a
+// rebuild would lose; one holding a plan waits at least keyConnPlanIdle.
+// Caller holds r.mu.
+func (r *remoteServer) dropIdleKeyConnectionsLocked(now time.Time, idle time.Duration, accountID string) {
 	for hash, c := range r.keyConns {
-		if c.inflight == 0 && now.Sub(c.lastUsed) >= idle && c.management.idle(now) {
+		if accountID != "" && c.accountID != accountID {
+			continue
+		}
+		wait := idle
+		if c.management.holdsPlans() {
+			wait = max(idle, keyConnPlanIdle)
+		}
+		if c.inflight == 0 && now.Sub(c.lastUsed) >= wait && c.management.idle(now) {
 			delete(r.keyConns, hash)
 		}
 	}
+}
+
+// accountKeyConnectionsLocked counts accountID's key connections other than
+// the one for hash, which a request is about to replace.
+func (r *remoteServer) accountKeyConnectionsLocked(accountID, hash string) int {
+	n := 0
+	for h, c := range r.keyConns {
+		if h != hash && c.accountID == accountID {
+			n++
+		}
+	}
+	return n
 }

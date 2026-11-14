@@ -102,13 +102,13 @@ func TestInternalQuotaHandler_AfterAllow(t *testing.T) {
 		t.Errorf("X-Faas-Quota-State = %q; want ok", got)
 	}
 	body := rec.Body.String()
-	// Hobby plan: RateLimitBurst = 100, RateLimitRPS = 20. After one
-	// Allow, remaining = 99.
+	// Hobby plan: RateLimitBurst = 1000, RateLimitRPS = 200. After one
+	// Allow, remaining = 999.
 	for _, want := range []string{
 		`"app_id":"app-1"`,
 		`"plan":"hobby"`,
-		`"limit":100`,
-		`"remaining":99`,
+		`"limit":1000`,
+		`"remaining":999`,
 		`"reset_seconds":0`,
 		`"ok":true`,
 	} {

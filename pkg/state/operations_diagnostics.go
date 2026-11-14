@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -19,11 +21,12 @@ func (m *MemStore) OperationPendingCount(_ context.Context, account string) (int
 		return 0, ErrNotFound
 	}
 	var count int64
+	now := time.Now().UTC()
 	if m.operationData == nil {
 		return 0, nil
 	}
 	for _, op := range m.operationData.operations {
-		if op.AccountID == account && !op.State.Terminal() {
+		if op.AccountID == account && operationCountsPending(op, now) {
 			count++
 		}
 	}
@@ -38,7 +41,8 @@ func (s *PgStore) OperationPendingCount(ctx context.Context, account string) (in
 	if err != nil {
 		return 0, err
 	}
-	count, err := sqlc.New().CountPendingCustomerOperations(ctx, s.pool, id)
+	now := time.Now().UTC()
+	count, err := sqlc.New().CountPendingCustomerOperations(ctx, s.pool, sqlc.CountPendingCustomerOperationsParams{AccountID: id, ObservedAt: operationPGTime(&now)})
 	if err != nil {
 		return 0, fmt.Errorf("state: observe pending operations: %w", mapErr(err))
 	}

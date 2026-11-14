@@ -33,7 +33,7 @@ func resolveLogsAppTarget(explicit string, preview bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	linked, _, err := linkedProjectContext(cwd)
+	linked, _, err := targetProjectContext(cwd)
 	if err != nil && !errors.Is(err, errProjectContextNotFound) {
 		return "", err
 	}

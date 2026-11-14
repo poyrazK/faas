@@ -70,7 +70,7 @@ func validateTestRestart(scenario testScenario, index int, step testScenarioStep
 	}
 	requests := append([]testHTTPRequest{r.Readiness}, r.StorageChecks...)
 	for i, request := range requests {
-		if request.Method != "GET" || request.JSON != nil || len(request.Capture) != 0 {
+		if request.Method != "GET" || request.hasJSONBody() || len(request.Capture) != 0 {
 			return errors.New("restart probes must be read-only GET requests without captures")
 		}
 		if request.Expect.Status < 200 || request.Expect.Status >= 300 {
@@ -83,12 +83,7 @@ func validateTestRestart(scenario testScenario, index int, step testScenarioStep
 			return errors.New("restart.storage_checks must assert persisted JSON values")
 		}
 	}
-	prior := []testHTTPRequest{}
-	for _, previous := range scenario.Steps[:index] {
-		prior = append(prior, previous.Requests...)
-		prior = append(prior, previous.Checks...)
-	}
-	return validateTestHTTPRequestsWithData(testScenario{Consumers: scenario.Consumers, Requests: append(prior, requests...)}, dataFields)
+	return validateTestHTTPRequestsWithCaptures(testScenario{Consumers: scenario.Consumers, Requests: requests}, dataFields, testScenarioStepCaptures(scenario.Steps[:index]))
 }
 
 func runTestRestart(ctx context.Context, client testRestartClient, baseURL string, env, consumerEnv []string, runID string, spec testRestartSpec, captures map[string]string) (evidence *testRestartEvidence, err error) {

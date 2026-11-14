@@ -388,6 +388,11 @@ failure_report_dir = %q
 				h.nativeRuntimeSnapshotRoot = snapshots
 				cfg += fmt.Sprintf("native_runtime_capture = true\nnative_runtime_snapshot_root = %q\n", snapshots)
 			}
+			if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" {
+				// The native GitOps journey is the qualification capture
+				// acceptance (ADR 20261023093000).
+				cfg += "native_qualification_capture = true\n"
+			}
 		}
 		if which&VMMDMetrics != 0 {
 			addr := freeTCPAddr(t)

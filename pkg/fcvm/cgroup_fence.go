@@ -56,7 +56,32 @@ func vmCgroupParent(l Lease) string {
 	if l.IsBuilder {
 		return BuilderCgroupParent
 	}
-	return ParentCgroupFor(l.Plan)
+	return tenantCgroupParent(l)
+}
+
+// tenantCgroupParent is the parent cgroup of a tenant (non-builder) VM: the
+// one it was launched under (Lease.cgroupParent). A lease rebuilt from a
+// record (adoption, quarantine cleanup) has none, so it is the flat tenant
+// slice when only that holds the VM's scope, else the plan's sub-slice
+// (ADR-20261109172421 step 6.5).
+func tenantCgroupParent(l Lease) string {
+	if l.cgroupParent != "" {
+		return l.cgroupParent
+	}
+	plan := ParentCgroupFor(l.Plan)
+	if plan != CgroupMountRoot && cgroupScopeExists(CgroupMountRoot, l.Instance) && !cgroupScopeExists(plan, l.Instance) {
+		return CgroupMountRoot
+	}
+	return plan
+}
+
+// cgroupScopeExists reports whether parent holds instance's scope directory.
+func cgroupScopeExists(parent, instance string) bool {
+	if instance == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(cgroupRoot, parent, PerInstanceScope(instance)))
+	return err == nil && info.IsDir()
 }
 
 func memoryMaxValue(memoryMB int) string {
@@ -70,7 +95,7 @@ func newCgroupFence(l Lease) (*cgroupFence, error) {
 		lease:     l,
 		parent:    parent,
 		scope:     filepath.Join(parent, PerInstanceScope(l.Instance)),
-		cpuWeight: strconv.Itoa(vmCPUWeight(l.Plan, l.IsBuilder)),
+		cpuWeight: strconv.Itoa(leaseCPUWeight(l)),
 	}
 	if l.IsBuilder {
 		f.memoryMax = fenceMemoryMaxFor(l)

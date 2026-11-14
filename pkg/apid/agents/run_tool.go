@@ -162,6 +162,7 @@ func (h *Handler) RunRunCallbacks(ctx context.Context) {
 		if _, err := h.DeliverRunCallbacks(ctx); err != nil && ctx.Err() == nil && h.Log != nil {
 			h.Log.Warn("agent run callbacks", "err", err)
 		}
+		h.sweepGitHubSubscriptions(ctx)
 	}
 }
 

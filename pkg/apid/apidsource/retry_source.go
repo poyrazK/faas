@@ -13,6 +13,19 @@ import (
 var ErrRetrySourceUnavailable = errors.New("original source archive is unavailable")
 
 func publishRetrySource(ctx context.Context, be storage.StorageBackend, buildID string, p EnqueueParams) error {
+	// A server-side copy keeps the retry request short; streaming the
+	// archive through apid could outlast the client's request timeout.
+	if copier, ok := be.(storage.ObjectCopier); ok && p.SourceBuildID != "" {
+		err := copier.CopyObject(ctx, "sources/"+p.SourceBuildID+".tar.gz", "sources/"+buildID+".tar.gz")
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, errors.ErrUnsupported), errors.Is(err, storage.ErrNotFound), errors.Is(err, os.ErrNotExist):
+			// Stream from the retained spool below.
+		default:
+			return fmt.Errorf("copy retained source: %w", err)
+		}
+	}
 	var source io.ReadCloser
 	if be != nil && p.SourceBuildID != "" {
 		var err error

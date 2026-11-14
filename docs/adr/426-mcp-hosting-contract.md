@@ -50,7 +50,11 @@ extension with `--tasks` or `--wait`. The client can inspect/cancel returned tas
 handles with `mcp task-get` and `mcp task-cancel`; `--wait` polls using the
 server's interval, handles bounded form input when explicitly enabled, and sends
 a cooperative cancellation request if its timeout expires. `mcp task-wait`
-resumes polling a saved task handle and can answer supported form requests.
+resumes polling a saved task handle and can answer supported form requests; a
+resumed wait leaves the task running on timeout unless `--cancel-on-timeout` is
+set. Waits periodically reconcile silent subscriptions with the durable task
+state, respecting any longer server-provided poll interval. Failed task waits
+surface the terminal task snapshot and its structured error.
 All three starters can optionally create durable `build_report` Tasks for
 task-aware clients when a PostgreSQL binding and stable encryption key are
 configured. Go and Python also support task reads, cancellation, and the task

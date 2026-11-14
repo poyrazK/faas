@@ -32,6 +32,8 @@ const categories: Readonly<Record<string, DataErrorCategory>> = Object.freeze({
   request_cancelled: 'cancelled',
   '57014': 'cancelled',
   data_api_unavailable: 'unavailable',
+  data_api_shared_budget_unavailable: 'unavailable',
+  data_api_budget_identity_required: 'permission_denied',
   data_api_overloaded: 'unavailable',
   data_api_rate_limited: 'rate_limited',
   data_api_concurrency_limited: 'concurrency_limited',

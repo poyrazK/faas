@@ -1,6 +1,13 @@
 package state
 
 func (m *MemStore) checkProjectEnvironmentCloneReservationLocked(clone ProjectEnvironmentClone) error {
+	// Managed secrets remain until provider cleanup succeeds. Reusing the
+	// slug earlier would attach the old credentials to a new environment.
+	for _, job := range m.projectEnvironmentCleanupJobs {
+		if job.ProjectID == clone.ProjectID && job.EnvironmentSlug == clone.TargetSlug {
+			return ErrProjectEnvironmentCleanupPending
+		}
+	}
 	for _, op := range m.projectEnvironmentCloneOperations {
 		if op.ProjectID != clone.ProjectID || op.TargetEnvironment != clone.TargetSlug || !cloneOperationReservesTarget(op.Status) {
 			continue

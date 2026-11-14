@@ -117,6 +117,10 @@ type DebugStatusResponse struct {
 	OOMKills      []DebugStatusOOMKill `json:"oom_kills"`
 	OOMKillsTotal int                  `json:"oom_kills_total"`
 	OOMFix        string               `json:"oom_fix,omitempty"`
+	// MemoryPressure is present when the app's guests ran short of memory in
+	// the last day, with the RAM that would have kept 30% free
+	// (ADR-20261102124306 step 3). Behind the app_health_memory flag.
+	MemoryPressure *DebugStatusMemory `json:"memory_pressure,omitempty"`
 	// TracingEnabled reports whether in-guest tracing (spans and request
 	// logs) is on for the app.
 	TracingEnabled bool   `json:"tracing_enabled"`
@@ -148,4 +152,30 @@ type DebugStatusDeployment struct {
 	RolloutState   string `json:"rollout_state,omitempty"`
 	CommitSHA      string `json:"commit_sha,omitempty"`
 	CreatedAt      string `json:"created_at"`
+}
+
+// DebugStatusMemory summarizes an app's memory-pressure rollup and the RAM it
+// needs (ADR-20261102124306 step 3).
+type DebugStatusMemory struct {
+	// Episodes counted in the rollup window; the low point and the guest's
+	// memory in MB; the anonymous memory peak.
+	Episodes          int `json:"episodes"`
+	LowestAvailableMB int `json:"lowest_available_mb"`
+	TotalMB           int `json:"total_mb"`
+	PeakAnonMB        int `json:"peak_anon_mb"`
+	// LastAt is the newest episode (RFC 3339).
+	LastAt string `json:"last_at"`
+	// CurrentMB is the app's ram_mb; SuggestedMB the RAM that would have kept
+	// 30% free. Plan/PlanMB are the account's plan and its RAM ceiling;
+	// UpgradePlan/UpgradeMB the smallest plan that allows SuggestedMB when
+	// FitsPlan is false (empty when no plan does).
+	CurrentMB   int    `json:"current_mb"`
+	SuggestedMB int    `json:"suggested_mb"`
+	Plan        string `json:"plan"`
+	PlanMB      int    `json:"plan_mb"`
+	FitsPlan    bool   `json:"fits_plan"`
+	UpgradePlan string `json:"upgrade_plan,omitempty"`
+	UpgradeMB   int    `json:"upgrade_mb,omitempty"`
+	// Advice is the same sentence app health's memory check gives.
+	Advice string `json:"advice"`
 }

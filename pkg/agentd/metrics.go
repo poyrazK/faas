@@ -26,6 +26,10 @@ type Metrics struct {
 	attemptSeconds   *prometheus.HistogramVec
 	memory           *prometheus.CounterVec
 	sampleGap        prometheus.Histogram
+	// sandboxBilled and sandboxPaused are a session VM's measured usage
+	// (ADR-20261027090013 step 11).
+	sandboxBilled prometheus.Counter
+	sandboxPaused prometheus.Counter
 }
 
 // Measures of agent_run_memory_gb_seconds_total (ADR-20261027090011).
@@ -98,12 +102,20 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Help:    "Share of an agent run's memory samples vmmd could not read (ADR-20261027090011).",
 			Buckets: []float64{0, .01, .05, .1, .2, .5, 1},
 		}),
+		sandboxBilled: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "sandbox_session_billed_gb_seconds_total",
+			Help: "Sandbox session VM memory vmmd measured under the ADR-20261027090011 rule, in GB-seconds: unpaused, unfrozen seconds at max(private, the floor) + 8 MB. Not billed yet.",
+		}),
+		sandboxPaused: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "sandbox_session_paused_seconds_total",
+			Help: "Seconds sandbox session VMs spent quiet-paused or frozen, which are not billed (ADR-20261027090013 §5).",
+		}),
 	}
 	for _, measure := range []string{measurePrivate, measureUnpausedPrivate, measureBillable, measureConfigured} {
 		m.memory.WithLabelValues(measure)
 	}
 	for _, c := range []prometheus.Collector{m.runs, m.requeues, m.startSeconds, m.runSeconds, m.queueDepth, m.queueOldest,
-		m.deliveries, m.deliveryAttempts, m.attemptSeconds, m.memory, m.sampleGap} {
+		m.deliveries, m.deliveryAttempts, m.attemptSeconds, m.memory, m.sampleGap, m.sandboxBilled, m.sandboxPaused} {
 		if err := reg.Register(c); err != nil {
 			return nil, err
 		}
@@ -205,5 +217,19 @@ func attemptResult(o agentstore.DeliveryOutcome) string {
 		return "rejected"
 	default:
 		return "unknown"
+	}
+}
+
+// sandboxUsed counts a session's growth from one cumulative usage record to
+// the next.
+func (m *Metrics) sandboxUsed(prev, next agentstore.SandboxUsage) {
+	if m == nil {
+		return
+	}
+	if d := next.BillableMBMillis - prev.BillableMBMillis; d > 0 {
+		m.sandboxBilled.Add(float64(d) / 1024 / 1000)
+	}
+	if d := next.PausedMillis - prev.PausedMillis; d > 0 {
+		m.sandboxPaused.Add(float64(d) / 1000)
 	}
 }

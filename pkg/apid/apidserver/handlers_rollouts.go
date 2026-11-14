@@ -106,13 +106,22 @@ func (s *server) recoverRollout(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrValidation("reviewed recovery requires exact abort selectors"))
 		return
 	}
+	attempt, problem := s.serviceAbortAttempt(r.Context(), r, app, req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	checkedRequest := r
+	if attempt != "" {
+		checkedRequest = r.WithContext(state.ContextWithServiceAbortAttempt(r.Context(), attempt))
+	}
 	// ADR-20261020085706: advance and promote cannot skip an approval wait.
 	if p := s.recoverRolloutApprovalProblem(r, app, req.Action); p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
 	if req.DeploymentID != "" || req.ExpectedPredecessorDeploymentID != "" {
-		s.recoverPinnedCanaryRollout(w, r, acct, app, req, nil)
+		s.recoverPinnedCanaryRollout(w, checkedRequest, acct, app, req, nil)
 		return
 	}
 	if !acct.Plan.TrafficSplitAllowed() {
@@ -293,7 +302,11 @@ func int64ToAuditIDString(id int64) string {
 // guards carries which route guards may hold the recovery.
 func (s *server) recoverRolloutRecordingDecision(r *http.Request, app state.App, req api.RecoverRolloutRequest, guards state.RouteGuardRelease) (state.Deployment, int64, error) {
 	decisions, ok := s.store.(state.RolloutDecisionStore)
-	if !ok || isInternalSafeDeployRequest(r) {
+	if isInternalSafeDeployRequest(r) {
+		ctx := state.WithRolloutRecoveryActor(state.WithRouteGuardRelease(r.Context(), guards), state.RolloutRecoveryActorSafeDeploy)
+		return s.store.RecoverRollout(ctx, app.ID, req.Action, req.Reason)
+	}
+	if !ok {
 		return s.store.RecoverRollout(state.WithRouteGuardRelease(r.Context(), guards), app.ID, req.Action, req.Reason)
 	}
 	var decision json.RawMessage

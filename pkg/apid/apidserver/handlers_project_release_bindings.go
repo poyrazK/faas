@@ -76,7 +76,7 @@ func (s *server) executeCheckedProjectRelease(r *http.Request, acct state.Accoun
 	if !ok || s.managedPostgresBindings == nil {
 		return response, api.ErrCapacity("checked graph activation is unavailable")
 	}
-	apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+	apps, err := bindings.ProjectReleaseApps(r.Context(), s.store, acct.ID, project.ID, r.PathValue("environment"))
 	if err != nil {
 		return response, api.ErrCapacity("could not read project workloads")
 	}

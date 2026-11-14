@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.custom_metric_response import CustomMetricResponse
 
@@ -22,7 +24,9 @@ class CustomMetricListResponse:
     """A metric older than this reports no signal to the scheduler rather than its last value, so a dead pusher
     cannot pin the fleet at a frozen backlog."""
     max_metrics: int
-    """Maximum distinct metric names this app may hold."""
+    """Maximum distinct metric names this app may hold (per plan)."""
+    max_series: int | Unset = UNSET
+    """Maximum labelled series this app may hold across its metrics (per plan); each metric also holds at most 50."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +39,8 @@ class CustomMetricListResponse:
 
         max_metrics = self.max_metrics
 
+        max_series = self.max_series
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -44,6 +50,8 @@ class CustomMetricListResponse:
                 "max_metrics": max_metrics,
             }
         )
+        if max_series is not UNSET:
+            field_dict["max_series"] = max_series
 
         return field_dict
 
@@ -63,10 +71,13 @@ class CustomMetricListResponse:
 
         max_metrics = d.pop("max_metrics")
 
+        max_series = d.pop("max_series", UNSET)
+
         custom_metric_list_response = cls(
             metrics=metrics,
             freshness_seconds=freshness_seconds,
             max_metrics=max_metrics,
+            max_series=max_series,
         )
 
         custom_metric_list_response.additional_properties = d

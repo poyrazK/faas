@@ -59,7 +59,7 @@ The opt-in apid reporter has a separate PostgreSQL journey for API variables, ro
 After normal review, approval and merge, CI can wait for recorded serving proof
 for that exact merged commit:
 
-    gregale projects environments gitops wait shop production \
+    gregale environment gitops wait shop production \
       --commit "$MERGED_SHA" --timeout 15m --json
 
 The commit must be a full lowercase 40-character SHA from the environment's
@@ -76,6 +76,9 @@ branch head, a completed build or historical applied revision cannot pass.
 Scheduled Jobs require the successful current post-activation occurrence.
 Missing or contradictory evidence remains unproven. Older APIs without the
 current graph's commit identity cannot satisfy the wait; upgrade both API and CLI.
+Serving also requires current resident and snapshot freshness and completion of
+pending runtime and fleet effects. Historical qualification or serving receipts
+cannot replace a resident's acknowledgement of its current runtime inputs.
 
 The wait pins the initial source binding. Once it observes the requested graph,
 it also pins that approved revision and generation. Binding or approval changes
@@ -83,6 +86,8 @@ end as superseded. Before observing the target graph, a different commit remains
 waiting; the command does not infer commit ancestry or whether the target
 previously deployed. Normal intent changes can progress only with fresh evidence
 for the same approval.
+Transient status failures respect `Retry-After` seconds or HTTP dates, bounded
+by the overall deadline. Cancellation interrupts that wait immediately.
 
 Text mode prints changed progress and workload actions to stderr, with a final
 receipt on stdout. Explicit --json and global JSON emit one final JSON receipt
@@ -110,13 +115,20 @@ remains pending. See [ADR-20261017190812](adr/20261017190812-gitops-wait-for-ser
 
 ## Try review and reporting
 
-Use `gregale projects environments gitops explain shop production` for a
+Use `gregale environment gitops explain shop production` for a
 read-only explanation of the current recorded state, or add `--json` for
 automation. The existing status API includes the same assessment under
 `explanation`, and the GitOps dashboard shows its workload progress and actions.
 Observed Git commits, approved revision IDs, historical applied revision IDs,
 and currently proven serving revision IDs are shown separately. They are not
 interchangeable: an applied ID alone never establishes current serving.
+
+The assessment also identifies the latest completed report for the current
+revision, generation and intent version. It shows safe ownership, adoption,
+quota and observation diagnostics even when no workload graph exists. Reports
+older than three reporting intervals are marked stale; reports for older intent
+cannot establish a current blocker or a recovery. A failed observation records
+the intent claimed by that attempt rather than attributing it to later edits.
 
 Each current graph member reports artifact/build preparation, qualification,
 active release membership and serving proof. Stages are `complete`, `pending`,
@@ -139,9 +151,9 @@ work nor approves, adopts, activates, rolls back or enables production gates.
 Use an existing GitHub-linked project and registered environment. Start in `report` mode with manual approval and pruning disabled:
 
 ```sh
-gregale projects environments gitops bind shop staging \
+gregale environment gitops bind shop staging \
   --manifest-path environments/staging.yaml --mode report --approval-policy manual
-gregale projects environments gitops review shop staging \
+gregale environment gitops review shop staging \
   --commit "$REVIEWED_COMMIT" > revision-review.json
 ```
 
@@ -155,11 +167,11 @@ sealed at rest and can be disconnected on the account page. A GitLab source
 may be bound to a Gregale project without a GitHub installation:
 
 ```sh
-gregale projects environments gitops bind shop staging \
+gregale environment gitops bind shop staging \
   --provider gitlab --repository group/subgroup/service \
   --ref refs/heads/main --manifest-path environments/staging.yaml \
   --mode report --approval-policy manual
-gregale projects environments gitops review shop staging \
+gregale environment gitops review shop staging \
   --commit "$REVIEWED_COMMIT" > revision-review.json
 ```
 
@@ -183,9 +195,9 @@ Production qualification and enforcement remain gated on exclusive native accept
 `REVIEWED_COMMIT` must be a complete immutable commit SHA. Inspect the returned definition digest and generation before approving its receipt:
 
 ```sh
-gregale projects environments gitops approve shop staging \
+gregale environment gitops approve shop staging \
   --file revision-review.json --yes
-gregale projects environments gitops adoption-preview shop staging > adoption-plan.json
+gregale environment gitops adoption-preview shop staging > adoption-plan.json
 ```
 
 Status reports and adoption previews omit before/after values, including
@@ -195,8 +207,8 @@ reconciliation and adoption revalidate against the complete internal observation
 Inspect the mapped resource IDs, owned fields and blocking reasons. Adoption preserves existing values and transfers the reviewed ownership; it does not activate a new workload:
 
 ```sh
-gregale projects environments gitops adopt shop staging --file adoption-plan.json --yes
-gregale projects environments gitops status shop staging
+gregale environment gitops adopt shop staging --file adoption-plan.json --yes
+gregale environment gitops status shop staging
 ```
 
 Stale or blocked receipts are rejected. Re-run the preview after changing relevant intent or source controls.
@@ -348,6 +360,16 @@ normal reporting cadence. A plan using a temporary override schedules its next
 check no later than that override's expiry; an override that expires during the
 run triggers a fresh check at the next poll. Completed reports remain historical
 observations, and do not certify changes made after their observed intent version.
+Runtime drift keeps the drift notification active until runtime acknowledgement
+is proven. GitHub repository verification propagates poll cancellation through
+provider pagination. Observation and archive limits use the project's current
+resource owner policy, including an organization's adopted billing plan.
+
+Configuration and smoke payload numbers are canonicalized without rounding
+their parsed decimal digits or large integers, so PostgreSQL's exponent rewriting
+does not invalidate an approved definition digest. Pruning an explicitly removed,
+owned secret reference does not require recreating its deleted source secret;
+references retained by the definition or an active override still require it.
 
 ## Preview a pull or merge request
 
@@ -355,7 +377,7 @@ Preview a candidate before approving it, including on a binding that has no
 approved revision yet:
 
 ```sh
-gregale projects environments gitops plan shop staging \
+gregale environment gitops plan shop staging \
   --commit "$CANDIDATE_SHA" --format markdown --fail-on-blocked
 ```
 
@@ -381,7 +403,7 @@ candidate plans always require a fresh request and grant no write authority.
 Preview an immutable image promotion from a currently proven serving release:
 
 ```sh
-gregale projects environments gitops promotion-plan shop production \
+gregale environment gitops promotion-plan shop production \
   --from staging --target-commit "$TARGET_COMMIT" --fail-on-blocked \
   > promotion-plan.json
 ```
@@ -464,7 +486,7 @@ An explicit artifact pin takes precedence. See [ADR-20261017190809](adr/20261017
 Review the plan and reuse its `plan_hash` in a fresh request before exporting:
 
 ```sh
-gregale projects environments gitops promotion-plan shop production \
+gregale environment gitops promotion-plan shop production \
   --from staging --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH" --format manifest \
   --manifest environments/production.yaml > proposed-production.json
@@ -492,7 +514,7 @@ After reviewing a `promotion-plan`, use its hash and the current target branch
 commit to preview a draft proposal:
 
 ```sh
-gregale projects environments gitops promotion-pr shop production \
+gregale environment gitops promotion create shop production \
   --from staging --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH"
 ```
@@ -500,7 +522,7 @@ gregale projects environments gitops promotion-pr shop production \
 Add `--yes` to create the draft PR/MR and `--json` for its portable receipt:
 
 ```sh
-gregale projects environments gitops promotion-pr shop production \
+gregale environment gitops promotion create shop production \
   --from staging --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH" --yes --json
 ```
@@ -568,7 +590,7 @@ See [ADR-20261017190807](adr/20261017190807-gitops-bounded-recovery-retention.md
 Find retained releases and current eligibility for your target manifest:
 
 ```sh
-gregale projects environments gitops releases shop production \
+gregale environment gitops releases shop production \
   --target-commit "$TARGET_COMMIT"
 ```
 
@@ -588,7 +610,7 @@ Select a release previously served by this Git source in this environment. The r
 image/build artifact and historical serving time:
 
 ```sh
-gregale projects environments gitops rollback-plan shop production \
+gregale environment gitops rollback-plan shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" --fail-on-blocked
 ```
 
@@ -596,7 +618,7 @@ Review the result, then request a fresh observation with its `plan_hash` before
 exporting a patch or manifest:
 
 ```sh
-gregale projects environments gitops rollback-plan shop production \
+gregale environment gitops rollback-plan shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_PLAN_HASH" --format patch > rollback-plan.json
 ```
@@ -634,7 +656,7 @@ Choose an eligible release from `gitops releases`, then review its fresh
 `rollback-plan`. Preview the recovery draft with that plan's hash:
 
 ```sh
-gregale projects environments gitops rollback-pr shop production \
+gregale environment gitops recovery create shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_ROLLBACK_HASH"
 ```
@@ -643,7 +665,7 @@ Add `--yes` to create the draft PR/MR, and `--json` for a receipt that includes
 the selected `release_set_id`:
 
 ```sh
-gregale projects environments gitops rollback-pr shop production \
+gregale environment gitops recovery create shop production \
   --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
   --expected-plan-hash "$REVIEWED_ROLLBACK_HASH" --yes --json
 ```
@@ -681,7 +703,7 @@ exclusive native acceptance requirements remain unchanged. See
 Subscribe an account receiver explicitly to `environment.gitops.changed`:
 
 ```sh
-printf '%s' "$WEBHOOK_SECRET" | gregale webhooks account add \
+printf '%s' "$WEBHOOK_SECRET" | gregale webhook account add \
   --target-url https://alerts.example.test/gregale \
   --event environment.gitops.changed --from-stdin
 ```
@@ -1382,9 +1404,9 @@ source. Release that reservation explicitly during a reviewed handoff to Git.
 Use the dashboard source controls or the CLI to rebind or disconnect:
 
 ```sh
-gregale projects environments gitops rebind shop staging \
+gregale environment gitops rebind shop staging \
   --expected-generation 3 --manifest-path environments/staging-v2.yaml --yes
-gregale projects environments gitops unbind shop staging \
+gregale environment gitops unbind shop staging \
   --expected-generation 5 --yes
 ```
 
@@ -1392,6 +1414,10 @@ Both operations require the current generation and report mode, release only the
 retired binding's Git ownership and overrides, and preserve existing values,
 resource identities, revisions, reports and execution journals. Pending effects,
 graph preparation and unfinished qualification cleanup block retirement.
+An obsolete preparation journal does not block retirement after its candidate
+deployments have failed, been cancelled, or finished preparing their artifacts.
+Unfinished candidate preparation and physical qualification cleanup still block
+both detach and rebind.
 Completed qualification records remain protected without preventing retirement:
 every capture and restore execution must have retirement evidence and any
 associated instance must be terminal. Rebinding creates

@@ -12,6 +12,10 @@
 export type OrgMemberResponse = {
   account_id: string;
   email: string;
+  /**
+   * The member's display name; absent when unset.
+   */
+  display_name?: string;
   role: 'owner' | 'admin' | 'developer' | 'viewer' | 'billing';
   joined_at: string;
 };

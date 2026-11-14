@@ -127,9 +127,12 @@ func (m *MemStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, po
 		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketBusy)
 	}
 	if m.objectCapacityFencedForKeyLocked(b.ID, j.Key) {
-		return ObjectDeletion{}, false, ErrConflict
+		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketTransition)
 	}
 	if !immutableDeletion(j) && versions && (m.objectUsage[b.ID].InventoryScope != ObjectInventoryAllVersions || v.ObservedStatus == "") {
+		if objectVersioningTransitionActive(v) {
+			return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketTransition)
+		}
 		return ObjectDeletion{}, false, ErrConflict
 	}
 	if !immutableDeletion(j) {
@@ -161,6 +164,7 @@ func (m *MemStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, po
 		m.objectDeletions = map[string]ObjectDeletion{}
 	}
 	m.objectDeletions[j.ID] = cloneDeletion(j)
+	m.markObjectBucketMutatedLocked(j.BucketID)
 	return cloneDeletion(j), true, nil
 }
 func (m *MemStore) GetObjectDeletion(ctx context.Context, account, bucket, id string) (ObjectDeletion, error) {
@@ -201,6 +205,7 @@ func (m *MemStore) dispatchObjectDeletion(ctx context.Context, id, token, status
 	j, err := dispatchVerifiedDeletion(j, token, status, baseline, verified, m.clock())
 	if err == nil {
 		m.objectDeletions[id] = cloneDeletion(j)
+		m.markObjectBucketMutatedLocked(j.BucketID)
 	}
 	return cloneDeletion(j), err
 }
@@ -245,6 +250,7 @@ func (m *MemStore) FinishObjectDeletion(ctx context.Context, result ObjectDeleti
 		m.objectUsage[j.BucketID] = u
 	}
 	m.objectDeletions[j.ID] = cloneDeletion(out)
+	m.markObjectBucketMutatedLocked(out.BucketID)
 	return cloneDeletion(out), nil
 }
 func (m *MemStore) DueObjectDeletions(ctx context.Context, limit int32) ([]ObjectDeletion, error) {
@@ -294,6 +300,7 @@ func (m *MemStore) ClaimObjectDeletion(ctx context.Context, id, token string) (O
 	j.LeaseUntil = now.Add(api.ObjectDeletionLease)
 	j.UpdatedAt = now
 	m.objectDeletions[id] = cloneDeletion(j)
+	m.markObjectBucketMutatedLocked(j.BucketID)
 	return cloneDeletion(j), nil
 }
 func (m *MemStore) RetryObjectDeletion(ctx context.Context, id, token, code string) error {
@@ -317,5 +324,6 @@ func (m *MemStore) RetryObjectDeletion(ctx context.Context, id, token, code stri
 	j.UpdatedAt = now
 	j.LastErrorCode = code
 	m.objectDeletions[id] = cloneDeletion(j)
+	m.markObjectBucketMutatedLocked(j.BucketID)
 	return nil
 }

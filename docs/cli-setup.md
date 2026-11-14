@@ -34,12 +34,12 @@ without saving or querying logs. Add `--replace` when previewing replacement of
 an existing name; before/after filters show what would change. Latest HTTP error
 views support this preview too. Remove `--dry-run` to save the reviewed filters.
 
-Run `gregale context presets` to list saved project, app, and environment
+Run `gregale config preset` to list saved project, app, and environment
 contexts using the existing `context presets list` behavior. It shows their
 relationship to the current context without applying a preset or making API
 requests or writes. Use `context presets --help` for help.
 
-Run `gregale profile` to list configured connections and see which is selected.
+Run `gregale config profile` to list configured connections and see which is selected.
 It uses the existing `profile list` output without changing the active profile,
 reading credentials, or making network requests. Use `profile --help` for help.
 
@@ -74,12 +74,12 @@ commands for scripts. Running bare `gregale` continues to show help.
 
 ## Guided workflow inspection and recovery
 
-Run `gregale workflows status --interactive` to choose an app and workflow run,
+Run `gregale workflow status --interactive` to choose an app and workflow run,
 then read its status, deployment, step states, attempt counts, and errors. The app
 comes from `--app`, a saved link, or the existing app picker. Run selection is
 paged and scoped to that app. `gregale menu` also opens this inspection flow.
 
-Use `gregale workflows retry --interactive` to choose a failed or dead run
+Use `gregale workflow retry --interactive` to choose a failed or dead run
 and a step that passes the server's manual HTTP retry preview. Review its
 attempt and the skipped descendants that would reopen, then confirm (default:
 no). The preview uses the captured workflow graph and current quota; it does
@@ -87,7 +87,7 @@ not reserve capacity. Retry can execute HTTP effects again. Older servers
 without the retry preview offer no steps; explicit retry commands remain
 available.
 
-Use `gregale workflows cancel --interactive` to choose a pending, running,
+Use `gregale workflow cancel --interactive` to choose a pending, running,
 or waiting run. Review its current steps and confirm (default: no).
 Cancellation stops further progress and does not undo completed external effects.
 
@@ -123,7 +123,7 @@ For scripts, pass the slug explicitly or save a specific app with
 
 ## Guided resource settings
 
-Run `gregale app my-api scale --interactive` to review current settings and
+Run `gregale app scale my-api --interactive` to review current settings and
 choose a resource profile, instance cap, and minimum warm instances within
 your account plan's limits. Add `--environment staging` to edit that
 environment's desired workload settings.
@@ -139,7 +139,7 @@ automation mode, setting flags, or the saved-plan flags. For scripts, use
 
 ## Guided secret entry
 
-Run `gregale secrets set --app my-api --interactive` to enter secret names
+Run `gregale env set --app my-api --interactive` to enter secret names
 and hidden, single-line values directly. Choose a scope (the linked environment
 is the default) and retention: preserve existing classes, persistent, or
 ephemeral. Ephemeral secrets disable VM snapshots for their scope.
@@ -178,7 +178,7 @@ only `--timeout` and `--poll-interval` alongside `--interactive`.
 
 ## Guided custom-domain setup
 
-Run `gregale domains setup api.example.com --app my-api` to bind a domain,
+Run `gregale domain setup api.example.com --app my-api` to bind a domain,
 show the DNS records to publish, and wait for ownership verification and an
 unexpired TLS certificate. Add `--environment staging` for an environment
 binding. An existing binding is reused only when its app and environment match.
@@ -196,7 +196,7 @@ existing `domains add`, `domains verify`, and `domains set-default` commands.
 
 ## Guided connection switching
 
-Run `gregale profile use --interactive` to choose a saved connection. The list
+Run `gregale config profile use --interactive` to choose a saved connection. The list
 shows each API address and marks the active profile. The flow checks the chosen
 endpoint with that profile's stored credential and displays the account identity
 before asking to switch (default: no). Failed checks leave the active profile
@@ -204,12 +204,12 @@ unchanged. Use `--timeout 5s` to adjust the connection check deadline.
 
 Run without a prefix `--profile` flag or `FAAS_API` / `FAAS_TOKEN` overrides so
 the check reflects the saved endpoint and its own credential. Terminal input
-and output are required. Scripts can use `gregale profile use <name>` and
-`gregale profile check` separately.
+and output are required. Scripts can use `gregale config profile use <name>` and
+`gregale config profile check` separately.
 
 ## Guided environment promotion
 
-Run `gregale projects environments promote my-project --interactive` to choose
+Run `gregale environment promote my-project --interactive` to choose
 source and destination environments. Protected environments are marked in the
 list. Choose whether to copy non-secret source configuration; secrets remain
 scoped to the destination.
@@ -287,14 +287,14 @@ defaults; protection requirements still apply to future operations.
 The guide saves the existing local project context and adds `.gregale/` to the
 repository `.gitignore` if needed. Pass `--no-gitignore` to skip that update.
 It requires an interactive terminal; for scripts, use
-`gregale link PROJECT --app APP --environment ENV`. Run `gregale context` to
+`gregale link PROJECT --app APP --env ENV`. Run `gregale config context get` to
 inspect saved defaults or `gregale unlink` to remove them.
 
 ## Guided secret removal
 
 ```sh
-gregale secrets unset --app my-api --interactive
-gregale secrets unset --app my-api --scope staging --interactive
+gregale env unset --app my-api --interactive
+gregale env unset --app my-api --env staging --interactive
 ```
 
 The guide lists secret names only in the selected scope, using the linked
@@ -308,14 +308,14 @@ Without a restart, running instances retain their boot environment until the
 next cold wake. A restart affects the app. If restart or acknowledgement fails
 after removal, the removal has already happened; the command reports that
 outcome. The guide requires an interactive terminal. Scripts can continue to
-use `gregale secrets unset --app APP KEY --scope SCOPE` with `--restart`,
+use `gregale env unset --app APP KEY --env SCOPE` with `--restart`,
 `--wait-for-ack`, and `--timeout` as needed.
 
 ## Preview an environment upload
 
 ```sh
 gregale env push --app my-api --dry-run
-gregale env push --app my-api --scope staging -f .env.staging --dry-run --restart
+gregale env push --app my-api --env staging -f .env.staging --dry-run --restart
 ```
 
 The preview uses the same input parsing and secret scan mode as `env push`.
@@ -338,9 +338,9 @@ The `--from-stdin` input option is also supported.
 ## Browse deployment summaries
 
 ```sh
-gregale deployment summary --app my-api --interactive
+gregale release summary --app my-api --interactive
 # Use the linked app, or choose an app when no default is linked:
-gregale deployment summary --interactive
+gregale release summary --interactive
 ```
 
 Choose a release from recent app history, with revision, status, creation time,
@@ -350,7 +350,7 @@ preceding release and the reported rollback target. The flow prints an
 equivalent command pinned to the selected release ID for reuse.
 
 The guide requires an interactive terminal. For scripts or JSON output, use
-`gregale deployment summary ID --app APP --json`. The history picker reads
+`gregale release summary ID --app APP --json`. The history picker reads
 release data and does not submit a rollback.
 
 ## Install shell completion
@@ -380,9 +380,9 @@ through `gregale completion bash`, `zsh`, `fish`, and `powershell`.
 ## Create a scheduled HTTP task
 
 ```sh
-gregale crons add --app my-api --interactive
+gregale cron create --app my-api --interactive
 # Use the linked app, or choose one:
-gregale crons add --interactive
+gregale cron create --interactive
 ```
 
 Choose an app-relative request path, an explicit IANA timezone (default UTC),
@@ -397,14 +397,14 @@ Only `--app` can be supplied alongside `--interactive`; choose the other
 settings in the flow. The guide creates enabled HTTP tasks with default policy
 settings. Deployment command tasks and advanced policies continue to use the
 explicit `crons add` flags. Scripts can use, for example,
-`gregale crons add --app my-api --schedule '0 * * * *' --path /tasks/hourly --timezone UTC`.
+`gregale cron create --app my-api --schedule '0 * * * *' --path /tasks/hourly --timezone UTC`.
 
 ## Edit a scheduled HTTP task
 
 ```sh
-gregale crons update --app my-api --interactive
+gregale cron update --app my-api --interactive
 # Use the linked app, or choose one:
-gregale crons update --interactive
+gregale cron update --interactive
 ```
 
 Choose an existing HTTP task. The guide displays its current configuration,
@@ -419,14 +419,14 @@ and failure rules are preserved. Keeping all settings unchanged exits without
 an update. The guide rechecks configuration before saving and stops if it changed
 during review. An equivalent command is printed for reuse. `--app` is accepted
 only in interactive mode; scripts and advanced settings continue to use
-`gregale crons update ID` with explicit update flags.
+`gregale cron update ID` with explicit update flags.
 
 ## Browse scheduled-task history
 
 ```sh
-gregale crons runs --app my-api --interactive
+gregale cron runs --app my-api --interactive
 # Use the linked app, or choose one:
-gregale crons runs --interactive
+gregale cron runs --interactive
 ```
 
 Choose an HTTP or command task, then select a recent run to inspect its outcome,
@@ -439,17 +439,17 @@ page and selected command run.
 The history API returns ten rows per page without an explicit next cursor.
 A full page offers older runs; the next page may be empty. The browser detects
 repeated cursors and bounds page traversal. Only `--app` can accompany
-`--interactive`; for scripts or JSON, use `gregale crons runs ID` with
+`--interactive`; for scripts or JSON, use `gregale cron runs ID` with
 `--before`, `--limit`, or `--run` as appropriate. The guide reads history without
 firing or canceling tasks.
 
 ## View upcoming scheduled tasks
 
 ```sh
-gregale crons next --app my-api
-gregale crons next --app my-api --json
+gregale cron next --app my-api
+gregale cron next --app my-api --json
 # Use the linked app, or choose one in a terminal:
-gregale crons next
+gregale cron next
 ```
 
 The overview lists HTTP and command tasks, sorted by their next expression time.
@@ -472,8 +472,8 @@ reliable preview. Scripts need an explicit or linked app and never prompt.
 ## Run a scheduled task now
 
 ```sh
-gregale crons run --app my-api --interactive
-gregale crons run --app my-api --interactive --timeout 5m
+gregale cron run --app my-api --interactive
+gregale cron run --app my-api --interactive --timeout 5m
 ```
 
 Choose an HTTP or command task and review its current path or command, schedule,
@@ -491,14 +491,14 @@ run's execution details. Server admission rules still apply, including the
 current task state and plan restrictions.
 
 The guide requires an interactive terminal. Scripts can continue using
-`gregale crons run ID`, then `gregale crons fire-now REQUEST_ID`. The `--app`
+`gregale cron run ID`, then `gregale cron run get REQUEST_ID`. The `--app`
 and `--timeout` flags apply only to interactive mode.
 
 ## Resume following a manual task request
 
 ```sh
-gregale crons fire-now REQUEST_ID --wait --timeout 5m
-gregale crons fire-now REQUEST_ID --wait --json
+gregale cron run get REQUEST_ID --wait --timeout 5m
+gregale cron run get REQUEST_ID --wait --json
 ```
 
 Follow an existing fire-now request without submitting another run. The command
@@ -521,9 +521,9 @@ requests without parsing human progress messages.
 ## Set up an alert preset
 
 ```sh
-gregale alerts preset enable --app my-api --interactive
+gregale alert preset enable --app my-api --interactive
 # Use the linked app, or choose one:
-gregale alerts preset enable --interactive
+gregale alert preset enable --interactive
 ```
 
 Choose an enabled catalog preset and review its metric, comparison, threshold,
@@ -544,9 +544,9 @@ After creation, it prints a command to inspect the rule.
 Choose an alert rule without copying its ID:
 
 ```sh
-gregale alerts deliveries --app my-api --interactive
+gregale alert deliveries --app my-api --interactive
 # Use the linked app, or pick an app when none is linked:
-gregale alerts deliveries --interactive
+gregale alert deliveries --interactive
 ```
 
 The flow shows the selected rule, asks whether to include test deliveries, and
@@ -559,15 +559,15 @@ A reusable command is printed with the selected rule ID and active profile.
 For scripts, use the explicit command with JSON output:
 
 ```sh
-gregale alerts deliveries ALERT_ID --app my-api --limit 20 --json
+gregale alert deliveries ALERT_ID --app my-api --limit 20 --json
 ```
 
 ## Edit alert settings interactively
 
 ```sh
-gregale alerts update --app my-api --interactive
+gregale alert update --app my-api --interactive
 # Use the linked app, or choose one:
-gregale alerts update --interactive
+gregale alert update --interactive
 ```
 
 Choose a rule by name, then edit its prefilled threshold, window, cooldown,
@@ -584,9 +584,9 @@ explicit flags.
 ## Inspect automatic rollback actions interactively
 
 ```sh
-gregale alerts actions --app my-api --interactive
+gregale alert actions --app my-api --interactive
 # Use the linked app, or pick one:
-gregale alerts actions --interactive
+gregale alert actions --interactive
 ```
 
 Pick an action from the returned history, ordered newest first and labeled with
@@ -605,9 +605,9 @@ For scripts, use `alerts actions --app APP --fire UUID [--wait] --json`.
 ## Check binding readiness interactively
 
 ```sh
-gregale bindings check --app my-api --interactive
+gregale app binding check --app my-api --interactive
 # Use the linked app, or choose one:
-gregale bindings check --interactive
+gregale app binding check --interactive
 ```
 
 Choose a live deployment from paginated history. The check stays pinned to its
@@ -629,9 +629,9 @@ For scripts, use `bindings check APP --deployment ID` with explicit flags and
 ## Inspect Job task logs interactively
 
 ```sh
-gregale jobs logs --interactive
+gregale job logs --interactive
 # Bound the returned log payload:
-gregale jobs logs --interactive --max-bytes 65536
+gregale job logs --interactive --max-bytes 65536
 ```
 
 Choose a Job by name, a run by status and creation time, and a task by index,
@@ -648,7 +648,7 @@ attempt observed during selection. For scripts, use
 ## Retry a Job task interactively
 
 ```sh
-gregale jobs retry --interactive
+gregale job retry --interactive
 ```
 
 Choose a Job, run, and task through paginated pickers. Tasks are filtered to
@@ -665,8 +665,8 @@ inspect tasks and logs. For scripts, use `jobs retry NAME RUN_ID TASK_INDEX`.
 ## Follow a Job run
 
 ```sh
-gregale jobs wait --interactive
-gregale jobs wait my-job RUN_ID --timeout 10m
+gregale job wait --interactive
+gregale job wait my-job RUN_ID --timeout 10m
 ```
 
 Choose a Job and run through paginated pickers, or provide the name and UUID.
@@ -684,7 +684,7 @@ waiting stops at the first terminal status it observes.
 ## Start a Job run interactively
 
 ```sh
-gregale jobs run --interactive
+gregale job run --interactive
 ```
 
 Choose a Job through a paginated picker. The Job must be active with a ready
@@ -706,7 +706,7 @@ use `jobs run NAME` with explicit flags.
 ## Cancel a Job run interactively
 
 ```sh
-gregale jobs cancel --interactive
+gregale job cancel --interactive
 ```
 
 Choose a Job and an unfinished run through paginated pickers. Only queued and
@@ -725,7 +725,7 @@ Explicit `jobs cancel NAME RUN_ID` remains available for scripts.
 ## Edit Job settings interactively
 
 ```sh
-gregale jobs update --interactive
+gregale job update --interactive
 ```
 
 Choose a Job and edit prefilled RAM, per-task timeout, maximum parallelism,
@@ -748,7 +748,7 @@ use `jobs update NAME` with explicit flags.
 ## Create a Job interactively
 
 ```sh
-gregale jobs add --interactive
+gregale job create --interactive
 ```
 
 Enter a Job name and container image. Keep the image entrypoint, or enter an
@@ -776,7 +776,7 @@ custom policies, or scripts, use the explicit CLI or API as appropriate.
 ## Wait for a Job image to become ready
 
 ```sh
-gregale jobs info my-job --wait-ready --timeout 5m
+gregale job get my-job --wait-ready --timeout 5m
 ```
 
 Follow image preparation without starting a run. The wait shows status changes,
@@ -794,7 +794,7 @@ Interrupting or timing out leaves image preparation running independently.
 ## Inspect retained Job attempts interactively
 
 ```sh
-gregale jobs attempts --interactive
+gregale job attempts --interactive
 ```
 
 Choose a Job, run, task, and retained attempt through paginated pickers.
@@ -811,7 +811,7 @@ not yet have a terminal record.
 ## Choose a Job artifact interactively
 
 ```sh
-gregale jobs artifact-url --interactive
+gregale job artifact get --interactive
 ```
 
 Choose a Job, run, and task through paginated pickers, then select a managed
@@ -829,7 +829,7 @@ This flow does not download bytes locally. For scripts, use
 ## Replay unsuccessful Job inputs interactively
 
 ```sh
-gregale jobs replay-failed --interactive
+gregale job replay --interactive
 ```
 
 Choose a Job and source run, then review its unsuccessful tasks, input IDs,
@@ -849,7 +849,7 @@ cancel it. For scripts, use `jobs replay-failed NAME RUN_ID` with explicit IDs.
 ## Browse recurring Job decisions interactively
 
 ```sh
-gregale jobs occurrences --interactive
+gregale job occurrences --interactive
 ```
 
 Choose a Job, then browse occurrence history with older-page navigation.
@@ -867,7 +867,7 @@ pagination flags.
 ## Set Job registry credentials interactively
 
 ```sh
-gregale jobs registry set --interactive
+gregale job registry set --interactive
 ```
 
 Pick a Job, enter a registry host and username, then enter a hidden password or
@@ -885,7 +885,7 @@ with `--password-stdin`.
 ## Remove a Job registry credential interactively
 
 ```sh
-gregale jobs registry rm --interactive
+gregale job registry rm --interactive
 ```
 
 Pick a Job and credential, then review the host, username, creation/update times,
@@ -901,8 +901,8 @@ client-side check, not an atomic server lock. Explicit
 ## See upcoming Job schedules
 
 ```sh
-gregale jobs next
-gregale jobs next --json
+gregale job next
+gregale job next --json
 ```
 
 Read all Job pages and sort active recurring Jobs by their next nominal cron
@@ -921,7 +921,7 @@ Job metadata; use `jobs occurrences` to inspect recorded schedule decisions.
 ## Browse Job tasks interactively
 
 ```sh
-gregale jobs tasks --interactive
+gregale job tasks --interactive
 ```
 
 Choose a Job and run, then browse all tasks or only unsuccessful tasks
@@ -940,7 +940,7 @@ cancels tasks. Explicit `jobs tasks NAME RUN_ID` remains available for scripts.
 ## Remove a Job interactively
 
 ```sh
-gregale jobs rm --interactive
+gregale job delete --interactive
 ```
 
 Choose a Job, then review its image, command arguments, resources, state,
@@ -957,9 +957,9 @@ for scripts.
 ## Inspect issues interactively
 
 ```sh
-gregale issues get --app my-api --interactive
+gregale debug issue get --app my-api --interactive
 # Use the linked app, or choose one:
-gregale issues get --interactive
+gregale debug issue get --interactive
 ```
 
 Choose an issue state (open, resolved, ignored, or all) and ordering (recent or
@@ -976,9 +976,9 @@ use `issues get ISSUE_ID --app APP` with explicit history cursors.
 ## Resolve an issue interactively
 
 ```sh
-gregale issues resolve --app my-api --interactive
+gregale debug issue resolve --app my-api --interactive
 # Use the linked app, or choose one:
-gregale issues resolve --interactive
+gregale debug issue resolve --interactive
 ```
 
 Choose an open issue and a fixing deployment from paginated release history.
@@ -995,9 +995,9 @@ and fixing deployment. For scripts, use
 ## Temporarily ignore an issue interactively
 
 ```sh
-gregale issues ignore --app my-api --interactive
+gregale debug issue ignore --app my-api --interactive
 # Use the linked app, or choose one:
-gregale issues ignore --interactive
+gregale debug issue ignore --interactive
 ```
 
 Choose an open issue, then select 1 hour, 24 hours, 7 days, or a custom Go-style
@@ -1014,9 +1014,9 @@ A profile-aware inspection command is printed after saving. For scripts, use
 ## Reopen an issue interactively
 
 ```sh
-gregale issues reopen --app my-api --interactive
+gregale debug issue reopen --app my-api --interactive
 # Use the linked app, or choose one:
-gregale issues reopen --interactive
+gregale debug issue reopen --interactive
 ```
 
 Choose resolved or ignored issues, then pick an issue by title. Review its
@@ -1033,9 +1033,9 @@ use `issues reopen ISSUE_ID --app APP`.
 ## Assign an issue interactively
 
 ```sh
-gregale issues assign --app my-api --interactive
+gregale debug issue assign --app my-api --interactive
 # Use the linked app, or choose one:
-gregale issues assign --interactive
+gregale debug issue assign --interactive
 ```
 
 Choose an open issue by title, then choose **Assign to me** or **Unassign**.
@@ -1148,10 +1148,9 @@ unknown-command error path explicitly.
 
 The per-account positional completion paths (e.g. `<slug>` in
 `gregale app <slug> ...`) read from a JSON file at
-`~/.config/gregale/completion-cache.json`. The file is rewritten
-on every successful `gregale apps` / `gregale orgs` call (the
-`pkg/api/client.go::doReq` middleware does the rewrite; no user
-action needed).
+`~/.config/gregale/completion-cache.json`. The CLI rewrites the file
+on every successful `gregale app list` / `gregale orgs` call; no user
+action needed.
 
 The file is keyed by:
 
@@ -1163,29 +1162,13 @@ To force a refresh, `rm` the file:
 
 ```bash
 rm ~/.config/gregale/completion-cache.json
-gregale apps      # repopulates the cache
+gregale app list      # repopulates the cache
 ```
 
 The cache file is mode 0600 and the dir is mode 0700 — equivalent
-visibility to a token-respecting `gregale apps` call. There's no
+visibility to a token-respecting `gregale app list` call. There's no
 need to seal it like env secrets; the contents are public to the
 account owner.
-
-## Why no checked-in `contrib/completion/`?
-
-The binary is the source of truth. Every `cliCommand{}` entry in
-`cli_meta.go` shows up in all four shell backends at compile time,
-and the manifest-drift test fires when a new command ships
-without a matching entry. A checked-in copy would drift the
-moment the manifest changes — the operator would either re-run
-the install script (defeating the point of checking it in) or
-ship a stale completion script.
-
-## Why no checked-in `docs/man/`?
-
-Same reasoning: the man pages are rendered from the manifest at
-process boot, so they always reflect the current binary. A checked-
-in copy would drift the same way.
 
 ## Following submitted work
 
@@ -1223,7 +1206,7 @@ The same overview appears in human-readable watch snapshots.
 
 ## Checking secret reference configuration
 
-`gregale secrets refs list --app APP --environment ENV` now checks whether each
+`gregale env ref list --app APP --env ENV` now checks whether each
 configured source secret is present in that same environment. It reads names
 and metadata only. Missing sources include a command using `--from-stdin` and
 an explicit scope; supply an existing private file named `secrets.env` containing
@@ -1381,7 +1364,7 @@ requests, writes, restarts, or waits occur; app existence, permissions, quotas,
 and runtime delivery remain unchecked. Interactive flows do not accept dry-run.
 
 ```sh
-gregale secrets unset --app my-api OLD_API_KEY --scope staging --dry-run
+gregale env unset --app my-api OLD_API_KEY --env staging --dry-run
 ```
 
 ## Linked apps for secret commands
@@ -1393,9 +1376,9 @@ to supply an app or link again. Human write previews and JSON dry-run receipts
 identify whether the app came from a flag or the linked project.
 
 ```sh
-gregale secrets list
-gregale secrets set --from-stdin --dry-run < secrets.env
-gregale secrets unset OLD_API_KEY --dry-run
+gregale env list
+gregale env set --from-stdin --dry-run < secrets.env
+gregale env unset OLD_API_KEY --dry-run
 ```
 
 ## Understanding empty secret lists
@@ -1431,13 +1414,13 @@ calls. With a delivery filter, `count` reports matching rows while `quota_max`
 remains unchanged. Empty-result guidance provides an unfiltered command.
 
 ```sh
-gregale secrets list --delivery-status failed
-gregale secrets list --scope __all__ --delivery-status unknown
+gregale env list --delivery-status failed
+gregale env list --env __all__ --delivery-status unknown
 ```
 
 ## Watching secret delivery
 
-`gregale secrets list --watch --interval 5s --timeout 2m` takes an initial
+`gregale env list --follow --interval 5s --timeout 2m` takes an initial
 metadata snapshot, then prints updates when the returned metadata changes.
 The app and scope are resolved once. Class, age, and delivery filters apply to
 every read; leaving a filtered result is a change too. Row ordering and
@@ -1485,7 +1468,7 @@ it does not prove removal from running applications. Existing post-write metadat
 commands now include the known keys for set, unset, rotation, and env push.
 
 ```sh
-gregale secrets list --key DATABASE_URL --watch
+gregale env list --key DATABASE_URL --follow
 ```
 
 ## Waiting after setting secrets
@@ -1512,7 +1495,7 @@ restart identifier, while stderr reports the error. Without `--wait-for-ack`,
 existing receipts and behavior stay unchanged.
 
 ```sh
-gregale secrets set --from-stdin --restart --wait-for-ack --timeout 2m < secrets.env
+gregale env set --from-stdin --restart --wait-for-ack --timeout 2m < secrets.env
 ```
 
 ## Waiting after env push
@@ -1602,9 +1585,7 @@ available, with no extra API calls and no changes to JSON output.
 
 ## See also
 
-- ADR-083 (this design decision)
-- `docs/faas_ux_spec.md` §3.2 (`--help is a real doc`)
-- `docs/source-ref.md` — headless `gregale deploy --repo --ref` for CI runners
+- [Deploy a GitHub source ref](source-ref.md) — headless `gregale deploy --repo --ref` for CI runners
 
 ## Loading secrets from a file
 
@@ -1613,8 +1594,8 @@ comments beginning with `#` are ignored; values may contain `=`. This uses the
 same plain pair format as `secrets set --from-stdin`, not shell evaluation.
 
 ```sh
-gregale secrets set --file secrets.env --dry-run
-gregale secrets set --file secrets.env --wait-for-ack
+gregale env set --file secrets.env --dry-run
+gregale env set --file secrets.env --wait-for-ack
 ```
 
 The linked app and environment provide defaults; explicit `--app` and `--scope`
@@ -1626,7 +1607,7 @@ A dry run makes no API requests. Keep the file out of version control.
 ## Waiting for recorded health
 
 ```sh
-gregale app my-api health --wait --timeout 2m
+gregale app health my-api --wait --timeout 2m
 ```
 
 Gregale polls recorded default-scope health every two seconds. Success requires
@@ -1645,7 +1626,7 @@ must be positive. Both options require `--wait`, which excludes history options.
 ## Checking health in scripts
 
 ```sh
-gregale app my-api health --check
+gregale app health my-api --check
 ```
 
 `--check` makes one read of recorded health and exits 0 only when the assessment
@@ -1662,8 +1643,8 @@ interval, and history pagination options. Ordinary health reads are unchanged.
 ## Removing several secrets
 
 ```sh
-gregale secrets unset OLD_TOKEN UNUSED_KEY --dry-run
-gregale secrets unset OLD_TOKEN UNUSED_KEY --wait-for-ack
+gregale env unset OLD_TOKEN UNUSED_KEY --dry-run
+gregale env unset OLD_TOKEN UNUSED_KEY --wait-for-ack
 ```
 
 Keys are validated before any API request, deduplicated in input order, and
@@ -1688,7 +1669,7 @@ and a format example for durations, numbers, and booleans. For flags with
 documented choices, a missing value lists those choices. Other documented
 value-taking flags show their placeholder, such as `PATH` or `SLUG`.
 
-For example, `gregale app my-api health --wait --poll-interval nope` explains
+For example, `gregale app health my-api --wait --poll-interval nope` explains
 that the value must be a duration and shows `--poll-interval 2s`. Format examples
 do not override command-specific limits. The guidance uses the active parser
 and command documentation, never stored defaults or supplied values. JSON
@@ -1700,7 +1681,7 @@ continue to report their own constraints.
 To find failed deployments in history:
 
 ```sh
-gregale deployments --app my-api --failed-only --all
+gregale release list --app my-api --failed-only --all
 ```
 
 `--failed-only` filters fetched history to deployments whose recorded status
@@ -1716,7 +1697,7 @@ The command changes no deployments; ordinary output remains unchanged.
 
 ```sh
 gregale deployment latest
-gregale deployment wait latest --timeout 2m
+gregale release wait latest --timeout 2m
 ```
 
 Use a linked app or supply `--app SLUG`. `latest` selects the newest entry in
@@ -1753,7 +1734,7 @@ are made for guidance, and JSON output remains unchanged.
 To find tasks that produced artifacts without checking indexes individually:
 
 ```sh
-gregale jobs tasks nightly-report latest --artifacts-only
+gregale job tasks nightly-report latest --artifacts-only
 ```
 
 This pins the run, checks its Job/account identity, and scans all task pages
@@ -1771,7 +1752,7 @@ signed URLs, and does not verify stored bytes. Task outputs may change on retry.
 To discover only tasks producing selected artifact names:
 
 ```sh
-gregale jobs tasks nightly-report latest --artifacts-only --include '*.csv'
+gregale job tasks nightly-report latest --artifacts-only --include '*.csv'
 ```
 
 Repeatable `--include` requires `--artifacts-only` and uses the same case-sensitive
@@ -1794,7 +1775,7 @@ existing discovery output and JSON remain unchanged.
 To discover artifact names before downloading:
 
 ```sh
-gregale jobs artifacts nightly-report latest 0
+gregale job artifacts nightly-report latest 0
 ```
 
 The read-only command resolves the run once, checks its Job/account identity,
@@ -1817,8 +1798,8 @@ a task retry; direct download verifies the current managed result.
 Artifact listing accepts the same repeatable name filters:
 
 ```sh
-gregale jobs artifacts nightly-report latest 0 --include '*.csv' --include 'summary.json'
-gregale jobs artifacts nightly-report RUN_ID 0 --attempt 2 --include '*.csv'
+gregale job artifacts nightly-report latest 0 --include '*.csv' --include 'summary.json'
+gregale job artifacts nightly-report RUN_ID 0 --attempt 2 --include '*.csv'
 ```
 
 Matching uses case-sensitive name globs; any matching pattern includes the
@@ -1836,7 +1817,7 @@ Task discovery now preserves filters in both listing and download commands.
 To inspect the recorded manifest from a specific retained terminal attempt:
 
 ```sh
-gregale jobs artifacts nightly-report latest 0 --attempt 2
+gregale job artifacts nightly-report latest 0 --attempt 2
 ```
 
 The command pins the run, checks its identity, and searches retained attempt
@@ -1849,8 +1830,8 @@ and `artifact-download` always reads the current task output.
 To run or continue a job while collecting only selected results:
 
 ```sh
-gregale jobs run nightly-report --tasks 10 --out-dir ./results --include '*.csv'
-gregale jobs wait nightly-report RUN_ID --out-dir ./results --include '*.csv' --include 'summary.json'
+gregale job run nightly-report --tasks 10 --out-dir ./results --include '*.csv'
+gregale job wait nightly-report RUN_ID --out-dir ./results --include '*.csv' --include 'summary.json'
 ```
 
 Repeatable `--include` requires `--out-dir` and uses the same case-sensitive
@@ -1871,7 +1852,7 @@ retain their existing JSON shape and behavior.
 To finish waiting and collect an existing run without submitting another:
 
 ```sh
-gregale jobs wait nightly-report RUN_ID --out-dir ./results
+gregale job wait nightly-report RUN_ID --out-dir ./results
 ```
 
 `latest` is also accepted and resolves once before waiting; every subsequent read
@@ -1896,7 +1877,7 @@ remain unchanged. No submission or retry request is made by this command.
 To submit once, wait, and collect results with one command:
 
 ```sh
-gregale jobs run nightly-report --tasks 10 --out-dir ./results
+gregale job run nightly-report --tasks 10 --out-dir ./results
 ```
 
 `--out-dir` implies `--wait` and accepts `--wait-timeout` and `--poll-interval`.
@@ -1933,11 +1914,11 @@ Single-artifact `--out` retains its existing parent-directory requirement.
 To omit unwanted artifact names:
 
 ```sh
-gregale jobs artifact-download nightly-report latest --all-tasks --include '*.csv' --exclude 'debug-*.csv' --out-dir ./results
-gregale jobs run nightly-report --tasks 10 --out-dir ./results --exclude 'debug-*'
-gregale jobs wait nightly-report RUN_ID --out-dir ./results --exclude 'debug-*'
-gregale jobs tasks nightly-report latest --artifacts-only --exclude 'debug-*'
-gregale jobs artifacts nightly-report RUN_ID 0 --attempt 2 --exclude 'debug-*'
+gregale job artifact download nightly-report latest --all-tasks --include '*.csv' --exclude 'debug-*.csv' --out-dir ./results
+gregale job run nightly-report --tasks 10 --out-dir ./results --exclude 'debug-*'
+gregale job wait nightly-report RUN_ID --out-dir ./results --exclude 'debug-*'
+gregale job tasks nightly-report latest --artifacts-only --exclude 'debug-*'
+gregale job artifacts nightly-report RUN_ID 0 --attempt 2 --exclude 'debug-*'
 ```
 
 Repeatable `--exclude` uses the same case-sensitive artifact-name globs as
@@ -1960,7 +1941,7 @@ exclusion patterns, existing output and JSON retain their previous behavior.
 To collect only selected artifact names across tasks:
 
 ```sh
-gregale jobs artifact-download nightly-report latest --all-tasks --include '*.csv' --include 'summary.json' --out-dir ./results
+gregale job artifact download nightly-report latest --all-tasks --include '*.csv' --include 'summary.json' --out-dir ./results
 ```
 
 Repeatable `--include` is available with `--all` and `--all-tasks`, including
@@ -1984,7 +1965,7 @@ when `--out-dir` is provided.
 To download current results across an entire run:
 
 ```sh
-gregale jobs artifact-download nightly-report latest --all-tasks --out-dir ./results
+gregale job artifact download nightly-report latest --all-tasks --out-dir ./results
 ```
 
 Gregale resolves one run, verifies Job/account
@@ -2014,7 +1995,7 @@ Historical-attempt downloads remain unsupported.
 To preview a bulk download before writing files:
 
 ```sh
-gregale jobs artifact-download nightly-report latest 0 --all --out-dir ./results --dry-run
+gregale job artifact download nightly-report latest 0 --all --out-dir ./results --dry-run
 ```
 
 Preview accepts missing destination directories and shows every artifact's size,
@@ -2038,7 +2019,7 @@ checksums, since local files and task outputs may change after the preview.
 To download all current managed artifacts into a directory:
 
 ```sh
-gregale jobs artifact-download nightly-report latest 0 --all --out-dir ./results
+gregale job artifact download nightly-report latest 0 --all --out-dir ./results
 ```
 
 This resolves the run once and validates the task manifest. All managed
@@ -2063,7 +2044,7 @@ invalid manifest fails. The overall deadline is five minutes. Retry individual
 failed artifacts into new files, or resume the bulk download:
 
 ```sh
-gregale jobs artifact-download nightly-report RUN_ID 0 --all --out-dir ./results --resume
+gregale job artifact download nightly-report RUN_ID 0 --all --out-dir ./results --resume
 ```
 
 Resume requires the explicit UUID from the earlier receipt (`latest` is rejected).
@@ -2079,7 +2060,7 @@ resumption even within the same run. Historical downloads are unsupported.
 To download a managed job result directly:
 
 ```sh
-gregale jobs artifact-download nightly-report latest 0 report.csv --out report.csv
+gregale job artifact download nightly-report latest 0 report.csv --out report.csv
 ```
 
 The command resolves `latest` once (explicit UUIDs also work), obtains the
@@ -2102,7 +2083,7 @@ local file; it does not change the Job run.
 For a one-time run summary:
 
 ```sh
-gregale jobs status nightly-report latest
+gregale job status nightly-report latest
 gregale --json jobs status nightly-report RUN_ID
 ```
 
@@ -2120,7 +2101,7 @@ automation. No run is submitted, retried, or cancelled.
 For a one-time success check in scripts:
 
 ```sh
-gregale jobs status nightly-report RUN_ID --check
+gregale job status nightly-report RUN_ID --check
 ```
 
 `--check` displays the same run summary and exits 0 only when its recorded
@@ -2135,7 +2116,7 @@ to the intended run. A successful check describes the run, not app health.
 To inspect a complete task list:
 
 ```sh
-gregale jobs tasks nightly-report latest --all
+gregale job tasks nightly-report latest --all
 ```
 
 `--all` reads every task page from the selected starting `--offset` (default
@@ -2153,7 +2134,7 @@ options, the request and JSON format remain unchanged.
 To read all retained attempts for one task:
 
 ```sh
-gregale jobs attempts nightly-report latest 0 --all
+gregale job attempts nightly-report latest 0 --all
 ```
 
 Add `--failed-only` to show only retained attempts with status `failed`,
@@ -2182,7 +2163,7 @@ without pagination options preserve their JSON request and output formats.
 To compare output from a particular retained attempt:
 
 ```sh
-gregale jobs logs nightly-report latest 0 --attempt 1 --max-bytes 65536
+gregale job logs nightly-report latest 0 --attempt 1 --max-bytes 65536
 ```
 
 `--attempt N` requires a positive attempt number and reads retained terminal
@@ -2203,7 +2184,7 @@ to the explicit command; ordinary logs without `--attempt` stay unchanged.
 To find runs with a particular outcome:
 
 ```sh
-gregale jobs runs nightly-report --status failed --all
+gregale job runs nightly-report --status failed --all
 ```
 
 `--status` accepts `queued`, `running`, `succeeded`, `failed`, `cancelled`, or
@@ -2226,7 +2207,7 @@ invalid-ID rows receive no guidance. No extra reads or mutations are sent.
 To focus on task failures without interactive browsing:
 
 ```sh
-gregale jobs tasks nightly-report latest --failed-only
+gregale job tasks nightly-report latest --failed-only
 ```
 
 `--failed-only` scans all task pages for the selected run and shows only
@@ -2245,11 +2226,11 @@ atomic snapshot or a claim that the run succeeded. Without the flag, the
 existing one-page read and output remain unchanged.
 
 ```sh
-gregale jobs tasks nightly-report latest
-gregale jobs logs nightly-report latest 0 --max-bytes 65536
-gregale jobs attempts nightly-report latest 0
-gregale jobs artifact-url nightly-report latest 0 report.csv
-gregale jobs wait nightly-report latest --timeout 10m
+gregale job tasks nightly-report latest
+gregale job logs nightly-report latest 0 --max-bytes 65536
+gregale job attempts nightly-report latest 0
+gregale job artifact get nightly-report latest 0 report.csv
+gregale job wait nightly-report latest --timeout 10m
 ```
 
 `latest` selects the newest run in the named job's history, including pending
@@ -2302,8 +2283,8 @@ does not submit or cancel runs.
 Inside a checkout linked with an app, these commands use that app by default:
 
 ```sh
-gregale workflows list
-gregale workflows run nightly-report
+gregale workflow list
+gregale workflow run nightly-report
 ```
 
 An explicit `--app SLUG` overrides the checkout context, including a missing or
@@ -2320,8 +2301,8 @@ idempotency, and JSON responses retain their existing behavior.
 ## Loading workflow input from a file
 
 ```sh
-gregale workflows run nightly-report --input-file input.json
-gregale workflows run nightly-report --input-file -
+gregale workflow run nightly-report --input-file input.json
+gregale workflow run nightly-report --input-file -
 ```
 
 `--input-file -` reads stdin until EOF. File paths are relative to the current
@@ -2339,7 +2320,7 @@ return output according to their own definitions.
 ## Waiting for a workflow run
 
 ```sh
-gregale workflows wait RUN_ID --timeout 5m
+gregale workflow wait RUN_ID --timeout 5m
 ```
 
 The command polls that exact run every two seconds and succeeds only when the
@@ -2362,7 +2343,7 @@ leaves the run untouched. `--timeout` must be positive; `--poll-interval` accept
 ## Starting and waiting in one command
 
 ```sh
-gregale workflows run nightly-report --input-file input.json --wait --timeout 5m
+gregale workflow run nightly-report --input-file input.json --wait --timeout 5m
 ```
 
 Gregale submits once and follows the ID returned by the server using the same
@@ -2385,8 +2366,8 @@ run history before submitting again. Without `--wait`, output stays unchanged.
 For a one-time workflow success check:
 
 ```sh
-gregale workflows status RUN_ID --check
-gregale workflows status latest --workflow-name billing --check
+gregale workflow status RUN_ID --check
+gregale workflow status latest --workflow-name billing --check
 ```
 
 `--check` reads once and shows the same status details, exiting 0 only for
@@ -2410,7 +2391,7 @@ wait commands in workflow history.
 To focus on failed steps without scanning successful or pending steps:
 
 ```sh
-gregale workflows steps latest --workflow-name billing --failed-only
+gregale workflow steps latest --workflow-name billing --failed-only
 ```
 
 `--failed-only` includes only steps whose recorded status is `failed`.
@@ -2422,11 +2403,11 @@ NDJSON and emits no rows for an empty result. Step states may change after
 the read. Without the flag, existing step output remains unchanged.
 
 ```sh
-gregale workflows status latest --workflow-name nightly-report
-gregale workflows steps latest --workflow-name nightly-report
-gregale workflows diagnose latest --workflow-name nightly-report
-gregale workflows attempts latest charge-card --workflow-name billing
-gregale workflows resumes latest --workflow-name billing
+gregale workflow status latest --workflow-name nightly-report
+gregale workflow steps latest --workflow-name nightly-report
+gregale workflow diagnose latest --workflow-name nightly-report
+gregale workflow attempts latest charge-card --workflow-name billing
+gregale workflow resumes latest --workflow-name billing
 ```
 
 These reads require an exact workflow name and use the linked app unless
@@ -2442,7 +2423,7 @@ for the explicitly named step. It reads the selected run without retrying the
 step or changing the workflow. A missing step name stops before any lookup.
 Add `--failed-only` to show only attempts whose recorded status is `failed`,
 with the existing HTTP status, start/finish times, and next-attempt details.
-For example: `gregale workflows attempts latest charge-card --workflow-name
+For example: `gregale workflow attempts latest charge-card --workflow-name
 billing --failed-only`. Explicit UUIDs also work. Human output explains when
 no failed attempts match; JSON retains NDJSON and emits no rows for an empty
 result. An empty result does not establish that the step or workflow succeeded;
@@ -2461,7 +2442,7 @@ and cancellation continue to use explicit run IDs.
 To wait for the newest matching workflow run without copying its UUID:
 
 ```sh
-gregale workflows wait latest --workflow-name billing --timeout 5m
+gregale workflow wait latest --workflow-name billing --timeout 5m
 ```
 
 Selection uses the linked app or `--app SLUG`, requires an exact workflow name,
@@ -2491,7 +2472,7 @@ are listed. Successful, pending, running, and event-waiting runs receive no
 failure guidance. This adds no API reads or mutations; JSON remains unchanged.
 
 ```sh
-gregale workflows list --workflow-name nightly-report --all
+gregale workflow list --workflow-name nightly-report --all
 ```
 
 `--all` walks matching pages starting at `--offset` (default 0), with `--limit`
@@ -2510,8 +2491,8 @@ keep a historical query bounded.
 ## Loading workflow event payloads
 
 ```sh
-gregale workflows events RUN_ID approved --payload-file approval.json
-gregale workflows events RUN_ID approved --payload-file -
+gregale workflow events RUN_ID approved --payload-file approval.json
+gregale workflow events RUN_ID approved --payload-file -
 ```
 
 `--payload-file -` reads stdin until EOF. Files use paths relative to the current
@@ -2528,7 +2509,7 @@ The run ID stays explicit, and successful output keeps its existing format.
 ## Resuming and waiting in one command
 
 ```sh
-gregale workflows resume RUN_ID --expected-resume-count 1 --wait --timeout 5m
+gregale workflow resume RUN_ID --expected-resume-count 1 --wait --timeout 5m
 ```
 
 The command sends one resume request, retaining the expected resume-count
@@ -2549,7 +2530,7 @@ Without `--wait`, existing resume output and behavior are unchanged.
 ## Retrying and waiting in one command
 
 ```sh
-gregale workflows retry RUN_ID STEP_NAME --wait --timeout 5m
+gregale workflow retry RUN_ID STEP_NAME --wait --timeout 5m
 ```
 
 With an explicit run ID and step name, Gregale sends one retry request and
@@ -2573,7 +2554,7 @@ apply to the explicit command, not interactive selection.
 To retry one task and wait for its run:
 
 ```sh
-gregale jobs retry nightly-report RUN_ID 0 --wait --wait-timeout 10m
+gregale job retry nightly-report RUN_ID 0 --wait --wait-timeout 10m
 ```
 
 The explicit command submits one task retry, checks that the response identifies
@@ -2593,7 +2574,7 @@ unchanged; these options apply to the explicit command.
 To submit a recovery run and follow it in one command:
 
 ```sh
-gregale jobs replay-failed nightly-report SOURCE_RUN_ID --wait --wait-timeout 10m
+gregale job replay nightly-report SOURCE_RUN_ID --wait --wait-timeout 10m
 ```
 
 The explicit command submits one replay request and waits for the newly
@@ -2609,7 +2590,7 @@ apply. Ordinary output without `--wait` remains unchanged; wait options
 apply to the explicit command, not interactive selection.
 
 ```sh
-gregale jobs run nightly-report --tasks 10 --wait --wait-timeout 10m
+gregale job run nightly-report --tasks 10 --wait --wait-timeout 10m
 ```
 
 The explicit command submits once and follows the exact accepted run using
@@ -2633,10 +2614,10 @@ Wait options apply to the explicit command, not interactive selection.
 ### Collect Job results with one command
 
 ```bash
-gregale jobs results nightly-report
-gregale jobs results nightly-report latest --out-dir ./results
-gregale jobs results nightly-report latest --out-dir ./results --include '*.csv' --exclude 'debug-*'
-gregale jobs results nightly-report latest --out-dir ./results --dry-run
+gregale job results nightly-report
+gregale job results nightly-report latest --out-dir ./results
+gregale job results nightly-report latest --out-dir ./results --include '*.csv' --exclude 'debug-*'
+gregale job results nightly-report latest --out-dir ./results --dry-run
 ```
 
 `jobs results JOB` defaults to `latest`. Without `--out-dir`, it saves under `./results/JOB/RUN_ID/`, keeping different runs separate. Explicit run IDs and destinations remain available; an explicitly empty destination is rejected. The destination is displayed before collection and included as `output_directory` in JSON collection/whole-run receipts. Preview reports it without creating directories.
@@ -2648,9 +2629,9 @@ gregale jobs results nightly-report latest --out-dir ./results --dry-run
 ### Start a Job and collect its results
 
 ```bash
-gregale jobs run nightly-report --tasks 1 --results
-gregale jobs run nightly-report --tasks 1 --results --include '*.csv' --exclude 'debug-*'
-gregale jobs run nightly-report --tasks 1 --results --out-dir ./exports
+gregale job run nightly-report --tasks 1 --results
+gregale job run nightly-report --tasks 1 --results --include '*.csv' --exclude 'debug-*'
+gregale job run nightly-report --tasks 1 --results --out-dir ./exports
 ```
 
 `--results` implies waiting and artifact collection. Without `--out-dir`, the destination is `./results/JOB/RUN_ID/`, using the ID returned by the single submission. It never looks up `latest` or submits again while waiting or collecting. Task count or input bindings remain required as for ordinary `jobs run`. Explicit destinations, filters, `--wait-timeout`, and `--poll-interval` remain available. Matching files in a fresh run's destination are treated as conflicts; recovery commands use `--resume` to verify existing files. Failed runs do not start collection. Human output shows the destination; JSON includes `output_directory` and recovery commands, including when waiting times out. Missing directories are created only if collection needs them; preview existing runs with `jobs results JOB --dry-run`.
@@ -2658,12 +2639,12 @@ gregale jobs run nightly-report --tasks 1 --results --out-dir ./exports
 ### Save project-local Job defaults
 
 ```bash
-gregale jobs defaults set nightly-report --tasks 1 --results
-gregale jobs defaults show
-gregale jobs run
-gregale jobs results
-gregale jobs run --tasks 3 --results=false
-gregale jobs defaults clear
+gregale job defaults set nightly-report --tasks 1 --results
+gregale job defaults show
+gregale job run
+gregale job results
+gregale job run --tasks 3 --results=false
+gregale job defaults clear
 ```
 
 Defaults are stored in `.gregale/jobs.json` at the linked project root, otherwise the Git root, otherwise the current directory. Commands in subdirectories of a linked or Git project use the same defaults. Only the Job name, task count, results and image-wait preferences, and artifact filters are stored; no credentials or environment values. `set` replaces the entire defaults record; omitted task count is unset and omitted `--results` is false. These commands are local and do not require login or modify a remote Job. `clear` is safe to repeat.
@@ -2673,12 +2654,12 @@ Defaults are stored in `.gregale/jobs.json` at the linked project root, otherwis
 ### Remember the outputs you normally collect
 
 ```bash
-gregale jobs defaults set nightly-report --tasks 1 --results --include '*.csv' --exclude 'debug-*'
-gregale jobs run
-gregale jobs results
-gregale jobs results --include '*.json'
-gregale jobs results --all-artifacts
-gregale jobs run --all-artifacts
+gregale job defaults set nightly-report --tasks 1 --results --include '*.csv' --exclude 'debug-*'
+gregale job run
+gregale job results
+gregale job results --include '*.json'
+gregale job results --all-artifacts
+gregale job run --all-artifacts
 ```
 
 Saved repeatable `--include`/`--exclude` patterns apply to `jobs results` and to `jobs run` when collection is enabled, only for the configured Job. They also apply when that Job name is explicitly supplied. Any explicit include or exclude replaces **both** saved filter lists, rather than adding to them. `--all-artifacts` ignores saved filters for one invocation; combining it with explicit filters is rejected. It does not enable collection on its own or change saved defaults. Exclusions still take precedence. Effective filters appear in collection/preview JSON and recovery commands, so recovery does not depend on defaults staying unchanged. `defaults show` displays saved filters; `defaults set` replaces the record and omitting filters clears them. Invalid patterns are rejected before saving or making API requests. Existing defaults files without filters remain valid.
@@ -2686,9 +2667,9 @@ Saved repeatable `--include`/`--exclude` patterns apply to `jobs results` and to
 ### Preview a Job run before submitting
 
 ```bash
-gregale jobs run --dry-run
-gregale jobs run nightly-report --tasks 3 --results --dry-run
-gregale jobs run --dry-run --json
+gregale job run --dry-run
+gregale job run nightly-report --tasks 3 --results --dry-run
+gregale job run --dry-run --json
 ```
 
 `jobs run --dry-run` applies local Job defaults and explicit overrides, validates arguments, and shows the effective task selection, run overrides, waiting, results destination, and artifact filters. It requires no login and makes no API requests or file writes. The default destination contains `<run-id>` because no run has been submitted. An explicit destination is inspected without creating it. This preview does not fetch remote Job defaults or readiness, read input manifests, or check account limits. Remote-derived values are marked unknown rather than guessed; input bindings determine the task count when present. Environment values, argument values, and input references are redacted in human and JSON output. JSON contains a sanitized `request_preview`, collection options, and a `dry_run` marker; it is not a submission receipt. Remove `--dry-run` to submit with those options.
@@ -2696,10 +2677,10 @@ gregale jobs run --dry-run --json
 ### Change one saved Job setting
 
 ```bash
-gregale jobs defaults update --tasks 3
-gregale jobs defaults update --results=false
-gregale jobs defaults update --include '*.json'
-gregale jobs defaults update --all-artifacts
+gregale job defaults update --tasks 3
+gregale job defaults update --results=false
+gregale job defaults update --include '*.json'
+gregale job defaults update --all-artifacts
 ```
 
 `defaults update` changes an existing defaults record and preserves omitted settings. A positive `--tasks` replaces the saved task count; `--results=false` disables default collection. Supplying either filter flag replaces both saved include/exclude lists. `--all-artifacts` clears both lists and cannot be combined with explicit filters. An optional Job name changes the selected Job while retaining other saved settings. At least one change must be supplied; missing or invalid defaults are reported without creating or replacing a record. Writes use the same atomic replacement and private file permissions as `defaults set`. The command is local, requires no login, and returns the complete updated record and path with `--json`. Use `defaults set` to replace everything or `defaults clear` to remove the record.
@@ -2707,10 +2688,10 @@ gregale jobs defaults update --all-artifacts
 ### Check the latest Job status with fewer arguments
 
 ```bash
-gregale jobs status
-gregale jobs status nightly-report
-gregale jobs status --check --json
-gregale jobs status nightly-report RUN_ID --check
+gregale job status
+gregale job status nightly-report
+gregale job status --check --json
+gregale job status nightly-report RUN_ID --check
 ```
 
 Without arguments, `jobs status` reads the saved Job name from project-local defaults. With a Job name but no run reference, it selects `latest`. Latest selection happens once; the summary and follow-up commands refer to that exact UUID. Explicit Job/run targets do not read local defaults. Missing or invalid defaults are reported before API requests when no Job is supplied. Status remains read-only and preserves the existing run JSON shape. `--check` exits successfully only for a recorded `succeeded` run, without waiting or submitting anything.
@@ -2718,11 +2699,11 @@ Without arguments, `jobs status` reads the saved Job name from project-local def
 ### Inspect tasks without repeating the Job and run
 
 ```bash
-gregale jobs tasks
-gregale jobs tasks --failed-only
-gregale jobs tasks --artifacts-only
-gregale jobs tasks nightly-report --all
-gregale jobs tasks nightly-report RUN_ID --failed-only
+gregale job tasks
+gregale job tasks --failed-only
+gregale job tasks --artifacts-only
+gregale job tasks nightly-report --all
+gregale job tasks nightly-report RUN_ID --failed-only
 ```
 
 Without positionals, `jobs tasks` uses the saved Job name. An omitted run reference defaults to `latest`, resolved once; pagination, log, and artifact follow-up commands use that exact UUID. Explicit Job/run targets do not read local defaults. Existing pagination, failed-task filtering, artifact-name filters, JSON task records, and interactive behavior remain available. Task inspection uses only the saved Job name, not the saved task count, results preference, or collection filters; pass artifact filters explicitly with `--artifacts-only`. Missing or invalid defaults are reported before API requests when no Job is supplied. This command remains read-only and does not download artifacts or create files.
@@ -2730,10 +2711,10 @@ Without positionals, `jobs tasks` uses the saved Job name. An omitted run refere
 ### Read task logs with a shorter command
 
 ```bash
-gregale jobs logs --task 0
-gregale jobs logs nightly-report --task 0
-gregale jobs logs nightly-report RUN_ID --task 0 --max-bytes 4096
-gregale jobs logs --task 0 --attempt 2
+gregale job logs --task 0
+gregale job logs nightly-report --task 0
+gregale job logs nightly-report RUN_ID --task 0 --max-bytes 4096
+gregale job logs --task 0 --attempt 2
 ```
 
 With `--task`, the Job name defaults to the saved project-local Job and the run reference defaults to `latest`, resolved once. The task index remains explicit and must be nonnegative. `--attempt` and `--max-bytes` retain their current behavior. The original `jobs logs JOB RUN_ID|latest TASK_INDEX` syntax and JSON log response remain available. Explicit Job names bypass local defaults. Duplicate task flags or mixing `--task` with the positional task index are rejected before API requests. This is read-only; it does not guess a task, retry, download artifacts, or create files. Human output identifies the defaults file when it supplies the Job name.
@@ -2741,10 +2722,10 @@ With `--task`, the Job name defaults to the saved project-local Job and the run 
 ### Inspect saved Job history
 
 ```bash
-gregale jobs runs
-gregale jobs runs --failed-only
-gregale jobs runs --failed-only --all
-gregale jobs runs nightly-report --status succeeded
+gregale job runs
+gregale job runs --failed-only
+gregale job runs --failed-only --all
+gregale job runs nightly-report --status succeeded
 ```
 
 Omitting the Job name uses the project-local saved Job; an explicit name bypasses local defaults. Existing limits, offsets, all-page traversal, and JSON run records retain their behavior. `--failed-only` filters fetched history to `failed` and `dead_letter` runs and cannot be combined with `--status`; cancelled runs are excluded. Filters apply to the fetched pages, so use `--all` to scan subsequent pages. Human follow-up commands retain the selected Job and history filter. This command is read-only and does not resolve `latest`, inspect task logs, submit runs, or collect outputs. Missing or invalid defaults stop an omitted-name command before API requests.
@@ -2752,10 +2733,10 @@ Omitting the Job name uses the project-local saved Job; an explicit name bypasse
 ### Inspect the saved Job and check image readiness
 
 ```bash
-gregale jobs info
-gregale jobs info --check
-gregale jobs info --wait-ready
-gregale jobs info nightly-report --wait-ready --timeout 5m
+gregale job get
+gregale job get --check
+gregale job get --wait-ready
+gregale job get nightly-report --wait-ready --timeout 5m
 ```
 
 `jobs info` and its readiness options use the saved Job when no name is supplied; explicit names bypass local defaults. `--check` reads once and exits 0 only when the recorded Job state is `active` and its image preparation status is `ready`. Paused Jobs, pending or failed images, and unknown states fail the check. It preserves the normal Job JSON response on stdout and reports failures on stderr. This check does not assess account limits, input accessibility, or guarantee execution success. `--check` and `--wait-ready` are mutually exclusive. Image waiting retains its existing behavior: it waits for the selected image, regardless of the Job's active/paused state, and pins Job/image identity. Wait timeout and polling flags require `--wait-ready`. No option submits a run or changes the Job.
@@ -2763,9 +2744,9 @@ gregale jobs info nightly-report --wait-ready --timeout 5m
 ### Wait for image preparation before starting a Job
 
 ```bash
-gregale jobs run --wait-ready --results
-gregale jobs run nightly-report --tasks 1 --wait-ready --image-wait-timeout 5m
-gregale jobs run --wait-ready --dry-run
+gregale job run --wait-ready --results
+gregale job run nightly-report --tasks 1 --wait-ready --image-wait-timeout 5m
+gregale job run --wait-ready --dry-run
 ```
 
 `--wait-ready` reads the selected Job and waits for its image to become ready before making the single run submission. Job/account/image identity and any resolved digest are pinned during polling. Image failure, unknown preparation state, changed identity, read failure, cancellation, or deadline stops before submission. `--image-wait-timeout` (default 5m) and `--image-poll-interval` (default 2s) must be positive and require `--wait-ready`. The image deadline includes the initial read and is separate from post-acceptance waiting and artifact collection.
@@ -2775,11 +2756,11 @@ Defaults, explicit overrides, filters, and `--results` continue to apply. `--dry
 ### Remember image waiting for a Job
 
 ```bash
-gregale jobs defaults update --wait-ready
-gregale jobs run
-gregale jobs run --wait-ready=false
-gregale jobs defaults update --wait-ready=false
-gregale jobs defaults set nightly-report --tasks 1 --results --wait-ready
+gregale job defaults update --wait-ready
+gregale job run
+gregale job run --wait-ready=false
+gregale job defaults update --wait-ready=false
+gregale job defaults set nightly-report --tasks 1 --results --wait-ready
 ```
 
 Saved `--wait-ready` applies to runs of the configured Job when that flag is omitted. Explicit `--wait-ready=false` disables it for one run; other Jobs do not inherit it. `defaults show` and `run --dry-run` display the preference. `defaults update` preserves it when omitted, and `defaults set` resets it to false when omitted. Existing files without `wait_ready` remain valid and default to false. Image timing options can be supplied when saved image waiting is enabled; they are still per-invocation options and must be positive. Disabling waiting while supplying image timing flags is rejected. Status, task, log, info, and results commands do not inherit this run preference. The existing image preparation timeout, cancellation, and single-submission behavior remain unchanged.
@@ -2787,9 +2768,9 @@ Saved `--wait-ready` applies to runs of the configured Job when that flag is omi
 ### See Job readiness and the latest run together
 
 ```bash
-gregale jobs overview
-gregale jobs overview nightly-report
-gregale jobs overview --json
+gregale job overview
+gregale job overview nightly-report
+gregale job overview --json
 ```
 
 `jobs overview` uses the saved Job when its name is omitted and otherwise bypasses local defaults. It shows Job state, image preparation, and the latest run's status and task counts. The latest history selection is read once; details and follow-up commands use that exact UUID. Jobs with no recorded runs still show readiness and configuration guidance. If the latest run has failures or is failed/dead-letter, overview scans failed task metadata and offers log commands for up to three tasks, plus a command to inspect all failed tasks. It does not read log content or artifact manifests/download URLs. Succeeded runs offer results collection; queued/running runs offer waiting. Non-ready images offer image-wait guidance.
@@ -2803,8 +2784,8 @@ Overview makes only read requests, has a 30-second overall deadline, and never s
 ### Use the overview as a health check
 
 ```bash
-gregale jobs overview --check
-gregale jobs overview nightly-report --check --json
+gregale job overview --check
+gregale job overview nightly-report --check --json
 ```
 
 `--check` prints the normal overview and exits 0 only when the recorded Job state is active, image preparation is ready, and the latest run succeeded. Paused/unknown Job states, non-ready images, other run outcomes, and no recorded runs fail. All failed conditions are reported together on stderr. JSON adds `check: {passed, reasons}` to the overview only when the flag is enabled; the reasons array is empty when it passes. Human output marks a successful check. Without `--check`, overview retains its existing output and exit behavior. The check uses already-fetched metadata, adds no requests or mutations, and assesses recorded state rather than guaranteeing a future run will succeed. Read/identity errors remain errors and do not produce a partial health check.
@@ -2816,10 +2797,10 @@ Run validation errors include correction guidance for missing saved Jobs or task
 ### Wait for the saved Job's latest run
 
 ```bash
-gregale jobs wait
-gregale jobs wait nightly-report
-gregale jobs wait --timeout 5m
-gregale jobs wait --out-dir ./results --include '*.csv'
+gregale job wait
+gregale job wait nightly-report
+gregale job wait --timeout 5m
+gregale job wait --out-dir ./results --include '*.csv'
 ```
 
 Without positionals, `jobs wait` uses the saved Job name. An omitted run reference defaults to `latest`, resolved once, then all polling and recovery commands use that exact UUID. Explicit Job names bypass local defaults. Existing timeout/polling flags, exit codes, JSON receipts, explicit run IDs, and `--out-dir` collection with explicit filters retain their behavior. Only the saved Job name is used: run task counts, image waiting, results preferences, and saved collection filters do not apply to `jobs wait`. Waiting never submits a run. Missing or invalid defaults stop omitted-name commands before API requests. Existing interactive behavior is unchanged; interactive collection remains unsupported.
@@ -2831,9 +2812,9 @@ Failed `jobs info --check` and `jobs overview --check` now include suggested nex
 ### Read all failed-task logs in one command
 
 ```bash
-gregale jobs logs --failed-only
-gregale jobs logs nightly-report --failed-only --max-bytes 4096
-gregale jobs logs nightly-report RUN_ID --failed-only
+gregale job logs --failed-only
+gregale job logs nightly-report --failed-only --max-bytes 4096
+gregale job logs nightly-report RUN_ID --failed-only
 ```
 
 `--failed-only` uses the saved Job if omitted and resolves an omitted/latest run once. It validates Job/run identity, scans all task pages, and reads current logs for tasks recorded as failed, timeout, or oom; cancelled and succeeded tasks are excluded. Each log tail is bounded by `--max-bytes` (default 65536, maximum 1048576), with excess server output also truncated locally at a UTF-8 boundary. Human output labels Job, exact run, task index, discovered attempt/status, and current log status. JSON streams one record per task with those identifiers, followed by a `type: "summary"` record; no matching tasks produces only a zero-count summary and exit 0. Tasks can change between discovery and log reads; this reads current logs, not a pinned retained attempt.
@@ -2863,8 +2844,8 @@ Successful run guidance from `jobs status`, `jobs wait`, and `jobs runs` (includ
 With a Job saved using `jobs defaults set`, retry a task in its newest run:
 
 ```sh
-gregale jobs retry --task 2
-gregale jobs retry --task 2 --wait
+gregale job retry --task 2
+gregale job retry --task 2 --wait
 ```
 
 Override the saved Job with `jobs retry nightly-report --task 2`, or pin a run
@@ -2881,8 +2862,8 @@ not apply to retry.
 ### Collect results after a task retry
 
 ```sh
-gregale jobs retry --task 2 --results
-gregale jobs retry nightly-report RUN_ID 2 --results --include '*.csv'
+gregale job retry --task 2 --results
+gregale job retry nightly-report RUN_ID 2 --results --include '*.csv'
 ```
 
 `--results` implies waiting for the whole run to succeed, then collects current
@@ -2902,9 +2883,9 @@ command in the output; it continues without submitting another retry.
 ### Replay unsuccessful tasks without copying the source run ID
 
 ```sh
-gregale jobs replay-failed
-gregale jobs replay-failed --wait
-gregale jobs replay-failed nightly-report latest --wait
+gregale job replay
+gregale job replay --wait
+gregale job replay nightly-report latest --wait
 ```
 
 An omitted Job uses the project-local Job default. An omitted run, or `latest`,
@@ -2923,8 +2904,8 @@ outcome, inspect run history before submitting again.
 ### Collect outputs from a replay recovery run
 
 ```sh
-gregale jobs replay-failed --results
-gregale jobs replay-failed nightly-report RUN_ID --results --include '*.csv'
+gregale job replay --results
+gregale job replay nightly-report RUN_ID --results --include '*.csv'
 ```
 
 `--results` implies waiting for the new linked recovery run to succeed, then
@@ -2946,9 +2927,9 @@ or an invalid acceptance response requires inspecting run history first.
 ### Inspect earlier task attempts without copying run IDs
 
 ```sh
-gregale jobs attempts --task 2 --failed-only --all
-gregale jobs attempts nightly-report --task 2
-gregale jobs attempts nightly-report RUN_ID --task 2 --limit 20
+gregale job attempts --task 2 --failed-only --all
+gregale job attempts nightly-report --task 2
+gregale job attempts nightly-report RUN_ID --task 2 --limit 20
 ```
 
 With `--task N`, an omitted Job uses the project-local Job default, and an
@@ -2967,9 +2948,9 @@ artifacts, or retrying tasks.
 ### List task outputs without copying run IDs
 
 ```sh
-gregale jobs artifacts --task 2
-gregale jobs artifacts --task 2 --attempt 1
-gregale jobs artifacts nightly-report RUN_ID --task 2 --include '*.csv'
+gregale job artifacts --task 2
+gregale job artifacts --task 2 --attempt 1
+gregale job artifacts nightly-report RUN_ID --task 2 --include '*.csv'
 ```
 
 With `--task N`, an omitted Job uses the project-local Job default, and an
@@ -2987,9 +2968,9 @@ reads metadata without downloading files or requesting signed download URLs.
 ### Download a named task output without copying run IDs
 
 ```sh
-gregale jobs artifact-download --task 2 report.csv --out report.csv
-gregale jobs artifact-download nightly-report --task 2 report.csv --out report.csv
-gregale jobs artifact-download nightly-report RUN_ID --task 2 report.csv --out report.csv
+gregale job artifact download --task 2 report.csv --out report.csv
+gregale job artifact download nightly-report --task 2 report.csv --out report.csv
+gregale job artifact download nightly-report RUN_ID --task 2 report.csv --out report.csv
 ```
 
 For a single artifact, `--task N` allows an omitted Job to use the project-local
@@ -3006,12 +2987,12 @@ positional syntax remains available. For an artifact name starting with a
 hyphen, place flags first and the artifact after `--`:
 
 ```sh
-gregale jobs artifact-download --task 2 --out ./saved.csv -- -report.csv
+gregale job artifact download --task 2 --out ./saved.csv -- -report.csv
 ```
 
 ## Check required secret configuration
 
-Use `gregale secrets check --app my-api --required DATABASE_URL --required API_KEY`
+Use `gregale env check --app my-api --required DATABASE_URL --required API_KEY`
 to compare explicitly required keys with sealed-secret metadata in one scope.
 The app and scope default to the linked project context. Select another scope
 with `--scope staging`; `__all__` is rejected to avoid mixing environments.
@@ -3023,7 +3004,7 @@ containing only key names:
 ["DATABASE_URL", "API_KEY"]
 ```
 
-Run `gregale secrets check --required-file .gregale/required-secrets.json`.
+Run `gregale env check --required-file .gregale/required-secrets.json`.
 The file is bounded to 64 KiB and contains no values. Without explicit
 requirement selectors, it is discovered automatically at the project root.
 Repeated `--required` keys are combined with the file and deduplicated.
@@ -3070,16 +3051,35 @@ summary. API/stream failures exit nonzero without a success summary.
 
 ## Understand which linked targets commands use
 
-`gregale context` shows the linked project, default app and environment,
+`gregale config context get` shows the linked project, default app and environment,
 connection profile and API sources, absolute project-context path, and absolute
 connection-configuration path. It explains missing defaults and how selectors
-work: the nearest ancestor `.gregale/project.json` wins, explicit selectors
-supersede linked defaults, and the environment applies only to commands that
-support environment selection. A profile selects a connection and credentials;
+work: explicit selectors win; then the nearest ancestor `.gregale/project.json`;
+then the committed `gregale.yaml`. The environment applies only to commands
+that support environment selection.
+
+A repository can commit its default target so a fresh clone needs no
+`gregale link`:
+
+```yaml
+# gregale.yaml at the repository root
+project:
+  name: shop        # project slug
+  app: shop-web     # default app for app-scoped commands
+```
+
+A service directory's own `gregale.yaml` may set `project: {app: shop-billing}`
+to make that service the default when you work inside it; the project still
+comes from the root. `app` without `name` targets a standalone app. The lookup
+stops at the Git root. `.gregale/project.json`, written by `gregale link`, still
+overrides the committed target for your checkout and holds your environment;
+`gregale link`, `unlink` and `context set` only ever change that file.
+`gregale config explain app` (or `project`, `environment`) shows which of these
+files the current directory's target comes from. A profile selects a connection and credentials;
 it is not an environment. When `FAAS_API` overrides the profile API address,
 the display explains that credentials are still selected by the profile.
 
-Use `gregale context --check` for a local guard before app-scoped commands. It
+Use `gregale config context get --check` for a local guard before app-scoped commands. It
 exits 1 if no project is linked or no default app is recorded, and otherwise 0.
 An unset environment is explained but does not fail: scoped secrets use
 `default`, and other commands keep their own defaults. Malformed context or
@@ -3100,7 +3100,7 @@ recovery run ID; accepted Job retries and Workflow retries/resumes also record
 the returned run when its identity matches the request. Unknown/failed
 submissions are never inferred from history or automatically repeated.
 
-Use `gregale jobs resume` or `gregale workflows resume-wait` to continue read-only
+Use `gregale job resume` or `gregale workflow recover` to continue read-only
 observation of a single recorded run. These commands do not submit, retry, resume
 execution, cancel, or collect outputs. Workflow `resume-wait` is distinct from
 `workflows resume`, which changes execution. Completed runs remain recorded;
@@ -3127,8 +3127,8 @@ uses the existing Job or Workflow receipt and exit-code behavior.
 
 ## Review and forget saved run records
 
-Run `gregale jobs resume --overview` or
-`gregale workflows resume-wait --overview` to group locally recorded runs into
+Run `gregale job resume --overview` or
+`gregale workflow recover --overview` to group locally recorded runs into
 in-progress, finished, and unavailable results. Each row includes its exact run
 ID and a POSIX command to observe that run with its original API/profile.
 Finished includes failed or cancelled outcomes; it does not mean success.
@@ -3143,8 +3143,8 @@ Unavailable rows exit 1; deadline and interrupt return 124 and 130 respectively,
 with partial observations preserved. JSON groups selected identity/status rows
 without input or result payloads.
 
-Use `gregale jobs resume --forget UUID` or
-`gregale workflows resume-wait --forget UUID` to remove one selected local record
+Use `gregale job resume --forget UUID` or
+`gregale workflow recover --forget UUID` to remove one selected local record
 under the current recorded API/profile. No login or API request is needed.
 Remote execution, results, and history remain unchanged, including for active
 runs. The receipt identifies the forgotten record; JSON includes
@@ -3158,7 +3158,7 @@ changed, or symlinked records fail without removing another record.
 
 ## Discover declared secret requirements automatically
 
-With no requirement flags, `gregale secrets check` discovers
+With no requirement flags, `gregale env check` discovers
 `.gregale/required-secrets.json` at the nearest linked project root, otherwise
 Git root, otherwise current directory. A linked root takes precedence over a
 nested directory's declaration, matching where project defaults are stored.
@@ -3185,7 +3185,7 @@ requirement declaration elsewhere, use `--required-file config/required-secrets.
 
 ## Export missing required names into a private template
 
-Run `gregale secrets check --missing-template missing.env` to create a local
+Run `gregale env check --missing-template missing.env` to create a local
 dotenv template containing only missing explicitly required names:
 
 ```dotenv
@@ -3242,13 +3242,13 @@ existing server validation and execution behavior.
 
 ## Read failure evidence for a saved run
 
-`gregale jobs resume --logs` selects an exact local accepted-run record and reads
+`gregale job resume --logs` selects an exact local accepted-run record and reads
 current failed-task logs using the existing bounded failed-log collector. It
 includes failed, timed-out, and out-of-memory tasks; it does not tail every task
 or select a historical attempt. No failed tasks produces the existing empty
 summary. Individual unavailable logs remain visible in the collection receipt.
 
-`gregale workflows resume-wait --diagnose` reads diagnostics for the exact saved
+`gregale workflow recover --diagnose` reads diagnostics for the exact saved
 Workflow run. It checks the recorded run, workflow, and available app identity
 before reading diagnostics, and verifies the diagnostic response identifies the
 same run and workflow. Neither shortcut waits, retries, resumes execution, or
@@ -3263,7 +3263,7 @@ or diagnostic response. Records are retained and credentials are not switched.
 
 ## Collect outputs from an exact saved Job run
 
-`gregale jobs resume --results` selects the exact recorded run, verifies its
+`gregale job resume --results` selects the exact recorded run, verifies its
 Job/account identity and original API/profile, waits for success, and collects
 artifacts through the existing `jobs results` path. When multiple records exist,
 pass `--run UUID`; no history lookup chooses a newer run. Workflow resume does
@@ -3303,8 +3303,8 @@ exit-code behavior remain unchanged.
 
 ## Change one linked default without relinking
 
-Use `gregale context set --environment staging` or
-`gregale context set --app payments-api` to change only that local default.
+Use `gregale config context set --env staging` or
+`gregale config context set --app payments-api` to change only that local default.
 Both may be supplied together. Omitted fields and the linked project remain
 unchanged; no workload or environment is automatically inferred. The nearest
 existing project context is updated, including when invoked from subdirectories.
@@ -3355,7 +3355,7 @@ no writes, deployments, retries, or recovery actions.
 
 ## Verify the account behind your linked targets
 
-`gregale context --verify` performs read-only account, project, and optional
+`gregale config context get --verify` performs read-only account, project, and optional
 environment reads on the current connection. It reuses profile authentication
 checks, shows the authenticated account ID/email/plan, verifies the linked
 project identity, checks the default app is a project workload, and verifies
@@ -3379,7 +3379,7 @@ Verification does not check runtime health or configuration delivery.
 
 ## Compare required names across selected environments
 
-`gregale secrets check --environments staging,production` compares the same
+`gregale env check --environments staging,production` compares the same
 explicitly declared required names against sealed-secret metadata in each named
 scope. Requirements come from project discovery or existing `--required` and
 `--required-file` selectors. The app defaults to the linked app; an explicit
@@ -3409,7 +3409,7 @@ configuration, or remote services are changed.
 
 Use `gregale secrets defaults set --environments staging,production` to save
 only the comparison scope names, then run
-`gregale secrets check --environments saved`. The comparison still resolves
+`gregale env check --environments saved`. The comparison still resolves
 required keys and app targeting through the existing selectors. It identifies
 the absolute defaults source path in human output and JSON
 `comparison_defaults_file`. Explicit scope lists bypass the saved file entirely.
@@ -3457,7 +3457,7 @@ keeps the latest-error selection receipt and canonical HTTP log record.
 
 ## Preview a linked-target change without saving
 
-`gregale context set --environment production --dry-run` performs the same
+`gregale config context set --env production --dry-run` performs the same
 read-only project/environment validation as a normal context update, then shows
 the proposed before/after defaults, unchanged settings, and exact context file.
 It never invokes the context writer. Omitted app/environment fields remain
@@ -3538,11 +3538,11 @@ show/list/update/delete commands use the new name after a successful rename.
 
 ## Save and reuse linked target presets
 
-After linking the desired targets, use `gregale context save staging` to capture
+After linking the desired targets, use `gregale config preset create staging` to capture
 its project, app, and environment names locally. Existing names are refused
 unless `--replace` is explicit. Preview restoration with
-`gregale context use staging --dry-run`, then apply with
-`gregale context use staging`. Both reuse normal context-update validation and
+`gregale config preset apply staging --dry-run`, then apply with
+`gregale config preset apply staging`. Both reuse normal context-update validation and
 before/after receipts; preview writes no files. Empty preset fields explicitly
 clear their defaults rather than preserving the currently selected target.
 
@@ -3565,7 +3565,7 @@ and `.gitignore` are unchanged. JSON apply receipts include `preset` and
 
 ## Update one saved context-preset target
 
-`gregale context presets update staging --environment preview --dry-run`
+`gregale config preset update staging --env preview --dry-run`
 validates the selected environment against the preset's project and displays
 before/after targets without saving. Remove `--dry-run` to update only the
 preset. The active project context is never modified or activated by this
@@ -3587,7 +3587,7 @@ a preset later still requires `context use NAME` and its normal validation.
 
 ## Choose a preset from the target overview
 
-`gregale context presets list` now marks presets that match the current linked
+`gregale config preset list` now marks presets that match the current linked
 project/app/environment names, presets with different targets in the same
 project, and presets that require relinking first. It displays the source file
 and a copyable `context use NAME --dry-run` command with the selected profile.
@@ -3678,10 +3678,10 @@ The argument-position probe remains read-free, and all suggestions stay offline.
 ## Declare required secret names without editing JSON
 
 ```bash
-gregale secrets requirements set DATABASE_URL API_KEY
-gregale secrets requirements show
-gregale secrets check
-gregale secrets requirements clear
+gregale env requirement set DATABASE_URL API_KEY
+gregale env requirement get
+gregale env check
+gregale env requirement clear
 ```
 
 `set` replaces `.gregale/required-secrets.json` with a JSON array of validated
@@ -3707,8 +3707,8 @@ was removed by this invocation).
 Edit individual required names without replacing the full list:
 
 ```bash
-gregale secrets requirements add REDIS_URL
-gregale secrets requirements remove OLD_API_KEY
+gregale env requirement create REDIS_URL
+gregale env requirement delete OLD_API_KEY
 ```
 
 `add` preserves existing order and appends new names once; adding only existing
@@ -3751,9 +3751,9 @@ change the declaration. Reload the generated shell completion script to use it.
 Preview required-name edits with `--dry-run`, before or after the key names:
 
 ```bash
-gregale secrets requirements set DATABASE_URL API_KEY --dry-run
-gregale secrets requirements add REDIS_URL --dry-run
-gregale secrets requirements remove OLD_API_KEY --dry-run
+gregale env requirement set DATABASE_URL API_KEY --dry-run
+gregale env requirement create REDIS_URL --dry-run
+gregale env requirement delete OLD_API_KEY --dry-run
 ```
 
 The offline preview shows the destination path, current/proposed ordered names,
@@ -3772,8 +3772,8 @@ edits. JSON previews include `path`, `operation`, `dry_run: true`, `changed: fal
 ## Import required names from a dotenv example
 
 ```bash
-gregale secrets requirements set --from-env-file .env.example --dry-run
-gregale secrets requirements set --from-env-file .env.example
+gregale env requirement set --from-env-file .env.example --dry-run
+gregale env requirement set --from-env-file .env.example
 ```
 
 `--from-env-file PATH` (or `--from-env-file=PATH`) is supported on `set` and `add`
@@ -3806,7 +3806,7 @@ names, and remains unsupported on `remove`.
 ## Check required-name drift offline
 
 ```bash
-gregale secrets requirements check --from-env-file .env.example
+gregale env requirement check --from-env-file .env.example
 gregale --json secrets requirements check --from-env-file .env.example
 ```
 
@@ -3834,7 +3834,7 @@ are rejected rather than treated as empty.
 The consistency check also works without flags:
 
 ```bash
-gregale secrets requirements check
+gregale env requirement check
 ```
 
 It uses `.env.example` at the same project root as the saved declaration,
@@ -3848,7 +3848,7 @@ It does not search for real `.env` files or create an example. JSON adds
 
 ## Inspect all saved project configuration offline
 
-`gregale context --local-config` shows the resolved project root and the absolute
+`gregale config context get --local-config` shows the resolved project root and the absolute
 paths/status of `.gregale/jobs.json`, `secrets.json`, `required-secrets.json`, and
 `context-presets.json`. It uses the same nearest-linked-project, Git-root, then
 current-directory discovery as each existing command, including from subdirectories.
@@ -3873,8 +3873,8 @@ claim remote validity or health. JSON output contains `root`, `valid`, and a
 ## Preview saved Job defaults offline
 
 ```bash
-gregale jobs defaults set nightly-report --tasks 4 --results --dry-run
-gregale jobs defaults update --tasks 3 --dry-run
+gregale job defaults set nightly-report --tasks 4 --results --dry-run
+gregale job defaults update --tasks 3 --dry-run
 ```
 
 Both `set` and `update` support offline previews before saving. Output includes
@@ -3892,7 +3892,7 @@ report no change. JSON includes `path`, `dry_run: true`, `changed: false`,
 `would_change`, `before_saved`, `before` (null if absent), and `after`.
 
 Unset only the saved task count with
-`gregale jobs defaults update --clear-tasks --dry-run`, then remove `--dry-run`
+`gregale job defaults update --clear-tasks --dry-run`, then remove `--dry-run`
 to save. The Job name, results preference, image-wait preference, and artifact
 filters remain unchanged unless explicitly updated in the same command.
 Unset means no saved task-count override; it does not force zero tasks on a run.
@@ -3905,8 +3905,8 @@ Edit saved artifact filters incrementally with repeatable `--add-include`,
 `jobs defaults update`. For example:
 
 ```bash
-gregale jobs defaults update --add-include '*.csv' --dry-run
-gregale jobs defaults update --remove-exclude 'private*' --dry-run
+gregale job defaults update --add-include '*.csv' --dry-run
+gregale job defaults update --remove-exclude 'private*' --dry-run
 ```
 
 Existing filters and other defaults are preserved. Additions append in input
@@ -3946,7 +3946,7 @@ task count or present an incomplete command as ready to run. JSON preserves
 commands use POSIX shell quoting. Unsaved defaults previews continue to show
 proposed settings without claiming they are active defaults.
 
-Preview removal with `gregale jobs defaults clear --dry-run`. It shows the
+Preview removal with `gregale job defaults clear --dry-run`. It shows the
 absolute file path, saved settings, and the effect on omitted Job selectors,
 task/results/image-wait preferences, and artifact filters. Missing defaults
 report nothing to clear and exit successfully, without creating directories.
@@ -3960,7 +3960,7 @@ defaults. JSON includes `dry_run: true`, `changed: false`, `cleared: false`,
 Without `--dry-run`, the existing clear behavior and JSON receipt are preserved.
 
 Rename a context preset offline with
-`gregale context presets rename staging staging-eu`. It preserves the preset's
+`gregale config preset rename staging staging-eu`. It preserves the preset's
 project/app/environment targets and all other presets without applying or
 changing the active context. Unknown sources, invalid or identical names, and
 existing destinations are rejected without changes. Malformed/unsafe stores
@@ -3975,8 +3975,8 @@ remain user-chosen. No API queries, credential changes, or prompts are involved.
 Create a similar preset without applying it first:
 
 ```bash
-gregale context presets copy staging staging-eu
-gregale context presets update staging-eu --environment staging-eu --dry-run
+gregale config preset copy staging staging-eu
+gregale config preset update staging-eu --env staging-eu --dry-run
 ```
 
 Copy preserves the source preset, duplicates its complete project/app/environment
@@ -3993,7 +3993,7 @@ rename receipts include `operation` and `source_preserved` in addition to
 Copy reports `source_preserved: true`; rename reports false.
 
 Preview a preset deletion with
-`gregale context presets delete staging --dry-run`. It displays the preset's
+`gregale config preset delete staging --dry-run`. It displays the preset's
 project/app/environment selection and absolute source file, confirming that
 active context and other presets would remain unchanged. `--dry-run` can appear
 before or after the name. Unknown names, invalid arguments, and malformed or
@@ -4443,7 +4443,7 @@ or guarantee that the destination is writable. Omit `--dry-run` to save.
 
 ## Show only local configuration problems
 
-Use `gregale context --local-config --problems-only` for a compact check of
+Use `gregale config context get --local-config --problems-only` for a compact check of
 invalid configuration files, broken preferred-log-view references, and damaged
 or incompletely scanned recovery stores. The same full offline validation runs
 before filtering, and the exit status is unchanged. Missing optional files and
@@ -4493,7 +4493,7 @@ inline `--app` values. All inspection remains offline and read-only.
 
 ## Resume the most recently recorded saved Job run
 
-Use `gregale jobs resume --saved-job --latest` to observe the most recently
+Use `gregale job resume --saved-job --latest` to observe the most recently
 recorded local run for the Job in `.gregale/jobs.json`, on the current profile
 and API. Add `--logs` to inspect failed-task logs, or `--results` to wait for
 success and collect that exact run's artifacts. Saved task counts and result
@@ -4516,7 +4516,7 @@ recording time. With `--json`, the action's stdout format is retained and a
 to stderr. The existing remote identity checks still apply before observation,
 logs, or result collection. Selection does not submit or replay a run.
 
-Preview that selection with `gregale jobs resume --saved-job --latest --dry-run`.
+Preview that selection with `gregale job resume --saved-job --latest --dry-run`.
 Add `--logs` or `--results` to preview those actions instead of waiting.
 The report shows the selected UUID, recording time, configured connection,
 action, applicable wait timing, and proposed results directory. No API calls,
@@ -4535,7 +4535,7 @@ modes; `--dry-run=false` retains the normal action. Ambiguous selections keep
 their exact-run choice commands, including `--dry-run`, for offline review.
 
 Workflow recovery supports the same offline review:
-`gregale workflows resume-wait --run UUID --dry-run`, or add `--diagnose`
+`gregale workflow recover --run UUID --dry-run`, or add `--diagnose`
 to preview reading diagnostics. `--workflow NAME` filters local records on the
 current profile/API; repeated names across apps still require an exact UUID or
 unique prefix. The report includes the recorded workflow, available app slug
@@ -4553,7 +4553,7 @@ action; its existing server identity checks remain in place.
 
 ## Narrow recorded workflow runs by app
 
-`gregale workflows resume-wait --workflow order-processing --app payments-api
+`gregale workflow recover --workflow order-processing --app payments-api
 --dry-run` filters local recovery records by both workflow and recorded app slug,
 on the current profile and API. Omit `--dry-run` to wait, or add `--diagnose`
 to inspect that exact run. If several runs still match, use a UUID or unique
@@ -4575,7 +4575,7 @@ is unverified until the normal read action performs its existing identity checks
 
 ## Select the most recently recorded workflow run
 
-`gregale workflows resume-wait --workflow order-processing --app payments-api
+`gregale workflow recover --workflow order-processing --app payments-api
 --latest --dry-run` selects the most recently recorded local run for that
 workflow and recorded app on the current profile/API. Add `--diagnose` to preview
 diagnostics, or omit `--dry-run` to observe the selected run. Both explicit
@@ -4600,9 +4600,9 @@ waits and diagnostic reads. No run is submitted or replayed by selection.
 
 ## Reuse project-local workflow recovery selectors
 
-Configure `gregale workflows defaults set order-processing --app payments-api`
+Configure `gregale workflow defaults set order-processing --app payments-api`
 once, then preview recovery with
-`gregale workflows resume-wait --saved-workflow --latest --dry-run`.
+`gregale workflow recover --saved-workflow --latest --dry-run`.
 `workflows defaults show` reports the workflow/app pair, preference path, and
 copyable preview command; `workflows defaults clear` removes only the preference.
 These commands are offline. Set validates selectors but does not require a
@@ -4636,7 +4636,7 @@ validating the file format without claiming remote or recorded-run availability.
 
 ## Check saved workflow recovery readiness
 
-`gregale workflows defaults show` now checks local accepted-run records for the
+`gregale workflow defaults show` now checks local accepted-run records for the
 saved workflow/app on the current profile/API. It reports the matching count and
 whether `--latest` can resolve a unique run. JSON adds `readiness` with status
 `ready`, `no_matches`, `missing_timestamps`, `tied_timestamps`, or `unreadable`,
@@ -4663,7 +4663,7 @@ receipts, clear behavior, and the project preference inventory stay unchanged.
 
 ## Preview changing workflow recovery defaults
 
-`gregale workflows defaults set order-processing --app payments-api --dry-run`
+`gregale workflow defaults set order-processing --app payments-api --dry-run`
 shows the resolved preference path, current and proposed workflow/app pair, and
 local recovery readiness for the proposed pair. No files are written or
 directories created, and no API calls occur. Flags can precede or follow the
@@ -4703,7 +4703,7 @@ current eligibility when executed. Generating actions adds no API requests or
 recovery submissions, and the overview receipt shape remains unchanged.
 
 Run `gregale jobs` to open the existing saved-Job overview: readiness, latest
-run state, and useful next commands. It behaves like `gregale jobs overview`,
+run state, and useful next commands. It behaves like `gregale job overview`,
 including JSON output, and performs only the overview's authenticated read
 requests. With no saved Job, it reports the defaults path and setup/explicit-Job
 examples without API calls or writes. Invalid preference files retain their
@@ -4716,14 +4716,14 @@ Across Jobs, Workflows, logs, and secrets, running `defaults` without a
 subcommand uses the existing `show` behavior. These commands inspect local
 settings without API requests or writes, preserving each command's saved-state
 output, missing-settings behavior, and validation errors. For example, use
-`gregale workflows defaults`, `gregale logs defaults`, or
+`gregale workflow defaults`, `gregale logs defaults`, or
 `gregale secrets defaults`; add `--help` for command help.
 
-Run `gregale jobs defaults` to inspect saved Job settings and recovery guidance.
+Run `gregale job defaults` to inspect saved Job settings and recovery guidance.
 It also shows how to save a Job when no settings exist, using the same local,
 read-only behavior as `jobs defaults show`. Use `jobs defaults --help` for help.
 
-Use Tab after `gregale jobs defaults set` or `gregale jobs defaults update` to
+Use Tab after `gregale job defaults set` or `gregale job defaults update` to
 suggest locally recorded Job names on the current profile/API. Task counts and
 artifact-filter values remain separate from the name position. Existing
 `update --remove-include`/`--remove-exclude` saved-pattern completion still works.
@@ -4770,7 +4770,7 @@ limits, filters, and pagination. Copying them no longer falls back to another
 configured profile. Generation adds no remote reads or writes, and endpoint
 environment overrides still apply when the copied command is run.
 
-Use `gregale jobs attempts --task 2 --unsuccessful-only --all` to inspect failed,
+Use `gregale job attempts --task 2 --unsuccessful-only --all` to inspect failed,
 timed-out, out-of-memory, and cancelled retained outcomes for a task, using the
 existing saved-Job/latest target behavior. Explicit Job/run/task targets also
 work. `--all` controls scanning all pages from the starting offset; without it,
@@ -4784,7 +4784,7 @@ history only and does not retry tasks, replay runs, or create files.
 
 ## Read logs for all unsuccessful Job tasks
 
-You can now use `gregale jobs logs` or `gregale jobs logs nightly-report`
+You can now use `gregale job logs` or `gregale job logs nightly-report`
 without a task index. With no explicit filter or task, the command shows current
 logs for unsuccessful tasks. The omitted Job uses saved defaults and the omitted
 run resolves the latest remote run once. Supplying `JOB RUN_UUID` uses that exact
@@ -4797,7 +4797,7 @@ filters opt out of the implicit default and still require a task selection.
 Missing defaults, invalid targets/options, and unavailable logs retain existing
 errors. This is read-only remote inspection with no prompts or task/run changes.
 
-Use `gregale jobs logs nightly-report RUN_UUID --unsuccessful-only` to read
+Use `gregale job logs nightly-report RUN_UUID --unsuccessful-only` to read
 current logs for failed, timed-out, out-of-memory, and cancelled tasks, matching
 the new unsuccessful task list. Saved-Job/latest target selection is also
 supported. Task pages are validated before logs are read; individual unavailable
@@ -4813,7 +4813,7 @@ This reads remote state only and creates no run records or files.
 
 ## List all unsuccessful Job tasks
 
-Run `gregale jobs tasks nightly-report latest --unsuccessful-only`, or omit the
+Run `gregale job tasks nightly-report latest --unsuccessful-only`, or omit the
 Job/run to use existing saved-Job/latest behavior, to scan failed, timed-out,
 out-of-memory, and cancelled tasks across all pages from the starting offset.
 These are recovery candidates; retry/replay previews still check current budget,
@@ -4847,11 +4847,11 @@ when those targets are entered or omitted as supported by the command.
 
 `jobs cancel` uses the same offline Job-name and exact-UUID completion. It never
 suggests a moving `latest` selector or assumes that a recorded run remains active.
-Use `gregale jobs cancel JOB RUN_UUID --dry-run` to check current remote state.
+Use `gregale job cancel JOB RUN_UUID --dry-run` to check current remote state.
 Cancellation still requires an explicit Job and exact UUID; completion does not
 change target selection or submit a cancellation request.
 
-Use Tab after `gregale jobs retry` or `gregale jobs replay-failed` for locally
+Use Tab after `gregale job retry` or `gregale job replay` for locally
 recorded Job names, and after an explicit Job name for its recorded run UUIDs.
 Suggestions use only the current profile/API and are sorted and deduplicated.
 Interspersed `--dry-run`, wait/result options, filters, and retry `--task N` are
@@ -4875,7 +4875,7 @@ and displayed run UUID and include `--dry-run`, so they inspect without
 cancelling. Guidance remains bounded to three failed/active groups with an
 overflow count, uses already fetched data, and leaves JSON output unchanged.
 
-Run `gregale jobs cancel nightly-report RUN_UUID --dry-run` with an exact UUID
+Run `gregale job cancel nightly-report RUN_UUID --dry-run` with an exact UUID
 to inspect a cancellation target before sending a request. The preview verifies
 Job/run ownership, displays status and task counts, and explains that cancellation
 stops pending work and requests termination of running tasks without undoing
@@ -4907,15 +4907,15 @@ profile and source UUID wherever applicable, use no moving `latest` selector,
 and perform no mutations. Guidance is generated from the existing observations
 without extra requests. Eligible reports and non-preview actions are unchanged.
 
-Human `gregale jobs tasks --failed-only` output now includes exact-run retry
+Human `gregale job tasks --failed-only` output now includes exact-run retry
 preview commands beside log and retained-attempt commands. The first three
 displayed failures get copyable commands with `--task N --dry-run`; a count
 explains remaining failures. Commands pin the current profile and resolved UUID,
 so a newer run cannot change the preview target. Guidance uses already fetched
 tasks and sends no additional API requests. `--json` task rows are unchanged.
 
-Use `gregale jobs retry --task 2 --dry-run` with saved Job defaults, or
-`gregale jobs retry nightly-report latest --task 2 --dry-run`, to inspect one
+Use `gregale job retry --task 2 --dry-run` with saved Job defaults, or
+`gregale job retry nightly-report latest --task 2 --dry-run`, to inspect one
 task before retrying. The positional form with an exact run UUID also works.
 The preview resolves the target once, reads task state, and shows attempts,
 remaining retry budget, capped backoff, and any flexible start-window blocker.
@@ -4941,7 +4941,7 @@ with a count for the rest. Generating commands adds no reads or writes and does
 not establish replay eligibility. JSON output remains unchanged; running the
 `--dry-run` command reads current replay eligibility without creating a run.
 
-Run `gregale jobs replay-failed nightly-report latest --dry-run` to inspect the
+Run `gregale job replay nightly-report latest --dry-run` to inspect the
 newest remote source run before replaying unsuccessful inputs. Omit the Job to
 use saved Job defaults, or provide an exact source UUID. Add `--wait` or
 `--results` and their normal options to preview the subsequent follow/collection
@@ -4975,9 +4975,9 @@ Completion is offline and read-only; manually typed new selectors remain valid.
 
 ## Update one workflow recovery selector
 
-Use `gregale workflows defaults update --app billing-api --dry-run` to change
+Use `gregale workflow defaults update --app billing-api --dry-run` to change
 only the saved app selector, or
-`gregale workflows defaults update nightly-report --dry-run` to change only
+`gregale workflow defaults update nightly-report --dry-run` to change only
 the workflow name. The omitted selector is preserved. Both can be supplied
 together, and at least one must be supplied. Existing valid preferences are
 required; use `workflows defaults set NAME --app SLUG` for initial setup.
@@ -4991,7 +4991,7 @@ not verified. Invalid or unsafe preference files are errors without replacement.
 
 ## Preview clearing workflow recovery preferences
 
-Run `gregale workflows defaults clear --dry-run` to see which preference file
+Run `gregale workflow defaults clear --dry-run` to see which preference file
 and workflow/app selectors would be removed. The preview explains that
 `--saved-workflow` will require new preferences and provides a profile-pinned
 listing command with explicit selectors, usable after clearing the preference.
@@ -5002,11 +5002,11 @@ Missing preferences return zero with nothing to clear. Existing preferences must
 be valid, regular, nonsymlink files within 8 KiB; unreadable or malformed files
 return an error without a partial preview. The command is offline and read-only,
 supports `--json` with before/after and removal effects, and creates no directories.
-Use `gregale workflows defaults clear` to perform the removal after review.
+Use `gregale workflow defaults clear` to perform the removal after review.
 
 ## Check saved Job recovery readiness
 
-`gregale jobs defaults show` now reports local recovery readiness for the saved
+`gregale job defaults show` now reports local recovery readiness for the saved
 Job name on the current profile/API, alongside saved task counts, result and
 image-wait settings, artifact filters, and existing new-run guidance. JSON keeps
 `defaults`, `path`, and `next_step`, and adds `recovery` with `status`, record-store

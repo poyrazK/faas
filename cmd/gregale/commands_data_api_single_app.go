@@ -205,7 +205,10 @@ func deployDataAPIArchive(ctx context.Context, slug, scope, timeout string, writ
 	if scope != api.DefaultEnvScope {
 		deployArgs = append(deployArgs, "--environment", scope)
 	}
-	return cmdDeployTarballToExisting(ctx, deployArgs, true)
+	// Startup readiness stays on /healthz (SQL ready); liveness checks only
+	// that the gateway process answers, so a saturated pool or a database
+	// blip never gets a healthy runtime destroyed.
+	return cmdDeployTarballToExisting(ctx, deployArgs, true, deployExecution{livenessProbe: &api.DeploymentLivenessProbe{Path: api.DataAPILivenessPath}})
 }
 
 func cmdDataAPIDeploy(args []string) int {

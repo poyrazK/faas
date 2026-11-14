@@ -166,6 +166,14 @@ func (c *Client) ListManagedPostgresBindings(ctx context.Context, databaseID str
 	return out, err
 }
 
+// ListAppPostgresBindings lists an app's live managed PostgreSQL bindings
+// across every database it is bound to.
+func (c *Client) ListAppPostgresBindings(ctx context.Context, slug string) (AppPostgresBindingList, error) {
+	var out AppPostgresBindingList
+	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/postgres-bindings", nil, &out)
+	return out, err
+}
+
 func (c *Client) CreateManagedPostgresBinding(ctx context.Context, databaseID string, req CreateManagedPostgresBindingRequest) (ManagedPostgresBinding, error) {
 	var out ManagedPostgresBinding
 	err := c.do(ctx, http.MethodPost, "/v1/postgres/databases/"+url.PathEscape(databaseID)+"/bindings", req, &out)

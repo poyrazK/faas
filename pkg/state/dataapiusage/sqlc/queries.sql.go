@@ -110,6 +110,38 @@ func (q *Queries) GetAccessConfig(ctx context.Context, db DBTX, appID string) (G
 	return i, err
 }
 
+const getChangeHookReport = `-- name: GetChangeHookReport :one
+SELECT reported_at,pending,failed,oldest_pending_at,last_published_at,last_failure_code,publishing,last_dropped_at
+  FROM data_api_change_hook_reports WHERE app_id=$1::text::uuid
+`
+
+type GetChangeHookReportRow struct {
+	ReportedAt      pgtype.Timestamptz
+	Pending         int64
+	Failed          int64
+	OldestPendingAt pgtype.Timestamptz
+	LastPublishedAt pgtype.Timestamptz
+	LastFailureCode pgtype.Text
+	Publishing      string
+	LastDroppedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetChangeHookReport(ctx context.Context, db DBTX, appID string) (GetChangeHookReportRow, error) {
+	row := db.QueryRow(ctx, getChangeHookReport, appID)
+	var i GetChangeHookReportRow
+	err := row.Scan(
+		&i.ReportedAt,
+		&i.Pending,
+		&i.Failed,
+		&i.OldestPendingAt,
+		&i.LastPublishedAt,
+		&i.LastFailureCode,
+		&i.Publishing,
+		&i.LastDroppedAt,
+	)
+	return i, err
+}
+
 const listUsageHours = `-- name: ListUsageHours :many
 SELECT hour,user_requests,anonymous_requests,server_requests,rejected_requests,error_requests,capped_requests,rows_returned,response_bytes
  FROM data_api_usage_hourly
@@ -231,6 +263,8 @@ const upsertAccessConfig = `-- name: UpsertAccessConfig :exec
 INSERT INTO data_api_access_configs (app_id,config,reported_at)
  VALUES ($1::text::uuid,$2::jsonb,now())
  ON CONFLICT (app_id) DO UPDATE SET config=EXCLUDED.config, reported_at=EXCLUDED.reported_at
+ WHERE NOT (data_api_access_configs.config ? 'started_at' AND EXCLUDED.config ? 'started_at'
+   AND (EXCLUDED.config->>'started_at')::timestamptz < (data_api_access_configs.config->>'started_at')::timestamptz)
 `
 
 type UpsertAccessConfigParams struct {
@@ -238,9 +272,61 @@ type UpsertAccessConfigParams struct {
 	Config []byte
 }
 
+// A report from a runtime process that started before the one whose settings
+// are stored is older configuration (a restored older snapshot, or a process
+// a fresh restart has not replaced yet): it never replaces newer settings.
+// Reports without a start time (runtimes before it) still apply.
 func (q *Queries) UpsertAccessConfig(ctx context.Context, db DBTX, arg UpsertAccessConfigParams) error {
 	_, err := db.Exec(ctx, upsertAccessConfig, arg.AppID, arg.Config)
 	return err
+}
+
+const upsertChangeHookReport = `-- name: UpsertChangeHookReport :execrows
+INSERT INTO data_api_change_hook_reports (app_id,reported_at,pending,failed,oldest_pending_at,last_published_at,last_failure_code,publishing,last_dropped_at)
+SELECT a.id, $1::timestamptz, $2::bigint, $3::bigint,
+       $4::timestamptz, $5::timestamptz,
+       $6::text, $7::text, $8::timestamptz
+  FROM apps a
+ WHERE a.id=$9::text::uuid AND a.account_id=$10::text::uuid AND a.deleted_at IS NULL
+ON CONFLICT (app_id) DO UPDATE SET reported_at=EXCLUDED.reported_at, pending=EXCLUDED.pending, failed=EXCLUDED.failed,
+  oldest_pending_at=EXCLUDED.oldest_pending_at,
+  last_published_at=GREATEST(data_api_change_hook_reports.last_published_at, EXCLUDED.last_published_at),
+  last_failure_code=EXCLUDED.last_failure_code, publishing=EXCLUDED.publishing,
+  last_dropped_at=GREATEST(data_api_change_hook_reports.last_dropped_at, EXCLUDED.last_dropped_at)
+`
+
+type UpsertChangeHookReportParams struct {
+	ReportedAt      pgtype.Timestamptz
+	Pending         int64
+	Failed          int64
+	OldestPendingAt pgtype.Timestamptz
+	LastPublishedAt pgtype.Timestamptz
+	LastFailureCode pgtype.Text
+	Publishing      string
+	LastDroppedAt   pgtype.Timestamptz
+	AppID           string
+	AccountID       string
+}
+
+// Zero rows: the token's app no longer belongs to its account or was deleted.
+// Each relay knows only its own publications, so the latest one is kept.
+func (q *Queries) UpsertChangeHookReport(ctx context.Context, db DBTX, arg UpsertChangeHookReportParams) (int64, error) {
+	result, err := db.Exec(ctx, upsertChangeHookReport,
+		arg.ReportedAt,
+		arg.Pending,
+		arg.Failed,
+		arg.OldestPendingAt,
+		arg.LastPublishedAt,
+		arg.LastFailureCode,
+		arg.Publishing,
+		arg.LastDroppedAt,
+		arg.AppID,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const usageTotals = `-- name: UsageTotals :one

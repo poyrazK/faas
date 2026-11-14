@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
-	"github.com/poyrazK/faas/sdk/go/preview"
+	faas "github.com/gregale-dev/gregale-go"
+	"github.com/gregale-dev/gregale-go/preview"
 )
 
 type configuration struct {

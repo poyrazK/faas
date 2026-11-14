@@ -18,6 +18,27 @@ type EnvironmentGitOpsActivationEvidenceStore interface {
 	EnvironmentGitOpsActivationEvidence(context.Context, EnvironmentGitOpsLease, environmentsync.Plan) (EnvironmentWorkloadActivationEvidence, error)
 }
 
+// Qualification and activation receipts remain recorded facts. Current serving
+// additionally requires fresh physical runtime and completed durable effects.
+func applyEnvironmentGitOpsRuntimeReadiness(evidence *EnvironmentWorkloadActivationEvidence, blockers []string) {
+	if len(blockers) == 0 {
+		return
+	}
+	evidence.Serving = false
+	evidence.BlockingReasons = append(evidence.BlockingReasons, blockers...)
+	slices.Sort(evidence.BlockingReasons)
+	evidence.BlockingReasons = slices.Compact(evidence.BlockingReasons)
+	for i := range evidence.Workloads {
+		workload := &evidence.Workloads[i]
+		if workload.Serving == "complete" {
+			workload.Serving = "pending"
+		}
+		workload.BlockingReasons = append(workload.BlockingReasons, blockers...)
+		slices.Sort(workload.BlockingReasons)
+		workload.BlockingReasons = slices.Compact(workload.BlockingReasons)
+	}
+}
+
 // EnvironmentGitOpsCurrentWorkloadEvidenceStore serves a read-only view of
 // evidence for the source's current approved plan. A nil result means that no
 // current candidate graph exists; stale graphs are never surfaced as current.
@@ -55,7 +76,7 @@ func graphActivationEvidenceWithReleaseTargets(graph EnvironmentWorkloadGraph, c
 		// status fail-closed when a definition has no activatable workloads.
 		evidence.BlockingReasons = append(evidence.BlockingReasons, "environment_workload_graph_empty")
 	}
-	nonJobCandidates, jobCandidates := 0, 0
+	nonJobCandidates, jobCandidates, frameworkReadyCandidates := 0, 0, 0
 	for _, member := range graph.Members {
 		switch member.ExecutionMode {
 		case api.ExecutionModeRequest, api.ExecutionModeService, api.ExecutionModeWorker, api.ExecutionModeJob:
@@ -119,6 +140,9 @@ func graphActivationEvidenceWithReleaseTargets(graph EnvironmentWorkloadGraph, c
 			continue
 		}
 		nonJobCandidates++
+		if !member.NoFrameworkReadySignal {
+			frameworkReadyCandidates++
+		}
 		workerSmokeRecorded := false
 		receipt, exists := captures[member.CandidateDeploymentID]
 		frame := receipt.Execution
@@ -140,7 +164,7 @@ func graphActivationEvidenceWithReleaseTargets(graph EnvironmentWorkloadGraph, c
 					restore.InstanceID, frame.InstanceID) {
 					evidence.GuestConfigAcknowledgementsRecorded++
 				}
-				if ready, readyExists := frameworkReady[frame.InstanceID]; readyExists && qualificationFrameworkReadyReceiptMatchesRestore(ready, restore, graph.ID) {
+				if ready, readyExists := frameworkReady[frame.InstanceID]; !member.NoFrameworkReadySignal && readyExists && qualificationFrameworkReadyReceiptMatchesRestore(ready, restore, graph.ID) {
 					evidence.FrameworkReadyAcknowledgementsRecorded++
 				}
 				smoke, smokeExists := smokes[frame.InstanceID]
@@ -172,7 +196,8 @@ func graphActivationEvidenceWithReleaseTargets(graph EnvironmentWorkloadGraph, c
 	if evidence.GuestConfigAcknowledgementsRecorded != evidence.Candidates {
 		evidence.BlockingReasons = append(evidence.BlockingReasons, "environment_guest_config_acknowledgement_missing")
 	}
-	if nonJobCandidates > 0 && evidence.FrameworkReadyAcknowledgementsRecorded != nonJobCandidates {
+	// Only a runtime runner signals framework-ready (ADR 20261023093000).
+	if frameworkReadyCandidates > 0 && evidence.FrameworkReadyAcknowledgementsRecorded != frameworkReadyCandidates {
 		evidence.BlockingReasons = append(evidence.BlockingReasons, "environment_framework_ready_evidence_missing")
 	}
 	if evidence.SmokesRecorded != evidence.Candidates {

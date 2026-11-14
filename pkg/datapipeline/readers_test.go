@@ -48,7 +48,7 @@ func TestReadersRequireExactPreviewAndPreserveWorkflow(t *testing.T) {
 		}
 		return v
 	}
-	for _, subjects := range [][]string{nil, {"bob", "bob"}, {""}, {"bob\nadmin"}, {strings.Repeat("b", api.DataPipelineSubjectMaxBytes+1)}} {
+	for _, subjects := range [][]string{{"bob", "bob"}, {""}, {"bob\nadmin"}, {strings.Repeat("b", api.DataPipelineSubjectMaxBytes+1)}} {
 		if err := service.Readers(ctx, p.AccountID, p.ID, p.Revision, "preview", "", subjects); !errors.Is(err, ErrInvalid) {
 			t.Fatal("invalid subjects accepted", err)
 		}
@@ -99,6 +99,9 @@ func TestReadersRequireExactPreviewAndPreserveWorkflow(t *testing.T) {
 	}
 	if _, err := store.Control(ctx, p.AccountID, p.ID, approved.Revision, "resync"); !errors.Is(err, ErrConflict) {
 		t.Fatal("resync discarded approved revocation", err)
+	}
+	if _, err := store.Control(ctx, p.AccountID, p.ID, approved.Revision, "delete"); !errors.Is(err, ErrConflict) {
+		t.Fatal("disconnect accepted an unacknowledged grant", err)
 	}
 	// A new exposure approval must wait for the acknowledged reader set,
 	// even if a failed worker has refreshed the ordinary observation.

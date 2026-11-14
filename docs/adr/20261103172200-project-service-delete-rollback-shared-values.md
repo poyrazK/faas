@@ -1,0 +1,27 @@
+# ADR-20261103172200: Deleting, restoring and rolling back project services; shared project values are part of projects
+
+- **Status:** accepted
+- **Date:** 2026-11-03
+- **Owner:** apid, githubd and CLI maintainers
+- **Amends:** ADR-050 (projects), ADR-1139 (project environment secrets), ADR-20261103112845 (GitHub pushes never remove or strand services)
+- **Decision:**
+  - **Deleting a depended-on service is refused.** `DELETE /v1/apps/{slug}` (`gregale app delete`) answers 409 `app_has_dependents` for a project service that another live, non-preview service of the same project names in a service binding (`AppManifest.ServiceBindings`) or a Compose `depends_on` condition (`ProjectDependencyConditions`). The error names the dependents and says to remove the service from Compose and run a reviewed deploy, which shows them in the same plan. Services nothing depends on delete as before.
+  - **A push does not recreate a service whose app name a deleted app holds.** `apps.slug` is unique over every row, and a soft-deleted app keeps its slug through the 7-day restore window. githubd allocates the push's app slugs as the reconcile will (`reconcile.AllocateAppSlugs`) and looks up their holders (`reconcile.SlugHolders`). A new service whose slug is held moves from the scan's workloads to its dependency references, so siblings that depend on it still validate, and the rest of the push deploys. Its GitHub check fails and says to restore the app with `gregale app restore <slug>` or give the service another app name; the reviewed plan already says the same (`reconcile.SlugHolderReasons`).
+  - **The in-memory store keeps a deleted app's slug.** `MemStore` refuses to create or rename an app onto a slug any app row holds, deleted or not, as Postgres's `apps_slug_key UNIQUE (slug)` does. Tests that relied on reusing a deleted slug passed against MemStore while the same code failed in production.
+  - **Shared project secrets and configuration are part of `projects`.** The GA `projects` capability owns `/v1/projects/{}/environments/{}/secrets` and `/v1/projects/{}/environments/{}/config` (with `config/diff`), and the CLI paths `projects environments secrets` and `projects environments config` (`gregale environment secrets|config`). They were owned by the preview `environments` capability, so they were hidden from accounts without it and left out of the GA SDKs, although every multi-service project needs values its services share. The rest of the environments surface (creating environments, promotion, release sets) stays preview. The SDK spec and the Node and Python SDKs are regenerated.
+  - **`gregale project rollback <slug>` rolls every service back.** With `--dry-run` it prints the order; with `--yes` it rolls each live service back to its previous live deployment (`POST /v1/apps/{slug}/rollback`), one at a time, after the services it depends on (`depends_on` from `GET /v1/projects/{slug}`), and waits until each serves again. It stops at the first failure and names the services already rolled back and those still on their current release. `--acknowledge-releases` passes through to each rollback. Release sets remain the atomic, preview path.
+- **Why:** A review of the multi-service path (2026-11-03) found:
+  - `gregale app delete` on a service its siblings call succeeded, and their calls and next deploys failed;
+  - a push that brought back a service deleted within 7 days failed the whole reconcile on `apps_slug_key`, so no service of the project deployed, and the error did not say to restore the app; MemStore allowed the create, so the tests did not show it;
+  - shared secrets and configuration, the one way to set a value for every service, were preview-only and missing from the GA SDKs;
+  - the only project-wide rollback was the preview release-set flow; the GA path was one `gregale rollback` per service, in an order the user had to work out.
+- **Consequences:**
+  - Scripts that delete one project service while others bind to it get 409 and must remove the service through a reviewed deploy, or delete the dependents first.
+  - A push with a held-name service is green for the other services and red for that one until it is restored, renamed or purged.
+  - Accounts without the `environments` capability now see and can use the project environment secrets and config commands and routes; plan limits (`ProjectSecretCountMax`) are unchanged.
+  - A project rollback is a sequence, not an atomic switch: for a moment a rolled-back service can receive calls from a sibling still on its newer release. The docs say so and point to release sets.
+- **Rejected alternatives:**
+  - **Cascade the delete to dependents.** Deleting apps the user did not name is worse than refusing.
+  - **Let the push restore the deleted app.** Restoring brings back domains, variables and crons the user deleted on purpose; a push has no reviewed plan to confirm it.
+  - **Promote the whole `environments` capability to GA.** Environment creation, promotion and release sets have their own acceptance gates; shared values do not depend on them.
+  - **A server-side project rollback endpoint.** It would need a new orchestration owner; the per-app rollback already carries the safety checks, and release sets cover atomic switches.

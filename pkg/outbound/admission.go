@@ -142,6 +142,10 @@ type Integration struct {
 	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
 	// that carry none (ADR-1437).
 	AIAutoPromptCache bool
+	// AISemanticCache answers calls whose last user turn means the same as
+	// a cached call's (ADR 20261112194947). The resolver sets it only for a
+	// plan that includes it and an integration with a response cache.
+	AISemanticCache *api.OutboundAISemanticCache
 	// AIUserDailyTokenLimit and AIUserDailyCostLimit cap each end user a
 	// call names with X-Gregale-AI-User per UTC day (ADR-994).
 	AIUserDailyTokenLimit *int64
@@ -273,6 +277,9 @@ func (i Integration) Validate() error {
 	}
 	if i.AIAutoPromptCache && i.AIProvider == "" {
 		return fmt.Errorf("%w: automatic prompt caching requires an AI provider", ErrInvalidIntegration)
+	}
+	if i.AISemanticCache != nil && (!i.AISemanticCache.Valid(i.AIProvider) || i.ResponseCacheTTLSeconds <= 0) {
+		return fmt.Errorf("%w: the AI semantic cache requires an AI provider and the response cache", ErrInvalidIntegration)
 	}
 	if i.AIRequestLogContent && !i.AIRequestLogEnabled {
 		return fmt.Errorf("%w: AI content capture requires the request log", ErrInvalidIntegration)

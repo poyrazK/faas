@@ -78,9 +78,11 @@ func TestApplyProjectImportsOptedInComposeEnv(t *testing.T) {
 		return state.App{}, nil
 	}
 
+	// Without the opt-in only the sibling address imports
+	// (ADR-20261104221217, ADR-20261105104500).
 	_, values := envOf(t, apply(t, "plain-env", compose), "api")
-	if len(values) != 0 {
-		t.Fatalf("without the opt-in, values = %v", values)
+	if want := map[string]string{"BILLING_URL": "http://billing.svc.gregale:10081"}; !maps.Equal(values, want) {
+		t.Fatalf("without the opt-in, values = %v, want %v", values, want)
 	}
 
 	optedIn := "x-gregale-env-import: true\n" + compose

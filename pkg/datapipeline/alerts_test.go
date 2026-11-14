@@ -130,6 +130,7 @@ func TestPipelineAlertConditionsAvoidIdleAndIntentFalseAlarms(t *testing.T) {
 	}
 	p.RetainedWALBytes = &pressure
 	p.DesiredState = "paused"
+	p.State = "paused"
 	if code, _ := alertCondition(p, now); code != "retention_pressure" {
 		t.Fatal("pause hid WAL pressure", code)
 	}
@@ -138,6 +139,7 @@ func TestPipelineAlertConditionsAvoidIdleAndIntentFalseAlarms(t *testing.T) {
 		t.Fatal("pause claimed recovery", code, healthy)
 	}
 	p.DesiredState = "running"
+	p.State = "live"
 	p.ObservedAt = now.Add(-api.DataPipelineObservationMaxAge).Format(time.RFC3339Nano)
 	if code, _ := alertCondition(p, now); code != "monitoring_stale" {
 		t.Fatal("stopped worker not detected", code)
@@ -471,5 +473,23 @@ func TestPipelineAlertMonitorSurvivesMissingKeysAndDeleteCancels(t *testing.T) {
 	a, err := store.Alerts(t.Context(), p.AccountID, p.ID)
 	if err != nil || a.Enabled || a.History[0].Status != "cancelled" || a.History[0].Result != "pipeline_deleted" {
 		t.Fatal("deleted pipeline still delivers", a, err)
+	}
+}
+
+func TestPipelineAlertWorkerRefreshesAccountScope(t *testing.T) {
+	_, _, p, worker := alertFixture(t)
+	scope := []string{uuid.NewString()}
+	var scopeErr error
+	worker.AccountsSource = func() ([]string, error) { return scope, scopeErr }
+	if more, err := worker.CheckTick(t.Context()); err != nil || more {
+		t.Fatal("unlisted account was monitored", more, err)
+	}
+	scope = []string{p.AccountID}
+	if more, err := worker.CheckTick(t.Context()); err != nil || !more {
+		t.Fatal("new account was not monitored", more, err)
+	}
+	scopeErr = errors.New("invalid pilot config")
+	if more, err := worker.CheckTick(t.Context()); more || !errors.Is(err, ErrUnavailable) {
+		t.Fatal("invalid config kept monitoring", more, err)
 	}
 }

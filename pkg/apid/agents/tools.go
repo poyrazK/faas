@@ -7,7 +7,8 @@ package agents
 // must be a callback URL apid issued for the invocation's own thread
 // (callbacks.go), so a tool can only answer the thread that called it. An
 // invocation may also carry the app's credential, which must then own the
-// callback's endpoint; gregale_run requires it (run_tool.go).
+// callback's endpoint; gregale_run (run_tool.go) and gregale_github_subscribe
+// (github_subscribe_tool.go) require it.
 //
 // gregale_sleep wakes the thread later. The wake-up is the call's tool result,
 // held as a realtime schedule on the endpoint's agent inbox until it is due,
@@ -78,6 +79,9 @@ type rapToolResultMessage struct {
 	ID      string  `json:"id"`
 	CallID  *string `json:"call_id,omitempty"`
 	Text    string  `json:"text"`
+	// Subscription marks the result of a call that subscribed the thread to
+	// later subscription events (gregale_github_subscribe).
+	Subscription *bool `json:"subscription,omitempty"`
 }
 
 // rapToolset is RAP's toolset manifest (RAP spec, "Toolsets").
@@ -120,7 +124,7 @@ func (h *Handler) Toolset(w http.ResponseWriter, _ *http.Request) {
 				"additionalProperties": false,
 			},
 			DisplayScript: `if args.until != () { "Sleeping until " + args.until } else { "Sleeping " + args.seconds + "s" }`,
-		}, runTool()},
+		}, runTool(), githubSubscribeTool()},
 	})
 }
 
@@ -199,8 +203,11 @@ func (h *Handler) runTool(ctx context.Context, grant CallbackToken, inv rapInvoc
 		return h.sleep(ctx, grant, inv)
 	case toolRun:
 		return h.startRun(ctx, grant, inv, caller)
+	case toolGitHubSubscribe:
+		return h.subscribeGitHub(ctx, grant, inv, caller)
 	}
-	return h.answerTool(ctx, grant, inv, fmt.Sprintf("unknown operation %q; the gregale toolset has %s and %s", inv.Operation, toolSleep, toolRun))
+	return h.answerTool(ctx, grant, inv, fmt.Sprintf("unknown operation %q; the gregale toolset has %s, %s and %s", inv.Operation,
+		toolSleep, toolRun, toolGitHubSubscribe))
 }
 
 // answerTool publishes the call's tool result now.

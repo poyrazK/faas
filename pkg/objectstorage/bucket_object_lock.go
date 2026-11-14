@@ -59,8 +59,14 @@ func (s BucketObjectLockService) Request(ctx context.Context, b state.ObjectBuck
 	if s.Store == nil || s.Provider == nil || s.Versioning == nil {
 		return state.ObjectBucketObjectLock{}, ErrUnsupported
 	}
-	j, _, err := s.Read(ctx, b)
+	j, native, err := s.Read(ctx, b)
 	if err != nil {
+		return j, err
+	}
+	enabled := j.EnabledRequired || j.NativeEnabledObserved || native.Enabled
+	if err = CheckObjectLockPlan(ctx, s.Store, b, func(l api.ObjectStoragePlanLimits) *api.ObjectLockPlanViolation {
+		return l.ObjectLockConfigurationViolation(c, enabled)
+	}); err != nil {
 		return j, err
 	}
 	if err = s.before(ctx); err != nil {

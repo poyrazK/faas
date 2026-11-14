@@ -1,0 +1,91 @@
+package mcphosting
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+func TestMCPRegressionSSEAcceptsResultWithinDiagnosticBudget(t *testing.T) {
+	// A standard single data line, below the diagnostic client's 8 MiB budget.
+	text := strings.Repeat("x", (1<<20)+256)
+	for _, transport := range []string{"json", "sse"} {
+		t.Run(transport, func(t *testing.T) {
+			client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					ID int `json:"id"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": request.ID,
+					"result": map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}}})
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if len(body)+8 >= maxResponseBytes {
+					t.Error("fixture exceeds diagnostic budget")
+					return
+				}
+				if transport == "json" {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write(body)
+				} else {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = fmt.Fprintf(w, "data: %s\n\n", body)
+				}
+			})
+			_, err := client.Call(context.Background(), Tool{Name: "large_result", InputSchema: map[string]any{"type": "object"}}, map[string]any{}, false)
+			if err != nil {
+				t.Fatalf("valid %s result below the diagnostic budget was rejected: %v", transport, err)
+			}
+		})
+	}
+}
+
+func TestMCPRegressionDoctorFailsRejectedToolDefinitions(t *testing.T) {
+	client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") != "" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		var result any
+		switch request.Method {
+		case "server/discover":
+			result = map[string]any{"supportedVersions": []string{ProtocolVersion}, "capabilities": map[string]any{"tools": map[string]any{}}}
+		case "tools/list":
+			result = map[string]any{"tools": []any{map[string]any{
+				"name": "broken_header_tool", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+					"customer": map[string]any{"type": "string", "x-mcp-header": ""},
+				}},
+			}}}
+		default:
+			t.Errorf("unexpected method %s", request.Method)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": result})
+	})
+	report := Doctor(context.Background(), client, false, "", nil)
+	if len(report.Discovery.RejectedTools) != 1 {
+		t.Fatalf("fixture tool was not rejected: %+v", report)
+	}
+	t.Logf("doctor OK=%v; accepted tools=%d; rejected tools=%+v; checks=%+v", report.OK, len(report.Tools), report.Discovery.RejectedTools, report.Checks)
+	if report.OK {
+		t.Fatal("Doctor reports healthy after rejecting the endpoint's only tool definition")
+	}
+}

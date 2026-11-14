@@ -133,11 +133,11 @@ func TestWorkflowRecoveryPolicyChangeCandidateBounds(t *testing.T) {
 	b := recoveryPolicyBudget{Existing: map[string]bool{}}
 	out := recoveryPolicyChangePreview(queue, p, nil, b)
 	candidates := []recoveryPolicyCandidate{}
-	for i := 0; i < api.AutomationRecoveryBatchMaxRuns+1; i++ {
+	for i := 0; i < api.StoredWorkflowRecoveryBatchMaxRuns+1; i++ {
 		candidates = append(candidates, recoveryPolicyCandidate{Decision: api.WorkflowRecoveryPolicyDecision{Position: int64(i + 1), RunID: uuid.NewString(), Outcome: "unknown"}})
 	}
 	addRecoveryPolicyChangeCandidates(&out, api.EventRecoveryJob{ID: uuid.NewString()}, candidates, &b)
-	if !out.CandidatesTruncated || len(out.Candidates) != api.AutomationRecoveryBatchMaxRuns {
+	if !out.CandidatesTruncated || len(out.Candidates) != api.StoredWorkflowRecoveryBatchMaxRuns {
 		t.Fatalf("bounds %+v", out)
 	}
 }

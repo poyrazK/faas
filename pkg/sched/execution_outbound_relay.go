@@ -60,6 +60,11 @@ func cloneOutboundHeaders(source map[string]string) map[string]string {
 }
 
 func (r *loopbackExecutionOutboundRelay) Call(ctx context.Context, request executionproto.OutboundRequest, assertion string) (executionproto.OutboundResponse, error) {
+	if _, bounded := ctx.Deadline(); !bounded {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+	}
 	var zero executionproto.OutboundResponse
 	if r == nil || r.client == nil || assertion == "" || len(assertion) > 8192 {
 		return zero, errors.New("scheduler outbound relay is unavailable")

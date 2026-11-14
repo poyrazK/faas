@@ -18,6 +18,10 @@ func (s *server) applyInvoiceCredits(ctx context.Context, provider string, acct 
 	if data == nil || data.ProviderInvoiceID == "" || data.AmountPaidCents <= 0 {
 		return nil
 	}
+	if s.creditDiscounts != nil {
+		// Credit reaches the order as a discount instead (ADR-20261104212028).
+		return nil
+	}
 	inv, err := s.store.GetInvoiceByProviderID(ctx, acct.ID, provider, data.ProviderInvoiceID)
 	if err != nil {
 		return fmt.Errorf("load invoice for credits: %w", err)

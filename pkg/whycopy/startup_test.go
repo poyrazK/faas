@@ -28,6 +28,23 @@ func TestStartupGuidanceUsesRecordedPhase(t *testing.T) {
 			}
 		})
 	}
+	// A raw TCP server (Redis) built from source: both phases it can end in
+	// name the image deploy, which needs no HTTP probe (ADR-20261112223000 §2).
+	for _, detail := range []string{
+		"startup_phase=guest_startup: guest x never answered readiness probe /healthz before 30s",
+		"startup_phase=handler_healthcheck: guest x accepted 3 readiness probes GET /healthz on :6379 but answered without HTTP before 30s",
+	} {
+		p := api.NewProblem(422, api.CodeAppStartupTimeout, "timeout", detail)
+		Decorate(p, p.Code, nil)
+		if !strings.Contains(p.Fix, "gregale deploy --image") || !strings.Contains(p.Fix, "--ports <name>=tcp:<port>:internal") {
+			t.Fatalf("detail %q: fix=%q, want the image deploy", detail, p.Fix)
+		}
+	}
+	nonHTTP := api.NewProblem(422, api.CodeAppStartupTimeout, "timeout", "startup_phase=handler_healthcheck: answered without HTTP")
+	Decorate(nonHTTP, nonHTTP.Code, nil)
+	if !strings.Contains(nonHTTP.Why, "raw TCP server") {
+		t.Fatalf("why=%q, want the raw TCP explanation", nonHTTP.Why)
+	}
 	p := api.NewProblem(422, api.CodeAppNotListening, "listener", "startup_phase=handler_healthcheck")
 	Decorate(p, p.Code, nil)
 	if strings.Contains(p.Why, "answered readiness probes") {

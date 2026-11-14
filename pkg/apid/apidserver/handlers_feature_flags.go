@@ -61,7 +61,7 @@ func (s *server) featureFlagScope(w http.ResponseWriter, r *http.Request, acct s
 	}
 	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, project.ID, r.PathValue("environment"))
 	if err != nil {
-		writeFeatureFlagError(w, err)
+		writeFeatureFlagLookupError(w, err, fmt.Sprintf("environment %q not found in project %s", r.PathValue("environment"), project.Slug))
 		return state.FeatureFlagScope{}, nil, false
 	}
 	store, ok := s.store.(state.FeatureFlagStore)
@@ -70,6 +70,41 @@ func (s *server) featureFlagScope(w http.ResponseWriter, r *http.Request, acct s
 	}
 	return state.FeatureFlagScope{AccountID: acct.ID, ProjectID: project.ID, EnvironmentID: env.ID}, store, ok
 }
+
+// featureFlagWriteScope is featureFlagScope for a change. Flags change what
+// the environment's code does, so a protected environment other than
+// production takes them from an approved project plan or promotion, like its
+// variables, secrets, routes and policies (ADR-20261019071733 amendment 12).
+// Production keeps direct edits (ADR-233).
+func (s *server) featureFlagWriteScope(w http.ResponseWriter, r *http.Request, acct state.Account) (state.FeatureFlagScope, state.FeatureFlagStore, bool) {
+	scope, store, ok := s.featureFlagScope(w, r, acct)
+	if !ok {
+		return scope, store, false
+	}
+	env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, scope.ProjectID, r.PathValue("environment"))
+	if err != nil {
+		writeFeatureFlagError(w, err)
+		return state.FeatureFlagScope{}, nil, false
+	}
+	if env.Protected && !state.IsProductionScope(env.Slug) {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Protected environment",
+			"apply flag changes through an approved project plan or environment promotion"))
+		return state.FeatureFlagScope{}, nil, false
+	}
+	return scope, store, true
+}
+
+// writeFeatureFlagLookupError names what one lookup did not find. The shared
+// "environment, version, or customer" detail left the caller guessing which
+// (Hunt 32 H32-72).
+func writeFeatureFlagLookupError(w http.ResponseWriter, err error, missing string) {
+	if errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", missing))
+		return
+	}
+	writeFeatureFlagError(w, err)
+}
+
 func writeFeatureFlagError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, state.ErrNotFound):
@@ -129,7 +164,7 @@ func (s *server) listFeatureFlagVersions(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, rows)
 }
 func (s *server) updateFeatureFlags(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	scope, store, ok := s.featureFlagScope(w, r, acct)
+	scope, store, ok := s.featureFlagWriteScope(w, r, acct)
 	if !ok {
 		return
 	}
@@ -146,7 +181,7 @@ func (s *server) updateFeatureFlags(w http.ResponseWriter, r *http.Request, acct
 	s.publishFeatureFlags(w, r, store, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: *req.ExpectedVersion, Config: req.Config, Actor: acct.ID})
 }
 func (s *server) rollbackFeatureFlags(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	scope, store, ok := s.featureFlagScope(w, r, acct)
+	scope, store, ok := s.featureFlagWriteScope(w, r, acct)
 	if !ok {
 		return
 	}
@@ -193,13 +228,17 @@ func (s *server) inspectFeatureFlag(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 		if _, err := tenants.GetPlatformTenant(r.Context(), acct.ID, req.CustomerID); err != nil {
-			writeFeatureFlagError(w, err)
+			writeFeatureFlagLookupError(w, err, fmt.Sprintf("customer %s is not a platform customer of this account; register it with gregale api tenant create", req.CustomerID))
 			return
 		}
 	}
 	v, err := store.GetFeatureFlags(r.Context(), scope, req.Version)
 	if err != nil {
-		writeFeatureFlagError(w, err)
+		missing := "no flag configuration is published in this environment"
+		if req.Version > 0 {
+			missing = fmt.Sprintf("flag configuration version %d not found", req.Version)
+		}
+		writeFeatureFlagLookupError(w, err, missing)
 		return
 	}
 	key := r.PathValue("key")

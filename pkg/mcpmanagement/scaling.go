@@ -16,7 +16,7 @@ func scalingRequestID(p *releasePlan) string {
 }
 
 func scalingRequest(p *releasePlan) (api.ApplyAppScalingRequest, error) {
-	if p.Operation.ScalingBefore == nil || p.Operation.ScalingBefore.AppID != p.AppID || p.Operation.ScalingBefore.Scope != p.Scope || p.Operation.ScalingBefore.Revision != p.Operation.ExpectedRevision {
+	if p.Operation == nil || p.Operation.ScalingBefore == nil || p.Operation.ScalingBefore.AppID != p.AppID || p.Operation.ScalingBefore.Scope != p.Scope || p.Operation.ScalingBefore.EnvironmentID != p.EnvironmentID || p.Operation.ScalingBefore.Revision != p.Operation.ExpectedRevision || p.Operation.ExpectedRevision < 0 {
 		return api.ApplyAppScalingRequest{}, invalid("invalid_plan", "review a new scaling plan with a native revision checkpoint")
 	}
 	var req api.ApplyAppScalingRequest

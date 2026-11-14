@@ -128,11 +128,20 @@ func TestProjectEnvironmentSecretStores(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			sharedReader := any(s).(state.ProjectSharedSecretRevisionReader)
+			beforeReseal, err := sharedReader.ProjectEnvironmentSharedSecretRevision(ctx, account.ID, project.ID, "staging")
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := s.CompareAndSwapSecretRekeyDocument(ctx, *doc, resealed); err != nil {
 				t.Fatalf("reseal = %v", err)
 			}
 			if err := s.CompareAndSwapSecretRekeyDocument(ctx, *doc, resealed); !errors.Is(err, state.ErrConflict) {
 				t.Fatalf("a stale reseal = %v, want a conflict", err)
+			}
+			afterReseal, err := sharedReader.ProjectEnvironmentSharedSecretRevision(ctx, account.ID, project.ID, "staging")
+			if err != nil || afterReseal != beforeReseal {
+				t.Fatalf("master-key reseal changed qualification identity: %+v %v", afterReseal, err)
 			}
 			listed, _ = s.ListProjectEnvironmentSecrets(ctx, account.ID, project.ID, "staging")
 			if listed[0].Kid != newKey || listed[0].SecretVersion != 2 || listed[0].ValueHash != "aa02" {

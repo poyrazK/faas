@@ -111,12 +111,8 @@ func (s *PgStore) UpdateIssueApplicationTriage(ctx context.Context, app, owner, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	locked, err := q.IssueLockApp(ctx, tx, issueUUID(app))
-	if err != nil {
-		return mapErr(err)
-	}
-	if issueID(locked.AccountID) != owner {
-		return ErrNotFound
+	if _, err = lockIssueResponseActor(ctx, tx, app, owner, actor); err != nil {
+		return err
 	}
 	if err = applyApplicationTriageAction(ctx, q, tx, app, owner, actor, issue, revision, req); err != nil {
 		return err

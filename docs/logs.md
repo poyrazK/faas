@@ -50,8 +50,7 @@ every line matters.
 show, is deleted once the run finished longer ago than your plan's window. The
 run, its tasks and their attempts stay, with their statuses and exit codes;
 their output reads as empty and truncated (`gregale job logs` prints only
-`...[truncated]`). Deleting your account deletes all of it
-([ADR-20261102183152](adr/20261102183152-job-log-retention.md)).
+`...[truncated]`). Deleting your account deletes all of it.
 
 ## Filtering
 
@@ -65,6 +64,52 @@ their output reads as empty and truncated (`gregale job logs` prints only
 | `--status 500`, `--route "GET /orders"` | HTTP events with that status or route |
 | `--request ID`, `--trace TRACE_ID` | One request, or every request of a trace |
 | `--explain` | A short summary of the latest failure and repeated errors |
+
+`--deployment ID` on a deployment that never served (failed, cancelled or
+still building) prints its build and deploy log, then its failure reason. With
+`--json` each entry is a `{"type":"log"}` record and the last record is a
+`{"type":"summary"}` with the deployment's `status`, `error` and `error_code`.
+
+### Structured deployment explanations
+
+```bash
+gregale logs my-api --deployment DEPLOYMENT_ID --explain --json
+gregale logs my-api --release v12 --explain --json
+```
+
+An unfiltered deployment snapshot with `--explain --json` uses the same severity
+and pattern model as text explanations. It emits one `type: explanation` object,
+with no log rows or human summary mixed into stdout. It records the app, deployment ID,
+status read before the snapshot, selected `source`, persisted failure reason,
+error/warning/info counts, last error, the top three patterns and inspection
+commands. Patterns use the existing 64-byte message-prefix buckets. A successful
+read exits zero even when the deployment itself failed.
+
+Failed, cancelled and still-building deployments use build/deploy logs; served
+deployments use runtime logs. The command verifies that the selected deployment
+belongs to the selected app before opening the stream. The snapshot reads at
+most 500 log records within a 30-second operation budget. Message excerpts are
+redacted before being shortened to 4096 bytes. Existing text log routing,
+multiline build output and streaming behavior are preserved. `--explain --json` requires
+`--deployment` or `--release` and excludes follow, archive, project and log-filter
+options. `--dry-run` continues to preview the query locally.
+
+`complete` describes the selected returned window, not all deployment history
+or application health. Retention and server-side windows may omit earlier
+output even on a complete read. A clean explicit end marks that window complete;
+EOF without an end, gaps, malformed records, degraded streams and record limits
+are reported as partial, with a nonzero exit. The receipt includes
+`observed_lines`, `skipped_records`, `entry_limit`, `end_reason`, `warnings` and
+`messages_shortened`. Read errors retain already observed counts and use exit
+1; partial reads and deadlines use 3; cancellation uses 130. Failed stream opens
+also produce an incomplete report once deployment identity is verified.
+The read requires metadata access to the selected app and deployment. Where the
+server supplies a typed read failure, `read_error_code` and `read_status` retain
+it. `unclassified_count` records returned legacy rows without a recognized level.
+
+Ordinary `--json` log records keep their existing format. These explanations
+perform metadata/log reads only and do not probe health, retry deployments or
+change configuration.
 
 `--level` reads the `level` or `severity` field of JSON log lines (the
 format Pino, Zap, Logrus and Cloud Logging use) and common text shapes such as
@@ -96,8 +141,7 @@ seconds, so its lines appear once a call wakes it. Without `--follow`, each
 running service prints its recent lines and a parked service is named with
 the command that reads its retained logs. `--since`, `--grep` and `--level`
 apply to every service; `--json` adds a `service` field to each line. To
-follow one request across services, use `--trace` on the app that received it
-([ADR-20261026190244](adr/20261026190244-project-logs.md)).
+follow one request across services, use `--trace` on the app that received it.
 
 ## Reading one archived day
 
@@ -159,8 +203,7 @@ gregale logs drain health my-api <drain-id>
 - `--follow` reconnects by itself after ten quiet minutes.
 - Each instance can write a limited amount of log output per UTC hour:
   Free 16 MiB, Hobby 64 MiB, Pro 256 MiB, Scale 1 GiB. Past it, Gregale
-  writes one line saying so and drops the rest of the hour's output
-  ([ADR-20261104085150](adr/20261104085150-log-volume-allowance.md)).
+  writes one line saying so and drops the rest of the hour's output.
 - A log drain delivers at most 1 MiB of lines a second (bursts to 4 MiB);
   lines past that are dropped and counted in `health`.
-- Logs have no separate charge.
+- Logs have no separate charge. Bytes a drain delivers count toward the app's monthly egress, like the app's own traffic ([plans](plans.md#what-each-limit-means)).

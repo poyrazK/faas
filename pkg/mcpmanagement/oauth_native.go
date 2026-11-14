@@ -178,6 +178,10 @@ func (r *remoteServer) prepareAccount(w http.ResponseWriter, req *http.Request, 
 		oauthError(w, 401, "access_denied", "Gregale could not verify this account credential")
 		return
 	}
+	if slices.Contains(flow.Scopes, scopePublish) && (account.KeyApp != nil || account.KeyOrg != nil || len(account.KeyProjects) != 0) {
+		oauthError(w, http.StatusForbidden, "access_denied", "Publishing requires an unscoped personal-account credential")
+		return
+	}
 	org, orgName := "", ""
 	if account.KeyOrg != nil {
 		org, orgName = account.KeyOrg.Slug, account.KeyOrg.Name

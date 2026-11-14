@@ -7,7 +7,11 @@ package vmmdgrpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/netip"
+	"path/filepath"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -369,14 +373,19 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// sidecar-init-failed dispatch can flip the deployments row
 		// back to status='failed' on init exit. Empty for legacy
 		// callers; the dispatch skips the flip on "".
-		DeploymentID:     deploymentIDFromContext(ctx),
-		BaseKey:          app.GetBaseKey(),
-		LayerKey:         app.GetLayerKey(),
-		VcpuCount:        int(app.GetVcpuCount()),
-		MemSizeMiB:       int(app.GetMemSizeMib()),
-		CPUMillicores:    int(app.GetCpuMillicores()),
-		EgressMbit:       int(app.GetEgressMbit()),
-		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
+		DeploymentID:  deploymentIDFromContext(ctx),
+		BaseKey:       app.GetBaseKey(),
+		LayerKey:      app.GetLayerKey(),
+		VcpuCount:     int(app.GetVcpuCount()),
+		MemSizeMiB:    int(app.GetMemSizeMib()),
+		CPUMillicores: int(app.GetCpuMillicores()),
+		// ADR-20261109172421: the busy-host share and the uncapped quota.
+		CPUWeight:   int(app.GetCpuWeight()),
+		CPUUncapped: app.GetCpuUncapped(),
+		EgressMbit:  int(app.GetEgressMbit()),
+		// ADR-20261101215228: negative values are ignored (plan bound).
+		RequestConcurrency: max(0, int(app.GetRequestConcurrency())),
+		SealedEnvEntries:   sealedFromProto(app.GetSealedEnv()),
 		// Issue #395 / ADR-045: plaintext api_env channel. apid
 		// enforces the per-plan EnvValueMaxBytes + EnvVarsMax
 		// quota upstream; vmmd just forwards to StageAPIEnv which
@@ -390,7 +399,9 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// Wake. Empty slice = no allowlist rule (current behaviour).
 		EgressAllowlist:             app.GetEgressAllowlist(),
 		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
+		EgressRevision:              app.GetEgressRevision(),
 		Quarantine:                  app.GetQuarantine(),
+		IdentityReload:              app.GetIdentityReload(),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
 		PrivateNetworkFirewallRules: privateNetworkFirewallRulesFromProto(app.GetPrivateNetworkFirewallRules()),
@@ -403,8 +414,9 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// it was woken for. The scheduler already knows the app
 		// when it calls CreateFromSnapshot; passing it on the wire
 		// means vmmd doesn't have to round-trip back to apid.
-		AppID:          app.GetAppId(),
-		RehearsalRunID: app.GetRehearsalRunId(),
+		AppID:                      app.GetAppId(),
+		RehearsalRunID:             app.GetRehearsalRunId(),
+		EnvironmentBranchContained: app.GetEnvironmentBranchContained(),
 		// issue #301 / ADR-044 — Plan + AccountID thread the
 		// apps-row context onto the wire so vmmd can land the VM
 		// under the per-plan cgroup sub-slice
@@ -428,9 +440,12 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
+		RoutedPortRawTCP:         app.GetRoutedPortRawTcp(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
+		IdleLadderEligible:       app.GetIdleLadderEligible(),
+		IdleLadderGuardedPause:   app.GetIdleLadderGuardedPause(),
 		// ADR-138: carry the per-app readiness budget to vmmd. 0 is
 		// retained for pre-M3 callers, which use vmmd.readyTimeout.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
@@ -547,6 +562,11 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 	if problem := validateAppHealthcheck(app); problem != nil {
 		return fcvm.WakeRequest{}, problem
 	}
+	seedDrive, err := buildKitSeedDriveFromProto(req.GetBuild(), app.GetLayerKey())
+	if err != nil {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid buildkit seed drive", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#create")
+	}
 	return fcvm.WakeRequest{
 		Instance: req.GetInstance(),
 		// issue #463 / ADR-069 / PR-B AC #1 — see toWakeRequest's
@@ -561,6 +581,8 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		VcpuCount:        int(app.GetVcpuCount()),
 		MemSizeMiB:       int(app.GetMemSizeMib()),
 		CPUMillicores:    int(app.GetCpuMillicores()),
+		CPUWeight:        int(app.GetCpuWeight()),
+		CPUUncapped:      app.GetCpuUncapped(),
 		EgressMbit:       int(app.GetEgressMbit()),
 		SealedEnvEntries: sealedFromProto(app.GetSealedEnv()),
 		// Issue #395 / ADR-045: see toWakeRequest's APIEnvEntries
@@ -571,6 +593,7 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// mirrors it so deploy primes the same egress policy.
 		EgressAllowlist:             app.GetEgressAllowlist(),
 		EgressPorts:                 egressPortsFromWire(app.GetEgressPorts()),
+		EgressRevision:              app.GetEgressRevision(),
 		Quarantine:                  app.GetQuarantine(),
 		PrivateNetworkCIDRs:         app.GetPrivateNetworkCidrs(),
 		PrivateNetworkAllowedCIDRs:  app.GetPrivateNetworkAllowedCidrs(),
@@ -584,8 +607,9 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// the very first UpdateEgressAllowlist fan-out finds the
 		// instance via m.live[].AppID without a separate
 		// bootstrap path.
-		AppID:          app.GetAppId(),
-		RehearsalRunID: app.GetRehearsalRunId(),
+		AppID:                      app.GetAppId(),
+		RehearsalRunID:             app.GetRehearsalRunId(),
+		EnvironmentBranchContained: app.GetEnvironmentBranchContained(),
 		// issue #301 / ADR-044 — see toWakeRequest. Cold-boot
 		// mirrors Plan + AccountID so deploy's first boot on a
 		// fresh VM lands under the per-plan cgroup sub-slice
@@ -604,9 +628,12 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
+		RoutedPortRawTCP:         app.GetRoutedPortRawTcp(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
+		IdleLadderEligible:       app.GetIdleLadderEligible(),
+		IdleLadderGuardedPause:   app.GetIdleLadderGuardedPause(),
 		// ADR-138: cold-boot mirrors the snapshot wake's readiness budget.
 		StartupDeadlineS:       int(app.GetStartupDeadlineS()),
 		DisableStartupCPUBoost: app.GetDisableStartupCpuBoost(),
@@ -634,7 +661,28 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// ADR-20261026091500: the built app's sealed registry
 		// credentials, for the builder's FROM pulls.
 		BuildRegistryCredentials: buildRegistryCredentialsFromProto(req.GetBuild()),
+		BuildKitSeedDrive:        seedDrive,
 	}, nil
+}
+
+// buildKitSeedDriveFromProto returns a builder's BuildKit seed copy
+// (ADR-20261030122204). builderd writes it beside drive1, so vmmd accepts
+// only an absolute, clean .ext4 path in drive1's directory that is not drive1.
+func buildKitSeedDriveFromProto(b *vmmdpb.BuildSpec, layerKey string) (string, error) {
+	seed := b.GetBuildkitSeedDrive()
+	if seed == "" {
+		return "", nil
+	}
+	if b.GetExportDir() == "" {
+		return "", errors.New("vmmd: a buildkit seed drive needs a builder VM")
+	}
+	if !filepath.IsAbs(seed) || filepath.Clean(seed) != seed || !strings.HasSuffix(seed, ".ext4") {
+		return "", fmt.Errorf("vmmd: buildkit seed drive %q must be an absolute, clean .ext4 path", seed)
+	}
+	if !filepath.IsAbs(layerKey) || seed == layerKey || filepath.Dir(seed) != filepath.Dir(layerKey) {
+		return "", fmt.Errorf("vmmd: buildkit seed drive %q must sit beside the builder drive", seed)
+	}
+	return seed, nil
 }
 
 // buildRegistryCredentialsFromProto copies a builder's sealed registry
@@ -703,6 +751,7 @@ func sealedFromProto(pbs []*vmmdpb.SealedSecret) []fcvm.SealedEnvEntry {
 			Key:        p.GetKey(),
 			Ciphertext: p.GetCiphertext(),
 			SourceKey:  p.GetSourceKey(),
+			Scope:      p.GetSecretScope(),
 		})
 	}
 	return out
@@ -848,6 +897,7 @@ func workloadDependenciesFromProto(pbs []*vmmdpb.WorkloadDependency) []api.Workl
 func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.Instance, requestMethod vmmdpb.WakeMethod) *vmmdpb.WakeResponse {
 	resp := &vmmdpb.WakeResponse{
 		RehearsalRunId:                     inst.Net.RehearsalRunID,
+		EnvironmentBranchContained:         inst.Net.EnvironmentBranchContained,
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,
@@ -990,12 +1040,13 @@ func toPrivateNetworkCIDRs(ss []string) ([]netip.Prefix, error) {
 	return parsed, nil
 }
 
-func toPrivateNetworkFirewallRules(raw []*vmmdpb.PrivateNetworkFirewallRule, network []netip.Prefix) ([]api.PrivateNetworkFirewallRule, error) {
+func toPrivateNetworkFirewallRules(raw []*vmmdpb.PrivateNetworkFirewallRule, networks []netip.Prefix, memberAddress string) ([]api.PrivateNetworkFirewallRule, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-	if len(network) != 1 {
-		return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network firewall rules", "firewall rules require exactly one private network CIDR")
+	network, err := privateNetworkFirewallCIDR(networks, memberAddress)
+	if err != nil {
+		return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network firewall rules", err.Error())
 	}
 	rules := make([]api.PrivateNetworkFirewallRule, 0, len(raw))
 	for _, rule := range raw {
@@ -1007,11 +1058,32 @@ func toPrivateNetworkFirewallRules(raw []*vmmdpb.PrivateNetworkFirewallRule, net
 			CIDRs: append([]string(nil), rule.GetCidrs()...), Ports: append([]string(nil), rule.GetPorts()...),
 		})
 	}
-	validated, err := api.ValidatePrivateNetworkFirewallRules(rules, network[0])
+	validated, err := api.ValidatePrivateNetworkFirewallRules(rules, network)
 	if err != nil {
 		return nil, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation, "Invalid private network firewall rules", err.Error())
 	}
 	return validated, nil
+}
+
+// Peer destinations can sort before the member's own subnet. Firewall rules
+// retain the owning subnet as their baseline regardless of route ordering.
+func privateNetworkFirewallCIDR(networks []netip.Prefix, memberAddress string) (netip.Prefix, error) {
+	if memberAddress == "" {
+		if len(networks) == 1 {
+			return networks[0], nil
+		}
+		return netip.Prefix{}, errors.New("firewall rules require a member address when multiple private network CIDRs are present")
+	}
+	address, err := netip.ParseAddr(memberAddress)
+	if err != nil || !address.Is4() {
+		return netip.Prefix{}, errors.New("private_network_address must be an IPv4 address")
+	}
+	for _, network := range networks {
+		if network.Contains(address) {
+			return network, nil
+		}
+	}
+	return netip.Prefix{}, errors.New("private_network_address is outside the private network CIDRs")
 }
 
 func privateNetworkFirewallRulesFromProto(raw []*vmmdpb.PrivateNetworkFirewallRule) []api.PrivateNetworkFirewallRule {

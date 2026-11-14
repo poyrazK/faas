@@ -4,8 +4,8 @@
 ADR-20261023124955 §5. Every alert Prometheus evaluates is delivered by the
 control plane, so a control-plane outage silences them all. This probe runs
 on the compute nodes instead. It requests each configured URL through the
-public edge; a URL fails when two attempts, RETRY_DELAY apart, both miss a
-2xx. Failures go straight to a chat webhook and a fully passing run pings an
+public edge; a URL fails when two attempts, RETRY_DELAY apart, both fail its
+status, configured body or first-byte checks. Failures go straight to a chat webhook and a fully passing run pings an
 external heartbeat check, so neither path needs the control plane. Metrics
 go to the node_exporter textfile directory for dashboards while the control
 plane is up.
@@ -18,6 +18,8 @@ Configuration (environment, from /etc/faas/serving-probe.env):
   FAAS_SERVING_PROBE_URLS                  space-separated https URLs
   FAAS_SERVING_PROBE_TIMEOUT_SECONDS       per attempt, default 20
   FAAS_SERVING_PROBE_RETRY_DELAY_SECONDS   between attempts, default 30
+  FAAS_SERVING_PROBE_EXPECTED_BODY         optional exact UTF-8 response body
+  FAAS_SERVING_PROBE_MAX_FIRST_BYTE_SECONDS  budget, defaults to attempt timeout
   FAAS_SERVING_PROBE_NODE                  name used in messages, default hostname
   FAAS_SERVING_PROBE_TEXTFILE              metrics file path
 Credentials (systemd LoadCredential): webhook_url, optional heartbeat_url.
@@ -25,6 +27,7 @@ State (systemd StateDirectory): the last outcome per URL.
 """
 
 import json
+import math
 import os
 import re
 import socket
@@ -40,6 +43,7 @@ URL_RE = re.compile(r"^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~!&()*+
 REMINDER_SECONDS = 3600
 DEFAULT_TEXTFILE = "/var/lib/node_exporter/textfile_collector/serving-probe.prom"
 USER_AGENT = "gregale-serving-probe/1"
+MAX_EXPECTED_BODY_BYTES = 4096
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -62,6 +66,17 @@ class Config:
         self.urls = raw
         self.timeout = float(env.get("FAAS_SERVING_PROBE_TIMEOUT_SECONDS", "20"))
         self.retry_delay = float(env.get("FAAS_SERVING_PROBE_RETRY_DELAY_SECONDS", "30"))
+        self.max_first_byte = float(env.get("FAAS_SERVING_PROBE_MAX_FIRST_BYTE_SECONDS", str(self.timeout)))
+        expected_body = env.get("FAAS_SERVING_PROBE_EXPECTED_BODY", "")
+        self.expected_body = expected_body.encode("utf-8")
+        if not math.isfinite(self.timeout) or self.timeout < 1:
+            raise ValueError("FAAS_SERVING_PROBE_TIMEOUT_SECONDS must be finite and at least 1")
+        if not math.isfinite(self.retry_delay) or self.retry_delay < 0:
+            raise ValueError("FAAS_SERVING_PROBE_RETRY_DELAY_SECONDS must be finite and nonnegative")
+        if not math.isfinite(self.max_first_byte) or not 0 < self.max_first_byte <= self.timeout:
+            raise ValueError("FAAS_SERVING_PROBE_MAX_FIRST_BYTE_SECONDS must be positive and no greater than the timeout")
+        if len(self.expected_body) > MAX_EXPECTED_BODY_BYTES or any(ord(c) < 32 or ord(c) == 127 for c in expected_body):
+            raise ValueError("FAAS_SERVING_PROBE_EXPECTED_BODY must be at most 4096 UTF-8 bytes without control characters")
         self.node = env.get("FAAS_SERVING_PROBE_NODE") or socket.gethostname()
         self.textfile = Path(env.get("FAAS_SERVING_PROBE_TEXTFILE", DEFAULT_TEXTFILE))
         state_dir = env.get("STATE_DIRECTORY", "").split(":")[0]
@@ -81,39 +96,53 @@ def _read_credential(directory, name):
         return ""
 
 
-def probe_once(url, timeout, opener):
+def probe_once(url, cfg, opener, monotonic=time.monotonic):
     """Return (status, first_byte_seconds, error). status 0 = no response."""
-    start = time.monotonic()
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache"})
+    start = monotonic()
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Cache-Control": "no-cache, no-store"})
     try:
-        with opener.open(req, timeout=timeout) as resp:
-            resp.read(1)
-            return resp.status, time.monotonic() - start, ""
+        with opener.open(req, timeout=cfg.timeout) as resp:
+            first = resp.read(1)
+            seconds = monotonic() - start
+            if not 200 <= resp.status < 300:
+                return resp.status, seconds, f"HTTP {resp.status}"
+            if seconds > cfg.max_first_byte:
+                return resp.status, seconds, f"first byte exceeded {cfg.max_first_byte:g}s budget"
+            if cfg.expected_body:
+                # One extra byte rejects a valid prefix followed by a parking
+                # page or other unexpected content, with bounded memory use.
+                body = first + resp.read(len(cfg.expected_body))
+                if monotonic() - start > cfg.timeout:
+                    return resp.status, seconds, "response body exceeded attempt timeout"
+                if body != cfg.expected_body:
+                    return resp.status, seconds, "response body mismatch"
+            return resp.status, seconds, ""
     except urllib.error.HTTPError as err:
-        return err.code, time.monotonic() - start, f"HTTP {err.code}"
+        err.close()
+        return err.code, monotonic() - start, f"HTTP {err.code}"
     except Exception as err:  # URLError, socket timeout, TLS failure
         reason = getattr(err, "reason", err)
-        return 0, time.monotonic() - start, str(reason)[:200]
+        return 0, monotonic() - start, str(reason)[:200]
 
 
-def probe(url, cfg, opener, sleep):
+def probe(url, cfg, opener, sleep, monotonic=time.monotonic):
     """Two attempts; the result is the last attempt's."""
-    status, seconds, error = probe_once(url, cfg.timeout, opener)
+    status, seconds, error = probe_once(url, cfg, opener, monotonic)
     attempts = 1
-    if not 200 <= status < 300:
+    if not 200 <= status < 300 or error:
         sleep(cfg.retry_delay)
-        status, seconds, error = probe_once(url, cfg.timeout, opener)
+        status, seconds, error = probe_once(url, cfg, opener, monotonic)
         attempts = 2
-    return {"ok": 200 <= status < 300, "status": status, "seconds": seconds, "error": error, "attempts": attempts}
+    return {"ok": 200 <= status < 300 and not error, "status": status, "seconds": seconds, "error": error, "attempts": attempts}
 
 
 def _label(value):
     return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
 
 
-def write_metrics(path, results, now):
+def write_metrics(path, results, now, cfg):
     lines = [
-        "# HELP faas_serving_probe_success 1 when the URL answered 2xx within two attempts on the last run.",
+        "# HELP faas_serving_probe_success 1 when status, configured body and first-byte checks passed within two attempts.",
         "# TYPE faas_serving_probe_success gauge",
     ]
     lines += [f'faas_serving_probe_success{{url="{_label(u)}"}} {int(r["ok"])}' for u, r in results.items()]
@@ -127,6 +156,14 @@ def write_metrics(path, results, now):
         "# TYPE faas_serving_probe_http_status gauge",
     ]
     lines += [f'faas_serving_probe_http_status{{url="{_label(u)}"}} {r["status"]}' for u, r in results.items()]
+    lines += [
+        "# HELP faas_serving_probe_content_check_enabled 1 when an exact response body is required.",
+        "# TYPE faas_serving_probe_content_check_enabled gauge",
+        f"faas_serving_probe_content_check_enabled {int(bool(cfg.expected_body))}",
+        "# HELP faas_serving_probe_first_byte_budget_seconds Configured first-byte latency budget.",
+        "# TYPE faas_serving_probe_first_byte_budget_seconds gauge",
+        f"faas_serving_probe_first_byte_budget_seconds {cfg.max_first_byte:g}",
+    ]
     lines += [
         "# HELP faas_serving_probe_last_run_timestamp_seconds Unix time the probe last finished.",
         "# TYPE faas_serving_probe_last_run_timestamp_seconds gauge",
@@ -199,12 +236,12 @@ def ping(url, timeout=10):
         resp.read()
 
 
-def run(env=None, opener=None, sleep=time.sleep, now=time.time, post=post_json, beat=ping):
+def run(env=None, opener=None, sleep=time.sleep, now=time.time, post=post_json, beat=ping, monotonic=time.monotonic):
     cfg = Config(os.environ if env is None else env)
     opener = opener or default_opener()
-    results = {url: probe(url, cfg, opener, sleep) for url in cfg.urls}
+    results = {url: probe(url, cfg, opener, sleep, monotonic) for url in cfg.urls}
     finished = now()
-    write_metrics(cfg.textfile, results, finished)
+    write_metrics(cfg.textfile, results, finished, cfg)
 
     for url, r in results.items():
         outcome = "ok" if r["ok"] else "FAIL"

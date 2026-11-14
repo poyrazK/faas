@@ -45,6 +45,11 @@ def _parse_response(
 
         return response_409
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -72,6 +77,10 @@ def sync_detailed(
      Stages deletion. The account becomes `deleted_pending` for 30 days
     during which the customer can call `POST /v1/account/restore`. After
     the grace period, all rows are GC'd.
+    An account serving as an organization's billing contact while it has
+    a billing customer must move that contact first (409
+    `billing_contact_member`). If the billing-contact check cannot
+    complete, returns retryable 503 without staging deletion.
 
     Args:
         idempotency_key (str | Unset):
@@ -105,6 +114,10 @@ def sync(
      Stages deletion. The account becomes `deleted_pending` for 30 days
     during which the customer can call `POST /v1/account/restore`. After
     the grace period, all rows are GC'd.
+    An account serving as an organization's billing contact while it has
+    a billing customer must move that contact first (409
+    `billing_contact_member`). If the billing-contact check cannot
+    complete, returns retryable 503 without staging deletion.
 
     Args:
         idempotency_key (str | Unset):
@@ -133,6 +146,10 @@ async def asyncio_detailed(
      Stages deletion. The account becomes `deleted_pending` for 30 days
     during which the customer can call `POST /v1/account/restore`. After
     the grace period, all rows are GC'd.
+    An account serving as an organization's billing contact while it has
+    a billing customer must move that contact first (409
+    `billing_contact_member`). If the billing-contact check cannot
+    complete, returns retryable 503 without staging deletion.
 
     Args:
         idempotency_key (str | Unset):
@@ -164,6 +181,10 @@ async def asyncio(
      Stages deletion. The account becomes `deleted_pending` for 30 days
     during which the customer can call `POST /v1/account/restore`. After
     the grace period, all rows are GC'd.
+    An account serving as an organization's billing contact while it has
+    a billing customer must move that contact first (409
+    `billing_contact_member`). If the billing-contact check cannot
+    complete, returns retryable 503 without staging deletion.
 
     Args:
         idempotency_key (str | Unset):

@@ -54,17 +54,24 @@ type releasePlan struct {
 	LocalSource             *localSourcePlan                   `json:"local_source,omitempty"`
 	EnvChange               *envChangePlan                     `json:"env_change,omitempty"`
 	Provision               *provisionPlan                     `json:"provision,omitempty"`
-	localReceipt            any
-	failure                 *planFailure
-	configReceipt           *api.EnvBatchResponse
-	localInFlight           bool
-	appHash                 [32]byte
-	latestID                string
-	attempted               bool
-	result                  *api.DeploymentResponse
-	promoted                *api.DeploymentResponse
-	promotionAttempted      bool
-	review                  *api.AppReleaseReview
+	// AgentBudget is what the change would cost the calling agent and
+	// whether a person would be asked first (ADR-20261111114059,
+	// amendment 2026-11-13); absent for credentials no budget limits.
+	AgentBudget        *api.AgentBudgetPreview `json:"agent_budget,omitempty"`
+	localReceipt       any
+	failure            *planFailure
+	configReceipt      *api.EnvBatchResponse
+	localInFlight      bool
+	appHash            [32]byte
+	latestID           string
+	attempted          bool
+	result             *api.DeploymentResponse
+	promoted           *api.DeploymentResponse
+	promotionAttempted bool
+	review             *api.AppReleaseReview
+	// budgeted: the credential pays from an agent budget, so a priced
+	// change is previewed. Not persisted.
+	budgeted bool
 }
 
 type planDeployArgs struct {
@@ -329,6 +336,10 @@ func (m *management) applyDeploy(ctx context.Context, args applyArgs) (any, erro
 			return nil, err
 		}
 	}
+	writeCtx, err := m.prepareDeploymentSubmission(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.attempted = true // Ambiguous retries must reuse the same key and payload.
 	if err := m.persistPlans(); err != nil {
 		return nil, err
@@ -340,9 +351,9 @@ func (m *management) applyDeploy(ctx context.Context, args applyArgs) (any, erro
 	}
 	var d api.DeploymentResponse
 	if p.Source != nil {
-		d, err = m.stageSourcePlan(ctx, p)
+		d, err = m.stageSourcePlan(writeCtx, p)
 	} else {
-		d, err = m.client.Deploy(api.ContextWithIdempotencyKey(ctx, "mcp-deploy-"+p.ID), p.App, request)
+		d, err = m.client.Deploy(api.ContextWithIdempotencyKey(writeCtx, "mcp-deploy-"+p.ID), p.App, request)
 	}
 	if err != nil {
 		return nil, err
@@ -424,11 +435,15 @@ func (m *management) promoteDeployment(ctx context.Context, args applyArgs) (any
 	if d.AppID != p.AppID || normalizedScope(d.Scope) != p.Scope || d.Status != "live" {
 		return nil, invalid("not_ready", "the planned revision is not live in the expected app and scope")
 	}
+	writeCtx, err := m.preparePromotionOutcome(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.promotionAttempted = true
 	if err := m.persistPlans(); err != nil {
 		return nil, err
 	}
-	writeCtx := api.ContextWithIdempotencyKey(ctx, "mcp-promote-"+p.ID)
+	writeCtx = api.ContextWithIdempotencyKey(writeCtx, "mcp-promote-"+p.ID)
 	if p.EnvironmentID != "" {
 		d, err = m.client.PatchDeploymentTrafficReviewed(writeCtx, d.ID, p.ExpectedCurrentID, *p.result.StagedReview)
 	} else {
@@ -459,11 +474,15 @@ func (m *management) applyRollback(ctx context.Context, args applyArgs) (any, er
 			return nil, err
 		}
 	}
+	ctx, err = m.prepareRollbackOutcome(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.attempted = true
 	if err := m.persistPlans(); err != nil {
 		return nil, err
 	}
-	d, err := m.client.CheckedRollback(api.ContextWithIdempotencyKey(ctx, "mcp-rollback-"+p.ID), p.App, api.RollbackRequest{ExpectedCurrentDeploymentID: &p.ExpectedCurrentID, TargetDeploymentID: &p.TargetDeploymentID, Reason: p.Reason})
+	d, err := m.client.CheckedRollback(api.ContextWithIdempotencyKey(ctx, "mcp-rollback-"+p.ID), p.App, rollbackRequest(p))
 	if err != nil {
 		return nil, err
 	}

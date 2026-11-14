@@ -106,3 +106,17 @@ func TestCapacityReportIncludesPeakAndRejectsExpiredEvidence(t *testing.T) {
 		t.Fatal(r)
 	}
 }
+
+func TestCapacityQualificationRejectsEquivalentDatabaseIDs(t *testing.T) {
+	now := time.Now().UTC()
+	id := "aa000000-0000-4000-8000-000000000001"
+	q := connectioncapacity.Qualification{Scope: "scope", DatabaseID: id, DatabaseGeneration: 1, BackendFingerprint: "backend", DataResourceID: "resource", Placement: "placement", Generation: 1, ReportSHA256: strings.Repeat("a", 64), QualifiedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), Allocation: connectioncapacity.Limits{Connections: 10}, External: connectioncapacity.Limits{Connections: 2}}
+	if err := validateQualifications([]connectioncapacity.Qualification{q}, now); err != nil {
+		t.Fatal(err)
+	}
+	duplicate := q
+	duplicate.DatabaseID = strings.ToUpper(id)
+	if err := validateQualifications([]connectioncapacity.Qualification{q, duplicate}, now); !errors.Is(err, ErrInvalid) {
+		t.Fatal("equivalent database qualifications accepted", err)
+	}
+}

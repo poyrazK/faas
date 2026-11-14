@@ -20,6 +20,11 @@ func (s *PgStore) markTrafficDomainVerified(ctx context.Context, domain, token s
 	if err != nil {
 		return false, mapErr(err)
 	}
+	probe, probeBound := CustomDomainProbe(ctx)
+	probeBound = probeBound && challengeBound
+	if probeBound && (probeDomainMatches(probe, domain) != nil || probe.AppID != pgUUIDString(owner.AppID) || probe.ChallengeToken != token) {
+		return false, ErrStaleCustomDomainProbe
+	}
 	tx, err := s.beginTrafficDomainBinding(ctx, domain, owner.AccountID, owner.AppID, true, "")
 	if errors.Is(err, ErrNotFound) && challengeBound {
 		return false, nil
@@ -30,6 +35,8 @@ func (s *PgStore) markTrafficDomainVerified(ctx context.Context, domain, token s
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	changed, err := queries.MarkTrafficDomainVerified(ctx, tx, sqlc.MarkTrafficDomainVerifiedParams{
 		Domain: domain, AppID: owner.AppID, Token: token, ChallengeBound: challengeBound,
+		ProbeBound: probeBound, ExpectedDnsCheckedAt: pgtypeFromTime(probe.DNSLastCheckedAt),
+		ExpectedDnsDrifted: probe.CertStatus == CustomDomainCertDNSDrifted,
 	})
 	if err != nil {
 		return false, mapErr(err)

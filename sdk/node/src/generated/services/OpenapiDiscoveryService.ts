@@ -6,6 +6,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class OpenapiDiscoveryService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read the captured OpenAPI document for a deployment.
    * Returns the OpenAPI document the cold-boot probe captured from the customer's app. The probe runs unconditionally during cold boot; the API surfaces the doc only on paid plans (Hobby/Pro/Scale). Free customers receive 402 + openapi_docs_not_allowed. Cache-Control: 5 min. Response headers: X-OpenAPI-Doc-Source (cold_boot or manual_upload), X-OpenAPI-Doc-Truncated (1 if clipped at 128 KiB), X-OpenAPI-Doc-Byte-Size, X-OpenAPI-Doc-Deployment-ID, X-OpenAPI-Doc-App-ID, X-OpenAPI-Doc-SHA256, X-OpenAPI-Doc-Captured-At and X-OpenAPI-Doc-Updated-At. These authenticated metadata headers bind the unchanged body to its capture.
@@ -25,7 +26,7 @@ export class OpenapiDiscoveryService {
      */
     deployment: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deployments/{deployment}/openapi',
       path: {
@@ -76,7 +77,7 @@ export class OpenapiDiscoveryService {
      */
     doc?: Record<string, any>;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/deployments/{deployment}/openapi',
       path: {
@@ -113,7 +114,7 @@ export class OpenapiDiscoveryService {
      */
     deployment: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/deployments/{deployment}/openapi',
       path: {

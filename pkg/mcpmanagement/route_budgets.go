@@ -114,16 +114,26 @@ func (m *management) applyRouteBudgets(ctx context.Context, args applyArgs) (any
 	if err != nil {
 		return nil, err
 	}
-	if err := validateBudgetResponse(out, p.AppID, p.Scope, p.ProjectID, p.EnvironmentID); err != nil {
+	if err := validateBudgetReceipt(p, out); err != nil {
 		return nil, err
-	}
-	req := p.Budgets.Proposed
-	if out.Revision != *req.ExpectedRevision+1 || out.AppRevision != *req.ExpectedAppRevision || req.Inherit && out.BudgetSource != "app_policy" || !req.Inherit && (out.BudgetSource != "environment_policy" || out.Config.Enabled != req.Enabled || !routemonitor.RoutesEqual(out.Config.Routes, req.Routes)) {
-		return nil, invalid("invalid_response", "saved route budgets differ from reviewed proposal")
 	}
 	p.budgetResult = &out
 	if err := m.persistPlans(); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func validateBudgetReceipt(p *releasePlan, out api.EnvironmentRouteBudgets) error {
+	if p.Budgets == nil || p.Budgets.Proposed.ExpectedRevision == nil || p.Budgets.Proposed.ExpectedAppRevision == nil {
+		return invalid("invalid_response", "route budget review lacks policy revisions")
+	}
+	if err := validateBudgetResponse(out, p.AppID, p.Scope, p.ProjectID, p.EnvironmentID); err != nil {
+		return err
+	}
+	req := p.Budgets.Proposed
+	if out.Revision != *req.ExpectedRevision+1 || out.AppRevision != *req.ExpectedAppRevision || req.Inherit && out.BudgetSource != "app_policy" || !req.Inherit && (out.BudgetSource != "environment_policy" || out.Config.Enabled != req.Enabled || !routemonitor.RoutesEqual(out.Config.Routes, req.Routes)) {
+		return invalid("invalid_response", "saved route budgets differ from reviewed proposal")
+	}
+	return nil
 }

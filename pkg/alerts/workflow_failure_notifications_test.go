@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
-func TestAutomationFailureNotificationLifecycle(t *testing.T) {
+func TestStoredWorkflowFailureNotificationLifecycle(t *testing.T) {
 	store := state.NewMemStore()
 	rule, ident, _ := seedRule(t, store, state.AlertMetricWorkflowFailures, state.AlertGte, api.WorkflowFailureAlertThreshold)
 	create := func(status string, cancel bool) {

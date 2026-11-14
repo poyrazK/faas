@@ -1287,7 +1287,7 @@ func (q *Queries) EventRecoveryLegacySettled(ctx context.Context, db DBTX, id in
 }
 
 const eventRecoveryPublishedVersion = `-- name: EventRecoveryPublishedVersion :one
-SELECT published_version FROM workflow_automation_definitions
+SELECT published_version FROM stored_workflows
 WHERE app_id=$1::uuid AND name=$2::text
 `
 

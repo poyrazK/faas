@@ -51,6 +51,24 @@ Use the existing cutover and complete all-generation inventory requirements.
 Interoperable XML version listings preserve IsLatest and pagination without
 synthesizing delete markers.
 
+Lifecycle accepts a complete history containing only archived generations;
+GCS need not have a live generation. Native XML `DeletedTime` supplies each
+generation's noncurrent age and the ordering used for newer-version retention.
+Metadata changes do not restart that clock. Missing or future archival times
+fail closed; equal times do not count as strictly newer. Discovery and final
+deletion preflight use the same interpretation while receipts retain the
+original generation and metadata timestamp. S3 still requires its unique latest
+entry. The native archival timestamp remains private to provider processing.
+
+For live-generation expiration in days, XML `LastModified` is metadata time,
+so read immutable `timeCreated` from generation-pinned native attributes during
+discovery and again under the deletion fence. Meter each read with native
+retries disabled. Prove the response key, generation and original metadata
+timestamp; missing creation time or an intervening change cannot authorize
+deletion. Only the eligibility clock uses creation time. The receipt still
+binds the original generation and metadata timestamp. Tag edits do not restart
+object age; date-based and noncurrent rules need no additional creation read.
+
 Explicit AES256 uses Google's managed encryption baseline. Require the stored
 receipt, intent proof and generation to match, with no native CMEK, before
 acknowledging an encrypted write. Clear bucket default CMEK only by matching the

@@ -256,7 +256,7 @@ func (s *RealService) GetInstallState(accountID string) (githubdgrpc.InstallStat
 	s.installsMu.RLock()
 	st, ok := s.installs[accountID]
 	s.installsMu.RUnlock()
-	if ok {
+	if ok && s.Installs == nil {
 		return st.State, st.InstID, st.DefBranch, nil
 	}
 	if s.Installs == nil {
@@ -342,7 +342,7 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 	if len(installs) == 0 {
 		return "", "", api.ErrGitHubAppNotInstalled()
 	}
-	pick, err := s.selectOAuthInstallation(context.Background(), userToken, stateStr, installs)
+	pick, err := s.selectOAuthInstallation(context.Background(), accountID, userToken, stateStr, installs)
 	if err != nil {
 		return "", "", err
 	}
@@ -444,9 +444,10 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 // (apid compared it with the state cookie, so the `.N` suffix cannot be
 // forged) and must be visible to the GitHub user. Without one, the user's
 // installations they may connect are the candidates: one is taken, several
-// are returned for the customer to choose (ADR-20261101160300), and none
-// returns why the first could not be connected.
-func (s *RealService) selectOAuthInstallation(ctx context.Context, userToken, stateStr string, installs []UserInstallation) (UserInstallation, error) {
+// are returned for the customer to choose (ADR-20261101160300). Seeing only
+// other people's personal installations must continue with installing the App
+// on the user's own account, rather than trapping them on an owner refusal.
+func (s *RealService) selectOAuthInstallation(ctx context.Context, accountID, userToken, stateStr string, installs []UserInstallation) (UserInstallation, error) {
 	desired := int64(0)
 	if dot := strings.LastIndexByte(stateStr, '.'); dot >= 0 && dot+1 < len(stateStr) {
 		if parsed, err := strconv.ParseInt(stateStr[dot+1:], 10, 64); err == nil && parsed > 0 {
@@ -456,7 +457,7 @@ func (s *RealService) selectOAuthInstallation(ctx context.Context, userToken, st
 	if desired != 0 {
 		for _, installation := range installs {
 			if installation.ID == desired {
-				if err := s.Auth.AuthorizeInstallationBinder(ctx, userToken, installation); err != nil {
+				if err := s.authorizeOAuthInstallation(ctx, accountID, userToken, installation); err != nil {
 					return UserInstallation{}, err
 				}
 				return installation, nil
@@ -466,13 +467,17 @@ func (s *RealService) selectOAuthInstallation(ctx context.Context, userToken, st
 	}
 	var eligible []UserInstallation
 	var firstErr error
+	onlyOtherPersonalInstallations := true
 	for i, installation := range installs {
 		if i == githubdgrpc.MaxInstallationCandidates {
 			break
 		}
-		if err := s.Auth.AuthorizeInstallationBinder(ctx, userToken, installation); err != nil {
+		if err := s.authorizeOAuthInstallation(ctx, accountID, userToken, installation); err != nil {
 			if firstErr == nil {
 				firstErr = err
+			}
+			if p := api.AsProblem(err); p == nil || p.Code != api.CodeGitHubInstallationOwnerRequired {
+				onlyOtherPersonalInstallations = false
 			}
 			continue
 		}
@@ -482,6 +487,9 @@ func (s *RealService) selectOAuthInstallation(ctx context.Context, userToken, st
 	case len(eligible) == 1:
 		return eligible[0], nil
 	case len(eligible) == 0:
+		if onlyOtherPersonalInstallations {
+			return UserInstallation{}, api.ErrGitHubAppNotInstalled()
+		}
 		return UserInstallation{}, firstErr
 	}
 	candidates := make([]githubdgrpc.InstallationCandidate, 0, len(eligible))
@@ -491,6 +499,21 @@ func (s *RealService) selectOAuthInstallation(ctx context.Context, userToken, st
 		})
 	}
 	return UserInstallation{}, &githubdgrpc.InstallationChoiceError{Candidates: candidates}
+}
+
+// Record the rejected candidate, never the OAuth code, state or user token.
+// The callback's stable error code alone cannot identify a wrong installation.
+func (s *RealService) authorizeOAuthInstallation(ctx context.Context, accountID, userToken string, installation UserInstallation) error {
+	err := s.Auth.AuthorizeInstallationBinder(ctx, userToken, installation)
+	if p := api.AsProblem(err); p != nil && s.Audit != nil {
+		s.Audit("auth.install.connect_refused", accountID, map[string]any{
+			"installation_id": installation.ID,
+			"github_owner":    installation.Account.Login,
+			"owner_type":      installation.Account.Type,
+			"reason":          p.Code,
+		})
+	}
+	return err
 }
 
 // ListInstallableRepos returns the repos the installation can see.
@@ -504,8 +527,8 @@ func (s *RealService) ListInstallableRepos(accountID string, installationID int6
 }
 
 // ListInstallableReposContext is the context-aware variant used by the
-// installation drift reconciler. The legacy ListInstallableRepos method is
-// retained for the gRPC surface, whose generated interface predates contexts.
+// installation drift reconciler and gRPC repository verification. The legacy
+// ListInstallableRepos method remains available for callers without a context.
 func (s *RealService) ListInstallableReposContext(ctx context.Context, accountID string, installationID int64) ([]githubdgrpc.Repo, error) {
 	if s.Auth == nil || s.Tokens == nil {
 		return nil, fmt.Errorf("githubd: OAuth not configured")
@@ -625,7 +648,7 @@ func (s *RealService) lookupInstall(ctx context.Context, accountID string) (int6
 	s.installsMu.RLock()
 	st, ok := s.installs[accountID]
 	s.installsMu.RUnlock()
-	if ok {
+	if ok && s.Installs == nil {
 		var id int64
 		if _, err := fmt.Sscanf(st.InstID, "%d", &id); err == nil && id > 0 {
 			return id, nil
@@ -722,10 +745,13 @@ func (s *RealService) ensureInstallTokenForInstallation(ctx context.Context, acc
 	if identities == nil && s.Identity != nil {
 		identities = []*age.X25519Identity{s.Identity}
 	}
-	if s.Installs != nil && len(identities) > 0 {
+	if s.Installs != nil {
 		inst, ierr := s.installForAccount(ctx, accountID, installID)
 		switch {
 		case ierr == nil:
+			if len(identities) == 0 {
+				return 0, "", fmt.Errorf("githubd: install token identity not configured")
+			}
 			now := time.Now()
 			if inst.TokenExpiresAt.After(now.Add(tokenRefreshSkew)) {
 				env, oerr := secretbox.OpenMulti(identities, inst.SealedToken)
@@ -743,7 +769,7 @@ func (s *RealService) ensureInstallTokenForInstallation(ctx context.Context, acc
 			// rotate it (mint + re-seal + persist + audit).
 			return s.rotateInstallToken(ctx, accountID, installID, inst)
 		case errors.Is(ierr, state.ErrNotFound):
-			// No durable row — fall through to a fresh mint.
+			return 0, "", state.ErrNotFound
 		default:
 			return 0, "", fmt.Errorf("githubd: durable rehydrate: %w", ierr)
 		}
@@ -790,7 +816,11 @@ func (s *RealService) rotateInstallToken(ctx context.Context, accountID string, 
 	if err != nil {
 		return 0, "", fmt.Errorf("githubd: seal rotated install token: %w", err)
 	}
-	if err := s.Installs.Upsert(ctx, state.GitHubInstall{
+	refresher, ok := s.Installs.(InstallTokenRefresher)
+	if !ok {
+		return 0, "", fmt.Errorf("githubd: safe install token refresh unavailable")
+	}
+	if err := refresher.RefreshToken(ctx, prev.SealedToken, state.GitHubInstall{
 		AccountID:        accountID,
 		InstallationID:   installID,
 		DefaultBranch:    prev.DefaultBranch,
@@ -835,11 +865,22 @@ func (s *RealService) UnbindAppRepo(appID, accountID string) error {
 	return nil
 }
 
-// GetAppBinding looks up the binding for an app. Cache-first;
-// falls back to the durable Store on miss and rebuilds the cache.
+// GetAppBinding reads the durable, account-scoped binding. Cache-only
+// operation is retained only for services without a configured store.
 // Returns the gRPC-facing AppBinding shape (BindingID empty = no
 // binding).
 func (s *RealService) GetAppBinding(appID, accountID string) (githubdgrpc.AppBinding, error) {
+	// A durable unbind on another worker must take effect immediately.
+	if s.Store != nil {
+		b, err := s.Store.GetForApp(context.Background(), appID, accountID)
+		if errors.Is(err, ErrAppNotFound) || errors.Is(err, state.ErrNotFound) {
+			return githubdgrpc.AppBinding{}, nil
+		}
+		if err != nil {
+			return githubdgrpc.AppBinding{}, err
+		}
+		return bindingToGRPC(b), nil
+	}
 	s.bindingsCacheMu.RLock()
 	if byApp, ok := s.bindingsCache[accountID]; ok {
 		if b, ok := byApp[appID]; ok {

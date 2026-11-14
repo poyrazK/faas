@@ -24,13 +24,13 @@ func comparisonBudgetReceipt(p95, p99 float64, failures, samples int, duration, 
 	}
 	workload := &testLoadWorkload{Version: 1, SHA256: strings.Repeat("a", 64), Label: "health-v1"}
 	load := &testLoadEvidence{
-		Status: "passed", Workload: workload, testLoadMetrics: metrics,
+		Status: "passed", Workload: workload, IterationsStarted: samples, IterationsCompleted: samples, testLoadMetrics: metrics,
 		Steps: []testLoadStepEvidence{{Name: "health", Method: "GET", Path: "/health", testLoadMetrics: metrics}},
 	}
 	return testRunReceipt{
 		Scenario: "health", Engine: "local", Profile: "local", Attempt: 1,
 		DurationMS: duration, Status: status,
-		Requests: []testHTTPRequestEvidence{{Name: "health", Method: "GET", Path: "/health", DurationMS: requestDuration, Passed: status == "passed"}},
+		Requests: []testHTTPRequestEvidence{{Name: "health", Method: "GET", Path: "/health", PathTemplateSHA256: testHTTPPathTemplateDigest("/health"), DurationMS: requestDuration, Passed: status == "passed"}},
 		Load:     load,
 	}
 }

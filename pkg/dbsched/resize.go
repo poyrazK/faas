@@ -15,10 +15,10 @@ import (
 //
 // The shape also says whether the database keeps a synchronous standby
 // (the production class). Turning it on places the standby, which attaches
-// after the restart or the next wake. Turning it off first retires the
-// standby: the database stops cleanly, then the standby, and the standby's
-// volume goes; the primary's slot for it is dropped once the primary runs
-// again (CheckStandbys).
+// after the restart or the next wake. Turning it off checks admission
+// before a clean stop of the primary and standby. The standby's volume
+// stays until the new shape is committed; its slot is dropped once the
+// primary runs again (CheckStandbys).
 func (s *Scheduler) Resize(ctx context.Context, id string, shape Shape) (VM, error) {
 	switch {
 	case shape.VcpuCount < 1 || shape.VcpuCount > 32:
@@ -35,13 +35,30 @@ func (s *Scheduler) Resize(ctx context.Context, id string, shape Shape) (VM, err
 		return VM{}, err
 	}
 	restart := vm.State == StateRunning
-	if vm.Replicated && !shape.Replicated {
-		if err := s.retireStandby(ctx, vm); err != nil {
-			return vm, fmt.Errorf("dbsched: resize %s: retire the standby: %w", id, err)
+	retiring := vm.Replicated && !shape.Replicated
+	if retiring {
+		if err := s.checkRetiringResize(ctx, vm, shape); err != nil {
+			return vm, err
+		}
+		// A clean park keeps the old standby synchronized and its volume
+		// intact until the store admits and records the requested shape.
+		if restart {
+			if err := s.parkLocked(ctx, id); err != nil {
+				return vm, err
+			}
 		}
 	}
 	if err := s.store.Resize(ctx, id, shape, s.now()); err != nil {
+		if retiring && restart {
+			// Capacity or placement can change after the preflight. Resume
+			// the unchanged shape and trusted standby on a failed admission.
+			_, wakeErr := s.wakeLocked(context.WithoutCancel(ctx), id)
+			err = errors.Join(err, wakeErr)
+		}
 		return VM{}, err
+	}
+	if retiring {
+		s.deleteStandby(ctx, vm) // admitted: failed cleanup is retried by the orphan sweep
 	}
 	vm, err = s.store.Get(ctx, id)
 	if err != nil || !vm.ResizePending {
@@ -70,40 +87,21 @@ func (s *Scheduler) Resize(ctx context.Context, id string, shape Shape) (VM, err
 	return s.Get(ctx, id)
 }
 
-// retireStandby removes a replicated database's standby before its
-// replication is turned off: the database stops cleanly (the primary
-// first, so its standby keeps every commit to the end), then the standby
-// VM, then its volume. A standby node that is unavailable or gone keeps
-// the volume for the orphan sweep. The database's lock is held.
-func (s *Scheduler) retireStandby(ctx context.Context, vm VM) error {
-	if vm.State == StateRunning {
-		if err := s.parkLocked(ctx, vm.DatabaseID); err != nil {
-			return err
-		}
-		cur, err := s.store.Get(ctx, vm.DatabaseID)
-		if err != nil {
-			return err
-		}
-		vm = cur
-	}
-	if err := s.store.MarkStandbySynced(ctx, vm.DatabaseID, false); err != nil {
+// checkRetiringResize rejects invalid or unplaceable changes before any
+// VM stops. The store repeats admission atomically after the clean park.
+func (s *Scheduler) checkRetiringResize(ctx context.Context, vm VM, shape Shape) error {
+	checking := vm
+	checking.StandbyRunning = false // the clean park stops it before committing
+	if err := checkResize(checking, shape); err != nil {
 		return err
 	}
-	if vm.StandbyRunning {
-		s.stopStandby(ctx, vm, false)
-	}
-	if vm.StandbyNode == "" {
-		return nil
-	}
-	node, err := s.node(ctx, vm.StandbyNode)
-	if errors.Is(err, ErrNodeUnavailable) || err == nil && node.Lifecycle == NodeUnavailable {
-		return nil
-	}
+	node, err := s.node(ctx, vm.NodeID)
 	if err != nil {
 		return err
 	}
-	if err := s.vmm.Stop(ctx, node, vm.DatabaseID); err != nil {
+	load, err := s.store.Loads(ctx)
+	if err != nil {
 		return err
 	}
-	return s.vmm.DiscardVolume(ctx, node, vm.DatabaseID)
+	return resizeFits(node, nodeUsage{volumeBytes: load[node.ID].VolumeBytes, activeMB: load[node.ID].ActiveMB}, vm, shape)
 }

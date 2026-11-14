@@ -759,7 +759,7 @@ func TestIssueSessionCookie_EnrolledAccountIsPending(t *testing.T) {
 // terminal state — they could only re-authenticate via /disable,
 // but /disable requires the same set of recovery codes (or the
 // password). The handler refuses the burn and returns 409
-// CodeValidation telling the customer to use /disable instead,
+// CodeMFALastRecoveryCode telling the customer to reset the factor instead,
 // keeping the password path open as the safety valve.
 func TestMFARecover_RefusesToBurnLastCode(t *testing.T) {
 	e := setupWithMFA(t, api.PlanPro, false, false)
@@ -794,6 +794,7 @@ func TestMFARecover_RefusesToBurnLastCode(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Errorf("status = %d, want 409 (would have locked the customer out)", rec.Code)
 	}
+	assertProblem(t, rec, http.StatusConflict, api.CodeMFALastRecoveryCode)
 
 	// The store must still hold that single code (no burn).
 	after, _ := e.store.AccountByID(ctx, e.acct.ID)

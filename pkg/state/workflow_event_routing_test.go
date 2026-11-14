@@ -305,14 +305,14 @@ func TestEventWorkflowRecipientAdmissionWebhook(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				automation := store.(WebhookAutomationStore)
-				if _, err := automation.SaveWebhookAutomationBinding(ctx, WebhookAutomationBindingOptions{
+				storedWorkflow := store.(WebhookWorkflowStore)
+				if _, err := storedWorkflow.SaveWebhookWorkflowBinding(ctx, WebhookWorkflowBindingOptions{
 					EndpointID: endpoint.ID, AppID: app.ID, AccountID: app.AccountID, WorkflowName: "paid", EventType: "invoice.*",
 				}); err != nil {
 					t.Fatal(err)
 				}
 				body := json.RawMessage(`{"amount":150}`)
-				accepted, handled, err := automation.AcceptVerifiedWebhookAutomation(ctx, endpoint, "webhook-isolation", "invoice.paid", body, true)
+				accepted, handled, err := storedWorkflow.AcceptVerifiedWebhookWorkflow(ctx, endpoint, "webhook-isolation", "invoice.paid", body, true)
 				if err != nil || !handled {
 					t.Fatalf("webhook acceptance=%+v handled=%t err=%v", accepted, handled, err)
 				}
@@ -333,11 +333,11 @@ func TestEventWorkflowRecipientAdmissionWebhook(t *testing.T) {
 				if err != nil || !result.RunCreated || !result.ReceiptSettled {
 					t.Fatalf("webhook admission=%+v err=%v", result, err)
 				}
-				receipt, err := automation.GetWebhookAutomationReceipt(ctx, endpoint.ID, "webhook-isolation")
+				receipt, err := storedWorkflow.GetWebhookWorkflowReceipt(ctx, endpoint.ID, "webhook-isolation")
 				if err != nil || receipt.RunID != result.RunID || receipt.RoutingStatus != "enqueued" {
 					t.Fatalf("webhook receipt=%+v err=%v", receipt, err)
 				}
-				duplicate, handled, err := automation.AcceptVerifiedWebhookAutomation(ctx, endpoint, "webhook-isolation", "invoice.paid", body, true)
+				duplicate, handled, err := storedWorkflow.AcceptVerifiedWebhookWorkflow(ctx, endpoint, "webhook-isolation", "invoice.paid", body, true)
 				if err != nil || !handled || !duplicate.Duplicate {
 					t.Fatalf("duplicate=%+v err=%v", duplicate, err)
 				}

@@ -366,3 +366,17 @@ func TestSummarizeProjectApply_UnchangedWorkloadIsNotAFailure(t *testing.T) {
 		t.Fatalf("legacy response status = %+v, want 1 missing build", status)
 	}
 }
+
+// Hunt 33 H33-33: `deploy --environment staging` on an existing project
+// printed "Created project".
+func TestRenderProjectApplyResult_EnvironmentDeployIsNotACreate(t *testing.T) {
+	plan := projectApplyPlan("noop")
+	plan.Environment = "staging"
+	var out bytes.Buffer
+	if code := main.RenderProjectApplyResult(&out, plan, api.ApplyResponse{ProjectID: "project-1"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	if text := out.String(); strings.Contains(text, "Created project") || !strings.Contains(text, "Deployed project project-1 to environment staging") {
+		t.Fatalf("staging apply line:\n%s", text)
+	}
+}

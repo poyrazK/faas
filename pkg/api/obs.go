@@ -175,6 +175,9 @@ type ObsTenant360Response struct {
 	Sessions ObsTenantCounts  `json:"sessions"`
 	Usage    ObsTenantUsage   `json:"usage"`
 	Billing  ObsTenantBilling `json:"billing"`
+	// Diagnosis explains why the account may not be working
+	// (ADR-20261112170000).
+	Diagnosis ObsTenantDiagnosis `json:"diagnosis"`
 }
 
 type ObsTenantUsage struct {
@@ -318,6 +321,18 @@ type ObsAccountMutationResponse struct {
 	Account         ObsTenantRow `json:"account"`
 	Action          string       `json:"action"`
 	RevokedSessions int          `json:"revoked_sessions"`
+}
+
+// ObsComplimentaryResponse is an account's complimentary status after an
+// operator set or cleared it (ADR-20261111140000). Complimentary accounts
+// hold a paid plan without a subscription, are not billed, and stop at the
+// plan's included amounts; ExpiresAt is when the account returns to Free.
+type ObsComplimentaryResponse struct {
+	AccountID     string     `json:"account_id"`
+	Plan          Plan       `json:"plan"`
+	Complimentary bool       `json:"complimentary"`
+	Reason        string     `json:"reason,omitempty"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 }
 
 // ObsObjectStorageCeilingResponse is a billing subject's object-storage

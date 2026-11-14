@@ -138,8 +138,9 @@ func TestObjectStorageStepLosesARaceWithoutPublishing(t *testing.T) {
 
 func TestObjectStorageStepReservesBeforeReadingTheCapAndStaysUnderIt(t *testing.T) {
 	store, sink, accounts, period := objectStorageProgressFixture(api.PlanHobby, 9)
-	// A 10-cent cap with 4 GB-hours of compute overage leaves 6000 millicents.
-	store.caps = map[string]int64{"acct": 10}
+	// A 26-cent cap with 4 GB-hours of compute overage (20000 millicents at
+	// $0.05/GB-h) leaves 6000 millicents.
+	store.caps = map[string]int64{"acct": 26}
 	store.usage = map[string][]state.Usage{"acct": {{Month: period.Add(time.Hour), MBSeconds: api.IncludedMBSeconds(api.PlanHobby) + 4*api.SecondsPerGBHour}}}
 	if _, err := deliverObjectStorageProgressAt(t, store, accounts, sink, period.AddDate(0, 0, 4)); err != nil {
 		t.Fatal(err)

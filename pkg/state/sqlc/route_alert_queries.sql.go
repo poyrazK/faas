@@ -268,6 +268,28 @@ func (q *Queries) RouteMonitorIncidentsSince(ctx context.Context, db DBTX, arg R
 	return items, nil
 }
 
+const routeRemovalBaselineDoc = `-- name: RouteRemovalBaselineDoc :one
+SELECT d.doc FROM app_route_removal_policies p
+JOIN deployment_openapi_docs d ON d.deployment_id = p.baseline_deployment_id AND d.app_id = p.app_id AND d.account_id = p.account_id
+WHERE p.app_id = $1::text::uuid AND p.account_id = $2::text::uuid AND NOT d.truncated
+`
+
+type RouteRemovalBaselineDocParams struct {
+	AppID     string
+	AccountID string
+}
+
+// ADR-20261028110044 amendment 6: the captured contract of the deployment an
+// app's route removal policy holds as its baseline. The gateway labels
+// requests with its templates when the app's current document no longer
+// declares them, so a removed route's traffic keeps its own label.
+func (q *Queries) RouteRemovalBaselineDoc(ctx context.Context, db DBTX, arg RouteRemovalBaselineDocParams) ([]byte, error) {
+	row := db.QueryRow(ctx, routeRemovalBaselineDoc, arg.AppID, arg.AccountID)
+	var doc []byte
+	err := row.Scan(&doc)
+	return doc, err
+}
+
 const routeTelemetryLost = `-- name: RouteTelemetryLost :one
 SELECT EXISTS (
   SELECT 1 FROM request_telemetry_coverage c

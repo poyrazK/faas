@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -10,6 +10,10 @@ from attrs import field as _attrs_field
 
 from ..models.object_bucket_state import ObjectBucketState, check_object_bucket_state
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.object_bucket_retry import ObjectBucketRetry
+
 
 T = TypeVar("T", bound="ObjectBucket")
 
@@ -26,6 +30,9 @@ class ObjectBucket:
     public: bool
     created_at: datetime.datetime
     serve_at: str | Unset = UNSET
+    retry: ObjectBucketRetry | Unset = UNSET
+    """Set while a bucket create or delete has failed and Gregale is retrying it. Reason is a bounded code, never a
+    provider message."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +52,10 @@ class ObjectBucket:
 
         serve_at = self.serve_at
 
+        retry: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.retry, Unset):
+            retry = self.retry.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -60,11 +71,15 @@ class ObjectBucket:
         )
         if serve_at is not UNSET:
             field_dict["serve_at"] = serve_at
+        if retry is not UNSET:
+            field_dict["retry"] = retry
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.object_bucket_retry import ObjectBucketRetry
+
         d = dict(src_dict)
         id = UUID(d.pop("id"))
 
@@ -82,6 +97,13 @@ class ObjectBucket:
 
         serve_at = d.pop("serve_at", UNSET)
 
+        _retry = d.pop("retry", UNSET)
+        retry: ObjectBucketRetry | Unset
+        if isinstance(_retry, Unset):
+            retry = UNSET
+        else:
+            retry = ObjectBucketRetry.from_dict(_retry)
+
         object_bucket = cls(
             id=id,
             name=name,
@@ -91,6 +113,7 @@ class ObjectBucket:
             public=public,
             created_at=created_at,
             serve_at=serve_at,
+            retry=retry,
         )
 
         object_bucket.additional_properties = d

@@ -246,6 +246,9 @@ func (linuxNativeSnapshotMemory) Prepare(ctx context.Context, v *JailerVMM, owne
 		checkOwner: func(ctx context.Context) error {
 			_, err := v.checkNativeSnapshotPublicationOwner(ctx, owner.Lease)
 			return err
+		},
+		fenceLimit: func(limit uint64) func() {
+			return v.trackFenceValue(owner.Lease.Instance, fenceMemoryMax, strconv.FormatUint(limit, 10))
 		}}, nil
 }
 

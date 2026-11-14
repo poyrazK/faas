@@ -2,18 +2,22 @@ package datarepair
 
 import "strings"
 
-// JSON journals cannot retain SQL array bounds or plain-json duplicate keys.
+// JSON journals cannot retain SQL array bounds, plain-json duplicate keys or
+// stable catalog identities for reg* aliases whose names can be reused.
 // Follow domain and composite members without executing application functions.
 func lossyValueTypesSQL(relation, fields string) string {
-	return valueTypesSQL(relation, fields, "value_type.oid='json'::regtype OR value_type.typcategory='A'")
+	return valueTypesSQL(relation, fields, `value_type.oid IN (
+ 'json'::regtype,'regclass'::regtype,'regcollation'::regtype,'regconfig'::regtype,'regdictionary'::regtype,
+ 'regnamespace'::regtype,'regoper'::regtype,'regoperator'::regtype,'regproc'::regtype,'regprocedure'::regtype,
+ 'regrole'::regtype,'regtype'::regtype) OR value_type.typcategory='A'`)
 }
 
 func unprovenCaptureSQL(operation string) string {
 	fields := "ARRAY(SELECT attname FROM pg_attribute WHERE attrelid=e.relation AND attnum>0 AND NOT attisdropped)"
 	risky := valueTypesSQL("e.relation", fields, "value_type.oid IN ('json'::regtype,'jsonb'::regtype,'numeric'::regtype,'float4'::regtype,'float8'::regtype) OR value_type.typcategory='A'")
-	unprovenNative := "(" + risky + " AND NOT EXISTS(SELECT 1 FROM gregale_repair.operations capture_proof WHERE capture_proof.id=" + operation + " AND capture_proof.capture_contract_version IN (1,2,3)))"
+	unprovenNative := "(" + risky + " AND NOT EXISTS(SELECT 1 FROM gregale_repair.operations capture_proof WHERE capture_proof.id=" + operation + " AND capture_proof.capture_contract_version IN (1,2,3,4)))"
 	ambiguousTypes := valueTypesSQL("e.relation", "e.fields||e.keys", "value_type.oid IN ('float4'::regtype,'float8'::regtype,'jsonb'::regtype)")
-	unprovenImages := `NOT EXISTS(SELECT 1 FROM gregale_repair.operations capture_proof WHERE capture_proof.id=` + operation + ` AND capture_proof.capture_contract_version IN (2,3)) AND (
+	unprovenImages := `NOT EXISTS(SELECT 1 FROM gregale_repair.operations capture_proof WHERE capture_proof.id=` + operation + ` AND capture_proof.capture_contract_version IN (2,3,4)) AND (
  (EXISTS(SELECT 1 FROM gregale_repair.operations capture_proof WHERE capture_proof.id=` + operation + ` AND capture_proof.payload_purged_at IS NOT NULL) AND ` + ambiguousTypes + `) OR EXISTS(
  WITH RECURSIVE image_values(type_oid,value) AS (
   SELECT a.atttypid,image.value FROM gregale_repair.changes image_change CROSS JOIN LATERAL (
@@ -33,8 +37,10 @@ func unprovenCaptureSQL(operation string) string {
  (v.type_oid IN ('float4'::regtype,'float8'::regtype) AND v.value='0'::jsonb) OR
  (v.type_oid='jsonb'::regtype AND v.value='null'::jsonb)))`
 	intervals := valueTypesSQL("e.relation", "e.fields||e.keys", "value_type.oid='interval'::regtype")
-	unprovenIntervals := "(" + intervals + " AND NOT EXISTS(SELECT 1 FROM gregale_repair.operations interval_proof WHERE interval_proof.id=" + operation + " AND interval_proof.capture_contract_version=3))"
-	return "(" + unprovenIntervals + " OR " + unprovenTypeSQL(operation) + " OR " + unprovenNative + " OR (" + unprovenImages + "))"
+	unprovenIntervals := "(" + intervals + " AND NOT EXISTS(SELECT 1 FROM gregale_repair.operations interval_proof WHERE interval_proof.id=" + operation + " AND interval_proof.capture_contract_version IN (3,4)))"
+	money := valueTypesSQL("e.relation", "e.fields||e.keys", "value_type.oid='money'::regtype")
+	unprovenMoney := "(" + money + " AND NOT EXISTS(SELECT 1 FROM gregale_repair.operations monetary_proof WHERE monetary_proof.id=" + operation + " AND monetary_proof.capture_contract_version=4))"
+	return "(" + unprovenMoney + " OR " + unprovenIntervals + " OR " + unprovenTypeSQL(operation) + " OR " + unprovenNative + " OR (" + unprovenImages + "))"
 }
 
 func unprovenPlanSQL() string {

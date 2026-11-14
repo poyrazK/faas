@@ -45,6 +45,10 @@ func testUsageWaiver(t *testing.T, store usageWaiverTestStore, accountID string)
 			AccountID: accountID, DatabaseID: database.ID, BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint,
 			WindowFrom: at(k, 0), WindowTo: at(k+1, 0), ObservedAt: at(k+1, 1),
 			Meter: MeterComputeUnitSeconds, Quantity: quantity, CostMillicents: quantity,
+		}, {
+			AccountID: accountID, DatabaseID: database.ID, BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint,
+			WindowFrom: at(k, 0), WindowTo: at(k+1, 0), ObservedAt: at(k+1, 1),
+			Meter: MeterEgressBytes, Quantity: quantity,
 		}}); err != nil {
 			t.Fatalf("record window %d: %v", k, err)
 		}
@@ -79,6 +83,11 @@ func testUsageWaiver(t *testing.T, store usageWaiverTestStore, accountID string)
 	snapshot, err := store.UsageSnapshot(ctx, accountID, start)
 	if err != nil || snapshot.ComputeUnitSeconds != customer || snapshot.CostMillicents != customer {
 		t.Fatalf("customer usage = %d units, %d millicents, %v; want %d", snapshot.ComputeUnitSeconds, snapshot.CostMillicents, err, customer)
+	}
+	// Each database's egress, which its own egress allowance is checked
+	// against (ADR-20261110160000 amendment 2026-11-11), is waived the same way.
+	if snapshot.EgressBytes != customer || len(snapshot.DatabaseEgress) != 1 || snapshot.DatabaseEgress[database.ID] != customer {
+		t.Fatalf("customer egress = %d, by database %v; want %d for %s", snapshot.EgressBytes, snapshot.DatabaseEgress, customer, database.ID)
 	}
 	if totals, err := store.FleetTotals(ctx, start); err != nil || totals.CostMillicents < 1<<9-1 {
 		t.Fatalf("fleet cost = %d, %v; want the waived windows counted (at least %d)", totals.CostMillicents, err, 1<<9-1)

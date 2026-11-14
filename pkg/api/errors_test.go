@@ -391,7 +391,7 @@ func TestCodeConstants_UniqueAndNonEmpty(t *testing.T) {
 	codes := []string{
 		CodePlanLimitApps, CodePlanLimitRAM, CodePlanLimitConcur, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair,
 		CodeSourceTooLarge, CodeAppLayerTooBig,
-		CodeBuildUndetected, CodeBuildOOM, CodeBuildTimeout, CodeBuildFailed, CodeBuildInfrastructure,
+		CodeBuildUndetected, CodeBuildOOM, CodeBuildTimeout, CodeBuildFailed, CodeBuildInfrastructure, CodeReleaseInfrastructure,
 		CodeQuotaExhausted, CodeBillingPastDue, CodeCapacity, CodeDebugRegressionUnavailable,
 		CodeUnauthorized, CodeNotFound, CodeValidation,
 		CodeImageNotFound, CodeImageEgressDenied, CodeImageManifestInvalid,
@@ -598,10 +598,11 @@ func TestValidateAppCPURAMPair(t *testing.T) {
 		guestVCPU int
 		wantOK    bool
 	}{
-		{name: "free canonical", plan: PlanFree, ramMB: 256, guestVCPU: 2, wantOK: true},
-		{name: "scale canonical", plan: PlanScale, ramMB: 2048, guestVCPU: 4, wantOK: true},
+		{name: "256 MB has one vCPU", plan: PlanFree, ramMB: 256, guestVCPU: 1, wantOK: true},
+		{name: "2 GB has two", plan: PlanScale, ramMB: 2048, guestVCPU: 2, wantOK: true},
+		{name: "any size on the plan", plan: PlanScale, ramMB: 512, guestVCPU: 1, wantOK: true},
 		{name: "wrong vcpu", plan: PlanScale, ramMB: 128, guestVCPU: 8},
-		{name: "wrong ram", plan: PlanScale, ramMB: 128, guestVCPU: 4},
+		{name: "the retired Scale plan pair", plan: PlanScale, ramMB: 2048, guestVCPU: 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := ValidateAppCPURAMPair(MustLimitsFor(tc.plan), tc.ramMB, tc.guestVCPU)
@@ -614,7 +615,7 @@ func TestValidateAppCPURAMPair(t *testing.T) {
 			if p == nil || p.Code != CodeInvalidCPURAMPair {
 				t.Fatalf("ValidateAppCPURAMPair = %+v, want %q", p, CodeInvalidCPURAMPair)
 			}
-			if !strings.Contains(p.Detail, "invalid (ram_mb, vcpu) pair for plan") {
+			if !strings.Contains(p.Detail, "invalid (ram_mb, vcpu) pair on plan") {
 				t.Errorf("detail = %q, want pair explanation", p.Detail)
 			}
 		})

@@ -84,7 +84,14 @@
 
     <h1>{{.Title}}</h1>
 
-    {{if index .Data "Refused"}}
+    {{$loopback := index .Data "LoopbackURL"}}
+    {{if $loopback}}
+      {{/* One-click login (ADR-20261111170000): carry the new device code
+          to the CLI listening on this machine. */}}
+      <p>Approved. Handing the sign-in to your terminal…</p>
+      <p class="fine">If nothing happens, <a href="{{$loopback}}">continue to your terminal</a>.</p>
+      <script nonce="{{.Nonce}}">window.location.replace({{$loopback}});</script>
+    {{else if index .Data "Refused"}}
       <p>{{index .Data "Detail"}}</p>
       <p class="fine">Nothing was authorized. Start the connection again from your agent.</p>
     {{else if index .Data "Error"}}
@@ -111,6 +118,8 @@
       {{if index .Data "MCP"}}
       <p class="code-label">Authorization code</p>
       <div class="code">{{index .Data "Code"}}</div>
+      {{else if index .Data "LoopbackPort"}}
+      <p class="fine">Only continue if you ran <code>gregale login</code> yourself, just now, on this computer.</p>
       {{else}}
       <p class="errorbox">Only continue if you ran <code>gregale login</code> yourself, just now, on a computer you control. Anyone who sent you this link gets access to your account if you approve it.</p>
       {{end}}
@@ -137,6 +146,12 @@
           <p class="fine">Leave every box clear to give the agent all projects. Choose only projects of the account or organization the agent acts in; a limited agent can't manage databases.</p>
         </fieldset>
         {{end}}
+        {{else if index .Data "LoopbackPort"}}
+        {{/* One-click login: approval sends a new device code to this
+            machine's loopback, never to the terminal that minted the code,
+            so carrying the code here is safe (ADR-20261111170000). */}}
+        <input type="hidden" name="code" value="{{index .Data "Code"}}">
+        <input type="hidden" name="port" value="{{index .Data "LoopbackPort"}}">
         {{else}}
         {{/* The code is typed, never pre-filled: a link alone cannot
             authorize someone else's terminal (device-code phishing). */}}

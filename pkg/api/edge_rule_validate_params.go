@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	"github.com/onebox-faas/faas/pkg/lazyregexp"
 )
 
@@ -95,10 +97,8 @@ func validateParamSchemaBytes(location string, schema json.RawMessage) *Problem 
 		return ErrValidation(fmt.Sprintf("validate action: parameters.%s exceeds %d bytes (got %d)",
 			location, MaxEdgeRuleValidateSchemaBytes, len(schema)))
 	}
-	if match := edgeRuleValidateRefURLPattern.FindStringIndex(string(schema)); match != nil {
-		return ErrValidation(fmt.Sprintf(
-			"validate action: parameters.%s contains an external $ref or $id URL (around byte %d); inline schemas only",
-			location, match[0]))
+	if _, err := edgevalidate.Compile(schema, false); err != nil {
+		return ErrValidation(fmt.Sprintf("validate action: parameters.%s cannot be compiled: %v", location, err))
 	}
 	return nil
 }
@@ -266,6 +266,32 @@ func paramScalarType(raw any) (string, bool) {
 	return "", false
 }
 
+// EdgeRuleHeaderParamValues collects the header parameter values a validate
+// rule checks: every declared header's values, with an array kind's values
+// split on commas the way list-valued headers are read. The gateway and the
+// trace share it so a trace reports the gateway's verdict.
+func EdgeRuleHeaderParamValues(h http.Header, kinds map[string]EdgeRuleParamKind) map[string][]string {
+	out := make(map[string][]string, len(kinds))
+	for name, kind := range kinds {
+		raw := h.Values(name)
+		if len(raw) == 0 {
+			continue
+		}
+		if kind.Type != "array" {
+			out[name] = raw
+			continue
+		}
+		var items []string
+		for _, v := range raw {
+			for _, item := range strings.Split(v, ",") {
+				items = append(items, strings.TrimSpace(item))
+			}
+		}
+		out[name] = items
+	}
+	return out
+}
+
 // EdgeRuleParamInstance builds the JSON object validated for one parameter
 // location. values maps each parameter name to its raw request values;
 // declared properties are converted to their kind, while undeclared names
@@ -305,8 +331,8 @@ func EdgeRuleParamInstance(kinds map[string]EdgeRuleParamKind, values map[string
 func convertParamValue(kind, value string) any {
 	switch kind {
 	case "integer":
-		if _, err := strconv.ParseInt(value, 10, 64); err == nil {
-			return json.Number(value)
+		if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return json.Number(strconv.FormatInt(n, 10))
 		}
 	case "number":
 		var n json.Number

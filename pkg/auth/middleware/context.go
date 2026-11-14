@@ -224,7 +224,13 @@ func WithSession(ctx context.Context, sess state.Session) context.Context {
 // RequireSession's cookie branch. ok=false means the request
 // didn't authenticate via cookie (bearer-key paths).
 func SessionFromContext(r *http.Request) (*state.Session, bool) {
-	v := r.Context().Value(sessionCtxKey{})
+	return SessionFromCtx(r.Context())
+}
+
+// SessionFromCtx is SessionFromContext for code that holds only the
+// request's context.
+func SessionFromCtx(ctx context.Context) (*state.Session, bool) {
+	v := ctx.Value(sessionCtxKey{})
 	if v == nil {
 		return nil, false
 	}

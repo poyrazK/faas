@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 const maxQuotaRecordBytes = 2 << 20
@@ -194,6 +196,9 @@ func (q *Quotas) mutate(ctx context.Context, key string, scope *quotaScope, chan
 }
 func (q *Quotas) mutateMigration(ctx context.Context, key string, scope *quotaScope, migration bool, change func(*quotaRecord, time.Time) error) error {
 	for attempt := 0; attempt < 8; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return err
+		}
 		r, version, err := q.read(ctx, key)
 		now := q.now()
 		if errors.Is(err, durableentity.ErrNotFound) && scope != nil {

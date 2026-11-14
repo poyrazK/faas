@@ -55,3 +55,38 @@ func TestObserveRestorePhases(t *testing.T) {
 		t.Fatalf("pre-boot outcomes = %v, want skipped=1 written=1", outcomes)
 	}
 }
+
+// A restore whose bind_tun took 223 ms on production (pulsewatch-web, fsn-2)
+// could not say whether the jailer, the journal or the cgroup fence was slow:
+// the split reached only a Debug log, and the native path filled none of it.
+func TestObserveRestorePhasesBindTunSubphases(t *testing.T) {
+	wpm := NewWakePhaseMetrics()
+	wpm.ObserveRestorePhases(restoreTimingBreakdown{
+		BindTunMs: 223, TunJournalChecksMs: 2, TunWaitMntnsMs: 30, TunWaitChrootMs: 140, TunSetupJailMs: 49, CgroupFenceMs: 2,
+	})
+	families, err := wpm.Registry().Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+	sums := map[string]float64{}
+	for _, f := range families {
+		if f.GetName() != "vmmd_restore_phase_duration_seconds" {
+			continue
+		}
+		for _, m := range f.GetMetric() {
+			sums[m.GetLabel()[0].GetValue()] = m.GetHistogram().GetSampleSum()
+		}
+	}
+	var parts float64
+	for phase, want := range map[string]float64{
+		"tun_journal_checks": 0.002, "tun_wait_mntns": 0.030, "tun_wait_chroot": 0.140, "tun_setup_jail": 0.049, "cgroup_fence": 0.002,
+	} {
+		if got := sums[phase]; got < want-1e-9 || got > want+1e-9 {
+			t.Errorf("%s sum = %v, want %v", phase, got, want)
+		}
+		parts += sums[phase]
+	}
+	if bind := sums["bind_tun"]; parts < bind-1e-9 || parts > bind+1e-9 {
+		t.Errorf("sub-phases add up to %v, want bind_tun %v: they partition the window", parts, bind)
+	}
+}

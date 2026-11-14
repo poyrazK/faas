@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/connreleaseproto"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/profileproto"
@@ -289,6 +290,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		handleAppCPULimitConn(f, log, hdr[4:], firstCPULimitHandler(onCPULimit))
 		return
 	}
+	if msgType == connreleaseproto.MessageType {
+		handleReleaseConnectionsConn(f, log, hdr[4:])
+		return
+	}
 	if msgType == guestmemproto.MessageType {
 		handleMemoryStatsConn(f, log, hdr[4:])
 		return
@@ -326,6 +331,19 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		Entropy             string `json:"entropy"`             // base64; decode + ioctl(RNDADDENTROPY)
 		Traceparent         string `json:"traceparent"`         // W3C; empty is tolerated (issues PR-4)
 		EventPublishVerdict bool   `json:"eventPublishVerdict"` // ADR-20261031102000; absent from an older vmmd
+		IdentityReload      bool   `json:"identityReload"`      // ADR-20261031193635; restore of a branch from a credential-free capture
+		// QualificationReceipt is sent only by a native qualification
+		// restore: re-attest the boot configuration under a fresh token.
+		QualificationReceipt *struct {
+			Token  string `json:"token"`
+			MACKey string `json:"macKey"` // hex; never logged
+		} `json:"qualificationReceipt"`
+		// ADR-20261107160000: the serving instance; absent from an older vmmd.
+		Identity *struct {
+			InstanceID string `json:"instanceId"`
+			NodeID     string `json:"nodeId"`
+			Region     string `json:"region"`
+		} `json:"identity"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		log.Warn("vsock resume body parse", "err", err)
@@ -390,6 +408,14 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	// goroutine — the resume hook doesn't return a value, and the
 	// runner env can't be threaded back through the supervisor
 	// without a refactor that breaks the test fixture.
+	// ADR-20261107160000: publish the serving instance before any workload
+	// code runs again. A failed write is not a uniqueness failure, so the
+	// resume proceeds and the file keeps an older identity.
+	if id := req.Identity; id != nil {
+		if err := publishResumedInstanceIdentity(id.InstanceID, id.NodeID, id.Region, time.Now()); err != nil {
+			log.Warn("vsock resume: instance identity not published", "err", err)
+		}
+	}
 	// ADR-687: the kernel is reseeded; now every registered workload process
 	// must reseed its userspace generators before the instance can serve.
 	stage := time.Now()
@@ -403,13 +429,46 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	timings.UserspaceReseedUs = time.Since(stage).Microseconds()
 	timings.ReseedClients = stats.Clients
 	timings.ReseedSlowestUs, timings.ReseedSlowestRuntime = stats.Slowest.Microseconds(), stats.SlowestRuntime
+	// ADR-20261109140000: report, never refuse, interpreter processes the
+	// barrier could not reach.
+	if n, runtimes := unregisteredRuntimeProcesses(); n > 0 {
+		timings.ReseedUnregistered, timings.ReseedUnregisteredRuntimes = n, strings.Join(runtimes, ",")
+		log.Warn("restore: processes not covered by the userspace RNG reseed may repeat random values across wakes",
+			"processes", n, "runtimes", timings.ReseedUnregisteredRuntimes)
+	}
+	// ADR-20261110170000: Go ID libraries keep per-process random state that
+	// nothing outside the program can reset.
+	if libs := goIDLibraryModules("/proc", os.Getpid()); len(libs) > 0 {
+		log.Warn("restore: Go ID libraries in this app may generate the same IDs in instances restored from one snapshot",
+			"modules", strings.Join(libs, ","))
+	}
 	stage = time.Now()
 	resumeGuestProfiles()
 	timings.ProfilesUs = time.Since(stage).Microseconds()
 	SetResumeTraceparent(req.Traceparent)
 	// The userspace reseed above runs first, so an application
 	// after_restore callback never sees the snapshot's random state.
-	if onCritical != nil {
+	switch {
+	case req.IdentityReload:
+		// The branch's identity replaces the capture's placeholders, and
+		// the hook's acknowledgement goes back to vmmd. A guest that cannot
+		// reload refuses, so vmmd cold-boots the branch instead.
+		stage = time.Now()
+		reload := restoreIdentityReloader.Load()
+		if reload == nil {
+			log.Warn("restore identity reload requested but after_restore.identity is not reload")
+			_, _ = f.Write([]byte{VsockResumeAckAfterRestore})
+			return
+		}
+		digest, err := (*reload)()
+		if err != nil {
+			log.Warn("restore identity reload failed", "err", err)
+			_, _ = f.Write([]byte{VsockResumeAckAfterRestore})
+			return
+		}
+		timings.AfterRestoreUs = time.Since(stage).Microseconds()
+		timings.IdentityDigest = digest
+	case onCritical != nil:
 		stage = time.Now()
 		if err := onCritical(); err != nil {
 			log.Warn("application after_restore hook failed", "err", err)
@@ -420,6 +479,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	}
 	timings.TotalUs = time.Since(received).Microseconds()
 	_, _ = f.Write(resumeAckFrame(restoreReseedContractHolds(), timings))
+	if receipt := req.QualificationReceipt; receipt != nil {
+		// vmmd opens the restore's guest-event channel only after this ack.
+		go emitQualificationRestoreReceiptFn(log, receipt.Token, receipt.MACKey)
+	}
 	if warmBuilderEnabled.Load() {
 		signalWarmBuilderResume()
 	}
@@ -513,7 +576,7 @@ func handleAppCPULimitConn(f *os.File, log *slog.Logger, lengthHeader []byte, ap
 		return
 	}
 	var req runtimepolicyproto.AppCPULimitUpdate
-	if err := json.Unmarshal(body, &req); err != nil || !api.ValidAppCPUMillicores(req.CPUMillicores) {
+	if err := json.Unmarshal(body, &req); err != nil || !api.ValidAnyAppCPUCeilingMillicores(req.CPUMillicores) {
 		log.Warn("vsock app CPU policy body rejected", "err", err, "cpu_millicores", req.CPUMillicores)
 		_, _ = f.Write([]byte{VsockResumeAckJSON})
 		return

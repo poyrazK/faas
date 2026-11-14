@@ -2,7 +2,6 @@
 package state_test
 
 import (
-	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -76,22 +75,14 @@ func TestServiceCapacityPostgresRawSQLRestartAndReplay(t *testing.T) {
 		t.Fatalf("replay left snapshot JIT enabled: config=%q err=%v", snapshotConfig, err)
 	}
 	var overhead, overcommit, startup, heartbeat int
-	var vcpuMap []byte
-	if err := pool.QueryRow(ctx, `SELECT overhead_mb,cpu_overcommit,startup_cpu,heartbeat_seconds,plan_vcpus FROM service_capacity_policy`).Scan(&overhead, &overcommit, &startup, &heartbeat, &vcpuMap); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT overhead_mb,cpu_overcommit,startup_cpu,heartbeat_seconds FROM service_capacity_policy`).Scan(&overhead, &overcommit, &startup, &heartbeat); err != nil {
 		t.Fatal(err)
 	}
 	if overhead != api.PerVMOverheadMB || overcommit != api.CPUOvercommit || startup != api.DefaultAppCPUMillicores || heartbeat != int(state.DefaultHeartbeatStaleness.Seconds()) {
 		t.Fatalf("SQL policy drift: overhead=%d CPU factor=%d startup=%d heartbeat=%d", overhead, overcommit, startup, heartbeat)
 	}
-	var planVCPUs map[api.Plan]int
-	if err := json.Unmarshal(vcpuMap, &planVCPUs); err != nil {
-		t.Fatal(err)
-	}
-	for _, plan := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
-		if got, want := planVCPUs[plan], api.MustLimitsFor(plan).VCPU; got != want {
-			t.Fatalf("SQL policy vCPU drift for %s: got %d, want %d", plan, got, want)
-		}
-	}
+	// plan_vcpus is no longer read (an instance counts its size's vCPUs,
+	// ADR-20261109172421), so it has no Go value to stay in step with.
 	// Request counters must not take the fleet lock or scan declarations.
 	var definition string
 	if err := pool.QueryRow(ctx, `SELECT pg_get_triggerdef(oid) FROM pg_trigger WHERE tgrelid='instances'::regclass AND tgname='service_capacity_before'`).Scan(&definition); err != nil {

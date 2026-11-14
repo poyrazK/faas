@@ -42,13 +42,19 @@ func financialObjectStorageMeter(ctx context.Context, store state.Store, account
 func objectStorageMeterCosts(account string, start, end, asOf, now time.Time, e state.FinancialObjectStorageEstimate) (api.FinancialMeterCosts, error) {
 	meter := financial.MeterObjectStorage
 	closed := !now.Before(end)
-	fresh := e.Fresh && (closed || (!e.ObservedAt.After(now) && now.Sub(e.ObservedAt) <= api.FinancialObjectStorageEstimateFreshness))
+	complete := !closed || !e.UsageThrough.Before(end)
+	// Calendar rollover cannot finalize a partial observation. Only evidence
+	// covering the whole closed period can remain fresh without an age limit.
+	fresh := e.Fresh && !e.ObservedAt.After(now) && (closed && complete || now.Sub(e.ObservedAt) <= api.FinancialObjectStorageEstimateFreshness)
 	expected := int64(asOf.Sub(start) / time.Minute)
 	reported := min(int64(e.UsageThrough.Sub(start)/time.Minute), expected)
-	out := api.FinancialMeterCosts{Meter: meter, Coverage: api.FinancialMeterCoverage{Complete: true, Fresh: fresh, ExpectedMinutes: expected, CompleteMinutes: reported, Reasons: []string{}}, PriceContracts: []api.FinancialPriceContract{},
+	out := api.FinancialMeterCosts{Meter: meter, Coverage: api.FinancialMeterCoverage{Complete: complete, Fresh: fresh, ExpectedMinutes: expected, CompleteMinutes: reported, Reasons: []string{}}, PriceContracts: []api.FinancialPriceContract{},
 		Forecast: financial.Forecast{Method: "elapsed_time_run_rate_v1", AccountID: account, PeriodStart: start, PeriodEnd: end, CompleteThrough: e.UsageThrough, Meter: meter, Currency: e.Pricing.Currency}}
 	if !fresh {
 		out.Coverage.Reasons = append(out.Coverage.Reasons, "stale_evidence")
+	}
+	if !complete {
+		out.Coverage.Reasons = append(out.Coverage.Reasons, "incomplete_period")
 	}
 	gross, err := objectstorage.CalculateCharge(e.Pricing, e.Usage, api.ObjectStorageAllowance{})
 	if err != nil {

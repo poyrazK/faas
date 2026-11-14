@@ -1,10 +1,14 @@
+export function isMcpTaskToolName(name) {
+  return typeof name === 'string' && /^[\x21-\x7e]{1,128}$/.test(name);
+}
+
 // Candidate coverage is checked against retained nonterminal work, independently
 // of worker heartbeats, retry eligibility, lease ownership or input pauses.
 export function mcpTaskHandlerInventory(handlers) {
   if (!handlers || typeof handlers !== 'object' || Array.isArray(handlers)) throw new Error('Invalid MCP task handler registry');
   const inventory = [];
   for (const [name, handler] of Object.entries(handlers)) {
-    if (!/^[a-z][a-z0-9_.-]{0,127}$/.test(name) || !handler || typeof handler.version !== 'string') throw new Error('Invalid MCP task handler registry');
+    if (!isMcpTaskToolName(name) || !handler || typeof handler.version !== 'string') throw new Error('Invalid MCP task handler registry');
     for (const [version, execute] of Object.entries({ ...handler.previousVersions, [handler.version]: handler.execute })) {
       if (!/^[A-Za-z0-9._-]{1,64}$/.test(version) || typeof execute !== 'function') throw new Error('Invalid MCP task handler registry');
       inventory.push({ name, version });

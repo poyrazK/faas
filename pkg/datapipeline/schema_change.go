@@ -53,6 +53,7 @@ func relationHash(relations []relation) string {
 }
 
 func schemaPlan(p Pipeline, before, after []relation) SchemaChange {
+	after = recordedSourceMetadata(p, preserveMissingMetadata(after, before))
 	c := SchemaChange{State: "pending", Supported: true, Before: before, After: after, BeforeHash: relationHash(before), AfterHash: relationHash(after), Changes: []SchemaColumnChange{}}
 	add := func(table string, old, next *column, kind, reason string, safe bool) {
 		v := SchemaColumnChange{Table: table, Kind: kind, Reason: reason, Safe: safe}
@@ -93,7 +94,7 @@ func schemaPlan(p Pipeline, before, after []relation) SchemaChange {
 			if !ok {
 				copy := col
 				add(old.Name, &copy, nil, "removed", "Removing or renaming a column requires an explicit resync.", false)
-			} else if !reflect.DeepEqual(col, found) {
+			} else if !sameColumn(col, found) {
 				copy := col
 				add(old.Name, &copy, &found, "changed", changedColumnReason(col, found), false)
 			}
@@ -125,6 +126,17 @@ func schemaPlan(p Pipeline, before, after []relation) SchemaChange {
 		c.State = "unsupported"
 	}
 	return c
+}
+
+func sameColumn(a, b column) bool {
+	a.KeyPosition, b.KeyPosition = 0, 0
+	return reflect.DeepEqual(a, b)
+}
+
+func sameRelations(a, b []relation) bool {
+	encoded, _ := json.Marshal(a)
+	expected, _ := json.Marshal(b)
+	return string(encoded) == string(expected)
 }
 
 func changedColumnReason(before, after column) string {

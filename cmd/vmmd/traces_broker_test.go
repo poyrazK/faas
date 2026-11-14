@@ -60,6 +60,14 @@ func (f *fakeGuestSpansClient) IngestGuestLogs(_ context.Context, req *apidpb.In
 	return &apidpb.IngestGuestLogsResponse{Outcome: f.outcome}, nil
 }
 
+func (f *fakeGuestSpansClient) IngestGuestMetrics(_ context.Context, req *apidpb.IngestGuestSpansRequest) (*apidpb.IngestGuestMetricsResponse, error) {
+	f.got, f.rpc = req, "metrics"
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &apidpb.IngestGuestMetricsResponse{Outcome: f.outcome}, nil
+}
+
 func (f *fakeGuestSpansClient) Close() error { return nil }
 
 // runTraceBroker sends raw bytes as the guest would and returns the ack.
@@ -135,6 +143,38 @@ func TestTraceBrokerRoutesLogFrames(t *testing.T) {
 	// the app's SDK stops retrying, instead of looping on unavailable.
 	client.err = status.Error(codes.Unimplemented, "unknown method IngestGuestLogs")
 	if ack, reason := runTraceBroker(t, b, "vm", traceTestFrame(api.TraceCodecProtobuf|api.TraceCodecLogsSignal, []byte("logs"))); ack != api.TraceAckRejected || reason != "unsupported" {
+		t.Fatalf("old apid: ack=%d reason=%q", ack, reason)
+	}
+}
+
+// adr: 20261108160000 — a metric frame goes to IngestGuestMetrics only for
+// an app with tracing.metrics; a frame with both signal bits is malformed.
+func TestTraceBrokerRoutesMetricFrames(t *testing.T) {
+	frame := traceTestFrame(api.TraceCodecGzipProtobuf|api.TraceCodecMetricsSignal, []byte("metrics"))
+
+	client := &fakeGuestSpansClient{outcome: api.TraceIngestAccepted}
+	b := newTestTraceBroker(client, &api.TracingConfig{Enabled: true})
+	if ack, reason := runTraceBroker(t, b, "vm", frame); ack != api.TraceAckRejected || reason != "disabled" || client.rpc != "" {
+		t.Fatalf("without tracing.metrics: ack=%d reason=%q rpc=%q", ack, reason, client.rpc)
+	}
+
+	b = newTestTraceBroker(client, &api.TracingConfig{Enabled: true, Metrics: true})
+	ack, reason := runTraceBroker(t, b, "vm", frame)
+	if ack != api.TraceAckAccepted || reason != api.TraceIngestAccepted || client.rpc != "metrics" {
+		t.Fatalf("ack=%d reason=%q rpc=%q", ack, reason, client.rpc)
+	}
+	if got := client.got; got.GetCodec() != uint32(api.TraceCodecGzipProtobuf) || string(got.GetPayload()) != "metrics" {
+		t.Fatalf("metric request = %+v", got)
+	}
+
+	client.rpc = ""
+	both := traceTestFrame(api.TraceCodecProtobuf|api.TraceCodecLogsSignal|api.TraceCodecMetricsSignal, []byte("x"))
+	if ack, reason := runTraceBroker(t, b, "vm", both); ack != api.TraceAckRejected || reason != "protocol" || client.rpc != "" {
+		t.Fatalf("two signals: ack=%d reason=%q rpc=%q", ack, reason, client.rpc)
+	}
+
+	client.err = status.Error(codes.Unimplemented, "unknown method IngestGuestMetrics")
+	if ack, reason := runTraceBroker(t, b, "vm", frame); ack != api.TraceAckRejected || reason != "unsupported" {
 		t.Fatalf("old apid: ack=%d reason=%q", ack, reason)
 	}
 }

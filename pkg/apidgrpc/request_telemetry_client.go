@@ -154,6 +154,18 @@ func (c *RequestTelemetryClientImpl) RecordRequestIDJournalBatch(ctx context.Con
 	return receipt, nil
 }
 
+// AddRequestAnalyticsRollups ships one gateway batch of per-minute analytics
+// rollups (ADR-20261103113952 amendment 5). The wrapped error keeps the gRPC
+// status, so callers can detect an apid that predates the RPC with
+// status.Code.
+func (c *RequestTelemetryClientImpl) AddRequestAnalyticsRollups(ctx context.Context, req *apidpb.AddRequestAnalyticsRollupsRequest) (*apidpb.AddRequestAnalyticsRollupsResponse, error) {
+	receipt, err := c.cli.AddRequestAnalyticsRollups(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("apidgrpc: AddRequestAnalyticsRollups: %w", err)
+	}
+	return receipt, nil
+}
+
 // Close shuts down the underlying gRPC connection. Safe to call
 // multiple times; subsequent calls are no-ops.
 func (c *RequestTelemetryClientImpl) Close() error {

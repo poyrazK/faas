@@ -75,7 +75,7 @@ func evaluateFeatureFlagRolloutHealth(progression flags.ProgressiveRollout, rows
 }
 
 func (s *server) promoteFeatureFlagRollout(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	scope, configStore, ok := s.featureFlagScope(w, r, acct)
+	scope, configStore, ok := s.featureFlagWriteScope(w, r, acct)
 	if !ok {
 		return
 	}

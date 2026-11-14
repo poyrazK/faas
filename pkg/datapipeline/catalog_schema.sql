@@ -5,3 +5,4 @@ CREATE TABLE managed_postgres_bindings(id uuid PRIMARY KEY,account_id uuid NOT N
 CREATE TABLE deployments(id uuid PRIMARY KEY,app_id uuid NOT NULL,status text NOT NULL,scope text NOT NULL);
 CREATE TABLE snapshots(id uuid PRIMARY KEY,deployment_id uuid NOT NULL,stale boolean NOT NULL);
 CREATE TABLE app_runtime_config_changes(app_id uuid PRIMARY KEY,changed_at timestamptz NOT NULL);
+CREATE TABLE notification_outbox(id bigserial PRIMARY KEY,channel text NOT NULL,payload text NOT NULL,available_at timestamptz NOT NULL,state text NOT NULL DEFAULT 'pending',attempts int NOT NULL DEFAULT 0,last_error text,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),delivered_at timestamptz);

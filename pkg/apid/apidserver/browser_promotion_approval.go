@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -36,6 +37,31 @@ type browserApprovalTicket struct {
 	PromotionToken string
 	Reason         string
 	ExpiresAt      time.Time
+	// OrgID and RequesterID are set for a company project
+	// (ADR-20261112230000): AccountID is then the project's resource owner,
+	// the review is approved by a member who may approve its protected
+	// environments, and only the member who asked exchanges it.
+	OrgID       string `json:",omitempty"`
+	RequesterID string `json:",omitempty"`
+}
+
+// browserApprovalReviewer checks the signed-in account that opens or approves
+// a review and returns the account the ticket's checks run as: the reviewer
+// itself for a personal project, or the company project's resource owner when
+// the reviewer is a member who may approve.
+func (s *server) browserApprovalReviewer(ctx context.Context, reviewer state.Account, ticket browserApprovalTicket) (state.Account, bool) {
+	if ticket.OrgID == "" {
+		return reviewer, ticket.AccountID == reviewer.ID
+	}
+	allowed, err := projectaccess.MayApprove(ctx, s.store, ticket.OrgID, reviewer.ID)
+	if err != nil || !allowed {
+		return state.Account{}, false
+	}
+	owner, err := s.store.AccountByID(ctx, ticket.AccountID)
+	if err != nil {
+		return state.Account{}, false
+	}
+	return owner, true
 }
 
 func browserApprovalCodeHash(code string) []byte {
@@ -122,6 +148,9 @@ func (s *server) mintBrowserApproval(ctx context.Context, acct state.Account, pl
 	code := base64.RawURLEncoding.EncodeToString(entropy)
 	hash := browserApprovalCodeHash(code)
 	ticket := browserApprovalTicket{Purpose: browserApprovalPurpose, ExchangeHash: hex.EncodeToString(hash), AccountID: acct.ID, Project: plan.Preview.ProjectSlug, ProjectID: plan.ProjectID, FromID: source.ID, Environment: target.Slug, EnvironmentID: target.ID, PromotionToken: input.PromotionToken, Reason: input.Reason, ExpiresAt: time.Now().UTC().Add(cliAuthCodeTTL)}
+	if grant, shared := projectaccess.From(ctx); shared {
+		ticket.OrgID, ticket.RequesterID = grant.Org.ID, grant.Actor.ID
+	}
 	data, err := json.Marshal(ticket)
 	if err != nil {
 		return result, err
@@ -156,7 +185,7 @@ func (s *server) exchangeBrowserPromotionApproval(w http.ResponseWriter, r *http
 		api.WriteProblem(w, api.NewProblem(404, api.CodeBrowserApprovalPending, "Awaiting human review", "open the review link in Gregale and approve the exact promotion"))
 		return
 	}
-	if claimedAccount != acct.ID {
+	if !s.browserApprovalExchangeAllowed(r, acct, ticket, claimedAccount) {
 		api.WriteProblem(w, browserApprovalUnavailable())
 		return
 	}
@@ -164,17 +193,39 @@ func (s *server) exchangeBrowserPromotionApproval(w http.ResponseWriter, r *http
 		api.WriteProblem(w, problem)
 		return
 	}
-	s.returnBrowserApproval(w, r, acct, ticket, input.ExchangeCode)
+	s.returnBrowserApproval(w, r, acct, ticket, input.ExchangeCode, claimedAccount)
+}
+
+// browserApprovalExchangeAllowed checks who claimed the review and who
+// exchanges it. A personal review is claimed and exchanged by the account
+// itself. A company project's review is exchanged only by the member who
+// asked for it, and its reviewer must still be a member who may approve.
+func (s *server) browserApprovalExchangeAllowed(r *http.Request, acct state.Account, ticket browserApprovalTicket, claimedAccount string) bool {
+	if ticket.OrgID == "" {
+		return claimedAccount == acct.ID
+	}
+	grant, shared := projectaccess.From(r.Context())
+	if !shared || grant.Org.ID != ticket.OrgID || grant.Actor.ID != ticket.RequesterID {
+		return false
+	}
+	allowed, err := projectaccess.MayApprove(r.Context(), s.store, ticket.OrgID, claimedAccount)
+	return err == nil && allowed
 }
 
 // Deterministic private credentials make a lost exchange response retryable
 // without renewing approval or reviving a consumed credential. Only hashes
 // reach durable state. The unique approval hash fences concurrent exchanges.
-func (s *server) returnBrowserApproval(w http.ResponseWriter, r *http.Request, acct state.Account, ticket browserApprovalTicket, code string) {
+func (s *server) returnBrowserApproval(w http.ResponseWriter, r *http.Request, acct state.Account, ticket browserApprovalTicket, code, reviewer string) {
 	mac := hmac.New(sha256.New, s.sessions.BindingKey())
 	_, _ = mac.Write([]byte(browserApprovalPurpose + ":credential:" + code))
 	credential := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	approval, err := s.store.CreateProjectEnvironmentApproval(r.Context(), state.ProjectEnvironmentApproval{AccountID: acct.ID, ProjectSlug: ticket.Project, EnvironmentSlug: ticket.Environment, TokenKind: "promotion", PlanTokenHash: hashProjectEnvironmentApprovalMaterial(ticket.PromotionToken), ApprovalTokenHash: hashProjectEnvironmentApprovalMaterial(credential), ExpiresAt: ticket.ExpiresAt})
+	record := state.ProjectEnvironmentApproval{AccountID: acct.ID, ProjectSlug: ticket.Project, EnvironmentSlug: ticket.Environment, TokenKind: "promotion", PlanTokenHash: hashProjectEnvironmentApprovalMaterial(ticket.PromotionToken), ApprovalTokenHash: hashProjectEnvironmentApprovalMaterial(credential), ExpiresAt: ticket.ExpiresAt}
+	if ticket.OrgID != "" {
+		// The member who approved in the browser, so release approval
+		// policies judge that member, not the agent's (ADR-20261112230000).
+		record.ApprovedByAccountID = reviewer
+	}
+	approval, err := s.store.CreateProjectEnvironmentApproval(r.Context(), record)
 	if errors.Is(err, state.ErrConflict) {
 		approval, err = s.store.ProjectEnvironmentApprovalByToken(r.Context(), acct.ID, ticket.Project, ticket.Environment, hashProjectEnvironmentApprovalMaterial(ticket.PromotionToken), hashProjectEnvironmentApprovalMaterial(credential))
 	} else if err == nil {

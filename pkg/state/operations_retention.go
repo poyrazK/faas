@@ -17,6 +17,9 @@ func (s *PgStore) PruneOperationState(ctx context.Context, now time.Time, limit 
 	if limit < 1 || limit > api.OperationRetentionPageMax {
 		return 0, ErrInvalidArgument
 	}
+	if err := s.ExpireDataRepairDrafts(ctx, now.UTC(), limit); err != nil {
+		return 0, err
+	}
 	q := sqlc.New()
 	cutoff := pgtype.Timestamptz{Time: now.UTC(), Valid: true}
 	if _, err := q.PruneCustomerOperationStreams(ctx, s.pool, sqlc.PruneCustomerOperationStreamsParams{Now: cutoff, PageLimit: int32(limit)}); err != nil {
@@ -35,9 +38,12 @@ func (s *PgStore) PruneOperationState(ctx context.Context, now time.Time, limit 
 	return deleted, nil
 }
 
-func (m *MemStore) PruneOperationState(_ context.Context, now time.Time, limit int) (int64, error) {
+func (m *MemStore) PruneOperationState(ctx context.Context, now time.Time, limit int) (int64, error) {
 	if limit < 1 || limit > api.OperationRetentionPageMax {
 		return 0, ErrInvalidArgument
+	}
+	if err := m.ExpireDataRepairDrafts(ctx, now, limit); err != nil {
+		return 0, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -49,7 +55,7 @@ func (m *MemStore) PruneOperationState(_ context.Context, now time.Time, limit i
 	}
 	deleted := int64(0)
 	for id, op := range data.operations {
-		if op.DataRepair != nil && (op.DataRepair.Phase == api.DataRepairReplacing || op.DataRepair.Phase == api.DataRepairResolving) {
+		if repairRetainsHistory(op) {
 			continue // Keep the exact reservation and history until replacement admission or source outcome resolution.
 		}
 		if !op.EventExpiresAt.After(now) {
@@ -67,7 +73,7 @@ func (m *MemStore) PruneOperationState(_ context.Context, now time.Time, limit i
 			break
 		}
 		op, exists := data.operations[receipt.OperationID]
-		if !receipt.ExpiresAt.After(now) && (!exists || !operationIsActive(op)) {
+		if !receipt.ExpiresAt.After(now) && (!exists || !operationIsActive(op) && !repairRetainsHistory(op)) {
 			delete(data.receipts, key)
 			pruned++
 		}

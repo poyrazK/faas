@@ -15,7 +15,9 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/rolloutevidence"
+	"github.com/onebox-faas/faas/pkg/apphealth"
 	"github.com/onebox-faas/faas/pkg/dashboard"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -212,9 +214,30 @@ func (s *server) debugStatusHandler(w http.ResponseWriter, r *http.Request, acct
 			"Gregale could not summarize this app's debugger evidence.", "Retry in a moment; if it continues, contact support.", err)
 		return
 	}
+	s.debugStatusMemory(r.Context(), &out, app, acct)
 	out.Since = rolloutevidence.FormatWindow(since)
 	if sinceRaw != "" {
 		out.Since = echoDebugSince(sinceRaw, since)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// debugStatusMemory adds the memory-pressure summary and RAM suggestion to a
+// debug status, for accounts the app_health_memory platform flag releases
+// (ADR-20261102124306 step 3). A failed read leaves it out: the status never
+// fails for it.
+func (s *server) debugStatusMemory(ctx context.Context, out *api.DebugStatusResponse, app state.App, acct state.Account) {
+	if !s.platformFlagEnabled(platformflags.AppHealthMemory, acct) {
+		return
+	}
+	store, ok := s.store.(state.AppMemoryPressureStore)
+	if !ok {
+		return
+	}
+	pressure, recorded, err := store.AppMemoryPressure(ctx, app.ID)
+	if err != nil {
+		s.log.Warn("debug status: memory pressure", "app_id", app.ID, "err", err)
+		return
+	}
+	out.MemoryPressure = apphealth.DebugMemory(pressure, recorded, acct.Plan, app.RAMMB, time.Now())
 }

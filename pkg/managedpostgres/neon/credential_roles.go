@@ -11,7 +11,9 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/pipelineread"
 )
 
 const ownerLogin = "gregale_owner"
@@ -20,6 +22,10 @@ type credentialRole struct {
 	connectionLimit                                                          int64
 	name, schemaOwner, authOwner, marker, scope, database, legacy, bindingID string
 	access                                                                   managedpostgres.CredentialAccess
+	liveLegacyScope                                                          string
+	// session marks a session login, whose connection limit is enforced on
+	// an existing role too (ADR-20261110120000).
+	session bool
 }
 
 type credentialRoleManager interface {
@@ -49,11 +55,17 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 	case managedpostgres.CredentialAuth:
 		prefix = "gregale_auth_"
 	}
+	connectionLimit := request.ConnectionLimit
+	if request.Access == managedpostgres.CredentialSession && connectionLimit == 0 {
+		// Session logins hold server connections directly; the role limit
+		// keeps one binding from exhausting the compute (ADR-20261110120000).
+		connectionLimit = api.SessionBindingConnectionLimit
+	}
 	return credentialRole{name: prefix + hex.EncodeToString(identity[:20]), schemaOwner: "gregale_schema_" + hex.EncodeToString(owner[:16]),
-		connectionLimit: request.ConnectionLimit,
-		authOwner:       "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
+		connectionLimit: connectionLimit, session: request.Access == managedpostgres.CredentialSession,
+		authOwner: "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
 		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
-		database: p.databaseName, access: request.Access, legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID}
+		database: p.databaseName, access: request.Access.Privileges(), legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID}
 }
 
 func (m *sqlCredentialRoles) connection(ctx context.Context, material managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
@@ -194,6 +206,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 	if !info.matches(role) {
 		return managedpostgres.ErrConflict
 	}
+	if role.session {
+		if _, err := tx.Exec(ctx, "ALTER ROLE "+roleIdentifier(role.name)+" CONNECTION LIMIT "+strconv.FormatInt(role.connectionLimit, 10)); err != nil {
+			return err
+		}
+	}
 	if role.connectionLimit > 0 {
 		var limit int64
 		if err := tx.QueryRow(ctx, `SELECT rolconnlimit::bigint FROM pg_roles WHERE rolname=$1`, role.name).Scan(&limit); err != nil {
@@ -254,6 +271,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 		if missingPrivileges {
 			return managedpostgres.ErrConflict
 		}
+		if role.access == managedpostgres.CredentialReadOnly {
+			if err := pipelineread.Grant(ctx, tx, role.name); err != nil {
+				return managedpostgres.ErrConflict
+			}
+		}
 	}
 	if role.access == managedpostgres.CredentialDataAPI {
 		if err := ensureDataAPICredential(ctx, tx, role); err != nil {
@@ -294,11 +316,11 @@ func verifyReadOnlyRole(ctx context.Context, tx pgx.Tx, name string) error {
  OR (c.relkind='S' AND has_sequence_privilege($1,c.oid,'USAGE,UPDATE'))))
  OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
  WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND p.prosecdef AND has_function_privilege($1,p.oid,'EXECUTE')
- AND NOT `+authHelperSQL+`)
+ AND NOT (`+authHelperSQL+` OR `+pipelineread.TrustedReaderSQL+`))
  OR EXISTS (SELECT 1 FROM pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
  WHERE a.grantee IN (0,(SELECT oid FROM pg_roles WHERE rolname=$1))
  AND ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
- OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE'))))`, name).Scan(&unsafe)
+ OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE'))))`, name, pipelineread.ReaderBodySHA256).Scan(&unsafe)
 	if err != nil {
 		return err
 	}

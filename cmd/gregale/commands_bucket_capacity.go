@@ -24,6 +24,9 @@ func cmdBucket(args []string) int {
 	if len(args) > 0 && (args[0] == "upload" || args[0] == "download") {
 		return cmdBucketTransfer(args)
 	}
+	if len(args) > 0 && args[0] == "sign" {
+		return cmdBucketSign(args[1:])
+	}
 	if len(args) > 0 && args[0] == "copy-sources" {
 		return cmdBucketCopySources(args[1:])
 	}
@@ -109,7 +112,7 @@ func cmdBucketCapacity(args []string) int {
 	return 0
 }
 func bucketCapacityUsage() int {
-	PrintUsage(osStderr, "usage: gregale bucket inventory start <app> <bucket-id> | gregale bucket inventory <status|cancel> <app> <bucket-id> <job-id>", "bucket")
+	PrintUsage(osStderr, "usage: gregale bucket inventory start <app> <bucket-id> | gregale bucket inventory <get|cancel> <app> <bucket-id> <job-id>", "bucket")
 	return 1
 }
 

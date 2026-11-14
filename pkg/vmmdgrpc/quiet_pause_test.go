@@ -121,3 +121,37 @@ func TestQuietPauseAfterFromWire(t *testing.T) {
 		}
 	}
 }
+
+// ladderStubVMM reports a fixed idle ladder level (ADR-20261107122928).
+type ladderStubVMM struct {
+	quietStubVMM
+	level fcvm.IdleLevel
+}
+
+func (l *ladderStubVMM) IdleLadderLevel(string, time.Time) fcvm.IdleLevel { return l.level }
+
+// adr: 20261107122928 — Stats carries the idle ladder level of a guest it
+// reports paused, so schedd can book level 2 at its frozen charge.
+func TestAddQuietPauseStateCarriesIdleLadderLevel(t *testing.T) {
+	paused := fcvm.QuietPauseReport{Paused: true, Since: time.Unix(1_700_000_000, 0)}
+	for _, tc := range []struct {
+		name string
+		vmm  VmmdAPI
+		want int32
+	}{
+		{name: "paused at freeze", vmm: &ladderStubVMM{quietStubVMM: quietStubVMM{report: paused}, level: fcvm.IdleFreeze}, want: 2},
+		{name: "paused at quiet pause", vmm: &ladderStubVMM{quietStubVMM: quietStubVMM{report: paused}, level: fcvm.IdleQuietPause}, want: 1},
+		{name: "running guest never carries a level", vmm: &ladderStubVMM{level: fcvm.IdleFreeze}},
+		{name: "ladder off", vmm: &ladderStubVMM{quietStubVMM: quietStubVMM{report: paused}}},
+		{name: "no ladder capability", vmm: &quietStubVMM{report: paused}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(tc.vmm, nil, "1.17.0", nil)
+			row := &vmmdpb.InstanceStats{Instance: "vm-a"}
+			s.addQuietPauseState(row)
+			if got := row.GetIdleLadderLevel(); got != tc.want {
+				t.Fatalf("idle_ladder_level = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

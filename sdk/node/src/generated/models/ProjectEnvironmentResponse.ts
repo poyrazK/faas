@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ProjectEnvironmentBranchResponse } from './ProjectEnvironmentBranchResponse.js';
 import type { ProjectEnvironmentCloneOperationResponse } from './ProjectEnvironmentCloneOperationResponse.js';
 import type { ProjectEnvironmentCloneResponse } from './ProjectEnvironmentCloneResponse.js';
 /**
@@ -20,5 +21,6 @@ export type ProjectEnvironmentResponse = {
   cloned_from?: string;
   clone?: ProjectEnvironmentCloneResponse;
   clone_operation?: ProjectEnvironmentCloneOperationResponse;
+  branch?: ProjectEnvironmentBranchResponse;
 };
 

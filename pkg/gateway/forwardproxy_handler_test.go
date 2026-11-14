@@ -255,6 +255,10 @@ func (s *stubVmmdClient) DeleteWarmSnapshot(context.Context, *vmmdpb.DeleteWarmS
 	return nil, status.Error(codes.Unimplemented, "gateway stub does not manage builder snapshots")
 }
 
+func (s *stubVmmdClient) SnapshotBackingCurrent(context.Context, *vmmdpb.SnapshotBackingCurrentRequest, ...grpc.CallOption) (*vmmdpb.SnapshotBackingCurrentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub does not check snapshot backing")
+}
+
 // WarmSnapshot (issue #470 / PR #470-FU-A) is the forwardproxy
 // handler integration test's no-op seam — the gateway forward
 // path doesn't fire warm captures (the engine reaper is the

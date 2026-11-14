@@ -67,7 +67,9 @@ func TestMetalRestoreSkipsUnchangedPreBootFiles(t *testing.T) {
 
 func assertPreBootTimingRow(t *testing.T, row map[string]int64, wrote bool) {
 	t.Helper()
-	for _, key := range []string{"pre_boot_prepare_us", "pre_boot_mount_ms", "pre_boot_check_us", "pre_boot_write_us", "pre_boot_unmount_ms", "pre_boot_files_total", "pre_boot_files_written"} {
+	// Drive edits replay the journal in the guestdisk sandbox instead of
+	// mounting (ADR-20261025090100), so there is no mount or unmount timing.
+	for _, key := range []string{"pre_boot_prepare_us", "pre_boot_replay_ms", "pre_boot_check_us", "pre_boot_write_us", "pre_boot_files_total", "pre_boot_files_written"} {
 		if value, ok := row[key]; !ok || value < 0 {
 			t.Fatalf("missing or negative staging diagnostic %s: %v", key, row)
 		}
@@ -76,7 +78,7 @@ func assertPreBootTimingRow(t *testing.T, row map[string]int64, wrote bool) {
 		t.Fatalf("staging writer counts do not match skip/write path: %v", row)
 	}
 	if !wrote {
-		for _, key := range []string{"pre_boot_mount_ms", "pre_boot_check_us", "pre_boot_write_us", "pre_boot_unmount_ms"} {
+		for _, key := range []string{"pre_boot_replay_ms", "pre_boot_check_us", "pre_boot_write_us"} {
 			if row[key] != 0 {
 				t.Fatalf("skipped mount reported %s work: %v", key, row)
 			}

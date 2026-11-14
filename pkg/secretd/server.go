@@ -1,0 +1,702 @@
+// Package secretd is the control plane's opener of customer runtime secrets
+// (ADR-20261110210000 §3). Compute nodes hold no runtime seal-domain
+// identity; a node's vmmd asks secretd, over mutual TLS, to open the sealed
+// entries of an app it runs. secretd answers only:
+//
+//   - the app's owner node: apps.node_id, which only the control plane may
+//     set once app_owner_authority is enforce (ADR §4, slice 1a), or
+//   - a peer the owner granted (secret_grants, written only here, after
+//     checking that the grantor is the owner).
+//
+// Every envelope must be bound to the app's resource account, every open is
+// recorded in secret_open_audit before any plaintext leaves, and a node that
+// opens more distinct apps per hour than its budget is refused.
+package secretd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"filippo.io/age"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/crashcrypt"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/triggerconfig"
+	"github.com/onebox-faas/faas/pkg/wire"
+)
+
+// AppTarget is what secretd needs to know about an app.
+type AppTarget struct {
+	// OwnerNodeID is apps.node_id; empty while the app is unplaced.
+	OwnerNodeID string
+	// AccountID is the app's resource account (state.AppResourceAccount),
+	// the account its envelopes are bound to.
+	AccountID string
+}
+
+// Store is secretd's view of the database.
+type Store interface {
+	// NodeIDByName maps an mTLS certificate name to compute_nodes.id. It
+	// returns ErrUnknownNode for a name with no active node.
+	NodeIDByName(ctx context.Context, name string) (string, error)
+	AppTarget(ctx context.Context, appID string) (AppTarget, error)
+	GrantValid(ctx context.Context, appID, nodeID string, at time.Time) (bool, error)
+	UpsertGrant(ctx context.Context, appID, nodeID, grantedByNodeID string, expiresAt time.Time) (time.Time, error)
+	RecordOpen(ctx context.Context, nodeID, appID, via string, entries int) error
+	// CaptureKey returns a live sealed crash capture's app id and sealed
+	// key, or ErrUnknownCapture.
+	CaptureKey(ctx context.Context, captureID string) (appID string, sealed []byte, err error)
+	// SidecarEnv returns the sealed direct env of sidecarName in
+	// deploymentID, a deployment of appID (SidecarCiphertexts), or
+	// ErrUnknownSidecar.
+	SidecarEnv(ctx context.Context, appID, deploymentID, sidecarName string) (map[string][]byte, error)
+	// AppSecretCiphertext returns the ciphertext of appID's app_secrets row
+	// (scope, key), or ErrUnknownSecret.
+	AppSecretCiphertext(ctx context.Context, appID, scope, key string) ([]byte, error)
+	// LogDrainHeader returns the sealed authentication header of drainID, a
+	// log drain of appID, or ErrUnknownDrain.
+	LogDrainHeader(ctx context.Context, appID, drainID string) ([]byte, error)
+	// TriggerConfig returns the kind and stored (sealed) config of
+	// triggerID, a trigger of appID, or ErrUnknownTrigger.
+	TriggerConfig(ctx context.Context, appID, triggerID string) (kind string, config []byte, err error)
+	// EdgeHeaderSecret returns the sealed value of secretID, an
+	// edge_rule_header_secrets row of appID that one of appID's headers
+	// rules references, or ErrUnknownEdgeHeaderSecret.
+	EdgeHeaderSecret(ctx context.Context, appID, secretID string) ([]byte, error)
+	// RegistryCredential returns the username and sealed password of
+	// appID's credential for registry (the request URL's host), or
+	// ErrUnknownRegistryCredential.
+	RegistryCredential(ctx context.Context, appID, registry string) (username string, sealed []byte, err error)
+	// PreparesImage reports whether nodeName holds an unfinished image
+	// preparation of a deployment of appID updated since since.
+	PreparesImage(ctx context.Context, appID, nodeName string, since time.Time) (bool, error)
+	// JobRegistryCredential returns the username and sealed password of
+	// jobID's credential for registry, or ErrUnknownRegistryCredential.
+	JobRegistryCredential(ctx context.Context, jobID, registry string) (username string, sealed []byte, err error)
+	// JobMaterializationLease returns the job's image materialization lease
+	// owner ("<node name>/<claim>") and expiry, or ErrUnknownJob.
+	JobMaterializationLease(ctx context.Context, jobID string) (owner string, until time.Time, err error)
+	// RecordJobOpen records an open of a job's credential.
+	RecordJobOpen(ctx context.Context, nodeID, jobID, via string) error
+}
+
+// ErrUnknownJob is returned by Store.JobMaterializationLease.
+var ErrUnknownJob = errors.New("secretd: no such job")
+
+// ErrUnknownEdgeHeaderSecret is returned by Store.EdgeHeaderSecret.
+var ErrUnknownEdgeHeaderSecret = errors.New("secretd: the app has no referenced edge rule header value of that id")
+
+// ErrUnknownTrigger is returned by Store.TriggerConfig.
+var ErrUnknownTrigger = errors.New("secretd: the app has no trigger of that id")
+
+// ErrUnknownDrain is returned by Store.LogDrainHeader.
+var ErrUnknownDrain = errors.New("secretd: the app has no log drain with a header of that id")
+
+// LogDrainHeaderNamespace is the secretbox namespace apid seals log drain
+// headers under (gatewayd-internal's appLogDrainSecretSealLabel).
+const LogDrainHeaderNamespace = "APP_LOG_DRAIN_AUTH_HEADER"
+
+// MaxLogDrainHeaderBytes bounds an opened drain header, as gatewayd-internal
+// does.
+const MaxLogDrainHeaderBytes = 4096
+
+// ErrUnknownSecret is returned by Store.AppSecretCiphertext.
+var ErrUnknownSecret = errors.New("secretd: the app has no secret of that scope and key")
+
+// ErrUnknownNode is returned by Store.NodeIDByName.
+var ErrUnknownNode = errors.New("secretd: no active compute node has that name")
+
+// ErrUnknownCapture is returned by Store.CaptureKey.
+var ErrUnknownCapture = errors.New("secretd: no live sealed capture has that id")
+
+// Limits bound what one node may do.
+const (
+	// DefaultAppsPerNodeHour is how many distinct apps one node may open in a
+	// rolling hour. A node at the RAM admission ceiling with the smallest
+	// plan holds a few hundred instances; churn through more than this in an
+	// hour is a node collecting secrets, not running apps.
+	DefaultAppsPerNodeHour = 1000
+	// MaxEntriesPerRequest bounds one request.
+	MaxEntriesPerRequest = 512
+	// MinGrantTTL and MaxGrantTTL clamp a grant's lifetime; the owner renews
+	// it while the peer runs the app.
+	MinGrantTTL = time.Minute
+	MaxGrantTTL = time.Hour
+)
+
+// Server implements secretdpb.SecretdServer.
+type Server struct {
+	secretdpb.UnimplementedSecretdServer
+	store      Store
+	identities []*age.X25519Identity
+	log        *slog.Logger
+	// peerNode names the calling node; wire.PeerCN in production.
+	peerNode func(context.Context) (string, error)
+	now      func() time.Time
+	budget   *appBudget
+	// requireReferences refuses app-secret entries that carry ciphertext
+	// instead of naming the app's row (slice 3d-4 contract step).
+	requireReferences bool
+	metrics           *Metrics
+	// edgeIdentities open the edge seal domain (slice 3f): log drain
+	// headers. Empty refuses OpenLogDrainHeader.
+	edgeIdentities []*age.X25519Identity
+	// deliveryIdentities open the delivery seal domain (slice 3g): broker
+	// trigger credentials. Empty refuses OpenTriggerConfig.
+	deliveryIdentities []*age.X25519Identity
+	// buildIdentities open registry passwords (slice 3j). Empty refuses
+	// RegistryFetch.
+	buildIdentities []*age.X25519Identity
+	registry        *registryFetcher
+}
+
+// WithDeliveryIdentities lets secretd open delivery seal-domain values
+// (current first, then previous) for OpenTriggerConfig (ADR-20261110210000
+// slice 3g).
+func (s *Server) WithDeliveryIdentities(ids []*age.X25519Identity) *Server {
+	s.deliveryIdentities = ids
+	return s
+}
+
+// WithEdgeIdentities lets secretd open edge seal-domain values (current
+// first, then previous) for OpenLogDrainHeader (ADR-20261110210000 slice 3f).
+func (s *Server) WithEdgeIdentities(ids []*age.X25519Identity) *Server {
+	s.edgeIdentities = ids
+	return s
+}
+
+// WithMetrics counts opens and refusals on m.
+func (s *Server) WithMetrics(m *Metrics) *Server {
+	s.metrics = m
+	return s
+}
+
+// RequireReferences makes OpenAppSecrets refuse entries that are not
+// references to the app's own app_secrets rows (ADR-20261110210000 slice
+// 3d-4). Turn it on once every schedd and vmmd sends references.
+func (s *Server) RequireReferences(required bool) *Server {
+	s.requireReferences = required
+	return s
+}
+
+// NewServer returns a server that opens with identities, the runtime seal
+// domain's (current first, then previous).
+func NewServer(store Store, identities []*age.X25519Identity, appsPerNodeHour int, log *slog.Logger) *Server {
+	if appsPerNodeHour <= 0 {
+		appsPerNodeHour = DefaultAppsPerNodeHour
+	}
+	s := &Server{
+		store: store, identities: identities, log: log,
+		peerNode: wire.PeerCN, now: time.Now,
+		budget: newAppBudget(appsPerNodeHour, time.Hour),
+	}
+	s.registry = newRegistryFetcher(nil, func() time.Time { return s.now() })
+	return s
+}
+
+// WithPeerNode replaces the caller identity source (tests).
+func (s *Server) WithPeerNode(f func(context.Context) (string, error)) *Server {
+	s.peerNode = f
+	return s
+}
+
+// WithClock replaces the clock (tests).
+func (s *Server) WithClock(now func() time.Time) *Server {
+	s.now = now
+	return s
+}
+
+func rpcErr(code codes.Code, msg string) error { return status.Error(code, msg) }
+
+// caller returns the calling node's name and id.
+func (s *Server) caller(ctx context.Context, rpc string) (string, string, error) {
+	name, err := s.peerNode(ctx)
+	if err != nil || strings.TrimSpace(name) == "" {
+		s.metrics.refuse(rpc, ReasonUnauthenticated)
+		return "", "", rpcErr(codes.Unauthenticated, "secretd refused the caller: no node identity")
+	}
+	id, err := s.store.NodeIDByName(ctx, name)
+	if errors.Is(err, ErrUnknownNode) {
+		s.metrics.refuse(rpc, ReasonUnknownNode)
+		return "", "", rpcErr(codes.PermissionDenied, "secretd refused the caller: not an active compute node")
+	}
+	if err != nil {
+		s.log.Error("secretd: node lookup", "node", logsanitize.Field(name), "err", err)
+		return "", "", rpcErr(codes.Unavailable, "secretd could not look up the caller")
+	}
+	return name, id, nil
+}
+
+// OpenAppSecrets implements secretdpb.SecretdServer.
+func (s *Server) OpenAppSecrets(ctx context.Context, req *secretdpb.OpenAppSecretsRequest) (*secretdpb.OpenAppSecretsResponse, error) {
+	name, nodeID, err := s.caller(ctx, rpcOpenAppSecrets)
+	if err != nil {
+		return nil, err
+	}
+	appID := req.GetAppId()
+	if appID == "" || len(req.GetEntries()) > MaxEntriesPerRequest {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id and at most 512 entries")
+	}
+	target, err := s.store.AppTarget(ctx, appID)
+	if err != nil {
+		s.log.Warn("secretd: app lookup", "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.NotFound, "secretd found no such app")
+	}
+	via, err := s.authorize(ctx, appID, nodeID, target)
+	if err != nil {
+		s.log.Warn("secretd: refused open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		s.metrics.refuse(rpcOpenAppSecrets, ReasonNotAuthorized)
+		return nil, rpcErr(codes.PermissionDenied, "secretd refused: the caller neither owns the app nor holds a grant for it")
+	}
+	if !s.budget.allow(nodeID, appID, s.now()) {
+		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
+		s.metrics.refuse(rpcOpenAppSecrets, ReasonBudgetExhausted)
+		return nil, rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
+	}
+	values, err := s.open(ctx, appID, req.GetEntries(), target.AccountID)
+	if err != nil {
+		s.log.Warn("secretd: refused envelope", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		s.metrics.refuse(rpcOpenAppSecrets, envelopeReason(err))
+		return nil, rpcErr(codes.FailedPrecondition, "secretd refused an envelope: "+err.Error())
+	}
+	// The record precedes the plaintext: an open that cannot be recorded
+	// does not happen.
+	if err := s.store.RecordOpen(ctx, nodeID, appID, via, len(values)); err != nil {
+		clear(values)
+		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
+	}
+	s.metrics.open(rpcOpenAppSecrets, via)
+	return &secretdpb.OpenAppSecretsResponse{Values: values}, nil
+}
+
+func (s *Server) authorize(ctx context.Context, appID, nodeID string, target AppTarget) (string, error) {
+	if target.OwnerNodeID != "" && target.OwnerNodeID == nodeID {
+		return "owner", nil
+	}
+	ok, err := s.store.GrantValid(ctx, appID, nodeID, s.now())
+	if err != nil {
+		return "", fmt.Errorf("grant lookup: %w", err)
+	}
+	if !ok {
+		return "", errors.New("no ownership and no valid grant")
+	}
+	return "grant", nil
+}
+
+// open opens every entry, requiring each envelope to be bound to accountID
+// and to hold exactly the selected key. An entry with a scope is a
+// reference to appID's app_secrets row (slice 3d-4).
+func (s *Server) open(ctx context.Context, appID string, entries []*secretdpb.SealedEntry, accountID string) (map[string]string, error) {
+	if len(s.identities) == 0 {
+		return nil, errors.New("secretd holds no runtime identity")
+	}
+	values := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		key := entry.GetKey()
+		source := entry.GetSourceKey()
+		if source == "" {
+			source = key
+		}
+		if api.ValidateEnvKey(key) != nil || api.ValidateEnvKey(source) != nil {
+			clear(values)
+			return nil, fmt.Errorf("entry %s: invalid key", logsanitize.Field(key))
+		}
+		if _, dup := values[key]; dup {
+			clear(values)
+			return nil, fmt.Errorf("entry %s: duplicate key", logsanitize.Field(key))
+		}
+		ciphertext := entry.GetCiphertext()
+		if scope := entry.GetScope(); scope != "" {
+			// Slice 3d-4: a reference names the app's own row; whatever
+			// ciphertext the caller sent is ignored.
+			row, err := s.store.AppSecretCiphertext(ctx, appID, scope, source)
+			if err != nil {
+				clear(values)
+				return nil, fmt.Errorf("entry %s: %w", logsanitize.Field(key), err)
+			}
+			ciphertext = row
+		} else if s.requireReferences {
+			clear(values)
+			return nil, fmt.Errorf("entry %s: %w", logsanitize.Field(key), errUnreferenced)
+		}
+		inner, binding, err := secretbox.OpenMultiBound(s.identities, ciphertext)
+		if err != nil {
+			clear(values)
+			return nil, fmt.Errorf("entry %s: %w", logsanitize.Field(key), err)
+		}
+		if err := binding.Require(accountID); err != nil {
+			clear(inner)
+			clear(values)
+			if errors.Is(err, secretbox.ErrUnbound) {
+				return nil, fmt.Errorf("entry %s: %w", logsanitize.Field(key), err)
+			}
+			return nil, fmt.Errorf("entry %s: %w: %w", logsanitize.Field(key), errWrongAccount, err)
+		}
+		value, ok := inner[source]
+		if !ok || len(inner) != 1 {
+			clear(inner)
+			clear(values)
+			return nil, fmt.Errorf("entry %s: envelope does not hold exactly the selected key", logsanitize.Field(key))
+		}
+		values[key] = value
+		clear(inner)
+	}
+	return values, nil
+}
+
+// GrantPeer implements secretdpb.SecretdServer.
+func (s *Server) GrantPeer(ctx context.Context, req *secretdpb.GrantPeerRequest) (*secretdpb.GrantPeerResponse, error) {
+	name, nodeID, err := s.caller(ctx, rpcGrantPeer)
+	if err != nil {
+		return nil, err
+	}
+	appID := req.GetAppId()
+	if appID == "" || strings.TrimSpace(req.GetNodeName()) == "" {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id and a node name")
+	}
+	target, err := s.store.AppTarget(ctx, appID)
+	if err != nil {
+		return nil, rpcErr(codes.NotFound, "secretd found no such app")
+	}
+	if target.OwnerNodeID == "" || target.OwnerNodeID != nodeID {
+		s.log.Warn("secretd: refused grant from a non-owner", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
+		s.metrics.refuse(rpcGrantPeer, ReasonNotAuthorized)
+		return nil, rpcErr(codes.PermissionDenied, "secretd refused: only the app's owner node may grant")
+	}
+	peerID, err := s.store.NodeIDByName(ctx, req.GetNodeName())
+	if errors.Is(err, ErrUnknownNode) {
+		return nil, rpcErr(codes.NotFound, "secretd found no active node of that name")
+	}
+	if err != nil {
+		return nil, rpcErr(codes.Unavailable, "secretd could not look up the peer")
+	}
+	if peerID == nodeID {
+		return nil, rpcErr(codes.InvalidArgument, "the owner needs no grant")
+	}
+	ttl := time.Duration(req.GetTtlSeconds()) * time.Second
+	ttl = min(max(ttl, MinGrantTTL), MaxGrantTTL)
+	expires, err := s.store.UpsertGrant(ctx, appID, peerID, nodeID, s.now().Add(ttl))
+	if err != nil {
+		s.log.Error("secretd: record grant", "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the grant")
+	}
+	s.metrics.open(rpcGrantPeer, "owner")
+	return &secretdpb.GrantPeerResponse{ExpiresAt: expires.UTC().Format(time.RFC3339)}, nil
+}
+
+// OpenCaptureKey implements secretdpb.SecretdServer (ADR-20261110210000
+// slice 3d): the caller names a capture, never supplies its key; secretd
+// reads the sealed key and answers only when the capture belongs to the app
+// the caller owns or holds a grant for.
+func (s *Server) OpenCaptureKey(ctx context.Context, req *secretdpb.OpenCaptureKeyRequest) (*secretdpb.OpenCaptureKeyResponse, error) {
+	appID, captureID := req.GetAppId(), req.GetCaptureId()
+	if appID == "" || captureID == "" {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id and a capture id")
+	}
+	if len(s.identities) == 0 {
+		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no runtime identity")
+	}
+	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenCaptureKey, appID)
+	if err != nil {
+		return nil, err
+	}
+	captureApp, sealed, err := s.store.CaptureKey(ctx, captureID)
+	if errors.Is(err, ErrUnknownCapture) {
+		return nil, rpcErr(codes.NotFound, "secretd found no live sealed capture with that id")
+	}
+	if err != nil {
+		s.log.Error("secretd: capture lookup", "capture_id", logsanitize.Field(captureID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not look up the capture")
+	}
+	if captureApp != appID {
+		s.log.Warn("secretd: refused capture of another app", "node", logsanitize.Field(name),
+			"app_id", logsanitize.Field(appID), "capture_id", logsanitize.Field(captureID))
+		s.metrics.refuse(rpcOpenCaptureKey, ReasonOtherApp)
+		return nil, rpcErr(codes.PermissionDenied, "secretd refused: the capture belongs to another app")
+	}
+	identity, err := crashcrypt.OpenKey(s.identities, captureID, sealed)
+	if err != nil {
+		s.log.Warn("secretd: capture key does not open", "capture_id", logsanitize.Field(captureID), "err", err)
+		s.metrics.refuse(rpcOpenCaptureKey, ReasonEnvelope)
+		return nil, rpcErr(codes.FailedPrecondition, "secretd could not open the capture key")
+	}
+	if err := s.store.RecordOpen(ctx, nodeID, appID, via, 1); err != nil {
+		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
+	}
+	s.metrics.open(rpcOpenCaptureKey, via)
+	return &secretdpb.OpenCaptureKeyResponse{Identity: identity.String()}, nil
+}
+
+// OpenSidecarEnv implements secretdpb.SecretdServer (ADR-20261110210000
+// slice 3d): the caller names a deployment and a sidecar; secretd reads the
+// sealed values from that deployment, which must be the app's, and opens
+// them.
+func (s *Server) OpenSidecarEnv(ctx context.Context, req *secretdpb.OpenSidecarEnvRequest) (*secretdpb.OpenSidecarEnvResponse, error) {
+	appID, deploymentID, sidecar := req.GetAppId(), req.GetDeploymentId(), req.GetSidecarName()
+	if appID == "" || deploymentID == "" || sidecar == "" {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id, a deployment id and a sidecar name")
+	}
+	if len(s.identities) == 0 {
+		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no runtime identity")
+	}
+	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenSidecarEnv, appID)
+	if err != nil {
+		return nil, err
+	}
+	sealed, err := s.store.SidecarEnv(ctx, appID, deploymentID, sidecar)
+	if errors.Is(err, ErrUnknownSidecar) {
+		return nil, rpcErr(codes.NotFound, "secretd found no such sidecar in a deployment of the app")
+	}
+	if err != nil {
+		s.log.Error("secretd: sidecar lookup", "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not look up the sidecar")
+	}
+	values := make(map[string]string, len(sealed))
+	for key, ct := range sealed {
+		namespace, plaintext, err := secretbox.OpenBytesMulti(s.identities, ct)
+		if err == nil && namespace != SidecarEnvNamespace {
+			err = fmt.Errorf("namespace %q, want %s", namespace, SidecarEnvNamespace)
+		}
+		if err != nil {
+			clear(values)
+			s.log.Warn("secretd: sidecar env does not open", "app_id", logsanitize.Field(appID), "key", logsanitize.Field(key), "err", err)
+			s.metrics.refuse(rpcOpenSidecarEnv, ReasonEnvelope)
+			return nil, rpcErr(codes.FailedPrecondition, "secretd could not open a sidecar env value")
+		}
+		values[key] = string(plaintext)
+	}
+	if err := s.store.RecordOpen(ctx, nodeID, appID, via, len(values)); err != nil {
+		clear(values)
+		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
+	}
+	s.metrics.open(rpcOpenSidecarEnv, via)
+	return &secretdpb.OpenSidecarEnvResponse{Values: values}, nil
+}
+
+// OpenLogDrainHeader implements secretdpb.SecretdServer (ADR-20261110210000
+// slice 3f): the caller names a drain; secretd reads its sealed header from
+// the drain row, which must be the app's, and opens it with the edge domain.
+// Drains ship only from the app's owner node, so owner or grant authorizes.
+func (s *Server) OpenLogDrainHeader(ctx context.Context, req *secretdpb.OpenLogDrainHeaderRequest) (*secretdpb.OpenLogDrainHeaderResponse, error) {
+	appID, drainID := req.GetAppId(), req.GetDrainId()
+	if appID == "" || drainID == "" {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id and a drain id")
+	}
+	if len(s.edgeIdentities) == 0 {
+		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no edge identity")
+	}
+	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenLogDrainHeader, appID)
+	if err != nil {
+		return nil, err
+	}
+	sealed, err := s.store.LogDrainHeader(ctx, appID, drainID)
+	if errors.Is(err, ErrUnknownDrain) {
+		return nil, rpcErr(codes.NotFound, "secretd found no such log drain of the app")
+	}
+	if err != nil {
+		s.log.Error("secretd: log drain lookup", "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not look up the log drain")
+	}
+	namespace, plaintext, err := secretbox.OpenBytesMulti(s.edgeIdentities, sealed)
+	if err == nil && namespace != LogDrainHeaderNamespace {
+		err = fmt.Errorf("namespace %q, want %s", namespace, LogDrainHeaderNamespace)
+	}
+	if err == nil && len(plaintext) > MaxLogDrainHeaderBytes {
+		err = errors.New("header exceeds the size limit")
+	}
+	if err != nil {
+		clear(plaintext)
+		s.log.Warn("secretd: log drain header does not open", "app_id", logsanitize.Field(appID),
+			"drain_id", logsanitize.Field(drainID), "err", err)
+		s.metrics.refuse(rpcOpenLogDrainHeader, ReasonEnvelope)
+		return nil, rpcErr(codes.FailedPrecondition, "secretd could not open the log drain header")
+	}
+	if err := s.store.RecordOpen(ctx, nodeID, appID, via, 1); err != nil {
+		clear(plaintext)
+		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
+	}
+	s.metrics.open(rpcOpenLogDrainHeader, via)
+	return &secretdpb.OpenLogDrainHeaderResponse{Header: string(plaintext)}, nil
+}
+
+// OpenTriggerConfig implements secretdpb.SecretdServer (ADR-20261110210000
+// slice 3g): the caller names a trigger; secretd reads its stored config,
+// which must be a trigger of the app, and opens its credential leaves with
+// the delivery domain. Broker triggers are polled only by the app's owner
+// node, so owner or grant authorizes.
+func (s *Server) OpenTriggerConfig(ctx context.Context, req *secretdpb.OpenTriggerConfigRequest) (*secretdpb.OpenTriggerConfigResponse, error) {
+	appID, triggerID := req.GetAppId(), req.GetTriggerId()
+	if appID == "" || triggerID == "" {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs an app id and a trigger id")
+	}
+	if len(s.deliveryIdentities) == 0 {
+		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no delivery identity")
+	}
+	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenTriggerConfig, appID)
+	if err != nil {
+		return nil, err
+	}
+	kind, stored, err := s.store.TriggerConfig(ctx, appID, triggerID)
+	if errors.Is(err, ErrUnknownTrigger) {
+		return nil, rpcErr(codes.NotFound, "secretd found no such trigger of the app")
+	}
+	if err != nil {
+		s.log.Error("secretd: trigger lookup", "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not look up the trigger")
+	}
+	opened, err := triggerconfig.Open(api.TriggerKind(kind), stored, s.deliveryIdentities)
+	if err != nil {
+		s.log.Warn("secretd: trigger credentials do not open", "app_id", logsanitize.Field(appID),
+			"trigger_id", logsanitize.Field(triggerID), "err", err)
+		s.metrics.refuse(rpcOpenTriggerConfig, ReasonEnvelope)
+		return nil, rpcErr(codes.FailedPrecondition, "secretd could not open the trigger credentials")
+	}
+	if err := s.store.RecordOpen(ctx, nodeID, appID, via, 1); err != nil {
+		clear(opened)
+		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
+	}
+	s.metrics.open(rpcOpenTriggerConfig, via)
+	return &secretdpb.OpenTriggerConfigResponse{ConfigJson: opened}, nil
+}
+
+// OpenEdgeHeaderSecret implements secretdpb.SecretdServer (ADR-20261110210000
+// slice 3i): the node that runs an instance of target_app_id asks for one
+// sealed edge-rule request header value, which vmmd adds to the guest
+// request. The caller must own the target app or hold a grant for it; the
+// value's app must share the target app's resource account (a route rule may
+// send one app's host to another app of the account) and still reference the
+// value from one of its headers rules.
+func (s *Server) OpenEdgeHeaderSecret(ctx context.Context, req *secretdpb.OpenEdgeHeaderSecretRequest) (*secretdpb.OpenEdgeHeaderSecretResponse, error) {
+	targetID, secretApp, secretID := req.GetTargetAppId(), req.GetSecretAppId(), req.GetSecretId()
+	if targetID == "" || secretApp == "" || secretID == "" {
+		return nil, rpcErr(codes.InvalidArgument, "secretd needs a target app id, a secret app id and a secret id")
+	}
+	if len(s.edgeIdentities) == 0 {
+		return nil, rpcErr(codes.FailedPrecondition, "secretd holds no edge identity")
+	}
+	name, nodeID, via, err := s.authorizeByReference(ctx, rpcOpenEdgeHeaderSecret, targetID)
+	if err != nil {
+		return nil, err
+	}
+	if secretApp != targetID {
+		target, terr := s.store.AppTarget(ctx, targetID)
+		owner, oerr := s.store.AppTarget(ctx, secretApp)
+		if terr != nil || oerr != nil {
+			return nil, rpcErr(codes.NotFound, "secretd found no such app")
+		}
+		if owner.AccountID == "" || owner.AccountID != target.AccountID {
+			s.log.Error("secretd: refused an edge header value of another account", "node", logsanitize.Field(name),
+				"app_id", logsanitize.Field(targetID), "secret_app_id", logsanitize.Field(secretApp))
+			s.metrics.refuse(rpcOpenEdgeHeaderSecret, ReasonWrongAccount)
+			return nil, rpcErr(codes.PermissionDenied, "secretd refused: the value belongs to an app of another account")
+		}
+	}
+	sealed, err := s.store.EdgeHeaderSecret(ctx, secretApp, secretID)
+	if errors.Is(err, ErrUnknownEdgeHeaderSecret) {
+		return nil, rpcErr(codes.NotFound, "secretd found no such edge rule header value referenced by the app")
+	}
+	if err != nil {
+		s.log.Error("secretd: edge header value lookup", "secret_app_id", logsanitize.Field(secretApp), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not look up the edge rule header value")
+	}
+	namespace, plaintext, err := secretbox.OpenBytesMulti(s.edgeIdentities, sealed)
+	if err == nil && namespace != api.EdgeRuleHeaderSecretSealNamespace {
+		err = fmt.Errorf("namespace %q, want %s", namespace, api.EdgeRuleHeaderSecretSealNamespace)
+	}
+	if err == nil && (len(plaintext) == 0 || len(plaintext) > api.EdgeRuleHeaderSecretMaxBytes) {
+		err = errors.New("value is empty or exceeds the size limit")
+	}
+	if err != nil {
+		clear(plaintext)
+		s.log.Warn("secretd: edge header value does not open", "secret_app_id", logsanitize.Field(secretApp),
+			"secret_id", logsanitize.Field(secretID), "err", err)
+		s.metrics.refuse(rpcOpenEdgeHeaderSecret, ReasonEnvelope)
+		return nil, rpcErr(codes.FailedPrecondition, "secretd could not open the edge rule header value")
+	}
+	// The audit names the app whose value left, under the authorization the
+	// caller holds for the app it runs.
+	if err := s.store.RecordOpen(ctx, nodeID, secretApp, via, 1); err != nil {
+		clear(plaintext)
+		s.log.Error("secretd: record open", "node", logsanitize.Field(name), "app_id", logsanitize.Field(secretApp), "err", err)
+		return nil, rpcErr(codes.Unavailable, "secretd could not record the open")
+	}
+	s.metrics.open(rpcOpenEdgeHeaderSecret, via)
+	return &secretdpb.OpenEdgeHeaderSecretResponse{Value: string(plaintext)}, nil
+}
+
+// authorizeByReference checks a by-reference open of appID's material: the
+// caller is an active node that owns the app or holds a grant for it, within
+// its distinct-app budget, and secretd holds a runtime identity. It returns
+// the caller's name and node id and how it is authorized.
+func (s *Server) authorizeByReference(ctx context.Context, rpc, appID string) (name, nodeID, via string, err error) {
+	name, nodeID, err = s.caller(ctx, rpc)
+	if err != nil {
+		return "", "", "", err
+	}
+	target, err := s.store.AppTarget(ctx, appID)
+	if err != nil {
+		return "", "", "", rpcErr(codes.NotFound, "secretd found no such app")
+	}
+	via, err = s.authorize(ctx, appID, nodeID, target)
+	if err != nil {
+		s.log.Warn("secretd: refused open by reference", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID), "err", err)
+		s.metrics.refuse(rpc, ReasonNotAuthorized)
+		return "", "", "", rpcErr(codes.PermissionDenied, "secretd refused: the caller neither owns the app nor holds a grant for it")
+	}
+	if !s.budget.allow(nodeID, appID, s.now()) {
+		s.log.Error("secretd: node over its distinct-app budget", "node", logsanitize.Field(name), "app_id", logsanitize.Field(appID))
+		s.metrics.refuse(rpc, ReasonBudgetExhausted)
+		return "", "", "", rpcErr(codes.ResourceExhausted, "secretd refused: the caller opened too many distinct apps this hour")
+	}
+	return name, nodeID, via, nil
+}
+
+// appBudget counts the distinct apps each node opened in a rolling window.
+type appBudget struct {
+	mu     sync.Mutex
+	limit  int
+	window time.Duration
+	seen   map[string]map[string]time.Time // node -> app -> last open
+}
+
+func newAppBudget(limit int, window time.Duration) *appBudget {
+	return &appBudget{limit: limit, window: window, seen: map[string]map[string]time.Time{}}
+}
+
+// allow records node opening app at now and reports whether node stays
+// within its distinct-app budget. Re-opening an app it already holds is
+// always allowed.
+func (b *appBudget) allow(node, app string, now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	apps := b.seen[node]
+	if apps == nil {
+		apps = map[string]time.Time{}
+		b.seen[node] = apps
+	}
+	for id, at := range apps {
+		if now.Sub(at) >= b.window {
+			delete(apps, id)
+		}
+	}
+	if _, held := apps[app]; !held && len(apps) >= b.limit {
+		return false
+	}
+	apps[app] = now
+	return true
+}

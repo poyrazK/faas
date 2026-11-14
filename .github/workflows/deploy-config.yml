@@ -27,6 +27,16 @@ on:
       - "scripts/ci/check_alertmanager_config.sh"
       - "scripts/ci/check_prometheus_alert_metadata.sh"
       - "scripts/ci/ensure-ansible-toolchain.sh"
+      - "scripts/ops/obs_gate.py"
+      - "scripts/ops/obs_gate_test.py"
+      - "scripts/ops/faas_serving_probe_test.py"
+      - "scripts/ops/serving_probe_coverage_test.py"
+      - "scripts/ops/notification_drill.py"
+      - "scripts/ops/notification_drill_test.py"
+      - "scripts/ops/notification_receiver_metrics_test.py"
+      - "scripts/ops/notification_receiver_config_test.py"
+      - "scripts/ops/notification_receiver_rules_test.py"
+      - "scripts/ci/check_notification_delivery.sh"
       - "scripts/egress-render-cross-check.sh"
       - "Makefile"
       - ".github/workflows/deploy-config.yml"
@@ -92,6 +102,17 @@ jobs:
 
       - name: Alertmanager routes
         run: make alertmanager-config-check
+
+      - name: Notification delivery drill
+        run: NOTIFICATION_DRILL_REPORT="$RUNNER_TEMP/notification-drill.json" make notification-delivery-check
+
+      - name: Notification drill evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: notification-drill
+          path: ${{ runner.temp }}/notification-drill.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: nftables renderers
         run: make egress-check

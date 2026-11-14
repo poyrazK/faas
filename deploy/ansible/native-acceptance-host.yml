@@ -260,6 +260,11 @@
         # nftables 1.1.3+ and loose rp_filter on the tenant bridge (ADR-1749).
         faas_public_forward_host: true
     - role: canary_artifact_retention
+    # Go build caches (runner caches under /var/cache/faas-*, plus root's and
+    # operators') filled the 48 GB root disk of gregale-internal-test-1 and
+    # failed metal runs at their first write. Trims them above 85% usage while
+    # no run holds the acceptance lock.
+    - role: go_cache_retention
     - role: native_acceptance_host
       vars:
         nah_enabled: true

@@ -22,7 +22,7 @@ func initialManualAttentionTransition(r *api.WorkflowInitialRecoveryReview, reas
 	a.Reason, a.ObservedAt, a.Diagnosis = reason, now, &d
 	base := "/v1/apps/" + url.PathEscape(r.App) + "/initial-recovery-reviews/" + r.ID
 	a.EvidenceURL = base + "/evidence"
-	a.CLICommand = fmt.Sprintf("gregale automations failure-recovery-evidence --app %s --review %s", r.App, r.ID)
+	a.CLICommand = fmt.Sprintf("gregale workflow stored failure-recovery-evidence --app %s --review %s", r.App, r.ID)
 	a.OperatorAction = initialManualOperatorAction(reason, d)
 	// A retained pending item or a policy change cannot prove an evidence blocker
 	// cleared. Only confirmed results or exact-generation execution progress can.

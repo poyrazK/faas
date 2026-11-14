@@ -87,6 +87,9 @@ type ProjectEnvironmentCloneObjectCredential struct {
 	ManagedAppID  string `json:"managed_app_id"`
 	ManagedScope  string `json:"managed_scope"`
 	ManagedPrefix string `json:"managed_prefix"`
+	// KeyPrefix is the binding's object key scope (ADR-20261106114500); a
+	// clone's copy keeps it, so a clone never widens a scoped key.
+	KeyPrefix string `json:"key_prefix,omitempty"`
 }
 
 type ProjectEnvironmentCloneObjectAccessGrant struct {

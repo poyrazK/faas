@@ -126,6 +126,7 @@ export interface WorkflowInvocationResponse {
   protocol: string;
   ops: ReportedOperation[];
   result: { status: 'running' | 'succeeded' | 'failed'; output?: unknown; error?: string };
+  replayed_ops?: number;
 }
 
 /** Parses a Duration into milliseconds. */
@@ -168,6 +169,7 @@ class Invocation implements WorkflowContext {
   get runId(): string { return this.request.run_id; }
   get workflow(): string { return this.request.workflow; }
   get invocation(): number { return this.request.invocation; }
+  get replayedOps(): number { return Math.min(this.seq, this.request.journal.length); }
 
   // claim assigns the next sequence number. A recorded operation that does
   // not match is reported as asked, so Gregale refuses the replay.
@@ -267,7 +269,7 @@ export async function runWorkflowInvocation(definitions: readonly WorkflowDefini
   }
   await Promise.allSettled(invocation.pending);
   const ops = [...invocation.ops].sort((a, b) => a.seq - b.seq);
-  const response: WorkflowInvocationResponse = { protocol: WORKFLOW_CODE_PROTOCOL, ops, result: { status: 'running' } };
+  const response: WorkflowInvocationResponse = { protocol: WORKFLOW_CODE_PROTOCOL, ops, result: { status: 'running' }, replayed_ops: invocation.replayedOps };
   if (finished?.ok) {
     let output: unknown;
     try {
@@ -288,13 +290,23 @@ const byteLength = (value: unknown): number => Buffer.byteLength(JSON.stringify(
 // output) that would push the answer past WORKFLOW_RESPONSE_MAX_BYTES, so an
 // oversized result surfaces as a step error instead of a failed call.
 function fitResponse(response: WorkflowInvocationResponse): WorkflowInvocationResponse {
-  const budget = WORKFLOW_RESPONSE_MAX_BYTES - 1024;
+  let budget = WORKFLOW_RESPONSE_MAX_BYTES - 1024;
+  if (response.result.error !== undefined) response.result.error = truncateWorkflowError(response.result.error, 4 * 1024);
+  if (response.result.status === 'failed') budget -= byteLength(response.result);
   let used = byteLength({ protocol: response.protocol, ops: [], result: { status: 'running' } });
+  let remaining = response.ops.reduce((total, op) => total + minimalWorkflowOpSize(op), 0);
   response.ops = response.ops.map((op) => {
+    remaining -= minimalWorkflowOpSize(op);
+    const available = budget - remaining;
+    if (op.error !== undefined) op.error = truncateWorkflowError(op.error, 4 * 1024);
     let size = byteLength(op) + 1;
-    if (op.kind === 'step' && op.status === 'succeeded' && used + size > budget) {
+    if (op.kind === 'step' && op.status === 'succeeded' && used + size > available) {
       const { output: _dropped, ...rest } = op;
       op = { ...rest, status: 'failed', error: `step result does not fit in one call's ${WORKFLOW_RESPONSE_MAX_BYTES} byte answer; store large data elsewhere and return its key`, non_retryable: true };
+      size = byteLength(op) + 1;
+    }
+    if (used + size > available && op.error) {
+      op.error = truncateWorkflowError(op.error, Math.max(0, Buffer.byteLength(op.error) - (used + size - available)));
       size = byteLength(op) + 1;
     }
     used += size;
@@ -303,7 +315,23 @@ function fitResponse(response: WorkflowInvocationResponse): WorkflowInvocationRe
   if (response.result.status === 'succeeded' && used + byteLength(response.result) > budget) {
     response.result = { status: 'failed', error: `workflow output does not fit in one call's ${WORKFLOW_RESPONSE_MAX_BYTES} byte answer` };
   }
+  if (byteLength(response) > WORKFLOW_RESPONSE_MAX_BYTES) {
+    response.ops = [];
+    response.result = { status: 'failed', error: 'workflow response metadata exceeds the response limit' };
+  }
   return response;
+}
+
+function minimalWorkflowOpSize(op: ReportedOperation): number {
+  if (op.kind !== 'step') return byteLength(op) + 1;
+  const { output: _dropped, ...rest } = op;
+  return byteLength({ ...rest, error: '', ...(op.status === 'succeeded' ? { status: 'failed', non_retryable: true } : {}) }) + 1;
+}
+
+function truncateWorkflowError(message: string, maxBytes: number): string {
+  const bytes = Buffer.from(message);
+  if (bytes.length <= maxBytes) return message;
+  return bytes.subarray(0, maxBytes).toString('utf8').replace(/\uFFFD$/u, '');
 }
 
 export class UnknownWorkflowError extends Error {

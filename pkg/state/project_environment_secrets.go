@@ -79,6 +79,7 @@ func (m *MemStore) SetProjectEnvironmentSecret(_ context.Context, secret Project
 	secret.UpdatedAt = now
 	secret.Ciphertext = append([]byte(nil), secret.Ciphertext...)
 	m.projectEnvironmentSecrets[id] = secret
+	m.advanceProjectSharedSecretGenerationLocked(secret.ProjectID, secret.EnvironmentSlug)
 	m.projectRuntimeChangeLocked(secret.ProjectID, secret.EnvironmentSlug, now)
 	listed := secret
 	listed.Ciphertext = nil
@@ -94,6 +95,7 @@ func (m *MemStore) DeleteProjectEnvironmentSecret(_ context.Context, accountID, 
 		return ErrNotFound
 	}
 	delete(m.projectEnvironmentSecrets, id)
+	m.advanceProjectSharedSecretGenerationLocked(projectID, environmentSlug)
 	m.projectRuntimeChangeLocked(projectID, environmentSlug, time.Now().UTC())
 	return nil
 }
@@ -163,6 +165,7 @@ func (m *MemStore) copyProjectEnvironmentSharedSecretsLocked(clone ProjectEnviro
 			m.projectEnvironmentSecrets = map[string]ProjectEnvironmentSecret{}
 		}
 		m.projectEnvironmentSecrets[projectEnvironmentSecretKey(clone.ProjectID, clone.TargetSlug, secret.Key)] = secret
+		m.advanceProjectSharedSecretGenerationLocked(clone.ProjectID, clone.TargetSlug)
 		copied++
 	}
 	if copied > 0 {

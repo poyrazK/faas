@@ -138,18 +138,7 @@ func cmdCustomerOperationDeveloper(args []string) int {
 				return printErr("Could not write operation type receipt", err)
 			}
 		} else {
-			message := fmt.Sprintf("Generated input and output types for %d operation(s) in %s", result.Operations, result.Output)
-			if c.checkTypes {
-				switch result.Status {
-				case "current":
-					message = fmt.Sprintf("Generated declarations are up to date in %s", result.Output)
-				case "missing":
-					message = fmt.Sprintf("Generated declarations are missing at %s; run customer-operations types to create them", result.Output)
-				case "stale":
-					message = fmt.Sprintf("Generated declarations are stale at %s; run customer-operations types to refresh them", result.Output)
-				}
-			}
-			if _, err := fmt.Fprintln(osStdout, message); err != nil {
+			if _, err := fmt.Fprintln(osStdout, customerOperationTypesMessage(result, c.checkTypes)); err != nil {
 				return printErr("Could not write operation type receipt", err)
 			}
 		}
@@ -221,4 +210,21 @@ func runCustomerOperationDefinitions(ctx context.Context, client customerOperati
 		}
 	}
 	return nil
+}
+
+// customerOperationTypesMessage reports a types run. The --check hints name
+// the command as customers spell it; they said "run customer-operations
+// types" (Hunt 32 H32-82).
+func customerOperationTypesMessage(result customerOperationTypesResult, check bool) string {
+	if check {
+		switch result.Status {
+		case "current":
+			return fmt.Sprintf("Generated declarations are up to date in %s", result.Output)
+		case "missing":
+			return fmt.Sprintf("Generated declarations are missing at %s; run gregale operation types to create them", result.Output)
+		case "stale":
+			return fmt.Sprintf("Generated declarations are stale at %s; run gregale operation types to refresh them", result.Output)
+		}
+	}
+	return fmt.Sprintf("Generated input and output types for %d operation(s) in %s", result.Operations, result.Output)
 }

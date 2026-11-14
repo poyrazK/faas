@@ -2,11 +2,13 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/zalando/go-keyring"
@@ -22,9 +24,16 @@ import (
 //     OS user unlock, never backed up by default.
 //  3. This plaintext file (~/.config/gregale/token at 0o600) — a
 //     fallback for headless hosts with no D-Bus session (CI runners,
-//     SSH-only servers, Docker images). A WARN line is printed when
-//     the keychain is unavailable so the operator sees the degraded
-//     mode.
+//     SSH-only servers, Docker images), a keyring the user declined to
+//     unlock (WSL, where nothing unlocks GNOME Keyring at login), or an
+//     explicit opt-out (`login --insecure-storage`, GREGALE_KEYRING=off).
+//     A WARN line is printed when the keychain refuses the key so the
+//     operator sees the degraded mode.
+//
+// Reads check the token file before the keychain: the file exists only
+// when the keychain did not take the key (a successful keychain save
+// removes it), so a user whose keyring is locked is not asked to unlock
+// it on every command.
 //
 // saveToken migrates the legacy plaintext file to the keychain
 // one-shot: on the first successful keychain Set, the old file is
@@ -102,15 +111,124 @@ func (productionKeyring) Delete(service, account string) error {
 	return keyring.Delete(service, account)
 }
 
-// effectiveKeyring returns the test seam if installed, otherwise the
-// production adapter. Centralises the nil-check so every call site
-// stays a one-liner.
-func effectiveKeyring() keyringStub {
-	if keyringBackend != nil {
-		return keyringBackend
+// keyringModeEnv turns the OS keychain off when set to off/0/false/no:
+// the API key then lives only in the token file. For hosts where the
+// keyring is locked or cannot show its unlock dialog (WSL, containers,
+// SSH sessions).
+const keyringModeEnv = "GREGALE_KEYRING"
+
+// loginInsecureStorage is set by `gregale login --insecure-storage` for
+// the duration of that login.
+var loginInsecureStorage bool
+
+// keyringDisabled reports whether the user opted out of the OS keychain.
+func keyringDisabled() bool {
+	if loginInsecureStorage {
+		return true
 	}
-	return productionKeyring{}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(keyringModeEnv))) {
+	case "off", "0", "false", "no", "disabled":
+		return true
+	}
+	return false
 }
+
+// errKeyringDisabled is what a save into a disabled keychain returns.
+var errKeyringDisabled = errors.New("OS keychain disabled")
+
+// disabledKeyring stands in for the keychain when the user opted out:
+// reads and deletes find nothing (silently), saves are refused so
+// saveToken writes the token file.
+type disabledKeyring struct{}
+
+func (disabledKeyring) Get(string, string) (string, error) { return "", keyring.ErrNotFound }
+func (disabledKeyring) Set(string, string, string) error   { return errKeyringDisabled }
+func (disabledKeyring) Delete(string, string) error        { return keyring.ErrNotFound }
+
+// errKeyringTimeout is returned when the keychain does not answer in time.
+var errKeyringTimeout = errors.New("OS keychain did not respond")
+
+// keyringWait bounds one keychain call. go-keyring waits on an unlock
+// prompt with no deadline, so a dialog that can never be shown (WSL
+// without WSLg, SSH, containers) would hang the CLI. A person at a
+// terminal gets time to type the keyring password; scripts do not wait
+// long. A variable so tests can shrink it.
+var keyringWait = func() time.Duration {
+	if nonInteractive || !stdinIsTTY() {
+		return 5 * time.Second
+	}
+	return 60 * time.Second
+}
+
+// timeoutKeyring bounds every call on inner by keyringWait. A call that
+// times out keeps running in its goroutine; the CLI moves on to the
+// token file.
+type timeoutKeyring struct{ inner keyringStub }
+
+func (k timeoutKeyring) Get(service, account string) (string, error) {
+	return withKeyringTimeout(func() (string, error) { return k.inner.Get(service, account) })
+}
+
+func (k timeoutKeyring) Set(service, account, value string) error {
+	_, err := withKeyringTimeout(func() (string, error) { return "", k.inner.Set(service, account, value) })
+	return err
+}
+
+func (k timeoutKeyring) Delete(service, account string) error {
+	_, err := withKeyringTimeout(func() (string, error) { return "", k.inner.Delete(service, account) })
+	return err
+}
+
+func withKeyringTimeout(call func() (string, error)) (string, error) {
+	type result struct {
+		value string
+		err   error
+	}
+	wait := keyringWait()
+	done := make(chan result, 1)
+	go func() {
+		v, err := call()
+		done <- result{v, err}
+	}()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.value, r.err
+	case <-timer.C:
+		return "", fmt.Errorf("%w within %s", errKeyringTimeout, wait)
+	}
+}
+
+// effectiveKeyring returns the keychain every token path uses: a no-op
+// when the user opted out, else the test seam if installed, else the
+// production adapter — both bounded by keyringWait. Never nil.
+func effectiveKeyring() keyringStub {
+	if keyringDisabled() {
+		return disabledKeyring{}
+	}
+	if keyringBackend != nil {
+		return timeoutKeyring{inner: keyringBackend}
+	}
+	return timeoutKeyring{inner: productionKeyring{}}
+}
+
+// describeKeyringErr turns a keychain failure into words a user can act
+// on. go-keyring reports a cancelled or failed unlock dialog as
+// "failed to unlock correct collection '/org/freedesktop/...'".
+func describeKeyringErr(err error) string {
+	switch {
+	case errors.Is(err, errKeyringTimeout):
+		return err.Error()
+	case strings.Contains(err.Error(), "unlock"):
+		return "the keyring is locked (the unlock prompt was cancelled or failed)"
+	default:
+		return err.Error()
+	}
+}
+
+// keyringOptOutHint tells a user how to stop the CLI asking the keychain.
+const keyringOptOutHint = "To keep the API key in a file instead, run 'gregale login --insecure-storage' or set GREGALE_KEYRING=off."
 
 // apiBase returns the effective API base URL. Explicit $FAAS_API remains the
 // highest-priority override for local development and CI; the persistent
@@ -194,51 +312,54 @@ func envToken() string { return strings.TrimSpace(os.Getenv("FAAS_TOKEN")) }
 // credential saved for the selected profile. Logout and re-login revoke the
 // key behind this credential, never the environment's.
 func loadStoredToken(diagnostics io.Writer) string {
-	if kr := effectiveKeyring(); kr != nil {
-		v, err := kr.Get(keyringService, profileKeyringAccount())
-		switch {
-		case err == nil:
-			v = strings.TrimSpace(v)
+	// The token file first: it exists only when the keychain did not
+	// take the key, and reading it never raises a keyring unlock dialog.
+	invalidFile := false
+	if p, err := tokenPath(); err == nil {
+		if b, err := os.ReadFile(p); err == nil {
+			v := strings.TrimSpace(string(b))
 			if validPersistedToken(v) {
 				return v
 			}
-			PrintWarn(diagnostics, "OS keychain contains an invalid Gregale API key; falling back to the token file.")
-		case errors.Is(err, keyring.ErrNotFound):
-			// fall through to file — not an error worth a WARN
-		default:
-			PrintWarn(diagnostics, "OS keychain lookup failed (%v); falling back to plaintext file.", err)
+			invalidFile = true
 		}
 	}
-	p, err := tokenPath()
-	if err != nil {
-		return loadLegacyToken(diagnostics)
-	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		// No new file — fall through to the legacy keychain / file
-		// paths before giving up. A pre-#439 install has neither the
-		// new keychain service nor the new file, so this loop is the
-		// load path for everyone who hasn't re-logged-in after the
-		// rename.
-	} else {
-		v := strings.TrimSpace(string(b))
+	keychainReachable := true
+	v, err := effectiveKeyring().Get(keyringService, profileKeyringAccount())
+	switch {
+	case err == nil:
+		v = strings.TrimSpace(v)
 		if validPersistedToken(v) {
 			return v
 		}
+		PrintWarn(diagnostics, "OS keychain contains an invalid Gregale API key; ignoring it.")
+	case errors.Is(err, keyring.ErrNotFound):
+		// not saved in the keychain — not an error worth a WARN
+	default:
+		keychainReachable = false
+		PrintWarn(diagnostics, "Could not read the API key from the OS keychain: %s. %s", describeKeyringErr(err), keyringOptOutHint)
+	}
+	if invalidFile {
 		PrintWarn(diagnostics, "Token file contains an invalid Gregale API key; trying legacy stores.")
 	}
-	return loadLegacyToken(diagnostics)
+	// A pre-#439 install has neither the new keychain entry nor the new
+	// file, so the legacy stores are the load path for everyone who
+	// hasn't re-logged-in after the rename.
+	return loadLegacyToken(diagnostics, keychainReachable)
 }
 
 // loadLegacyToken probes the pre-#439 keychain service and the
 // pre-#439 plaintext file in turn. Silent on ErrNotFound (the
 // expected case for a fresh install); other keychain errors get
-// a WARN.
-func loadLegacyToken(diagnostics io.Writer) string {
+// a WARN. askKeychain is false when the keychain just refused a read
+// (locked, unlock cancelled, timed out): asking again would show the
+// user a second unlock dialog for the same command.
+func loadLegacyToken(diagnostics io.Writer, askKeychain bool) string {
 	if currentProfile() != "default" {
 		return ""
 	}
-	if kr := effectiveKeyring(); kr != nil {
+	if askKeychain {
+		kr := effectiveKeyring()
 		v, err := kr.Get(legacyKeyringService, keyringAccount)
 		switch {
 		case err == nil:
@@ -325,9 +446,29 @@ func validPersistedToken(token string) bool {
 // PR #439. The new store is the source of truth; the legacy store
 // is erased, not republished.
 func saveToken(token string) error {
+	_, err := saveTokenStore(token)
+	return err
+}
+
+// savedTokenStore says where saveTokenStore put the API key: the OS
+// keychain (Path empty) or the token file at Path.
+type savedTokenStore struct {
+	Path string
+}
+
+// describe is the "Credentials:" line printed after a login.
+func (s savedTokenStore) describe() string {
+	if s.Path == "" {
+		return "OS keychain"
+	}
+	return s.Path + " (plaintext, readable only by you)"
+}
+
+// saveTokenStore is saveToken, also reporting which store took the key.
+func saveTokenStore(token string) (savedTokenStore, error) {
 	token = strings.TrimSpace(token)
 	if !validPersistedToken(token) {
-		return errors.New("gregale: refusing to persist an invalid API key")
+		return savedTokenStore{}, errors.New("gregale: refusing to persist an invalid API key")
 	}
 
 	kr := effectiveKeyring()
@@ -371,27 +512,28 @@ func saveToken(token string) error {
 			}
 		}
 		clearCompletionCaches()
-		return nil
-	} else {
-		// Keychain unreachable (no D-Bus on headless Linux, locked
-		// Keychain, etc.). Surface the degradation loudly so an
-		// operator on a shared host sees the warning; the file
-		// fallback keeps the CLI functional.
-		PrintWarn(os.Stderr, "OS keychain unavailable; falling back to plaintext token file. Install gnome-keyring (Linux) for safer storage.")
+		return savedTokenStore{}, nil
+	} else if !errors.Is(err, errKeyringDisabled) {
+		// Keychain unreachable (no D-Bus on headless Linux, a locked
+		// keyring whose unlock prompt was cancelled, a timeout). Say
+		// so, and how to make the choice stick; the file fallback keeps
+		// the CLI working either way. An explicit opt-out is not a
+		// degradation and gets no warning.
+		PrintWarn(os.Stderr, "Could not save the API key to the OS keychain: %s. Saved it to a plaintext file readable only by you instead. To use the keychain, unlock it and run 'gregale login' again. %s", describeKeyringErr(err), keyringOptOutHint)
 	}
 
 	p, err := tokenPath()
 	if err != nil {
-		return err
+		return savedTokenStore{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return err
+		return savedTokenStore{}, err
 	}
 	if err := os.WriteFile(p, []byte(token+"\n"), 0o600); err != nil {
-		return err
+		return savedTokenStore{}, err
 	}
 	clearCompletionCaches()
-	return nil
+	return savedTokenStore{Path: p}, nil
 }
 
 // deleteToken clears the token from both stores (keychain + legacy

@@ -127,12 +127,12 @@ var AllowedAppWebhookEvents = []string{
 	"routes.monitor.violated", "routes.monitor.escalated", "routes.monitor.recovered",
 	"routes.insight.detected", "routes.insight.resolved",
 	"issue.created", "issue.assigned", "issue.resolved", "issue.reopened", "issue.ignored", "issue.regressed", "issue.impact_threshold_reached", "issue.frequency_threshold_reached", "issue.compound_threshold_reached", "issue.tracker_sync.attention", "issue.tracker_sync.recovered",
-	"workflow.finished", "automation.paused",
+	"workflow.finished", "stored_workflow.paused",
 	"event_recovery.completed", "event_recovery.cancelled", "event_recovery.expired", "event_recovery.execution_finished",
 	"event_recovery.execution_attention",
-	"automation.recovery_review_ready", "automation.recovery_review_finished",
-	"automation.recovery_polling_status", "automation.recovery_policy_paused", "automation.recovery_queue_blocked",
-	"automation.recovery_health_alert", "automation.recovery_health_recovered",
+	"stored_workflow.recovery_review_ready", "stored_workflow.recovery_review_finished",
+	"stored_workflow.recovery_polling_status", "stored_workflow.recovery_policy_paused", "stored_workflow.recovery_queue_blocked",
+	"stored_workflow.recovery_health_alert", "stored_workflow.recovery_health_recovered",
 }
 
 // Account receivers intentionally cannot use the app-level all-events
@@ -141,6 +141,36 @@ var AllowedAppWebhookEvents = []string{
 var AllowedAccountReleaseWebhookEvents = []string{
 	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
 	"environment.gitops.changed",
+	AgentApprovalRequestedWebhookEvent, AgentApprovalApprovedWebhookEvent, AgentApprovalDeniedWebhookEvent,
+}
+
+// Agent approval events (ADR-20261107140000 §4): an agent key's request waits
+// for a person, and a person approved or denied it. Expiry is not an event.
+const (
+	AgentApprovalRequestedWebhookEvent = "agent.approval.requested"
+	AgentApprovalApprovedWebhookEvent  = "agent.approval.approved"
+	AgentApprovalDeniedWebhookEvent    = "agent.approval.denied"
+)
+
+// AgentApprovalWebhookPayload is the payload of an agent.approval.* delivery.
+// It never carries the request body.
+type AgentApprovalWebhookPayload struct {
+	ApprovalID string `json:"approval_id"`
+	KeyID      string `json:"key_id"`
+	OrgID      string `json:"org_id,omitempty"`
+	Category   string `json:"category"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	ExpiresAt  string `json:"expires_at"`
+	// ReviewURL is set on agent.approval.requested.
+	ReviewURL string `json:"review_url,omitempty"`
+	DecidedAt string `json:"decided_at,omitempty"`
+	// Note is the person's reason on agent.approval.denied, when given.
+	Note string `json:"note,omitempty"`
+	// Reason is what the agent said the request is for, when it said
+	// (ADR-20261110182236). Untrusted agent text.
+	Reason string `json:"reason,omitempty"`
 }
 
 // AgentRunFinishedWebhookEvent reaches account receivers when an agent run
@@ -575,7 +605,7 @@ type AppWebhookDeliveryResponse struct {
 	Status           string `json:"status"`
 	LastError        string `json:"last_error,omitempty"`
 	LastResponseCode int    `json:"last_response_code,omitempty"`
-	NextAttemptAt    string `json:"next_attempt_at"`
+	NextAttemptAt    string `json:"next_attempt_at,omitempty"`
 	DeliveredAt      string `json:"delivered_at,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	UpdatedAt        string `json:"updated_at"`
@@ -617,7 +647,7 @@ func AppWebhookDeliveryResponseFromRow(r AppWebhookDeliveryRow) AppWebhookDelive
 		Status:           r.Status,
 		LastError:        r.LastError,
 		LastResponseCode: r.LastResponseCode,
-		NextAttemptAt:    FormatAlertTime(r.NextAttemptAt),
+		NextAttemptAt:    formatWebhookNextAttempt(r.NextAttemptAt),
 		CreatedAt:        FormatAlertTime(r.CreatedAt),
 		UpdatedAt:        FormatAlertTime(r.UpdatedAt),
 	}
@@ -625,6 +655,16 @@ func AppWebhookDeliveryResponseFromRow(r AppWebhookDeliveryRow) AppWebhookDelive
 		resp.DeliveredAt = FormatAlertTime(*r.DeliveredAt)
 	}
 	return resp
+}
+
+// formatWebhookNextAttempt omits a delivery's next attempt when none is
+// scheduled. The store keeps the Unix epoch for a dead delivery, which the
+// JSON rendered as "1970-01-01T00:00:00Z" (Hunt 34 H34-9).
+func formatWebhookNextAttempt(t time.Time) string {
+	if t.Unix() <= 0 {
+		return ""
+	}
+	return FormatAlertTime(t)
 }
 
 // RotateAppWebhookSecretResponse is the body of POST

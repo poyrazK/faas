@@ -47,6 +47,8 @@ var hopByHopHeaders = map[string]struct{}{
 // Handler is an explicit request-aware outbound gateway. A request to
 // /i/{integrationID}/path is sent only to that integration's configured origin.
 type Handler struct {
+	// aiAccountRates bounds each account's AI calls per second.
+	aiAccountRates aiAccountRates
 	// Log, when set, records failures the caller only sees as a generic 503.
 	Log                       *slog.Logger
 	SimulationHandler         http.Handler
@@ -72,6 +74,8 @@ type Handler struct {
 	Routes               RouteResolver
 	managedAuthorization map[string]string
 	responseCache        *outboundResponseCache
+	// semanticIndex is the semantic cache's index (ADR 20261112194947).
+	semanticIndex *aiSemanticIndex
 	// vertexTokens caches exchanged Google access tokens (ADR-991).
 	vertexTokens vertexTokenCache
 	// keyPools holds local key cooldowns and round-robin positions.
@@ -188,6 +192,7 @@ func NewHandler(resolver Resolver, backend Backend, client *http.Client) (*Handl
 		Client:                 client,
 		workflowClient:         workflowClient,
 		responseCache:          responseCache,
+		semanticIndex:          newAISemanticIndex(),
 		MaxBodyBytes:           defaultMaxBodyBytes,
 		MaxResponseBytes:       defaultMaxResponseBytes,
 		MaxResponseHeaderBytes: defaultMaxResponseHeaderBytes,
@@ -359,6 +364,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !allowedRoute || (integration.ProviderAuthMode == ProviderAuthManaged && hasMethodOverride(r)) {
 		writeProblem(w, http.StatusForbidden, "outbound_route_not_allowed", "Outbound method or path is not allowed", "")
+		return
+	}
+	// ADR 20261027132936 amendment 2: one account's AI calls per second
+	// across all its integrations, counted only once the caller is
+	// authorized so nobody else can spend an account's allowance. The
+	// gateway's own checks and probes are not the account's traffic.
+	if integration.AIProvider != "" && integration.OwnerKind == IntegrationOwnerCustomer && !isInternal && !isQualification &&
+		!h.aiAccountRates.allow(integration.AccountID, integration.AccountPlan, time.Now()) {
+		h.Metrics.ObserveRejection(metricIntegrationID, "outbound_ai_account_rate_limited")
+		writeProblem(w, http.StatusTooManyRequests, "outbound_ai_account_rate_limited",
+			"The account's AI calls per second are at the plan limit", "1")
 		return
 	}
 	aiEndUser, aiAffinity, ok := aiCallerKeys(r, integration)
@@ -539,6 +555,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if requestTimeout <= 0 {
 		requestTimeout = integration.RequestTimeout
 	}
+	if _, public := accessTokenFromContext(r.Context()); public {
+		requestTimeout = publicHeaderTimeout(requestTimeout)
+	}
 	// ADR 20261027132936: a billable AI call's request timeout bounds the
 	// wait for its response headers; its answer may take longer.
 	var aiCall *aiCallContext
@@ -656,6 +675,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// every signed or exchanged token, shares one entry (ADR-991).
 		cacheKey = h.responseCache.key(integration.ID, principalID, integration.PolicyRevision, integration.ResponseCacheTTLSeconds, upstreamReq, cacheBody)
 	}
+	// ADR 20261112194947: the semantic partition is keyed here too, before
+	// the credential is applied.
+	var semantic *aiSemanticCandidate
+	var semanticErr error
+	if cacheEligible && integration.AISemanticCache != nil && !isReplay && !isInternal {
+		semantic, semanticErr = h.semanticCandidate(integration, aiPlan, aiReq, upstreamReq, principalID, aiEndUser)
+	}
 	if integration.ProviderAuthMode == ProviderAuthManaged {
 		// The guest may send an Authorization header, but it cannot replace
 		// or read the provider credential held by outboundd.
@@ -667,7 +693,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if realtime != realtimeNone {
 		// The upgrade itself was admitted like a call, with no reservation;
-		// each response is admitted with its own (ADR 20261019072722).
+		// each response is admitted with its own (ADR 20261019072722). The
+		// session holds its in-flight slot until it ends, so its lease is
+		// renewed (ADR 20261027132936 amendment 1).
+		defer h.renewAILease(integration.ID, decision.LeaseID, requestTimeout)()
 		h.serveRealtime(w, r, &realtimeSession{h: h, integration: integration, appID: appID, instanceID: callerInstance, metricID: metricIntegrationID,
 			metered: realtime == realtimeMetered, spec: spec, endUser: aiEndUser, tags: aiTags, traceID: aiTrace,
 			model: realtimeURLModel(r.URL.Query()), live: livePath(integration.AIProvider, path)}, upstreamReq)
@@ -696,6 +725,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		upstreamStarted = time.Now()
+	}
+	// ADR 20261112194947: the semantic index is searched after the check,
+	// since a similar prompt was never checked.
+	var semanticVector []float32
+	switch {
+	case cacheHit:
+	case semantic != nil:
+		var cached *http.Response
+		if cached, semanticVector = h.semanticLookup(ctx, w, integration, semantic, metricIntegrationID); cached != nil {
+			resp, cacheHit = cached, true
+			dependencySpan.SetAttributes(attribute.Bool("gregale.outbound.cache_hit", true),
+				attribute.String("gregale.ai.semantic_similarity", w.Header().Get(AISimilarityHeader)))
+		}
+		upstreamStarted = time.Now()
+	case semanticErr != nil:
+		h.Metrics.ObserveAISemanticCache(metricIntegrationID, aiSemanticSkipped)
 	}
 	if !cacheHit {
 		cooldown, ok := h.Backend.(ProviderCooldownBackend)
@@ -780,7 +825,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		resp, attempts, err = h.doWithRetries(dependencyCtx, client, upstreamReq, integration.ID, metricIntegrationID,
-			integration.PolicyRevision, maxRetries, decision.RetryBudgetPerMinute, keys)
+			integration.PolicyRevision, maxRetries, decision.RetryBudgetPerMinute, keys, aiCall != nil)
 		if breaker != nil {
 			outcome := outboundCircuitOutcome(resp, err)
 			if outcome != CircuitOutcomeNeutral {
@@ -795,6 +840,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil && cacheEligible {
 			h.responseCache.storeResponse(cacheKey, resp, integration.ResponseCacheTTLSeconds, time.Now(), h.MaxResponseHeaderBytes, h.MaxResponseHeaders, h.MaxResponseBytes)
+			if semanticVector != nil && resp.StatusCode == http.StatusOK {
+				// A hit still needs the answer in the response cache.
+				h.semanticIndex.add(integration.ID, semantic.partition, cacheKey, semanticVector)
+			}
 		}
 	}
 	dependencySpan.SetAttributes(attribute.Int("gregale.outbound.attempt_count", attempts))
@@ -914,6 +963,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		dependencySpan.SetStatus(codes.Error, "incomplete provider response")
 		panic(http.ErrAbortHandler)
 	}
+}
+
+// publicHeaderTimeout caps the header wait of a call through the public
+// host, whose proxy stops waiting for an origin's response at 100 seconds
+// (ADR 20261027132936 amendment 1).
+func publicHeaderTimeout(requestTimeout time.Duration) time.Duration {
+	publicCap := api.OutboundAIPublicHeaderTimeoutSeconds * time.Second
+	if requestTimeout <= 0 || requestTimeout > publicCap {
+		return publicCap
+	}
+	return requestTimeout
 }
 
 // callerAppID returns the calling app and, when a verified workload

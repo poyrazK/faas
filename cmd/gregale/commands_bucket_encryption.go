@@ -34,6 +34,7 @@ type bucketDefaultEncryptionClient interface {
 }
 
 func cmdBucketDefaultEncryption(args []string) int {
+	args = bucketStatusAlias(args)
 	if len(args) < 3 || !api.ValidAppSlug(args[1]) {
 		return bucketDefaultEncryptionUsage()
 	}
@@ -106,4 +107,13 @@ func bucketDefaultEncryptionSelection(args []string) (api.ObjectEncryption, erro
 func bucketDefaultEncryptionUsage() int {
 	PrintUsage(osStderr, "usage: gregale bucket encryption set <status|clear|AES256|aws:kms|aws:kms:dsse> <app> <bucket-id> [owned-key-ref] [bucket-key-enabled]", "bucket")
 	return 1
+}
+
+// bucketStatusAlias reads `get` as `status` for the encryption and Object
+// Lock reads (Hunt 33 H33-23: `bucket encryption get` printed usage).
+func bucketStatusAlias(args []string) []string {
+	if len(args) > 0 && args[0] == "get" {
+		return append([]string{"status"}, args[1:]...)
+	}
+	return args
 }

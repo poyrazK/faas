@@ -71,6 +71,9 @@ func TestWakeSnapshotProducerLocality(t *testing.T) {
 			if _, err := store.UpsertComputeNode(ctx, node); err != nil {
 				t.Fatal(err)
 			}
+			if tc.originNoCPU {
+				fillNodeVCPUBudget(t, store, producer)
+			}
 			if tc.originOff {
 				if err := store.SetComputeNodeActive(ctx, producer, false); err != nil {
 					t.Fatal(err)

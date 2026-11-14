@@ -90,6 +90,9 @@ func (s *PgStore) ConsumeOrgInvitationWithActivity(ctx context.Context, hash []b
 	if !strings.EqualFold(inv.Email, accepting.Email) {
 		return OrgMembership{}, OrgInvitation{}, 0, 0, ErrOrgInvitationInvalid
 	}
+	if err := checkInviterTx(ctx, tx, inv); err != nil {
+		return OrgMembership{}, OrgInvitation{}, 0, 0, err
+	}
 
 	limit, err := lockOrgInvitationLimit(ctx, tx, inv.OrgID)
 	if err != nil {

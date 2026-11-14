@@ -120,7 +120,7 @@ func (s *server) createAppUDPListener(w http.ResponseWriter, r *http.Request, ac
 	}
 	if !appDeclaresUDPListener(app, name, req.GuestPort) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid UDP listener", "name and guest_port must match a declared UDP listener in the app manifest"))
+			"Invalid UDP listener", fmt.Sprintf("name and guest_port must match a declared UDP listener in the app manifest; declare the port with `gregale app %s --ports udp:<port>` (the listener is named udp-<port>), then retry", app.Slug)))
 		return
 	}
 	if req.PublicPort != 0 && (req.PublicPort < state.UDPListenerPublicPortMin || req.PublicPort > state.UDPListenerPublicPortMax) {

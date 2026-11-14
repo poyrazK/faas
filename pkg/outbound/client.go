@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -67,5 +68,11 @@ func (c *Client) Do(ctx context.Context, method, path string, body io.Reader) (*
 	// used. The gateway creates the dependency spans; this carrier makes them
 	// children of the caller's trace when a caller span is available.
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
-	return c.HTTP.Do(req)
+	client := c.HTTP
+	if _, bounded := ctx.Deadline(); !bounded && client.Timeout <= 0 {
+		copy := *client
+		copy.Timeout = 30 * time.Second
+		client = &copy
+	}
+	return client.Do(req)
 }

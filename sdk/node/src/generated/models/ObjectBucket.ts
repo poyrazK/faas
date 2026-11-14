@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObjectBucketRetry } from './ObjectBucketRetry.js';
 /**
  * Logical bucket metadata without upstream credentials or placement details.
  */
@@ -14,5 +15,6 @@ export type ObjectBucket = {
   public: boolean;
   serve_at?: string;
   created_at: string;
+  retry?: ObjectBucketRetry;
 };
 

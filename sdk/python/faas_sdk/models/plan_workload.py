@@ -43,6 +43,9 @@ class PlanWorkload:
     public_url: str | Unset = UNSET
     """Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when
     wildcard app URLs are disabled."""
+    public_auth_mode: str | Unset = UNSET
+    """Public URL auth the app will have after apply (bearer, basic, ...), from the existing app or the plan
+    default for a new app. Omitted when the URL accepts anonymous requests."""
     app_slug: str | Unset = UNSET
     """Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original
     identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug,
@@ -145,6 +148,8 @@ class PlanWorkload:
         ports = self.ports
 
         public_url = self.public_url
+
+        public_auth_mode = self.public_auth_mode
 
         app_slug = self.app_slug
 
@@ -271,6 +276,8 @@ class PlanWorkload:
         )
         if public_url is not UNSET:
             field_dict["public_url"] = public_url
+        if public_auth_mode is not UNSET:
+            field_dict["public_auth_mode"] = public_auth_mode
         if app_slug is not UNSET:
             field_dict["app_slug"] = app_slug
         if platform_tenant_required is not UNSET:
@@ -360,6 +367,8 @@ class PlanWorkload:
         ports = cast(list[int], d.pop("ports"))
 
         public_url = d.pop("public_url", UNSET)
+
+        public_auth_mode = d.pop("public_auth_mode", UNSET)
 
         app_slug = d.pop("app_slug", UNSET)
 
@@ -513,6 +522,7 @@ class PlanWorkload:
             command=command,
             ports=ports,
             public_url=public_url,
+            public_auth_mode=public_auth_mode,
             app_slug=app_slug,
             platform_tenant_required=platform_tenant_required,
             visibility=visibility,

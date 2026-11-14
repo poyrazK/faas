@@ -58,6 +58,7 @@ func TestDNSPoller_CustomDomainDriftRevokesVerificationOnce(t *testing.T) {
 	log := slog.Default()
 	srv := &server{store: store, audit: newAuditor(store, log, nil), notif: noopNotifier{}}
 	srv.runDoctorForDomain(ctx, log, domain.Domain)
+	srv.runDoctorForDomain(ctx, log, domain.Domain)
 	got, err := store.DomainByName(ctx, domain.Domain)
 	if err != nil {
 		t.Fatal(err)
@@ -126,5 +127,44 @@ func TestDNSPoller_CustomDomainDriftRevokesVerificationOnce(t *testing.T) {
 	}
 	if !got.Verified() || got.CertStatus != state.CustomDomainCertPending {
 		t.Fatalf("after TXT verification: verified=%v cert_status=%q, want true/pending", got.Verified(), got.CertStatus)
+	}
+}
+
+func TestWildcardDoctorDoesNotRevokeForProbeOverride(t *testing.T) {
+	t.Setenv("FAAS_CUSTOM_DOMAIN_TARGET", "edge.gregale.dev")
+	t.Setenv("FAAS_CUSTOM_DOMAIN_ADDRESSES", "")
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(t.Context(), "wildcard-probe@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "wildcard-probe", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const domain = "*.example.com"
+	if _, err := store.CreateCustomDomain(t.Context(), domain, app.ID, "proof"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDomainVerified(t.Context(), domain); err != nil {
+		t.Fatal(err)
+	}
+	withSeams(t, staticLookup("203.0.113.10"), notFoundLookup, notFoundLookup, "gregale.dev")
+	previous := cnameLookupFunc
+	t.Cleanup(func() { cnameLookupFunc = previous })
+	cnameLookupFunc = func(_ context.Context, name string) (string, error) {
+		if name == "gregale-wildcard-check.example.com" {
+			return "elsewhere.example.", nil
+		}
+		return "edge.gregale.dev.", nil
+	}
+	log := slog.New(slog.DiscardHandler)
+	srv := &server{store: store, audit: newAuditor(store, log, nil), notif: noopNotifier{}}
+	if err := srv.runDoctorForDomain(t.Context(), log, domain); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.DomainByName(t.Context(), domain)
+	if err != nil || !current.Verified() || current.CertStatus == state.CustomDomainCertDNSDrifted {
+		t.Fatalf("wildcard revoked by an explicit fixed probe record: %+v %v", current, err)
 	}
 }

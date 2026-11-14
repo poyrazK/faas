@@ -203,3 +203,74 @@ cancellation by itself, because the customer may have cancelled before asking
 for deletion; the restore notice names Keep subscription instead. Whether a
 re-added card passes a later upgrade depends on the bank; it still needs a
 sandbox run with a 3-D Secure test card.
+
+## Amendment 2 (2026-11-04, revised 2026-11-08): the GA charging fixes
+
+- **Owner decisions (2026-11-04, billing GA questions):** egress "stop free,
+  on paid plans default no overage at egress, if overage enabled, 0.03 on
+  gib"; builds "Free, monthly quota"; the go-live gate includes fixing the
+  charging bugs first.
+- **Revision (2026-11-08):** the egress overage election landed separately
+  (ADR-20261104204500, #6743) and the monthly build-minute quota has its own
+  decision (ADR-20261104132753). This amendment keeps only what neither
+  covers: the egress price, per-hour plan pricing and the charging fixes
+  below. An earlier draft's `egress_overage_choices` table and build quota
+  were dropped in favour of those.
+
+The billing GA review found these charging bugs:
+
+- meterd priced each egress hour by the subject's current plan. A downgrade
+  re-priced earlier hours, and hours spent on Free could be billed after an
+  upgrade.
+- The egress price came only from an environment value.
+- A `min_instances` floor was priced without its sidecars. The sampler kept
+  writing floor rows for subjects whose spend cap had stopped them, so they
+  were billed for time that did not run.
+- The object storage allowance was the largest plan held in the month: a
+  one-day upgrade gave the whole month the bigger allowance.
+- Managed PostgreSQL overage was billed for the whole month against the
+  current plan. A downgrade re-billed usage the larger allowance had already
+  covered, and an upgrade dropped overage that had already been billed.
+
+Decisions:
+
+1. **Egress overage costs $0.03 per GiB.** `api.EgressOverageMillicentsPerGiB`
+   = 3,000 is the published rate. The Polar provider defaults to it and
+   refuses to start with any other egress price while egress billing is
+   shadow or live. Who pays it is ADR-20261104204500's election.
+2. **Each egress hour is priced by the plan held in that hour.**
+   - The plan comes from the subject's price snapshots (`monthGrants.planAt`).
+     A Free hour settles with a zero receipt, also after an upgrade.
+   - The allowance and price the hour is billed against are that plan's.
+3. **`min_instances` floors are priced and stopped like the instances they
+   stand for.**
+   - A floor row is priced at
+     `api.BillableRAMMBWithSidecars(app.RAMMB, sidecars)` of the floor's
+     deployment.
+   - The sampler writes no floor row for a subject whose cap is reached,
+     using schedd's admission rule: compute overage at or above the cap, or a
+     hold that applies to this cap.
+   - A failed cap read writes the row.
+4. **The object storage allowance is shared across the month's plans.** It
+   is weighted by how long each plan was held
+   (`state.MonthPlanSpans`, `state.WeightedMonthAllowance`), like the
+   included GB-RAM-hours.
+5. **Managed PostgreSQL overage is billed per plan span.**
+   - Each span's usage above that span's plan allowance is billed, as app
+     compute is billed hour by hour against the allowance in force
+     (ADR-20261030093512). Closed months keep their recorded terms.
+   - The month's charge is then clamped once to the current plan's ceiling:
+     one more allowance.
+   - Suspension stays on the current plan's limits. After a downgrade, the
+     month's usage so far counts against the new allowance. Suspension
+     protects capacity, not the bill.
+
+Consequences:
+
+- $0.03 per GiB is below the list price of internet egress on the current
+  GCP production (about $0.085 to $0.12 per GiB). Elected egress overage
+  loses money there until production moves to bare metal with bundled
+  traffic, or the price changes.
+- A deployment whose Polar egress billing is shadow or live with
+  `FAAS_POLAR_EGRESS_MILLICENTS_PER_GIB` set to anything but 3000 fails to
+  start its billing provider: unset it or set 3000 before upgrading.

@@ -55,8 +55,10 @@ func (s *server) postBillingCancel(w http.ResponseWriter, r *http.Request, acct 
 			"account", acct.ID, "err", err)
 		switch {
 		case errors.Is(err, billing.ErrAlreadyCancelled):
+			// The code is the stable field clients branch on; it was
+			// "conflict" with this name in the title.
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict,
-				api.CodeConflict, "billing_already_cancelled",
+				api.CodeBillingAlreadyCancelled, "No active subscription",
 				"this account has no active subscription to cancel"))
 		case errors.Is(err, billing.ErrNoAPIKey):
 			api.WriteProblem(w, api.NewProblem(http.StatusBadGateway,

@@ -1,0 +1,23 @@
+# Managed by the tetragon role (ADR-20261110183000). Observe only: attaching
+# to another process (PTRACE_ATTACH 16, PTRACE_SEIZE 0x4206) or writing its
+# memory directly. Nothing on a compute node debugs another process.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: faas-ptrace
+spec:
+  kprobes:
+    - call: sys_ptrace
+      syscall: true
+      args:
+        - index: 0
+          type: int
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: Equal
+              values:
+                - "16"
+                - "16902"
+    - call: sys_process_vm_writev
+      syscall: true

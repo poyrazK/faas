@@ -47,6 +47,11 @@ func captureProjectEnvironmentObjectStorageSnapshot(
 		Objects: make([]state.ProjectEnvironmentCloneObjectCheckpoint, len(versions)),
 	}
 	for i, version := range versions {
+		if validator, ok := provider.(objectstorage.SnapshotCopyValidator); ok {
+			if err := validator.ValidateSnapshotCopy(version); err != nil {
+				return state.ProjectEnvironmentCloneObjectManifest{}, err
+			}
+		}
 		manifest.Objects[i].Source = state.ProjectEnvironmentCloneObjectVersion{
 			Key: version.Key, VersionID: version.VersionID, MetadataVersion: version.MetadataVersion,
 			Size: version.Size, ETag: version.ETag, LastModified: version.LastModified,
@@ -82,6 +87,19 @@ func copyProjectEnvironmentObjectStorageSnapshot(
 		return 0, objectstorage.ErrUnsupported
 	}
 	completed := 0
+	// Requalify pending objects in old manifests before dispatching any copy.
+	// Already verified copies remain resumable across a capability change.
+	if validator, ok := provider.(objectstorage.SnapshotCopyValidator); ok {
+		for _, item := range manifest.Objects {
+			if item.CopiedAt != nil {
+				continue
+			}
+			v := item.Source
+			if err := validator.ValidateSnapshotCopy(objectstorage.ObjectVersion{Key: v.Key, VersionID: v.VersionID, MetadataVersion: v.MetadataVersion, Size: v.Size, Deleted: v.Deleted}); err != nil {
+				return 0, err
+			}
+		}
+	}
 	for _, item := range manifest.Objects {
 		if item.CopiedAt != nil {
 			completed++

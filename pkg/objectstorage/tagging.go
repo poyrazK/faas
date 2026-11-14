@@ -10,9 +10,17 @@ import (
 )
 
 type TaggingService struct {
-	References    state.ObjectVersionReferenceStore
-	Provider      Provider
-	BeforeRequest func(context.Context) error
+	References state.ObjectVersionReferenceStore
+	Provider   Provider
+	// BeforeOperation admits one customer operation; BeforeRequest reserves each native RPC.
+	BeforeOperation func(context.Context) error
+	BeforeRequest   func(context.Context) error
+	// Mutate records a writer after preparation and before native mutation.
+	Mutate func(context.Context, func(context.Context) (api.ObjectTaggingResult, error)) (api.ObjectTaggingResult, error)
+}
+
+type objectTaggingPreparer interface {
+	prepareObjectTagging(context.Context, string, string, string, map[string]string, func(context.Context) error) (func(context.Context) (ObjectTaggingResult, error), error)
 }
 
 func ValidateObjectTaggingRequest(r *http.Request) error {
@@ -53,21 +61,50 @@ func (s TaggingService) Do(ctx context.Context, b state.ObjectBucket, method, ke
 	if !capable && (!fallback || selector != "") || capable && s.References == nil {
 		return result, ErrUnsupported
 	}
-	if s.BeforeRequest != nil {
-		if err := s.BeforeRequest(ctx); err != nil {
+	if s.BeforeOperation != nil {
+		if err := s.BeforeOperation(ctx); err != nil {
 			return result, err
 		}
 	}
-	var out ObjectTaggingResult
-	var err error
-	if capable {
-		out, err = dispatchVersionTags(ctx, versioned, b.PhysicalName, method, key, native, tags)
-	} else {
-		out, err = dispatchLegacyTags(ctx, legacy, b.PhysicalName, method, key, tags)
-	}
+	call, err := s.prepare(ctx, b, method, key, native, tags, versioned, legacy)
 	if err != nil {
 		return result, err
 	}
+	finish := func(ctx context.Context) (api.ObjectTaggingResult, error) {
+		out, err := call(ctx)
+		if err != nil {
+			return result, err
+		}
+		return s.finish(ctx, b, key, selector, native, out)
+	}
+	if method != http.MethodGet && s.Mutate != nil {
+		return s.Mutate(ctx, finish)
+	}
+	return finish(ctx)
+}
+
+func (s TaggingService) prepare(ctx context.Context, b state.ObjectBucket, method, key, native string, tags map[string]string, versioned ObjectVersionTagger, legacy ObjectTagger) (func(context.Context) (ObjectTaggingResult, error), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if p, ok := s.Provider.(objectTaggingPreparer); ok {
+		return p.prepareObjectTagging(ctx, b.PhysicalName, method, key, tags, s.BeforeRequest)
+	}
+	if s.BeforeRequest != nil {
+		if err := s.BeforeRequest(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return func(ctx context.Context) (ObjectTaggingResult, error) {
+		if versioned != nil {
+			return dispatchVersionTags(ctx, versioned, b.PhysicalName, method, key, native, tags)
+		}
+		return dispatchLegacyTags(ctx, legacy, b.PhysicalName, method, key, tags)
+	}, nil
+}
+
+func (s TaggingService) finish(ctx context.Context, b state.ObjectBucket, key, selector, native string, out ObjectTaggingResult) (api.ObjectTaggingResult, error) {
+	result := api.ObjectTaggingResult{Tags: map[string]string{}}
 	if ValidateObjectMetadata(ObjectMetadata{Tags: out.Tags}) != nil || native != "" && out.ProviderVersionID != native || out.ProviderVersionID != "" && !validNativeVersionID(out.ProviderVersionID) {
 		return result, ErrUnavailable
 	}

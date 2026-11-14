@@ -24,7 +24,7 @@ func TestAPIContractFallback(t *testing.T) {
 	}{
 		{name: "anonymous unknown", method: http.MethodGet, path: "/v1/not-a-real-route", wantStatus: http.StatusNotFound, wantCode: api.CodeNotFound},
 		{name: "authenticated unknown", method: http.MethodGet, path: "/v1/not-a-real-route", auth: true, wantStatus: http.StatusNotFound, wantCode: api.CodeNotFound},
-		{name: "known path wrong method", method: http.MethodPost, path: "/v1/account", wantStatus: http.StatusMethodNotAllowed, wantCode: api.CodeMethodNotAllowed, wantAllow: "DELETE, GET, HEAD"},
+		{name: "known path wrong method", method: http.MethodPost, path: "/v1/account", wantStatus: http.StatusMethodNotAllowed, wantCode: api.CodeMethodNotAllowed, wantAllow: "DELETE, GET, HEAD, PATCH"},
 		{name: "escaped slash", method: http.MethodGet, path: "/v1/not%2Fa%2Froute", wantStatus: http.StatusNotFound, wantCode: api.CodeNotFound},
 	}
 	for _, tt := range tests {

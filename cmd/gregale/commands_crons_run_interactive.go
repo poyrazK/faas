@@ -119,6 +119,9 @@ func cronRunCommand(verb, id string) string {
 	if profile := currentProfile(); profile != "default" {
 		command = append(command, "--profile", quoteLogCommandArg(profile))
 	}
-	command = append(command, "crons", verb, quoteLogCommandArg(id))
+	// Name the command by its tree spelling (`cron run get`), not the earlier
+	// `crons fire-now` the tree replaced.
+	command = append(command, strings.Fields(cliTreeSpellPath("crons "+verb))...)
+	command = append(command, quoteLogCommandArg(id))
 	return strings.Join(command, " ")
 }

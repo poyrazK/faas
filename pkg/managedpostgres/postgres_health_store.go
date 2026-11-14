@@ -26,7 +26,7 @@ func (s *PostgresStore) ClaimHealthCheck(ctx context.Context, token string, now,
 	}
 	return HealthClaim{LeaseToken: token, LeaseUntil: until, AttemptCount: row.AttemptCount, Database: Database{
 		ID: row.ID, AccountID: row.AccountID, BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint,
-		ProviderResourceID: row.ProviderResourceID, DesiredGeneration: row.DesiredGeneration, State: StateReady,
+		ProviderResourceID: row.ProviderResourceID, DataResourceID: row.DataResourceID, DesiredGeneration: row.DesiredGeneration, State: StateReady,
 		Spec: Spec{Region: row.Region, PostgresMajor: int(row.PostgresMajor), Class: ServiceClass(row.ServiceClass),
 			Availability: Availability(row.Availability), ScaleToZero: row.ScaleToZero,
 			StorageLimitBytes: row.StorageLimitBytes, RestoreWindowSeconds: row.RestoreWindowSeconds},

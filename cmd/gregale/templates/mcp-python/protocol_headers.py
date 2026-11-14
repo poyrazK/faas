@@ -27,8 +27,16 @@ def validate_mcp_headers(headers, message, protocol, catalog):
 
 
 def _validate_params(headers, schema, arguments):
+    if isinstance(schema, bool):
+        return True  # Boolean schemas contain no mirrored header annotations.
+    if not isinstance(schema, dict):
+        return False
     arguments = arguments if isinstance(arguments, dict) else {}
     for name, prop in schema.get("properties", {}).items():
+        if isinstance(prop, bool):
+            continue
+        if not isinstance(prop, dict):
+            return False
         value = arguments.get(name)
         suffix = prop.get("x-mcp-header")
         if isinstance(suffix, str) and suffix:

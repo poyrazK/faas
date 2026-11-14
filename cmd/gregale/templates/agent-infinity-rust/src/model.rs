@@ -1,7 +1,8 @@
 // A scripted model, so the starter runs with no provider key: a user message
 // calls `lookup` with the message as its query, and the tool's result is the
-// answer. "sleep N" calls gregale_sleep for N seconds instead, when Gregale's
-// toolset is loaded. Replace it with any Infinity provider, for example
+// answer. When Gregale's toolset is loaded, "sleep N" calls gregale_sleep for
+// N seconds instead, and "run AGENT PROMPT" starts that agent with
+// gregale_run. Replace it with any Infinity provider, for example
 // infinity-provider-rig pointed at your Gregale AI integration.
 
 use std::sync::Arc;
@@ -19,6 +20,8 @@ pub struct ScriptedModel;
 pub const MODEL_ID: &str = "scripted";
 /// Gregale's sleep tool (ADR-20261030125501 §4).
 pub const SLEEP_TOOL: &str = "gregale_sleep";
+/// Gregale's agent-run tool (ADR-20261030125501 §4).
+pub const RUN_TOOL: &str = "gregale_run";
 
 pub fn scripted() -> StaticModel {
     let entry = ModelEntry {
@@ -56,19 +59,26 @@ pub fn next_step(request: &CompletionRequest) -> StreamChunk {
         }
         Some(UserContent::Text(t)) => {
             let id = format!("call_{}", &uuid::Uuid::new_v4().simple().to_string()[..24]);
-            let offered = request.tools.iter().any(|tool| tool.name == SLEEP_TOOL);
-            match sleep_seconds(&t.text).filter(|_| offered) {
-                Some(seconds) => StreamChunk::ToolCall(ToolCall::new(
+            let offered = |name: &str| request.tools.iter().any(|tool| tool.name == name);
+            if let Some(seconds) = sleep_seconds(&t.text).filter(|_| offered(SLEEP_TOOL)) {
+                return StreamChunk::ToolCall(ToolCall::new(
                     id,
                     SLEEP_TOOL,
                     serde_json::json!({ "seconds": seconds, "reason": "asked to sleep" }),
-                )),
-                None => StreamChunk::ToolCall(ToolCall::new(
-                    id,
-                    "lookup",
-                    serde_json::json!({ "query": t.text }),
-                )),
+                ));
             }
+            if let Some((agent, prompt)) = run_request(&t.text).filter(|_| offered(RUN_TOOL)) {
+                let mut args = serde_json::json!({ "agent": agent });
+                if !prompt.is_empty() {
+                    args["prompt"] = serde_json::Value::String(prompt.to_owned());
+                }
+                return StreamChunk::ToolCall(ToolCall::new(id, RUN_TOOL, args));
+            }
+            StreamChunk::ToolCall(ToolCall::new(
+                id,
+                "lookup",
+                serde_json::json!({ "query": t.text }),
+            ))
         }
         _ => StreamChunk::Text("Send a question to start.".to_owned()),
     }
@@ -93,6 +103,14 @@ fn sleep_seconds(text: &str) -> Option<u64> {
         .parse()
         .ok()
         .filter(|s| *s >= 1)
+}
+
+/// "run triage look at PR 7" runs the agent triage with the prompt "look at
+/// PR 7".
+fn run_request(text: &str) -> Option<(&str, &str)> {
+    let rest = text.trim().strip_prefix("run ")?.trim_start();
+    let (agent, prompt) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    (!agent.is_empty()).then_some((agent, prompt.trim()))
 }
 
 #[async_trait]
@@ -154,6 +172,44 @@ mod tests {
         assert_eq!(
             next_step(&answered(call, "Valletta")),
             StreamChunk::Text("lookup answered: Valletta".to_owned())
+        );
+    }
+
+    #[test]
+    fn run_calls_gregale_run_when_it_is_offered() {
+        let StreamChunk::ToolCall(call) = next_step(&request(UserContent::text("run triage")))
+        else {
+            panic!("want a tool call")
+        };
+        assert_eq!(call.function.name, "lookup", "no toolset, no run");
+
+        let mut offered = request(UserContent::text("run triage  look at PR 7 "));
+        offered.tools = vec![ToolDefinition {
+            name: RUN_TOOL.to_owned(),
+            description: "Start an agent run.".to_owned(),
+            parameters: serde_json::json!({ "type": "object" }),
+        }];
+        let StreamChunk::ToolCall(call) = next_step(&offered) else {
+            panic!("want a tool call")
+        };
+        assert_eq!(call.function.name, RUN_TOOL);
+        assert_eq!(
+            call.function.arguments,
+            serde_json::json!({ "agent": "triage", "prompt": "look at PR 7" })
+        );
+        offered.chat_history = vec![Message::User {
+            content: vec![UserContent::text("run triage")],
+        }];
+        let StreamChunk::ToolCall(call) = next_step(&offered) else {
+            panic!("want a tool call")
+        };
+        assert_eq!(
+            call.function.arguments,
+            serde_json::json!({ "agent": "triage" })
+        );
+        assert_eq!(
+            next_step(&answered(call, "{\"state\":\"succeeded\"}")),
+            StreamChunk::Text("gregale_run answered: {\"state\":\"succeeded\"}".to_owned())
         );
     }
 

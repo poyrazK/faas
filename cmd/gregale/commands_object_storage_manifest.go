@@ -57,11 +57,67 @@ type manifestObjectStorageBindingPlan struct {
 	bindings   api.ObjectStorageComputeBindingList
 }
 
-// deployManifestObjectStorageBindings attaches existing ready buckets to the
-// app and lets the API seal the provider-neutral S3 settings into the app
-// environment. It intentionally does not provision buckets: resource creation
-// stays explicit through `gregale add bucket`, which keeps CI deploys free of
-// unexpected storage side effects.
+// manifestBucketCreator is the optional client surface for `create`
+// declarations; fakes without it refuse them.
+type manifestBucketCreator interface {
+	CreateObjectBucket(context.Context, string, api.CreateObjectBucketRequest) (api.ObjectBucket, error)
+}
+
+// createManifestBuckets creates the buckets declared with `create` that do
+// not exist yet in the deployment's scope, after checking every declaration
+// it can: a missing bucket without `create` fails before anything is made.
+// It returns the catalog with the new buckets.
+func createManifestBuckets(ctx context.Context, client manifestObjectStorageClient, slug, environment string, dependencies []gregalemanifest.BucketDependency, catalog api.ObjectBucketList) (api.ObjectBucketList, error) {
+	type missing struct {
+		name, scope, region string
+	}
+	var toCreate []missing
+	for i, dependency := range dependencies {
+		scope, err := manifestScopeForDeclared(dependency.Scope, environment)
+		if err != nil {
+			return catalog, fmt.Errorf("bucket dependency %d (%q): %w", i+1, dependency.Bucket, err)
+		}
+		if _, err := resolveManifestObjectBucket(catalog.Items, dependency.Bucket, scope); err == nil || strings.Contains(err.Error(), "ambiguous") {
+			continue // the binding pass reports an ambiguous reference
+		} else if dependency.Create == nil {
+			return catalog, fmt.Errorf("bucket dependency %d (%q): %w; add `create: true` or provision it with `gregale add bucket`", i+1, dependency.Bucket, err)
+		}
+		toCreate = append(toCreate, missing{name: strings.TrimSpace(dependency.Bucket), scope: scope, region: strings.TrimSpace(dependency.Create.Region)})
+	}
+	if len(toCreate) == 0 {
+		return catalog, nil
+	}
+	creator, ok := client.(manifestBucketCreator)
+	if !ok {
+		return catalog, fmt.Errorf("creating buckets is unavailable")
+	}
+	created := map[string]bool{}
+	for _, want := range toCreate {
+		key := want.name + "\x00" + want.scope
+		if created[key] {
+			continue
+		}
+		created[key] = true
+		// No idempotency key: the API reserves by (app, scope, name), so a
+		// retry finds the bucket, and a fixed key could replay a create
+		// for a bucket deleted since.
+		bucket, err := creator.CreateObjectBucket(ctx, slug, api.CreateObjectBucketRequest{Name: want.name, Scope: want.scope, Region: want.region})
+		if err != nil {
+			return catalog, fmt.Errorf("create bucket %q: %w", want.name, err)
+		}
+		if !jsonOutput {
+			PrintProgress(osStderr, "Created bucket %s for %s", bucket.Name, slug)
+		}
+		catalog.Items = append(catalog.Items, bucket)
+	}
+	return catalog, nil
+}
+
+// deployManifestObjectStorageBindings attaches ready buckets to the app and
+// lets the API seal the provider-neutral S3 settings into the app
+// environment. It creates a bucket only for an entry that says `create`
+// (ADR-20261106105015 §1), so CI deploys get no storage side effect they
+// were not asked for.
 func deployManifestObjectStorageBindings(ctx context.Context, client manifestObjectStorageClient, slug, cwd string, environments ...string) error {
 	manifest, present, err := gregalemanifest.Load(cwd)
 	if err != nil {
@@ -96,6 +152,9 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 	}
 	if err != nil {
 		return fmt.Errorf("list object-storage buckets for %q: %w", slug, err)
+	}
+	if catalog, err = createManifestBuckets(ctx, client, slug, environment, matching, catalog); err != nil {
+		return err
 	}
 
 	plans := make([]manifestObjectStorageBindingPlan, 0, len(matching))
@@ -165,6 +224,9 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 			if existing.Credential.Permission != "" && existing.Credential.Permission != plan.permission {
 				return fmt.Errorf("bucket dependency %d (%q): existing binding %q has permission %q, manifest requests %q; delete the binding and redeploy", i+1, plan.dependency.Bucket, existing.ID, existing.Credential.Permission, plan.permission)
 			}
+			if existing.KeyPrefix != plan.dependency.KeyPrefix {
+				return fmt.Errorf("bucket dependency %d (%q): existing binding %q has key_prefix %q, manifest requests %q; delete the binding and redeploy", i+1, plan.dependency.Bucket, existing.ID, existing.KeyPrefix, plan.dependency.KeyPrefix)
+			}
 			if !jsonOutput {
 				_, _ = fmt.Fprintf(osStdout, "  ✓ %s: bucket %s attached as %s\n", slug, plan.bucket.Name, plan.prefix)
 			}
@@ -174,9 +236,10 @@ func deployManifestObjectStorageBindings(ctx context.Context, client manifestObj
 			continue
 		}
 
-		bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("manifest-bucket-binding", slug, plan.bucket.ID, plan.scope, plan.prefix))
+		bindingCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("manifest-bucket-binding", bucketBindingKeyParts(slug, plan.bucket.ID, plan.scope, plan.prefix, plan.dependency.KeyPrefix)...))
 		binding, err := client.CreateObjectStorageComputeBinding(bindingCtx, slug, plan.bucket.ID, api.CreateObjectStorageComputeBindingRequest{
 			Label: strings.TrimSpace(plan.dependency.EffectiveLabel()), Permission: plan.permission, Prefix: plan.prefix,
+			KeyPrefix: plan.dependency.KeyPrefix,
 		})
 		if err != nil {
 			return fmt.Errorf("bucket dependency %d (%q): create compute binding: %w", i+1, plan.dependency.Bucket, err)

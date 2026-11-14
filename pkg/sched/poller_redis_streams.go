@@ -49,8 +49,9 @@ type redisPoller struct {
 	batchMax   int
 	visibility time.Duration
 
-	mu       sync.Mutex
-	inFlight map[string]string // id → original stream value (for header passthrough)
+	mu            sync.Mutex
+	inFlight      map[string]string // id → original stream value (for header passthrough)
+	reclaimCursor string
 
 	// closeOnce serializes Close calls. redismock's ExpectClose
 	// allows at most one matched Close per expected client;
@@ -185,6 +186,14 @@ func (r *redisPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 		// The pending list filled the batch. A Count of 0 would make
 		// go-redis drop COUNT and read the whole backlog of new entries
 		// into memory (ADR-20261101093512).
+		return PollResult{Records: out}
+	}
+	reclaimed, reclaimErr := r.reclaimIdle(ctx, limit-int64(len(out)))
+	if reclaimErr != nil {
+		return PollResult{Error: reclaimErr}
+	}
+	out = r.appendOutFromXReadGroup(out, []redis.XStream{{Stream: r.stream, Messages: reclaimed}})
+	if int64(len(out)) >= limit {
 		return PollResult{Records: out}
 	}
 	newRes, err := r.client.XReadGroup(ctx, &redis.XReadGroupArgs{

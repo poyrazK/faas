@@ -288,7 +288,12 @@ func cmdLogDrainsUpdate(args []string) int {
 }
 
 func cmdLogDrainsRm(args []string) int {
-	slug, id, ok := logDrainFlags("rm", args, true, nil)
+	// Delete does not prompt; --yes / -y are accepted so scripts written for
+	// the other delete commands work here too (Hunt 32 H32-52).
+	slug, id, ok := logDrainFlags("rm", args, true, func(fs *flag.FlagSet) {
+		fs.Bool("yes", false, "confirm deletion without prompting")
+		fs.Bool("y", false, "shorthand for --yes")
+	})
 	if !ok {
 		return 1
 	}

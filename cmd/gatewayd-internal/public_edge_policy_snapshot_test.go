@@ -446,11 +446,8 @@ func TestPublicEdgePolicyPostgresBoundsOutageAndCleanup(t *testing.T) {
 
 func TestPublicEdgePolicyPostgresEnvironmentOverlayRepairsWithoutNotify(t *testing.T) {
 	f := newPublicRoutingPGFixture(t)
+	environment := f.environment(t, "staging")
 	deployment := f.deployment(t, "staging", "sha256:edge-environment")
-	environment, err := f.store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: f.app.AccountID, ProjectID: f.project.ID, Slug: "staging"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	host := gateway.BuildEnvironmentHost(".gregale.dev", environment.ID, f.app.ID)
 	f.edgeRule(t, host, state.EdgeRuleAction{Kind: state.EdgeRuleKindHeaders, Headers: &state.EdgeRuleHeadersAction{
 		ResponseHeaders: []state.EdgeRuleHeaderOp{{Name: "X-Environment", Action: "set", Value: "global"}}}})

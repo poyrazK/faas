@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Go build cache disk pressure every 10 minutes
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=10m
+RandomizedDelaySec=1m
+Persistent=true
+Unit=faas-go-cache-trim.service
+
+[Install]
+WantedBy=timers.target

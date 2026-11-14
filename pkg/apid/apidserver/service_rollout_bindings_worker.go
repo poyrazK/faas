@@ -62,7 +62,15 @@ func (s *server) serviceRolloutBindingCheck(ctx context.Context, candidate state
 		var writeErr error
 		switch gate.Action {
 		case state.ServiceRolloutActionPromote:
-			updated, writeErr = s.store.BeginServiceRolloutCutover(writeCtx, candidate.ID)
+			if gate.TrafficPercent > 0 && gate.TrafficPercent < 100 {
+				steps, ok := s.store.(state.ServiceRolloutStepStore)
+				if !ok {
+					return state.ErrServiceRolloutInvalid
+				}
+				updated, writeErr = steps.BeginServiceRolloutStep(writeCtx, candidate.ID, gate.TrafficPercent)
+			} else {
+				updated, writeErr = s.store.BeginServiceRolloutCutover(writeCtx, candidate.ID)
+			}
 		case state.ServiceRolloutActionAbort:
 			updated, writeErr = s.store.BeginServiceRolloutAbort(writeCtx, candidate.ID)
 		default:
@@ -134,6 +142,12 @@ func (s *server) serviceRolloutBindingSweep(ctx context.Context, cursor *int) er
 			if problem.BindingsCheck != nil {
 				blockers = problem.BindingsCheck.Blockers
 			}
+		} else if errors.Is(err, state.ErrRollbackCrossesRelease) {
+			code = api.CodeRollbackCrossesRelease
+			blockers = []api.BindingCheckFinding{{Code: code, DeploymentID: gate.DeploymentID, Message: "A release command started after this predecessor last served. Review migrations before restoring old code."}}
+		} else if errors.Is(err, state.ErrRollbackTargetDatabaseRestored) {
+			code = api.CodeRollbackTargetDatabaseRestored
+			blockers = []api.BindingCheckFinding{{Code: code, DeploymentID: gate.DeploymentID, Message: "This predecessor release was undone by a database restore. Choose compatible code."}}
 		} else if errors.Is(err, state.ErrServiceRolloutNotReady) {
 			code = "service_rollout_not_ready"
 			blockers = []api.BindingCheckFinding{{Code: code, DeploymentID: gate.DeploymentID, Message: "The exact recipient must have ready service capacity before routing can change."}}

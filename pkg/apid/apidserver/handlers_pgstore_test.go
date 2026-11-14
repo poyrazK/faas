@@ -879,7 +879,14 @@ func TestPGAppErrorsReceiverStoresRepeatOccurrenceWithoutHeaders(t *testing.T) {
 	if requests != 3 || withoutHeaders != 2 {
 		t.Fatalf("app_error_requests rows = %d (%d without headers), want 3 (2)", requests, withoutHeaders)
 	}
-	list := issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues", nil, nil), 200)
+	// Issue grouping runs on the receiver's bounded background queue (#6600).
+	var list api.ListIssuesResponse
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		list = issueDecode[api.ListIssuesResponse](t, e.do(t, "GET", "/v1/apps/"+app.Slug+"/issues", nil, nil), 200)
+		if len(list.Items) == 1 && list.Items[0].EventCount == 3 || time.Now().After(deadline) {
+			break
+		}
+	}
 	if len(list.Items) != 1 || list.Items[0].EventCount != 3 {
 		t.Fatalf("issues = %+v, want one issue with 3 events", list.Items)
 	}
@@ -912,4 +919,35 @@ func TestPGAppErrorsReceiverStoresUnredactedRequests(t *testing.T) {
 	if requests != 1 {
 		t.Fatalf("app_error_requests rows = %d, want 1", requests)
 	}
+}
+
+// doSession dispatches a request as accountID's dashboard session, for routes
+// that refuse API keys (transferring or deleting an organization). An empty
+// accountID is e.acct.
+func (e pgHandlerEnv) doSession(t *testing.T, accountID, method, path string, body any, hdrs map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	if accountID == "" {
+		accountID = e.acct.ID
+	}
+	var r io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		r = bytes.NewReader(b)
+	}
+	req := httptest.NewRequest(method, path, r)
+	sid := uuid.NewString()
+	if _, err := e.store.CreateSession(req.Context(), sid, accountID, "192.0.2.11", "session-test-ua"); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	token, err := e.s.sessions.IssueWithSession(sid, accountID, false)
+	if err != nil {
+		t.Fatalf("IssueWithSession: %v", err)
+	}
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	for k, v := range hdrs {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	return rec
 }

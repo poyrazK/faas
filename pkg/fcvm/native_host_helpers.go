@@ -159,6 +159,9 @@ type nativeHostHelperJournal struct {
 	writeValue func(string, nativeHostHelperRecord) error
 	purpose    nativeHostHelperPurpose
 	deviceRoot string
+	// deviceTimings, when set, receives where the jail device setup spent its
+	// wall clock (bindTunTimings). Observation only; nil for every other helper.
+	deviceTimings *nativeDeviceTimings
 	// Only the full native capture producer uses this while retaining its
 	// original physical lock through helper join and source FD closure.
 	lockedOwner     *nativeLaunchRecord
@@ -323,7 +326,9 @@ func (j *nativeHostHelperJournal) launch(ctx context.Context, expected nativeLau
 	var deviceInputs nativeJailDeviceInputs
 	var snapshotInputs *nativeSnapshotOutputInputs
 	if deviceCommand {
+		prepareStart := time.Now()
 		deviceInputs, err = j.prepareDeviceInputs(ctx, owner)
+		j.deviceTimings.notePrepare(prepareStart, deviceInputs)
 		if deviceInputs != nil {
 			defer func() { err = errors.Join(err, deviceInputs.Close()) }()
 		}

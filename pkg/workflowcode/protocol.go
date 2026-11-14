@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 // Kind is an operation kind.
@@ -196,6 +197,9 @@ type Response struct {
 	Protocol string       `json:"protocol"`
 	Ops      []ReportedOp `json:"ops"`
 	Result   Result       `json:"result"`
+	// ReplayedOps is optional for compatibility with older SDKs. New SDKs
+	// report their cursor so terminal responses cannot silently omit history.
+	ReplayedOps *int `json:"replayed_ops,omitempty"`
 }
 
 // Limits bounds a run; values come from pkg/api's limits table and the
@@ -330,6 +334,12 @@ func Validate(journal Journal, response Response, limits Limits) (Plan, error) {
 	names := map[string]bool{}
 	bytes := journal.Bytes
 	for _, op := range response.Ops {
+		// Classify an exhausted journal before validating generated names.
+		// Otherwise a repeat suffix beyond the global limit can look like a
+		// retryable protocol error and execute that extra body repeatedly.
+		if op.Seq >= limits.MaxOps {
+			return Plan{}, fmt.Errorf("%w: operation limit %d exhausted", ErrLimit, limits.MaxOps)
+		}
 		planned, err := validateOp(journal, op, limits, next, seen, names)
 		if err != nil {
 			return Plan{}, err
@@ -347,6 +357,14 @@ func Validate(journal Journal, response Response, limits Limits) (Plan, error) {
 		return Plan{}, fmt.Errorf("%w: journal is %d bytes, limit %d", ErrLimit, bytes, limits.JournalMaxBytes)
 	}
 	if plan.Result.Status != ResultRunning {
+		if response.ReplayedOps != nil && *response.ReplayedOps != len(journal.Entries) {
+			return Plan{}, fmt.Errorf("%w: terminal response did not replay the complete journal", ErrNondeterministic)
+		}
+		for _, entry := range journal.Entries {
+			if entry.Status != EntrySucceeded && entry.Status != EntryFailed && !seen[entry.Seq] {
+				return Plan{}, fmt.Errorf("%w: terminal response omitted pending operation %q", ErrNondeterministic, entry.Name)
+			}
+		}
 		return plan, nil
 	}
 	if !progresses(journal, plan) {
@@ -507,12 +525,9 @@ func DriverRetryDelay(failures int) time.Duration {
 
 // truncate bounds s to max bytes on a rune boundary.
 func truncate(s string, max int) string {
-	if max <= 0 || len(s) <= max {
+	s = safetext.Clean(s)
+	if max <= 0 {
 		return s
 	}
-	cut := max
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return s[:cut]
+	return safetext.Truncate(s, max)
 }

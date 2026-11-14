@@ -36,6 +36,7 @@ WITH input AS (SELECT $1::text AS protocol),
     UNION ALL SELECT signature||': EXECUTE' FROM (VALUES ('pg_catalog.pg_advisory_xact_lock(bigint)'),
      ('pg_catalog.pg_advisory_xact_lock_shared(bigint)'),('pg_catalog.hashtextextended(text,bigint)')) p(signature)
      WHERE NOT has_function_privilege(to_regprocedure(signature),'EXECUTE')
+    UNION ALL SELECT 'pg_catalog.pg_locks: SELECT' WHERE NOT has_table_privilege('pg_catalog.pg_locks','SELECT')
    ) x ORDER BY object) AS missing_grants,
    ARRAY(SELECT object FROM (VALUES
     ('session_replication_role: origin required',current_setting('session_replication_role')='origin'),

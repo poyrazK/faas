@@ -104,7 +104,7 @@ test("active session errors are handled without committing or replaying a write"
   await db.close();
 });
 
-test("restore coalesces concurrent callbacks, replaces the pool and only reads", async () => {
+test("restore coalesces concurrent callbacks and replaces the pool without SQL", async () => {
   const { db, pools } = await fixture();
   await db.query("SELECT 1");
   const first = db.restore(), second = db.restore();
@@ -112,7 +112,10 @@ test("restore coalesces concurrent callbacks, replaces the pool and only reads",
   await assert.rejects(db.query("SELECT 1"), /database_unavailable/);
   await first;
   assert.equal(pools.length, 2); assert.equal(pools[0].ended, 1); assert.equal(db.generation, 1);
-  assert.deepEqual(pools[1].clients[0].queries.map((q) => q.sql), ["BEGIN READ ONLY", "SELECT set_config('statement_timeout', $1, true)", "SELECT id FROM notes LIMIT 1", "COMMIT"]);
+  // ADR-20261109180000: after_restore stays off the network; the first query connects.
+  assert.equal(pools[1].clients.length, 0);
+  await db.query("SELECT 1");
+  assert.deepEqual(pools[1].clients[0].queries.map((q) => q.sql), ["BEGIN READ ONLY", "SELECT set_config('statement_timeout', $1, true)", "SELECT 1", "COMMIT"]);
   await db.restore(); assert.equal(db.generation, 2);
   await db.close(); await db.close();
   assert.ok(pools.every((pool) => pool.ended === 1));
@@ -151,21 +154,18 @@ test("request deadlines and admission bound an unavailable database", async () =
   await db.close();
 });
 
-test("restore cancels captured work and a failed readiness probe stays closed", async () => {
+test("restore cancels captured work and an unreachable database fails the first query, not restore", async () => {
   const { db, pools } = await fixture({configurePool: (pool, index) => {
-    if (index === 3) pool.execute = () => {throw new Error("secret");};
+    if (index === 2) pool.execute = () => {throw new Error("secret provider detail");};
   }}); const blocked = deferred();
   pools[0].execute = () => blocked.promise;
   const work = assert.rejects(db.query("SELECT 1"), /database_cancelled/);
   const restore = db.restore(); await tick();
-  // Run another restore with a missing-schema error on the fresh pool.
   await restore; await work; blocked.resolve({ rows: [] });
-  pools[1].execute = () => { throw new Error("secret provider detail"); };
-  const next = db.restore();
-  await assert.rejects(next, /database_unavailable/);
   assert.equal(db.generation, 1);
-  await assert.rejects(db.query("SELECT 1"), /database_unavailable/);
-  await db.restore(); assert.equal(db.generation, 2); await db.close();
+  await assert.rejects(db.query("SELECT 1"), (error) => error.code === "database_unavailable" && !error.message.includes("secret"));
+  await db.restore(); assert.equal(db.generation, 2);
+  await db.query("SELECT 1"); await db.close();
 });
 
 test("close during restore prevents late readiness publication", async () => {
@@ -177,17 +177,16 @@ test("close during restore prevents late readiness publication", async () => {
   await assert.rejects(db.restore(), /database_unavailable/);
 });
 
-test("shutdown aborts an already running readiness probe", async () => {
+test("shutdown aborts the first query still running after restore", async () => {
   const entered = deferred();
   const { db, pools } = await fixture({configurePool: (pool, index) => {
     if (index === 2) pool.execute = () => {entered.resolve(); return new Promise(() => {});};
   }});
-  const restore = db.restore();
-  const failure = assert.rejects(restore, /database_unavailable/);
+  await db.restore();
+  assert.equal(pools[1].clients.length, 0);
+  const work = assert.rejects(db.query("SELECT 1"), /database_cancelled/);
   await entered.promise;
-  assert.equal(pools[1].clients.length, 1);
-  await db.close(); await failure;
-  assert.equal(db.generation, 0);
+  await db.close(); await work;
   assert.deepEqual(pools[1].clients[0].releases, [true]);
 });
 
@@ -329,19 +328,15 @@ test('restore cancellation fences a refresh queued behind rotation and rereads t
   await f.db.query('SELECT 1');
 });
 
-test('restore timeout cancels active validation without a late publication or ACK', {timeout:3000}, async t => {
-  const entered=deferred(), finish=deferred();
+test('restore adopts and ACKs the latest snapshot without waiting for the database', {timeout:3000}, async t => {
+  const finish=deferred();
   const f=await managedFixture(t,{restoreTimeoutMS:30,configurePool:(pool,index)=>{
-    if(index===2)pool.execute=async sql=>{
-      if(sql==='SELECT id FROM notes LIMIT 1'){entered.resolve();await finish.promise;}
-      return {rows:[]};
-    };
+    if(index===2)pool.execute=async()=>{await finish.promise;return {rows:[]};};
   }});
-  const restore=assert.rejects(f.db.restore(),/database_unavailable/);await entered.promise;
-  await restore;finish.resolve();await tick();
-  assert.equal(f.db.generation,0);assert.equal(f.pools[1].ended,1);assert.equal(f.receipts.length,1);
-  await assert.rejects(f.db.query('SELECT 1'),/database_unavailable/);
-  await f.db.restore();assert.equal(f.db.generation,1);
+  await f.db.restore();
+  assert.equal(f.db.generation,1);assert.equal(f.pools[1].clients.length,0);
+  assert.equal(f.receipts.at(-1).status,'applied');
+  const work=f.db.query('SELECT 1');finish.resolve();await work;
 });
 
 test('a rotation cannot build a pool while checkpointed; restore adopts the latest snapshot', async t => {

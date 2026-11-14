@@ -136,6 +136,7 @@ type Metrics struct {
 	// the disk budget before they expired (ADR-20261101085552).
 	requestIDJournalEvicted     prometheus.Counter
 	requestTelemetryShipped     prometheus.Counter
+	requestAnalyticsRollups     *prometheus.CounterVec
 	requestTelemetryOverwritten prometheus.Counter
 	requestIDJournalWrites      *prometheus.CounterVec
 	requestIDJournalWriteTime   prometheus.Histogram
@@ -180,6 +181,10 @@ type Metrics struct {
 	// new-host budget was spent). A sustained shed rate is a flood of names
 	// that route nowhere.
 	routeLookupUnknownHost *prometheus.CounterVec
+	// requestLogSuppressed counts gateway_request lines not written
+	// because the request-log budget (api.GatewayRequestLogLinesPerSecond)
+	// was spent.
+	requestLogSuppressed prometheus.Counter
 	// inflightRequests (issue #587 / PR-A) is the per-daemon
 	// drain.Tracker in-flight gauge (see SetInflightRequests).
 	inflightRequests *prometheus.GaugeVec
@@ -1064,6 +1069,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_request_telemetry_shipped_total",
 			Help: "Original requests represented by telemetry rows successfully handed to apid.",
 		}),
+		requestAnalyticsRollups: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_request_analytics_rollup_requests_total",
+			Help: "Requests in gateway analytics rollup batches, by outcome: shipped (apid acknowledged the batch) or lost (the batch was given up).",
+		}, []string{"outcome"}),
 		requestTelemetryOverwritten: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gateway_request_telemetry_overwritten_total",
 			Help: "Telemetry rows evicted from the gateway ring because it was full before the publisher drained them.",
@@ -2216,7 +2225,7 @@ func NewMetrics() *Metrics {
 		Name: "geoip_db_build_timestamp_seconds",
 		Help: "Unix time the loaded geoip country database was built (its build_epoch); NaN when none is loaded. time() minus it is the database's age (ADR-091 amendment 2026-11-02, later).",
 	}, m.geoipDBBuildTimestamp)
-	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestIDJournalEvicted, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.wakeRequestLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBBuildTime, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestIDJournalEvicted, m.requestTelemetryShipped, m.requestAnalyticsRollups, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.wakeRequestLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBBuildTime, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
@@ -2285,8 +2294,12 @@ func NewMetrics() *Metrics {
 	}, []string{"outcome"})
 	m.routeLookupUnknownHost.WithLabelValues("remembered_miss")
 	m.routeLookupUnknownHost.WithLabelValues("shed")
+	m.requestLogSuppressed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "gateway_request_log_suppressed_total",
+		Help: "gateway_request log lines (cold requests and non-2xx answers) not written because this gateway spent its request-log budget (GatewayRequestLogLinesPerSecond in pkg/api/limits.go). The next written line carries suppressed_before. A sustained rate means a flood of errors or of names that route nowhere; gateway_requests_total still counts every request.",
+	})
 	m.initMCPMetrics(reg)
-	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed, m.routeLookupUnknownHost)
+	reg.MustRegister(m.drainWaitSeconds, m.inflightRequests, m.routeLookupStaleServed, m.routeLookupUnknownHost, m.requestLogSuppressed)
 	return m
 }
 
@@ -2341,6 +2354,15 @@ func (m *Metrics) ObserveRouteLookupUnknownHost(outcome string) {
 		return
 	}
 	m.routeLookupUnknownHost.WithLabelValues(outcome).Inc()
+}
+
+// ObserveRequestLogSuppressed counts one gateway_request line the request-log
+// budget kept from being written. Nil-safe.
+func (m *Metrics) ObserveRequestLogSuppressed() {
+	if m == nil || m.requestLogSuppressed == nil {
+		return
+	}
+	m.requestLogSuppressed.Inc()
 }
 
 // ObserveDrainWait (issue #587 / PR-A) records the wall-clock
@@ -2529,6 +2551,17 @@ func (m *Metrics) RequestCountHandler() http.Handler {
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(m.requests, m.appInflight)
 	return promhttp.HandlerFor(registry, promhttp.HandlerOpts{Registry: registry})
+}
+
+// ForgetAppRequestCounts drops a deleted app's request counters. Their
+// series stayed for the gateway's lifetime, one per status code, and
+// schedd reads them every second (ADR 20261104091530). The in-flight gauge
+// stays: a request still finishing would bring it back below zero.
+func (m *Metrics) ForgetAppRequestCounts(appID string) {
+	if m == nil || appID == "" {
+		return
+	}
+	m.requests.DeletePartialMatch(prometheus.Labels{"app": appID})
 }
 
 // AdjustAppInflight moves appID's in-flight request gauge by delta.
@@ -3994,12 +4027,20 @@ func (l *requestLogger) Log(appID, code string, latency time.Duration, cold bool
 		"cold", cold,
 		"request_id", logsanitize.Field(requestID),
 	}
-	hotSuccess := len(code) == 3 && code[0] == '2'
-	if cold || !hotSuccess {
+	if requestLogLevel(code, cold) == slog.LevelInfo {
 		l.log.Info("gateway_request", fields...)
 		return
 	}
 	l.log.Debug("gateway_request", fields...)
+}
+
+// requestLogLevel is the level requestLogger.Log writes a request at: a warm
+// 2xx at Debug, anything else at Info.
+func requestLogLevel(code string, cold bool) slog.Level {
+	if cold || len(code) != 3 || code[0] != '2' {
+		return slog.LevelInfo
+	}
+	return slog.LevelDebug
 }
 
 // Issue #676 / ADR-080 follow-up, PR-B: closed-set label constants
@@ -4479,6 +4520,25 @@ func (m *Metrics) AddRequestTelemetryShipped(n int64) {
 		return
 	}
 	m.requestTelemetryShipped.Add(float64(n))
+}
+
+// AddRequestAnalyticsRollupShipped records requests whose gateway rollup
+// batch apid acknowledged (ADR-20261103113952 amendment 5).
+func (m *Metrics) AddRequestAnalyticsRollupShipped(n int64) {
+	m.addRequestAnalyticsRollups("shipped", n)
+}
+
+// AddRequestAnalyticsRollupLost records requests whose gateway rollup batch
+// was given up.
+func (m *Metrics) AddRequestAnalyticsRollupLost(n int64) {
+	m.addRequestAnalyticsRollups("lost", n)
+}
+
+func (m *Metrics) addRequestAnalyticsRollups(outcome string, n int64) {
+	if m == nil || m.requestAnalyticsRollups == nil || n <= 0 {
+		return
+	}
+	m.requestAnalyticsRollups.WithLabelValues(outcome).Add(float64(n))
 }
 
 // ObserveRequestIDJournalBatch records one batch write (ADR-1521): every

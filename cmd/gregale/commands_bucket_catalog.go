@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"text/tabwriter"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -64,9 +65,26 @@ func renderBucketList(app string, list api.ObjectBucketList) {
 				bucket.ID, bucket.Name, bucket.Scope, bucket.Region, bucket.State, publicAt)
 		}
 		_ = tw.Flush()
+		renderBucketRetries(list.Items)
 	}
 	if !list.Enabled {
 		_, _ = fmt.Fprintln(osStdout, "Object storage is not enabled on this installation; existing buckets can still be emptied and deleted.")
+	}
+}
+
+// renderBucketRetries explains each bucket whose create or delete Gregale is
+// retrying, so a bucket stuck in provisioning or deleting says why.
+func renderBucketRetries(items []api.ObjectBucket) {
+	for _, bucket := range items {
+		r := bucket.Retry
+		if r == nil {
+			continue
+		}
+		next := "now"
+		if wait := time.Until(r.RetryAt).Round(time.Second); wait > 0 {
+			next = "in " + wait.String()
+		}
+		_, _ = fmt.Fprintf(osStdout, "\n%s is %s (attempt %d, next retry %s): %s\n", bucket.ID, bucket.State, r.Attempts, next, r.Detail)
 	}
 }
 

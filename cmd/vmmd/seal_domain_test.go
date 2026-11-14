@@ -68,14 +68,14 @@ func TestUnsealIdentities(t *testing.T) {
 		return true
 	}
 
-	gotHost, gotRegistry, err := unsealIdentities(ids(runtime), ids(build), ids(fleet, host), false)
+	gotHost, gotRegistry, err := unsealIdentities(ids(runtime), ids(build), ids(fleet, host), false, false)
 	if err != nil || !same(gotHost, ids(runtime, fleet, host)) || !same(gotRegistry, ids(build, fleet, host)) {
 		t.Fatalf("uncontracted = %v, %v, %v; want each domain then fleet and host", gotHost, gotRegistry, err)
 	}
-	if gotHost, gotRegistry, err := unsealIdentities(nil, nil, ids(fleet, host), false); err != nil || !same(gotHost, ids(fleet, host)) || !same(gotRegistry, ids(fleet, host)) {
+	if gotHost, gotRegistry, err := unsealIdentities(nil, nil, ids(fleet, host), false, false); err != nil || !same(gotHost, ids(fleet, host)) || !same(gotRegistry, ids(fleet, host)) {
 		t.Fatalf("no domain staged = %v, %v, %v; want the legacy identities", gotHost, gotRegistry, err)
 	}
-	gotHost, gotRegistry, err = unsealIdentities(ids(runtime), ids(build), nil, true)
+	gotHost, gotRegistry, err = unsealIdentities(ids(runtime), ids(build), nil, true, false)
 	if err != nil || !same(gotHost, ids(runtime)) || !same(gotRegistry, ids(build)) {
 		t.Fatalf("contracted = %v, %v, %v; want each domain alone", gotHost, gotRegistry, err)
 	}
@@ -83,9 +83,72 @@ func TestUnsealIdentities(t *testing.T) {
 		"no runtime domain": {nil, ids(build)},
 		"no build domain":   {ids(runtime), nil},
 	} {
-		if _, _, err := unsealIdentities(staged[0], staged[1], nil, true); err == nil {
+		if _, _, err := unsealIdentities(staged[0], staged[1], nil, true, false); err == nil {
 			t.Errorf("contracted with %s started", name)
 		}
+	}
+	// ADR-20261110210000 slice 3e: a retired node needs only the build domain.
+	gotHost, gotRegistry, err = unsealIdentities(nil, ids(build), nil, true, true)
+	if err != nil || len(gotHost) != 0 || !same(gotRegistry, ids(build)) {
+		t.Fatalf("retired = %v, %v, %v; want no runtime identities and the build domain", gotHost, gotRegistry, err)
+	}
+	if _, _, err := unsealIdentities(nil, nil, nil, true, true); err == nil {
+		t.Error("retired without the build domain started")
+	}
+}
+
+// ADR-20261110210000 slice 3e: a retired node holds no private key that
+// opens runtime secrets, opens them through secretd, and seals capture keys
+// to the runtime recipient.
+func TestRuntimeRetiredRecipient(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newDir := func(t *testing.T, files ...string) string {
+		t.Helper()
+		dir := t.TempDir()
+		domains := filepath.Join(dir, "domains")
+		if err := os.MkdirAll(domains, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range files {
+			body := id.String()
+			if strings.HasSuffix(f, ".pub") {
+				body = id.Recipient().String() + "\n"
+			}
+			if err := os.WriteFile(filepath.Join(domains, f), []byte(body), 0o400); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	for _, tc := range []struct {
+		name       string
+		files      []string
+		contracted bool
+		opener     string
+		want       string
+	}{
+		{name: "retired", files: []string{"runtime.age.pub"}, contracted: true, opener: "secretd"},
+		{name: "not contracted", files: []string{"runtime.age.pub"}, opener: "secretd", want: "CONTRACTED"},
+		{name: "opens locally", files: []string{"runtime.age.pub"}, contracted: true, opener: "local", want: "OPENER=secretd"},
+		{name: "identity left", files: []string{"runtime.age.pub", "runtime.age"}, contracted: true, opener: "secretd", want: "still on this host"},
+		{name: "previous left", files: []string{"runtime.age.pub", "runtime.age.previous"}, contracted: true, opener: "secretd", want: "still on this host"},
+		{name: "no recipient", contracted: true, opener: "secretd", want: "needs the runtime recipient"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := runtimeRetiredRecipient(newDir(t, tc.files...), tc.contracted, tc.opener)
+			if tc.want == "" {
+				if err != nil || r.String() != id.Recipient().String() {
+					t.Fatalf("recipient = %v, %v", r, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

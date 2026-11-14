@@ -98,7 +98,29 @@ func (s *Service) CustomerLogin(w http.ResponseWriter, r *http.Request) {
 		customerError(w, customerAuthFailure{http.StatusUnauthorized})
 		return
 	}
-	s.customerToken(w, r, realm, "/auth/v1/token?grant_type=password", body)
+	key := customerSignInKey(realm.app.ID, body.Email)
+	now := s.clock()
+	if wait := s.signIns.blocked(key, now); wait > 0 {
+		customerError(w, customerRateLimited{retryAfter: wait})
+		return
+	}
+	err = s.customerToken(w, r, realm, "/auth/v1/token?grant_type=password", body)
+	var refused customerAuthFailure
+	switch {
+	case err == nil:
+		s.signIns.succeed(key)
+	case errors.As(err, &refused) && refused.status == http.StatusUnauthorized:
+		// Only wrong credentials count, not an unavailable login service.
+		s.signIns.fail(key, now)
+	}
+}
+
+// clock is the service's time, pinned by Now in tests.
+func (s *Service) clock() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
 }
 
 func (s *Service) CustomerRefresh(w http.ResponseWriter, r *http.Request) {
@@ -115,10 +137,12 @@ func (s *Service) CustomerRefresh(w http.ResponseWriter, r *http.Request) {
 		customerError(w, customerAuthFailure{http.StatusUnauthorized})
 		return
 	}
-	s.customerToken(w, r, realm, "/auth/v1/token?grant_type=refresh_token", map[string]string{"refresh_token": refresh.Value})
+	_ = s.customerToken(w, r, realm, "/auth/v1/token?grant_type=refresh_token", map[string]string{"refresh_token": refresh.Value})
 }
 
-func (s *Service) customerToken(w http.ResponseWriter, r *http.Request, realm customerRealm, path string, body any) {
+// customerToken exchanges credentials with the product's login service,
+// writes the response, and returns why it did not sign the customer in.
+func (s *Service) customerToken(w http.ResponseWriter, r *http.Request, realm customerRealm, path string, body any) error {
 	var session struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
@@ -126,21 +150,23 @@ func (s *Service) customerToken(w http.ResponseWriter, r *http.Request, realm cu
 	}
 	if err := s.authCall(r.Context(), realm, http.MethodPost, path, "", body, &session); err != nil {
 		customerError(w, err)
-		return
+		return err
 	}
 	if !validCookieToken(session.AccessToken) || !validCookieToken(session.RefreshToken) || session.ExpiresIn <= 0 || session.ExpiresIn > api.ProductControlSessionMaxSeconds {
-		customerError(w, customerAuthFailure{http.StatusServiceUnavailable})
-		return
+		err := customerAuthFailure{http.StatusServiceUnavailable}
+		customerError(w, err)
+		return err
 	}
 	// Verify the session against the Auth database before accepting it. This
 	// catches revoked/banned users even if a JWT's expiry has not passed.
 	if _, err := s.customerOrganizations(r.Context(), realm, session.AccessToken); err != nil {
 		customerError(w, err)
-		return
+		return err
 	}
 	realm.setCookie(w, "access", session.AccessToken, session.ExpiresIn)
 	realm.setCookie(w, "refresh", session.RefreshToken, api.ProductControlSessionMaxSeconds)
 	httpkit.WriteJSON(w, http.StatusOK, map[string]bool{"authenticated": true})
+	return nil
 }
 
 func (s *Service) CustomerLogout(w http.ResponseWriter, r *http.Request) {
@@ -245,6 +271,9 @@ func (s *Service) authCallAuthorization(ctx context.Context, realm customerRealm
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response.StatusCode == http.StatusTooManyRequests {
+			return customerRateLimited{retryAfter: upstreamRetryAfter(response.Header.Get("Retry-After"))}
+		}
 		if response.StatusCode == 400 || response.StatusCode == 401 {
 			return customerAuthFailure{http.StatusUnauthorized}
 		}
@@ -456,6 +485,13 @@ func (s *Service) CustomerStart(w http.ResponseWriter, r *http.Request, acct sta
 }
 
 func customerError(w http.ResponseWriter, err error) {
+	var limited customerRateLimited
+	if errors.As(err, &limited) {
+		w.Header().Set("Retry-After", limited.retryAfterSeconds())
+		api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "product_customer_rate_limited", "Too many sign-in attempts",
+			"wait before trying to sign in again"))
+		return
+	}
 	var auth customerAuthFailure
 	if errors.As(err, &auth) {
 		api.WriteProblem(w, api.NewProblem(auth.status, "product_customer_auth", "Customer session unavailable", "sign in again or retry when your product's login service is available"))

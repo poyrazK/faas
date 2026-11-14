@@ -86,7 +86,9 @@ func testMigrationBaseline(t *testing.T, factory func(*testing.T) Store) {
 				t.Fatal(err)
 			}
 			exit := 0
-			task, err = tasks.CompleteAppTask(ctx, CompleteAppTaskParams{ID: task.ID, LeaseToken: *task.LeaseToken, Status: AppTaskSucceeded, ExitCode: &exit, FinishedAt: now.Add(3 * time.Second), StdoutTail: "private migration output"})
+			// Admission may move the accepted start forward from our seed clock.
+			// Finish at that accepted time so subsequent real-time probes follow it.
+			task, err = tasks.CompleteAppTask(ctx, CompleteAppTaskParams{ID: task.ID, LeaseToken: *task.LeaseToken, Status: AppTaskSucceeded, ExitCode: &exit, FinishedAt: task.UpdatedAt, StdoutTail: "private migration output"})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -45,7 +45,7 @@ func (h *Handler) manageDashboardReaders(r *http.Request, account string) (strin
 		return "", datapipeline.ErrInvalid
 	}
 	var subjects []string
-	if action == "preview" {
+	if action == "preview" && r.FormValue("readers") != "" {
 		subjects = strings.Split(strings.ReplaceAll(r.FormValue("readers"), "\r\n", "\n"), "\n")
 	}
 	err = h.Service.Readers(r.Context(), account, r.FormValue("pipeline_id"), revision, action, r.FormValue("reader_change_id"), subjects)

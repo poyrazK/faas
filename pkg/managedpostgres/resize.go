@@ -14,9 +14,8 @@ type ResizeState string
 const (
 	ResizePending   ResizeState = "pending"
 	ResizeSucceeded ResizeState = "succeeded"
-	// ResizeFailed ends a major upgrade the provider rejected for good
-	// (ErrorCode); the database is back on its source spec. Only upgrades
-	// fail.
+	// ResizeFailed ends a rejected change (ErrorCode); the database is back
+	// on its confirmed source spec.
 	ResizeFailed ResizeState = "failed"
 )
 
@@ -35,7 +34,7 @@ type ResizeOperation struct {
 	// TargetPostgresMajor upgrades the major in place (upgrade.go); zero
 	// keeps it. An upgrade changes nothing else.
 	TargetPostgresMajor int
-	// ErrorCode is why a failed upgrade failed (ResizeFailed).
+	// ErrorCode is the stable reason for a failed change (ResizeFailed).
 	ErrorCode              string
 	Generation             int64
 	State                  ResizeState
@@ -89,6 +88,12 @@ func resizeTarget(source Spec, request ResizeDatabaseRequest) (ServiceClass, int
 	return class, storage, nil
 }
 
+// UpdateObserver confirms a rejected update without sending another mutation.
+// Ready must mean the pinned configuration has settled, with no update pending.
+type UpdateObserver interface {
+	ObserveUpdate(context.Context, UpdateRequest) (ObservedDatabase, error)
+}
+
 // ResizeStore serializes intent admission with other catalogue mutations and
 // commits the operation receipt with the observed database configuration.
 type ResizeStore interface {
@@ -96,8 +101,8 @@ type ResizeStore interface {
 	GetResize(context.Context, string, string) (ResizeOperation, error)
 	ActiveResize(context.Context, string, string) (ResizeOperation, error)
 	FinishResize(context.Context, Database, ResizeOperation, ObservedDatabase, time.Time) (Database, error)
-	// FailResize ends the claimed pending major upgrade as failed with a
-	// stable code and puts the database back to ready on its source spec.
+	// FailResize ends a confirmed rejection with a stable code and puts the
+	// database back to ready on its source spec under the claimed lease.
 	FailResize(context.Context, Database, ResizeOperation, string, time.Time) (Database, error)
 }
 
@@ -228,7 +233,8 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 // scale-to-zero on stay available while usage is stale or at its guardrail:
 // those are the changes that stop spend (ADR-623 amendment, hunt #9 H9-P201).
 func computeChangeRaisesCost(source, target Spec) bool {
-	return serviceClassRank(target.Class) > serviceClassRank(source.Class) || source.ScaleToZero && !target.ScaleToZero
+	return serviceClassRank(target.Class) > serviceClassRank(source.Class) || source.ScaleToZero && !target.ScaleToZero ||
+		target.StorageLimitBytes > source.StorageLimitBytes
 }
 
 // serviceClassRank orders the product classes by their compute promise; an
@@ -284,13 +290,23 @@ func (s *Service) reconcileResize(ctx context.Context, database Database) (Datab
 	}
 	providerCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
 	defer cancel()
-	observed, err := backend.Provider.Update(providerCtx, UpdateRequest{ResourceID: operation.ProviderResourceID,
+	request := UpdateRequest{ResourceID: operation.ProviderResourceID,
 		DataResourceID: operation.DataResourceID, PreviousSpec: operation.SourceSpec, Spec: operation.TargetSpec(),
-		Generation: operation.Generation, IdempotencyKey: "resize-" + operation.ID})
+		Generation: operation.Generation, IdempotencyKey: "resize-" + operation.ID}
+	observed, err := backend.Provider.Update(providerCtx, request)
 	if err != nil {
 		var rejected *ChangeRejectedError
 		if operation.MajorUpgrade() && errors.As(err, &rejected) && validRejectionCode(rejected.Code) {
 			return s.failResize(ctx, store, claimed, operation, rejected.Code)
+		}
+		if !operation.MajorUpgrade() {
+			code := providerErrorCode(err)
+			if errors.As(err, &rejected) && validRejectionCode(rejected.Code) {
+				code = rejected.Code
+			} else if !errors.Is(err, ErrInvalid) && !errors.Is(err, ErrUnsupported) {
+				return Database{}, s.releaseProviderError(ctx, claimed, StateUpdating, err)
+			}
+			return s.resolveResizeRejection(ctx, providerCtx, store, claimed, operation, backend.Provider, request, code, err)
 		}
 		return Database{}, s.releaseProviderError(ctx, claimed, StateUpdating, err)
 	}
@@ -298,13 +314,7 @@ func (s *Service) reconcileResize(ctx context.Context, database Database) (Datab
 		return Database{}, s.releaseKnownError(ctx, claimed, StateUpdating, "resize_observation_mismatch", err, time.Hour)
 	}
 	if observed.Status == ProviderStatusReady && observed.Spec == operation.TargetSpec() {
-		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
-		defer finishCancel()
-		result, err := store.FinishResize(finishCtx, claimed, operation, observed, s.now())
-		if err != nil {
-			return Database{}, s.releaseProviderError(ctx, claimed, StateUpdating, err)
-		}
-		return result, nil
+		return s.finishResize(ctx, store, claimed, operation, observed)
 	}
 	if observed.Status != ProviderStatusPending {
 		return Database{}, s.releaseKnownError(ctx, claimed, StateUpdating, "resize_not_ready", ErrUnavailable, time.Hour)
@@ -315,7 +325,7 @@ func (s *Service) reconcileResize(ctx context.Context, database Database) (Datab
 	return s.store.Get(ctx, claimed.AccountID, claimed.ID)
 }
 
-// failResize ends a major upgrade the provider rejected for good: the
+// failResize ends a change the provider rejected for good: the
 // database is back to ready on its source spec, and the change records why.
 func (s *Service) failResize(ctx context.Context, store ResizeStore, claimed Database, operation ResizeOperation, code string) (Database, error) {
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)

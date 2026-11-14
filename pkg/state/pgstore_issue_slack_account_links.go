@@ -51,12 +51,8 @@ func (s *PgStore) ConfirmIssueSlackAccountLink(ctx context.Context, app, owner, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	a, err := q.IssueLockApp(ctx, tx, issueUUID(app))
-	if err != nil {
-		return mapErr(err)
-	}
-	if issueID(a.AccountID) != owner {
-		return ErrNotFound
+	if _, err = lockIssueResponseActor(ctx, tx, app, owner, actor); err != nil {
+		return err
 	}
 	scope, err := applicationTriageScope(ctx, q, tx, app, owner, actor, issue)
 	if err != nil {
@@ -65,24 +61,24 @@ func (s *PgStore) ConfirmIssueSlackAccountLink(ctx context.Context, app, owner, 
 	if scope.State != "open" {
 		return applicationTriageConflict()
 	}
-	ch, err := q.IssueSlackChallengeByToken(ctx, tx, sqlc.IssueSlackChallengeByTokenParams{AppID: a.ID, Token: slackLinkTokenHash(token)})
+	ch, err := q.IssueSlackChallengeByToken(ctx, tx, sqlc.IssueSlackChallengeByTokenParams{AppID: issueUUID(app), Token: slackLinkTokenHash(token)})
 	if err != nil {
 		return mapErr(err)
 	}
 	if issueID(ch.IssueID) != issue {
 		return ErrNotFound
 	}
-	if err = q.IssueSlackIdentitiesExpire(ctx, tx, a.ID); err != nil {
+	if err = q.IssueSlackIdentitiesExpire(ctx, tx, issueUUID(app)); err != nil {
 		return err
 	}
-	n, err := q.IssueSlackIdentityCount(ctx, tx, a.ID)
+	n, err := q.IssueSlackIdentityCount(ctx, tx, issueUUID(app))
 	if err != nil {
 		return err
 	}
 	if n >= api.IssueSlackIdentitiesMax {
 		return api.ErrCapacity("Slack identity limit reached")
 	}
-	changed, err := q.IssueSlackIdentityPut(ctx, tx, sqlc.IssueSlackIdentityPutParams{AppID: a.ID, AccountID: issueUUID(actor), SlackUserID: ch.SlackUserID, PolicyRevision: ch.PolicyRevision, ExpiresAt: issueTime(scope.CheckedAt.Time.Add(api.IssueSlackIdentityTTL))})
+	changed, err := q.IssueSlackIdentityPut(ctx, tx, sqlc.IssueSlackIdentityPutParams{AppID: issueUUID(app), AccountID: issueUUID(actor), SlackUserID: ch.SlackUserID, PolicyRevision: ch.PolicyRevision, ExpiresAt: issueTime(scope.CheckedAt.Time.Add(api.IssueSlackIdentityTTL))})
 	if err != nil {
 		var constraint *pgconn.PgError
 		if !errors.As(err, &constraint) || constraint.Code != "23505" {

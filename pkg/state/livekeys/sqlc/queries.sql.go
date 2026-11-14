@@ -302,12 +302,15 @@ func (q *Queries) LiveDatabases(ctx context.Context, db DBTX, backendIds []strin
 }
 
 const liveDatabasesWithoutLogin = `-- name: LiveDatabasesWithoutLogin :many
-SELECT DISTINCT k.database_id::text AS database_id,k.account_id::text AS account_id
+SELECT k.database_id::text AS database_id,k.account_id::text AS account_id
  FROM managed_postgres_live_keys k
  JOIN managed_postgres_databases d ON d.id=k.database_id
+ LEFT JOIN managed_postgres_live_logins l ON l.database_id=d.id
+ LEFT JOIN managed_postgres_live_login_attempts a ON a.database_id=d.id
  WHERE k.retires_at IS NULL AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
-   AND NOT EXISTS (SELECT 1 FROM managed_postgres_live_logins l WHERE l.database_id=k.database_id)
- ORDER BY 1 LIMIT $1::int
+ AND (l.database_id IS NULL OR (d.data_resource_id IS NOT NULL AND d.data_resource_id IS DISTINCT FROM d.provider_resource_id
+   AND (l.data_resource_id IS DISTINCT FROM d.data_resource_id OR l.authorized_identity_id IS DISTINCT FROM l.provider_identity_id)))
+ ORDER BY a.attempted_at NULLS FIRST,k.database_id::text LIMIT $1::int
 `
 
 type LiveDatabasesWithoutLoginRow struct {
@@ -315,8 +318,10 @@ type LiveDatabasesWithoutLoginRow struct {
 	AccountID  string
 }
 
-// Databases with an active live key and no login, the ones apid issues a
-// login for: a login the re-seal dropped, or one never stored.
+// Missing logins and legacy root logins whose dataset authorization must be
+// upgraded once. Old writers remain compatible and cannot bless a changed
+// provider identity with authorization captured for another login.
+// The partial unique index permits exactly one active key per database.
 func (q *Queries) LiveDatabasesWithoutLogin(ctx context.Context, db DBTX, pageSize int32) ([]LiveDatabasesWithoutLoginRow, error) {
 	rows, err := db.Query(ctx, liveDatabasesWithoutLogin, pageSize)
 	if err != nil {
@@ -379,6 +384,26 @@ func (q *Queries) LiveKeyRing(ctx context.Context, db DBTX, databaseID string) (
 	return items, nil
 }
 
+const liveLoginNeedsDatasetRepair = `-- name: LiveLoginNeedsDatasetRepair :one
+SELECT EXISTS(SELECT 1 FROM managed_postgres_live_logins l JOIN managed_postgres_databases d ON d.id=l.database_id
+ WHERE d.id=$1::text::uuid AND d.account_id=$2::text::uuid
+ AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+ AND d.data_resource_id IS NOT NULL AND d.data_resource_id IS DISTINCT FROM d.provider_resource_id
+ AND (l.data_resource_id IS DISTINCT FROM d.data_resource_id OR l.authorized_identity_id IS DISTINCT FROM l.provider_identity_id))::boolean
+`
+
+type LiveLoginNeedsDatasetRepairParams struct {
+	DatabaseID string
+	AccountID  string
+}
+
+func (q *Queries) LiveLoginNeedsDatasetRepair(ctx context.Context, db DBTX, arg LiveLoginNeedsDatasetRepairParams) (bool, error) {
+	row := db.QueryRow(ctx, liveLoginNeedsDatasetRepair, arg.DatabaseID, arg.AccountID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const liveLoginOf = `-- name: LiveLoginOf :many
 SELECT provider_identity_id,slot FROM managed_postgres_live_logins
  WHERE database_id=$1::text::uuid AND account_id=$2::text::uuid
@@ -430,6 +455,30 @@ func (q *Queries) LockLiveDatabase(ctx context.Context, db DBTX, arg LockLiveDat
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const recordLiveLoginAttempt = `-- name: RecordLiveLoginAttempt :execrows
+INSERT INTO managed_postgres_live_login_attempts(database_id,attempted_at)
+ SELECT d.id,clock_timestamp() FROM managed_postgres_databases d
+ WHERE d.id=$1::text::uuid AND d.account_id=$2::text::uuid
+ AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+ AND EXISTS(SELECT 1 FROM managed_postgres_live_keys k WHERE k.database_id=d.id AND k.retires_at IS NULL)
+ ON CONFLICT(database_id) DO UPDATE SET attempted_at=EXCLUDED.attempted_at
+`
+
+type RecordLiveLoginAttemptParams struct {
+	DatabaseID string
+	AccountID  string
+}
+
+// Commit before provider I/O, outside the login publication transaction: a
+// failed issue must still move behind databases not yet attempted.
+func (q *Queries) RecordLiveLoginAttempt(ctx context.Context, db DBTX, arg RecordLiveLoginAttemptParams) (int64, error) {
+	result, err := db.Exec(ctx, recordLiveLoginAttempt, arg.DatabaseID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const resealLiveKey = `-- name: ResealLiveKey :execrows
@@ -634,36 +683,48 @@ func (q *Queries) SignLiveLogin(ctx context.Context, db DBTX, arg SignLiveLoginP
 	return result.RowsAffected(), nil
 }
 
-const upsertLiveLogin = `-- name: UpsertLiveLogin :exec
-INSERT INTO managed_postgres_live_logins (database_id,account_id,sealed_login,recipient,provider_identity_id,slot,awake,sealed_login_sig)
- VALUES ($1::text::uuid,$2::text::uuid,$3::bytea,$4::text,
- $5::text,$6::text,$7::text,$8::bytea)
+const upsertLiveLogin = `-- name: UpsertLiveLogin :execrows
+INSERT INTO managed_postgres_live_logins (database_id,account_id,sealed_login,recipient,provider_identity_id,slot,awake,sealed_login_sig,data_resource_id,authorized_identity_id)
+ SELECT d.id,d.account_id,$1::bytea,$2::text,
+ $3::text,$4::text,$5::text,$6::bytea,
+ nullif($7::text,''),
+ CASE WHEN $7::text<>'' THEN $3::text ELSE NULL END
+ FROM managed_postgres_databases d
+ WHERE d.id=$8::text::uuid AND d.account_id=$9::text::uuid
+ AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+ AND coalesce(d.data_resource_id,'')=$7::text
  ON CONFLICT (database_id) DO UPDATE SET sealed_login=EXCLUDED.sealed_login, recipient=EXCLUDED.recipient,
  provider_identity_id=EXCLUDED.provider_identity_id, slot=EXCLUDED.slot, awake=EXCLUDED.awake,
- sealed_login_sig=EXCLUDED.sealed_login_sig, created_at=now()
+ sealed_login_sig=EXCLUDED.sealed_login_sig, data_resource_id=EXCLUDED.data_resource_id,
+ authorized_identity_id=EXCLUDED.authorized_identity_id, created_at=now()
 `
 
 type UpsertLiveLoginParams struct {
-	DatabaseID         string
-	AccountID          string
 	SealedLogin        []byte
 	Recipient          string
 	ProviderIdentityID string
 	Slot               string
 	Awake              string
 	SealedLoginSig     []byte
+	DataResourceID     string
+	DatabaseID         string
+	AccountID          string
 }
 
-func (q *Queries) UpsertLiveLogin(ctx context.Context, db DBTX, arg UpsertLiveLoginParams) error {
-	_, err := db.Exec(ctx, upsertLiveLogin,
-		arg.DatabaseID,
-		arg.AccountID,
+func (q *Queries) UpsertLiveLogin(ctx context.Context, db DBTX, arg UpsertLiveLoginParams) (int64, error) {
+	result, err := db.Exec(ctx, upsertLiveLogin,
 		arg.SealedLogin,
 		arg.Recipient,
 		arg.ProviderIdentityID,
 		arg.Slot,
 		arg.Awake,
 		arg.SealedLoginSig,
+		arg.DataResourceID,
+		arg.DatabaseID,
+		arg.AccountID,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

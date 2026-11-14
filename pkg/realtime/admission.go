@@ -99,7 +99,5 @@ func (m *Manager) closeConnectionsNoLongerAdmitted(state *endpointState, endpoin
 		}
 	}
 	m.mu.RUnlock()
-	for _, conn := range stale {
-		conn.terminate(websocket.ClosePolicyViolation, "endpoint credentials or origins changed")
-	}
+	closeConnectionsWithin(stale, websocket.ClosePolicyViolation, "endpoint credentials or origins changed", endpointRemovalCloseWait)
 }

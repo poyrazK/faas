@@ -79,6 +79,26 @@ func (c *Client) Endpoints(ctx context.Context) ([]string, error) {
 	return ids, err
 }
 
+// EndpointsWithPreviews also returns the previews the node serves, or nil
+// when the node predates NodePreviewsHeader.
+func (c *Client) EndpointsWithPreviews(ctx context.Context) ([]string, []string, error) {
+	var ids []string
+	header, err := c.doHeader(ctx, http.MethodGet, "/internal/endpoints", NodePreviewsHeader, &ids)
+	if err != nil {
+		return nil, nil, err
+	}
+	if header == nil {
+		return ids, nil, nil
+	}
+	previews := []string{}
+	for _, name := range strings.Split(*header, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			previews = append(previews, name)
+		}
+	}
+	return ids, previews, nil
+}
+
 // ListEndpointInventory adapts the local client to the control-plane repair
 // interface used by both single-box and split-node deployments.
 func (c *Client) ListEndpointInventory(ctx context.Context) (EndpointInventory, error) {
@@ -294,8 +314,26 @@ func (c *Client) do(ctx context.Context, method, path string, payload any, resul
 }
 
 func (c *Client) doWithStatus(ctx context.Context, method, path string, payload any, result any, headers http.Header) (int, error) {
+	status, _, err := c.doResponse(ctx, method, path, payload, result, headers)
+	return status, err
+}
+
+// doHeader is do that also returns one response header, nil when absent.
+func (c *Client) doHeader(ctx context.Context, method, path, header string, result any) (*string, error) {
+	_, responseHeaders, err := c.doResponse(ctx, method, path, nil, result, nil)
+	if err != nil {
+		return nil, err
+	}
+	values, ok := responseHeaders[http.CanonicalHeaderKey(header)]
+	if !ok || len(values) == 0 {
+		return nil, nil
+	}
+	return &values[0], nil
+}
+
+func (c *Client) doResponse(ctx context.Context, method, path string, payload any, result any, headers http.Header) (int, http.Header, error) {
 	if c == nil || strings.TrimSpace(c.BaseURL) == "" {
-		return 0, fmt.Errorf("realtime: client is not configured")
+		return 0, nil, fmt.Errorf("realtime: client is not configured")
 	}
 	var body *strings.Reader
 	if payload == nil {
@@ -303,13 +341,13 @@ func (c *Client) doWithStatus(ctx context.Context, method, path string, payload 
 	} else {
 		encoded, err := json.Marshal(payload)
 		if err != nil {
-			return 0, fmt.Errorf("realtime: encode management request: %w", err)
+			return 0, nil, fmt.Errorf("realtime: encode management request: %w", err)
 		}
 		body = strings.NewReader(string(encoded))
 	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(c.BaseURL, "/")+path, body)
 	if err != nil {
-		return 0, fmt.Errorf("realtime: build management request: %w", err)
+		return 0, nil, fmt.Errorf("realtime: build management request: %w", err)
 	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -323,28 +361,28 @@ func (c *Client) doWithStatus(ctx context.Context, method, path string, payload 
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("realtime: management request: %w", err)
+		return 0, nil, fmt.Errorf("realtime: management request: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return resp.StatusCode, &ManagementError{StatusCode: resp.StatusCode}
+		return resp.StatusCode, nil, &ManagementError{StatusCode: resp.StatusCode}
 	}
 	if result != nil {
 		body, err := io.ReadAll(io.LimitReader(resp.Body, managementResponseMaxBytes+1))
 		if err != nil {
-			return resp.StatusCode, fmt.Errorf("realtime: read management response: %w", err)
+			return resp.StatusCode, nil, fmt.Errorf("realtime: read management response: %w", err)
 		}
 		if int64(len(body)) > managementResponseMaxBytes {
-			return resp.StatusCode, fmt.Errorf("realtime: management response exceeds %d bytes", managementResponseMaxBytes)
+			return resp.StatusCode, nil, fmt.Errorf("realtime: management response exceeds %d bytes", managementResponseMaxBytes)
 		}
 		if resp.StatusCode == http.StatusNoContent && len(body) == 0 {
-			return resp.StatusCode, nil
+			return resp.StatusCode, resp.Header, nil
 		}
 		if err := json.Unmarshal(body, result); err != nil {
-			return resp.StatusCode, fmt.Errorf("realtime: decode management response: %w", err)
+			return resp.StatusCode, nil, fmt.Errorf("realtime: decode management response: %w", err)
 		}
 	}
-	return resp.StatusCode, nil
+	return resp.StatusCode, resp.Header, nil
 }
 
 // endpointRequestFor is an endpoint as the management API carries it.

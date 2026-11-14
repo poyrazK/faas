@@ -2,6 +2,7 @@
 """Tests for the compute-node serving probe (ADR-20261023124955 §5)."""
 
 import http.server
+import io
 import importlib.machinery
 import importlib.util
 import json
@@ -9,6 +10,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.request
 
@@ -25,6 +27,7 @@ LOADER.exec_module(MODULE)
 class _Handler(http.server.BaseHTTPRequestHandler):
     # Path -> list of statuses served in order; the last one repeats.
     plan = {}
+    bodies = {}
 
     def do_GET(self):
         statuses = self.plan.setdefault(self.path, [200])
@@ -32,8 +35,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(status)
         if 300 <= status < 400:
             self.send_header("Location", "/elsewhere")
+        body = self.bodies.get(self.path, b"ok")
+        if isinstance(body, list):
+            body = body.pop(0) if len(body) > 1 else body[0]
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(b"ok")
+        self.wfile.write(body)
 
     def log_message(self, *args):
         pass
@@ -66,6 +73,7 @@ class ServingProbeTest(unittest.TestCase):
 
     def setUp(self):
         _Handler.plan = {}
+        _Handler.bodies = {}
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         (self.root / "creds").mkdir()
@@ -90,7 +98,7 @@ class ServingProbeTest(unittest.TestCase):
             "CREDENTIALS_DIRECTORY": str(self.root / "creds"),
         }
 
-    def run_probe(self, env, advance=0):
+    def run_probe(self, env, advance=0, monotonic=time.monotonic):
         self.clock += advance
         return MODULE.run(
             env=env,
@@ -99,6 +107,7 @@ class ServingProbeTest(unittest.TestCase):
             now=lambda: self.clock,
             post=lambda url, payload: self.posts.append((url, payload)),
             beat=self.beats.append,
+            monotonic=monotonic,
         )
 
     def metrics(self):
@@ -119,6 +128,107 @@ class ServingProbeTest(unittest.TestCase):
         self.assertEqual(self.sleeps, [30.0])
         self.assertEqual(self.posts, [])
         self.assertEqual(len(self.beats), 1)
+
+    def test_exact_response_body_passes_and_reports_validation_enabled(self):
+        env = self.env("/ok")
+        env["FAAS_SERVING_PROBE_EXPECTED_BODY"] = "ok"
+        self.assertEqual(self.run_probe(env), 0)
+        self.assertEqual(len(self.beats), 1)
+        self.assertIn("faas_serving_probe_content_check_enabled 1", self.metrics())
+        self.assertIn("faas_serving_probe_first_byte_budget_seconds 5", self.metrics())
+
+    def test_status_only_configuration_remains_visible(self):
+        self.assertEqual(self.run_probe(self.env("/ok")), 0)
+        self.assertIn("faas_serving_probe_content_check_enabled 0", self.metrics())
+
+    def test_wrong_empty_and_prefix_only_bodies_fail_despite_http_200(self):
+        for body in (b"parking page", b"", b"ok extra", b"ok" + b"x" * 10000):
+            with self.subTest(body_length=len(body)):
+                self.posts.clear()
+                _Handler.bodies = {"/wrong": body}
+                env = self.env("/wrong")
+                env["FAAS_SERVING_PROBE_EXPECTED_BODY"] = "ok"
+                # Each case starts a new incident.
+                (self.root / "state" / "state.json").unlink(missing_ok=True)
+                self.assertEqual(self.run_probe(env), 1)
+                self.assertIn("response body mismatch", self.posts[0][1]["text"])
+                self.assertIn('faas_serving_probe_http_status{url="https://probe.example/wrong"} 200', self.metrics())
+                self.assertIn('faas_serving_probe_success{url="https://probe.example/wrong"} 0', self.metrics())
+                self.assertEqual(self.beats, [])
+
+    def test_body_mismatch_can_recover_on_the_second_attempt(self):
+        _Handler.bodies = {"/flaky": [b"wrong", b"ok"]}
+        env = self.env("/flaky")
+        env["FAAS_SERVING_PROBE_EXPECTED_BODY"] = "ok"
+        self.assertEqual(self.run_probe(env), 0)
+        self.assertEqual(self.sleeps, [30.0])
+        self.assertEqual(self.posts, [])
+        self.assertEqual(len(self.beats), 1)
+
+    def test_utf8_expected_body(self):
+        _Handler.bodies = {"/utf8": "sağlıklı".encode()}
+        env = self.env("/utf8")
+        env["FAAS_SERVING_PROBE_EXPECTED_BODY"] = "sağlıklı"
+        self.assertEqual(self.run_probe(env), 0)
+
+    def test_slow_200_is_retried_and_does_not_feed_the_heartbeat(self):
+        env = self.env("/slow")
+        env["FAAS_SERVING_PROBE_MAX_FIRST_BYTE_SECONDS"] = "2"
+        ticks = iter((0.0, 3.0, 4.0, 7.0))
+        self.assertEqual(self.run_probe(env, monotonic=lambda: next(ticks)), 1)
+        self.assertEqual(self.sleeps, [30.0])
+        self.assertIn("first byte exceeded 2s budget", self.posts[0][1]["text"])
+        self.assertEqual(self.beats, [])
+        self.assertIn('faas_serving_probe_first_byte_seconds{url="https://probe.example/slow"} 3.000', self.metrics())
+
+    def test_latency_budget_boundary_and_retry_recovery(self):
+        for elapsed in (2.0, 3.0):
+            with self.subTest(elapsed=elapsed):
+                env = self.env("/slow")
+                env["FAAS_SERVING_PROBE_MAX_FIRST_BYTE_SECONDS"] = "2"
+                ticks = iter((0.0, elapsed, 4.0, 6.0))
+                self.assertEqual(self.run_probe(env, monotonic=lambda: next(ticks)), 0)
+                self.assertEqual(self.posts, [])
+
+    def test_body_validation_is_bounded_and_preserves_first_byte_timing(self):
+        assert_bounded = lambda size: self.assertLessEqual(size, MODULE.MAX_EXPECTED_BODY_BYTES)
+
+        class Response(io.BytesIO):
+            status = 200
+
+            def read(self, size=-1):
+                self.assert_bounded(size)
+                return super().read(size)
+
+        class Opener:
+            def open(self, req, timeout):
+                response = Response(b"ok")
+                response.assert_bounded = assert_bounded
+                return response
+
+        env = self.env("/slow-body")
+        env["FAAS_SERVING_PROBE_EXPECTED_BODY"] = "ok"
+        cfg = MODULE.Config(env)
+        for finished, error in ((4.0, ""), (6.0, "response body exceeded attempt timeout")):
+            with self.subTest(finished=finished):
+                ticks = iter((0.0, 1.0, finished))
+                status, seconds, observed_error = MODULE.probe_once(cfg.urls[0], cfg, Opener(), lambda: next(ticks))
+                self.assertEqual((status, seconds, observed_error), (200, 1.0, error))
+
+    def test_invalid_check_configuration_is_rejected(self):
+        cases = {
+            "FAAS_SERVING_PROBE_TIMEOUT_SECONDS": ("0", "nan", "inf"),
+            "FAAS_SERVING_PROBE_RETRY_DELAY_SECONDS": ("-1", "nan", "inf"),
+            "FAAS_SERVING_PROBE_MAX_FIRST_BYTE_SECONDS": ("0", "-1", "6", "nan", "inf"),
+            "FAAS_SERVING_PROBE_EXPECTED_BODY": ("x" * 4097, "é" * 2049, "ok\n", "ok\x00"),
+        }
+        for field, values in cases.items():
+            for value in values:
+                with self.subTest(field=field, value_length=len(value)):
+                    env = self.env("/ok")
+                    env[field] = value
+                    with self.assertRaises(ValueError):
+                        MODULE.Config(env)
 
     def test_failure_notifies_once_then_hourly_then_recovers(self):
         env = self.env("/down")

@@ -35,6 +35,21 @@ Immutable selectors survive reconstructed stores. Current and null selectors
 remain mutable, and concurrent tag updates retain provider last-writer behavior.
 This does not claim ordered or exactly-once tag updates.
 
+Tagging validates input, resolves owned versions and admits the customer operation
+before registering a source-capture writer. Provider preparation and request
+reservation also precede that writer. Only the native mutation and its validated
+acknowledgment/reference persistence hold the writer. Success or an authoritative
+single-attempt native rejection retires it; uncertain replies retain it. Local
+validation, unsupported capabilities and budget refusals cannot leave writers.
+
+GCS current-object tag writes read the live generation and metageneration, then
+patch only the reserved tag metadata entry with both identities as preconditions.
+They never replay customer metadata, encryption metadata or upload receipts from
+the read snapshot. A concurrent replacement or metadata edit returns a conflict;
+the caller may explicitly retry. Both native RPCs reserve their own request
+allowance, while authorization admission happens once per customer operation.
+SDK retries are disabled for both attempts.
+
 Validate success status and version headers before publishing a result. Reject
 duplicate headers, wrong selectors and unexpected marker success responses.
 Bound and validate GetObjectTagging XML before the SDK interprets it. The shared

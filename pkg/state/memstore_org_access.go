@@ -19,7 +19,7 @@ func (m *MemStore) OrgAccessSnapshot(_ context.Context, orgID, accountID string)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	mem, ok := m.memberships[orgAccountKey{OrgID: orgID, AccountID: accountID}]
-	if !ok || mem.RemovedAt != nil {
+	if !ok || mem.RemovedAt != nil || m.orgMFABlocksLocked(orgID, accountID) {
 		return OrgAccessSnapshot{}, ErrNotFound
 	}
 	return OrgAccessSnapshot{Role: mem.Role, Revision: m.orgAccessRevisions[orgAccountKey{OrgID: orgID, AccountID: accountID}]}, nil
@@ -55,7 +55,7 @@ func (m *MemStore) revokeOrgMemberCredentialsLocked(orgID, accountID string) {
 	}
 	for id, token := range m.deployTokens {
 		app := m.apps[token.AppID]
-		if app.OrgID == orgID && token.AccountID == accountID && token.Status != string(APIKeyStatusRevoked) {
+		if app.OrgID == orgID && (token.AccountID == accountID || token.CreatedByAccountID == accountID) && token.Status != string(APIKeyStatusRevoked) {
 			token.Status, token.RevokedAt = string(APIKeyStatusRevoked), &now
 			m.deployTokens[id], m.deployTokenByHash[string(token.Hash)] = token, token
 		}
@@ -74,7 +74,8 @@ func (m *MemStore) checkOrgAccessLocked(ctx context.Context) error {
 		return nil
 	}
 	mem, exists := m.memberships[orgAccountKey{OrgID: f.OrgID, AccountID: f.AccountID}]
-	if !exists || mem.RemovedAt != nil || m.orgAccessRevisions[orgAccountKey{OrgID: f.OrgID, AccountID: f.AccountID}] != f.Revision {
+	if !exists || mem.RemovedAt != nil || m.orgAccessRevisions[orgAccountKey{OrgID: f.OrgID, AccountID: f.AccountID}] != f.Revision ||
+		m.orgMFABlocksLocked(f.OrgID, f.AccountID) {
 		return rejectOrgAccess(ctx)
 	}
 	if f.CredentialID == "" {
@@ -84,7 +85,7 @@ func (m *MemStore) checkOrgAccessLocked(ctx context.Context) error {
 	var expiry *time.Time
 	if f.AppID != "" {
 		token := m.deployTokens[f.CredentialID]
-		if token.AccountID != f.AccountID || token.AppID != f.AppID {
+		if token.principalID() != f.AccountID || token.AppID != f.AppID {
 			return rejectOrgAccess(ctx)
 		}
 		status, expiry = token.Status, token.ExpiresAt

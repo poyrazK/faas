@@ -56,6 +56,7 @@ type deployJoinOptions struct {
 	SignKeySource           string
 	VerifyKeySource         string
 	ComputeDBEnvSource      string
+	ComputeDBRolesSource    string
 	StorageEnvSource        string
 	ImagedStorageEnvSource  string
 	RuntimeBasesEnvSource   string
@@ -185,6 +186,7 @@ func cmdDeployJoinNode(args []string) int {
 	signKey := fs.String("sign-key", "", "image-signing private key (required for apply)")
 	verifyKey := fs.String("verify-key", "", "image-signing public key (required for apply)")
 	computeDBEnv := fs.String("compute-db-env", "", "root-only compute-db.env source (required for apply)")
+	computeDBRoles := fs.String("compute-db-roles", "", "optional per-daemon compute database logins, <unit>=<dsn> lines (artifact-dir convention: compute-db-roles.env)")
 	storageEnv := fs.String("storage-env", "", "shared remote storage.env source (required for multi-box apply)")
 	imagedStorageEnv := fs.String("imaged-storage-env", "", "imaged-only migration lifecycle credential source (required for multi-box apply)")
 	runtimeBasesEnv := fs.String("runtime-bases-env", "", "release-bound digest-pinned runtime base refs (required for apply)")
@@ -245,6 +247,7 @@ func cmdDeployJoinNode(args []string) int {
 		SignKeySource:           *signKey,
 		VerifyKeySource:         *verifyKey,
 		ComputeDBEnvSource:      *computeDBEnv,
+		ComputeDBRolesSource:    *computeDBRoles,
 		StorageEnvSource:        *storageEnv,
 		ImagedStorageEnvSource:  *imagedStorageEnv,
 		RuntimeBasesEnvSource:   *runtimeBasesEnv,
@@ -603,20 +606,32 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	if opts.DryRun {
 		return report, nil
 	}
-	for name, path := range map[string]string{
+	retired, err := retiredComputeKeys(opts.AnsibleVarsFile,
+		m.ArtifactSigner.Enabled && m.ArtifactSigner.RetireComputeKey)
+	if err != nil {
+		return report, err
+	}
+	required := map[string]string{
 		"release-tarball":     opts.ReleaseTarball,
 		"bootstrap-binary":    opts.BootstrapBinary,
 		"cosign-binary":       opts.CosignBinary,
 		"pki-dir":             opts.PKISource,
-		"sign-key":            opts.SignKeySource,
 		"verify-key":          opts.VerifyKeySource,
 		"compute-db-env":      opts.ComputeDBEnvSource,
 		"storage-env":         opts.StorageEnvSource,
 		"imaged-storage-env":  opts.ImagedStorageEnvSource,
 		"runtime-bases-env":   opts.RuntimeBasesEnvSource,
-		"fleet-age-key":       opts.FleetAgeKeySource,
 		"fleet-age-recipient": opts.FleetAgeRecipientSource,
-	} {
+	}
+	// node_join.yml removes a retired key from the node instead of staging
+	// it, so the join needs that key only while it is not retired.
+	if !retired.signKey || opts.SignKeySource != "" {
+		required["sign-key"] = opts.SignKeySource
+	}
+	if !retired.fleetKey || opts.FleetAgeKeySource != "" {
+		required["fleet-age-key"] = opts.FleetAgeKeySource
+	}
+	for name, path := range required {
 		if path == "" {
 			return report, fmt.Errorf("--%s is required for apply", name)
 		}
@@ -636,6 +651,7 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	}
 	for name, path := range map[string]string{
 		"box-age-key":            opts.BoxAgeKeySource,
+		"compute-db-roles":       opts.ComputeDBRolesSource,
 		"rclone-envelope":        opts.RcloneEnvelope,
 		"archive-creds-envelope": opts.ArchiveEnvelope,
 	} {
@@ -693,8 +709,12 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	if err := validateRuntimeBasesEnv(opts.RuntimeBasesEnvSource, m.Release.RuntimeBaseRefs); err != nil {
 		return report, fmt.Errorf("--runtime-bases-env: %w", err)
 	}
-	if err := validateFleetAgePair(opts.FleetAgeKeySource, opts.FleetAgeRecipientSource); err != nil {
-		return report, err
+	if opts.FleetAgeKeySource != "" {
+		if err := validateFleetAgePair(opts.FleetAgeKeySource, opts.FleetAgeRecipientSource); err != nil {
+			return report, err
+		}
+	} else if _, err := secretbox.LoadRecipient(opts.FleetAgeRecipientSource); err != nil {
+		return report, fmt.Errorf("--fleet-age-recipient: %w", err)
 	}
 	if opts.AnsibleVarsFile != "" {
 		if _, err := os.Stat(opts.AnsibleVarsFile); err != nil {
@@ -890,6 +910,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_sign_key_source":            opts.SignKeySource,
 		"faas_join_verify_key_source":          opts.VerifyKeySource,
 		"faas_join_compute_db_env_source":      opts.ComputeDBEnvSource,
+		"faas_join_compute_db_roles_source":    opts.ComputeDBRolesSource,
 		"faas_join_storage_env_source":         opts.StorageEnvSource,
 		"faas_join_imaged_storage_env_source":  opts.ImagedStorageEnvSource,
 		"faas_join_runtime_bases_env_source":   opts.RuntimeBasesEnvSource,
@@ -1651,6 +1672,7 @@ func resolveJoinArtifacts(opts *deployJoinOptions) {
 	resolve(&opts.ImagedStorageEnvSource, "imaged-storage.env")
 	resolve(&opts.RuntimeBasesEnvSource, "runtime-bases.env")
 	resolveIfPresent(&opts.BoxAgeKeySource, "box-age-key")
+	resolveIfPresent(&opts.ComputeDBRolesSource, "compute-db-roles.env")
 	resolve(&opts.FleetAgeKeySource, "fleet.age")
 	resolve(&opts.FleetAgeRecipientSource, "fleet.age.pub")
 	resolveIfPresent(&opts.RcloneEnvelope, "rclone.conf.age")

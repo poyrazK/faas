@@ -70,20 +70,20 @@ func (s *server) renderOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		// sessionAuth would have redirected before this; defend
 		// against a future refactor that drops the middleware.
-		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
+		writeGitHubConnectProblem(w, r, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
 			"Unauthorized", "sign in to connect GitHub"))
 		return
 	}
 
 	installIDStr := r.URL.Query().Get("installation_id")
 	if installIDStr == "" {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request",
+		writeGitHubConnectProblem(w, r, api.NewProblem(http.StatusBadRequest, "invalid_request",
 			"Missing installation_id", "the GitHub App install callback must include ?installation_id=…"))
 		return
 	}
 	installationID, err := strconv.ParseInt(installIDStr, 10, 64)
 	if err != nil || installationID <= 0 {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_request",
+		writeGitHubConnectProblem(w, r, api.NewProblem(http.StatusBadRequest, "invalid_request",
 			"Invalid installation_id", "installation_id must be a positive integer"))
 		return
 	}
@@ -117,7 +117,7 @@ func (s *server) renderOAuthCallback(w http.ResponseWriter, r *http.Request) {
 			"account_id", acct.ID,
 			"install_id", stripLogInt(installationID),
 			"err", err)
-		api.WriteProblem(w, githubUnreachableProblem("Retry the connect flow in a minute."))
+		writeGitHubConnectProblem(w, r, githubUnreachableProblem("Retry the connect flow in a minute."))
 		return
 	}
 	if !verified {

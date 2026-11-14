@@ -152,3 +152,77 @@ BringUp.
 - Tests: `pkg/sched/liveness_window_test.go`,
   `pkg/sched/engine_liveness_test.go`,
   `cmd/vmmd/liveness_recv_test.go`
+
+## Amendment 1 (2026-11-12): plan-default liveness checks that the server answers
+
+**Status:** accepted (owner, 2026-11-12).
+
+**Context.** The decision above says liveness mirrors `healthcheck_path`,
+but vmmd sent every app without a liveness override to the plan-default
+`/healthz` and counted any non-2xx as a failure. In production on
+2026-11-12 all five `retail-*` apps (Spring/Express images readying on
+`/actuator/health` or `/health`) answered `/healthz` with 404, so each
+instance was destroyed about 10 s after it booted. The destroy marks the
+snapshot stale, so every request paid a 12–13 s JVM cold boot and three
+restarts in 300 s parked the apps. gRPC apps fared worse: an HTTP/1.1 GET
+cannot reach a gRPC server, so `pulsewatch-grpc` failed with
+`liveness_conn_err` after every boot. H10-23 had already exempted 404 for
+TCP-readiness images only.
+
+Probing the declared health path instead would kill a healthy process
+whenever a dependency fails: Spring's `/actuator/health` returns 503 while
+its database is down, so a 15 s database outage would restart the app and
+three restarts would park it (the data API already uses a separate
+`/livez` for this reason, #6837).
+
+**Decision.** With no liveness path or gRPC action declared, the
+plan-default probe asks whether the server still answers, never whether
+its dependencies are healthy:
+
+| Startup contract | Plan-default liveness |
+|---|---|
+| HTTP readiness on `/healthz` | `GET /healthz`, 2xx only (unchanged) |
+| HTTP readiness on another path | `GET /healthz`; any answer below 500 is alive |
+| TCP readiness (no health path), HTTP image | `GET /healthz`; any answer below 500 is alive (widens H10-23 from 404) |
+| TCP readiness on a declared raw TCP listener (ADR-20261027090000) | none; a crash still reports through process exit |
+| gRPC readiness, Pro/Scale | health.v1 `Check` on the service readiness used |
+| gRPC readiness, Free/Hobby | none (gRPC liveness stays Pro+, `GRPCLivenessAllowed`); a crash still reports through process exit |
+
+A timeout, a refused connection or a 5xx still counts as a failure, so a
+wedged or crashed server is still replaced.
+
+The guest's liveness GET follows a redirect only while it stays on the
+probed origin (scheme and host:port), so trailing-slash and `/login`
+redirects still reach their page. Any other redirect returns the 3xx
+itself. Before, an app that sends `/healthz` to `https://…` (Spring
+`requiresChannel`, Django `SECURE_SSL_REDIRECT`, Rails `force_ssl`, Phoenix
+`force_ssl`) made the probe speak TLS to a plain-HTTP port, and an app that
+redirects to an outside login page sent the probe out of the VM; both
+failed as transport errors. On a path the app never promised the 3xx is
+alive; on a promised `/healthz` it fails, as the startup probe would.
+
+A raw TCP server answers an HTTP GET in its own protocol or waits silently
+for a frame, so no HTTP probe can judge it. schedd marks TCP readiness on a
+declared raw TCP listener (`AppSpec.routed_port_raw_tcp`) and vmmd runs no
+default probe for it. 401/403 on a path the app
+never promised no longer marks the deployment `app_healthz_unauthorized`;
+on a promised `/healthz` it still does. An explicit liveness override is
+unchanged and stays strict. Worker, job and image-HEALTHCHECK exemptions
+are unchanged. The adoption record carries the readiness gRPC service
+and the raw TCP mark (`omitempty`), so a vmmd restart keeps the same
+probe. An older vmmd's strict decoder refuses to adopt only an instance
+that carries one of them, and that instance is replaced.
+
+Old and new components mix safely: an older vmmd ignores
+`routed_port_raw_tcp`, and an older guest-init keeps following every
+redirect, which is today's behavior.
+
+**Implementation.** `pkg/fcvm/manager.go` (`planDefaultLivenessAction`,
+`LivenessProbeConfig.UnpromisedPath`), `cmd/vmmd/liveness_recv.go`
+(`classifyLivenessStatus`; a reported failure now logs path, port and the
+last HTTP status), `guest/init/liveness_redirect.go`,
+`pkg/sched/deployment_runtime.go` (`routedPortRawTCPForApp`),
+`api/proto/onebox/faas/vmmd/v1/vmmd.proto` (`routed_port_raw_tcp = 45`),
+`pkg/fcvm/resource_adoption.go`. Tests: `pkg/fcvm/worker_liveness_test.go`,
+`cmd/vmmd/liveness_recv_test.go`, `guest/init/liveness_redirect_test.go`,
+`pkg/sched/raw_tcp_readiness_test.go`.

@@ -7,27 +7,33 @@ import { createRemoteJWKSet, jwtVerify, SignJWT } from 'jose'
 import { traceRequest, markRequest, markAccess, markQueryShape, markDatabaseTimings, requestID, runtimeFailure } from './logging.mjs'
 import { parseDatabaseTimings, unknownDatabaseTimings } from './database-timing.mjs'
 import { inspect, fingerprint, enrichOpenAPI } from './types.mjs'
-import { runtimeConfig, servingContracts, limits, enginePool, UnsafeConfiguration } from './config.mjs'
+import { openAPI31 } from './openapi31.mjs'
+import { runtimeConfig, servingContracts, limits, enginePool, sqlDeadlineExpiry, UnsafeConfiguration } from './config.mjs'
 import { createAdmission } from './admission.mjs'
+import { sharedBudgetConfig, createSharedBudget } from './shared-budget.mjs'
 import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
 import { checkSQLDeadlineConnection } from './sql-deadline.mjs'
+import { configurePipelineReadGate } from './pipeline-read-gate.mjs'
 import { streamResponse } from './response-limit.mjs'
 import { createRateLimiter, admitRateLimit, admitServerKeyRate } from './rate-limit.mjs'
 import { createUserConcurrency, admitUserConcurrency, createServerKeyConcurrency, admitServerKeyConcurrency } from './user-concurrency.mjs'
 import { qualifiedConnectionEngine, startConnectionReporter } from './connection-observations.mjs'
 import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
-import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
-import { createEngine, lifecyclePaths } from './engine.mjs'
-import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
-import { changeEventsTable, createChangeRelay, checkChangeEvents } from './changes.mjs'
+import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable, storageActor } from './storage.mjs'
+import { createEngine, lifecyclePaths, engineStopGraceMs } from './engine.mjs'
+import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial, createAccessSafety } from './access.mjs'
+import { relayTables, changeHooksDrainPath, createChangeRelay, checkChangeEvents } from './changes.mjs'
+import { uploadTable } from './storage-sessions.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
   const acceptedFingerprints = servingContracts(config)
-  const health = createHealth(config, upstreamPort, readyPort)
+  // Tests drive the health cache with config.healthClock.
+  const health = createHealth(config, upstreamPort, readyPort, config.healthClock ? { monotonic: config.healthClock } : {})
   const rateLimiter = createRateLimiter(config.rateLimit)
+  const sharedBudget = createSharedBudget(config.sharedBudget)
   // Anonymous clients always have a budget and never use subject tracking slots.
   const anonymousLimiter = config.publicRead || config.publicRpc ? createRateLimiter(config.rateLimit ?? { perSecond: limits.rateLimitDefaultPerSecond, burst: limits.rateLimitDefaultBurst }) : null
   const userConcurrency = createUserConcurrency(config.userConcurrency, enginePool(config))
@@ -41,6 +47,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
   // Change hooks (ADR-20261022121642) borrow free engine slots, never queue.
   const changes = createChangeRelay(config, { upstreamPort, tryAcquire: admitted.tryAcquire })
   const transfers = { active: 0 }
+  let hooksRequests = 0
   const server = http.createServer(async (req, res) => {
     const guarded = /^\/__gregale\/contract\/([a-f0-9]{64})(\/rest\/v1\/.*)$/.exec(req.url)
     if (guarded) req.url = guarded[2]
@@ -50,15 +57,15 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       // Edge-cached public reads are shared across origins, so they cannot vary
       // on Origin. They carry no credentials; any origin may read public rows.
       res.setHeader('Access-Control-Allow-Origin', '*')
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id,Retry-After')
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id,Retry-After,X-Gregale-Storage-Version')
     } else if (origin && config.origins.includes(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Vary', 'Origin')
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id,Retry-After,ETag')
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Range,Preference-Applied,X-Request-Id,Retry-After,ETag,X-Gregale-Storage-Version')
     }
     if (req.method === 'OPTIONS') {
       if (!origin || !config.origins.includes(origin)) return problem(res, 403, 'origin_not_allowed')
-      res.writeHead(204, { 'Access-Control-Allow-Methods': config.storage ? 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS' : 'GET,HEAD,POST,PATCH,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type,Prefer,Range,Range-Unit,Accept-Profile,Content-Profile', 'Access-Control-Max-Age': '600' })
+      res.writeHead(204, { 'Access-Control-Allow-Methods': config.storage ? 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS' : 'GET,HEAD,POST,PATCH,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type,Prefer,Range,Range-Unit,Accept-Profile,Content-Profile,X-Content-Sha256', 'Access-Control-Max-Age': '600' })
       return res.end()
     }
     if (req.url === '/livez' && req.method === 'GET') return healthResponse(res, 200, { version: 1, live: true })
@@ -79,16 +86,33 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       res.writeHead(204)
       return res.end()
     }
+    // A drain schedule's platform cron (ADR-20261022121642 amendment 1) wakes
+    // a parked API so changes other writers recorded meanwhile publish. Only
+    // invocations the platform dispatches carry x-faas-cron; the answer is
+    // delivery counts, and a drain publishes nothing that would not publish.
+    if (req.method === 'POST' && req.url === changeHooksDrainPath && req.headers['x-faas-cron'] === 'true') {
+      if (!changes) return problem(res, 409, 'data_api_change_hooks_off')
+      const state = await changes.drain(limits.changeHooksDrainWaitMs)
+      if (!state) return problem(res, 503, 'data_api_change_hooks_unavailable')
+      if (state.refused) return problem(res, 409, 'data_api_change_hooks_not_production')
+      return healthResponse(res, state.publishing === 'retrying' ? 503 : 200, { version: 1, pending: state.pending, failed: state.failed, publishing: state.publishing,
+        ...(state.oldestPendingAt ? { oldest_pending_at: state.oldestPendingAt } : {}) })
+    }
     // Health checks and preflights are not usage.
     const counted = usage?.start(res)
+    // Keep the access gate current with the owner's migrations (amendment 1).
+    config.accessSafety?.maybeRefresh()
     // File storage (ADR-20261021101510) shares REST's credentials and admission.
     let storage = null
+    const hooksOperation = !guarded && ({ '/__gregale/hooks/status': 'status', '/__gregale/hooks/drain': 'drain' })[req.url]
+    if (hooksOperation && req.headers.authorization === undefined) return problem(res, 404, 'not_found')
+    if (hooksOperation && req.method !== (hooksOperation === 'status' ? 'GET' : 'POST')) return problem(res, 405, 'method_not_allowed')
     if (config.storage && req.url.startsWith('/storage/v1/') && !guarded) {
       // A missing or unsafe storage_objects table disables storage, not the API.
       if (config.storageUnavailable) return problem(res, 503, 'storage_unavailable')
       storage = storageRoute(req, config.storage)
       if (storage.code) return problem(res, storage.status, storage.code)
-    } else if (!req.url.startsWith('/rest/v1/') && req.url !== '/openapi.json' && req.url !== '/__gregale/schema') return problem(res, 404, 'not_found')
+    } else if (!hooksOperation && !req.url.startsWith('/rest/v1/') && !['/openapi.json', '/openapi-3.1.json', '/__gregale/schema'].includes(req.url)) return problem(res, 404, 'not_found')
     const writes = storage ? storage.write : !['GET', 'HEAD'].includes(req.method)
     // A committed write may have recorded changes: publish them promptly.
     if (changes && writes) res.once('finish', () => { if (res.statusCode < 300) changes.kick() })
@@ -97,8 +121,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       const raw = req.url.slice('/rest/v1/'.length).split('?')[0]
       let path
       try { path = decodeURIComponent(raw) } catch { return problem(res, 400, 'invalid_path') }
-      // Only the change event relay reads its table, over loopback.
-      if (path === changeEventsTable) return problem(res, 404, 'not_found')
+      // Only the change event relay reads its tables, over loopback.
+      if ([...relayTables, uploadTable].includes(path)) return problem(res, 404, 'not_found')
       if (path.includes('/')) {
         const match = /^rpc\/([a-z][a-z0-9_]{0,62})$/.exec(path)
         const read = ['GET', 'HEAD'].includes(req.method)
@@ -111,14 +135,14 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       }
     }
     if (!storage && !['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(req.method)) return problem(res, 405, 'method_not_allowed')
-    if (['/__gregale/schema', '/openapi.json'].includes(req.url) && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
+    if (['/__gregale/schema', '/openapi.json', '/openapi-3.1.json'].includes(req.url) && req.method !== 'GET') return problem(res, 405, 'method_not_allowed')
     const token = req.headers.authorization?.match(/^Bearer ([^\s]+)$/i)?.[1]
     let access = 'user', serverKeySlot = null, serverKeyPermissions = null, subject = null, publicCache = null
     if (req.headers.authorization === undefined) {
       // Never downgrade a present but invalid credential to anonymous access.
       const target = storage ? storageAnonymousTarget(storage, config) : rpc ? publicRpcTarget(req, config, rpc) : publicReadTarget(req, config)
       if (target.code === 'public_rpc_requires_get') res.setHeader('Allow', 'GET, HEAD')
-      if (target.code) return problem(res, { public_read_not_allowed: 403, public_rpc_requires_get: 405 }[target.code] ?? 401, target.code)
+      if (target.code) return problem(res, { public_read_not_allowed: 403, public_rpc_requires_get: 405, data_api_public_read_unsafe: 503, data_api_public_rpc_unsafe: 503 }[target.code] ?? 401, target.code)
       access = 'anonymous'
       publicCache = storage ? null : publicReadCache(req, config, target)
     } else if (!token) return problem(res, 401, 'token_required')
@@ -132,8 +156,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       serverKeyPermissions = config.serverKeys.find(entry => entry.slot === serverKeySlot).permissions
     }
     markAccess(res, { kind: access, ...(serverKeySlot ? { server_key_slot: serverKeySlot, ...(serverKeyPermissions ? { server_key_restricted: true } : {}) } : {}) })
-    if (counted) counted.access = access
     if (serverKeyPermissions && !(storage ? storageServerKeyAllows(storage, serverKeyPermissions, config) : serverKeyAllows(req, serverKeyPermissions, config, rpc))) return problem(res, 403, 'server_key_permission_denied')
+    if (hooksOperation && (access !== 'server' || serverKeyPermissions || origin)) return problem(res, 403, 'hooks_owner_required')
     if (access === 'server' && config.readOnly === true && writes) return problem(res, 403, 'read_only_identity')
     // Server keys skip per-user budgets but have their own (ADR-20261021180534).
     if (access === 'server' && serverKeyRate && !admitServerKeyRate(serverKeyRate, serverKeySlot, res, problem)) return
@@ -145,11 +169,12 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       return problem(res, 429, 'data_api_monthly_cap_reached', { cap: cap.name, limit: cap.limit, observed: cap.observed, docs: 'https://gregale.dev/docs/data-api#usage-and-monthly-caps' })
     }
     const declared = Number(req.headers['content-length'] ?? 0)
-    if (storage?.action === 'upload') {
+    if (storage?.action === 'upload' || storage?.action === 'sessionPart') {
       // The bucket stores exactly the size the owner's policy approved.
       if (req.headers['content-length'] === undefined || req.headers['transfer-encoding'] !== undefined) return problem(res, 411, 'storage_length_required')
       if (!Number.isSafeInteger(declared) || declared < 0) return problem(res, 400, 'storage_invalid_length')
-      if (declared > config.storage.maxObjectBytes) return problem(res, 413, 'storage_object_too_large', { limit: config.storage.maxObjectBytes, observed: declared })
+      const maxBytes = storage.action === 'sessionPart' ? limits.storageChunkBytes : config.storage.maxObjectBytes
+      if (declared > maxBytes) return problem(res, 413, 'storage_object_too_large', { limit: maxBytes, observed: declared })
     } else if (!Number.isSafeInteger(declared) || declared < 0 || declared > limits.bodyBytes) return problem(res, 413, 'request_too_large')
     // A server-key lease spans admission's queue too, and settles even when
     // admission never runs the handler.
@@ -163,6 +188,21 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
       // Server-key leases settle exactly as user leases do.
       let userLease = serverKeyLease ?? undefined
       try {
+        if (hooksOperation) {
+          if (!changes) return problem(res, 503, 'change_hooks_unavailable')
+          if (hooksRequests >= limits.changeEventsOwnerRequests) { res.setHeader('Retry-After','1'); return problem(res,503,'change_hooks_busy') }
+          // The relay acquires its own free SQL slots. Release this HTTP
+          // admission before waiting, including when the pool has one slot.
+          release()
+          deadline.stop()
+          hooksRequests++
+          try {
+            if (hooksOperation === 'drain') await changes.cycle()
+            const status = await changes.status()
+            if (!status) return problem(res, 503, 'change_hooks_observation_unavailable')
+            return healthResponse(res, 200, { version: 1, ...status })
+          } finally { hooksRequests-- }
+        }
         let payload, concurrencyKey = null
         if (access === 'user') {
           try { payload = await verify(token) } catch {
@@ -173,6 +213,14 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (typeof payload.sub !== 'string' || !payload.sub || typeof payload.exp !== 'number') return problem(res, 401, 'token_invalid')
           if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
           if (!admitRateLimit(rateLimiter, payload.sub, res, problem)) return
+          if (sharedBudget) {
+            const refusal=await sharedBudget(payload,deadline.signal)
+            if(!deadline.check())return
+            if(refusal){
+              if(refusal.retry)res.setHeader('Retry-After',String(refusal.retry))
+              return problem(res,refusal.status,refusal.code,{reason:'shared_tenant',...(refusal.status===429?{limit:{requests:config.sharedBudget.requests,window_seconds:config.sharedBudget.window_seconds},observed:{available_requests:0},docs:'https://gregale.dev/docs/data-api#shared-request-budgets'}:{})})
+            }
+          }
           if ((config.readOnly === true || payload.gregale_read_only === true) && writes) return problem(res, 403, 'read_only_identity')
           // Storage authorizes through storage_objects' own RLS policies.
           const denial = storage ? null : rowSecurityDenial(req, config, rpc)
@@ -193,8 +241,13 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           userLease = admitUserConcurrency(userConcurrency, concurrencyKey, req, res, problem)
           if (userLease === false) return
         }
+        // Only an admitted request counts toward usage and monthly caps
+        // (ADR 20261019102108): one past its credential, rate, row-security
+        // and concurrency checks. Refusals before here count as rejected, so
+        // invalid tokens or a throttled flood cannot use up an owner's cap.
         if (req.url.startsWith('/rest/v1/')) markQueryShape(req, res, config)
         if (req.url === '/__gregale/schema') {
+          if (counted) counted.access = access
           if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
           try {
             if (!deadline.enter('refresh')) return
@@ -211,6 +264,20 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (deadline.check()) problem(res, 503, 'data_api_unavailable')
           return
         }
+        if (config.accessSafety && !await config.accessSafety.ready(deadline.expiresAt - Date.now())) {
+          return problem(res, 503, 'data_api_unavailable', { reason: 'access_safety' })
+        }
+        // A restore may have changed safety while this request waited. Make
+        // the final authorization decision against the refreshed generation.
+        if (access === 'user' && !storage) {
+          const denial = rowSecurityDenial(req, config, rpc)
+          if (denial) return problem(res, denial.status, denial.code)
+        } else if (access === 'anonymous') {
+          const target = storage ? storageAnonymousTarget(storage, config) : rpc ? publicRpcTarget(req, config, rpc) : publicReadTarget(req, config)
+          if (target.code) return problem(res, { public_read_not_allowed: 403, data_api_public_read_unsafe: 503, data_api_public_rpc_unsafe: 503 }[target.code] ?? 401, target.code)
+          publicCache = storage ? null : publicReadCache(req, config, target)
+        }
+        if (counted) counted.access = access
         if (!deadline.enter('signing')) return
         // Only the binding login may become the SQL role. External role claims
         // cannot select an administrator, owner or another application's role.
@@ -220,11 +287,14 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         // claims: storage_objects' guard trusts gregale_storage.
         delete claims.gregale_server_key
         delete claims.gregale_storage
+        delete claims.gregale_storage_actor
         claims.gregale_access = access
         if (serverKeySlot) claims.gregale_server_key = serverKeySlot
         // A caller cannot extend or enable the internal SQL retry deadline.
         delete claims.gregale_sql_deadline
-        if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: deadline.expiresAt, coordinated_refresh: config.coordinatedRefresh === true }
+        delete claims.gregale_pipeline_request
+        if (config.pipelineReadGate) claims.gregale_pipeline_request = { version: 1, previous_hook: config.pipelinePreviousHook }
+        if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: sqlDeadlineExpiry(deadline.expiresAt), coordinated_refresh: config.coordinatedRefresh === true }
         // Never accept reserved coordination claims from an application JWT.
         if (config.coordinatedRefresh) {
           delete claims.gregale_refresh_hash
@@ -238,12 +308,12 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           // Storage calls PostgREST more than once, after a transfer too, so
           // each call gets a fresh token and SQL deadline.
           const token = write => {
-            const fresh = { ...claims, exp: Math.ceil(Date.now() / 1000) + Math.ceil(limits.queryMs / 1000) + 5, ...(write ? { gregale_storage: 'write' } : {}) }
-            if (fresh.gregale_sql_deadline) fresh.gregale_sql_deadline = { ...fresh.gregale_sql_deadline, expires_at_ms: Date.now() + limits.queryMs }
+            const fresh = { ...claims, gregale_storage_actor: storageActor(claims), exp: Math.ceil(Date.now() / 1000) + Math.ceil(limits.queryMs / 1000) + 5, ...(write ? { gregale_storage: 'write' } : {}) }
+            if (fresh.gregale_sql_deadline) fresh.gregale_sql_deadline = { ...fresh.gregale_sql_deadline, expires_at_ms: sqlDeadlineExpiry(Date.now() + limits.queryMs) }
             return new SignJWT(fresh).setProtectedHeader({ alg: 'HS256' }).sign(key)
           }
           if (!deadline.enter('upstream')) return
-          return await handleStorage({ req, res, route: storage, config, token, deadline, release, transfers, upstreamPort, problem })
+          return await handleStorage({ req, res, route: storage, config, token, deadline, release, transfers, client: concurrencyKey, upstreamPort, problem })
         }
         const internal = await new SignJWT(claims).setProtectedHeader({ alg: 'HS256' }).sign(key)
         if (!deadline.check()) return
@@ -254,6 +324,9 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
   })
   server.usage = usage
   server.changes = changes
+  // The engine's owner calls this when the engine stops, starts, reloads or
+  // is restored, so /healthz never answers for an engine that is gone.
+  server.invalidateHealth = () => health.invalidate()
   server.on('close', () => { usage?.stop(); changes?.stop() })
   return server
 }
@@ -313,7 +386,7 @@ function proxy(req, res, token, port, config, restBasePath, deadline, userLease,
   // Forward only PostgREST's data contract, never client-supplied internal
   // identity, proxy credentials or hop-by-hop headers.
   for (const name of ['accept', 'content-type', 'prefer', 'range', 'range-unit', 'accept-profile', 'content-profile']) if (req.headers[name]) headers[name] = req.headers[name]
-  const path = req.url === '/openapi.json' ? '/' : req.url.slice('/rest/v1'.length)
+  const path = ['/openapi.json', '/openapi-3.1.json'].includes(req.url) ? '/' : req.url.slice('/rest/v1'.length)
   if (!deadline.enter('upstream') || !deadline.dispatch()) return
   userLease?.dispatched()
   markDatabaseTimings(res, unknownDatabaseTimings('no_response'))
@@ -324,7 +397,7 @@ function proxy(req, res, token, port, config, restBasePath, deadline, userLease,
     if (!deadline.enter('streaming')) { response.destroy(); return }
     markDatabaseTimings(res, parseDatabaseTimings(response.headers['server-timing']))
     response.on('data', () => deadline.check())
-    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath, deadline)
+    if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath, deadline, req.url === '/openapi-3.1.json')
     if (response.statusCode >= 400) markRequest(res, 'upstream_error')
     // The engine names a created row from its own root; clients reach it below restBasePath.
     if (typeof response.headers.location === 'string' && response.headers.location.startsWith('/')) response.headers.location = restBasePath + response.headers.location
@@ -341,7 +414,7 @@ function proxy(req, res, token, port, config, restBasePath, deadline, userLease,
   req.pipe(upstream)
 }
 
-function openAPISpec(response, res, config, restBasePath, deadline) {
+function openAPISpec(response, res, config, restBasePath, deadline, version31 = false) {
   let bytes = 0
   const chunks = []
   response.on('data', chunk => {
@@ -361,15 +434,18 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
       delete document.schemes
       document.basePath = restBasePath
       const schema = response.req.getHeader('accept-profile') ?? config.schemas[0]
-      // The change event table is the relay's, never part of the API.
-      delete document.paths?.[`/${changeEventsTable}`]
-      delete document.definitions?.[changeEventsTable]
-      for (const name of Object.keys(document.parameters ?? {})) if (name === `body.${changeEventsTable}` || name.startsWith(`rowFilter.${changeEventsTable}.`)) delete document.parameters[name]
+      // The change event tables are the relay's, never part of the API.
+      for (const table of [...relayTables, uploadTable]) {
+        delete document.paths?.[`/${table}`]
+        delete document.definitions?.[table]
+        for (const name of Object.keys(document.parameters ?? {})) if (name === `body.${table}` || name.startsWith(`rowFilter.${table}.`)) delete document.parameters[name]
+      }
       for (const path of Object.keys(document.paths ?? {})) if (path.startsWith('/rpc/')) {
         if (!config.functions?.some(f => f.schema === schema && f.name === path.slice(5))) delete document.paths[path]
         else for (const method of Object.keys(document.paths[path])) if (method !== 'post' && method !== 'parameters' && !(method === 'get' && publicRpcListed(config, { schema, name: path.slice(5) }))) delete document.paths[path][method]
       }
-      const output = JSON.stringify(enrichOpenAPI(document, config.snapshot, schema))
+      const enriched = enrichOpenAPI(document, config.snapshot, schema)
+      const output = JSON.stringify(version31 ? openAPI31(enriched) : enriched)
       if (Buffer.byteLength(output) > limits.outputBytes) return problem(res, 503, 'schema_document_too_large')
       if (!deadline.check()) return
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
@@ -380,15 +456,18 @@ function openAPISpec(response, res, config, restBasePath, deadline) {
 }
 
 export async function main(env = process.env) {
-  const config = runtimeConfig(env)
+  const config = await startupStage('configuration', 'data_api_configuration_invalid', () => ({...runtimeConfig(env), sharedBudget: sharedBudgetConfig(env)}))
   if (config.connectionObservation || config.sqlDeadline) {
-    const { stdout } = await promisify(execFile)(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', ['--version'], { timeout: limits.connectionReportMs, maxBuffer: limits.healthBytes })
-    if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
+    await startupStage('engine', 'data_api_configuration_invalid', async () => {
+      const { stdout } = await promisify(execFile)(env.DATA_API_POSTGREST_BIN || '/usr/local/bin/postgrest', ['--version'], { timeout: limits.connectionReportMs, maxBuffer: limits.healthBytes })
+      if (!qualifiedConnectionEngine(stdout)) throw new Error('Unsupported connection observation engine')
+    })
   }
-  if (config.sqlDeadline) await checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh })
+  if (config.sqlDeadline) await startupStage('database', 'data_api_configuration_invalid', () => checkSQLDeadlineConnection(config.connection, { coordinatedRefresh: config.coordinatedRefresh }))
   // Inspection connects first, with the full query budget, so a suspended
   // database is awake before the configuration checks run.
-  const snapshot = await inspect(config.connection, config.schemas)
+  const snapshot = await startupStage('inspection', 'data_api_configuration_invalid', () => inspect(config.connection, config.schemas))
+  if (config.readOnly) await startupStage('pipeline', 'data_api_configuration_invalid', () => configurePipelineReadGate(config))
   config.snapshot = snapshot
   config.functions = snapshot.functions
   if (config.publicRead) await bootCheck(() => checkPublicRelations(config.connection, config.publicRead), 'data_api_public_read_unsafe', 'Unsafe public read configuration')
@@ -397,7 +476,7 @@ export async function main(env = process.env) {
     // the owner's migration adds or repairs storage_objects. An unreachable
     // database fails the boot instead, because a disabled storage would be
     // captured in the snapshot every wake restores.
-    try { await checkStorageTable(config.connection, config.storage.schema) } catch (error) {
+    try { config.storage = Object.freeze({ ...config.storage, maintenance: await checkStorageTable(config.connection, config.storage.schema) }) } catch (error) {
       if (!(error instanceof UnsafeConfiguration)) {
         runtimeFailure('data_api_database_unavailable')
         throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })
@@ -411,7 +490,11 @@ export async function main(env = process.env) {
     // them off, the API keeps serving and recorded changes wait in the table.
     // An unreachable database fails the boot instead, because hooks turned
     // off here would be captured in the snapshot every wake restores.
-    try { await checkChangeEvents(config.connection, config.changeEvents.schema) } catch (error) {
+    try {
+      const { bounded } = await checkChangeEvents(config.connection, config.changeEvents.schema)
+      // Hooks installed before the backlog bound still publish; say so once.
+      if (!bounded) runtimeFailure('data_api_change_hooks_unbounded')
+    } catch (error) {
       if (!(error instanceof UnsafeConfiguration)) {
         runtimeFailure('data_api_database_unavailable')
         throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })
@@ -446,10 +529,23 @@ export async function main(env = process.env) {
       server.close()
     } })
   // A snapshot must not capture SQL sessions (lifecycle hooks set by the CLI).
+  // The access gate read at boot is rechecked while serving and after every
+  // restore, so a migration since cannot leave it stale (amendment 1).
+  config.accessSafety = createAccessSafety(config)
+  // The CLI registers the hooks with a 2 s budget (api.SetDataAPILifecycle);
+  // the engine stops within engineStopGraceMs of it.
+  const checkpointFlushMs = engineStopGraceMs
   config.lifecycle = {
-    ready: waitMs => engine.ready(waitMs),
-    beforeCheckpoint: () => Promise.all([engine.stop(), refresh?.release()]),
-    afterRestore: () => engine.start(),
+    ready: async waitMs => {
+      const started = Date.now()
+      return await engine.ready(waitMs) && await config.accessSafety.ready(waitMs - (Date.now() - started))
+    },
+    // Usage counted since the last report would be dropped by the restore
+    // check, so it is reported before the snapshot, within the hook's budget;
+    // a report still in flight keeps its id and is applied once.
+    // The snapshot carries no health answer: the engine it described stops here.
+    beforeCheckpoint: () => { server?.invalidateHealth(); return Promise.all([engine.stop(), refresh?.release(), server?.usage?.flush(checkpointFlushMs)]) },
+    afterRestore: () => { server?.invalidateHealth(); engine.start(); config.accessSafety.restored() },
   }
   engine.start()
   server = createServer(config, verify)
@@ -463,7 +559,7 @@ export async function main(env = process.env) {
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => { stopping = true; void server.usage?.flush(); server.close(); void engine.stop() })
   process.on('SIGUSR1', () => {
     if (config.coordinatedRefresh) runtimeFailure('data_api_uncoordinated_reload_rejected')
-    else engine.signal('SIGUSR1')
+    else { engine.signal('SIGUSR1'); server.invalidateHealth() }
   })
   server.listen(Number(env.PORT || 8080), '0.0.0.0')
 }
@@ -473,8 +569,22 @@ export async function main(env = process.env) {
 async function bootCheck(check, unsafeEvent, unsafeMessage) {
   try { await check() } catch (error) {
     const unsafe = error instanceof UnsafeConfiguration
-    runtimeFailure(unsafe ? unsafeEvent : 'data_api_database_unavailable')
+    runtimeFailure(unsafe ? unsafeEvent : 'data_api_database_unavailable', { stage: 'database', error })
     throw Object.assign(new Error(unsafe ? unsafeMessage : 'Database unavailable during startup'), { cause: error, reported: true })
+  }
+}
+
+// startupStage reports which startup step failed and a safe reason before the
+// process exits, so a crash during snapshot_prepare is diagnosable from the
+// deployment log (ChronoLake finding 19). The event stays
+// data_api_configuration_invalid, as before; stage and reason are added.
+async function startupStage(stage, event, step) {
+  try { return await step() } catch (error) {
+    if (error?.reported !== true) {
+      runtimeFailure(event, { stage, error })
+      if (error && typeof error === 'object') error.reported = true
+    }
+    throw error
   }
 }
 
@@ -482,4 +592,4 @@ export function tokenVerifier(auth, keys) {
   return async token => (await jwtVerify(token, keys, { issuer: auth.issuer, audience: auth.audience, algorithms: ['RS256', 'ES256'], requiredClaims: ['sub', 'exp'] })).payload
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { if (error?.reported !== true) runtimeFailure('data_api_configuration_invalid'); process.exitCode = 1 })
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch(error => { if (error?.reported !== true) runtimeFailure('data_api_configuration_invalid', { stage: 'startup', error }); process.exitCode = 1 })

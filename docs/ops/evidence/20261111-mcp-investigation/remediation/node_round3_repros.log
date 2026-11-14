@@ -1,0 +1,11 @@
+✔ a registered visible-ASCII task name can construct a runtime (7.332018ms)
+✔ registration owns the nested definition it advertises (2.116358ms)
+✔ HTTP discovery silently changes when the original annotation object is edited (261.72563ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 817.586546

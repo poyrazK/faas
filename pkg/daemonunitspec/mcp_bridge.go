@@ -29,12 +29,18 @@ func UnitMcpBridge() daemonunit.Unit {
 		ExecStart: `/opt/faas/current/bin/mcp-bridged --state-key-file %d/faas_mcp_bridge_state_key --admin-socket /run/faas-mcp-bridge/admin.sock` +
 			` --oauth-redirect-uri https://claude.ai/api/mcp/auth_callback --oauth-redirect-uri https://claude.com/api/mcp/auth_callback` +
 			` --oauth-redirect-uri https://chatgpt.com/connector_platform_oauth_redirect` +
-			` --oauth-redirect-uri http://localhost/callback --oauth-redirect-uri http://127.0.0.1/callback`,
+			` --oauth-redirect-uri http://localhost/callback --oauth-redirect-uri http://127.0.0.1/callback` +
+			// Uploads and plan directories live on the state disk, not in the
+			// private /tmp, which may be tmpfs inside the 1G memory limit; the
+			// bridge bounds the bytes it stages there (bug hunt H92).
+			` --upload-dir /var/lib/faas-mcp-bridge/uploads`,
 		Restart:    "on-failure",
 		RestartSec: "2s",
 
 		RuntimeDirectory:     "faas-mcp-bridge",
 		RuntimeDirectoryMode: "0700",
+		StateDirectory:       "faas-mcp-bridge",
+		StateDirectoryMode:   "0700",
 
 		Slice:     FaasCPSlice,
 		MemoryMax: "1G",

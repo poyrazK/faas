@@ -99,6 +99,8 @@ func TestFirecrackerControlLineRecognizesTimestampedProductionLines(t *testing.T
 		"2026-10-22T09:22:49.314065038 [" + id + ":main] Net: The device is not yet activated. Spurious event received: 3",
 		// Hunt 14: in a queue worker's log on rc.294.
 		"2026-10-25T00:28:11.555571126 [" + id + ":main] Got a spurious notification from api thread",
+		// Hunt 32 H32-69: in a function's log on rc.336.
+		"2026-11-10T09:33:48.970474406 [" + id + ":main] vsock: error writing to local stream (lp=1027, pp=2580291070): GuestMemoryMmap(IOError(Os { code: 32, kind: BrokenPipe, message: \"Broken pipe\" }))",
 	} {
 		if !firecrackerControlLine([]byte(line)) {
 			t.Errorf("production control line was not filtered: %q", line)

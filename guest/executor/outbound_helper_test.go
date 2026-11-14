@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -52,8 +53,10 @@ func TestExecutionOutboundHelperExposesSameContractToNodeAndPython(t *testing.T)
 			}
 			calls := 0
 			host, guest := net.Pipe()
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(nodeExecutionTestTimeoutMS)*time.Millisecond+5*time.Second)
 			defer cancel()
+			defer host.Close()
+			defer guest.Close()
 			serveDone := make(chan error, 1)
 			go func() {
 				serveDone <- executionproto.ServeWithBroker(ctx, guest, func(ctx context.Context, request executionproto.Request, stdout, stderr *executionproto.OutputWriter, guestBroker executionproto.OutboundBroker) (executionproto.Result, error) {
@@ -73,7 +76,7 @@ func TestExecutionOutboundHelperExposesSameContractToNodeAndPython(t *testing.T)
 			}
 			result, err := client.ExecuteWithOutputAndBroker(ctx, executionproto.Request{
 				Version: executionproto.Version, ExecutionID: "agent-run", Runtime: testCase.runtime,
-				Source: testCase.source, Input: json.RawMessage("null"), TimeoutMS: 5_000,
+				Source: testCase.source, Input: json.RawMessage("null"), TimeoutMS: nodeExecutionTestTimeoutMS,
 				MaxOutput: 4 << 10, NetworkMode: api.ExecutionNetworkNone, OutboundEnabled: true,
 			}, nil, broker)
 			if err != nil {
@@ -88,6 +91,58 @@ func TestExecutionOutboundHelperExposesSameContractToNodeAndPython(t *testing.T)
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestExecutionOutboundHelperCancelsInFlightBroker(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	started := make(chan struct{})
+	stopped := make(chan error, 1)
+	broker := outboundBrokerFunc(func(ctx context.Context, _ executionproto.OutboundRequest) (executionproto.OutboundResponse, error) {
+		close(started)
+		<-ctx.Done()
+		stopped <- ctx.Err()
+		return executionproto.OutboundResponse{}, ctx.Err()
+	})
+	helper, err := startExecutionOutboundHelper(ctx, broker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer helper.Close(t.Context())
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, helper.endpoint+"/i/11111111-1111-4111-8111-111111111111/v1/items", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
+		if err == nil {
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusBadGateway {
+				err = fmt.Errorf("cancelled broker returned status %d", response.StatusCode)
+			}
+		}
+		done <- err
+	}()
+	select {
+	case <-started:
+	case err := <-done:
+		t.Fatalf("request ended before reaching the broker: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("request did not reach the broker")
+	}
+	cancel()
+	select {
+	case err := <-stopped:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("broker context error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("execution cancellation did not stop the in-flight broker")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -128,11 +183,11 @@ func invokeOutboundHelper(t *testing.T, broker executionproto.OutboundBroker, in
 		t.Fatal(err)
 	}
 	defer helper.Close(ctx)
-	request, err := http.NewRequest(http.MethodPost, helper.endpoint+"/i/"+integrationID+path, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, helper.endpoint+"/i/"+integrationID+path, bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := (&http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(request)
+	response, err := (&http.Client{Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(request)
 	if err != nil {
 		t.Fatal(err)
 	}

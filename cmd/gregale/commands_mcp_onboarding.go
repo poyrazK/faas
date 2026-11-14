@@ -142,14 +142,25 @@ func runMCPInit(options mcpInitOptions) int {
 }
 
 func writeMCPStackRole(root, role string, options mcpInitOptions) error {
-	command := map[string]string{"node": "npm start", "go": "go run .", "python": "python server.py"}[options.Runtime]
+	// A Go build runs its compiled binary; the runtime image has no Go
+	// toolchain, so a Go role declares no start command (Hunt 32 H32-75).
+	// MCP_TASKS_ROLE selects the role inside the one binary.
+	command := map[string]string{"node": "npm start", "python": "python server.py"}[options.Runtime]
 	if options.Runtime == "node" && role != "web" {
 		command = "npm run start:tasks-" + role
 	}
-	manifest := "hosting:\n  start: " + command + "\n"
+	hosting := ""
+	if command != "" {
+		hosting += "  start: " + command + "\n"
+	}
 	if role == "web" {
-		manifest += "  port: 8080\n  health: /healthz\n"
-	} else {
+		hosting += "  port: 8080\n  health: /healthz\n"
+	}
+	manifest := ""
+	if hosting != "" {
+		manifest = "hosting:\n" + hosting
+	}
+	if role != "web" {
 		manifest += "worker:\n  drain_timeout: 45s\n  stop_signal: SIGTERM\n  scale:\n    min: 1\n"
 		if role == "worker" {
 			manifest += "    max: 10\n    metric: custom\n    name: mcp_tasks_outstanding\n    target: 1\n"

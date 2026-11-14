@@ -37,6 +37,10 @@ const (
 // packed archive may not exceed capMB and the expanded source may not exceed
 // api.SourceArchiveMaxExpandedBytes, the limits apid enforces.
 func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly map[string][]byte, dockerfile bool, excludes ...string) (outPath string, regularFileCount int, findings []secretscan.Finding, err error) {
+	return packGitArchiveReported(srcPath, capMB, mode, buildOnly, dockerfile, nil, excludes...)
+}
+
+func packGitArchiveReported(srcPath string, capMB int, mode secretScanMode, buildOnly map[string][]byte, dockerfile bool, report *deploySourceFilesReport, excludes ...string) (outPath string, regularFileCount int, findings []secretscan.Finding, err error) {
 	if capMB <= 0 {
 		return "", 0, nil, fmt.Errorf("invalid source cap %d MB", capMB)
 	}
@@ -47,6 +51,9 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 	rules, err := readGitArchiveRules(srcPath, dockerfile)
 	if err != nil {
 		return "", 0, nil, err
+	}
+	if report != nil {
+		report.generated = buildOnly
 	}
 
 	in, err := openCustomerFile(srcPath)
@@ -111,7 +118,14 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		if name == "" {
 			continue
 		}
-		if excluded[name] || gitArchiveShouldExclude(name, isDir, rules) {
+		decision := gitArchiveSelection(name, isDir, rules)
+		if excluded[name] {
+			decision = packSelection{excluded: true, reason: "command-scoped exclusion"}
+		}
+		if err := report.observe(name, isDir, hdr.Size, decision, false); err != nil {
+			return "", 0, findings, err
+		}
+		if decision.excluded {
 			continue
 		}
 		if hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg {
@@ -149,6 +163,9 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 				var entryFindings []secretscan.Finding
 				body, entryFindings = scanGitArchiveEntry(name, body, mode)
 				findings = append(findings, entryFindings...)
+				if report != nil && len(entryFindings) > 0 {
+					report.redacted[name] = true
+				}
 				hdr.Size = int64(len(body))
 				if hdr.Size > expandedCap-totalUncompressed {
 					return "", 0, findings, sourceExpandedLimitError()
@@ -441,24 +458,6 @@ func gitArchiveEntrySafe(name string) bool {
 		}
 	}
 	return true
-}
-
-// gitArchiveShouldExclude mirrors filepath.WalkDir's SkipDir behaviour for
-// archives that omit explicit directory headers (git archive commonly does).
-// Checking only the file basename would otherwise let a tracked file below
-// node_modules/.git/etc. survive the filter.
-func gitArchiveShouldExclude(name string, isDir bool, rules packRules) bool {
-	if rules.exclude(name, isDir) {
-		return true
-	}
-	trimmed := strings.TrimSuffix(name, "/")
-	parts := strings.Split(trimmed, "/")
-	for i := 1; i < len(parts); i++ {
-		if rules.exclude(strings.Join(parts[:i], "/"), true) {
-			return true
-		}
-	}
-	return false
 }
 
 func readGitArchiveEntryForScan(name string, size int64, mode secretScanMode) ([]byte, bool) {

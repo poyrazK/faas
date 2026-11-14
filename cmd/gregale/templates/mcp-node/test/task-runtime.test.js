@@ -33,7 +33,7 @@ test('zero-valued Task settings use the same defaults as omitted settings', asyn
     resolveMcpTaskSettings({ tasks: omittedTasks }, { env, role: 'web' }));
   const service = await startMcpTaskRuntime({ tasks: zeroTasks }, {
     env, role: 'web',
-    createPool: () => ({ async end() {} }),
+    createPool: options => { assert.equal(options.max, 4); return { async end() {} }; },
     createStore: () => ({ async initialize() {}, async claim() {} }),
   });
   await service.close();
@@ -49,6 +49,21 @@ test('zero-default handling preserves invalid retry settings and explicit drain 
     env: { ...baseEnv, MCP_DRAIN_TIMEOUT_SECONDS: '45' },
   });
   assert.equal(settings.shutdownTimeoutMs, 45_000);
+});
+
+test('worker service exposes the effective startup drain budget', async () => {
+  for (const [override, expected] of [[undefined, 10_000], ['120', 120_000], ['1.5', 1500]]) {
+    let runtimeOptions;
+    const service = await startMcpTaskRuntime(config, {
+      role: 'worker', env: { ...baseEnv, MCP_TASK_NAMESPACE: 'shared', ...(override === undefined ? {} : { MCP_DRAIN_TIMEOUT_SECONDS: override }) },
+      createPool: () => ({ async end() {} }), createStore: () => ({}),
+      createRuntime: options => { runtimeOptions = options; return { async start() {}, async stop() {} }; },
+    });
+    try {
+      assert.equal(service.shutdownTimeoutMs, expected);
+      assert.equal(service.shutdownTimeoutMs, runtimeOptions.shutdownTimeoutMs);
+    } finally { await service.close(); }
+  }
 });
 
 test('a dedicated worker requires and uses the shared logical namespace override', () => {
@@ -81,11 +96,12 @@ test('runtime startup selects the process role and closes the runtime and pool o
     async start() {},
     async stop() {},
   };
-  const service = await startMcpTaskRuntime({ ...config, tasks: { ...config.tasks, max_attempts: 5 } }, {
+  const service = await startMcpTaskRuntime({ ...config, tasks: { ...config.tasks, max_attempts: 5, worker_concurrency: 16 } }, {
     env: { ...baseEnv, MCP_TASK_NAMESPACE: 'storefront-prod' },
     role: 'worker',
     createPool(options) {
       assert.equal(options.connectionString, baseEnv.DATABASE_URL);
+      assert.equal(options.max, 20);
       return { async end() { poolCloseCount++; } };
     },
     createStore(options) {
@@ -102,6 +118,7 @@ test('runtime startup selects the process role and closes the runtime and pool o
 
   assert.equal(service.taskRuntime, fakeRuntime);
   assert.equal(runtimeOptions.workerEnabled, true);
+  assert.equal(runtimeOptions.workerConcurrency, 16);
   assert.equal(runtimeOptions.keepAlive, true);
   assert.equal(runtimeOptions.maxAttempts, 5);
   await service.close();

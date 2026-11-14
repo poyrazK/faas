@@ -127,6 +127,27 @@ func (a *stateBindingsAdapter) GetAppBindingForInstallation(ctx context.Context,
 	return a.store.GithubInstallBindingForRepoBranchInstallation(ctx, repoFullName, branch, installationID)
 }
 
+func (a *stateBindingsAdapter) ListBindingsForInstallation(ctx context.Context, installationID int64) ([]state.GitHubBinding, error) {
+	bindings, err := a.store.ListGitHubInstallBindingsForInstallation(ctx, installationID)
+	if err != nil {
+		return nil, err
+	}
+	projects, err := a.store.GitHubProjectBindingsForInstallation(ctx, installationID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool)
+	for _, b := range bindings {
+		seen[b.AccountID+"\x00"+b.RepoFullName] = true
+	}
+	for _, project := range projects {
+		if !seen[project.AccountID+"\x00"+project.RepoFullName] {
+			bindings = append(bindings, project)
+		}
+	}
+	return bindings, nil
+}
+
 // InstallationIDForRepo is the legacy ChecksAPI seam. Maps
 // state.ErrNotFound to githubd.ErrNoBinding (the pre-PR-B
 // sentinel) so the cmd-side swap is invisible to ChecksAPI.
@@ -215,3 +236,7 @@ func (a *stateLifecycleAdapter) RecordGitHubInstallationSync(ctx context.Context
 
 var _ githubd.InstallationLifecycleStore = (*stateLifecycleAdapter)(nil)
 var _ githubd.InstallationSyncStore = (*stateLifecycleAdapter)(nil)
+
+func (a *stateInstallsAdapter) RefreshToken(ctx context.Context, previous []byte, inst state.GitHubInstall) error {
+	return a.store.RefreshGitHubConnectionToken(ctx, previous, inst)
+}

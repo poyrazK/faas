@@ -26,6 +26,8 @@ type ManagedPostgresDatabase struct {
 	State              string
 	BackendID          string
 	BackendFingerprint string
+	ProviderResourceID pgtype.Text
+	DataResourceID     pgtype.Text
 	DeletedAt          pgtype.Timestamptz
 }
 
@@ -41,13 +43,20 @@ type ManagedPostgresLiveKey struct {
 }
 
 type ManagedPostgresLiveLogin struct {
-	DatabaseID         pgtype.UUID
-	AccountID          pgtype.UUID
-	SealedLogin        []byte
-	Recipient          string
-	ProviderIdentityID string
-	Slot               string
-	Awake              string
-	CreatedAt          pgtype.Timestamptz
-	SealedLoginSig     []byte
+	DatabaseID           pgtype.UUID
+	AccountID            pgtype.UUID
+	SealedLogin          []byte
+	Recipient            string
+	ProviderIdentityID   string
+	Slot                 string
+	Awake                string
+	CreatedAt            pgtype.Timestamptz
+	SealedLoginSig       []byte
+	DataResourceID       pgtype.Text
+	AuthorizedIdentityID pgtype.Text
+}
+
+type ManagedPostgresLiveLoginAttempt struct {
+	DatabaseID  pgtype.UUID
+	AttemptedAt pgtype.Timestamptz
 }

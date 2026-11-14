@@ -215,6 +215,34 @@ func (q *Queries) ProjectEnvironmentIDForSecrets(ctx context.Context, db DBTX, a
 	return id, err
 }
 
+const projectEnvironmentSharedSecretGeneration = `-- name: ProjectEnvironmentSharedSecretGeneration :one
+SELECT e.shared_secret_generation, EXISTS (
+    SELECT 1 FROM project_environment_secrets s
+    WHERE s.project_id = e.project_id AND s.environment_slug = e.slug
+) AS has_shared_secrets
+FROM project_environments e
+WHERE e.account_id = $1::uuid AND e.project_id = $2::uuid
+    AND e.slug = $3::text
+`
+
+type ProjectEnvironmentSharedSecretGenerationParams struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+}
+
+type ProjectEnvironmentSharedSecretGenerationRow struct {
+	SharedSecretGeneration int64
+	HasSharedSecrets       bool
+}
+
+func (q *Queries) ProjectEnvironmentSharedSecretGeneration(ctx context.Context, db DBTX, arg ProjectEnvironmentSharedSecretGenerationParams) (ProjectEnvironmentSharedSecretGenerationRow, error) {
+	row := db.QueryRow(ctx, projectEnvironmentSharedSecretGeneration, arg.AccountID, arg.ProjectID, arg.EnvironmentSlug)
+	var i ProjectEnvironmentSharedSecretGenerationRow
+	err := row.Scan(&i.SharedSecretGeneration, &i.HasSharedSecrets)
+	return i, err
+}
+
 const upsertProjectEnvironmentSecret = `-- name: UpsertProjectEnvironmentSecret :one
 INSERT INTO project_environment_secrets (account_id, project_id, environment_slug, key, ciphertext, kid, value_hash)
 VALUES ($1::uuid, $2::uuid, $3::text, $4::text,

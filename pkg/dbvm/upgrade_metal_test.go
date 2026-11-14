@@ -1,7 +1,7 @@
 //go:build metal && linux
 
 // adr: 1027 — an in-place major upgrade: pg_upgrade's check refuses a
-// PostgreSQL 14 cluster it cannot carry (a reg* column) and leaves it
+// PostgreSQL 15 cluster it cannot carry (a reg* column) and leaves it
 // intact; once that is gone, the cluster, crashed even, upgrades to 17 with
 // pg_upgrade --link, keeping its rows, extension, function and sequence.
 package dbvm
@@ -21,9 +21,9 @@ import (
 
 func TestMetalMajorUpgrade(t *testing.T) {
 	env := loadMetalEnv(t)
-	base14 := filepath.Join(env.workdir, "base-postgres-14.ext4")
-	if _, err := os.Stat(base14); os.IsNotExist(err) {
-		buildMetalBase(t, PostgresImages[14], os.Getenv("FAAS_GUEST_INIT"), base14)
+	base15 := filepath.Join(env.workdir, "base-postgres-15.ext4")
+	if _, err := os.Stat(base15); os.IsNotExist(err) {
+		buildMetalBase(t, PostgresImages[15], os.Getenv("FAAS_GUEST_INIT"), base15)
 	}
 	parent := "dbvm-upgrade-metal"
 	if err := os.MkdirAll(filepath.Join("/sys/fs/cgroup", parent), 0o755); err != nil {
@@ -32,7 +32,7 @@ func TestMetalMajorUpgrade(t *testing.T) {
 	t.Cleanup(func() { _ = os.Remove(filepath.Join("/sys/fs/cgroup", parent)) })
 	rt, err := NewRuntime(RuntimeConfig{
 		JailBase: filepath.Join(env.workdir, "ujail"), VolumeRoot: filepath.Join(env.workdir, "uvolumes"),
-		KernelPath: env.kernel, Bases: map[int]string{14: base14, 17: env.base}, ParentCgroup: parent,
+		KernelPath: env.kernel, Bases: map[int]string{15: base15, 17: env.base}, ParentCgroup: parent,
 		JailerBin: envOr("FAAS_JAILER", "jailer"), FirecrackerBin: env.firecracker, Leases: &fakeLeaser{},
 	})
 	if err != nil {
@@ -69,9 +69,9 @@ func TestMetalMajorUpgrade(t *testing.T) {
 		return v
 	}
 
-	// A PostgreSQL 14 database with rows, an extension, a function and a
+	// A PostgreSQL 15 database with rows, an extension, a function and a
 	// sequence position.
-	if resp := boot(14, 0); resp.State != dbguest.StateNeedsBootstrap {
+	if resp := boot(15, 0); resp.State != dbguest.StateNeedsBootstrap {
 		t.Fatalf("fresh volume = %+v", resp)
 	}
 	if resp, err := rt.Control(ctx, id, dbguest.Request{Op: dbguest.OpBootstrap}); err != nil || resp.Error != "" {
@@ -83,8 +83,8 @@ func TestMetalMajorUpgrade(t *testing.T) {
 	password := hex.EncodeToString([]byte("major-upgrade-metal-password-1"))
 	createAppRole(t, func(req dbguest.Request) (dbguest.Response, error) { return rt.Control(ctx, id, req) }, password)
 	conn := connectRuntime(ctx, t, rt, id, password)
-	if v := versionNum(conn); v/10000 != 14 {
-		t.Fatalf("server version %d, want 14", v)
+	if v := versionNum(conn); v/10000 != 15 {
+		t.Fatalf("server version %d, want 15", v)
 	}
 	if _, err := conn.Exec(ctx, `CREATE EXTENSION pgcrypto;
 CREATE TABLE accounts (id bigserial PRIMARY KEY, email text NOT NULL, secret text NOT NULL);
@@ -102,22 +102,22 @@ CREATE TABLE blocker (r regprocedure);`); err != nil {
 	if err := rt.Stop(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	if resp := boot(17, 14); resp.State != dbguest.StateFailed || resp.Error != dbguest.ErrCodeUpgradeRefused {
+	if resp := boot(17, 15); resp.State != dbguest.StateFailed || resp.Error != dbguest.ErrCodeUpgradeRefused {
 		t.Fatalf("upgrade of a cluster with a reg* column = %+v; want %s", resp, dbguest.ErrCodeUpgradeRefused)
 	}
 	if err := rt.Stop(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	if resp := boot(14, 0); resp.State != dbguest.StateReady {
-		t.Fatalf("the refused cluster on 14 = %+v", resp)
+	if resp := boot(15, 0); resp.State != dbguest.StateReady {
+		t.Fatalf("the refused cluster on 15 = %+v", resp)
 	}
 	conn = connectRuntime(ctx, t, rt, id, password)
 	var count int64
 	if err := conn.QueryRow(ctx, `SELECT account_count()`).Scan(&count); err != nil || count != 2000 {
 		t.Fatalf("after the refusal: %d rows, %v", count, err)
 	}
-	if v := versionNum(conn); v/10000 != 14 {
-		t.Fatalf("server version %d after the refusal, want 14", v)
+	if v := versionNum(conn); v/10000 != 15 {
+		t.Fatalf("server version %d after the refusal, want 15", v)
 	}
 	if _, err := conn.Exec(ctx, `DROP TABLE blocker`); err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ CREATE TABLE blocker (r regprocedure);`); err != nil {
 	// old binaries first.
 	killVM(t, rt, id)
 	started := time.Now()
-	if resp := boot(17, 14); resp.State != dbguest.StateReady {
+	if resp := boot(17, 15); resp.State != dbguest.StateReady {
 		t.Fatalf("upgrade = %+v", resp)
 	}
 	took := time.Since(started)
@@ -163,5 +163,5 @@ CREATE TABLE blocker (r regprocedure);`); err != nil {
 	if err := conn.QueryRow(ctx, `SELECT account_count()`).Scan(&count); err != nil || count != 2001 {
 		t.Fatalf("after a plain boot: %d rows, %v", count, err)
 	}
-	t.Logf("upgraded PostgreSQL 14 to 17 in place in %v (boot to ready)", took.Round(time.Millisecond))
+	t.Logf("upgraded PostgreSQL 15 to 17 in place in %v (boot to ready)", took.Round(time.Millisecond))
 }

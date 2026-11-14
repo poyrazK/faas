@@ -35,7 +35,7 @@ func (s *server) dashboardTrackerTriageHandler(w http.ResponseWriter, r *http.Re
 	}
 	// #nosec G124 -- configured production domains use Secure; empty domain supports local development.
 	http.SetCookie(w, &http.Cookie{Name: dashboardIssueCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
-	view := dashboard.NewIssueTrackerTriageView(app.Slug, token, triage, triage.ClaimedBy == acct.ID || app.AccountID == acct.ID)
+	view := dashboard.NewIssueTrackerTriageView(app.Slug, token, triage, triage.ClaimedBy == acct.ID || s.dashboardCanManageTrackerNotifications(r, acct, app))
 	if err = dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: "Incident triage", Body: "issue_tracker_triage", Account: dashboardAccountView(acct, 0), Data: view}); err != nil {
 		renderProblem(w, s.log, err)
 	}

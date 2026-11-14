@@ -3,6 +3,7 @@ package imaged
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -20,17 +22,27 @@ import (
 type agentLayerBuilder struct {
 	callCountingBuilder
 	published []string
-	marker    string
-	label     string
-	sizeMB    int
+	// markers holds each publication's only marker file and its content,
+	// by label.
+	markers map[string]string
+	sizeMB  int
 }
 
 func (b *agentLayerBuilder) PublishStagedLayer(ctx context.Context, be storage.StorageBackend, key, staging, label string, sizeMB int) (rootfs.ArtifactIdentity, error) {
-	marker, err := os.ReadFile(filepath.Join(staging, "upper", "etc", "faas", "agent.json"))
+	dir := filepath.Join(staging, "upper", "etc", "faas")
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		return rootfs.ArtifactIdentity{}, fmt.Errorf("layer %s: want one marker, got %v: %w", label, entries, err)
+	}
+	marker, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
 	if err != nil {
 		return rootfs.ArtifactIdentity{}, err
 	}
-	b.published, b.marker, b.label, b.sizeMB = append(b.published, key), string(marker), label, sizeMB
+	if b.markers == nil {
+		b.markers = map[string]string{}
+	}
+	b.published, b.sizeMB = append(b.published, key), sizeMB
+	b.markers[label] = entries[0].Name() + "=" + string(marker)
 	return rootfs.ArtifactIdentity{Digest: "sha256:layer", Bytes: 4}, be.Put(ctx, key, strings.NewReader("ext4"))
 }
 
@@ -71,7 +83,7 @@ func TestAgentRunDrivesStageOnlyWhenConfigured(t *testing.T) {
 	if baseKey != "base/runner-agent-amd64.ext4" {
 		t.Fatalf("agent base key = %q", baseKey)
 	}
-	for _, key := range []string{baseKey, wire.ScanKeyForBaseKey(baseKey), sched.AgentRunLayerKeyForArch("amd64")} {
+	for _, key := range []string{baseKey, wire.ScanKeyForBaseKey(baseKey), sched.AgentRunLayerKeyForArch("amd64"), storagekey.SandboxLayerForArch("amd64")} {
 		rc, err := hs.be.Get(ctx, key)
 		if err != nil {
 			t.Fatalf("%s not published: %v", key, err)
@@ -82,15 +94,19 @@ func TestAgentRunDrivesStageOnlyWhenConfigured(t *testing.T) {
 	if err != nil || !strings.Contains(scan.Image, "agent-base@sha256:") {
 		t.Fatalf("scan sidecar = %+v, %v; want it to name the pinned agent base", scan, err)
 	}
-	if builder.marker != agentManifestJSON || builder.label != "agent-layer" || builder.sizeMB != agentLayerMB {
-		t.Fatalf("agent layer marker %q label %q size %d", builder.marker, builder.label, builder.sizeMB)
+	// adr: 20261027090013 — sessions get a layer of their own, since guest-init
+	// takes exactly one mode marker.
+	if builder.markers["agent-layer"] != "agent.json="+agentManifestJSON || builder.markers["sandbox-layer"] != "sandbox.json="+sandboxManifestJSON ||
+		builder.sizeMB != agentLayerMB {
+		t.Fatalf("layer markers %q size %d", builder.markers, builder.sizeMB)
 	}
-	if len(chowned) != 4 || !strings.HasSuffix(chowned[3], filepath.Join("upper", "etc", "faas", "agent.json")) {
-		t.Fatalf("chowned %q, want upper, etc, faas and the marker", chowned)
+	if len(chowned) != 8 || !strings.HasSuffix(chowned[3], filepath.Join("upper", "etc", "faas", "agent.json")) ||
+		!strings.HasSuffix(chowned[7], filepath.Join("upper", "etc", "faas", "sandbox.json")) {
+		t.Fatalf("chowned %q, want upper, etc, faas and the marker of each layer", chowned)
 	}
 
 	got, err = hs.h.EnsureAgentRunDrives(ctx, "amd64", lookup)
-	if err != nil || len(got) != 1 || !got[0].Skipped || len(builder.published) != 1 {
+	if err != nil || len(got) != 1 || !got[0].Skipped || len(builder.published) != 2 {
 		t.Fatalf("restage = %+v, %v with %d layer publications; want both reused", got, err, len(builder.published))
 	}
 }

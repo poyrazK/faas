@@ -50,6 +50,18 @@ func (m *MemStore) standardRuntimeSnapshotLocked(ins Instance) ([]byte, error) {
 			return nil, ErrInvalidArgument
 		}
 	}
+	if dep.ID != "" {
+		runtimeApp, err := m.serviceAppForDeploymentLocked(app, dep)
+		if err != nil {
+			return nil, err
+		}
+		if err := checkScopedStandardRuntimeSettings(runtimeApp, e); err != nil {
+			return nil, err
+		}
+		app.Type, app.Runtime, app.RAMMB, app.AppProtocol = runtimeApp.Type, runtimeApp.Runtime, runtimeApp.RAMMB, runtimeApp.AppProtocol
+		app.RequireSigned, app.SecurityPolicy = runtimeApp.RequireSigned, runtimeApp.SecurityPolicy
+		app.EgressAllowlist, app.EgressPorts = runtimeApp.EgressAllowlist, runtimeApp.EgressPorts
+	}
 	input := standardRuntimeCallerInputs(app, account, dep)
 	if e.ExceptionExpiresAt != nil {
 		input["exception_expires_at_unix_nano"] = e.ExceptionExpiresAt.UnixNano()

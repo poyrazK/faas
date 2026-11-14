@@ -37,5 +37,8 @@ func EventDeliveryReplayProblem(err error, fallback string) *api.Problem {
 	if errors.Is(err, state.ErrKeyedReplayExpired) {
 		return api.ErrDeadLetterKeyedReplayExpired()
 	}
+	if errors.Is(err, state.ErrConflict) {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Replay work changed", "refresh the retained work before retrying recovery")
+	}
 	return api.ErrInternal(fallback)
 }

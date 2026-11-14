@@ -22,6 +22,7 @@ func TestManagedPostgresDrainPlanNeverQueuesUnprovenLifecycleKinds(t *testing.T)
 		{"parked", "parked_instance_unproven", func(r *sqlc.ListManagedPostgresDrainPlanInventoryRow) { r.State = "parked" }},
 		{"pending", "undispatched_instance_unproven", func(r *sqlc.ListManagedPostgresDrainPlanInventoryRow) { r.State = "pending" }},
 		{"builder", "unsupported_instance_kind", func(r *sqlc.ListManagedPostgresDrainPlanInventoryRow) { r.Kind = "build" }},
+		{"snapshot_refresh", "snapshot_refresh_in_progress", func(r *sqlc.ListManagedPostgresDrainPlanInventoryRow) { r.Mode = "refresh" }},
 		{"missing_deployment", "instance_identity_incomplete", func(r *sqlc.ListManagedPostgresDrainPlanInventoryRow) { r.DeploymentID = pgtype.UUID{} }},
 		{"zero_wake", "instance_identity_incomplete", func(r *sqlc.ListManagedPostgresDrainPlanInventoryRow) { r.WakeID = pgtype.UUID{Valid: true} }},
 		{"deleted_account", "unsupported_instance_state", func(r *sqlc.ListManagedPostgresDrainPlanInventoryRow) { r.State = "evicting_account_deleting" }},

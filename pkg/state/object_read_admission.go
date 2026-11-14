@@ -20,6 +20,9 @@ import (
 // plan-tightened ceilings they are checked against.
 type ObjectReadAdmission struct {
 	Err error
+	// SubjectID is the billing owner whose monthly counters this decision
+	// contains. Organization enrollment can leave a bucket account-billed.
+	SubjectID string
 	// DownloadErr refuses object bodies, not HEAD or listing, while the
 	// account stores more than its plan's ceiling (ADR-20261101214152).
 	DownloadErr       error
@@ -97,7 +100,10 @@ func (m *MemStore) ObjectReadAdmission(ctx context.Context, account, bucket stri
 	if !ok || owned.AccountID != account {
 		return ObjectReadAdmission{Period: ObjectStoragePeriod(at), Err: ErrNotFound}, nil
 	}
-	return objectReadAdmission(m.objectUsageLocked(m.objectBillingSubjectLocked(owned), at), bucket, at, p), nil
+	subject := m.objectBillingSubjectLocked(owned)
+	out := objectReadAdmission(m.objectUsageLocked(subject, at), bucket, at, p)
+	out.SubjectID = subject
+	return out, nil
 }
 
 func (m *MemStore) RecordObjectReadUsage(ctx context.Context, usage []ObjectReadUsage) error {
@@ -148,7 +154,9 @@ func (s *pgCore) ObjectReadAdmission(ctx context.Context, account, bucket string
 	if err != nil {
 		return ObjectReadAdmission{}, err
 	}
-	return objectReadAdmission(snapshot, bucket, at, p), nil
+	out := objectReadAdmission(snapshot, bucket, at, p)
+	out.SubjectID = pgUUIDString(subject)
+	return out, nil
 }
 
 // RecordObjectReadUsage writes counter rows in key order, so concurrent

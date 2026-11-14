@@ -143,6 +143,72 @@ func (l *loginFailureLimiter) sweepLocked(now time.Time) {
 	}
 }
 
+// loginFailureBudget is the per-address budget the shared store enforces.
+var loginFailureBudget = state.LoginFailureBudget{
+	MaxFailures: api.LoginFailuresPerEmail,
+	Window:      api.LoginFailureEmailWindow,
+}
+
+// sharedLoginFailures returns the store's shared counter, or nil when the
+// store has none: every apid then counts on its own (ADR 20261111150000).
+func (s *server) sharedLoginFailures() state.LoginFailureBudgetStore {
+	st, _ := s.store.(state.LoginFailureBudgetStore)
+	return st
+}
+
+// loginRetryAfter reports how long password checks for email stay refused.
+// The counts are shared by every apid; when the shared counter cannot be
+// read this process's own counts decide.
+func (s *server) loginRetryAfter(ctx context.Context, email string) time.Duration {
+	key := auth.HashEmail(email)
+	if st := s.sharedLoginFailures(); st != nil {
+		wait, err := st.LoginFailureRetryAfter(ctx, key, loginFailureBudget)
+		if err == nil {
+			return wait
+		}
+		s.log.Warn("auth: shared sign-in failure budget unavailable, using this process's", "err", err)
+	}
+	return s.loginFailures.retryAfter(key)
+}
+
+// countLoginFailure records one failure and reports whether it used up the
+// address's budget with the owner not yet told.
+func (s *server) countLoginFailure(ctx context.Context, key string) bool {
+	if st := s.sharedLoginFailures(); st != nil {
+		notify, err := st.RecordLoginFailure(ctx, key, loginFailureBudget)
+		if err == nil {
+			return notify
+		}
+		s.log.Warn("auth: shared sign-in failure budget unavailable, using this process's", "err", err)
+	}
+	return s.loginFailures.record(key)
+}
+
+// resetLoginFailures lifts a failed-password pause on email: its owner
+// proved control of the address.
+func (s *server) resetLoginFailures(ctx context.Context, email string) {
+	key := auth.HashEmail(email)
+	s.loginFailures.reset(key)
+	if st := s.sharedLoginFailures(); st != nil {
+		if err := st.ResetLoginFailures(ctx, key); err != nil {
+			s.log.Warn("auth: could not reset shared sign-in failure budget", "err", err)
+		}
+	}
+}
+
+// refuseWhileLoginLimited answers 429 while email is out of failed-password
+// budget. Every password check (sign-in, enrollment, email change, password
+// change, turning off two-factor) shares the budget, so a stolen session
+// cannot guess the password through a route sign-in does not count.
+func (s *server) refuseWhileLoginLimited(w http.ResponseWriter, r *http.Request, email string) bool {
+	wait := s.loginRetryAfter(r.Context(), email)
+	if wait <= 0 {
+		return false
+	}
+	api.WriteProblem(w, api.ErrAuthRateLimited(int(math.Ceil(wait.Seconds()))))
+	return true
+}
+
 // decodeCredentials reads a password sign-in body and refuses it with 429
 // while the address is out of failed-sign-in budget.
 func (s *server) decodeCredentials(w http.ResponseWriter, r *http.Request) (string, string, bool) {
@@ -150,8 +216,7 @@ func (s *server) decodeCredentials(w http.ResponseWriter, r *http.Request) (stri
 	if !ok {
 		return "", "", false
 	}
-	if wait := s.loginFailures.retryAfter(auth.HashEmail(email)); wait > 0 {
-		api.WriteProblem(w, api.ErrAuthRateLimited(int(math.Ceil(wait.Seconds()))))
+	if s.refuseWhileLoginLimited(w, r, email) {
 		return "", "", false
 	}
 	return email, password, true
@@ -162,7 +227,7 @@ func (s *server) decodeCredentials(w http.ResponseWriter, r *http.Request) (stri
 // the request so the response time does not reveal whether the address has
 // an account.
 func (s *server) recordLoginFailure(ctx context.Context, email string, acct *state.Account) {
-	if !s.loginFailures.record(auth.HashEmail(email)) {
+	if !s.countLoginFailure(ctx, auth.HashEmail(email)) {
 		return
 	}
 	var accountID *string

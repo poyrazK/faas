@@ -11,12 +11,9 @@
 //     server can replay an accepted response instead of repeating the write.
 //   * Opt-in: callers can pin a stable key via `client.setIdempotencyKey`
 //     for retry semantics that survive across processes (CI deploys,
-//     idempotent batch jobs, etc.). The key is process-wide, attached
-//     to the FaaSClient instance, and persists until explicitly replaced.
-//
-// The async-local-storage wire-in (per-call key without touching
-// the FaaSClient instance) is deferred to a doc-driven follow-up;
-// today the explicit `setIdempotencyKey` is sufficient.
+//     idempotent batch jobs, etc.). createClient keeps this default private
+//     to the instance; the legacy FaaSClient shares it process-wide.
+//     Prefer the generated method's idempotencyKey option for concurrent work.
 
 import { randomUUID } from 'node:crypto';
 

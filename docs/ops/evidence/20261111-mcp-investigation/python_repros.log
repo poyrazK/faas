@@ -1,0 +1,24 @@
+test_completion_does_not_enumerate_another_callers_records (__main__.PythonMCPInvestigation.test_completion_does_not_enumerate_another_callers_records) ... FAIL
+test_subscriptions_do_not_reveal_unreadable_record_updates (__main__.PythonMCPInvestigation.test_subscriptions_do_not_reveal_unreadable_record_updates) ... 127.0.0.1 - - [11/Nov/2026 16:17:15] "POST /mcp HTTP/1.1" 200 -
+FAIL
+
+======================================================================
+FAIL: test_completion_does_not_enumerate_another_callers_records (__main__.PythonMCPInvestigation.test_completion_does_not_enumerate_another_callers_records)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/faas/docs/ops/evidence/20261111-mcp-investigation/python_starter_repro_test.py", line 33, in test_completion_does_not_enumerate_another_callers_records
+    self.assertNotIn('example-2', completion['result']['completion']['values'],
+AssertionError: 'example-2' unexpectedly found in ['example-1', 'example-2', 'example-3'] : completion leaks a record ID that resource ownership refuses
+
+======================================================================
+FAIL: test_subscriptions_do_not_reveal_unreadable_record_updates (__main__.PythonMCPInvestigation.test_subscriptions_do_not_reveal_unreadable_record_updates)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/faas/docs/ops/evidence/20261111-mcp-investigation/python_starter_repro_test.py", line 81, in test_subscriptions_do_not_reveal_unreadable_record_updates
+    self.assertNotEqual(update.get('params', {}).get('uri'), forbidden_uri,
+AssertionError: 'customer://records/example-2' == 'customer://records/example-2' : unreadable record update leaked; acknowledged filter: {'jsonrpc': '2.0', 'method': 'notifications/subscriptions/acknowledged', 'params': {'notifications': {'resourceSubscriptions': ['customer://records/example-2']}, '_meta': {'io.modelcontextprotocol/subscriptionId': 3}}}
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.534s
+
+FAILED (failures=2)

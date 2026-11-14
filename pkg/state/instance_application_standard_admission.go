@@ -168,6 +168,21 @@ func unmanagedStandardRuntimeInputs(input map[string]any) bool {
 	return ok && fieldsOK && planOK && len(adoptions) == 0 && len(fields) == 0
 }
 
+// Scoped customer settings cannot replace a currently materialized standard.
+// Enrollment/revision/exception checks remain independent admission fences.
+func checkScopedStandardRuntimeSettings(app App, enrollment ApplicationStandardEnrollment) error {
+	for field, raw := range applicationStandardBaseSettings(app) {
+		if !standardManagedField(enrollment, field) {
+			continue
+		}
+		var actual, expected any
+		if json.Unmarshal(raw, &actual) != nil || json.Unmarshal(enrollment.Effective.Values[field], &expected) != nil || !reflect.DeepEqual(actual, expected) {
+			return fmt.Errorf("%w: scoped %s conflicts with the current application standard", ErrApplicationStandardsPending, field)
+		}
+	}
+	return nil
+}
+
 func standardRuntimeCallerInputs(app App, account Account, dep Deployment) map[string]any {
 	projectID := ""
 	if app.ProjectID != "" {

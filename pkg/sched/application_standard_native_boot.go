@@ -101,11 +101,19 @@ func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanc
 	if runID != "" {
 		spec.APIEnv = appendRehearsalPlatformAPI(spec.APIEnv)
 	}
+	branchContained, err := e.environmentBranchContained(ctx, spec.DeploymentID)
+	if err != nil {
+		return nil, err
+	}
+	spec.EnvironmentBranchContained = branchContained
 	if captureErr != nil {
 		return nil, applicationStandardRuntimeProblem(captureErr)
 	}
 	if capture.Managed && runID != "" {
 		return nil, errors.New("rehearsal containment does not yet support managed native admission")
+	}
+	if capture.Managed && branchContained {
+		return nil, errors.New("environment branch containment does not yet support managed native admission")
 	}
 	if !capture.Managed {
 		return e.createRehearsalCheckedRuntime(ctx, nodeID, instanceID, spec, snap, paused)

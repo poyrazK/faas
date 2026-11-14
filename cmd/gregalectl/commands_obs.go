@@ -67,6 +67,8 @@ const subObsCollectionHistory = "collection-history"
 const subObsRecurrence = "recurrence"
 const subObsResponseTimes = "response-times"
 const subObsNotificationHealth = "notification-health"
+const subObsServingHealth = "serving-health"
+const subObsVerifyDeployment = "verify-deployment"
 const subObsRuleHealth = "rule-health"
 const subObsRuleCoverage = "rule-coverage"
 const subObsRecordingCoverage = "recording-coverage"
@@ -102,7 +104,7 @@ const defaultAPIDURL = "http://127.0.0.1:8080"
 // for `manifest validate` without --file).
 func cmdObsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|input-health|rule-health|rule-coverage|recording-coverage|notification-health|summary|response-times|recurrence|collection-history|incidents|triage|triage-history|evidence|context|bundle|overview|capacity|logs|wake|app|node")
+		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|input-health|rule-health|rule-coverage|recording-coverage|notification-health|serving-health|verify-deployment|summary|response-times|recurrence|collection-history|incidents|triage|triage-history|evidence|context|bundle|overview|capacity|logs|wake|app|node")
 		return 2
 	}
 	sub, rest := args[0], args[1:]
@@ -117,6 +119,10 @@ func cmdObsDispatch(args []string) int {
 		return cmdObsRuleHealth(rest)
 	case subObsNotificationHealth:
 		return cmdObsNotificationHealth(rest)
+	case subObsServingHealth:
+		return cmdObsServingHealth(rest)
+	case subObsVerifyDeployment:
+		return cmdObsVerifyDeployment(rest)
 	case subObsCollectionHistory:
 		return cmdObsCollectionHistory(rest)
 	case subObsRecurrence:

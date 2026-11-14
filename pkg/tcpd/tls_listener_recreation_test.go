@@ -46,7 +46,7 @@ func TestTLSListenerRecreationDuringHandshakeDoesNotWake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tls-recreation", Status: state.AppActive, RAMMB: 256})
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "tls-recreation", Status: state.AppActive, RAMMB: 256, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 9000}}}})
 	if err != nil {
 		t.Fatal(err)
 	}

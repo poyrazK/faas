@@ -20,13 +20,21 @@ func cmdDebugProfiles(args []string) int {
 	baselineStart := fs.String("baseline-start", "", "baseline start, RFC3339")
 	baselineEnd := fs.String("baseline-end", "", "baseline end, RFC3339")
 	kind := fs.String("type", "cpu", "profile kind: cpu or heap (heap shows the live heap near --end)")
-	flags, positional := normalizeDebugFlagArgs(args, map[string]bool{"route": true, "deployment-id": true, "runtime": true, "start": true, "end": true, "baseline-id": true, "baseline-start": true, "baseline-end": true, "type": true})
+	fs.StringVar(deployment, "release", "", "alias for --deployment-id")
+	flags, positional := normalizeDebugFlagArgs(args, map[string]bool{"route": true, "deployment-id": true, "release": true, "runtime": true, "start": true, "end": true, "baseline-id": true, "baseline-start": true, "baseline-end": true, "type": true})
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(osStderr, "usage: gregale debug profiles <slug> --release UUID --runtime NAME --start RFC3339 --end RFC3339 [--type cpu|heap] [--route LABEL] [--baseline-id UUID --baseline-start RFC3339 --baseline-end RFC3339]", debugCmdDocsTopic)
+		PrintUsage(osStderr, "usage: gregale debug profiles <slug> [--release UUID] [--runtime NAME] [--start RFC3339 --end RFC3339] [--type cpu|heap] [--route LABEL] [--baseline-id UUID --baseline-start RFC3339 --baseline-end RFC3339]", debugCmdDocsTopic)
 		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	if err := defaultProfileQuery(client, positional[0], deployment, runtime, start, end, time.Now()); err != nil {
+		return printErr("Invalid profile window", err)
 	}
 	q, err := profileCLIQuery(*deployment, *runtime, *start, *end)
 	if err != nil {
@@ -35,10 +43,6 @@ func cmdDebugProfiles(args []string) int {
 	q.Route = *route
 	if !api.ValidProfileRoute(q.Route) {
 		return printErr("Invalid route label", fmt.Errorf("use a static method/pattern or [unattributed]"))
-	}
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
 	}
 	if *kind == "heap" {
 		return printHeapProfile(client, positional[0], q, *baseline != "" || q.Route != "")
@@ -146,6 +150,46 @@ func cmdDebugProfiles(args []string) int {
 		}
 	}
 	return 0
+}
+
+// defaultProfileQuery fills what `debug profiles <slug>` leaves out: the
+// serving deployment with the most traffic, the app's runtime, and the last
+// hour. The command used to refuse with "deployment-id and runtime are
+// required" when given only a slug.
+func defaultProfileQuery(client *Client, slug string, deployment, runtime, start, end *string, now time.Time) error {
+	if *start == "" && *end == "" {
+		*start, *end = now.Add(-time.Hour).UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339)
+	}
+	if *deployment != "" && *runtime != "" {
+		return nil
+	}
+	ctx := context.Background()
+	if *runtime == "" {
+		app, err := client.GetApp(ctx, slug)
+		if err != nil {
+			return fmt.Errorf("look up the app's runtime: %w", err)
+		}
+		if app.Runtime == "" {
+			return fmt.Errorf("the app has no recorded runtime; pass --runtime (e.g. node22, python312, go124)")
+		}
+		*runtime = app.Runtime
+	}
+	if *deployment == "" {
+		status, err := client.GetAppDebugStatus(ctx, slug, "1h")
+		if err != nil {
+			return fmt.Errorf("find the serving deployment: %w", err)
+		}
+		best := -1
+		for _, dep := range status.Deployments {
+			if dep.TrafficPercent > best {
+				best, *deployment = dep.TrafficPercent, dep.ID
+			}
+		}
+		if *deployment == "" {
+			return fmt.Errorf("no deployment is serving; pass --release")
+		}
+	}
+	return nil
 }
 
 func profileComparisonRate(rate float64, observed, delta bool) string {

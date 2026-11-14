@@ -113,6 +113,11 @@ func testRuntimeAppValuesScopeGrantsAndLifetime(t *testing.T, store runtimeAppEn
 	if got, err := store.RuntimeAppValuesForDeployment(ctx, uuid.NewString(), f.app.ID, dep.ID); !errors.Is(err, state.ErrNotFound) || len(got.Secrets) != 0 {
 		t.Fatalf("foreign account received secrets: %v", err)
 	}
+	for _, id := range []string{f.deployments["stage"].ID, dep.ID} {
+		if err := store.UpdateDeploymentStatus(ctx, id, state.DeployCancelled, "stopped before environment deletion"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := store.DeleteProjectEnvironment(ctx, f.account.ID, f.project.ID, "stage"); err != nil {
 		t.Fatal(err)
 	}

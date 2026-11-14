@@ -16,6 +16,7 @@ import (
 type environmentFixture struct {
 	mu                                   sync.Mutex
 	projectID, productionID, hash, appID string
+	account, stagingID                   string
 	protected, ambiguous, extra          bool
 	writes, reads                        int
 	keys, bodies                         []string
@@ -26,7 +27,7 @@ type environmentFixture struct {
 }
 
 func newEnvironmentFixture(t *testing.T) (*environmentFixture, *httptest.Server) {
-	f := &environmentFixture{projectID: "project-one", productionID: "env-production", hash: strings.Repeat("a", 64), appID: "app-one"}
+	f := &environmentFixture{projectID: "project-one", productionID: "env-production", hash: strings.Repeat("a", 64), appID: "app-one", account: "account-one", stagingID: "env-staging"}
 	b := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(b.Close)
 	return f, b
@@ -89,7 +90,7 @@ func (f *environmentFixture) serve(w http.ResponseWriter, r *http.Request) {
 	f.reads++
 	switch r.URL.Path {
 	case "/v1/account":
-		_ = json.NewEncoder(w).Encode(api.AccountResponse{ID: "account-one"})
+		_ = json.NewEncoder(w).Encode(api.AccountResponse{ID: f.account})
 	case "/v1/projects":
 		_ = json.NewEncoder(w).Encode([]api.ProjectSummaryResponse{{ID: f.projectID, Slug: "shop"}})
 	case "/v1/apps":
@@ -105,9 +106,9 @@ func (f *environmentFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode(api.ProjectResponse{ProjectSummaryResponse: api.ProjectSummaryResponse{ID: f.projectID, Slug: "shop"}, Workloads: workloads})
 	case "/v1/projects/shop/environments":
-		_ = json.NewEncoder(w).Encode([]api.ProjectEnvironmentResponse{{ID: "env-staging", ProjectID: f.projectID, Slug: "staging"}, {ID: f.productionID, ProjectID: f.projectID, Slug: "production", Protected: f.protected}})
+		_ = json.NewEncoder(w).Encode([]api.ProjectEnvironmentResponse{{ID: f.stagingID, ProjectID: f.projectID, Slug: "staging"}, {ID: f.productionID, ProjectID: f.projectID, Slug: "production", Protected: f.protected}})
 	case "/v1/projects/shop/environments/staging", "/v1/projects/shop/environments/production":
-		slug, id := "staging", "env-staging"
+		slug, id := "staging", f.stagingID
 		if strings.HasSuffix(r.URL.Path, "production") {
 			slug, id = "production", f.productionID
 		}

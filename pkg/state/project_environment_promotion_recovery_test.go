@@ -48,8 +48,9 @@ func promotionRecoveryFailureFixture(t *testing.T, store Store, known ...bool) (
 	if instance == task.ID || instance == "" {
 		t.Fatal("runtime ID was reused across leases")
 	}
-	_, err = tasks.MarkAppTaskRunning(ctx, task.ID, *task.LeaseToken, at.Add(time.Millisecond))
+	task, err = tasks.MarkAppTaskRunning(ctx, task.ID, *task.LeaseToken, at.Add(time.Millisecond))
 	requirePromotionSnapshot(t, err)
+	at = task.UpdatedAt
 	if len(known) > 0 && known[0] {
 		exit := 23
 		code, message := "nonzero_exit", "migration partially failed"

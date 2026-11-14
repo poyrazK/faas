@@ -250,6 +250,20 @@ func TestIdempotencyBindingRefusalsAreRetryable(t *testing.T) {
 	}
 }
 
+// A deploy refused while release commands were off kept replaying that 422
+// for 24 h after the operator enabled them, because the CLI derives the key
+// from the source. The gate clears like a 501; other 422s still replay.
+func TestIdempotencyReleasePhaseRefusalIsRetryable(t *testing.T) {
+	if apidserver.IdempotencyResponseReplayable(http.StatusUnprocessableEntity, []byte(`{"code":"`+api.CodeReleasePhaseUnavailable+`"}`)) {
+		t.Fatal("release_phase_unavailable would freeze the deploy key")
+	}
+	for _, body := range []string{`{"code":"validation_failed"}`, `{"code":"app_manifest_invalid"}`, `not-json`} {
+		if !apidserver.IdempotencyResponseReplayable(http.StatusUnprocessableEntity, []byte(body)) {
+			t.Errorf("unrelated 422 lost replay behavior: %s", body)
+		}
+	}
+}
+
 // TestIdempotent_FailedDeployIsNotReplayed — the CLI derives the deploy
 // Idempotency-Key from the source digest and flags, so re-running the same
 // `gregale deploy` after a transient build failure replayed the 202 for the

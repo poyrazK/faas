@@ -15,12 +15,37 @@ func (s *server) envBatchHandler() httpkit.AccountHandler {
 	return envbatch.Apply(envbatch.Deps{Store: store, Actor: configActor,
 		Resolve: func(w http.ResponseWriter, r *http.Request, account state.Account) (state.App, string, bool) {
 			app, scope, _, ok := s.configRevisionScope(w, r, account)
-			return app, scope, ok
+			if !ok {
+				return app, scope, false
+			}
+			// A batch sets and deletes variables like the single-key routes
+			// (ADR-20261019071733 amendment 11).
+			if problem := protectedEnvironmentConfigProblem(r.Context(), s.store, app.AccountID, app.ProjectID, scope); problem != nil {
+				api.WriteProblem(w, problem)
+				return app, scope, false
+			}
+			return app, scope, true
 		},
 		Guard: func(r *http.Request, app state.App, scope string) bool {
 			return configGuardRequested(r) && s.configGuardHasTraffic(r.Context(), app.ID, scope)
 		},
 		After: s.afterEnvBatch,
+	})
+}
+
+func (s *server) envBatchReceiptHandler() httpkit.AccountHandler {
+	store, _ := s.store.(state.EnvBatchReceiptReader)
+	return envbatch.Receipt(store, func(w http.ResponseWriter, r *http.Request, account state.Account) (state.App, string, bool) {
+		app, scope, _, ok := s.configRevisionScope(w, r, account)
+		return app, scope, ok
+	})
+}
+
+func (s *server) configRollbackReceiptHandler() httpkit.AccountHandler {
+	store, _ := s.store.(state.ConfigRollbackReceiptReader)
+	return envbatch.ConfigRollbackReceipt(store, func(w http.ResponseWriter, r *http.Request, account state.Account) (state.App, string, bool) {
+		app, scope, _, ok := s.configRevisionScope(w, r, account)
+		return app, scope, ok
 	})
 }
 

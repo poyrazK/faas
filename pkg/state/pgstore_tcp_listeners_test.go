@@ -4,12 +4,17 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgStoreTCPListenerLifecycleAndRouteLookup(t *testing.T) {
 	s, ctx := pgStore(t)
 	accountID, appID, _ := seedLiveDeploy(t, s, ctx, "-tcp-listener")
+	manifest := state.AppManifest{Ports: []api.WorkloadPort{{Name: "postgres", Port: 5432}}}
+	if _, err := s.UpdateApp(ctx, appID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
 	created, err := s.CreateTCPListener(ctx, state.TCPListener{
 		AccountID: accountID, AppID: appID, ListenerName: "postgres",
 		GuestPort: 5432, PublicPort: 40126, Enabled: true,

@@ -107,6 +107,10 @@ func sealChannel(acct state.Account, req api.CreateNotificationChannelRequest) (
 		if acct.Email == "" || !strings.EqualFold(req.Email, acct.Email) {
 			return in, api.ErrNotificationChannelInvalid("email channels can only send to this account's own email address; other recipients need a confirmation flow that is not available yet")
 		}
+		// An unverified address may be someone else's (ADR-20261109153000).
+		if !acct.EmailVerified() {
+			return in, api.ErrNotificationChannelInvalid("verify this account's email address before creating an email channel")
+		}
 		in.Email, in.TargetHint = acct.Email, acct.Email
 		return in, nil
 	}
@@ -133,6 +137,81 @@ func (s *server) getNotificationChannel(w http.ResponseWriter, r *http.Request, 
 		s.notFound(w, "no such notification channel")
 		return
 	}
+	writeJSON(w, http.StatusOK, channelResponse(row))
+}
+
+// updateNotificationChannel serves PATCH /v1/notification-channels/{id}:
+// rename a channel or replace its destination in place, keeping its id and
+// the rules bound to it (ADR-20261104142830).
+func (s *server) updateNotificationChannel(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	var req api.UpdateNotificationChannelRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+		return
+	}
+	store, ok := s.channelStore(w, acct)
+	if !ok {
+		return
+	}
+	updater, ok := s.store.(state.NotificationChannelUpdateStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("notification channel updates are unavailable on this deployment"))
+		return
+	}
+	current, err := store.GetNotificationChannel(r.Context(), acct.ID, r.PathValue("id"))
+	if err != nil {
+		s.notFound(w, "no such notification channel")
+		return
+	}
+	req, prob := api.NormalizeUpdateNotificationChannelRequest(current.Kind, req)
+	if prob == nil {
+		var params state.UpdateNotificationChannelParams
+		if params, prob = channelUpdateParams(acct, current, req); prob == nil {
+			if prob = s.pagerDutyKeyChangeAllowed(r, acct, current, params); prob == nil {
+				s.applyChannelUpdate(w, r, acct, updater, current.ID, params)
+				return
+			}
+		}
+	}
+	api.WriteProblem(w, prob)
+}
+
+// channelUpdateParams seals a new destination the way a new channel's is.
+func channelUpdateParams(acct state.Account, current state.NotificationChannel, req api.UpdateNotificationChannelRequest) (state.UpdateNotificationChannelParams, *api.Problem) {
+	p := state.UpdateNotificationChannelParams{Name: req.Name}
+	if req.SlackWebhookURL == "" && req.PagerDutyRoutingKey == "" {
+		return p, nil
+	}
+	sealed, prob := sealChannel(acct, api.CreateNotificationChannelRequest{
+		Name: current.Name, Kind: current.Kind, SlackWebhookURL: req.SlackWebhookURL,
+		PagerDutyRoutingKey: req.PagerDutyRoutingKey, PagerDutyRegion: req.PagerDutyRegion,
+	})
+	if prob != nil {
+		return p, prob
+	}
+	p.TargetSealed, p.TargetHint = sealed.TargetSealed, &sealed.TargetHint
+	if current.Kind == alertchannels.KindPagerDuty {
+		p.PagerDutyRegion = &sealed.PagerDutyRegion
+	}
+	return p, nil
+}
+
+func (s *server) applyChannelUpdate(w http.ResponseWriter, r *http.Request, acct state.Account, updater state.NotificationChannelUpdateStore, id string, p state.UpdateNotificationChannelParams) {
+	row, err := updater.UpdateNotificationChannel(r.Context(), acct.ID, id, p)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		s.notFound(w, "no such notification channel")
+		return
+	case errors.Is(err, state.ErrConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeNotificationChannelInvalid, "Channel name already exists", "this account already has a notification channel with that name"))
+		return
+	case err != nil:
+		api.WriteProblem(w, api.ErrCapacity("could not update notification channel"))
+		return
+	}
+	s.audit.Emit(r.Context(), "notification_channel.updated", &acct.ID, map[string]any{
+		"channel_id": row.ID, "name": row.Name, "kind": row.Kind, "target": row.TargetHint, "destination_replaced": p.TargetSealed != nil,
+	})
 	writeJSON(w, http.StatusOK, channelResponse(row))
 }
 

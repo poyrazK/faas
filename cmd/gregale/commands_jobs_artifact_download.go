@@ -95,9 +95,9 @@ func cmdJobsArtifactDownload(args []string) int {
 		artifactName := pos[len(pos)-1]
 		target := append([]string(nil), pos[:len(pos)-1]...)
 		if len(target) == 0 {
-			defaults, path, err := readJobDefaults()
+			defaults, path, err := readJobDefaultsForCommand([]string{"jobs", "artifact-download", "my-job", "latest", "ARTIFACT", "--task", "0", "--out", "FILE"})
 			if err != nil {
-				return printErr("Could not read Job defaults", err)
+				return printJobDefaultsSelectionError("Could not read Job defaults", err)
 			}
 			target = []string{defaults.Job}
 			if !jsonOutput {

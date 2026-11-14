@@ -273,6 +273,10 @@ func printBuildStatus(w io.Writer, b api.BuildResponse) {
 		// but only one is the auditor-friendly one.
 		{"duration_seconds", durationSecondsForDisplay(b)},
 	}
+	// The build log lives with the deployment the build made (Hunt 33 H33-29).
+	if b.DeploymentID != "" {
+		rows = append(rows, struct{ label, value string }{"logs", "gregale release logs " + b.DeploymentID})
+	}
 	for _, r := range rows {
 		//nolint:errcheck // tabular printer writes to a typed writer; a failed Fprintf
 		// at the tab stop is no different from a panic mid-row for the operator — both
@@ -293,7 +297,7 @@ func formatArtifactCacheSummary(status, key string) string {
 		return ""
 	}
 	if status == "miss" {
-		status = "miss (no artifact hit; dependency cache is separate—see build logs)"
+		status = "miss (no artifact hit; dependency cache is separate—see gregale release logs)"
 	}
 	if key = strings.TrimSpace(key); key != "" {
 		return fmt.Sprintf("%s (sha256:%s)", status, key)

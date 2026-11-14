@@ -139,13 +139,14 @@ func (s *server) obsTenant360(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	writeJSON(w, http.StatusOK, api.ObsTenant360Response{
-		Account:  detail.Account,
-		Apps:     detail.Apps,
-		Orgs:     detail.Orgs,
-		APIKeys:  detail.APIKeys,
-		Sessions: detail.Sessions,
-		Usage:    usage,
-		Billing:  billing,
+		Account:   detail.Account,
+		Apps:      detail.Apps,
+		Orgs:      detail.Orgs,
+		APIKeys:   detail.APIKeys,
+		Sessions:  detail.Sessions,
+		Usage:     usage,
+		Billing:   billing,
+		Diagnosis: s.buildTenantDiagnosis(r.Context(), target, billing),
 	})
 }
 

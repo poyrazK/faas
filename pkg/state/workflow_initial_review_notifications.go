@@ -13,7 +13,7 @@ import (
 
 func initialReviewReadyPayload(r api.WorkflowInitialRecoveryReview, now time.Time) api.WorkflowRecoveryReviewReadyWebhookPayload {
 	path := "/v1/apps/" + url.PathEscape(r.App) + "/initial-recovery-reviews/" + r.ID
-	command := "gregale automations failure-recovery-review --app " + strconv.Quote(r.App) + " --review " + r.ID
+	command := "gregale workflow stored failure-recovery-review --app " + strconv.Quote(r.App) + " --review " + r.ID
 	return api.WorkflowRecoveryReviewReadyWebhookPayload{InitialFailureID: r.Failure.ID, EventID: recoveryReviewNotificationID(r.ID), ReviewID: r.ID, AppID: r.AppID, App: r.App, PolicyVersion: r.PolicyVersion, PreparedAt: r.PreparedAt, ObservedAt: now, ReviewURL: path, StatusURL: path, ReviewCommand: command, ExportCommand: command + " --json", Targets: []api.WorkflowRecoveryPolicyDecision{{RunID: r.Failure.RunID, ResumeCount: 0, Trigger: "initial_failure", Action: "initial_recovery", Outcome: "prepared", FailureStatus: r.Failure.FailureStatus}}}
 }
 func initialReviewNotificationAllowed(ctx context.Context, s WorkflowRecoveryReviewInspector, row AppWebhookDelivery, payload api.WorkflowRecoveryReviewReadyWebhookPayload, now time.Time) (bool, string, error) {

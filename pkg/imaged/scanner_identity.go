@@ -5,8 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -41,37 +46,62 @@ func (id installedScanner) matches(version, dbVersion, dbBuiltAt string) bool {
 }
 
 // scannerIdentityCache keeps the last identity read from the probe or seen in
-// a real scan's result.
+// a real scan's result. stamp is the install stamp read just before the probe
+// that produced id; empty when unknown.
 type scannerIdentityCache struct {
-	mu   sync.Mutex
-	id   installedScanner
-	seen time.Time
+	mu    sync.Mutex
+	id    installedScanner
+	seen  time.Time
+	stamp string
 }
 
-func (c *scannerIdentityCache) get(now time.Time) (installedScanner, bool) {
+// get returns the cached identity while it is younger than
+// api.ScannerIdentityCacheTTL, or, when stamp is known and equals the stamp
+// the identity was probed under, while it is younger than
+// api.ScannerIdentityUnchangedMaxAge: the binary and database files the probe
+// read are the ones still installed.
+func (c *scannerIdentityCache) get(now time.Time, stamp string) (installedScanner, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.id.Version == "" || now.Sub(c.seen) >= api.ScannerIdentityCacheTTL || now.Before(c.seen) {
+	if c.id.Version == "" || now.Before(c.seen) {
 		return installedScanner{}, false
 	}
-	return c.id, true
+	age := now.Sub(c.seen)
+	if age < api.ScannerIdentityCacheTTL {
+		return c.id, true
+	}
+	if stamp != "" && stamp == c.stamp && age < api.ScannerIdentityUnchangedMaxAge {
+		return c.id, true
+	}
+	return installedScanner{}, false
 }
 
 func (c *scannerIdentityCache) set(id installedScanner, now time.Time) {
+	c.setProbed(id, now, "")
+}
+
+func (c *scannerIdentityCache) setProbed(id installedScanner, now time.Time, stamp string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.id, c.seen = id, now
+	c.id, c.seen, c.stamp = id, now, stamp
 }
 
 // observe records the identity a real scan reported; unparsable metadata
-// clears the cache so the next decision asks the probe.
+// clears the cache so the next decision asks the probe. A scan that reports
+// the identity already cached keeps its install stamp; any other identity
+// drops it, since the scan may have updated the database.
 func (c *scannerIdentityCache) observe(version, dbVersion, dbBuiltAt string, now time.Time) {
 	id, ok := newScannerIdentity(version, dbVersion, dbBuiltAt)
 	if !ok {
 		c.set(installedScanner{}, time.Time{})
 		return
 	}
-	c.set(id, now)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if id != c.id {
+		c.stamp = ""
+	}
+	c.id, c.seen = id, now
 }
 
 // WithScannerIdentity installs the probe that reads the installed scanner and
@@ -90,7 +120,13 @@ func (h *Handler) currentScannerIdentity(ctx context.Context) (installedScanner,
 		return installedScanner{}, errScannerIdentityUnavailable
 	}
 	now := time.Now()
-	if id, ok := h.scannerIdentityCache.get(now); ok {
+	// Read the stamp before probing: a change during the probe then leaves a
+	// stamp that no longer matches, and the next call probes again.
+	stamp := ""
+	if h.scannerInstallStamp != nil {
+		stamp = h.scannerInstallStamp()
+	}
+	if id, ok := h.scannerIdentityCache.get(now, stamp); ok {
 		return id, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, api.ScannerIdentityProbeTimeout)
@@ -102,15 +138,90 @@ func (h *Handler) currentScannerIdentity(ctx context.Context) (installedScanner,
 	if id.Version == "" {
 		return installedScanner{}, errors.New("imaged: scanner identity probe returned no identity")
 	}
-	h.scannerIdentityCache.set(id, now)
+	h.scannerIdentityCache.setProbed(id, now, stamp)
 	return id, nil
 }
 
+// WithScannerInstallStamp installs the cheap check that the scanner and its
+// database are unchanged since the last probe. Nil, or an empty stamp, keeps
+// the identity only for api.ScannerIdentityCacheTTL.
+func (h *Handler) WithScannerInstallStamp(stamp func() string) *Handler {
+	h.scannerInstallStamp = stamp
+	return h
+}
+
 // WithGrypeIdentityProbe reads the scanner identity from the Grype binary the
-// scans use (FAAS_GRYPE_BIN; empty means grype on PATH).
-func (h *Handler) WithGrypeIdentityProbe(bin string) *Handler {
+// scans use (FAAS_GRYPE_BIN; empty means grype on PATH). dbDir is Grype's
+// database directory (GRYPE_DB_CACHE_DIR); when set, the identity is kept
+// while neither the binary nor any file there has changed.
+func (h *Handler) WithGrypeIdentityProbe(bin, dbDir string) *Handler {
 	h.scannerDBUpdater = grypeDBUpdater(bin)
+	if dbDir != "" {
+		h.WithScannerInstallStamp(grypeInstallStamp(bin, dbDir))
+	}
 	return h.WithScannerIdentity(grypeIdentityProbe(bin))
+}
+
+// grypeInstallStamp describes the Grype binary and every file under its
+// database directory by device, inode, size and modification time. Grype
+// installs a new database by writing new files, so any update changes the
+// stamp. Any error, or a directory past api.ScannerInstallStampMaxEntries
+// entries, gives the empty stamp, which never matches.
+func grypeInstallStamp(bin, dbDir string) func() string {
+	if bin == "" {
+		bin = "grype"
+	}
+	return func() string {
+		path, err := exec.LookPath(bin)
+		if err != nil {
+			return ""
+		}
+		var b strings.Builder
+		if !appendFileStamp(&b, "bin", path) {
+			return ""
+		}
+		entries := 0
+		err = filepath.WalkDir(dbDir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entries++; entries > api.ScannerInstallStampMaxEntries {
+				return errScannerStampTooLarge
+			}
+			rel, err := filepath.Rel(dbDir, p)
+			if err != nil {
+				return err
+			}
+			if !appendFileStamp(&b, rel, p) {
+				return errScannerStampUnreadable
+			}
+			return nil
+		})
+		if err != nil {
+			return ""
+		}
+		return b.String()
+	}
+}
+
+var (
+	errScannerStampTooLarge   = errors.New("imaged: grype database directory has too many entries to stamp")
+	errScannerStampUnreadable = errors.New("imaged: grype install file could not be stamped")
+)
+
+// appendFileStamp writes one file's identity: name, device, inode, size,
+// mode and modification time.
+func appendFileStamp(b *strings.Builder, name, path string) bool {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false
+	}
+	fmt.Fprintf(b, "%s|%d|%d|%d|%o|%d\n", name, st.Dev, st.Ino, info.Size(), info.Mode(), info.ModTime().UnixNano())
+	return true
 }
 
 // WithScannerDBUpdater installs the database refresh; nil disables it.

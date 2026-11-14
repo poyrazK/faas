@@ -10,10 +10,16 @@ import "net/http"
 // and handing it on let the pull request's code read it. The request stays
 // marked as credentialed, so shared caches still bypass it.
 //
+// A verified consumer key is withheld the same way: on a preview it is
+// usually a production consumer's key (ADR-20261105090226).
+//
 // Production apps keep receiving the header, as before; so does a preview
 // whose Authorization no platform gate reads (an app's own scheme).
 func withholdPreviewGateCredential(r *http.Request, app App) {
-	if !app.IsPreview || !platformGateReadsAuthorization(app) || len(r.Header.Values("Authorization")) == 0 {
+	if !app.IsPreview || len(r.Header.Values("Authorization")) == 0 {
+		return
+	}
+	if !platformGateReadsAuthorization(app) && authenticatedFrom(r.Context()).ConsumerKeyID == "" {
 		return
 	}
 	r.Header.Del("Authorization")

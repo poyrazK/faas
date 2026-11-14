@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -105,6 +106,9 @@ func renderDebugStatus(w io.Writer, slug string, resp api.DebugStatusResponse) {
 	if more := resp.OOMKillsTotal - len(resp.OOMKills); more > 0 {
 		_, _ = fmt.Fprintf(tw, "\t... and %d more\n", more)
 	}
+	if m := resp.MemoryPressure; m != nil {
+		_, _ = fmt.Fprintf(tw, "Memory pressure\t%s\n", debugMemoryPressure(*m))
+	}
 	label = "Recent failures"
 	for _, req := range resp.RecentFailures {
 		_, _ = fmt.Fprintf(tw, "%s\t%s  %s  %d  %s\n", label, debugClock(req.ReceivedAt), requestLine(req.Method, req.Route), req.Status, debugRequestRef(req))
@@ -116,9 +120,16 @@ func renderDebugStatus(w io.Writer, slug string, resp api.DebugStatusResponse) {
 	}
 	_, _ = fmt.Fprintf(tw, "Tracing\t%s\n", tracing)
 	_ = tw.Flush()
+	var memory []string
 	if resp.OOMFix != "" {
+		memory = strings.Split(resp.OOMFix, "\n")
+	}
+	if m := resp.MemoryPressure; m != nil && m.Advice != "" {
+		memory = append(memory, m.Advice)
+	}
+	if len(memory) > 0 {
 		_, _ = fmt.Fprintln(w, "\nMemory:")
-		for _, line := range strings.Split(resp.OOMFix, "\n") {
+		for _, line := range memory {
 			_, _ = fmt.Fprintf(w, "  %s\n", line)
 		}
 	}
@@ -129,6 +140,25 @@ func renderDebugStatus(w io.Writer, slug string, resp api.DebugStatusResponse) {
 			_, _ = fmt.Fprintf(w, "  %s\n", cmd)
 		}
 	}
+}
+
+// debugMemoryPressure is the status line for the app's memory-pressure
+// rollup (ADR-20261102124306 step 3).
+func debugMemoryPressure(m api.DebugStatusMemory) string {
+	percent := 0
+	if m.TotalMB > 0 {
+		percent = m.LowestAvailableMB * 100 / m.TotalMB
+	}
+	episodes := "1 episode"
+	if m.Episodes != 1 {
+		episodes = fmt.Sprintf("%d episodes", m.Episodes)
+	}
+	newest := m.LastAt
+	if at, err := time.Parse(time.RFC3339, m.LastAt); err == nil {
+		newest = at.UTC().Format("2006-01-02 15:04 UTC")
+	}
+	return fmt.Sprintf("available fell to %d of %d MB (%d%%), %s in the last day, newest %s",
+		m.LowestAvailableMB, m.TotalMB, percent, episodes, newest)
 }
 
 // debugStatusNext suggests the commands that drill into what the status

@@ -235,7 +235,8 @@ func CheckPromotion(ctx context.Context, store state.Store, appID, deploymentID,
 }
 
 // CheckDeploymentPromotion compares an already-captured deployment snapshot
-// with the current live baseline. Rollbacks use this path: rebuilding the
+// with the latest recorded baseline. CheckDeploymentRollback pins a rollback
+// to its selected serving baseline: rebuilding the
 // proposal from the app's current edge rules would compare the app to itself
 // and could never detect a rollback that removes a currently-live field.
 // Deployments created before snapshot capture are allowed to fall back to the

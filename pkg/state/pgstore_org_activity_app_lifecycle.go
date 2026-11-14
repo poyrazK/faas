@@ -59,6 +59,19 @@ func (s *PgStore) ScheduleAppDeletionWithActivity(ctx context.Context, id string
 	if graceUntil.IsZero() {
 		graceUntil = time.Now().UTC().Add(AppDeleteGraceDuration())
 	}
+	var (
+		app      App
+		outboxID int64
+	)
+	err := retryTrafficAnalysisTimeout(ctx, func() error {
+		var err error
+		app, outboxID, err = s.scheduleAppDeletionWithActivityOnce(ctx, id, graceUntil, entry)
+		return err
+	})
+	return app, outboxID, err
+}
+
+func (s *PgStore) scheduleAppDeletionWithActivityOnce(ctx context.Context, id string, graceUntil time.Time, entry OrgActivity) (App, int64, error) {
 	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
 		return App{}, 0, fmt.Errorf("state: begin app activity delete: %w", err)

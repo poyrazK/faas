@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,8 +58,12 @@ type Config struct {
 	// (ADR-20261025111015): the database was restored, so keys it revoked
 	// may be valid again. Every request is refused while it is closed,
 	// including the deletes Enabled leaves open (bug hunt 33).
-	Fenced      func() bool
-	Host        string
+	Fenced func() bool
+	Host   string
+	// RelayHosts are extra Host values accepted only from a loopback peer:
+	// the bridge object relay forwards a contained branch guest's request
+	// with the Host it signed (ADR-20261031193635 slice 6c).
+	RelayHosts  []string
 	Region      string
 	SpoolDir    string
 	MaxPutBytes int64
@@ -108,6 +113,7 @@ type Handler struct {
 	enabled         func() bool
 	fenced          func() bool
 	host            string
+	relayHosts      map[string]bool
 	region          string
 	spoolDir        string
 	maxPutBytes     int64
@@ -126,6 +132,8 @@ type Handler struct {
 	log             *slog.Logger
 	touchMu         sync.Mutex
 	lastTouch       map[string]time.Time
+	// overlays caches environment branch bucket overlays (ADR-20261031193635).
+	overlays overlayCache
 }
 
 func New(c Config) (*Handler, error) {
@@ -209,7 +217,7 @@ func New(c Config) (*Handler, error) {
 	return &Handler{
 		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, orgAccess: c.OrgAccess, credentials: c.Credentials, accountLimiter: c.AccountLimiter, transfers: c.Transfers, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
-		enabled:        c.Enabled, fenced: c.Fenced, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
+		enabled:        c.Enabled, fenced: c.Fenced, host: strings.ToLower(c.Host), relayHosts: relayHostSet(c.RelayHosts), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
 		maxSpoolBytes: c.MaxSpoolBytes, minSpoolFree: c.MinSpoolFreeBytes,
 		transferTimeout: c.Registry.TransferTimeout(),
@@ -299,7 +307,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// reaches the client while the edge never keeps a private response past
 	// its URL's expiry or the object's deletion.
 	w.Header().Set("Cloudflare-CDN-Cache-Control", "no-store")
-	if strings.ToLower(r.Host) != h.host {
+	if !h.acceptsHost(r) {
 		writeS3Error(w, http.StatusBadRequest, "InvalidRequest", "Use the configured Gregale S3 endpoint with path-style addressing.", r.URL.Path, requestID)
 		return
 	}
@@ -356,11 +364,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
+	if presigned && applyPresignedObjectHeaders(r) != nil {
+		writeS3Error(w, http.StatusBadRequest, "InvalidArgument", "The signed object request fields are invalid or ambiguous.", r.URL.Path, requestID)
+		return
+	}
 	if h.accountLimiter != nil && !h.accountLimiter.Allow(bucket) {
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, requestID)
 		return
 	}
 	if !h.applyBucketCORS(w, r, bucket, requestID) || !h.boundURLRequest(w, r, credential, bucket, requestID) {
+		return
+	}
+	// A key-scoped binding is checked before every route (ADR-20261106114500).
+	if !keyScopeAllows(r, credential, bucket) {
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access Denied.", r.URL.Path, requestID)
 		return
 	}
 	if h.routeWriteReceipt(w, r, requestContext{requestID: requestID, credential: credential, bucket: bucket, signature: parsed}) {
@@ -720,7 +737,10 @@ const bucketSettingsPermission = "bucket_settings"
 
 func (h *Handler) can(credential state.ObjectS3Credential, permission string) bool {
 	if permission == bucketSettingsPermission {
-		return credential.Permission == state.ObjectBucketPermissionReadWrite && credential.ManagedAppID == ""
+		// A rotation stage keeps a compute binding's previous key without
+		// the binding's app ID; it is still a compute key.
+		return credential.Permission == state.ObjectBucketPermissionReadWrite && credential.ManagedAppID == "" &&
+			credential.RotationParentID == "" && credential.KeyPrefix == ""
 	}
 	return credential.Permission == permission || credential.Permission == state.ObjectBucketPermissionReadWrite
 }
@@ -1011,6 +1031,12 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 		return
 	}
 	defer h.closeResponseBody(response.Body, req.requestID)
+	// A key an environment branch never wrote reads through to its parent's
+	// bucket (ADR-20261031193635); a delete marker is the branch's own delete.
+	if native == "" && response.StatusCode == http.StatusNotFound && response.Header.Get("X-Amz-Delete-Marker") == "" &&
+		h.readThroughOverlay(w, r, req, key) {
+		return
+	}
 	if !h.downloadVersionHeaders(w, r, req, key, native, response) {
 		return
 	}
@@ -1200,6 +1226,9 @@ const (
 
 func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requestContext, err error, key string) {
 	resource := r.URL.Path
+	if objectLockPlanError(w, r, req, err) {
+		return
+	}
 	if errors.Is(err, objectstorage.ErrPreconditionFailed) {
 		writeS3Error(w, http.StatusPreconditionFailed, "PreconditionFailed", "The destination does not satisfy the write condition.", resource, req.requestID)
 		return
@@ -1216,6 +1245,12 @@ func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requ
 	// Contention is the customer's own concurrent work, never a provider
 	// outage: SDKs retry SlowDown with backoff, and 409 tells them waiting
 	// will not help yet.
+	if errors.Is(err, state.ErrObjectBucketTransition) {
+		// A bucket-wide inventory finishes on its own; SDKs retry SlowDown.
+		w.Header().Set("Retry-After", strconv.Itoa(api.ObjectBucketTransitionRetryAfterSeconds))
+		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", objectBusyMessage, resource, req.requestID)
+		return
+	}
 	if errors.Is(err, state.ErrObjectBucketBusy) {
 		w.Header().Set("Retry-After", "1")
 		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", objectBusyMessage, resource, req.requestID)
@@ -1289,6 +1324,27 @@ func queryKeysOnly(query url.Values, allowed ...string) bool {
 	return true
 }
 
+// acceptsHost admits the configured endpoint, and a relay host only from a
+// loopback peer: the relay signs nothing itself, it forwards the guest's
+// request unchanged, so the signature still covers the Host the guest used.
+func (h *Handler) acceptsHost(r *http.Request) bool {
+	host := strings.ToLower(r.Host)
+	if host == h.host {
+		return true
+	}
+	return h.relayHosts[host] && IsLoopbackAddress(r.RemoteAddr)
+}
+
+func relayHostSet(hosts []string) map[string]bool {
+	set := make(map[string]bool, len(hosts))
+	for _, host := range hosts {
+		if host = strings.ToLower(strings.TrimSpace(host)); host != "" {
+			set[host] = true
+		}
+	}
+	return set
+}
+
 func IsLoopbackAddress(address string) bool {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
@@ -1302,6 +1358,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	if response.StatusCode == http.StatusNotModified || response.StatusCode == http.StatusPreconditionFailed {
 		copyObjectHeaders(w.Header(), response.Header)
 		setURLDownloadHeaders(w.Header(), r, req)
+		sandboxObjectResponse(w.Header())
 		keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 		w.Header().Del("Content-Length")
 		w.WriteHeader(response.StatusCode)
@@ -1330,6 +1387,7 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 	}
 	copyObjectHeaders(w.Header(), response.Header)
 	setURLDownloadHeaders(w.Header(), r, req)
+	sandboxObjectResponse(w.Header())
 	keepEdgeFromRewritingHTML(w.Header(), h.registry.Transfer.Profile)
 	writeEncryptionHeaders(w.Header(), encryption)
 	w.WriteHeader(response.StatusCode)

@@ -135,5 +135,23 @@ func checkServiceRecoveryReview(expected, current api.AppReleaseReview) error {
 	if current.Protected {
 		return ErrReleaseReviewChanged
 	}
+	// Typed clients normalize compact UUIDs to dashed spelling. Compare the
+	// same identities without changing configuration, scope or serving guards.
+	match := func(want, observed string) string {
+		if sameDeploymentID(want, observed) {
+			return observed
+		}
+		return want
+	}
+	expected.AppID = match(expected.AppID, current.AppID)
+	expected.ProjectID = match(expected.ProjectID, current.ProjectID)
+	expected.EnvironmentID = match(expected.EnvironmentID, current.EnvironmentID)
+	expected.LatestDeploymentID = match(expected.LatestDeploymentID, current.LatestDeploymentID)
+	expected.ServingDeploymentIDs = slices.Clone(expected.ServingDeploymentIDs)
+	for i := range expected.ServingDeploymentIDs {
+		if i < len(current.ServingDeploymentIDs) {
+			expected.ServingDeploymentIDs[i] = match(expected.ServingDeploymentIDs[i], current.ServingDeploymentIDs[i])
+		}
+	}
 	return checkReleaseReview(expected, current)
 }

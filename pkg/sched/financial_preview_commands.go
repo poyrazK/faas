@@ -89,13 +89,12 @@ func (e *Engine) seedFinancialPreviewCommandLedger(ctx context.Context, apps []s
 		if err != nil {
 			return err
 		}
-		limits := api.MustLimitsFor(account.Plan)
 		for _, command := range commands {
 			if command.NodeID == "" {
 				continue // Legacy unknown ownership remains explicit in stop status.
 			}
 			if err := e.ledger.Admit(Request{Instance: command.TaskID, AppID: app.ID, DeploymentID: command.DeploymentID, Plan: account.Plan,
-				RAMMB: command.RAMMB, VCPU: limits.VCPU, CPUMillicores: command.CPUMillicores, MaxConcurrency: app.MaxConcurrency,
+				RAMMB: command.RAMMB, VCPU: api.SizeVCPUs(command.RAMMB), CPUMillicores: command.CPUMillicores, MaxConcurrency: app.MaxConcurrency,
 				NodeID: command.NodeID, Kind: KindAppTask, AllowConcurrencyRecovery: true, AllowResidentRecovery: true}); err != nil {
 				return fmt.Errorf("recover preview command capacity: %w", err)
 			}

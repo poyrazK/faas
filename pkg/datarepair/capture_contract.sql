@@ -2,7 +2,7 @@
 ALTER TABLE gregale_repair.operations ADD COLUMN IF NOT EXISTS capture_relation_filenode oid;
 ALTER TABLE gregale_repair.operations ADD COLUMN IF NOT EXISTS capture_contract_version integer;
 ALTER TABLE gregale_repair.operations DROP CONSTRAINT IF EXISTS operations_capture_contract_version_check;
-ALTER TABLE gregale_repair.operations ADD CONSTRAINT operations_capture_contract_version_check CHECK(capture_contract_version IN (1,2,3));
+ALTER TABLE gregale_repair.operations ADD CONSTRAINT operations_capture_contract_version_check CHECK(capture_contract_version IN (1,2,3,4));
 
 CREATE OR REPLACE FUNCTION gregale_repair.enroll(target regclass, selected_fields text[]) RETURNS uuid
 LANGUAGE plpgsql SET search_path = pg_catalog SET jit = 'off' AS $$
@@ -41,7 +41,7 @@ BEGIN
  SELECT format('%I.%I',n.nspname,c.relname) INTO qualified FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.oid=target;
  EXECUTE format('ALTER TABLE %s ADD COLUMN gregale_row_identity uuid NOT NULL DEFAULT gen_random_uuid(), ADD COLUMN gregale_row_version bigint NOT NULL DEFAULT 1 CHECK(gregale_row_version>0)',target);
  EXECUTE format('CREATE UNIQUE INDEX ON %s (gregale_row_identity)',target);
- INSERT INTO gregale_repair.enrollments(relation,qualified_name,fields,keys,fingerprint,fingerprint_timezone,fingerprint_datestyle,fingerprint_intervalstyle) VALUES(target,qualified,selected_fields,pk,'pending','UTC','ISO, YMD','postgres') RETURNING enrollment_id INTO enrollment;
+ INSERT INTO gregale_repair.enrollments(relation,qualified_name,fields,keys,fingerprint,fingerprint_timezone,fingerprint_datestyle,fingerprint_intervalstyle,fingerprint_monetary) VALUES(target,qualified,selected_fields,pk,'pending','UTC','ISO, YMD','postgres','C') RETURNING enrollment_id INTO enrollment;
  EXECUTE format('CREATE TRIGGER gregale_repair_guard BEFORE INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE FUNCTION gregale_repair.guard_row()',target);
  EXECUTE format('CREATE TRIGGER gregale_repair_capture AFTER UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION gregale_repair.capture_row()',target);
  UPDATE gregale_repair.enrollments SET fingerprint=gregale_repair.fingerprint(target),type_fingerprint=gregale_repair.type_fingerprint(target,false) WHERE relation=target;
@@ -57,11 +57,24 @@ BEGIN
  END IF;
  IF NOT (__CURRENT_ROW_CONTRACT__) THEN RAISE EXCEPTION 'repair_capture_contract_changed' USING ERRCODE='22023'; END IF;
  SELECT * INTO STRICT e FROM gregale_repair.enrollments WHERE enrollment_id=enrollment;
- IF e.fingerprint_datestyle IS NULL OR e.fingerprint_intervalstyle IS NULL THEN RAISE EXCEPTION 'repair_fingerprint_rendering_requires_review' USING ERRCODE='22023'; END IF;
+ IF e.fingerprint_datestyle IS NULL OR e.fingerprint_intervalstyle IS NULL OR e.fingerprint_monetary IS NULL THEN RAISE EXCEPTION 'repair_fingerprint_rendering_requires_review' USING ERRCODE='22023'; END IF;
  IF e.fingerprint_timezone IS NULL THEN RAISE EXCEPTION 'repair_fingerprint_timezone_requires_review' USING ERRCODE='22023'; END IF;
- -- Ordinary row writers remain concurrent. This also fences inheritance,
- -- trigger/rule changes and concurrent index DDL for the bounded transaction.
- EXECUTE format('LOCK TABLE %s IN SHARE UPDATE EXCLUSIVE MODE',e.relation);
+ IF current_setting('transaction_isolation')='read committed' THEN
+  -- Concurrent captured writers share this lock; ordinary schema DDL cannot
+  -- pass it. A concurrent index build started later must wait for this writer
+  -- before building/activating its index. Refuse maintenance already running.
+  EXECUTE format('LOCK TABLE %s IN ROW EXCLUSIVE MODE',e.relation);
+  IF NOT EXISTS(SELECT 1 FROM gregale_repair.operations
+   WHERE id=nullif(current_setting('gregale.repair_guarded_'||e.relation::oid::text,true),'')::uuid
+    AND enrollment_id=e.enrollment_id AND transaction_id=pg_current_xact_id()::text) AND
+   EXISTS(SELECT 1 FROM pg_locks WHERE locktype='relation' AND relation=e.relation AND database=(SELECT oid FROM pg_database WHERE datname=current_database())
+    AND mode='ShareUpdateExclusiveLock' AND pid IS DISTINCT FROM pg_backend_pid()) THEN
+   RAISE EXCEPTION 'repair_schema_maintenance_busy' USING ERRCODE='40001';
+  END IF;
+ ELSE
+  -- Preserve the stronger fence for callers retaining an older catalog snapshot.
+  EXECUTE format('LOCK TABLE %s IN SHARE UPDATE EXCLUSIVE MODE',e.relation);
+ END IF;
  IF EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=e.relation AND attnum>0 AND NOT attisdropped AND attgenerated<>'') THEN
   RAISE EXCEPTION 'repair_generated_columns_unsupported' USING ERRCODE='22023';
  END IF;

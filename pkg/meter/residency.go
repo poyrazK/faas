@@ -163,6 +163,7 @@ func (r *Residency) RunOnce(ctx context.Context) (map[api.Plan]int, error) {
 			avg = totalGB[plan] / elapsedHours / float64(n)
 		}
 		r.ops.SetResidentGBPerCustomer(string(plan), avg)
+		r.ops.SetResidentPayingCustomers(string(plan), count[plan])
 	}
 	return count, nil
 }

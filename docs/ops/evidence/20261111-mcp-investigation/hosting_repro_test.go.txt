@@ -1,0 +1,35 @@
+package mcphosting
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"testing"
+)
+
+func TestInvestigationReadRejectsMissingRequiredResultFields(t *testing.T) {
+	for _, kind := range []string{"resource", "prompt"} {
+		t.Run(kind, func(t *testing.T) {
+			client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					ID int `json:"id"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "result": map[string]any{"resultType": "complete"}})
+			})
+			var err error
+			if kind == "resource" {
+				_, err = client.ReadResource(context.Background(), "greeting://welcome")
+			} else {
+				_, err = client.GetPrompt(context.Background(), "summarize", map[string]string{"text": "test"})
+			}
+			if err == nil {
+				t.Fatalf("%s result without its required %s was accepted as successful", kind, map[string]string{"resource": "contents", "prompt": "messages"}[kind])
+			}
+		})
+	}
+}

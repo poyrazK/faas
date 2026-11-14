@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -36,8 +37,14 @@ func TestGetOverageCap_SavedValue(t *testing.T) {
 			if err := (*e.Store()).UpdateAccountOverageCapCents(context.Background(), other.ID, &otherCap); err != nil {
 				t.Fatal(err)
 			}
+			want := value
+			if value == "null" {
+				// ADR-20261105120000: a paid NULL reads as the plan's ceiling.
+				ceiling, _ := api.PlanPro.MaxSelfServiceOverageCapCents()
+				want = strconv.FormatInt(ceiling, 10)
+			}
 			rec := e.Do(t, "GET", "/v1/account/overage-cap", nil, nil)
-			if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"overage_cap_cents":`+value+`}` {
+			if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"overage_cap_cents":`+want+`}` {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body)
 			}
 		})
@@ -96,7 +103,7 @@ func TestRaiseOverageCap_RequiresAdminScope(t *testing.T) {
 			if err := (*e.Store()).UpdateAccountOverageCapCents(context.Background(), (*e.Acct()).ID, &saved); err != nil {
 				t.Fatal(err)
 			}
-			rec := e.Do(t, "POST", "/v1/account/overage-cap", map[string]any{"overage_cap_cents": nil}, nil)
+			rec := e.Do(t, "POST", "/v1/account/overage-cap", map[string]any{"overage_cap_cents": 700}, nil)
 			if rec.Code != tc.want {
 				t.Fatalf("status %d, want %d: %s", rec.Code, tc.want, rec.Body)
 			}
@@ -104,8 +111,51 @@ func TestRaiseOverageCap_RequiresAdminScope(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if cleared := !capped; cleared != (tc.want == 200) || capped && cents != saved {
-				t.Fatalf("cap after the call = %d (capped %v)", cents, capped)
+			want := saved
+			if tc.want == 200 {
+				want = 700
+			}
+			if !capped || cents != want {
+				t.Fatalf("cap after the call = %d (capped %v), want %d", cents, capped, want)
+			}
+		})
+	}
+}
+
+// A paid account keeps a spend cap, at most its plan's self-service ceiling
+// (ADR-20261105120000); a refused request leaves the saved cap as it was.
+func TestRaiseOverageCap_PaidPlanCeiling(t *testing.T) {
+	ceiling, _ := api.PlanPro.MaxSelfServiceOverageCapCents()
+	for _, tc := range []struct {
+		name  string
+		cents any
+		want  int
+		code  string
+	}{
+		{"clear refused", nil, 422, api.CodeOverageCapRequired},
+		{"above ceiling refused", ceiling + 1, 422, api.CodeOverageCapAboveMax},
+		{"at ceiling", ceiling, 200, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := apidserver.Setup(t, api.PlanPro)
+			saved := int64(500)
+			if err := (*e.Store()).UpdateAccountOverageCapCents(context.Background(), (*e.Acct()).ID, &saved); err != nil {
+				t.Fatal(err)
+			}
+			rec := e.Do(t, "POST", "/v1/account/overage-cap", map[string]any{"overage_cap_cents": tc.cents}, nil)
+			if rec.Code != tc.want || !strings.Contains(rec.Body.String(), tc.code) {
+				t.Fatalf("status %d, want %d %s: %s", rec.Code, tc.want, tc.code, rec.Body)
+			}
+			cents, _, err := (*e.Store()).GetAccountOverageCapCents(context.Background(), (*e.Acct()).ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := saved
+			if tc.want == 200 {
+				want = ceiling
+			}
+			if cents != want {
+				t.Fatalf("cap = %d, want %d", cents, want)
 			}
 		})
 	}

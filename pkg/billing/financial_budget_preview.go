@@ -233,7 +233,11 @@ func financialBudgetMembers(ctx context.Context, store state.Store, account stri
 		}
 		out = append(out, financialBudgetMember{target: api.FinancialBudgetTarget{Kind: "job", ID: job.ID, Name: job.Name}, background: true})
 	case "account":
-		jobs, err := store.JobListByAccount(ctx, account, api.FinancialAllocationMax+1, 0)
+		inventory, ok := store.(state.FinancialBudgetJobLister)
+		if !ok {
+			return nil, ErrFinancialUnavailable
+		}
+		jobs, err := inventory.FinancialBudgetJobs(ctx, account, api.FinancialAllocationMax+1)
 		if err != nil {
 			return nil, err
 		}

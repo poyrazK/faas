@@ -47,13 +47,16 @@ func (s *PgStore) RecordFinancialBudgetEvaluation(ctx context.Context, account, 
 	if err != nil {
 		return err
 	}
-	_, err = q.FinancialBudgetEvaluationPut(ctx, tx, sqlc.FinancialBudgetEvaluationPutParams{AccountID: aid, PolicyID: pid, Revision: revision, PeriodStart: financialTimestamp(e.PeriodStart), EvaluatedAt: financialTimestamp(e.EvaluatedAt), EvidenceThroughID: e.EvidenceThroughID, Observation: data, Unavailable: e.KnownMillicents == nil})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrConflict
+	if e.EvaluatedAt.Before(e.PeriodEnd) {
+		_, err = q.FinancialBudgetEvaluationPut(ctx, tx, sqlc.FinancialBudgetEvaluationPutParams{AccountID: aid, PolicyID: pid, Revision: revision, PeriodStart: financialTimestamp(e.PeriodStart), EvaluatedAt: financialTimestamp(e.EvaluatedAt), EvidenceThroughID: e.EvidenceThroughID, Observation: data, Unavailable: e.KnownMillicents == nil})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrConflict
+		}
+		if err != nil {
+			return err
+		}
 	}
-	if err != nil {
-		return err
-	}
+
 	for _, alert := range financialBudgetAlerts(p, e) {
 		payload, err := json.Marshal(alert.BudgetAlert)
 		if err != nil {

@@ -2,7 +2,7 @@
 
 A push binding delivers each message to the app over HTTP, so the app must
 listen for deliveries. A worker or job that runs its own loop with no HTTP
-listener consumes a queue by leasing its messages instead (ADR-1140): it asks
+listener consumes a queue by leasing its messages instead: it asks
 for messages when it has capacity, and acks or nacks each one.
 
 [Organization queues](organization-queues.md) use the same lease contract and
@@ -96,6 +96,9 @@ extend calls report each receipt separately in `succeeded` and `failed`.
   when the pool scales in. Only a worker running a production deployment can
   lease with its token: a staging or preview deployment of the same app gets
   `401`, so code reviewed only for a stage never touches production messages.
+  Workload tokens need the platform's workload identity. Where it is not
+  enabled, the token endpoint answers an error and the SDK consumers report
+  `Queue workload identity unavailable`; pass an API key instead.
 - **From anywhere else:** an API key with the `queues:consume` scope
   (`deploy:write` and `admin` keys also work).
 
@@ -105,5 +108,27 @@ A call leases at most 100 messages and takes at most 100 receipts. It also
 stops adding messages once their payloads and headers would pass 8 MiB, but
 always returns at least one ready message. A call waits at most 20 seconds.
 The default visibility timeout is 30 seconds; the maximum is the plan's async
-invocation deadline. Leasing works on production queues; stage environment
-queues use their own delivery path.
+invocation deadline. A lease cannot be extended past that deadline from when
+it was issued either: an extend after it answers `lease_expired`, so a hung
+handler cannot hold a message forever. One account holds at most 64 waiting
+lease calls at a time; past that a call answers at once without waiting.
+If the caller disconnects before a lease response reaches it, the messages
+return to the queue without spending an attempt.
+
+Leasing works on production queues only. A stage environment cannot consume
+a queue by pull yet: an enabled stage pull binding is refused; use push.
+
+## Retries, retention and binding changes
+
+- A message's retry budget and back-off come from the send's
+  `retry_policy`, else the binding's, else the app's, capped by the plan.
+  The policy is fixed when the message is sent.
+- A pending message expires after the plan's retention, counted from its
+  send, its last replay, or when a retry or nack delay last made it due,
+  whichever is latest. A suspended account's messages do not expire until it
+  is reactivated.
+- Renaming a binding's `queue_name` keeps its messages: they lease and
+  settle under the new name.
+- Deleting a binding retires it and holds its messages. Creating a binding
+  with the same `name` and `queue_name` again revives it and its messages;
+  no other binding may take a retired binding's queue name.

@@ -9,6 +9,7 @@ import (
 )
 
 type tlsPolicySource struct {
+	activeOwnerFixture
 	intent    state.TCPListener
 	domain    state.CustomDomain
 	instances []state.Instance
@@ -16,7 +17,7 @@ type tlsPolicySource struct {
 }
 
 func (*tlsPolicySource) AppByID(context.Context, string) (state.App, error) {
-	return state.App{ID: "app", AccountID: "account", Status: state.AppActive}, nil
+	return state.App{ID: "app", AccountID: "account", Status: state.AppActive, Manifest: state.AppManifest{Ports: []api.WorkloadPort{{Name: "echo", Port: 9000}}}}, nil
 }
 func (s *tlsPolicySource) TCPListenerByAppAndName(context.Context, string, string) (state.TCPListener, error) {
 	return s.intent, nil

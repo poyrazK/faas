@@ -2,6 +2,7 @@ package tcpd
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -114,6 +115,15 @@ func (c *CachedInstanceSource) AppByID(ctx context.Context, appID string) (state
 	return c.next.AppByID(ctx, appID)
 }
 
+// Owner policy stays fresh so a warm lookup cache cannot bypass a new hold.
+func (c *CachedInstanceSource) AccountByID(ctx context.Context, accountID string) (state.Account, error) {
+	return c.next.AccountByID(ctx, accountID)
+}
+
+func (c *CachedInstanceSource) OrgByID(ctx context.Context, orgID string) (state.Org, error) {
+	return c.next.OrgByID(ctx, orgID)
+}
+
 func (c *CachedInstanceSource) TCPListenerByAppAndName(ctx context.Context, appID, listenerName string) (state.TCPListener, error) {
 	return c.next.TCPListenerByAppAndName(ctx, appID, listenerName)
 }
@@ -125,6 +135,12 @@ func (c *CachedInstanceSource) DomainByName(ctx context.Context, domain string) 
 // LiveDeployments returns a shared slice; callers must not modify it.
 func (c *CachedInstanceSource) LiveDeployments(ctx context.Context, appID string) ([]state.Deployment, error) {
 	return c.deployments.get(appID, func() ([]state.Deployment, error) { return c.next.LiveDeployments(ctx, appID) })
+}
+
+// Raw admission verifies durable security quarantine independently of cached
+// routing weights, including a quarantine recorded after target selection.
+func (c *CachedInstanceSource) LiveDeploymentsForRawIngress(ctx context.Context, appID string) ([]state.Deployment, error) {
+	return c.next.LiveDeployments(ctx, appID)
 }
 
 func (c *CachedInstanceSource) ListInstancesForApp(ctx context.Context, appID string) ([]state.Instance, error) {
@@ -150,4 +166,15 @@ func (c *CachedInstanceSource) ListLiveInstancesForApps(ctx context.Context, app
 		}
 	}
 	return out, nil
+}
+
+// Readiness is authoritative per connection, independent of routing cache TTL.
+func (c *CachedInstanceSource) LatestInstanceReadinessForTargets(ctx context.Context, targets []state.ReadinessTarget) (map[string]map[string]state.InstanceReadiness, error) {
+	reader, ok := c.next.(interface {
+		LatestInstanceReadinessForTargets(context.Context, []state.ReadinessTarget) (map[string]map[string]state.InstanceReadiness, error)
+	})
+	if !ok {
+		return nil, errors.New("TCP readiness source is unavailable")
+	}
+	return reader.LatestInstanceReadinessForTargets(ctx, targets)
 }

@@ -27,6 +27,9 @@ func TestCredentialMintRequiresFreshStepUp(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := apidserver.Setup(t, api.PlanPro)
+			if err := (*e.Store()).MarkMFAEnrolled(t.Context(), (*e.Acct()).ID); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := (*e.Store()).CreateApp(context.Background(), state.App{
 				AccountID: (*e.Acct()).ID, Slug: "mint-app", Status: state.AppActive, RAMMB: 256,
 			}); err != nil {

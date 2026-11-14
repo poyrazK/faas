@@ -13,8 +13,12 @@ export type CustomMetricListResponse = {
    */
   freshness_seconds: number;
   /**
-   * Maximum distinct metric names this app may hold.
+   * Maximum distinct metric names this app may hold (per plan).
    */
   max_metrics: number;
+  /**
+   * Maximum labelled series this app may hold across its metrics (per plan); each metric also holds at most 50.
+   */
+  max_series?: number;
 };
 

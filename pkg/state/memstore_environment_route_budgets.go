@@ -2,9 +2,6 @@ package state
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"strings"
 	"time"
 
@@ -80,15 +77,10 @@ func (m *MemStore) SetEnvironmentRouteBudgets(ctx context.Context, account, app,
 	if current.EnvironmentID != req.EnvironmentID || current.ProjectID != req.ProjectID {
 		return current, ErrRouteHealthRevision
 	}
-	raw, err := json.Marshal(struct {
-		Scope   string
-		Request api.SetEnvironmentRouteBudgetsRequest
-	}{scope, req})
+	hash, err := api.EnvironmentRouteBudgetRequestHash(scope, req)
 	if err != nil {
 		return current, err
 	}
-	digest := sha256.Sum256(raw)
-	hash := hex.EncodeToString(digest[:])
 	key := account + "\x00" + req.RequestID
 	if saved, ok := m.environmentBudgetReceipts[key]; ok {
 		if saved.Hash != hash {

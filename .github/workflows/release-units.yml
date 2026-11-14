@@ -36,7 +36,11 @@
 # run it: roll that full release out first.
 #
 # Unit releases are cumulative over the base, so a newer one supersedes an
-# older one: an in-progress build is cancelled by the next push. A deploy
+# older one: an in-progress build is cancelled by the next run that deploys
+# to the same place. Builds that deploy nothing (pushes while autodeploy is
+# off) supersede each other only, so a merge cannot cancel a dispatched
+# deploy's build: on 2026-11-07 the first dispatch was cancelled by #6769's
+# push build, and with autodeploy off no later run deployed it. A deploy
 # already started is never cancelled (cd-controlplane's own concurrency).
 #
 # Gate: the merged commit passed the pull request's required light tier.
@@ -76,7 +80,8 @@ jobs:
     # (about as long as the head build); later runs restore its digests.
     timeout-minutes: 35
     concurrency:
-      group: release-units-build
+      # Keyed by the deploy target, as the preflight's `if:` decides it.
+      group: release-units-build-${{ inputs.deploy_environment || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}
       cancel-in-progress: true
     outputs:
       eligible: ${{ steps.detect.outputs.eligible }}

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -9,6 +10,16 @@ import (
 // (ADR-1161). apid creates, touches and evicts these rows; customer job
 // listings and the Job quota exclude them.
 const JobKindImageRun = "image_run"
+
+// ErrImageRunBusy refuses a refresh that would invalidate active runs'
+// immutable artifact snapshots. Callers may retry once the tasks settle.
+var ErrImageRunBusy = errors.New("state: image run has active work")
+
+// ImageRunHistoryStore preserves reads of retained receipts after an idle
+// runner has been evicted, without making deleted templates writable.
+type ImageRunHistoryStore interface {
+	JobGetByIDForRunHistory(context.Context, string) (Job, error)
+}
 
 // ImageRunEnsure is the get-or-create request for one runner job.
 type ImageRunEnsure struct {

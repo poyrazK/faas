@@ -1,0 +1,22 @@
+---
+- name: serving_probe — validate configuration
+  ansible.builtin.assert:
+    that:
+      - faas_serving_probe_urls | length > 0
+      - faas_serving_probe_urls | select('match', '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~!&()*+,;=:@%/?-]*)?$') | list | length == faas_serving_probe_urls | length
+      - faas_serving_probe_timeout_seconds | float >= 1
+      - faas_serving_probe_timeout_seconds | float < ('inf' | float)
+      - faas_serving_probe_retry_delay_seconds | float(default=-1) >= 0
+      - faas_serving_probe_retry_delay_seconds | float < ('inf' | float)
+      - faas_serving_probe_max_first_byte_seconds | float > 0
+      - faas_serving_probe_max_first_byte_seconds | float <= faas_serving_probe_timeout_seconds | float
+      - faas_serving_probe_expected_body is string
+      - faas_serving_probe_expected_body.encode('utf-8') | length <= 4096
+      - not (faas_serving_probe_expected_body is search('[\x00-\x1f\x7f]'))
+      - faas_serving_probe_interval | string is match('^[0-9]+(s|min|h)$')
+    fail_msg: >-
+      Probe URLs must be https URLs without spaces or quotes; the timeout
+      must be finite and at least 1 s and retry delay finite and nonnegative.
+      The interval must be a systemd time span such as 5min. The first-byte
+      budget must be positive and no greater than the timeout; the exact
+      expected body must be at most 4096 UTF-8 bytes without control characters.

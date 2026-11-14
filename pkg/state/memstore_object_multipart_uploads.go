@@ -104,10 +104,7 @@ func (m *MemStore) reserveObjectMultipartLocked(upload ObjectMultipartUpload, li
 	if m.objectMultipartUploads == nil {
 		m.objectMultipartUploads = map[string]ObjectMultipartUpload{}
 	}
-	if m.objectMutations == nil {
-		m.objectMutations = map[string]ObjectBucketMutation{}
-	}
-	m.objectMutations[upload.ID] = ObjectBucketMutation{ID: upload.ID, MultipartUploadID: upload.ID, Bucket: bucket, Kind: ObjectBucketMutationRequest, CreatedAt: now}
+	m.putObjectMutationLocked(ObjectBucketMutation{ID: upload.ID, MultipartUploadID: upload.ID, Bucket: bucket, Kind: ObjectBucketMutationRequest, CreatedAt: now})
 	m.enrollObjectNodeSettlementLocked(job)
 	m.objectMultipartUploads[upload.ID] = cloneObjectMultipartUpload(upload)
 	if m.objectMultipartInitiations == nil {

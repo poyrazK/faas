@@ -42,8 +42,15 @@ func TestAccountingDiagnosticReasonsAndBoundaries(t *testing.T) {
 		{"stale", UsageProgress{Window: time.Hour, ObservedAt: now.Add(-policy.StaleAfter - time.Nanosecond), CollectedUntil: now.Truncate(time.Hour)}, StateReady, false, []string{"observation_stale"}},
 		{"fresh at threshold", UsageProgress{Window: time.Hour, ObservedAt: now.Add(-policy.StaleAfter), CollectedUntil: now.Truncate(time.Hour)}, StateReady, false, []string{}},
 		{"shutdown absent", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true}, StateDeleted, false, []string{"shutdown_unconfirmed"}},
-		{"terminal backlog", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now, CollectedUntil: now.Truncate(time.Hour)}, StateDeleted, false, []string{"coverage_incomplete", "final_correction_pending"}},
-		{"terminal correction", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now.Truncate(time.Hour), CollectedUntil: now.Truncate(time.Hour)}, StateDeleted, false, []string{"final_correction_pending"}},
+		{"terminal backlog", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now, CollectedUntil: now.Truncate(time.Hour)}, StateDeleted, false, []string{"coverage_incomplete"}},
+		// ADR-20261104143000: a covered tombstone's correction tail blocks
+		// only once it is overdue by StaleAfter (3 h): the tail of a
+		// database deleted at 06:00 is due at 09:00 and overdue after 12:00.
+		{"terminal correction", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now.Truncate(time.Hour), CollectedUntil: now.Truncate(time.Hour)}, StateDeleted, false, []string{}},
+		{"terminal correction overdue", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now.Truncate(time.Hour).Add(-6 * time.Hour), CollectedUntil: now.Truncate(time.Hour).Add(-6 * time.Hour)}, StateDeleted, false, []string{"final_correction_pending"}},
+		{"terminal correction partly overdue", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now.Truncate(time.Hour).Add(-6 * time.Hour), CollectedUntil: now.Truncate(time.Hour).Add(-6 * time.Hour), CorrectionObservedAt: now.Truncate(time.Hour).Add(-3*time.Hour - time.Nanosecond)}, StateDeleted, false, []string{"final_correction_pending"}},
+		{"terminal correction not yet overdue", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now.Truncate(time.Hour).Add(-5 * time.Hour), CollectedUntil: now.Truncate(time.Hour).Add(-5 * time.Hour)}, StateDeleted, false, []string{}},
+		{"terminal backlog past correction deadline", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now.Truncate(time.Hour).Add(-6 * time.Hour), CollectedUntil: now.Truncate(time.Hour).Add(-7 * time.Hour)}, StateDeleted, false, []string{"coverage_incomplete", "final_correction_pending"}},
 		{"settled terminal", UsageProgress{Window: time.Hour, ObservedAt: now.Add(-30 * 24 * time.Hour), Terminal: true, EndedAt: now.Add(-30 * 24 * time.Hour).Truncate(time.Hour), CollectedUntil: now.Add(-30 * 24 * time.Hour).Truncate(time.Hour), CorrectionObservedAt: now.Add(-30 * 24 * time.Hour).Truncate(time.Hour).Add(3 * time.Hour)}, StateDeleted, false, []string{}},
 		{"disabled", UsageProgress{Unresolved: true}, StateDeleted, true, []string{}},
 	} {

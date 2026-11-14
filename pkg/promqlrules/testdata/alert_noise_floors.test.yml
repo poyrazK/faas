@@ -1,0 +1,109 @@
+# Floors that keep low-volume or one-off samples from opening operator
+# alerts (2026-11-09 production alert review): a single failed hourly drift
+# audit, a plan average from one account, one credentialed cache lookup and
+# a spike ratio on a near-idle account.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "one failed drift audit tick stays quiet"
+    input_series:
+      - series: 'schedd_snapshot_disk_drift_consecutive_failures{job="schedd-compute",instance="one-miss"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasSnapshotDriftAuditUnavailable
+        exp_alerts: []
+
+  - interval: 30s
+    name: "two consecutive drift audit failures alert internally"
+    input_series:
+      - series: 'schedd_snapshot_disk_drift_consecutive_failures{job="schedd-compute",instance="two-misses"}'
+        values: '2x40'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasSnapshotDriftAuditUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: snapshot_integrity
+              public_status: internal
+              job: schedd-compute
+              instance: two-misses
+            exp_annotations:
+              summary: "Snapshot integrity inventory is unavailable"
+              description: "The snapshot drift audit has failed 2 consecutive times. A zero drift counter is not authoritative until a complete inventory succeeds."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotDriftAuditUnavailable.md"
+
+  - interval: 1m
+    name: "a high plan average from one paying customer stays quiet"
+    input_series:
+      - series: 'meterd_resident_gb_per_customer{job="meterd",instance="cp",plan="scale"}'
+        values: '0.76x90'
+      - series: 'meterd_resident_paying_customers{job="meterd",instance="cp",plan="scale"}'
+        values: '1x90'
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: FaasResidentGbPerCustomerHigh
+        exp_alerts: []
+
+  - interval: 1m
+    name: "a high plan average across five paying customers warns"
+    input_series:
+      - series: 'meterd_resident_gb_per_customer{job="meterd",instance="cp",plan="pro"}'
+        values: '0.6x90'
+      - series: 'meterd_resident_paying_customers{job="meterd",instance="cp",plan="pro"}'
+        values: '5x90'
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: FaasResidentGbPerCustomerHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: residency
+              public_status: internal
+              plan: pro
+            exp_annotations:
+              summary: "Resident GB per paying customer > 0.45 (plan pro)"
+              description: "Plan pro has been above the §12 threshold (0.45 average resident GB / paying customer) for 1h with at least five paying customers. Spec target is 0.305. Cross-check FaasHighResidentRamPct — fleet RAM pressure is the usual upstream cause."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResidentGbPerCustomerHigh.md"
+
+  - interval: 1m
+    name: "one credentialed lookup on an idle cache stays quiet"
+    input_series:
+      # One bypass_authed lookup in 30 minutes: 100% of a near-zero rate.
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="bypass_authed"}'
+        values: '0x10 1x20'
+      - series: 'gateway_response_cache_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="hit"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasResponseCacheBypassAuthedHigh
+        exp_alerts: []
+
+  - interval: 30s
+    name: "a spike ratio on a near-idle account stays quiet"
+    input_series:
+      # 0.001 rps for 24h, then 0.05 rps for 30m: a 50x ratio below the floor.
+      # A full day of baseline keeps the 3d average near 0.001 rps (score ~27);
+      # with only 6h the spike's own samples pulled the score to ~10, which
+      # promtool 2.x and 3.x round to opposite sides of the threshold.
+      - series: 'apid_request_total{account_id="anonymous",route="GET /v1/status",code="ok"}'
+        values: '0+0.03x2880 86.4+1.5x60'
+    promql_expr_test:
+      # The ratio alone is past the 10x threshold; only the floor holds it.
+      - expr: 'faas_apid_anomaly_score:by_account > bool 10'
+        eval_time: 24h25m
+        exp_samples:
+          - labels: '{account_id="anonymous"}'
+            value: 1
+    alert_rule_test:
+      - eval_time: 24h25m
+        alertname: FaasTrafficSpikeAccount
+        exp_alerts: []

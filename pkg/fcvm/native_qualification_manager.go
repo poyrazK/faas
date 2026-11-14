@@ -154,7 +154,7 @@ func validateNativeQualificationWakeIdentity(ctx context.Context, frame state.En
 }
 
 type nativeQualificationRestoreVMM interface {
-	RestoreNativeQualification(context.Context, state.EnvironmentQualificationExecution, Lease, WakeRequest, [2]string, string, string) error
+	RestoreNativeQualification(context.Context, state.EnvironmentQualificationExecution, Lease, WakeRequest, [2]string, string) error
 }
 
 // RestoreEnvironmentQualification admits one receipt-backed capture onto a
@@ -215,6 +215,7 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	lease.MemoryMaxMiB = req.MemSizeMiB
 	lease.CPUMillicores = req.CPUMillicores
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
+	lease.CPUWeight, lease.CPUUncapped = wakeLeaseCPU(req, false)
 	lease.AppPort = req.Port
 	lease = m.beginProcessAttempt(lease)
 	var nc netns.Config
@@ -249,6 +250,9 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	if err != nil {
 		return nil, err
 	}
+	// Like a source candidate's wake: the isolated smoke reaches a native
+	// target only through its captured public forward target.
+	nc.PublicForwarding = m.nativeVMM() != nil
 	if err := m.prepareNativeLease(bootCtx, lease); err != nil {
 		return nil, fmt.Errorf("native qualification restore: prepare target ownership: %w", err)
 	}
@@ -265,6 +269,10 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	if err := m.setupNetwork(bootCtx, nc); err != nil {
 		return nil, fmt.Errorf("native qualification restore: private network setup: %w", err)
 	}
+	publicTarget, err := m.capturePublicForwardTarget(bootCtx, nc)
+	if err != nil {
+		return nil, fmt.Errorf("native qualification restore: private forward target: %w", err)
+	}
 	if err := bootCtx.Err(); err != nil {
 		return nil, err
 	}
@@ -276,27 +284,23 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	if err != nil {
 		return nil, fmt.Errorf("native qualification restore: resolve original base candidate: %w", err)
 	}
+	// The captured layer already holds the boot's staged files, and load
+	// verifies it byte-for-byte, so restore stages and unseals nothing. Only
+	// the fresh receipt control reaches the guest, through the resume hook.
 	var waiter *qualificationConfigReceiptWaiter
-	req, waiter, err = m.prepareQualificationConfigReceipt(req)
+	req, waiter, err = m.prepareQualificationRestoreConfigReceipt(req, frame.CaptureInstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("native qualification restore: prepare config receipt: %w", err)
 	}
 	defer m.clearQualificationConfigReceipt(frame.InstanceID, waiter)
-	req.preparedSecretsEnvJSON, req.preparedAPIEnvJSON, err = m.prepareWakeFiles(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("native qualification restore: prepare frozen runtime files: %w", err)
-	}
-	serviceDiscoveryIP := ""
-	if nc.HostBridgeIP.IsValid() {
-		serviceDiscoveryIP = nc.HostBridgeIP.String()
-	}
-	if err := restorer.RestoreNativeQualification(bootCtx, frame, lease, req, [2]string{kernelPath, basePath}, m.fcVersion, serviceDiscoveryIP); err != nil {
+	// The restorer consumes the receipt while its private channels are open.
+	if err := restorer.RestoreNativeQualification(bootCtx, frame, lease, req, [2]string{kernelPath, basePath}, m.fcVersion); err != nil {
 		return nil, fmt.Errorf("native qualification restore: dedicated native restore: %w", err)
 	}
-	if err := m.waitForQualificationConfigReceipt(bootCtx, frame.InstanceID, waiter); err != nil {
+	if err := m.recordRestoredQualificationFrameworkReady(bootCtx, frame, req.Runtime); err != nil {
 		return nil, err
 	}
-	inst := &Instance{Lease: lease, Net: nc, Method: WakeRestore, QualificationOnly: true, AppID: req.AppID, AccountID: req.AccountID,
+	inst := &Instance{publicForwardTarget: publicTarget, Lease: lease, Net: nc, Method: WakeRestore, QualificationOnly: true, AppID: req.AppID, AccountID: req.AccountID,
 		DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath,
 		StartupDeadlineS: req.StartupDeadlineS}
 	if err := m.stampNativeInstanceGeneration(inst); err != nil {

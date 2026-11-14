@@ -235,6 +235,10 @@ func TestProductControlOwnerEmailConsoleAndScopes(t *testing.T) {
 	call("POST", apiBase+"/"+d.ID+"/retry", string(body), key, false, 404)
 	// The email console uses the same MFA and verified-email policy as other
 	// owner mutations, including before domain parsing or recipient lookup.
+	// A pending envelope models a live MFA requirement (ADR-20261106210000).
+	if _, err = store.SetMFARequired(ctx, acct.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	pendingID := uuid.NewString()
 	if _, err = store.CreateSession(ctx, pendingID, acct.ID, "192.0.2.10", "owner-email-test"); err != nil {
 		t.Fatal(err)

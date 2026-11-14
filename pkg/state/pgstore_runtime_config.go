@@ -43,6 +43,29 @@ func (s *pgCore) ListRuntimeConfigs(ctx context.Context, scope RuntimeConfigScop
 	return out, nil
 }
 
+// RuntimeConfigFingerprinter is implemented by stores that can tell, without
+// reading the values, whether a scope's runtime configuration rows changed.
+type RuntimeConfigFingerprinter interface {
+	RuntimeConfigFingerprint(ctx context.Context, scope RuntimeConfigScope) (string, error)
+}
+
+// RuntimeConfigFingerprint changes whenever a row of scope is inserted,
+// updated or deleted: every write gives the row a new xmin, whichever columns
+// it touches. It reads no JSONB, so a repair loop that finds it unchanged
+// skips ListRuntimeConfigs, which decoded all 172 global rows (82 kB) for
+// every daemon every five seconds on production (2026-11-10).
+func (s *pgCore) RuntimeConfigFingerprint(ctx context.Context, scope RuntimeConfigScope) (string, error) {
+	var fingerprint string
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*)::text || ':' || COALESCE(md5(string_agg(id::text || '/' || xmin::text, ',' ORDER BY id)), '')
+		FROM runtime_config_entries
+		WHERE scope = $1`, string(scope)).Scan(&fingerprint)
+	if err != nil {
+		return "", fmt.Errorf("state: runtime config fingerprint: %w", err)
+	}
+	return fingerprint, nil
+}
+
 func (s *PgStore) GetRuntimeConfig(ctx context.Context, key string, scope RuntimeConfigScope, scopeID string) (RuntimeConfig, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, config_key, scope, scope_id, desired_value,

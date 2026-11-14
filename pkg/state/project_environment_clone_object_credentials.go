@@ -61,7 +61,7 @@ func validateCloneObjectCredentialRequest(op ProjectEnvironmentCloneOperation, v
 		return err
 	}
 	if appID != request.AppID || sourceBucket.ID != request.SourceBucketID || c.ID == source.ID || c.AccountID != op.AccountID || c.BucketID == sourceBucket.ID ||
-		c.Label != source.Label || c.Permission != source.Permission || c.ManagedAppID != source.ManagedAppID || c.ManagedPrefix != source.ManagedPrefix ||
+		c.Label != source.Label || c.Permission != source.Permission || c.ManagedAppID != source.ManagedAppID || c.ManagedPrefix != source.ManagedPrefix || c.KeyPrefix != source.KeyPrefix ||
 		c.RotationParentID != "" || c.RotationWakeID != "" || c.RotationStampedAt != nil || !validObjectS3Credential(c) || request.Target.MaxCredentialsPerBucket < 1 {
 		return ErrConflict
 	}

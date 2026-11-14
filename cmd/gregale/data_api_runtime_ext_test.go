@@ -5,6 +5,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -175,6 +177,46 @@ func TestDataAPIHealthFlagsARuntimeThatIsNotCurrent(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Health reads the current version from the status route, without the
+// runtime archive; only a control plane without that route is asked for the
+// archive.
+func TestDataAPICurrentRuntimeVersionSkipsTheArchive(t *testing.T) {
+	archive := tarGz(t, map[string]string{"data-api/Dockerfile": "FROM x", "data-api/Procfile": "web: node server.mjs", "data-api/runtime-version.json": `{"version":"fedcba9876543210"}`}, nil)
+	for _, tc := range []struct {
+		name          string
+		statusRoute   bool
+		want          string
+		wantDownloads int32
+	}{
+		{name: "status route", statusRoute: true, want: "0123456789abcdef"},
+		{name: "older control plane", want: "fedcba9876543210", wantDownloads: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var downloads atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/v1/apps/notes/data-api/status" && tc.statusRoute:
+					main.WriteJSONTest(w, api.DataAPIStatus{RuntimeVersion: "0123456789abcdef", RuntimeReports: api.DataAPIRuntimeReportsAvailable})
+				case r.URL.Path == "/v1/apps/notes/data-api/runtime":
+					downloads.Add(1)
+					main.WriteJSONTest(w, api.DataAPIRuntime{Version: "fedcba9876543210", ArchiveSHA256: sha256Hex(archive), Archive: archive})
+				default:
+					api.WriteProblem(w, api.NewProblem(http.StatusNotFound, "not_found", "Not found", "no such API route"))
+				}
+			}))
+			defer srv.Close()
+			if got := main.CurrentDataAPIRuntimeVersion(t.Context(), api.NewClient(srv.URL, "fp_test_x"), "notes"); got != tc.want || downloads.Load() != tc.wantDownloads {
+				t.Fatalf("version %q after %d downloads, want %q after %d", got, downloads.Load(), tc.want, tc.wantDownloads)
+			}
+		})
+	}
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func tarGz(t *testing.T, files map[string]string, extra *tar.Header) []byte {

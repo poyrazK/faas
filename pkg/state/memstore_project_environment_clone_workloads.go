@@ -26,7 +26,7 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 	if m.activeProjectReleaseSets[releaseKey(projectID, op.SourceEnvironment)] != op.SourceReleaseSetID {
 		return nil, ErrConflict
 	}
-	apps := m.projectCloneAppsLocked(projectID)
+	apps := m.projectCloneAppsLocked(projectID, op.SourceEnvironment)
 	if len(apps) == 0 {
 		return nil, ErrConflict
 	}
@@ -98,6 +98,11 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 		snapshot.Bindings = &bindings
 		policies := m.capturedScopedPoliciesLocked(appID, op.SourceEnvironment, settings)
 		snapshot.Policies = &policies
+		crons, err := m.captureCloneCronsLocked(appID, op.SourceEnvironment)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.Crons = &crons
 		for _, layer := range m.deploymentSidecarLayers {
 			if layer.DeploymentID == source.ID {
 				snapshot.Layers = append(snapshot.Layers, layer)
@@ -117,6 +122,13 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 			return nil, err
 		}
 		records[appID] = record
+	}
+	captured := make(map[string]bool, len(records))
+	for appID := range records {
+		captured[appID] = true
+	}
+	if err := m.requireCloneCronsCapturedLocked(projectID, op.SourceEnvironment, captured); err != nil {
+		return nil, err
 	}
 	var keys []string
 	for _, record := range records {

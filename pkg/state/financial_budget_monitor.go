@@ -33,7 +33,7 @@ func validFinancialBudgetEvaluation(e financial.BudgetEvaluation) bool {
 	start := e.PeriodStart.UTC()
 	return !start.IsZero() && start.Day() == 1 && start.Equal(start.Truncate(24*time.Hour)) &&
 		e.PeriodEnd.Equal(start.AddDate(0, 1, 0)) && !e.EvaluatedAt.IsZero() &&
-		!e.EvaluatedAt.Before(start) && e.EvaluatedAt.Before(e.PeriodEnd) &&
+		!e.EvaluatedAt.Before(start) && !e.AsOf.After(e.PeriodEnd) &&
 		!e.AsOf.Before(start) && !e.AsOf.After(e.EvaluatedAt) &&
 		e.EvidenceThroughID >= 0 && (e.KnownMillicents == nil || *e.KnownMillicents >= 0) &&
 		(e.ProjectedMillicents == nil || *e.ProjectedMillicents >= 0 && e.KnownMillicents != nil) &&
@@ -72,7 +72,7 @@ type FinancialBudgetProjectionStore interface {
 // known usage is still below it.
 func financialBudgetProjectionAlert(p FinancialBudget, e financial.BudgetEvaluation) (FinancialBudgetAlertDelivery, bool) {
 	limit := p.Spec.LimitMillicents
-	if e.KnownMillicents == nil || e.ProjectedMillicents == nil || !e.Fresh || !e.CoverageComplete || limit <= 0 || *e.KnownMillicents >= limit || *e.ProjectedMillicents < limit {
+	if !e.EvaluatedAt.Before(e.PeriodEnd) || e.KnownMillicents == nil || e.ProjectedMillicents == nil || !e.Fresh || !e.CoverageComplete || limit <= 0 || *e.KnownMillicents >= limit || *e.ProjectedMillicents < limit {
 		return FinancialBudgetAlertDelivery{}, false
 	}
 	key := fmt.Sprintf("financial-budget-projection\n%s\n%s\n%d\n%s", p.AccountID, p.ID, p.Revision, e.PeriodStart.UTC().Format("2006-01"))

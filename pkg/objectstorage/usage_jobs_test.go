@@ -1,9 +1,9 @@
 package objectstorage
 
 import (
+	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -18,10 +18,30 @@ func usageJobsRegistry(t *testing.T, backends ...BackendConfig) *Registry {
 	return registry
 }
 
+func TestOVHUsageJobRequiresCoverageConfiguration(t *testing.T) {
+	backend := ovhUsageBackend("ovh", "OVH_APP_KEY")
+	backend.Usage.RequestLogCoveragePath = ""
+	registry := usageJobsRegistry(t, backend)
+	jobs, err := UsageExportJobs(registry, state.NewMemStore(), func(string) string { return "synthetic" })
+	if len(jobs) != 0 || !errors.Is(err, ErrOVHRequestMetricsMissing) {
+		t.Fatal("unqualified log source enabled", jobs, err)
+	}
+	backend.Usage.RequestLogCoveragePath = "/var/spool/faas/object-storage-usage/qualified.coverage.json"
+	if configured := usageJobsRegistry(t, backend); configured.Backends()[0].Fingerprint != registry.Backends()[0].Fingerprint {
+		t.Fatal("coverage configuration changed bucket placement")
+	}
+	for _, path := range []string{"relative.json", backend.UsageReportsPath} {
+		backend.Usage.RequestLogCoveragePath = path
+		if _, err := NewRegistry(Config{DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": backend.ID}, Backends: []BackendConfig{backend}}, func(string) string { return "synthetic" }, map[string]Factory{"s3": NewS3}); err == nil {
+			t.Fatal("unsafe evidence path accepted", path)
+		}
+	}
+}
+
 func ovhUsageBackend(id, keyEnv string) BackendConfig {
 	return BackendConfig{ID: id, Driver: "s3", Region: "us-east-1", S3Region: "us-east-va", Namespace: "project-" + id, Endpoint: "https://s3.example.test", PathStyle: true,
 		AccessKeyEnv: "ADMIN_KEY", SecretKeyEnv: "ADMIN_SECRET", UsageReportsPath: "/var/spool/faas/object-storage-usage/" + id + ".json",
-		Usage: UsageConfig{Driver: "ovh", ApplicationKeyEnv: keyEnv, ApplicationSecretEnv: "OVH_APP_SECRET", ConsumerKeyEnv: "OVH_CONSUMER_KEY", RequestLogBucket: "logs"}}
+		Usage: UsageConfig{Driver: "ovh", ApplicationKeyEnv: keyEnv, ApplicationSecretEnv: "OVH_APP_SECRET", ConsumerKeyEnv: "OVH_CONSUMER_KEY", RequestLogBucket: "logs", RequestLogCoveragePath: "/var/spool/faas/object-storage-usage/" + id + ".coverage.json"}}
 }
 
 // adr: 20261031122757 — apid builds the provider usage exports; a backend
@@ -52,7 +72,7 @@ func TestUsageExportJobs(t *testing.T) {
 			backend = b
 		}
 	}
-	if job.BackendID != "ovh-a" || job.BackendFingerprint != backend.Fingerprint || job.ReportPath != "/var/spool/faas/object-storage-usage/ovh-a.json" || job.CoverageLag != time.Hour {
+	if job.BackendID != "ovh-a" || job.BackendFingerprint != backend.Fingerprint || job.ReportPath != "/var/spool/faas/object-storage-usage/ovh-a.json" || job.CoverageLag != 0 {
 		t.Fatalf("job = %+v", job)
 	}
 	if _, ok := job.Exporter.(periodUsageExporter); !ok {

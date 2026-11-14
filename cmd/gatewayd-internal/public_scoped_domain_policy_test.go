@@ -27,11 +27,8 @@ func TestPublicScopedDomainPostgresPolicyAndFreshAdmission(t *testing.T) {
 	for _, mode := range []string{"exact", "wildcard", "escaped-boundary", "configured-environment-host"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newPublicRoutingPGFixture(t)
+			environment := f.environment(t, "staging")
 			deployment := f.deployment(t, "staging", "sha256:scoped-domain-policy")
-			environment, err := f.store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: f.app.AccountID, ProjectID: f.project.ID, Slug: "staging"})
-			if err != nil {
-				t.Fatal(err)
-			}
 			router := pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", deploySuffix: ".custom.gregale.test", tenantSurfacesEnabled: func() bool { return false }}
 			host, domain := "staging.example.test", "staging.example.test"
 			if mode == "wildcard" {
@@ -143,11 +140,8 @@ func TestPublicScopedDomainPostgresActualBindingWins(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newPublicRoutingPGFixture(t)
 			production := f.deployment(t, "production", "sha256:shadow-production")
+			environment := f.environment(t, "staging")
 			f.deployment(t, "staging", "sha256:shadow-staging")
-			environment, err := f.store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: f.app.AccountID, ProjectID: f.project.ID, Slug: "staging"})
-			if err != nil {
-				t.Fatal(err)
-			}
 			host, scoped := "shadow.example.test", "*.example.test"
 			router := pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", deploySuffix: ".gregale.dev", tenantSurfacesEnabled: func() bool { return mode == "tenant" }}
 			if mode == "alias" {
@@ -212,11 +206,8 @@ func TestPublicScopedDomainPostgresActualBindingWins(t *testing.T) {
 
 func TestPublicScopedDomainPostgresHTTPPeersRepairWithoutNotify(t *testing.T) {
 	f := newPublicRoutingPGFixture(t)
+	environment := f.environment(t, "staging")
 	deployment := f.deployment(t, "staging", "sha256:scoped-domain-http")
-	environment, err := f.store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: f.app.AccountID, ProjectID: f.project.ID, Slug: "staging"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	const host = "http-scoped.example.test"
 	if _, err := f.store.CreateCustomDomainInEnvironmentIfUnderQuota(t.Context(), host, f.app.ID, environment.ID, "token", 100, 500); err != nil {
 		t.Fatal(err)

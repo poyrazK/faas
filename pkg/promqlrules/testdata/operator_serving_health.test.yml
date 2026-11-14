@@ -1,0 +1,135 @@
+# Production serving-health query semantics, tied by TestServingHealthQueriesHaveSemanticFixtures.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: fresh real coverage rules
+  interval: 1m
+  input_series:
+  - series: faas_serving_probe_inventory_configured{job="node",instance="cp:9100"}
+    values: 1x60
+  - series: faas_serving_probe_expected_pairs{job="node",instance="cp:9100"}
+    values: 1x60
+  - series: faas_serving_probe_expected{job="node",instance="cp:9100",probe_node="fsn-2",url="https://probe.example/"}
+    values: 1x60
+  - series: faas_serving_probe_expected_first_byte_seconds{job="node",instance="cp:9100",probe_node="fsn-2"}
+    values: 2x60
+  - series: faas_serving_probe_expected_max_age_seconds{job="node",instance="cp:9100",probe_node="fsn-2"}
+    values: 900x60
+  - series: up{job="node-compute",node="fsn-2",instance="fsn-2:9100"}
+    values: 1x60
+  - series: faas_serving_probe_last_run_timestamp_seconds{job="node-compute",node="fsn-2",instance="fsn-2:9100"}
+    values: 0+60x60
+  - series: faas_serving_probe_content_check_enabled{job="node-compute",node="fsn-2",instance="fsn-2:9100"}
+    values: 1x60
+  - series: faas_serving_probe_first_byte_budget_seconds{job="node-compute",node="fsn-2",instance="fsn-2:9100"}
+    values: 2x60
+  - series: faas_serving_probe_success{job="node-compute",node="fsn-2",instance="fsn-2:9100",url="https://probe.example/"}
+    values: 1x60
+  - series: up{job="node",instance="cp:9100"}
+    values: 1x60
+  promql_expr_test:
+  - expr: label_replace({__name__=~"up|faas_serving_probe_(inventory_configured|expected_pairs|expected|expected_first_byte_seconds|expected_max_age_seconds)",job="node"},"evidence_metric","$1","__name__","(.+)")
+    eval_time: 30m
+    exp_samples: &id001
+    - labels: faas_serving_probe_inventory_configured{evidence_metric="faas_serving_probe_inventory_configured",job="node",instance="cp:9100"}
+      value: 1
+    - labels: faas_serving_probe_expected_pairs{evidence_metric="faas_serving_probe_expected_pairs",job="node",instance="cp:9100"}
+      value: 1
+    - labels: faas_serving_probe_expected{evidence_metric="faas_serving_probe_expected",job="node",instance="cp:9100",probe_node="fsn-2",url="https://probe.example/"}
+      value: 1
+    - labels: faas_serving_probe_expected_first_byte_seconds{evidence_metric="faas_serving_probe_expected_first_byte_seconds",job="node",instance="cp:9100",probe_node="fsn-2"}
+      value: 2
+    - labels: faas_serving_probe_expected_max_age_seconds{evidence_metric="faas_serving_probe_expected_max_age_seconds",job="node",instance="cp:9100",probe_node="fsn-2"}
+      value: 900
+    - labels: up{evidence_metric="up",job="node",instance="cp:9100"}
+      value: 1
+  - expr: timestamp(label_replace({__name__=~"up|faas_serving_probe_(inventory_configured|expected_pairs|expected|expected_first_byte_seconds|expected_max_age_seconds)",job="node"},"evidence_metric","$1","__name__","(.+)"))
+    eval_time: 30m
+    exp_samples:
+    - labels: '{evidence_metric="faas_serving_probe_inventory_configured",job="node",instance="cp:9100"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe_expected_pairs",job="node",instance="cp:9100"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe_expected",job="node",instance="cp:9100",probe_node="fsn-2",url="https://probe.example/"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe_expected_first_byte_seconds",job="node",instance="cp:9100",probe_node="fsn-2"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe_expected_max_age_seconds",job="node",instance="cp:9100",probe_node="fsn-2"}'
+      value: 1800
+    - labels: '{evidence_metric="up",job="node",instance="cp:9100"}'
+      value: 1800
+  - expr: label_replace({__name__=~"faas_serving_probe:(coverage_state|expected_budget|expected_max_age|last_run)"},"evidence_metric","$1","__name__","(.+)")
+    eval_time: 30m
+    exp_samples:
+    - labels: faas_serving_probe:coverage_state{evidence_metric="faas_serving_probe:coverage_state",probe_node="fsn-2",url="https://probe.example/"}
+      value: 0
+    - &id002
+      labels: faas_serving_probe:expected_budget{evidence_metric="faas_serving_probe:expected_budget",probe_node="fsn-2"}
+      value: 2
+    - &id003
+      labels: faas_serving_probe:expected_max_age{evidence_metric="faas_serving_probe:expected_max_age",probe_node="fsn-2"}
+      value: 900
+    - labels: faas_serving_probe:last_run{evidence_metric="faas_serving_probe:last_run",probe_node="fsn-2"}
+      value: 1800
+  - expr: timestamp(label_replace({__name__=~"faas_serving_probe:(coverage_state|expected_budget|expected_max_age|last_run)"},"evidence_metric","$1","__name__","(.+)"))
+    eval_time: 30m
+    exp_samples:
+    - labels: '{evidence_metric="faas_serving_probe:coverage_state",probe_node="fsn-2",url="https://probe.example/"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe:expected_budget",probe_node="fsn-2"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe:expected_max_age",probe_node="fsn-2"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe:last_run",probe_node="fsn-2"}'
+      value: 1800
+- name: missing expected compute node remains missing
+  interval: 1m
+  input_series:
+  - series: faas_serving_probe_inventory_configured{job="node",instance="cp:9100"}
+    values: 1x60
+  - series: faas_serving_probe_expected_pairs{job="node",instance="cp:9100"}
+    values: 1x60
+  - series: faas_serving_probe_expected{job="node",instance="cp:9100",probe_node="fsn-2",url="https://probe.example/"}
+    values: 1x60
+  - series: faas_serving_probe_expected_first_byte_seconds{job="node",instance="cp:9100",probe_node="fsn-2"}
+    values: 2x60
+  - series: faas_serving_probe_expected_max_age_seconds{job="node",instance="cp:9100",probe_node="fsn-2"}
+    values: 900x60
+  - series: up{job="node",instance="cp:9100"}
+    values: 1x60
+  promql_expr_test:
+  - expr: label_replace({__name__=~"up|faas_serving_probe_(inventory_configured|expected_pairs|expected|expected_first_byte_seconds|expected_max_age_seconds)",job="node"},"evidence_metric","$1","__name__","(.+)")
+    eval_time: 30m
+    exp_samples: *id001
+  - expr: timestamp(label_replace({__name__=~"up|faas_serving_probe_(inventory_configured|expected_pairs|expected|expected_first_byte_seconds|expected_max_age_seconds)",job="node"},"evidence_metric","$1","__name__","(.+)"))
+    eval_time: 30m
+    exp_samples:
+    - labels: '{evidence_metric="faas_serving_probe_inventory_configured",job="node",instance="cp:9100"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe_expected_pairs",job="node",instance="cp:9100"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe_expected",job="node",instance="cp:9100",probe_node="fsn-2",url="https://probe.example/"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe_expected_first_byte_seconds",job="node",instance="cp:9100",probe_node="fsn-2"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe_expected_max_age_seconds",job="node",instance="cp:9100",probe_node="fsn-2"}'
+      value: 1800
+    - labels: '{evidence_metric="up",job="node",instance="cp:9100"}'
+      value: 1800
+  - expr: label_replace({__name__=~"faas_serving_probe:(coverage_state|expected_budget|expected_max_age|last_run)"},"evidence_metric","$1","__name__","(.+)")
+    eval_time: 30m
+    exp_samples:
+    - labels: faas_serving_probe:coverage_state{evidence_metric="faas_serving_probe:coverage_state",probe_node="fsn-2",url="https://probe.example/"}
+      value: 1
+    - *id002
+    - *id003
+  - expr: timestamp(label_replace({__name__=~"faas_serving_probe:(coverage_state|expected_budget|expected_max_age|last_run)"},"evidence_metric","$1","__name__","(.+)"))
+    eval_time: 30m
+    exp_samples:
+    - labels: '{evidence_metric="faas_serving_probe:coverage_state",probe_node="fsn-2",url="https://probe.example/"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe:expected_budget",probe_node="fsn-2"}'
+      value: 1800
+    - labels: '{evidence_metric="faas_serving_probe:expected_max_age",probe_node="fsn-2"}'
+      value: 1800

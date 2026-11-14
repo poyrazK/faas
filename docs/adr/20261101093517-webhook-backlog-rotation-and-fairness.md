@@ -82,3 +82,13 @@ The 2026-11-01 review of inbound and outbound webhooks found:
 - New columns on `app_webhooks` and `inbound_webhook_endpoints` (expand,
   constant defaults). An older apid or schedd ignores them and keeps the
   single-secret behaviour.
+
+## Amendment 2026-11-05: an emptied claim keeps the backlog
+
+The account cap made a claim come back empty while due rows waited behind
+the dispatcher's own running deliveries. The dispatcher read that as "no
+backlog" and left the rows to the next 5 s tick, so one account's backlog
+drained at 18 deliveries/s instead of about 150 (V12, 2026-11-05). An empty
+claim now keeps the backlog while this dispatcher still has deliveries
+running; their completions claim again. An empty claim with none running
+clears it, as before. The cap and its fairness bound are unchanged.

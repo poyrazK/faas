@@ -6,6 +6,7 @@ package fcvm
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -14,9 +15,12 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestNativeQualificationRestoreResumePinsOriginalPeerAndNeverRetriesPayload(t *testing.T) {
@@ -42,6 +46,7 @@ func TestNativeQualificationRestoreResumePinsOriginalPeerAndNeverRetriesPayload(
 			}
 			t.Cleanup(func() { _ = listener.Close() })
 			var payloads atomic.Int32
+			receipt := qualificationRestoreReceiptControl{token: uuid.NewString(), macKey: strings.Repeat("ab", sha256.Size)}
 			done := make(chan error, 1)
 			go func() {
 				connection, err := listener.Accept()
@@ -80,8 +85,9 @@ func TestNativeQualificationRestoreResumePinsOriginalPeerAndNeverRetriesPayload(
 					return
 				}
 				var payload struct {
-					Entropy  string `json:"entropy"`
-					HostTime int64  `json:"hostTimeUnixNano"`
+					Entropy  string                          `json:"entropy"`
+					HostTime int64                           `json:"hostTimeUnixNano"`
+					Receipt  *resumeHookQualificationReceipt `json:"qualificationReceipt"`
 				}
 				if err := json.Unmarshal(body, &payload); err != nil {
 					done <- err
@@ -90,6 +96,10 @@ func TestNativeQualificationRestoreResumePinsOriginalPeerAndNeverRetriesPayload(
 				entropy, err := base64.StdEncoding.DecodeString(payload.Entropy)
 				if err != nil || len(entropy) != resumeHookEntropyBytes || payload.HostTime <= 0 {
 					done <- errors.New("native hook lost fresh entropy or clock")
+					return
+				}
+				if payload.Receipt == nil || payload.Receipt.Token != receipt.token || payload.Receipt.MACKey != receipt.macKey {
+					done <- errors.New("native hook lost the fresh qualification receipt control")
 					return
 				}
 				payloads.Add(1)
@@ -126,7 +136,7 @@ func TestNativeQualificationRestoreResumePinsOriginalPeerAndNeverRetriesPayload(
 			case "canceled":
 				cancel()
 			}
-			err = (linuxNativeQualificationRestoreResume{}).Resume(ctx, v, owner)
+			err = (linuxNativeQualificationRestoreResume{}).Resume(ctx, v, owner, receipt)
 			if (err == nil) != (outcome == "success") {
 				t.Fatal(outcome, err)
 			}

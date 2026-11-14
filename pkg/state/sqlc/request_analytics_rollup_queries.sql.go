@@ -11,6 +11,78 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addRequestAnalyticsHours = `-- name: AddRequestAnalyticsHours :exec
+INSERT INTO request_analytics_hours AS m (
+    app_id, bucket_start, dimension_kind, dimension, method, status, deployment_id,
+    account_id, requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist
+)
+SELECT r.app_id, r.bucket_start, r.dimension_kind, r.dimension, r.method, r.status, r.deployment_id,
+       r.account_id, r.requests, r.error_requests, r.cold_boots, r.request_time_ms, r.latency_max_ms,
+       ($1::bigint[])[(r.ord - 1) * 45 + 1 : r.ord * 45]
+FROM (
+    SELECT unnest($2::uuid[]) AS app_id,
+           unnest($3::timestamptz[]) AS bucket_start,
+           unnest($4::text[]) AS dimension_kind,
+           unnest($5::text[]) AS dimension,
+           unnest($6::text[]) AS method,
+           unnest($7::smallint[]) AS status,
+           unnest($8::uuid[]) AS deployment_id,
+           unnest($9::uuid[]) AS account_id,
+           unnest($10::bigint[]) AS requests,
+           unnest($11::bigint[]) AS error_requests,
+           unnest($12::bigint[]) AS cold_boots,
+           unnest($13::bigint[]) AS request_time_ms,
+           unnest($14::int[]) AS latency_max_ms,
+           generate_series(1, cardinality($2::uuid[])) AS ord
+) AS r
+ON CONFLICT (app_id, bucket_start, dimension_kind, dimension, method, status, deployment_id) DO UPDATE
+SET requests = m.requests + EXCLUDED.requests,
+    error_requests = m.error_requests + EXCLUDED.error_requests,
+    cold_boots = m.cold_boots + EXCLUDED.cold_boots,
+    request_time_ms = m.request_time_ms + EXCLUDED.request_time_ms,
+    latency_max_ms = GREATEST(m.latency_max_ms, EXCLUDED.latency_max_ms),
+    latency_hist = request_analytics_hist_add(COALESCE(m.latency_hist, array_fill(0::bigint, ARRAY[45])), EXCLUDED.latency_hist)
+`
+
+type AddRequestAnalyticsHoursParams struct {
+	LatencyHists   []int64
+	AppIds         []pgtype.UUID
+	BucketStarts   []pgtype.Timestamptz
+	DimensionKinds []string
+	Dimensions     []string
+	Methods        []string
+	Statuses       []int16
+	DeploymentIds  []pgtype.UUID
+	AccountIds     []pgtype.UUID
+	Requests       []int64
+	ErrorRequests  []int64
+	ColdBoots      []int64
+	RequestTimeMs  []int64
+	LatencyMaxMs   []int32
+}
+
+// ADR-20261103113952 amendment 2: the same flush folded to UTC hours, in
+// the same shape as AddRequestAnalyticsMinutes.
+func (q *Queries) AddRequestAnalyticsHours(ctx context.Context, db DBTX, arg AddRequestAnalyticsHoursParams) error {
+	_, err := db.Exec(ctx, addRequestAnalyticsHours,
+		arg.LatencyHists,
+		arg.AppIds,
+		arg.BucketStarts,
+		arg.DimensionKinds,
+		arg.Dimensions,
+		arg.Methods,
+		arg.Statuses,
+		arg.DeploymentIds,
+		arg.AccountIds,
+		arg.Requests,
+		arg.ErrorRequests,
+		arg.ColdBoots,
+		arg.RequestTimeMs,
+		arg.LatencyMaxMs,
+	)
+	return err
+}
+
 const addRequestAnalyticsMinutes = `-- name: AddRequestAnalyticsMinutes :exec
 INSERT INTO request_analytics_minutes AS m (
     app_id, bucket_start, dimension_kind, dimension, method, status, deployment_id,
@@ -41,7 +113,7 @@ SET requests = m.requests + EXCLUDED.requests,
     cold_boots = m.cold_boots + EXCLUDED.cold_boots,
     request_time_ms = m.request_time_ms + EXCLUDED.request_time_ms,
     latency_max_ms = GREATEST(m.latency_max_ms, EXCLUDED.latency_max_ms),
-    latency_hist = request_analytics_hist_add(m.latency_hist, EXCLUDED.latency_hist)
+    latency_hist = request_analytics_hist_add(COALESCE(m.latency_hist, array_fill(0::bigint, ARRAY[45])), EXCLUDED.latency_hist)
 `
 
 type AddRequestAnalyticsMinutesParams struct {
@@ -85,28 +157,66 @@ func (q *Queries) AddRequestAnalyticsMinutes(ctx context.Context, db DBTX, arg A
 	return err
 }
 
-const getRequestAnalyticsRollupCoverage = `-- name: GetRequestAnalyticsRollupCoverage :one
-SELECT covered_since FROM request_analytics_rollup_coverage WHERE app_id = $1
+const claimRequestAnalyticsRollupBatch = `-- name: ClaimRequestAnalyticsRollupBatch :execrows
+INSERT INTO request_analytics_rollup_batches (batch_id, node_id)
+VALUES ($1, $2)
+ON CONFLICT (batch_id) DO NOTHING
 `
 
-func (q *Queries) GetRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error) {
+type ClaimRequestAnalyticsRollupBatchParams struct {
+	BatchID pgtype.UUID
+	NodeID  string
+}
+
+// ADR-20261103113952 amendment 5: record a gateway rollup batch in the
+// transaction that applies it; 0 rows means the batch was applied before.
+func (q *Queries) ClaimRequestAnalyticsRollupBatch(ctx context.Context, db DBTX, arg ClaimRequestAnalyticsRollupBatchParams) (int64, error) {
+	result, err := db.Exec(ctx, claimRequestAnalyticsRollupBatch, arg.BatchID, arg.NodeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeRequestAnalyticsWindow = `-- name: CompleteRequestAnalyticsWindow :exec
+DELETE FROM request_analytics_rollup_windows WHERE id=$1::uuid AND state='pending'
+`
+
+func (q *Queries) CompleteRequestAnalyticsWindow(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, completeRequestAnalyticsWindow, id)
+	return err
+}
+
+const getRequestAnalyticsRollupCoverage = `-- name: GetRequestAnalyticsRollupCoverage :one
+SELECT covered_since, hours_covered_since FROM request_analytics_rollup_coverage WHERE app_id = $1
+`
+
+type GetRequestAnalyticsRollupCoverageRow struct {
+	CoveredSince      pgtype.Timestamptz
+	HoursCoveredSince pgtype.Timestamptz
+}
+
+func (q *Queries) GetRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, appID pgtype.UUID) (GetRequestAnalyticsRollupCoverageRow, error) {
 	row := db.QueryRow(ctx, getRequestAnalyticsRollupCoverage, appID)
-	var covered_since pgtype.Timestamptz
-	err := row.Scan(&covered_since)
-	return covered_since, err
+	var i GetRequestAnalyticsRollupCoverageRow
+	err := row.Scan(&i.CoveredSince, &i.HoursCoveredSince)
+	return i, err
 }
 
 const recordRequestAnalyticsRollupCoverage = `-- name: RecordRequestAnalyticsRollupCoverage :exec
-INSERT INTO request_analytics_rollup_coverage (app_id, covered_since)
-SELECT a.id, c.covered_since
+INSERT INTO request_analytics_rollup_coverage AS c (app_id, covered_since, hours_covered_since)
+SELECT a.id, n.covered_since, n.covered_since
 FROM (
     SELECT unnest($1::uuid[]) AS app_id,
            unnest($2::timestamptz[]) AS covered_since
-) AS c
-JOIN apps a ON a.id = c.app_id
+) AS n
+JOIN apps a ON a.id = n.app_id
 ON CONFLICT (app_id) DO UPDATE
-SET covered_since = LEAST(request_analytics_rollup_coverage.covered_since, EXCLUDED.covered_since)
-WHERE EXCLUDED.covered_since < request_analytics_rollup_coverage.covered_since
+SET covered_since = LEAST(c.covered_since, EXCLUDED.covered_since),
+    hours_covered_since = LEAST(COALESCE(c.hours_covered_since, EXCLUDED.hours_covered_since), EXCLUDED.hours_covered_since)
+WHERE EXCLUDED.covered_since < c.covered_since
+   OR c.hours_covered_since IS NULL
+   OR EXCLUDED.hours_covered_since < c.hours_covered_since
 `
 
 type RecordRequestAnalyticsRollupCoverageParams struct {
@@ -114,35 +224,418 @@ type RecordRequestAnalyticsRollupCoverageParams struct {
 	CoveredSince []pgtype.Timestamptz
 }
 
-// The first flush that holds an app's rows records its minute. A later,
-// earlier minute (a replica's late flush) moves it back; an app that is
-// gone is skipped.
+// The first flush that holds an app's rows records its minute, for both
+// tiers. A later, earlier minute (a replica's late flush) moves either back;
+// an app whose coverage predates the hourly tier gets hours_covered_since
+// from its first flush after it. An app that is gone is skipped.
 func (q *Queries) RecordRequestAnalyticsRollupCoverage(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupCoverageParams) error {
 	_, err := db.Exec(ctx, recordRequestAnalyticsRollupCoverage, arg.AppIds, arg.CoveredSince)
 	return err
 }
 
+const recordRequestAnalyticsRollupGaps = `-- name: RecordRequestAnalyticsRollupGaps :exec
+INSERT INTO request_analytics_rollup_gaps (app_id, bucket_start)
+SELECT g.app_id, g.bucket_start
+FROM (
+    SELECT unnest($1::uuid[]) AS app_id,
+           unnest($2::timestamptz[]) AS bucket_start
+) AS g
+ON CONFLICT (app_id, bucket_start) DO NOTHING
+`
+
+type RecordRequestAnalyticsRollupGapsParams struct {
+	AppIds       []pgtype.UUID
+	BucketStarts []pgtype.Timestamptz
+}
+
+// ADR-20261103113952 amendment 1: app minutes whose rollups apid lost.
+func (q *Queries) RecordRequestAnalyticsRollupGaps(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupGapsParams) error {
+	_, err := db.Exec(ctx, recordRequestAnalyticsRollupGaps, arg.AppIds, arg.BucketStarts)
+	return err
+}
+
+const recordRequestAnalyticsRollupGapsFromTelemetry = `-- name: RecordRequestAnalyticsRollupGapsFromTelemetry :exec
+INSERT INTO request_analytics_rollup_gaps (app_id, bucket_start)
+SELECT DISTINCT rt.app_id, date_bin('1 minute', rt.received_at, 'epoch'::timestamptz)
+FROM request_telemetry rt
+JOIN apps a ON a.id = rt.app_id
+WHERE rt.received_at >= $1::timestamptz
+  AND rt.received_at <  $2::timestamptz
+ON CONFLICT (app_id, bucket_start) DO NOTHING
+`
+
+type RecordRequestAnalyticsRollupGapsFromTelemetryParams struct {
+	WindowFrom  pgtype.Timestamptz
+	WindowUntil pgtype.Timestamptz
+}
+
+// ADR-20261103113952 amendment 4: after apid stopped without writing its
+// pending rollups, mark every app minute with raw telemetry in the span it
+// may have held as lost.
+func (q *Queries) RecordRequestAnalyticsRollupGapsFromTelemetry(ctx context.Context, db DBTX, arg RecordRequestAnalyticsRollupGapsFromTelemetryParams) error {
+	_, err := db.Exec(ctx, recordRequestAnalyticsRollupGapsFromTelemetry, arg.WindowFrom, arg.WindowUntil)
+	return err
+}
+
+const recordRequestAnalyticsWindow = `-- name: RecordRequestAnalyticsWindow :exec
+WITH audit AS (
+ INSERT INTO request_analytics_rollup_audit(app_id,audited_since)
+ VALUES($2::uuid,clock_timestamp()) ON CONFLICT(app_id) DO NOTHING
+ RETURNING app_id
+)
+INSERT INTO request_analytics_rollup_windows(id,app_id,bucket_start,state)
+VALUES($1::uuid,$2::uuid,$3::timestamptz,$4::text)
+ON CONFLICT(id) DO NOTHING
+`
+
+type RecordRequestAnalyticsWindowParams struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	BucketStart pgtype.Timestamptz
+	State       string
+}
+
+func (q *Queries) RecordRequestAnalyticsWindow(ctx context.Context, db DBTX, arg RecordRequestAnalyticsWindowParams) error {
+	_, err := db.Exec(ctx, recordRequestAnalyticsWindow,
+		arg.ID,
+		arg.AppID,
+		arg.BucketStart,
+		arg.State,
+	)
+	return err
+}
+
+const requestAnalyticsCoverageGaps = `-- name: RequestAnalyticsCoverageGaps :many
+WITH participating_nodes AS (
+ SELECT node_name FROM request_analytics_coverage_watermarks WHERE registered_at < $1::timestamptz
+ UNION
+ SELECT name AS node_name FROM compute_nodes WHERE active AND created_at < $1::timestamptz
+ UNION
+ SELECT node_name FROM request_analytics_coverage_intervals WHERE covered_since < $1::timestamptz AND covered_until>=$2::timestamptz
+), evidence AS (
+ SELECT n.node_name, CASE WHEN $3::boolean AND EXISTS(
+ SELECT 1 FROM request_analytics_coverage_intervals i WHERE i.node_name=n.node_name AND i.source_kind='analytics'
+ AND i.covered_since<=$2::timestamptz AND i.covered_until>=$1::timestamptz
+ ) THEN 'analytics' ELSE 'raw' END::text AS source_kind FROM participating_nodes n
+), pending_app_gaps AS (
+ SELECT node_name,'raw'::text AS source_kind,app_id,last_gap_at FROM request_telemetry_app_gaps WHERE pending_count>0
+ UNION ALL
+ SELECT node_name,'analytics'::text AS source_kind,app_id,last_gap_at FROM request_analytics_app_gaps WHERE pending_count>0
+), gaps AS (
+ SELECT 'telemetry_coverage_unknown'::text AS reason WHERE NOT EXISTS(SELECT 1 FROM evidence)
+ OR ($3::boolean AND EXISTS(SELECT 1 FROM evidence WHERE source_kind='raw') AND NOT EXISTS(
+ SELECT 1 FROM request_analytics_rollup_audit WHERE app_id=$4::uuid AND audited_since<=$2::timestamptz))
+ OR EXISTS(SELECT 1 FROM request_analytics_coverage_gaps g JOIN evidence e USING(node_name,source_kind)
+ WHERE g.app_id=$4::uuid AND g.history_incomplete AND g.gap_from>$2::timestamptz)
+ OR EXISTS(SELECT 1 FROM evidence e WHERE NOT EXISTS(
+ SELECT 1 FROM request_analytics_coverage_intervals i WHERE i.node_name=e.node_name AND i.source_kind=e.source_kind
+ AND i.covered_since<=$2::timestamptz AND i.covered_until>=$1::timestamptz))
+ UNION
+ SELECT 'telemetry_window_incomplete'::text WHERE EXISTS(
+ SELECT 1 FROM request_analytics_coverage_gaps g JOIN evidence e USING(node_name,source_kind)
+ WHERE g.app_id=$4::uuid AND g.gap_from<$1::timestamptz AND g.gap_until>=$2::timestamptz)
+ UNION
+ -- A live backlog affects its recorded delivery interval, not earlier proof.
+ SELECT 'telemetry_ingestion_pending'::text WHERE EXISTS(
+ SELECT 1 FROM pending_app_gaps p JOIN evidence e USING(node_name,source_kind)
+ JOIN request_analytics_coverage_gaps g USING(node_name,source_kind,app_id)
+ WHERE p.app_id=$4::uuid AND g.gap_from<=p.last_gap_at AND g.gap_until>=p.last_gap_at
+ AND g.gap_from<$1::timestamptz AND g.gap_until>=$2::timestamptz)
+ UNION
+ SELECT CASE WHEN state='lost' THEN 'telemetry_window_incomplete' ELSE 'telemetry_ingestion_pending' END
+ FROM request_analytics_rollup_windows WHERE $3::boolean AND app_id=$4::uuid
+ AND bucket_start<$1::timestamptz AND bucket_start+interval '1 minute'>$2::timestamptz
+)
+SELECT DISTINCT reason::text AS reason FROM gaps ORDER BY reason
+`
+
+type RequestAnalyticsCoverageGapsParams struct {
+	WindowUntil pgtype.Timestamptz
+	WindowFrom  pgtype.Timestamptz
+	Rollups     bool
+	AppID       pgtype.UUID
+}
+
+// Prefer independent gateway counting proof for rollups, while raw responses
+// require raw delivery proof. Later heartbeats never rewrite historical proof.
+func (q *Queries) RequestAnalyticsCoverageGaps(ctx context.Context, db DBTX, arg RequestAnalyticsCoverageGapsParams) ([]string, error) {
+	rows, err := db.Query(ctx, requestAnalyticsCoverageGaps,
+		arg.WindowUntil,
+		arg.WindowFrom,
+		arg.Rollups,
+		arg.AppID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var reason string
+		if err := rows.Scan(&reason); err != nil {
+			return nil, err
+		}
+		items = append(items, reason)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requestAnalyticsRollupByDeployment = `-- name: RequestAnalyticsRollupByDeployment :many
+WITH window_rows AS (
+ SELECT app_id,account_id,bucket_start,dimension_kind,dimension,method,deployment_id,requests FROM request_analytics_minutes m
+ WHERE m.app_id=$2::uuid AND m.account_id=$3::uuid AND m.dimension_kind='route'
+ AND ((m.bucket_start>=$4::timestamptz AND m.bucket_start<$5::timestamptz)
+ OR (m.bucket_start>=$6::timestamptz AND m.bucket_start<$7::timestamptz))
+ UNION ALL
+ SELECT app_id,account_id,bucket_start,dimension_kind,dimension,method,deployment_id,requests FROM request_analytics_hours m
+ WHERE m.app_id=$2::uuid AND m.account_id=$3::uuid AND m.dimension_kind='route'
+ AND m.bucket_start>=$5::timestamptz AND m.bucket_start<$6::timestamptz
+), per_deployment AS (
+ SELECT m.deployment_id::text AS deployment_id,
+  coalesce(max(d.commit_sha),'')::text AS commit_sha,coalesce(max(d.tag),'')::text AS deployment_tag,
+  coalesce(max(to_char(d.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')),'')::text AS deployment_created_at,
+  sum(m.requests)::bigint AS requests
+ FROM window_rows m LEFT JOIN deployments d ON d.id=m.deployment_id AND d.app_id=m.app_id
+ WHERE m.app_id=$2::uuid AND m.account_id=$3::uuid
+   AND m.dimension_kind='route' AND m.bucket_start>=$4::timestamptz AND m.bucket_start<$7::timestamptz
+ GROUP BY m.deployment_id
+)
+SELECT deployment_id, commit_sha, deployment_tag, deployment_created_at, requests,sum(requests) OVER()::bigint AS total_requests FROM per_deployment
+ORDER BY requests DESC,deployment_id ASC LIMIT $1::integer
+`
+
+type RequestAnalyticsRollupByDeploymentParams struct {
+	DeploymentLimit int32
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	WindowFrom      pgtype.Timestamptz
+	HoursFrom       pgtype.Timestamptz
+	HoursUntil      pgtype.Timestamptz
+	WindowUntil     pgtype.Timestamptz
+}
+
+type RequestAnalyticsRollupByDeploymentRow struct {
+	DeploymentID        string
+	CommitSha           string
+	DeploymentTag       string
+	DeploymentCreatedAt string
+	Requests            int64
+	TotalRequests       int64
+}
+
+func (q *Queries) RequestAnalyticsRollupByDeployment(ctx context.Context, db DBTX, arg RequestAnalyticsRollupByDeploymentParams) ([]RequestAnalyticsRollupByDeploymentRow, error) {
+	rows, err := db.Query(ctx, requestAnalyticsRollupByDeployment,
+		arg.DeploymentLimit,
+		arg.AppID,
+		arg.AccountID,
+		arg.WindowFrom,
+		arg.HoursFrom,
+		arg.HoursUntil,
+		arg.WindowUntil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestAnalyticsRollupByDeploymentRow{}
+	for rows.Next() {
+		var i RequestAnalyticsRollupByDeploymentRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
+			&i.Requests,
+			&i.TotalRequests,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requestAnalyticsRollupByRouteDeployment = `-- name: RequestAnalyticsRollupByRouteDeployment :many
+WITH window_rows AS (
+ SELECT app_id,account_id,bucket_start,dimension_kind,dimension,method,deployment_id,requests FROM request_analytics_minutes m
+ WHERE m.app_id=$2::uuid AND m.account_id=$3::uuid AND m.dimension_kind='route'
+ AND ((m.bucket_start>=$4::timestamptz AND m.bucket_start<$5::timestamptz)
+ OR (m.bucket_start>=$6::timestamptz AND m.bucket_start<$7::timestamptz))
+ UNION ALL
+ SELECT app_id,account_id,bucket_start,dimension_kind,dimension,method,deployment_id,requests FROM request_analytics_hours m
+ WHERE m.app_id=$2::uuid AND m.account_id=$3::uuid AND m.dimension_kind='route'
+ AND m.bucket_start>=$5::timestamptz AND m.bucket_start<$6::timestamptz
+), filtered AS (
+    SELECT m.dimension AS route,request_analytics_method(m.method)::text AS method,m.deployment_id::text AS deployment_id,
+           coalesce(d.commit_sha,'') AS commit_sha,coalesce(d.tag,'') AS deployment_tag,
+           coalesce(to_char(d.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),'') AS deployment_created_at,
+           m.requests AS request_count,false AS guest_resource_usage_available,0::integer AS guest_cpu_time_ms
+    FROM window_rows m LEFT JOIN deployments d ON d.id=m.deployment_id AND d.app_id=m.app_id
+    WHERE m.app_id=$2::uuid AND m.account_id=$3::uuid
+      AND m.dimension_kind='route' AND m.bucket_start>=$4::timestamptz AND m.bucket_start<$7::timestamptz
+), per_route_deployment AS (
+    SELECT route,
+           method,
+           deployment_id,
+           COALESCE(MAX(NULLIF(commit_sha, '')), '') AS commit_sha,
+           COALESCE(MAX(NULLIF(deployment_tag, '')), '') AS deployment_tag,
+           COALESCE(MAX(NULLIF(deployment_created_at, '')), '') AS deployment_created_at,
+           SUM(request_count)::bigint AS requests,
+           COALESCE(SUM(request_count) FILTER (WHERE guest_resource_usage_available), 0)::bigint AS guest_cpu_measured_requests,
+           COALESCE(
+               ROUND(
+                   SUM(guest_cpu_time_ms::numeric * request_count)
+                       FILTER (WHERE guest_resource_usage_available)
+                   / NULLIF(SUM(request_count) FILTER (WHERE guest_resource_usage_available), 0)
+               ),
+               0
+           )::int AS guest_cpu_avg_ms
+    FROM filtered
+    GROUP BY route, method, deployment_id
+), top_routes AS (
+    SELECT route, method
+    FROM per_route_deployment
+    GROUP BY route, method
+    ORDER BY SUM(requests) DESC, route ASC, method ASC
+    LIMIT $8::int
+), ranked_deployments AS (
+    SELECT per_route_deployment.route, per_route_deployment.method, per_route_deployment.deployment_id, per_route_deployment.commit_sha, per_route_deployment.deployment_tag, per_route_deployment.deployment_created_at, per_route_deployment.requests, per_route_deployment.guest_cpu_measured_requests, per_route_deployment.guest_cpu_avg_ms,
+           ROW_NUMBER() OVER (
+               PARTITION BY per_route_deployment.route, per_route_deployment.method
+               ORDER BY per_route_deployment.requests DESC, per_route_deployment.deployment_id ASC
+           ) AS deployment_rank
+    FROM per_route_deployment
+    JOIN top_routes USING (route, method)
+)
+SELECT route,
+       method,
+       CASE WHEN deployment_rank <= $1::int THEN deployment_id ELSE '__other__' END AS deployment_id,
+       CASE WHEN MAX(deployment_rank) <= $1::int THEN COALESCE(MAX(commit_sha), '') ELSE '' END AS commit_sha,
+       CASE WHEN MAX(deployment_rank) <= $1::int THEN COALESCE(MAX(deployment_tag), '') ELSE '' END AS deployment_tag,
+       CASE WHEN MAX(deployment_rank) <= $1::int THEN COALESCE(MAX(deployment_created_at), '') ELSE '' END AS deployment_created_at,
+       SUM(requests)::bigint AS requests,
+       CASE WHEN MAX(deployment_rank) > $1::int THEN 0
+            ELSE COALESCE(MAX(guest_cpu_measured_requests), 0)::bigint END AS guest_cpu_measured_requests,
+       CASE WHEN MAX(deployment_rank) > $1::int THEN 0
+            ELSE COALESCE(MAX(guest_cpu_avg_ms), 0)::int END AS guest_cpu_avg_ms
+FROM ranked_deployments
+GROUP BY route,
+         method,
+         CASE WHEN deployment_rank <= $1::int THEN deployment_id ELSE '__other__' END
+ORDER BY route ASC,
+         method ASC,
+         CASE WHEN CASE WHEN deployment_rank <= $1::int THEN deployment_id ELSE '__other__' END = '__other__' THEN 1 ELSE 0 END,
+         MAX(deployment_created_at) DESC,
+         CASE WHEN deployment_rank <= $1::int THEN deployment_id ELSE '__other__' END ASC
+`
+
+type RequestAnalyticsRollupByRouteDeploymentParams struct {
+	DeploymentLimit int32
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	WindowFrom      pgtype.Timestamptz
+	HoursFrom       pgtype.Timestamptz
+	HoursUntil      pgtype.Timestamptz
+	WindowUntil     pgtype.Timestamptz
+	RouteLimit      int32
+}
+
+type RequestAnalyticsRollupByRouteDeploymentRow struct {
+	Route                    string
+	Method                   string
+	DeploymentID             string
+	CommitSha                string
+	DeploymentTag            string
+	DeploymentCreatedAt      string
+	Requests                 int64
+	GuestCpuMeasuredRequests int64
+	GuestCpuAvgMs            int32
+}
+
+// Per-route deployment split for the customer analytics window. Routes are
+// bounded to the same top-N surface as route analytics, and each route keeps
+// only its top deployments by request count; the remaining revisions are
+// folded into __other__ so the response cardinality is bounded by
+// route_limit * (deployment_limit + 1).
+func (q *Queries) RequestAnalyticsRollupByRouteDeployment(ctx context.Context, db DBTX, arg RequestAnalyticsRollupByRouteDeploymentParams) ([]RequestAnalyticsRollupByRouteDeploymentRow, error) {
+	rows, err := db.Query(ctx, requestAnalyticsRollupByRouteDeployment,
+		arg.DeploymentLimit,
+		arg.AppID,
+		arg.AccountID,
+		arg.WindowFrom,
+		arg.HoursFrom,
+		arg.HoursUntil,
+		arg.WindowUntil,
+		arg.RouteLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestAnalyticsRollupByRouteDeploymentRow{}
+	for rows.Next() {
+		var i RequestAnalyticsRollupByRouteDeploymentRow
+		if err := rows.Scan(
+			&i.Route,
+			&i.Method,
+			&i.DeploymentID,
+			&i.CommitSha,
+			&i.DeploymentTag,
+			&i.DeploymentCreatedAt,
+			&i.Requests,
+			&i.GuestCpuMeasuredRequests,
+			&i.GuestCpuAvgMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requestAnalyticsRollupGroups = `-- name: RequestAnalyticsRollupGroups :many
-WITH filtered AS (
-    SELECT CASE WHEN $1::bool THEN date_bin('1 hour', bucket_start, 'epoch'::timestamptz)
+WITH filtered AS NOT MATERIALIZED (
+    SELECT bucket_start, dimension_kind, dimension, method, status,
+           requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist, latency_hist_int4
+    FROM request_analytics_minutes AS rm
+    WHERE rm.app_id = $1
+      AND rm.account_id = $2
+      AND rm.dimension_kind = CASE WHEN $3::text = 'status' THEN 'route' ELSE $3::text END
+      AND ((rm.bucket_start >= $4::timestamptz AND rm.bucket_start < $5::timestamptz)
+        OR (rm.bucket_start >= $6::timestamptz AND rm.bucket_start < $7::timestamptz))
+    UNION ALL
+    SELECT bucket_start, dimension_kind, dimension, method, status,
+           requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist, latency_hist_int4
+    FROM request_analytics_hours AS rh
+    WHERE rh.app_id = $1
+      AND rh.account_id = $2
+      AND rh.dimension_kind = CASE WHEN $3::text = 'status' THEN 'route' ELSE $3::text END
+      AND rh.bucket_start >= $5::timestamptz
+      AND rh.bucket_start <  $6::timestamptz
+), grouped AS NOT MATERIALIZED (
+    SELECT CASE WHEN $8::bool THEN date_bin('1 hour', bucket_start, 'epoch'::timestamptz)
                 ELSE 'epoch'::timestamptz END AS bucket,
-           CASE WHEN $2::text = 'status' THEN status::text ELSE dimension END AS dimension,
-           CASE WHEN $2::text = 'route' THEN method ELSE '' END AS method,
-           requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist
-    FROM request_analytics_minutes
-    WHERE app_id = $3
-      AND account_id = $4
-      AND dimension_kind = CASE WHEN $2::text = 'status' THEN 'route' ELSE $2::text END
-      AND bucket_start >= $5::timestamptz
-      AND bucket_start <  $6::timestamptz
-      AND ($7::text = '' OR dimension = $7::text)
-      AND ($8::text = '' OR method = $8::text)
+           CASE WHEN $3::text = 'status' THEN status::text ELSE dimension END AS dimension,
+           CASE WHEN $3::text = 'route' THEN request_analytics_method(method) ELSE '' END AS method,
+           requests, error_requests, cold_boots, request_time_ms, latency_max_ms, latency_hist, latency_hist_int4
+    FROM filtered
+    WHERE ($9::text = '' OR dimension = $9::text)
+      AND ($10::text = '' OR request_analytics_method(method) = $10::text)
 ), top_groups AS (
     SELECT dimension, method
-    FROM filtered
+    FROM grouped
     GROUP BY dimension, method
     ORDER BY SUM(requests) DESC, dimension ASC, method ASC
-    LIMIT $9::int
+    LIMIT $11::int
 )
 SELECT f.bucket::timestamptz AS bucket,
        COALESCE(t.dimension, '__other__')::text AS dimension,
@@ -152,20 +645,38 @@ SELECT f.bucket::timestamptz AS bucket,
        SUM(f.cold_boots)::bigint AS cold_boots,
        SUM(f.request_time_ms)::bigint AS request_time_ms,
        MAX(f.latency_max_ms)::int AS latency_max_ms,
-       request_analytics_hist_sum(f.latency_hist)::bigint[] AS latency_hist
-FROM filtered AS f
+       ARRAY[
+           SUM(COALESCE(f.latency_hist[1], 0) + COALESCE(f.latency_hist_int4[1], 0)), SUM(COALESCE(f.latency_hist[2], 0) + COALESCE(f.latency_hist_int4[2], 0)), SUM(COALESCE(f.latency_hist[3], 0) + COALESCE(f.latency_hist_int4[3], 0)),
+           SUM(COALESCE(f.latency_hist[4], 0) + COALESCE(f.latency_hist_int4[4], 0)), SUM(COALESCE(f.latency_hist[5], 0) + COALESCE(f.latency_hist_int4[5], 0)), SUM(COALESCE(f.latency_hist[6], 0) + COALESCE(f.latency_hist_int4[6], 0)),
+           SUM(COALESCE(f.latency_hist[7], 0) + COALESCE(f.latency_hist_int4[7], 0)), SUM(COALESCE(f.latency_hist[8], 0) + COALESCE(f.latency_hist_int4[8], 0)), SUM(COALESCE(f.latency_hist[9], 0) + COALESCE(f.latency_hist_int4[9], 0)),
+           SUM(COALESCE(f.latency_hist[10], 0) + COALESCE(f.latency_hist_int4[10], 0)), SUM(COALESCE(f.latency_hist[11], 0) + COALESCE(f.latency_hist_int4[11], 0)), SUM(COALESCE(f.latency_hist[12], 0) + COALESCE(f.latency_hist_int4[12], 0)),
+           SUM(COALESCE(f.latency_hist[13], 0) + COALESCE(f.latency_hist_int4[13], 0)), SUM(COALESCE(f.latency_hist[14], 0) + COALESCE(f.latency_hist_int4[14], 0)), SUM(COALESCE(f.latency_hist[15], 0) + COALESCE(f.latency_hist_int4[15], 0)),
+           SUM(COALESCE(f.latency_hist[16], 0) + COALESCE(f.latency_hist_int4[16], 0)), SUM(COALESCE(f.latency_hist[17], 0) + COALESCE(f.latency_hist_int4[17], 0)), SUM(COALESCE(f.latency_hist[18], 0) + COALESCE(f.latency_hist_int4[18], 0)),
+           SUM(COALESCE(f.latency_hist[19], 0) + COALESCE(f.latency_hist_int4[19], 0)), SUM(COALESCE(f.latency_hist[20], 0) + COALESCE(f.latency_hist_int4[20], 0)), SUM(COALESCE(f.latency_hist[21], 0) + COALESCE(f.latency_hist_int4[21], 0)),
+           SUM(COALESCE(f.latency_hist[22], 0) + COALESCE(f.latency_hist_int4[22], 0)), SUM(COALESCE(f.latency_hist[23], 0) + COALESCE(f.latency_hist_int4[23], 0)), SUM(COALESCE(f.latency_hist[24], 0) + COALESCE(f.latency_hist_int4[24], 0)),
+           SUM(COALESCE(f.latency_hist[25], 0) + COALESCE(f.latency_hist_int4[25], 0)), SUM(COALESCE(f.latency_hist[26], 0) + COALESCE(f.latency_hist_int4[26], 0)), SUM(COALESCE(f.latency_hist[27], 0) + COALESCE(f.latency_hist_int4[27], 0)),
+           SUM(COALESCE(f.latency_hist[28], 0) + COALESCE(f.latency_hist_int4[28], 0)), SUM(COALESCE(f.latency_hist[29], 0) + COALESCE(f.latency_hist_int4[29], 0)), SUM(COALESCE(f.latency_hist[30], 0) + COALESCE(f.latency_hist_int4[30], 0)),
+           SUM(COALESCE(f.latency_hist[31], 0) + COALESCE(f.latency_hist_int4[31], 0)), SUM(COALESCE(f.latency_hist[32], 0) + COALESCE(f.latency_hist_int4[32], 0)), SUM(COALESCE(f.latency_hist[33], 0) + COALESCE(f.latency_hist_int4[33], 0)),
+           SUM(COALESCE(f.latency_hist[34], 0) + COALESCE(f.latency_hist_int4[34], 0)), SUM(COALESCE(f.latency_hist[35], 0) + COALESCE(f.latency_hist_int4[35], 0)), SUM(COALESCE(f.latency_hist[36], 0) + COALESCE(f.latency_hist_int4[36], 0)),
+           SUM(COALESCE(f.latency_hist[37], 0) + COALESCE(f.latency_hist_int4[37], 0)), SUM(COALESCE(f.latency_hist[38], 0) + COALESCE(f.latency_hist_int4[38], 0)), SUM(COALESCE(f.latency_hist[39], 0) + COALESCE(f.latency_hist_int4[39], 0)),
+           SUM(COALESCE(f.latency_hist[40], 0) + COALESCE(f.latency_hist_int4[40], 0)), SUM(COALESCE(f.latency_hist[41], 0) + COALESCE(f.latency_hist_int4[41], 0)), SUM(COALESCE(f.latency_hist[42], 0) + COALESCE(f.latency_hist_int4[42], 0)),
+           SUM(COALESCE(f.latency_hist[43], 0) + COALESCE(f.latency_hist_int4[43], 0)), SUM(COALESCE(f.latency_hist[44], 0) + COALESCE(f.latency_hist_int4[44], 0)), SUM(COALESCE(f.latency_hist[45], 0) + COALESCE(f.latency_hist_int4[45], 0))
+       ]::bigint[] AS latency_hist
+FROM grouped AS f
 LEFT JOIN top_groups AS t ON t.dimension = f.dimension AND t.method = f.method
 GROUP BY f.bucket, t.dimension, t.method
 ORDER BY 1 ASC, 4 DESC, 2 ASC, 3 ASC
 `
 
 type RequestAnalyticsRollupGroupsParams struct {
-	Hourly      bool
-	GroupBy     string
 	AppID       pgtype.UUID
 	AccountID   pgtype.UUID
+	GroupBy     string
 	WindowFrom  pgtype.Timestamptz
+	HoursFrom   pgtype.Timestamptz
+	HoursUntil  pgtype.Timestamptz
 	WindowUntil pgtype.Timestamptz
+	Hourly      bool
 	Route       string
 	Method      string
 	GroupLimit  int32
@@ -183,22 +694,30 @@ type RequestAnalyticsRollupGroupsRow struct {
 	LatencyHist   []int64
 }
 
-// ADR-20261103113952: analytics totals from the rollups. Groups are
-// (dimension, method) over the window, top sqlc.arg(group_limit) by
-// requests, the rest folded into one __other__ group; with hourly they are
-// also split by UTC hour (callers zero-fill). group_by 'status' groups the
-// route rows by HTTP status. The route/method filter applies to route
-// rows only, so callers pass group_by 'route' or 'status' with it. A
-// minute counts when it starts inside the window. latency_hist is the
-// groups' merged histogram; callers turn it into percentiles.
+// ADR-20261103113952: analytics totals from the rollups. Whole hours in
+// [hours_from, hours_until) come from the hourly tier and the minutes on
+// either side from the minute tier (amendment 2); callers pass an empty
+// hour range to read minutes only. Groups are (dimension, method) over the
+// window, top sqlc.arg(group_limit) by requests, the rest folded into one
+// __other__ group; with hourly they are also split by UTC hour (callers
+// zero-fill). group_by 'status' groups the route rows by HTTP status. The
+// route/method filter applies to route rows only, so callers pass group_by
+// 'route' or 'status' with it. A bucket counts when it starts inside the
+// window. latency_hist is the groups' merged histogram, summed bucket by
+// bucket; callers turn it into percentiles. A row holds its histogram in
+// latency_hist, latency_hist_int4 or, while two releases write, both
+// (amendment 3), so each bucket adds the two. filtered is not materialized:
+// the top-group pass reads no histograms.
 func (q *Queries) RequestAnalyticsRollupGroups(ctx context.Context, db DBTX, arg RequestAnalyticsRollupGroupsParams) ([]RequestAnalyticsRollupGroupsRow, error) {
 	rows, err := db.Query(ctx, requestAnalyticsRollupGroups,
-		arg.Hourly,
-		arg.GroupBy,
 		arg.AppID,
 		arg.AccountID,
+		arg.GroupBy,
 		arg.WindowFrom,
+		arg.HoursFrom,
+		arg.HoursUntil,
 		arg.WindowUntil,
+		arg.Hourly,
 		arg.Route,
 		arg.Method,
 		arg.GroupLimit,
@@ -229,4 +748,129 @@ func (q *Queries) RequestAnalyticsRollupGroups(ctx context.Context, db DBTX, arg
 		return nil, err
 	}
 	return items, nil
+}
+
+const requestAnalyticsRollupHasGap = `-- name: RequestAnalyticsRollupHasGap :one
+SELECT EXISTS (
+    SELECT 1 FROM request_analytics_rollup_gaps
+    WHERE app_id = $1
+      AND bucket_start >= $2::timestamptz
+      AND bucket_start <  $3::timestamptz
+)::bool AS has_gap
+`
+
+type RequestAnalyticsRollupHasGapParams struct {
+	AppID       pgtype.UUID
+	WindowFrom  pgtype.Timestamptz
+	WindowUntil pgtype.Timestamptz
+}
+
+// Whether any minute starting inside the window lost rollups.
+func (q *Queries) RequestAnalyticsRollupHasGap(ctx context.Context, db DBTX, arg RequestAnalyticsRollupHasGapParams) (bool, error) {
+	row := db.QueryRow(ctx, requestAnalyticsRollupHasGap, arg.AppID, arg.WindowFrom, arg.WindowUntil)
+	var has_gap bool
+	err := row.Scan(&has_gap)
+	return has_gap, err
+}
+
+const requestAnalyticsRollupRouteDeployments = `-- name: RequestAnalyticsRollupRouteDeployments :many
+WITH filtered AS NOT MATERIALIZED (
+    SELECT dimension, method, deployment_id, requests
+    FROM request_analytics_minutes AS rm
+    WHERE rm.app_id = $1
+      AND rm.account_id = $2
+      AND rm.dimension_kind = 'route'
+      AND ((rm.bucket_start >= $3::timestamptz AND rm.bucket_start < $4::timestamptz)
+        OR (rm.bucket_start >= $5::timestamptz AND rm.bucket_start < $6::timestamptz))
+    UNION ALL
+    SELECT dimension, method, deployment_id, requests
+    FROM request_analytics_hours AS rh
+    WHERE rh.app_id = $1
+      AND rh.account_id = $2
+      AND rh.dimension_kind = 'route'
+      AND rh.bucket_start >= $4::timestamptz
+      AND rh.bucket_start <  $5::timestamptz
+)
+SELECT dimension::text AS route,
+       request_analytics_method(method)::text AS method,
+       deployment_id::uuid AS deployment_id,
+       SUM(requests)::bigint AS requests
+FROM filtered
+GROUP BY dimension, request_analytics_method(method), deployment_id
+`
+
+type RequestAnalyticsRollupRouteDeploymentsParams struct {
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	WindowFrom  pgtype.Timestamptz
+	HoursFrom   pgtype.Timestamptz
+	HoursUntil  pgtype.Timestamptz
+	WindowUntil pgtype.Timestamptz
+}
+
+type RequestAnalyticsRollupRouteDeploymentsRow struct {
+	Route        string
+	Method       string
+	DeploymentID pgtype.UUID
+	Requests     int64
+}
+
+// Requests per route, method and deployment from the rollups, for the
+// analytics route and deployment cost splits; tiers split as in
+// RequestAnalyticsRollupGroups.
+func (q *Queries) RequestAnalyticsRollupRouteDeployments(ctx context.Context, db DBTX, arg RequestAnalyticsRollupRouteDeploymentsParams) ([]RequestAnalyticsRollupRouteDeploymentsRow, error) {
+	rows, err := db.Query(ctx, requestAnalyticsRollupRouteDeployments,
+		arg.AppID,
+		arg.AccountID,
+		arg.WindowFrom,
+		arg.HoursFrom,
+		arg.HoursUntil,
+		arg.WindowUntil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RequestAnalyticsRollupRouteDeploymentsRow{}
+	for rows.Next() {
+		var i RequestAnalyticsRollupRouteDeploymentsRow
+		if err := rows.Scan(
+			&i.Route,
+			&i.Method,
+			&i.DeploymentID,
+			&i.Requests,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requestTelemetryExistsBetween = `-- name: RequestTelemetryExistsBetween :one
+SELECT EXISTS (
+    SELECT 1 FROM request_telemetry
+    WHERE app_id = $1
+      AND received_at >= $2::timestamptz
+      AND received_at <  $3::timestamptz
+)::bool AS has_rows
+`
+
+type RequestTelemetryExistsBetweenParams struct {
+	AppID       pgtype.UUID
+	WindowFrom  pgtype.Timestamptz
+	WindowUntil pgtype.Timestamptz
+}
+
+// Whether the app has raw telemetry received in [window_from, window_until).
+// Analytics backdates a rollup tier's coverage over a span with none
+// (ADR-20261103113952 amendment 4).
+func (q *Queries) RequestTelemetryExistsBetween(ctx context.Context, db DBTX, arg RequestTelemetryExistsBetweenParams) (bool, error) {
+	row := db.QueryRow(ctx, requestTelemetryExistsBetween, arg.AppID, arg.WindowFrom, arg.WindowUntil)
+	var has_rows bool
+	err := row.Scan(&has_rows)
+	return has_rows, err
 }

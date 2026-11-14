@@ -1,5 +1,5 @@
 CREATE OR REPLACE FUNCTION gregale_repair.guard_row() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET lc_monetary = 'C' AS $$
 DECLARE enrollment gregale_repair.enrollments; fields text; new_fields text; changed boolean;
 BEGIN
  IF TG_OP='INSERT' THEN
@@ -27,7 +27,7 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION gregale_repair.capture_row() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog SET extra_float_digits = '3' SET IntervalStyle = 'postgres' SET lc_monetary = 'C' AS $$
 DECLARE op gregale_repair.operations; enrollment gregale_repair.enrollments;
  before_data jsonb; after_data jsonb; row_key jsonb; context_id text; fields text; new_fields text; changed boolean;
 BEGIN

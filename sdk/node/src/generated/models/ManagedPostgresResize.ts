@@ -11,10 +11,10 @@ export type ManagedPostgresResize = {
   from_class: 'development' | 'burstable' | 'production';
   target_class: 'development' | 'burstable' | 'production';
   generation: number;
-  state: 'pending' | 'succeeded';
+  state: 'pending' | 'succeeded' | 'failed';
   connection_interruption_expected: boolean;
   /**
-   * Safe diagnostic code; pending intent remains recoverable after uncertain provider outcomes.
+   * Safe diagnostic code. A failed resize retains the confirmed source configuration; uncertain outcomes remain pending.
    */
   last_error_code?: string;
   created_at: string;

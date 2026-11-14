@@ -2,6 +2,52 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://docs.gregale.dev/dpa/subprocessor-archive.schema.json",
   "version": "1.0.0",
-  "removed_sub_processors": [],
+  "removed_sub_processors": [
+    {
+      "id": "postgres-hosting",
+      "vendor": "Hetzner",
+      "service": "Hetzner managed single-tenant Postgres",
+      "effective_from": "2026-08-08",
+      "effective_until": "2026-11-08",
+      "removal_reason": "List correction: Gregale's production Postgres runs on its own hosts (Google Cloud today, OVHcloud at public release), not Hetzner.",
+      "archived_at": "2026-11-08"
+    },
+    {
+      "id": "stripe-billing",
+      "vendor": "Stripe",
+      "service": "Stripe Billing + metered usage records (legacy opt-in)",
+      "effective_from": "2026-08-08",
+      "effective_until": "2026-11-08",
+      "removal_reason": "List correction: Stripe is an unused legacy billing option; Polar is the merchant of record.",
+      "archived_at": "2026-11-08"
+    },
+    {
+      "id": "paddle-billing",
+      "vendor": "Paddle",
+      "service": "Paddle Billing (explicit compatibility provider)",
+      "effective_from": "2026-08-08",
+      "effective_until": "2026-11-08",
+      "removal_reason": "List correction: Paddle is an unused billing option; Polar is the merchant of record.",
+      "archived_at": "2026-11-08"
+    },
+    {
+      "id": "transactional-email-postmark",
+      "vendor": "Postmark",
+      "service": "Postmark transactional email transport + bounce / spam-complaint webhook",
+      "effective_from": "2026-08-08",
+      "effective_until": "2026-11-08",
+      "removal_reason": "List correction: transactional email is sent through Resend only.",
+      "archived_at": "2026-11-08"
+    },
+    {
+      "id": "off-host-backup-storage",
+      "vendor": "Hetzner",
+      "service": "Hetzner Storage Box (SFTP + rclone)",
+      "effective_from": "2026-08-08",
+      "effective_until": "2026-11-08",
+      "removal_reason": "List correction: off-host backups are stored with the production hosting providers, not a Hetzner Storage Box.",
+      "archived_at": "2026-11-08"
+    }
+  ],
   "_comment": "Each removed sub-processor becomes one object here. Shape: {\"id\": \"...\", \"vendor\": \"...\", \"service\": \"...\", \"effective_from\": \"YYYY-MM-DD\", \"effective_until\": \"YYYY-MM-DD\", \"removal_reason\": \"...\", \"archived_at\": \"YYYY-MM-DD\"}. The id MUST NOT be reused in subprocessors.json — once archived, the id is dead."
 }

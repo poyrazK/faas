@@ -28,6 +28,7 @@ SELECT (o.payload::jsonb->>'wake_id')::text AS wake_id,
  WHEN position('reason=telemetry_missing' in o.last_error)>0 THEN 'telemetry_missing'
  WHEN position('reason=requests_active' in o.last_error)>0 THEN 'requests_active'
  WHEN position('reason=quiet_period_not_elapsed' in o.last_error)>0 THEN 'quiet_period_not_elapsed'
+ WHEN position('app_startup_crash' in o.last_error) > 0 THEN 'app_startup_crash'
  ELSE 'restart_attempt_failed' END::text AS failure_reason,
  o.created_at AS requested_at,o.delivered_at AS completed_at
 FROM notification_outbox o JOIN apps a ON a.id=sqlc.arg(app_id) AND a.account_id=sqlc.arg(account_id) AND a.status<>'deleted'
@@ -101,3 +102,8 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND request_id=sqlc.arg(request_id):
 -- name: WriteEnvironmentBudgetReceipt :exec
 INSERT INTO environment_route_budget_receipts(account_id,request_id,app_id,request_hash,response)
 VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(request_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(request_hash)::text,sqlc.arg(response)::jsonb);
+
+-- name: ReadEnvironmentBudgetReceiptForApp :one
+SELECT request_hash,response FROM environment_route_budget_receipts
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND request_id=sqlc.arg(request_id)::uuid;

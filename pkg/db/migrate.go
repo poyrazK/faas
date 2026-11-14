@@ -108,7 +108,7 @@ func MigrateUp(ctx context.Context, pool *pgxpool.Pool) error {
 	if err := applyScopedMigrations(ctx, sqlDB, option != nil); err != nil {
 		return fmt.Errorf("db: goose up: %w", annotateSchemaDrift(err))
 	}
-	return nil
+	return CheckNoInvalidIndexes(ctx, pool)
 }
 
 // duplicateObjectSQLStates are the Postgres error codes that mean "the thing

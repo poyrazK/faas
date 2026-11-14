@@ -1,0 +1,451 @@
+# ADR 20261023093000 · Native qualification capture opens behind a host opt-in
+
+- **Status:** accepted for acceptance hosts; production stays closed
+- **Date:** 2026-10-23
+- **Related:** ADR-568 (environment GitOps; native capture/restore gate),
+  ADR-1646 (candidate binding qualification), ADR 20261022184951 (native
+  runtime capture), ADR 20261021153953 (push-bound worker listener),
+  ADR 20261022155812 (pull-queue smoke leases)
+
+This record has a date-and-time identifier because numbered ADRs collide
+when parallel changes pick the next number.
+
+## Context
+
+ADR-568 keeps native qualification capture closed until capture and restore
+pass dedicated acceptance. In code that was
+`JailerVMM.checkEnvironmentQualificationSnapshotSupport`, which refused every
+capture unconditionally. The rest of the path, from the original candidate
+through native capture, journal-backed restore, smoke and owner-authorized
+retirement, is implemented. The gate also refused the acceptance run that is
+meant to prove it, so the native GitOps and managed-service journeys could
+never get past capture.
+
+On the n2 test node, every earlier prerequisite now passes: nftables 1.1.3,
+loose `rp_filter` on `br-tenants`, and the push-worker listener. A graph
+reaches capture and stops there with
+`environment_qualification_unconfirmed`. The native capture protocol itself
+(`TestMetalNativeCaptureSequence`: complete, lost_create, lost_resume)
+passed on n2 under the runtime-capture work.
+
+## Decision
+
+- **The opt-in.** vmmd gains `native_qualification_capture`, off by default.
+  `LoadConfig` refuses it unless `native_process_recovery = true` and both
+  `native_snapshot_publication_root` and `native_image_staging_root` are set.
+  vmmd then calls `JailerVMM.WithEnvironmentQualificationCapture()`.
+- **The gate.** It opens only when the opt-in and every native prerequisite
+  are present on the jailer. A default or partially configured host keeps the
+  unchanged refusal before any effect.
+- **Acceptance hosts.** The e2e harness sets the option only for
+  `GREGALE_GITOPS_NATIVE_ACCEPTANCE=1`, so the native GitOps journey is the
+  acceptance for capture, restore, smoke and retirement on that host class.
+- **Production.** No production template sets it. Enabling it on a production
+  host needs a passing native GitOps acceptance on that host class and an
+  operator decision. The decision must also settle the shared snapshot
+  directory, because the exclusive publication writer refuses
+  `/srv/fc/snap`'s group-writable 2770 mode, the same open question as
+  ADR 20261022184951.
+
+## Consequences
+
+- Acceptance runs can reach restore, smoke and retirement natively, and their
+  result is recorded below.
+- The option's own refusal at load time prevents a half-configured host from
+  booting candidates that every capture would then reject.
+- Production behaviour is unchanged until an operator sets the option.
+
+## Amendment 1 (2026-10-24): restore delivers its receipt control over the resume hook
+
+The first n2 run (`bindq-e1837337bf`) booted both candidates, passed the
+source smoke and native capture, and retired both VMs. The restore then
+failed with:
+
+```
+native restore load: verify original layer.ext4: storage: artifact differs from original receipt
+```
+
+Restore was staging pre-boot files (secrets, API env with a fresh receipt
+token, resolver, CA) into the captured `layer.ext4` before load. Load
+verifies that layer byte-for-byte against the capture receipt, so every
+restore failed. Writing into a filesystem the restored guest already has
+mounted is unsafe anyway. Also, guest-init emitted its configuration receipt
+only at startup. A restored guest never re-reads the env file, so even an
+unchecked layer could not have produced the restored-target receipt that
+ADR-568 requires.
+
+- **No staging on restore.** Restore stages no pre-boot file and unseals no
+  secret. The layer stays identical to the capture, and the strict load
+  check is kept.
+- **A fresh control on the resume hook.** vmmd generates a fresh one-time
+  token and MAC key per restore attempt. It sends them in the resume-hook
+  body as `qualificationReceipt`, an `omitempty` key, over the connection
+  that is already checked against the pinned original process. The waiter
+  expects the restore request's frozen projection: the API env digest and
+  the MAC of the secret key names.
+- **The guest re-attests.** A qualification boot that emitted its receipt
+  keeps only the receipt basis: the API env digest and the sorted secret key
+  names, never secret values. After it acknowledges the resume, guest-init
+  re-emits a receipt with the same encoding under the fresh control.
+  - It retries for up to 30 s, because vmmd opens the restore's guest-event
+    channel only after the acknowledgement.
+  - A guest without a boot basis withholds the receipt.
+  - A malformed control is ignored.
+  - Both cases fail closed on the host.
+- **The host waits while the channels are open.** The restore's private
+  guest channels close when the native restore returns. A restored app is
+  ready almost at once, so vmmd consumes the receipt inside the restore,
+  after readiness and before the channels close. The first n2 run with this
+  amendment (`bindq-0d1f6f3315`) showed the receipt leaving the guest
+  113 ms after resume. vmmd then cancelled the stream when the channels
+  closed, because it only waited after the restore had returned.
+- **The expectation uses the capture's instance identity.** A snapshot
+  restore cannot change the environment of a running process, so the
+  restored guest keeps the `FAAS_INSTANCE_ID` it booted with. That is the
+  capture instance's ID, while schedd builds the restore spec for the target
+  instance. `FAAS_INSTANCE_ID` is the only per-instance entry: the restore runs
+  under the same request and graph, on the same node, so binding URLs match.
+  - vmmd expects the restore request's env with that entry set to the
+    capture instance.
+  - schedd records the same digest for the restored target
+    (`fcvm.QualificationRestoreAPIEnvSHA256`).
+  - The n2 rerun with the in-restore wait had the receipt rejected
+    (`did not match this attempt`) until this change.
+- **The restored smoke reaches its target.** schedd probes a restored graph
+  through vmmd's private HTTP forward, which resolves instances with
+  `NetnsFor`.
+  - A source candidate boots through the generic wake, so it sits in the
+    serving index, flagged `QualificationOnly`.
+  - A restored target stays in the private qualification registry, so the
+    probe failed with `instance "…" not live`.
+  - `NetnsFor` now also resolves a restored qualification target (restore
+    method, not a Job) from that registry.
+  - On a native host the forward also needs the captured public forward
+    target. The restore now enables public forwarding on its network, as the
+    wake does, and captures the target after network setup.
+    `PublicForwardTarget` resolves it under the same rule.
+  - HTTP forward admission (ADR-570) admits instances only from the serving
+    index. It now resolves restored targets under the same rule. Their
+    admission generation retires through the shared cleanup.
+  - Together these give the probe the same reach a source candidate already
+    has. The serving index and routing are unchanged.
+- **Framework-ready evidence (decided 2026-10-26).** Only a function runtime
+  runner signals framework-ready. It records the signal in guest memory,
+  which a snapshot keeps, and serves it when the host reads guest port 1027.
+  It never pushes the signal again after a restore.
+  - A candidate whose app has no runtime (`apps.runtime` empty) never
+    signals framework-ready, and production stamps none for it. Its graph
+    member now carries `no_framework_ready_signal`, and activation evidence
+    no longer requires that receipt for it.
+  - Graphs stored before this change keep the requirement: the field is
+    absent there, which fails closed.
+  - For a runner candidate the restore reads the stored state from the
+    restored guest after the native restore succeeds. vmmd records the
+    framework-ready receipt for the restore frame before it publishes the
+    target, using the frozen runtime label.
+  - The n2 run with 4919977311 completed the whole qualification dispatch
+    for the first time. Activation then waited only on this receipt for two
+    full-rootfs image candidates.
+- **What the receipt proves.** A capture made from different inputs cannot
+  satisfy the restore request's expectation. Restore still refuses sidecars,
+  so only the main workload re-attests.
+- **Version skew.** An older guest ignores the new key and sends no receipt,
+  so the restore fails closed instead of qualifying without proof.
+
+## Acceptance record
+
+- 2026-10-23, n2 `bindq-e1837337bf`: capture passed; restore failed at the
+  layer verification described in amendment 1.
+- 2026-10-24/25, n2 `bindq-0d1f6f3315`:
+  - The Linux unit tests passed.
+  - The restore loaded the capture with the strict layer check, and the
+    resume hook was acknowledged.
+  - The receipt was dropped as described above.
+- 2026-10-25, n2, rerun with b5819ddd5a on a private PostgreSQL (the shared
+  e2e cluster was down after a full root disk):
+  - The gitlab restore received the guest's receipt inside the restore.
+  - vmmd rejected the receipt because of the instance identity mismatch
+    described above.
+  - The github capture failed on a full scratch disk.
+- 2026-10-26, n2, rerun with 7f95c9cbee on a private PostgreSQL:
+  - All four graph members, two per provider, were captured and restored.
+  - Every restored guest's receipt arrived within 110–292 ms and was
+    accepted.
+  - The restored-graph smoke then failed with `not live`, as described above.
+- 2026-10-26, n2, rerun with 170e8ed217 (`NetnsFor` only):
+  - Restore and receipts passed again.
+  - The probe then failed with `public forward instance is not live`.
+- 2026-10-26, n2, rerun with 4919977311:
+  - The github graph completed the whole native qualification dispatch:
+    capture, restore, guest receipt, restored-graph smoke and retirement.
+  - Activation evidence then lacked only framework-ready (both candidates
+    are image apps), activation and serving.
+- 2026-10-27, n2, the branch merged with main (1da4b81a7e):
+  - vmmd refused the shared native journal. Another session's older vmmd had
+    left launch records without the newer lease fields.
+  - With the user's approval, the journal was moved aside, not deleted.
+  - The rerun passed restore and receipts. The restored-graph smoke then
+    failed on HTTP forward admission, as described above.
+- 2026-10-28, n2, rerun with 46e36b254e:
+  - The gitlab graph completed the whole native qualification dispatch on
+    the merged tree.
+  - The github candidates failed to deploy before qualification. imaged
+    staged the shared minimal base for two plain-image deployments at once.
+    The first one's scan publication then failed as stale (`state: runtime
+    inputs changed after admission`).
+  - ac56849e87 serializes minimal-base staging, as runtime bases already
+    were.
+- 2026-10-28, n2, rerun with ac56849e87:
+  - Every candidate in both graphs finished preparation.
+  - The gitlab graph qualified natively for the first time: two captures,
+    two restores, two guest config acknowledgements and two smokes. Its
+    evidence reported `Qualified`. Activation had not happened when the
+    test's 12-minute window closed, about 4.5 minutes after qualification.
+  - The github capture's cold boot spent 33.8 s provisioning the jail chroot
+    on the busy shared disk. It overran schedd's cold-boot budget, and the
+    5-minute qualification lease held the retry past the test window.
+  - 939289c79e makes the test report the GitOps runs and the graph,
+    qualification and release rows when it times out.
+- 2026-10-29, n2, rerun with the timeout diagnostics:
+  - gitlab qualified again. Every apid pass then ended
+    `environment_runtime_unacknowledged`, and no release set existed.
+    - The test fixture's apps had no revision pin TTL. Activation publishes a
+      project release set, which refuses such an app, so it returned "not
+      activated" without an error.
+    - a52d0adfb6 sets the TTL, as the source-Jobs journey already did.
+  - The github capture failed with `create original snapshot: unexpected
+    EOF`.
+    - vmmd's cgroup fence repair had written the ordinary `memory.max` back
+      into the capture's scope, and the kernel OOM-killed Firecracker while it
+      wrote the snapshot.
+    - The native snapshot allowance (ADR-568) raised the limit without moving
+      the fence record, unlike `widenSnapshotFence` on the ordinary path. This
+      affects every native capture, runtime capture included.
+    - 66cf2736ae records each limit in the fence before writing it.
+- 2026-10-29, n2, rerun with 66cf2736ae and a52d0adfb6:
+  - Both graphs, github and gitlab, were captured, restored, qualified and
+    activated natively for the first time.
+  - The first customer queue delivery then failed a test check. A bound
+    queue keeps its environment on the binding, not on the invocation.
+    3366c8253d checks the binding instead.
+- 2026-10-29, n2, rerun with 3366c8253d:
+  - The first queue delivery dead-lettered. The test created its apps with
+    no node, and queue delivery routes through the app's node. 8072f211e5
+    places them on the harness node.
+  - The worker's first serving cold boot timed out on the loaded host. schedd
+    could not mark it failed:
+    - The legacy-qualification fallback of the ADR-435 retirement guard
+      covered every frameless instance of a deployment with an
+      `environment_workload_runtime`.
+    - Activation keeps that runtime, so the ordinary serving instances of an
+      activated GitOps workload could never fail, park or be removed.
+    - 09b75d2ce7 limits the fallback to held candidates, in a new migration
+      with a Postgres test.
+  - The rerun with those fixes routed the delivery. The worker's serving
+    cold boot then succeeded, but recording its runtime receipt was refused:
+    the runtime-receipt guard also treated every instance of such a
+    deployment as a qualification attempt.
+    - 680403868b lets a frameless instance of an unheld live deployment
+      through, as the instance reservation guard already did.
+    - It is in the same unreleased migration and is covered by the same
+      Postgres test.
+    - Main's `20261103210000001` (ADR-20261103210001) later replaced both
+      guards with a superset of these exemptions. The branch's migration was
+      dropped before it landed, so it cannot run after main's and restore the
+      older definitions; the Postgres test now covers main's guards.
+- 2026-10-29, n2, rerun with 680403868b, after the user approved removing
+  two leaked builder jails another session left behind (their TUN device
+  mounts stopped every native vmmd from starting):
+  - github: the worker's serving wake succeeded and the first customer
+    delivery reached `dispatching`. Finalizing it then failed with `function
+    public.environment_workload_serving_ready(uuid) does not exist`.
+    - Two serving queries schema-qualified that function, unlike every
+      other schema function. That only breaks per-test schemas.
+    - 59adf9a06d calls it unqualified.
+  - gitlab: the second member's restore ran out of time while it staged its
+    snapshot inputs on the loaded host. The partial copy then failed its
+    receipt check. Earlier runs restored the same graph.
+- 2026-10-29, n2, rerun with 59adf9a06d:
+  - The gitlab graph was activated natively, its release set went live, and
+    the first customer queue delivery completed.
+  - Serving convergence then failed on every apid pass
+    (`environment_runtime_verification_failed`) until the 4-minute serving
+    window closed.
+  - github's capture was cancelled while copying its private image on the
+    loaded host.
+- 2026-10-29, n2, rerun with an uncommitted diagnostic that logs the
+  verification error:
+  - Both graphs, github and gitlab, were activated and completed their first
+    customer queue delivery.
+  - Every later apid pass then refused the activated candidate: `stored
+    candidate inputs differ from the reviewed intent`.
+    - The frozen inputs carry an inherited baseline, the app's live
+      deployments at review. On Postgres that baseline includes the
+      candidate itself once activation makes it live.
+    - c23c5fd766 carries the frozen baseline over for an activated (live,
+      unheld) candidate. Every other authority field must still match.
+- 2026-10-30, n2, rerun with c23c5fd766:
+  - The candidate refusal is gone, and both graphs were activated again.
+  - Serving still failed on every pass, now with a bare `state: conflict`.
+    Many store calls return that.
+  - 44e992a7f0 names the failing step in the verification error.
+- 2026-10-30, n2, rerun with 44e992a7f0:
+  - The named step was `reconcile preparation`. Preparation reconciliation
+    compared the activated candidate's inputs strictly, and so did source
+    requests.
+  - eb173a4d6d routes all three post-activation checks through one helper
+    with the activated-candidate comparison. Activation itself keeps the
+    strict match on a held candidate.
+- 2026-10-30, n2, reruns with eb173a4d6d and then f4121638b6. Each cleared
+  the next refusal that came after activation:
+  - The preparation reconcile computed `preparing` for live candidates and
+    tried `prepared` → `preparing`, which the graph guard refuses.
+    f4121638b6 counts a live candidate as prepared.
+  - Qualification was re-queued on every pass. Its guard admits only
+    snapshotting candidates. f86f27291e queues nothing for an activated
+    graph.
+  - gitlab's vmmd once stalled in native recovery right after github's
+    teardown and never opened its socket. Every earlier run started.
+- 2026-10-30, n2, rerun with f86f27291e:
+  - The github graph made it through every apid pass without an error.
+    Serving convergence still never completed: the journey ran no serving
+    gateway, so there was no route acknowledgement to wait for.
+  - 17923ec133 registers gatewayd as the default-local serving gateway, as
+    the edge-rule and runtime-policy journeys do.
+  - gitlab's qualification cold boot timed out on the loaded host.
+- 2026-10-31, n2, rerun with 17923ec133:
+  - The first attempt never started. vmmd refused the shared native journal,
+    whose launch records another session's newer vmmd had written.
+  - After that session moved the journal aside, the rerun activated github.
+    Serving preparation then failed with `function
+    public.environment_workload_scheduled_job_acks(uuid, uuid) does not
+    exist`, the same qualification bug as 59adf9a06d.
+    - 4472b400d9 calls it unqualified. No other faas query qualifies a
+      schema function.
+  - The first queue delivery dead-lettered. All five attempts ran out while
+    the worker's cold boots waited on slow `nft` and `debugfs` steps.
+  - gitlab's capture was cancelled mid-copy of its private image.
+- 2026-10-31, n2, rerun with 4472b400d9:
+  - Both graphs, github and gitlab, were captured, restored, qualified and
+    activated natively, and each completed its first customer queue
+    delivery.
+  - github's serving evidence completed (`Serving:true`, no blocking
+    reasons).
+  - The applied revision was still never recorded. Every apid pass ended
+    `environment_runtime_unacknowledged`, which points at the runtime
+    readiness checks that follow serving convergence.
+- 2026-10-31, n2, rerun with an uncommitted readiness diagnostic:
+  - The blocker was the runtime target's `UnqualifiedWorkloads:1`.
+  - That fence comes from the ADR-568 preview. It counts every Git-managed
+    workload source as unqualified, and nothing clears it, so an enforced
+    graph could never record its applied revision.
+  - 6bc1801865 treats the fence as met when the reviewed graph qualified,
+    activated and served in the same pass. Freshness checks still apply,
+    and report mode keeps the fence.
+- 2026-11-01, n2, rerun with 6bc1801865 and an uncommitted apid diagnostic:
+  - Runtime readiness passed, but no pass finished. Each run was
+    superseded when its 60 s lease lapsed.
+  - The converged finish returned a conflict, which the worker drops
+    silently. `HasEnvironmentGitOpsRuntimeDrift` counted the graph's own
+    managed `source` and `runtime/*` fields as drift.
+  - 41a368edce does not count a field as drift when a served receipt of the
+    approved graph names its resource. The in-memory store applies the same
+    rule.
+- 2026-11-01, n2, rerun with 41a368edce:
+  - gitlab recorded its applied revision and passed `baseline_serving`.
+  - github's worker cold boots took 55 s against the 35 s budget
+    (`ColdBootTimeout`, spec §6.1), with 19 s in `env_prepare`. The first
+    queue delivery used its five attempts in 50 s while no worker ran, then
+    dead-lettered.
+  - gitlab's first two resilience requests, sent 22 s after a 32 s cold
+    boot, missed the 250 ms public host read (`TrafficPublicHostReadTimeout`,
+    ADR-570). The gateway refused them with 503 `traffic_policy_unavailable`
+    as designed.
+- 2026-11-02, n2, rerun with e5f2b0050d:
+  - gitlab passed `baseline_serving` again.
+  - github's qualification HTTP probe missed vmmd's 2 s stream bridge
+    readiness wait while two VMs booted. The failed attempt cleaned up its
+    VMs, but its claim had been renewed to the 8-minute job qualification
+    lease, so no retry could start before the 12-minute activation wait
+    ended. The lease semantics are unchanged.
+  - gitlab's first resilience requests were refused at wake with a generic
+    503. The public-routing wake path dropped the scheduler's cause.
+    7994d1b98d logs it as on the ordinary wake path.
+- 2026-11-02, n2, rerun with 7994d1b98d and rebuilt `schedd` and
+  `gatewayd-internal`:
+  - Both graphs passed `baseline_serving`.
+  - Every ordinary wake of an activated candidate failed with `deployment
+    runtime value owner or grants changed`. The value snapshot hashes the
+    app with the candidate's frozen runtime overlay
+    (`AppForDeploymentRuntime`), but `ResolveAppForDeployment` never applied
+    it. Only the qualification paths did, so a live candidate could not be
+    woken once its qualification instance was gone.
+  - The fix applies the overlay in `ResolveAppForDeployment` after the
+    workload spec, matching the PgStore snapshot. The in-memory snapshot
+    now also applies it when a workload spec exists. A deployment without
+    a frozen runtime is unchanged.
+- 2026-11-03, n2, rerun with 700bd792ce:
+  - Both graphs passed `baseline_serving`. The first resilience wakes were
+    cut after about 7 s. gatewayd-internal's 10 s edge-listener heartbeat
+    fired `compute_node_changed`, and each gateway closed its cached schedd
+    client mid-wake. Main had fixed the trigger on 10-27
+    (`20261027213512170`); afc9e184d9 merges main into this branch.
+- 2026-11-04, n2, merged branch afc9e184d9 on an idle host:
+  - github's status poll got one retryable 503 (`Could not read the
+    project.`); the journey treated any status error as fatal, and apid did
+    not log the cause.
+  - gitlab's first queue delivery dead-lettered. Five attempts ran in about
+    20 s while the scale-from-zero push worker was still cold-booting, which
+    takes 20-50 s on n2.
+  - The journey now tolerates the status API's retryable 503 for up to 30 s
+    and waits for a running worker before the first delivery. apid logs the
+    store error behind a GitOps status 503. Queue retry semantics are
+    unchanged; a delivery sent while a queue-woken worker still boots can use
+    up its attempts on a slow host. That is a native acceptance limitation,
+    not covered here.
+- 2026-11-04, n2, rerun with c887b47359 and 94fe3d7d85. The two reruns before
+  it had reused an `e2e.test` built from afc9e184d9, so those journey changes
+  had not run.
+  - Both graphs passed `baseline_serving`, and gitlab passed
+    `source_outage_restart`.
+  - github's first customer requests got 404 `No such app`. The host's route
+    read ran past 250 ms in an organization read. With no last-known-good
+    route, the gateway's cached host path called the host unknown, so the
+    retry of ADR-20261027085556 amendment 2 never ran. Amendment 3 returns
+    the read's error on that path; the lookup retries it within the cold bound
+    and then refuses with 503.
+  - gitlab's superseding revision (generation 3) never activated. Liveness
+    destroyed the worker's qualification original while the native capture
+    held it paused to copy the frozen drive (n2's filesystem cannot reflink),
+    so the capture was cancelled. The failed attempt then held its claim past
+    the activation wait.
+  - The native capture now suspends the guest's liveness, readiness and
+    framework-ready probes while it holds the guest paused, as the measured
+    runtime capture does. A completed capture resumes the guest and restarts
+    them; a failed one leaves them stopped, and the original is retired with
+    its attempt.
+- 2026-11-04, n2, rerun with e04c805824 on a host shared with other runs:
+  - Both graphs passed `baseline_serving` and `source_outage_restart`, with
+    no liveness kill, route-read failure or 404.
+  - Both failed `held_revision_supersession` at the 12-minute activation
+    wait. Preparing the superseding revision took 6-7 minutes, against about
+    3.5 minutes for the baseline.
+  - Both captures of github's generation 3 completed. Its first restore then
+    ran out the 5-minute qualification claim
+    (`EnvironmentGitOpsQualificationLeaseDuration`) while it staged full drive
+    copies and waited for the resume ack. gitlab's preparation left 5 minutes,
+    and its qualification was still running when the wait ended. On this host
+    the phase needs either a longer activation wait or a longer qualification
+    lease; both are unchanged.
+- Accepted 2026-11-04 (owner decision): on n2 the native GitOps journey is
+  verified through `baseline_serving` and `source_outage_restart` for both
+  providers. `held_revision_supersession` is an n2 time-budget limitation, and
+  the later resilience phases are not verified on n2.
+
+## Rejected alternatives
+
+- **Remove the gate.** That would open capture on every native host before
+  any acceptance.
+- **Tie it to `native_runtime_capture`.** Runtime capture and qualification
+  capture have different authority and retirement paths, and each needs its
+  own acceptance.

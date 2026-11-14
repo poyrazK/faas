@@ -55,3 +55,14 @@ recovery, whether it comes from the Dockerfile or a Compose override.
 - Railpack builds declare no HEALTHCHECK and are unaffected.
 - Native qualification of the gate on a built image is pending with the other
   ADR-683/684 native lanes.
+
+## Amendment (2026-11-05): publish the built image's runtime port
+
+The same profile handoff also records the effective guest port when no explicit
+deployment port override exists. A source Dockerfile may inherit its EXPOSE from
+the base image, leaving static inference at 8080 while the built image listens
+on a different port. Imaged merges that port into the existing profile before
+publishing the app layer, preserving unknown fields and the frozen Compose
+contract. This write is required even without a command HEALTHCHECK when the
+port differs. The scheduler uses it for first-boot readiness, DNAT and later
+wakes. Failure to persist the profile stops conversion before publication.

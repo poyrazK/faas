@@ -41,6 +41,15 @@ WHERE account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_
   AND environment_slug = sqlc.arg(environment_slug)::text
 ORDER BY key;
 
+-- name: ProjectEnvironmentSharedSecretGeneration :one
+SELECT e.shared_secret_generation, EXISTS (
+    SELECT 1 FROM project_environment_secrets s
+    WHERE s.project_id = e.project_id AND s.environment_slug = e.slug
+) AS has_shared_secrets
+FROM project_environments e
+WHERE e.account_id = sqlc.arg(account_id)::uuid AND e.project_id = sqlc.arg(project_id)::uuid
+    AND e.slug = sqlc.arg(environment_slug)::text;
+
 -- name: CopyProjectEnvironmentSecrets :execrows
 -- An environment clone copies the source environment's shared secrets as it
 -- copies app secrets: the envelope is not bound to an environment.

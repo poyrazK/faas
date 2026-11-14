@@ -11,7 +11,7 @@ import (
 // 2,400-column usage line; the Commands section lists them anyway (Hunt 14
 // H14-48).
 func TestHelpUsageLineStaysReadableForLargeCommandFamilies(t *testing.T) {
-	for _, command := range []string{"events", "automations", "jobs"} {
+	for _, command := range []string{"events", "stored-workflows", "jobs"} {
 		t.Run(command, func(t *testing.T) {
 			out, restoreOut := main.CaptureStdout(t)
 			errOut, restoreErr := main.CaptureStderr(t)

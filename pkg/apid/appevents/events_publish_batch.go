@@ -81,9 +81,11 @@ func (s *Service) publishEventBatchItem(ctx context.Context, store state.Publish
 	if _, reserved := eventcontract.AppSource(envelope.Source); reserved {
 		return batchPublishFailure("rejected", false, AppSourceReservedProblem())
 	}
-	if problem, retryable := s.batchEventSchemaProblem(ctx, acct.ID, req); problem != nil {
-		return batchPublishFailure("rejected", retryable, problem)
+	environment, problem := s.PublishEnvironment(ctx, acct.ID, req.EnvironmentID)
+	if problem != nil {
+		return batchPublishFailure("rejected", problem.Status >= http.StatusInternalServerError, problem)
 	}
+	envelope.EnvironmentID = environment
 	envelope.Producer = producer
 	trace := pkgtrace.InjectHeaders(ctx)
 	envelope.Traceparent, envelope.Tracestate, envelope.Baggage = trace["traceparent"], trace["tracestate"], trace["baggage"]
@@ -91,16 +93,19 @@ func (s *Service) publishEventBatchItem(ctx context.Context, store state.Publish
 	if err != nil {
 		return batchPublishFailure("rejected", false, api.ErrValidation("invalid event data"))
 	}
-	if !api.WorkflowEventEnvelopeFits(payload) {
-		if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
-			accepted, lookupErr := lookup.LookupPublishedEventAcceptance(ctx, acct.ID, payload)
-			if lookupErr == nil {
-				return api.PublishEventBatchResult{Status: "duplicate", Receipt: &api.PublishEventResponse{ID: envelope.ID, AccountID: acct.ID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: EventReceiptURL(envelope.Source, envelope.ID)}}
-			}
-			if errors.Is(lookupErr, state.ErrConflict) {
-				return batchEventAcceptanceFailure(lookupErr)
-			}
+	if lookup, ok := s.Host.Store().(state.PublishedEventLookupStore); ok {
+		accepted, lookupErr := lookup.LookupPublishedEventAcceptance(ctx, acct.ID, payload)
+		if lookupErr == nil {
+			return api.PublishEventBatchResult{Status: "duplicate", Receipt: &api.PublishEventResponse{ID: envelope.ID, AccountID: acct.ID, AcceptedAt: accepted.AcceptedAt, ReceiptURL: EventReceiptURL(envelope.Source, envelope.ID)}}
 		}
+		if !errors.Is(lookupErr, state.ErrNotFound) {
+			return batchEventAcceptanceFailure(lookupErr)
+		}
+	}
+	if problem, retryable := s.batchEventSchemaProblem(ctx, acct.ID, req); problem != nil {
+		return batchPublishFailure("rejected", retryable, problem)
+	}
+	if !api.WorkflowEventEnvelopeFits(payload) {
 		return batchPublishFailure("rejected", false, api.ErrWorkflowEventEnvelopeTooLarge())
 	}
 	accepted, err := store.AcceptPublishedEvent(ctx, "apid", acct.ID, payload)

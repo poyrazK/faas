@@ -29,7 +29,8 @@ func TestComputePushReservesLiveObjectStorageAgainstCap(t *testing.T) {
 		mode      string
 		wantMBSec int64
 	}{
-		// A 3-cent cap holding 1,500 millicents of storage leaves 1.5 GB-hours.
+		// A three-GB-hour cap holding 1.5 GB-hours' worth of storage leaves
+		// 1.5 GB-hours.
 		{"live storage keeps its place", state.ObjectStorageDeliveryLive, 3 * api.SecondsPerGBHour / 2},
 		{"shadow storage reserves nothing", state.ObjectStorageDeliveryShadow, 2 * api.SecondsPerGBHour},
 	} {
@@ -37,12 +38,12 @@ func TestComputePushReservesLiveObjectStorageAgainstCap(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
 			acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
-			store.SetOverageCapCentsForTest(acct.ID, 3)
+			store.SetOverageCapCentsForTest(acct.ID, 3*overageCentsPerGBHour)
 			start := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
 			if err := store.AppendUsage(ctx, acct.ID, "app", "instance", start, api.IncludedMBSeconds(api.PlanHobby)+2*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 				t.Fatal(err)
 			}
-			saveObjectStorageCharge(t, store, acct.ID, tc.mode, state.ObjectStoragePeriod(start), 1000, 500)
+			saveObjectStorageCharge(t, store, acct.ID, tc.mode, state.ObjectStoragePeriod(start), api.OverageMillicentsPerGBHour, api.OverageMillicentsPerGBHour/2)
 			provider := &recordingOverage{}
 			pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(time.Hour) }, nil)
 			completeUsageThrough(t, ctx, store, start.Add(time.Hour))
@@ -69,6 +70,7 @@ func TestEgressPushReservesLiveObjectStorageAgainstCap(t *testing.T) {
 	}
 	saveObjectStorageCharge(t, store, acct.ID, state.ObjectStorageDeliveryLive, state.ObjectStoragePeriod(start), 500, 0)
 	provider := &combinedOverageProvider{recordingEgressProvider: recordingEgressProvider{mode: billing.MeterDeliveryLive}}
+	electEgressOverage(t, ctx, store, acct.ID)
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return start.Add(time.Hour) }, nil)
 	completeUsageThrough(t, ctx, store, start.Add(time.Hour))
 	if _, err := pusher.PushPending(ctx, 24*time.Hour); err != nil {

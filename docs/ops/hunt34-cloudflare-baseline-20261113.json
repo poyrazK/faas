@@ -1,0 +1,305 @@
+{
+  "phase": "before-owner-application",
+  "captured_at_utc": "2026-11-13T15:33:23Z",
+  "cloudflare_api_read": false,
+  "cloudflare_settings_applied": false,
+  "raw_capture_directory": "/private/tmp/h34-zone-before-final-20261113",
+  "http_host": "h34-zone-http-1113.gregale.dev",
+  "grpc_host": "h34-zone-grpc-1113.gregale.dev",
+  "direct_ip": "34.148.143.180",
+  "statuses": {
+    "200": {
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "direct_probe": true
+    },
+    "500": {
+      "cloudflare": 500,
+      "direct": 500,
+      "body_equal": true,
+      "direct_probe": true
+    },
+    "502": {
+      "cloudflare": 502,
+      "direct": 502,
+      "body_equal": false,
+      "direct_probe": true
+    },
+    "503": {
+      "cloudflare": 503,
+      "direct": 503,
+      "body_equal": true,
+      "direct_probe": true
+    },
+    "504": {
+      "cloudflare": 504,
+      "direct": 504,
+      "body_equal": false,
+      "direct_probe": true
+    }
+  },
+  "crawlers": {
+    "GPTBot": {
+      "user_agent": "GPTBot",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "ClaudeBot": {
+      "user_agent": "ClaudeBot",
+      "cloudflare": 403,
+      "direct": 200,
+      "body_equal": false,
+      "cloudflare_probe": false,
+      "direct_probe": true
+    },
+    "CCBot": {
+      "user_agent": "CCBot",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "Bytespider": {
+      "user_agent": "Bytespider",
+      "cloudflare": 403,
+      "direct": 200,
+      "body_equal": false,
+      "cloudflare_probe": false,
+      "direct_probe": true
+    },
+    "OAI-SearchBot": {
+      "user_agent": "OAI-SearchBot",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "PerplexityBot": {
+      "user_agent": "PerplexityBot",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "Googlebot": {
+      "user_agent": "Googlebot",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "Claude-User": {
+      "user_agent": "Claude-User",
+      "cloudflare": 200,
+      "direct": 200,
+      "body_equal": true,
+      "cloudflare_probe": true,
+      "direct_probe": true
+    },
+    "GPTBot-versioned": {
+      "user_agent": "GPTBot/1.2",
+      "cloudflare": 403,
+      "direct": 200,
+      "body_equal": false,
+      "cloudflare_probe": false,
+      "direct_probe": true
+    },
+    "ClaudeBot-versioned": {
+      "user_agent": "ClaudeBot/1.0",
+      "cloudflare": 403,
+      "direct": 200,
+      "body_equal": false,
+      "cloudflare_probe": false,
+      "direct_probe": true
+    },
+    "CCBot-versioned": {
+      "user_agent": "CCBot/2.0",
+      "cloudflare": 403,
+      "direct": 200,
+      "body_equal": false,
+      "cloudflare_probe": false,
+      "direct_probe": true
+    },
+    "Bytespider-versioned": {
+      "user_agent": "Bytespider/1.0",
+      "cloudflare": 403,
+      "direct": 200,
+      "body_equal": false,
+      "cloudflare_probe": false,
+      "direct_probe": true
+    }
+  },
+  "grpc": {
+    "Say": {
+      "cloudflare": {
+        "curl_grpc_status": [],
+        "h2_grpc_status": null,
+        "bytes": 12,
+        "ok": false
+      },
+      "direct": {
+        "curl_grpc_status": [
+          "0"
+        ],
+        "h2_grpc_status": "0",
+        "bytes": 12,
+        "ok": true
+      }
+    },
+    "Stream": {
+      "cloudflare": {
+        "curl_grpc_status": [],
+        "h2_grpc_status": null,
+        "bytes": 26,
+        "ok": false
+      },
+      "direct": {
+        "curl_grpc_status": [
+          "0"
+        ],
+        "h2_grpc_status": "0",
+        "bytes": 26,
+        "ok": true
+      }
+    },
+    "Fail": {
+      "cloudflare": {
+        "curl_grpc_status": [
+          "9"
+        ],
+        "h2_grpc_status": "9",
+        "bytes": 0,
+        "ok": true
+      },
+      "direct": {
+        "curl_grpc_status": [
+          "9"
+        ],
+        "h2_grpc_status": "9",
+        "bytes": 0,
+        "ok": true
+      }
+    }
+  },
+  "html": {
+    "body_equal": false,
+    "cloudflare": {
+      "status": 200,
+      "bytes": 1220,
+      "sha256": "660dfee4ce3a3e55cf4a7b42facf7bca4817d5ee7b1f0f9a39ac1f98ac5dff9f",
+      "jsd_injected": true,
+      "probe": true,
+      "csp": "default-src 'none'"
+    },
+    "direct": {
+      "status": 200,
+      "bytes": 106,
+      "sha256": "7f6f06490a3fcbb331fef17b3feb56b84c03ac02d944a0eba500a4bf44380f10",
+      "jsd_injected": false,
+      "probe": true,
+      "csp": "default-src 'none'"
+    }
+  },
+  "checks": {
+    "direct_status_bodies": true,
+    "pass_through_200_500_503": true,
+    "crawler_control": false,
+    "html_unchanged": false,
+    "grpc": false
+  },
+  "standard_grpc_js": {
+    "cloudflare": [
+      {
+        "method": "Say",
+        "code": 13,
+        "details": "Received RST_STREAM with code 0 (Call ended without gRPC status)",
+        "messages": [],
+        "ok": false
+      },
+      {
+        "method": "Stream",
+        "code": 13,
+        "details": "Received RST_STREAM with code 0 (Call ended without gRPC status)",
+        "messages": [
+          "one",
+          "two",
+          "three"
+        ],
+        "ok": false
+      },
+      {
+        "method": "Fail",
+        "code": 9,
+        "details": "zone deliberate failure",
+        "messages": [],
+        "ok": true
+      }
+    ],
+    "direct": [
+      {
+        "method": "Say",
+        "code": 0,
+        "details": "OK",
+        "messages": [
+          "echo:hi"
+        ],
+        "ok": true
+      },
+      {
+        "method": "Stream",
+        "code": 0,
+        "details": "OK",
+        "messages": [
+          "one",
+          "two",
+          "three"
+        ],
+        "ok": true
+      },
+      {
+        "method": "Fail",
+        "code": 13,
+        "details": "Received RST_STREAM with code 0 (Call ended without gRPC status)",
+        "messages": [],
+        "ok": false
+      }
+    ]
+  },
+  "selected_cloudflare_headers": {
+    "html": {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'none'",
+      "x-gregale-trace-id": "b327e2606534e39c84ee50a5693ddf76",
+      "server": "cloudflare",
+      "cf-ray": "a59ed5b4091fd5fc-IST"
+    },
+    "ua-GPTBot-versioned": {
+      "content-type": "text/plain",
+      "server": "cloudflare",
+      "cf-ray": "a59ed5c14b98d5fc-IST"
+    },
+    "ua-ClaudeBot-versioned": {
+      "content-type": "text/plain",
+      "server": "cloudflare",
+      "cf-ray": "a59ed5c20d26d5fc-IST"
+    },
+    "ua-CCBot-versioned": {
+      "content-type": "text/plain",
+      "server": "cloudflare",
+      "cf-ray": "a59ed5c2ee98d5fc-IST"
+    },
+    "ua-Bytespider-versioned": {
+      "content-type": "text/plain",
+      "server": "cloudflare",
+      "cf-ray": "a59ed5c3e846d5fc-IST"
+    }
+  }
+}

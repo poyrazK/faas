@@ -116,7 +116,7 @@ func (m *MemStore) processWorkflowRecoveryLocked(job *memEventRecoveryJob, item 
 	}
 	published := false
 	owned, _ := m.eventSubscriptionAppLocked(job.Job.AppID)
-	for _, a := range m.automationRecordsLocked(owned.ID) {
+	for _, a := range m.storedWorkflowRecordsLocked(owned.ID) {
 		if a.Name == p.Name && a.PublishedVersion == p.PublishedVersion {
 			published = true
 		}

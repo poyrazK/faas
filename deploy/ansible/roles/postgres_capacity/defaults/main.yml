@@ -33,8 +33,10 @@ faas_postgres_per_compute_object_gateway_direct_budget: 2
 # x db.directHubOnMaxConns (2, being one parked hub connection plus MigrateUp's
 # boot advisory lock), plus one for imaged: its deployment activation lock and
 # MarkDeploymentLive's ADR-570 traffic guard each pin a direct connection
-# (db.directNestedGuardHubOnMaxConns).
-faas_postgres_per_compute_direct_budget: 11
+# (db.directNestedGuardHubOnMaxConns). schedd adds five: four background
+# prime locks and one inline overflow lock, in addition to its hub and
+# short-session-operation headroom (db.directSchedulerHubOnMaxConns = 7).
+faas_postgres_per_compute_direct_budget: 16
 
 # pgbouncer's own backends against the postmaster: default_pool_size +
 # reserve_pool_size from the pgbouncer role. This is the whole compute fleet's

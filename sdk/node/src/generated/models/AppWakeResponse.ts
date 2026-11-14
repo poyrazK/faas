@@ -15,7 +15,7 @@ export type AppWakeResponse = {
    */
   already_running?: boolean;
   /**
-   * The running instance, present when already_running is true.
+   * The instance the wake resolves to: the running instance when already_running is true, or the frozen instance a queued wake resumes under its own wake_id.
    */
   instance_id?: string;
 };

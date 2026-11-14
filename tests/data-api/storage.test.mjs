@@ -87,12 +87,16 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   const sql = await readFile(new URL('../../cmd/gregale/templates/data-api/storage.sql', import.meta.url), 'utf8')
   await owner.query(`REVOKE ALL ON SCHEMA public FROM PUBLIC; CREATE SCHEMA api; CREATE SCHEMA bare;`)
   await owner.query(sql.replaceAll('{{schema}}', 'api'))
+  await owner.query((await readFile(new URL('../../cmd/gregale/templates/data-api/storage-sessions.sql', import.meta.url), 'utf8')).replaceAll('{{schema}}', 'api'))
+  await owner.query((await readFile(new URL('../../cmd/gregale/templates/data-api/storage-cleanup.sql', import.meta.url), 'utf8')).replaceAll('{{schema}}', 'api'))
   await owner.query(`CREATE POLICY own_uploads ON api.storage_objects
       USING (bucket = 'uploads' AND owner = current_setting('request.jwt.claims', true)::jsonb ->> 'sub')
       WITH CHECK (bucket = 'uploads' AND owner = current_setting('request.jwt.claims', true)::jsonb ->> 'sub' AND size <= 64);
     CREATE POLICY read_avatars ON api.storage_objects FOR SELECT USING (bucket = 'avatars');
     GRANT USAGE ON SCHEMA api TO "${role}";
     GRANT SELECT, INSERT, UPDATE, DELETE ON api.storage_objects TO "${role}";
+    GRANT SELECT, INSERT, UPDATE, DELETE ON api.gregale_storage_uploads TO "${role}";
+    GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA api TO "${role}";
     CREATE TABLE bare.storage_objects (bucket text, name text);
     ALTER TABLE bare.storage_objects ENABLE ROW LEVEL SECURITY;`)
   const loginURL = new URL(ownerURL); loginURL.username = role; loginURL.password = 'test-only'
@@ -109,13 +113,15 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   const s3 = name => ({ [`GREGALE_S3_${name}_ENDPOINT`]: bucket.origin, [`GREGALE_S3_${name}_REGION`]: 'us-east-1', [`GREGALE_S3_${name}_BUCKET`]: `real-${name.toLowerCase()}`, [`GREGALE_S3_${name}_ACCESS_KEY_ID`]: 'AKID', [`GREGALE_S3_${name}_SECRET_ACCESS_KEY`]: 'secret' })
   const config = runtimeConfig({ DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'files',
     DATA_API_STORAGE: 'on', DATA_API_PUBLIC_READ: 'api.storage_objects', ...s3('UPLOADS'), ...s3('AVATARS') })
+  config.storage=Object.freeze({...config.storage,maintenance:await checkStorageTable(loginURL.toString(),'api')})
+  assert.equal(config.storage.maintenance,true)
   const snapshot = await inspect(loginURL.toString(), ['api'])
   config.snapshot = snapshot; config.functions = snapshot.functions
   const upstream = await port(), ready = await port()
   child = spawn(process.env.DATA_API_POSTGREST_BIN, [], { env: { ...process.env, ...config.postgrestEnv, PGRST_SERVER_PORT: String(upstream), PGRST_ADMIN_SERVER_PORT: String(ready) }, stdio: ['ignore', 'pipe', 'pipe'] })
   let logs = ''; child.stdout.on('data', b => { logs += b }); child.stderr.on('data', b => { logs += b })
   const { privateKey, publicKey } = await generateKeyPair('ES256'), jwk = await exportJWK(publicKey)
-  const sign = sub => new SignJWT({ sub, gregale_storage: 'write' }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(config.auth.audience).setExpirationTime('5m').sign(privateKey)
+  const sign = (sub, extra = {}) => new SignJWT({ ...extra, sub, gregale_storage: 'write' }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(config.auth.audience).setExpirationTime('5m').sign(privateKey)
   gateway = createServer(config, tokenVerifier(config.auth, createLocalJWKSet({ keys: [jwk] })), upstream, ready, () => {})
   await new Promise(r => gateway.listen(0, '127.0.0.1', r))
   const url = `http://127.0.0.1:${gateway.address().port}`
@@ -135,12 +141,16 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   const firstVersion = await stored('alice/hello.txt')
   assert.match(firstVersion, /^\/real-uploads\/_gregale\/objects\/[0-9a-f]{32}$/)
   assert.equal(bucket.objects.get(firstVersion).toString(), 'hello')
+  assert.equal((await owner.query('SELECT count(*)::int AS n FROM gregale_storage_maintenance.owned_keys WHERE object_key=$1',[firstVersion.slice('/real-uploads/'.length)])).rows[0].n,1,'ownership is persisted before an object upload')
   assert.equal(await (await files(alice).download('alice/hello.txt')).text(), 'hello')
   assert.deepEqual(await refusal(files(bob).download('alice/hello.txt')), [404, 'storage_not_found'])
 
   const rest = (token, init = {}) => fetch(url + '/rest/v1/storage_objects', { ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...init.headers } })
   const forged = await rest(alice, { method: 'POST', body: JSON.stringify({ bucket: 'uploads', name: 'alice/forged.txt', size: 1, content_type: 'text/plain' }) })
   assert.equal(forged.status, 403, 'REST writes stop at the guard trigger')
+  const register = await fetch(url + '/rest/v1/rpc/gregale_storage_register_key', { method: 'POST', headers: { Authorization: `Bearer ${alice}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_bucket: 'uploads', p_key: '_gregale/objects/' + 'f'.repeat(32) }) })
+  assert.ok(register.status >= 400, 'ordinary REST cannot register cleanup ownership')
+  assert.equal((await owner.query("SELECT count(*)::int AS n FROM gregale_storage_maintenance.owned_keys WHERE object_key=$1",['_gregale/objects/'+'f'.repeat(32)])).rows[0].n,0)
   assert.deepEqual((await (await rest(alice)).json()).map(r => r.name), ['alice/hello.txt'], 'REST reads follow RLS')
   assert.deepEqual(await (await rest(bob)).json(), [])
 
@@ -176,4 +186,47 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   await files(alice).remove('alice/hello.txt')
   assert.ok(!bucket.objects.has(secondVersion))
   assert.deepEqual((await rows()).map(r => `${r.bucket}/${r.name}`), ['avatars/alice.png'])
+
+  const session = await files(alice).startUpload('resumed.txt', { size: 5, expectedVersion: null })
+  await files(alice).uploadPart(session.id, 1, new Blob(['hello']))
+  assert.deepEqual(await refusal(files(bob).getUpload(session.id)), [404, 'storage_session_not_found'])
+  assert.equal((await fetch(url + '/rest/v1/gregale_storage_uploads', { headers: { Authorization: `Bearer ${alice}` } })).status, 404)
+  const resumed = await files(alice).uploadResumable('resumed.txt', 'hello', { sessionId: session.id })
+  assert.match(resumed.version, /^[0-9a-f]{32}$/)
+  assert.equal(await (await files(alice).download('resumed.txt')).text(), 'hello')
+  assert.equal((await files(alice).head('resumed.txt')).version,resumed.version)
+  assert.deepEqual(await refusal(files(await sign('alice',{tenant:'other'})).getUpload(session.id)),[404,'storage_session_not_found'])
+  assert.deepEqual(await refusal(files(await sign('alice',{gregale_tenant:'other'})).getUpload(session.id)),[404,'storage_session_not_found'])
+  assert.deepEqual((await files(alice).completeUpload(session.id)).object, resumed, 'receipt makes finalization idempotent after reply loss')
+  const replacedSession = await files(alice).uploadResumable('resumed.txt', 'new', { expectedVersion: resumed.version })
+  assert.notEqual(replacedSession.version, resumed.version)
+  assert.deepEqual(await refusal(files(alice).uploadResumable('resumed.txt', 'stale', { expectedVersion: resumed.version })), [412, 'storage_version_conflict'])
+  assert.equal(await (await files(alice).download('resumed.txt')).text(), 'new')
+  assert.deepEqual(await refusal(files(alice).uploadResumable('resumed.txt', 'create', { expectedVersion: null })), [412, 'storage_version_conflict'])
+  const aborted = await files(alice).startUpload('cancelled.txt', { size: 1 })
+  await files(alice).uploadPart(aborted.id, 1, new Blob(['x']))
+  assert.equal((await files(alice).abortUpload(aborted.id)).state, 'aborted')
+  assert.deepEqual(await refusal(files(alice).completeUpload(aborted.id)), [409, 'storage_session_conflict'])
+  const bad=await files(alice).startUpload('checksum.txt',{size:3})
+  const mismatch=await fetch(`${url}/storage/v1/upload/uploads/${bad.id}/parts/1`,{method:'PUT',headers:{Authorization:`Bearer ${alice}`,'x-content-sha256':'0'.repeat(64)},body:'abc'})
+  assert.equal(mismatch.status,400)
+  assert.deepEqual((await files(alice).getUpload(bad.id)).parts,[])
+  let savedID,lost=false
+  const unreliable=createStorageClient({url,accessToken:alice,fetch:async(input,init)=>{
+    const response=await fetch(input,init)
+    if(String(input).endsWith('/complete')&&!lost){lost=true;await response.arrayBuffer();throw new TypeError('simulated response loss')}
+    return response
+  }}).from('uploads')
+  await assert.rejects(unreliable.uploadResumable('lost-receipt.txt','safe',{onSession:s=>{savedID=s.id}}))
+  assert.equal((await files(alice).getUpload(savedID)).state,'complete')
+  assert.equal((await files(alice).uploadResumable('lost-receipt.txt','safe',{sessionId:savedID})).size,4)
+  const competing=await Promise.allSettled([files(alice).uploadResumable('race.txt','one',{expectedVersion:null}),files(alice).uploadResumable('race.txt','two',{expectedVersion:null})])
+  assert.equal(competing.filter(r=>r.status==='fulfilled').length,1)
+  assert.equal(competing.find(r=>r.status==='rejected').reason.status,412)
+  await owner.query("ALTER POLICY own_uploads ON api.storage_objects WITH CHECK (bucket='uploads' AND owner=current_setting('request.jwt.claims',true)::jsonb->>'sub')")
+  const large=new Blob([Buffer.alloc(5*1024*1024,1),Buffer.from('tail')]),sizes=[]
+  const multipart=await files(alice).uploadResumable('large.bin',large,{onProgress:p=>sizes.push(p.uploaded)})
+  assert.deepEqual(sizes,[5*1024*1024,large.size])
+  assert.equal(multipart.size,large.size)
+  assert.deepEqual(Buffer.from(await (await files(alice).download('large.bin')).arrayBuffer()),Buffer.from(await large.arrayBuffer()))
 })

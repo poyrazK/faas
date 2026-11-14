@@ -1,0 +1,4 @@
+# Managed by the neond_service role (ADR-20261112160000): apid's Neon backend
+# forwards every Neon API call to neond, which holds the key.
+[Service]
+Environment=FAAS_MANAGED_POSTGRES_NEON_BROKER=unix:///run/faas/neond.sock

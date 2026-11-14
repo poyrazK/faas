@@ -37,6 +37,7 @@ MEMORY_EVENTS = ("low", "high", "max", "oom", "oom_kill")
 FAMILIES = {
     "faas_cgroup_cpu_usage_seconds_total": ("counter", "CPU time consumed by the cgroup (cpu.stat usage_usec)."),
     "faas_cgroup_cpu_throttled_seconds_total": ("counter", "Time the cgroup was throttled by its CPU quota (cpu.stat throttled_usec)."),
+    "faas_cgroup_cpu_quota_cores": ("gauge", "The cgroup's CPU quota in cores (cpu.max quota / period); absent when unlimited."),
     "faas_cgroup_memory_bytes": ("gauge", "Memory charged to the cgroup now (memory.current), page cache included."),
     "faas_cgroup_memory_anon_bytes": ("gauge", "Anonymous memory in the cgroup (memory.stat anon)."),
     "faas_cgroup_memory_file_bytes": ("gauge", "Page cache charged to the cgroup (memory.stat file)."),
@@ -79,6 +80,18 @@ def _single(text):
         return int(value)
     except ValueError:
         return None
+
+
+def _cpu_quota_cores(text):
+    """cpu.max "<quota> <period>" in cores; None for "max" (no quota)."""
+    parts = (text or "").split()
+    if len(parts) != 2 or parts[0] == "max":
+        return None
+    try:
+        quota, period = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    return quota / period if period > 0 else None
 
 
 def _io(text):
@@ -143,6 +156,9 @@ def collect(root, patterns):
             samples["faas_cgroup_cpu_usage_seconds_total"].append((cg, cpu["usage_usec"] / 1e6))
         if "throttled_usec" in cpu:
             samples["faas_cgroup_cpu_throttled_seconds_total"].append((cg, cpu["throttled_usec"] / 1e6))
+        quota = _cpu_quota_cores(_read(path / "cpu.max"))
+        if quota is not None:
+            samples["faas_cgroup_cpu_quota_cores"].append((cg, quota))
 
         for name, filename in (
             ("faas_cgroup_memory_bytes", "memory.current"),

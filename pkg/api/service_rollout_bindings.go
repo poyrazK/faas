@@ -5,6 +5,7 @@ import "time"
 // ServiceRolloutBindingGate is a bounded projection of a routing check. It is
 // status and audit evidence, never a reusable authorization for another switch.
 type ServiceRolloutBindingGate struct {
+	TrafficPercent int                   `json:"traffic_percent,omitempty"`
 	RequestID      string                `json:"request_id"`
 	Action         string                `json:"action"`
 	DeploymentID   string                `json:"deployment_id"`

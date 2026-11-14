@@ -1,0 +1,166 @@
+---
+# ADR-20261109120000: LUKS2 under the new data volume.
+#
+# - The volume key is bound with Clevis to the OTHER hosts' Tang servers
+#   (Shamir threshold 1: any one of them unlocks it). A host's own Tang keys
+#   sit on its plain root disk, so binding to them would let anyone holding
+#   this server's disks open the volume.
+# - A random recovery key fills a second LUKS slot. It is sealed to the
+#   operator's age recipients and kept beside the volume; it is worthless
+#   without an identity that is never on the fleet. It opens the volume if
+#   every Tang server is lost (docs/runbooks/disk-encryption.md).
+# - At boot, crypttab's _netdev entry waits for the network and
+#   clevis-luks-askpass answers the unlock from Tang. faas-* units require
+#   the mount, so a volume that cannot unlock stops the daemons instead of
+#   letting them write to an empty directory on the root disk.
+#
+# An existing plain volume is never converted in place: drain the node,
+# rebuild it on a blank disk, and let the snapshots and layers repopulate.
+
+- name: storage — require Tang peers and recovery recipients
+  ansible.builtin.assert:
+    that:
+      - faas_tang_peer_urls | default([]) | length > 0
+      - faas_disk_recovery_recipients | default([]) | length > 0
+      - faas_disk_recovery_recipients | select('match', '^age1[02-9ac-hj-np-z]{58}$') | list | length == faas_disk_recovery_recipients | length
+    fail_msg: >-
+      disk_encryption needs Tang peers (the other fleet hosts) and operator
+      age recipients; render the inventory from a manifest with a
+      disk_encryption section.
+    quiet: true
+
+- name: storage — install the encryption tooling
+  ansible.builtin.apt:
+    name: [cryptsetup, clevis, clevis-luks, clevis-systemd, age, curl]
+    state: present
+
+- name: storage — find the Tang peers that answer now
+  ansible.builtin.shell: |
+    set -uo pipefail
+    for url in {{ faas_tang_peer_urls | map('quote') | join(' ') }}; do
+      if curl -fsS --max-time 5 "$url/adv" > /dev/null 2>&1; then echo "$url"; fi
+    done
+  args:
+    executable: /bin/bash
+  register: faas_storage_tang_live
+  changed_when: false
+
+- name: storage — require at least one reachable Tang peer
+  ansible.builtin.assert:
+    that:
+      - faas_storage_tang_live.stdout_lines | length > 0
+    fail_msg: >-
+      None of {{ faas_tang_peer_urls | join(', ') }} answers. Every host runs
+      Tang from the first bootstrap play (tag `tang`); bring another host's
+      Tang up first, e.g. `ansible-playbook bootstrap.yml --tags tang` across
+      the inventory, then converge this host again. Nothing was written.
+    quiet: true
+
+- name: storage — report Tang peers left out of the binding
+  ansible.builtin.debug:
+    msg: >-
+      Binding to {{ faas_storage_tang_live.stdout_lines | join(', ') }} only;
+      {{ faas_tang_peer_urls | difference(faas_storage_tang_live.stdout_lines) | join(', ') }}
+      did not answer. Any one bound server unlocks the volume; rebind later
+      (docs/runbooks/disk-encryption.md) to add the rest.
+  when: faas_storage_tang_live.stdout_lines | length < faas_tang_peer_urls | length
+
+- name: storage — inspect the volume for an existing LUKS header
+  ansible.builtin.command:
+    argv: [cryptsetup, isLuks, "{{ faas_storage_filesystem_device }}"]
+  register: faas_storage_is_luks
+  changed_when: false
+  failed_when: faas_storage_is_luks.rc not in [0, 1]
+
+- name: storage — format, bind and seal the recovery key
+  when: faas_storage_is_luks.rc != 0
+  block:
+    - name: storage — format LUKS2, bind it to Tang and seal the recovery key
+      ansible.builtin.shell: |
+        set -euo pipefail
+        device="{{ faas_storage_filesystem_device }}"
+        label="{{ faas_storage_label }}"
+        umask 077
+        work="$(mktemp -d /run/faas-luks.XXXXXX)"
+        trap 'shred -u "$work"/key 2>/dev/null || true; rm -rf "$work"' EXIT
+        head -c 48 /dev/urandom | base64 -w0 > "$work/key"
+        cryptsetup luksFormat --type luks2 --batch-mode --label "$label-crypt" \
+          --key-file "$work/key" "$device"
+        policy="$(python3 -I -c 'import json, sys; print(json.dumps({"t": 1, "pins": {"tang": [{"url": u} for u in sys.argv[1:]]}}))' \
+          {{ faas_storage_tang_live.stdout_lines | map('quote') | join(' ') }})"
+        clevis luks bind -y -d "$device" -k "$work/key" sss "$policy"
+        install -d -m 0700 -o root -g root /etc/faas/disk-recovery
+        age {% for r in faas_disk_recovery_recipients %}-r {{ r | quote }} {% endfor %}\
+          -o "/etc/faas/disk-recovery/$label.key.age.tmp" "$work/key"
+        mv -f "/etc/faas/disk-recovery/$label.key.age.tmp" "/etc/faas/disk-recovery/$label.key.age"
+        cryptsetup luksUUID "$device" > "/etc/faas/disk-recovery/$label.luks-uuid"
+      args:
+        executable: /bin/bash
+      no_log: true
+      changed_when: true
+
+- name: storage — require the Tang binding on the LUKS volume
+  ansible.builtin.command:
+    argv: [clevis, luks, list, -d, "{{ faas_storage_filesystem_device }}"]
+  register: faas_storage_clevis_list
+  changed_when: false
+  failed_when: faas_storage_clevis_list.rc != 0 or ('sss' not in faas_storage_clevis_list.stdout)
+
+- name: storage — open the encrypted volume through Tang
+  ansible.builtin.shell: |
+    set -euo pipefail
+    name="{{ faas_storage_label }}-crypt"
+    [ -e "/dev/mapper/$name" ] && exit 0
+    clevis luks unlock -d "{{ faas_storage_filesystem_device }}" -n "$name"
+    echo opened
+  args:
+    executable: /bin/bash
+  register: faas_storage_luks_open
+  changed_when: "'opened' in faas_storage_luks_open.stdout"
+
+- name: storage — read the LUKS UUID
+  ansible.builtin.command:
+    argv: [cryptsetup, luksUUID, "{{ faas_storage_filesystem_device }}"]
+  register: faas_storage_luks_uuid
+  changed_when: false
+
+- name: storage — unlock the volume at boot through Tang
+  ansible.builtin.lineinfile:
+    path: /etc/crypttab
+    regexp: '^{{ faas_storage_label }}-crypt\s'
+    line: "{{ faas_storage_label }}-crypt UUID={{ faas_storage_luks_uuid.stdout | trim }} none luks,_netdev"
+    create: true
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: storage — answer boot-time unlock prompts with Clevis
+  ansible.builtin.systemd_service:
+    name: clevis-luks-askpass.path
+    enabled: true
+
+- name: storage — keep faas daemons off an unmounted data volume
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: storage — require the data volume for every faas unit
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-.service.d/10-faas-encrypted-data.conf
+    content: |
+      # Managed by Gregale (storage, ADR-20261109120000). The data volume is
+      # encrypted and unlocks through Tang after the network is up; a faas
+      # daemon must never start against the empty mountpoint.
+      [Unit]
+      RequiresMountsFor={{ faas_storage_mount }}
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: storage — make the filesystem go on the opened volume
+  ansible.builtin.set_fact:
+    faas_storage_filesystem_device: "/dev/mapper/{{ faas_storage_label }}-crypt"
+    faas_storage_mount_options: "{{ faas_storage_mount_options }},_netdev,nofail"

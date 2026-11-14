@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/internal/api"
+	"github.com/gregale-dev/gregale-go/internal/api"
 )
 
 // Client is the public SDK client. It embeds *internal/api.Client, so

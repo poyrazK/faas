@@ -169,6 +169,28 @@ func testLoadScheduleMatches(actual *testLoadEvidence, cfg *testLoadConfig) bool
 }
 
 func validateTestBenchmarkLoad(load *testLoadEvidence, scenario testScenario) error {
+	if err := validateTestBenchmarkEvidence(load); err != nil {
+		return err
+	}
+	steps := append(append([]testHTTPRequest{}, scenario.Requests...), scenario.Checks...)
+	if len(load.Steps) != len(steps) {
+		return errors.New("report HTTP steps do not match the declared journey")
+	}
+	for i, step := range load.Steps {
+		if step.Name != steps[i].Name || step.Method != steps[i].Method || step.Path != strings.SplitN(steps[i].Path, "?", 2)[0] {
+			return errors.New("report HTTP steps do not match the declared journey")
+		}
+	}
+	return nil
+}
+
+// Comparison reports do not include the manifest. Check their completeness and
+// internal accounting before using any aggregate or per-step measurements.
+func validateTestBenchmarkEvidence(load *testLoadEvidence) error {
+	switch load.StopReason {
+	case "canceled", "scenario_timeout", "time_limit", "request_limit", "dropped_arrivals":
+		return errors.New("load run did not complete its schedule")
+	}
 	if load.IterationsInterrupted != 0 || load.IterationsCompleted != load.IterationsStarted || load.IterationsStarted <= 0 || (load.Arrival != nil && (load.Arrival.Dropped != 0 || load.Arrival.Scheduled != load.Arrival.Planned || load.IterationsStarted != load.Arrival.Planned)) {
 		return errors.New("load run was incomplete or dropped arrivals")
 	}
@@ -190,15 +212,16 @@ func validateTestBenchmarkLoad(load *testLoadEvidence, scenario testScenario) er
 	if err := testBenchmarkMetricsValid(load.testLoadMetrics); err != nil {
 		return fmt.Errorf("aggregate: %w", err)
 	}
-	steps := append(append([]testHTTPRequest{}, scenario.Requests...), scenario.Checks...)
-	if len(load.Steps) != len(steps) {
-		return errors.New("report HTTP steps do not match the declared journey")
+	if len(load.Steps) == 0 {
+		return errors.New("report has no HTTP step evidence")
 	}
+	seen := make(map[string]bool, len(load.Steps))
 	requests, failures := 0, 0
-	for i, step := range load.Steps {
-		if step.Name != steps[i].Name || step.Method != steps[i].Method || step.Path != strings.SplitN(steps[i].Path, "?", 2)[0] {
-			return errors.New("report HTTP steps do not match the declared journey")
+	for _, step := range load.Steps {
+		if step.Name == "" || seen[step.Name] {
+			return errors.New("report has empty or duplicate HTTP step names")
 		}
+		seen[step.Name] = true
 		if err := testBenchmarkMetricsValid(step.testLoadMetrics); err != nil {
 			return fmt.Errorf("step %s: %w", step.Name, err)
 		}

@@ -95,6 +95,18 @@ func (m *MemStore) validateEnvironmentInvocationCleanupLocked(environmentID stri
 			continue
 		}
 		app, owned := m.apps[inv.AppID]
+		if inv.Source == InvocationCron && inv.QueueName == "" && inv.WorkPolicyName == "" && !admitted {
+			// An environment cron's request; a cron deleted since may be gone
+			// (ValidateEnvironmentInvocationCleanup's cron branch).
+			if cron, exists := m.crons[derefString(inv.CronID)]; inv.CronID != nil && exists && (cron.AppID != inv.AppID || cron.DeploymentScope != env.Slug) {
+				return ErrInvocationEnvironmentWorkIsolation
+			}
+			if !owned || app.AccountID != env.AccountID || app.ProjectID != env.ProjectID || inv.AccountID != env.AccountID {
+				return ErrInvocationEnvironmentWorkIsolation
+			}
+			busy = busy || inv.State == InvocationDispatching || inv.QuotaReserved
+			continue
+		}
 		if !owned || app.AccountID != env.AccountID || app.ProjectID != env.ProjectID || inv.AccountID != env.AccountID || !stageKeyedInvocationSupported(inv) {
 			return ErrInvocationEnvironmentWorkIsolation
 		}

@@ -24,32 +24,70 @@ type startupCPUProfile struct {
 // shared by cold boots and snapshot restores. An unset opt-out stays false so
 // legacy and newly-created deployments retain the existing boost.
 func shouldApplyStartupCPUBoost(lease Lease, eligible bool) bool {
-	return eligible && !lease.IsBuilder && lease.Plan.Valid() && !lease.DisableStartupCPUBoost
+	// An uncapped VM already has every CPU a boost could lend
+	// (ADR-20261109172421).
+	return eligible && !lease.IsBuilder && lease.Plan.Valid() && !lease.DisableStartupCPUBoost && !leaseUncappedAt(lease, lease.CPUMillicores)
 }
 
-// resolveStartupCPUProfile grants at most one host CPU while an app cold boots
-// or restores, bounded by the owning plan's cpu.max ceiling. The
-// customer-selected sustained quota is returned separately so the caller can
-// restore it after readiness and before routing.
-func resolveStartupCPUProfile(plan api.Plan, configuredMillicores int) (startupCPUProfile, error) {
-	quota := plan.CPUQuotaUS()
-	period := plan.CPUPeriodUS()
-	if quota <= 0 || period <= 0 {
-		return startupCPUProfile{}, fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max (%d/%d)", plan, quota, period)
+// leaseUncappedAt reports whether an app lease runs without a CPU quota at a
+// given ceiling. An uncapped lease (ADR-20261109172421) drops the quota only
+// at the app default ceiling; an app that chose 250 or 500 millicores keeps
+// that as its cap, at boot and after a live policy update.
+func leaseUncappedAt(l Lease, cpuMillicores int) bool {
+	return l.CPUUncapped && !l.Networkless && !l.IsBuilder &&
+		(cpuMillicores <= 0 || cpuMillicores >= api.DefaultAppCPUMillicores)
+}
+
+// cpuMaxPeriodUS is the cpu.max period vmmd writes for every VM
+// (ADR-20261109172421). It replaced the per-plan periods (100 ms to 1 s),
+// whose quotas all granted one core per period.
+const cpuMaxPeriodUS = 100_000
+
+// wakeLeaseCPU is the cpu.weight and quota rule of a woken VM; nothing in it
+// depends on the plan (ADR-20261109172421 step 6.3). Every VM but a builder
+// gets the weight schedd sent, else its memory's. An app instance runs
+// without a quota at the app default ceiling whatever its scheduler sent.
+// Execution guests (agent runs, data repair, function executions) keep their
+// quotas. Builders keep their own rules, as does a request without a memory
+// size, which cannot boot.
+func wakeLeaseCPU(req WakeRequest, builder bool) (weight int, uncapped bool) {
+	if builder || req.MemSizeMiB <= 0 {
+		return req.CPUWeight, req.CPUUncapped
 	}
-	if configuredMillicores != 0 && !api.ValidAppCPUMillicores(configuredMillicores) {
+	weight = req.CPUWeight
+	if weight <= 0 {
+		weight = api.SizeCPUWeight(req.MemSizeMiB)
+	}
+	if req.ExecutionOnly {
+		return weight, req.CPUUncapped
+	}
+	return weight, true
+}
+
+// liveAppCPUMax is the cpu.max an app lease runs with at a ceiling pushed by
+// a live CPU policy update.
+func liveAppCPUMax(l Lease, cpuMillicores int) (string, error) {
+	if leaseUncappedAt(l, cpuMillicores) {
+		return uncappedCPUMax(), nil
+	}
+	return appCPUMax(l.Plan, cpuMillicores)
+}
+
+// resolveStartupCPUProfile grants one host CPU while an app cold boots or
+// restores. The customer-selected sustained quota (one core when unset) is
+// returned separately so the caller can restore it after readiness and
+// before routing. plan only bounds a whole-core ceiling above one core
+// (ADR-20261101160231).
+func resolveStartupCPUProfile(plan api.Plan, configuredMillicores int) (startupCPUProfile, error) {
+	if configuredMillicores != 0 && !api.ValidAppCPUCeilingMillicores(plan, configuredMillicores) {
 		return startupCPUProfile{}, fmt.Errorf("fcvm: cgroup: invalid cpu_millicores %d", configuredMillicores)
 	}
-
-	planCeiling := int(int64(quota) * 1000 / int64(period))
 	configured := configuredMillicores
 	if configured == 0 {
-		configured = planCeiling
+		configured = api.DefaultAppCPUMillicores
 	}
-	if configured > planCeiling {
-		return startupCPUProfile{}, fmt.Errorf("fcvm: cgroup: configured cpu_millicores %d exceeds plan %q ceiling %d", configured, plan, planCeiling)
-	}
-	startup := min(api.DefaultAppCPUMillicores, planCeiling)
+	// The startup boost never lowers an instance below its sustained ceiling.
+	startup := max(api.DefaultAppCPUMillicores, configured)
 	return startupCPUProfile{StartupMillicores: startup, ConfiguredMillicores: configured}, nil
 }
 
@@ -111,7 +149,7 @@ func writeLeaseCgroup(l Lease, planMB int) error {
 	if err != nil {
 		return err
 	}
-	return writeCgroupValuesAt(ParentCgroupFor(l.Plan), l.Instance, planMB, cpuMax)
+	return writeCgroupValuesAt(tenantCgroupParent(l), l.Instance, planMB, cpuMax)
 }
 
 // perInstanceControllers are the cgroup v2 controllers a per-VM scope needs.
@@ -281,7 +319,7 @@ func snapshotMemoryLimits(l Lease) (scope string, ordinaryMB, widenedMB int) {
 		return filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(l.Instance)),
 			api.BuilderMemoryMaxMB(l.MemoryMaxMiB), api.BuilderSnapshotMemoryMaxMB(l.MemoryMaxMiB)
 	}
-	return filepath.Join(cgroupRoot, ParentCgroupFor(l.Plan), PerInstanceScope(l.Instance)),
+	return filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance)),
 		api.BillableRAMMB(l.MemoryMaxMiB), api.SnapshotMemoryMaxMB(l.MemoryMaxMiB)
 }
 
@@ -320,37 +358,38 @@ func widenSnapshotMemoryCgroup(l Lease) (func() error, error) {
 }
 
 // leaseCPUMax returns the cpu.max value for a VM lease. An agent run's
-// networkless VM is sized in whole vCPUs (ADR-20261027090014 §3), beyond the app CPU
-// tiers; every other lease keeps the app rules.
+// networkless VM, and a networked sandbox session VM, are sized in whole
+// vCPUs (ADR-20261027090014 §3), beyond the app CPU tiers; every other lease
+// keeps the app rules.
 func leaseCPUMax(l Lease) (string, error) {
-	if !l.Networkless || l.CPUMillicores <= api.DefaultAppCPUMillicores || !api.ValidAgentRunCPUMillicores(l.CPUMillicores) {
+	if leaseUncappedAt(l, l.CPUMillicores) {
+		return uncappedCPUMax(), nil
+	}
+	if !l.Networkless && !l.AgentSized || l.CPUMillicores <= api.DefaultAppCPUMillicores || !api.ValidAgentRunCPUMillicores(l.CPUMillicores) {
 		return appCPUMax(l.Plan, l.CPUMillicores)
 	}
-	period := l.Plan.CPUPeriodUS()
-	if l.Plan.CPUQuotaUS() <= 0 || period <= 0 {
-		return "", fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max (%d/%d)", l.Plan, l.Plan.CPUQuotaUS(), period)
-	}
-	return fmt.Sprintf("%d %d", l.CPUMillicores*period/1000, period), nil
+	return fmt.Sprintf("%d %d", l.CPUMillicores*cpuMaxPeriodUS/1000, cpuMaxPeriodUS), nil
 }
 
-// appCPUMax returns the cpu.max value ("<quota> <period>") for an app VM.
+// uncappedCPUMax is the cpu.max of an app VM without a quota: it may use any
+// idle host CPU up to its vCPUs (ADR-20261109172421).
+func uncappedCPUMax() string {
+	return fmt.Sprintf("max %d", cpuMaxPeriodUS)
+}
+
+// appCPUMax returns the cpu.max value ("<quota> <period>") for an app VM, a
+// job or an execution guest: cpuMillicores, or one core when it is zero
+// (ADR-20261109172421; the plan's cpu.max was one core on every plan). plan
+// only bounds a whole-core ceiling above one core (ADR-20261101160231).
 func appCPUMax(plan api.Plan, cpuMillicores int) (string, error) {
-	quota := plan.CPUQuotaUS()
-	period := plan.CPUPeriodUS()
-	if quota <= 0 || period <= 0 {
-		// Fail closed: a missing quota is a missing-row plan,
-		// which Manager.Wake rejected upstream. The check here
-		// is defence-in-depth so a future caller that bypasses
-		// Manager.Wake doesn't silently emit an unbounded slice.
-		return "", fmt.Errorf("fcvm: cgroup: plan %q has non-positive cpu.max (%d/%d)", plan, quota, period)
-	}
+	quota := api.DefaultAppCPUMillicores * cpuMaxPeriodUS / 1000
 	if cpuMillicores > 0 {
-		if !api.ValidAppCPUMillicores(cpuMillicores) {
+		if !api.ValidAppCPUCeilingMillicores(plan, cpuMillicores) {
 			return "", fmt.Errorf("fcvm: cgroup: invalid cpu_millicores %d", cpuMillicores)
 		}
-		quota = cpuMillicores * period / 1000
+		quota = cpuMillicores * cpuMaxPeriodUS / 1000
 	}
-	return fmt.Sprintf("%d %d", quota, period), nil
+	return fmt.Sprintf("%d %d", quota, cpuMaxPeriodUS), nil
 }
 
 // writeAppCPUMaxTo writes cpu.max (in microseconds) into the given
@@ -453,7 +492,7 @@ func writeWorkloadCgroup(parentScope, workloadName string, ramMB int, cpuMillico
 	if len(cpuMillicoresOpt) > 0 {
 		cpuMillicores = cpuMillicoresOpt[0]
 	}
-	if cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAppCPUMillicores(cpuMillicores)) {
+	if cpuMillicores < 0 || (cpuMillicores != 0 && !api.ValidAnyAppCPUCeilingMillicores(cpuMillicores)) {
 		return fmt.Errorf("fcvm: cgroup: workload %q invalid cpu_millicores %d", workloadName, cpuMillicores)
 	}
 	if ramMB == 0 && cpuMillicores == 0 {

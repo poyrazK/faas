@@ -1,6 +1,9 @@
 package apidserver
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // backgroundWork runs best-effort work off the request path with a cap on
 // how much runs at once. A public route whose work differs by whether an
@@ -10,6 +13,9 @@ import "sync"
 type backgroundWork struct {
 	slots chan struct{}
 	wg    sync.WaitGroup
+	// dropped counts work refused because every slot was busy; exported
+	// as <prefix>_background_mail_dropped_total (ADR 20261110120000).
+	dropped atomic.Int64
 }
 
 func newBackgroundWork(limit int) *backgroundWork {
@@ -26,6 +32,7 @@ func (b *backgroundWork) try(fn func()) bool {
 	select {
 	case b.slots <- struct{}{}:
 	default:
+		b.dropped.Add(1)
 		return false
 	}
 	b.wg.Add(1)
@@ -45,4 +52,12 @@ func (b *backgroundWork) wait() {
 	if b != nil {
 		b.wg.Wait()
 	}
+}
+
+// droppedCount reports how much work was refused since start.
+func (b *backgroundWork) droppedCount() float64 {
+	if b == nil {
+		return 0
+	}
+	return float64(b.dropped.Load())
 }

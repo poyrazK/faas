@@ -6,23 +6,21 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func (s *PgStore) PutSpendCapHold(ctx context.Context, hold SpendCapHold) error {
 	if !validSpendCapHold(hold) {
 		return ErrInvalidArgument
 	}
-	_, err := s.pool.Exec(ctx, `
-		insert into account_spend_cap_holds (account_id, month, cap_cents, observed_cents)
-		values ($1, $2::date, $3, $4)
-		on conflict (account_id) do update
-		   set month = excluded.month, cap_cents = excluded.cap_cents,
-		       observed_cents = excluded.observed_cents,
-		       reached_at = case
-		           when account_spend_cap_holds.month = excluded.month
-		            and account_spend_cap_holds.cap_cents = excluded.cap_cents
-		           then account_spend_cap_holds.reached_at else now() end`,
-		hold.AccountID, hold.Month.UTC(), hold.CapCents, hold.ObservedCents)
+	account, err := parsePgUUID(hold.AccountID)
+	if err != nil {
+		return ErrInvalidArgument
+	}
+	id, _ := parsePgUUID(spendCapNoticeID(hold))
+	err = sqlc.New().PutSpendCapHoldWithNotice(ctx, s.pool, sqlc.PutSpendCapHoldWithNoticeParams{ID: id, AccountID: account,
+		Month: pgtype.Date{Time: hold.Month.UTC(), Valid: true}, CapCents: hold.CapCents, ObservedCents: hold.ObservedCents})
 	if err != nil {
 		return fmt.Errorf("state: put spend cap hold: %w", mapErr(err))
 	}

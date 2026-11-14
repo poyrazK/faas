@@ -111,6 +111,23 @@ func validateScenarioChaosSpec(scenario testScenario, spec *testChaosSpec) error
 	return nil
 }
 
+// Load journeys keep their captures private to each iteration. Only captures
+// produced by ordinary stages are available to subsequent stages.
+func testScenarioStepCaptures(steps []testScenarioStep) map[string]string {
+	captures := make(map[string]string)
+	for _, step := range steps {
+		if step.Load != nil {
+			continue
+		}
+		for _, request := range append(append([]testHTTPRequest{}, step.Requests...), step.Checks...) {
+			for capture := range request.Capture {
+				captures["steps."+request.Name+"."+capture] = "example-value"
+			}
+		}
+	}
+	return captures
+}
+
 func validateTestScenarioSteps(scenario testScenario, dataFields []string) error {
 	var err error
 	scenario, err = expandTestOutageCycles(scenario)
@@ -183,8 +200,8 @@ func validateTestScenarioSteps(scenario testScenario, dataFields []string) error
 		if len(step.Command) > 0 && step.Command[0] == "" {
 			return fmt.Errorf("step %q has an empty command", step.Name)
 		}
-		temp := testScenario{Consumers: scenario.Consumers, Requests: step.Requests, Checks: step.Checks}
-		if err := validateTestHTTPRequestsWithData(temp, dataFields); err != nil {
+		temp := testScenario{Consumers: scenario.Consumers, Requests: step.Requests, Checks: step.Checks, Load: step.Load}
+		if err := validateTestHTTPRequestsWithCaptures(temp, dataFields, testScenarioStepCaptures(scenario.Steps[:i])); err != nil {
 			return fmt.Errorf("step %q: %w", step.Name, err)
 		}
 		if step.Load != nil {

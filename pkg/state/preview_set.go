@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/githubscope"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,22 @@ type PRPreviewSet struct {
 	// SetupError says why githubd could not reserve or start the recorded
 	// head. A new head clears it.
 	SetupError string
+	// MemberCommitSHAs maps a member the head's push did not rebuild to the
+	// commit its live deployment was built from (ADR-20261108150000). A
+	// member absent here is expected at CommitSHA. Reads return only pins
+	// made for the current CommitSHA; a new head clears them.
+	MemberCommitSHAs map[string]string
+	// pinnedHead is the head MemStore's pins were made for.
+	pinnedHead string
+}
+
+// MemberCommit is the commit member appID must be live at for the set to be
+// live: its pin, or the set's head.
+func (set PRPreviewSet) MemberCommit(appID string) string {
+	if commit := set.MemberCommitSHAs[appID]; commit != "" {
+		return commit
+	}
+	return set.CommitSHA
 }
 
 // PRPreviewSetStore is separate from Store so preview-only state does not
@@ -111,8 +128,8 @@ func (s *PgStore) PutPRPreviewSet(ctx context.Context, set PRPreviewSet) error {
 	}
 	var previous []string
 	err = tx.QueryRow(ctx, `select member_app_ids from pr_preview_sets
-		where installation_id = $1 and repo_full_name = $2 and pr_number = $3`,
-		set.InstallationID, set.RepoFullName, set.PRNumber).Scan(&previous)
+		where installation_id = $1 and repo_full_name = $2 and pr_number = $3 and account_id = $4::uuid`,
+		set.InstallationID, set.RepoFullName, set.PRNumber, accountID).Scan(&previous)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("state: load previous PR preview members: %w", err)
 	}
@@ -158,12 +175,14 @@ func (s *PgStore) PutPRPreviewSet(ctx context.Context, set PRPreviewSet) error {
 		insert into pr_preview_sets
 		  (installation_id, repo_full_name, pr_number, commit_sha, root_app_id, member_app_ids)
 		values ($1, $2, $3, $4, $5, $6)
-		on conflict (installation_id, repo_full_name, pr_number)
+		on conflict (account_id, installation_id, repo_full_name, pr_number)
 		do update set commit_sha = excluded.commit_sha,
 		              root_app_id = excluded.root_app_id,
 		              member_app_ids = excluded.member_app_ids,
 		              closed_at = null,
 		              setup_error = null,
+		              member_pins = null,
+		              member_pins_head = null,
 		              updated_at = now()`, set.InstallationID, set.RepoFullName,
 		set.PRNumber, set.CommitSHA, set.RootAppID, set.MemberAppIDs)
 	if err != nil {
@@ -191,31 +210,49 @@ func (s *PgStore) PutPRPreviewSet(ctx context.Context, set PRPreviewSet) error {
 }
 
 func (s *PgStore) ClosePRPreviewSet(ctx context.Context, installationID int64, repo string, prNumber int) error {
-	if installationID <= 0 || repo == "" || prNumber <= 0 {
-		return fmt.Errorf("state: invalid PR preview set identity: %w", ErrConflict)
+	set, err := s.GetPRPreviewSet(ctx, installationID, repo, prNumber)
+	if errors.Is(err, ErrNotFound) {
+		return nil
 	}
-	_, err := s.pool.Exec(ctx, `update pr_preview_sets set closed_at = now(), updated_at = now()
-		where installation_id = $1 and repo_full_name = $2 and pr_number = $3`, installationID, repo, prNumber)
 	if err != nil {
-		return fmt.Errorf("state: close PR preview set: %w", err)
+		return err
 	}
-	return nil
+	_, err = s.pool.Exec(ctx, `update pr_preview_sets set closed_at=now(), updated_at=now() where installation_id=$1 and repo_full_name=$2 and pr_number=$3 and root_app_id=$4`, installationID, repo, prNumber, set.RootAppID)
+	return err
 }
 
 func (s *PgStore) GetPRPreviewSet(ctx context.Context, installationID int64, repo string, prNumber int) (PRPreviewSet, error) {
+	rows, err := s.pool.Query(ctx, `select commit_sha,root_app_id::text,member_app_ids,closed_at is not null,coalesce(setup_error,''),
+ case when member_pins_head = commit_sha then member_pins end from pr_preview_sets
+ where installation_id=$1 and repo_full_name=$2 and pr_number=$3 and ($4='' or account_id::text=$4) limit 2`, installationID, repo, prNumber, githubscope.Account(ctx))
+	if err != nil {
+		return PRPreviewSet{}, err
+	}
+	defer rows.Close()
 	var set PRPreviewSet
-	var closed bool
-	err := s.pool.QueryRow(ctx, `select commit_sha, root_app_id::text, member_app_ids, closed_at is not null,
-		coalesce(setup_error, '')
-		from pr_preview_sets where installation_id = $1 and repo_full_name = $2 and pr_number = $3`,
-		installationID, repo, prNumber).Scan(&set.CommitSHA, &set.RootAppID, &set.MemberAppIDs, &closed, &set.SetupError)
-	if errors.Is(err, pgx.ErrNoRows) {
+	n := 0
+	for rows.Next() {
+		n++
+		var pins []byte
+		if err := rows.Scan(&set.CommitSHA, &set.RootAppID, &set.MemberAppIDs, &set.Closed, &set.SetupError, &pins); err != nil {
+			return PRPreviewSet{}, err
+		}
+		if set.MemberCommitSHAs, err = decodePRPreviewPins(pins); err != nil {
+			return PRPreviewSet{}, err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return PRPreviewSet{}, err
+	}
+	if n == 0 {
 		return PRPreviewSet{}, ErrNotFound
 	}
-	if err != nil {
-		return PRPreviewSet{}, fmt.Errorf("state: get PR preview set: %w", err)
+	if n > 1 {
+		return PRPreviewSet{}, ErrConflict
 	}
-	set.InstallationID, set.RepoFullName, set.PRNumber, set.Closed = installationID, repo, prNumber, closed
+	set.InstallationID = installationID
+	set.RepoFullName = repo
+	set.PRNumber = prNumber
 	return set, nil
 }
 
@@ -226,12 +263,13 @@ func (s *PgStore) PRPreviewEnvironmentByRoot(ctx context.Context, rootAppID stri
 	rows, err := s.pool.Query(ctx, `
 		with selected as (
 			select installation_id, repo_full_name, pr_number, commit_sha, root_app_id,
-			       member_app_ids, closed_at is not null as closed, coalesce(setup_error, '') as setup_error
+			       member_app_ids, closed_at is not null as closed, coalesce(setup_error, '') as setup_error,
+			       case when member_pins_head = commit_sha then member_pins end as pins
 			from pr_preview_sets where root_app_id = $1::uuid
 			order by updated_at desc limit 1
 		)
 		select selected.installation_id, selected.repo_full_name, selected.pr_number,
-		       selected.commit_sha, selected.closed, selected.setup_error, expected.app_id,
+		       selected.commit_sha, selected.closed, selected.setup_error, selected.pins, expected.app_id,
 		       coalesce(a.slug, ''), coalesce(a.preview_of_slug, ''),
 		       coalesce(nullif(a.workload_name, ''), a.slug, expected.app_id),
 		       coalesce(a.status, 'missing'), coalesce(a.preview_pr_state, ''),
@@ -245,7 +283,8 @@ func (s *PgStore) PRPreviewEnvironmentByRoot(ctx context.Context, rootAppID stri
 		  and a.preview_pr_number = selected.pr_number
 		left join lateral (
 			select id, status from deployments
-			where app_id = a.id and kind = 'preview' and commit_sha = selected.commit_sha
+			where app_id = a.id and kind = 'preview'
+			  and commit_sha = coalesce(selected.pins ->> expected.app_id, selected.commit_sha)
 			order by created_at desc, id desc limit 1
 		) d on true
 		order by expected.ordinal`, rootAppID)
@@ -255,21 +294,26 @@ func (s *PgStore) PRPreviewEnvironmentByRoot(ctx context.Context, rootAppID stri
 	defer rows.Close()
 	var environment PRPreviewEnvironment
 	environment.Members = []previewset.Member{}
+	var pins []byte
 	for rows.Next() {
 		var member previewset.Member
 		if err := rows.Scan(&environment.Set.InstallationID, &environment.Set.RepoFullName,
 			&environment.Set.PRNumber, &environment.Set.CommitSHA, &environment.Set.Closed,
-			&environment.Set.SetupError, &member.AppID, &member.Slug, &member.PreviewOfSlug, &member.WorkloadName,
+			&environment.Set.SetupError, &pins, &member.AppID, &member.Slug, &member.PreviewOfSlug, &member.WorkloadName,
 			&member.AppStatus, &member.PreviewState, &member.DeploymentID, &member.DeploymentStatus); err != nil {
 			return PRPreviewEnvironment{}, fmt.Errorf("state: scan PR preview environment: %w", err)
 		}
 		environment.Members = append(environment.Members, member)
+		environment.Set.MemberAppIDs = append(environment.Set.MemberAppIDs, member.AppID)
 	}
 	if err := rows.Err(); err != nil {
 		return PRPreviewEnvironment{}, fmt.Errorf("state: iterate PR preview environment: %w", err)
 	}
 	if len(environment.Members) == 0 {
 		return PRPreviewEnvironment{}, ErrNotFound
+	}
+	if environment.Set.MemberCommitSHAs, err = decodePRPreviewPins(pins); err != nil {
+		return PRPreviewEnvironment{}, err
 	}
 	environment.Set.RootAppID = rootAppID
 	return environment, nil
@@ -296,11 +340,12 @@ func (m *MemStore) PutPRPreviewSet(_ context.Context, set PRPreviewSet) error {
 	if m.previewSets == nil {
 		m.previewSets = make(map[string]PRPreviewSet)
 	}
-	key := previewSetKey(set.InstallationID, set.RepoFullName, set.PRNumber)
+	key := root.AccountID + "\x00" + previewSetKey(set.InstallationID, set.RepoFullName, set.PRNumber)
 	previous := m.previewSets[key]
 	set.MemberAppIDs = append([]string(nil), set.MemberAppIDs...)
 	set.Closed = false
 	set.SetupError = ""
+	set.MemberCommitSHAs, set.pinnedHead = nil, ""
 	m.previewSets[key] = set
 	for _, id := range previous.MemberAppIDs {
 		inUse := false
@@ -329,29 +374,65 @@ func (m *MemStore) PutPRPreviewSet(_ context.Context, set PRPreviewSet) error {
 	return nil
 }
 
-func (m *MemStore) ClosePRPreviewSet(_ context.Context, installationID int64, repo string, prNumber int) error {
-	if installationID <= 0 || repo == "" || prNumber <= 0 {
-		return fmt.Errorf("state: invalid PR preview set identity: %w", ErrConflict)
+func (m *MemStore) previewSetKeyForAccountLocked(ctx context.Context, installationID int64, repo string, prNumber int) (string, error) {
+	key := ""
+	for candidate, set := range m.previewSets {
+		if set.InstallationID != installationID || set.RepoFullName != repo || set.PRNumber != prNumber {
+			continue
+		}
+		if account := githubscope.Account(ctx); account != "" && m.apps[set.RootAppID].AccountID != account {
+			continue
+		}
+		if key != "" {
+			return "", ErrConflict
+		}
+		key = candidate
 	}
+	if key == "" {
+		return "", ErrNotFound
+	}
+	return key, nil
+}
+func (m *MemStore) ClosePRPreviewSet(ctx context.Context, installationID int64, repo string, prNumber int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := previewSetKey(installationID, repo, prNumber)
-	if set, ok := m.previewSets[key]; ok {
-		set.Closed = true
-		m.previewSets[key] = set
+	key, err := m.previewSetKeyForAccountLocked(ctx, installationID, repo, prNumber)
+	if errors.Is(err, ErrNotFound) {
+		return nil
 	}
+	if err != nil {
+		return err
+	}
+	set := m.previewSets[key]
+	set.Closed = true
+	m.previewSets[key] = set
 	return nil
 }
-
-func (m *MemStore) GetPRPreviewSet(_ context.Context, installationID int64, repo string, prNumber int) (PRPreviewSet, error) {
+func (m *MemStore) GetPRPreviewSet(ctx context.Context, installationID int64, repo string, prNumber int) (PRPreviewSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	set, ok := m.previewSets[previewSetKey(installationID, repo, prNumber)]
-	if !ok {
-		return PRPreviewSet{}, ErrNotFound
+	key, err := m.previewSetKeyForAccountLocked(ctx, installationID, repo, prNumber)
+	if err != nil {
+		return PRPreviewSet{}, err
 	}
+	return m.previewSets[key].copyForRead(), nil
+}
+
+// copyForRead returns the set as a reader sees it: its own slices and only
+// the pins made for its current head.
+func (set PRPreviewSet) copyForRead() PRPreviewSet {
 	set.MemberAppIDs = append([]string(nil), set.MemberAppIDs...)
-	return set, nil
+	if set.pinnedHead != set.CommitSHA || len(set.MemberCommitSHAs) == 0 {
+		set.MemberCommitSHAs = nil
+	} else {
+		pins := make(map[string]string, len(set.MemberCommitSHAs))
+		for id, commit := range set.MemberCommitSHAs {
+			pins[id] = commit
+		}
+		set.MemberCommitSHAs = pins
+	}
+	set.pinnedHead = ""
+	return set
 }
 
 func (m *MemStore) PRPreviewEnvironmentByRoot(_ context.Context, rootAppID string) (PRPreviewEnvironment, error) {
@@ -368,9 +449,9 @@ func (m *MemStore) PRPreviewEnvironmentByRoot(_ context.Context, rootAppID strin
 	if !found {
 		return PRPreviewEnvironment{}, ErrNotFound
 	}
+	set = set.copyForRead()
 	root, rootExists := m.apps[rootAppID]
 	environment := PRPreviewEnvironment{Set: set, Members: make([]previewset.Member, 0, len(set.MemberAppIDs))}
-	environment.Set.MemberAppIDs = append([]string(nil), set.MemberAppIDs...)
 	for _, id := range set.MemberAppIDs {
 		member := previewset.Member{AppID: id, WorkloadName: id, AppStatus: "missing", DeploymentStatus: "missing"}
 		app, ok := m.apps[id]
@@ -385,7 +466,7 @@ func (m *MemStore) PRPreviewEnvironmentByRoot(_ context.Context, rootAppID strin
 			member.PreviewState = app.PreviewPrState
 			var latest Deployment
 			for _, deployment := range m.deployments {
-				if deployment.AppID != id || deployment.Kind != DeploymentKindPreview || deployment.CommitSHA != set.CommitSHA {
+				if deployment.AppID != id || deployment.Kind != DeploymentKindPreview || deployment.CommitSHA != set.MemberCommit(id) {
 					continue
 				}
 				if latest.ID == "" || deployment.CreatedAt.After(latest.CreatedAt) ||

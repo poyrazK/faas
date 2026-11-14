@@ -117,8 +117,9 @@ func TestCursorRoundTrip(t *testing.T) {
 }
 
 type fakeHost struct {
-	store *state.MemStore
-	app   state.App
+	store  *state.MemStore
+	app    state.App
+	audits *[]string // kinds recorded, in order
 }
 
 func (h fakeHost) LoadApp(w http.ResponseWriter, _ *http.Request, _ state.Account, slug string) (state.App, bool) {
@@ -131,6 +132,9 @@ func (h fakeHost) LoadApp(w http.ResponseWriter, _ *http.Request, _ state.Accoun
 func (h fakeHost) LogEvents() state.LogEventStore           { return h.store }
 func (h fakeHost) SavedSearches() state.LogSavedSearchStore { return h.store }
 func (h fakeHost) Logger() *slog.Logger                     { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+func (h fakeHost) Audit(_ context.Context, kind string, _ string, data map[string]any) {
+	*h.audits = append(*h.audits, kind+" "+data["name"].(string))
+}
 
 func newService(t *testing.T, enabled bool) (*Service, state.Account) {
 	t.Helper()
@@ -157,7 +161,7 @@ func newService(t *testing.T, enabled bool) (*Service, state.Account) {
 			t.Fatal(err)
 		}
 	}
-	return &Service{Host: fakeHost{store: store, app: app}, Enabled: enabled, Now: func() time.Time { return testNow }}, acct
+	return &Service{Host: fakeHost{store: store, app: app, audits: &[]string{}}, Enabled: enabled, Now: func() time.Time { return testNow }}, acct
 }
 
 func serve(t *testing.T, h func(http.ResponseWriter, *http.Request, state.Account), acct state.Account, target string, out any) int {
@@ -214,8 +218,8 @@ func TestFacetsCountTheWindow(t *testing.T) {
 
 func TestGateAndUnknownApp(t *testing.T) {
 	svc, acct := newService(t, false)
-	if code := serve(t, svc.Search, acct, "/v1/apps/shop/log-events", nil); code != http.StatusServiceUnavailable {
-		t.Fatalf("disabled status = %d, want 503", code)
+	if code := serve(t, svc.Search, acct, "/v1/apps/shop/log-events", nil); code != http.StatusForbidden {
+		t.Fatalf("disabled status = %d, want 403", code)
 	}
 	svc.Enabled = true
 	r := httptest.NewRequest(http.MethodGet, "/v1/apps/nope/log-events/facets", nil)

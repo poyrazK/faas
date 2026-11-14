@@ -11,8 +11,9 @@ import (
 )
 
 // Route probes (ADR-847) are a separate challenge kind from the hosting smoke.
-// A probe token pins one live deployment of one app; unlike the smoke it does
-// not bypass customer auth gates, and the request writes no telemetry or usage.
+// A probe token pins one live deployment of one app. It passes the platform's
+// own auth gates (ADR-847 amendment 2) but never an auth check the app runs itself,
+// and the request writes no telemetry or usage.
 
 type routeProbeValidator interface {
 	ValidateRouteProbe(appID, deploymentID, token string) bool
@@ -30,6 +31,17 @@ func withRouteProbe(ctx context.Context, deploymentID, token string) context.Con
 func isRouteProbe(ctx context.Context) bool {
 	probe, ok := ctx.Value(routeProbeKey{}).(routeProbeRequest)
 	return ok && probe.deploymentID != ""
+}
+
+// routeProbePassesPlatformAuth reports whether a request is a validated route
+// probe that may pass the platform's own auth gates (require_authn and
+// public_auth). The challenge binds it to one live deployment of this app and
+// expires in seconds; it reads with GET or HEAD only, carries no customer
+// credential, and still meets every gate the app enforces itself. Without it
+// a protected app's canary answered no probe and rolled out on no evidence
+// (ADR-847 amendment 2).
+func routeProbePassesPlatformAuth(r *http.Request) bool {
+	return r != nil && isRouteProbe(r.Context()) && (r.Method == http.MethodGet || r.Method == http.MethodHead)
 }
 
 // authorizedRouteProbe validates and strips the probe headers. Headers that

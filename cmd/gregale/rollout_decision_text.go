@@ -83,6 +83,8 @@ func describeRolloutDecision(d *api.RolloutDecision) string {
 			" roll back with `gregale rollback` or ship a fix"
 	} else if d.RollbackSkipped != "" {
 		summary += "; not rolled back automatically (" + d.RollbackSkipped + ")"
+	} else if d.Kind == api.RolloutDecisionAbort && api.PostReleaseRolloutRule(d.Rule) && d.StableDeploymentID != "" {
+		summary += "; rolled back automatically to " + d.StableDeploymentID
 	}
 	return summary
 }
@@ -91,6 +93,12 @@ func describeRolloutDecision(d *api.RolloutDecision) string {
 // hold for `deployment summary` (ADR-1447).
 func renderRolloutDecisions(w io.Writer, d api.DeploymentResponse) {
 	if d.CanaryTotalSteps <= 0 {
+		// A release without a canary still gets the post-release watch and
+		// the first-wake 5xx guard; their verdict was never printed, so an
+		// automatic rollback looked like a plain "superseded" (Hunt 34 H34-17).
+		if d.RolloutDecision != nil && api.PostReleaseRolloutRule(d.RolloutDecision.Rule) {
+			_, _ = fmt.Fprintf(w, "after release (%s, %s): %s\n", d.RolloutDecision.Rule, d.RolloutDecision.DecidedAt, describeRolloutDecision(d.RolloutDecision))
+		}
 		return
 	}
 	_, _ = fmt.Fprintf(w, "rollout: %s at %d%% traffic (step %d/%d)\n",

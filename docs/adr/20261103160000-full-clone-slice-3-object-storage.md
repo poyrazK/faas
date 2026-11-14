@@ -119,3 +119,33 @@ Four gaps stopped any of it from running:
     The decided lean is to fail and retry, not to hold.
 - **Unused interface:** `ObjectVersionRetentionObserver` stays in
   `pkg/objectstorage`, and clone workers no longer call it.
+
+## Amendment (2026-11-05): Snapshot listing requires completion evidence
+
+S3 snapshot capture uses the same validated version-list adapter as public
+version history. A page must explicitly report whether it is truncated, with
+consistent continuation markers and complete version identities, sizes and
+timestamps. Missing or contradictory pagination evidence fails capture rather
+than publishing an empty or partial manifest. Continuation cursors retain their
+existing wire shape and are validated before any native request.
+
+## Amendment (2026-11-05): Recover copies before repeating them
+
+The S3 snapshot copier stamps a reserved receipt bound to the source bucket,
+target bucket and exact manifest item. It uses one native `CopyObject` attempt
+with destination `If-None-Match: *`. Matching target proof is adopted after a
+lost native acknowledgment, verification failure or lost `CopiedAt` checkpoint;
+an unrelated existing target is refused. Verification hashes both the pinned
+source version and the proven destination version. A late request or overlapping
+worker cannot create another retained destination version on a backend honoring
+the native condition. Backend qualification must cover conditional copy.
+
+This slice copies selected objects up to the native single-copy ceiling,
+`api.MaxObjectSinglePutBytes` (5 GiB), independently of a deployment's upload
+profile. Capture refuses a larger selected object before committing its copy
+plan. Pending objects in old manifests are requalified before any new copy;
+previously verified copies remain resumable.
+The permanent `object_storage_copy_size_unsupported` failure compensates the
+operation-owned target instead of retrying until the deadline. Native multipart
+snapshot copying requires its own recovery qualification and remains outside
+this slice. Normal managed multipart uploads retain their total object limit.

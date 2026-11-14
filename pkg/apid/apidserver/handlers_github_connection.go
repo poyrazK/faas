@@ -226,12 +226,16 @@ func (s *server) emitGitHubActivityRetryAudit(ctx context.Context, accountID, ap
 // helper ensures the JSON API and server-rendered dashboard use the same
 // action binding and expiry semantics.
 func (s *server) issueGitHubInstallManageCSRF(w http.ResponseWriter, accountID string) string {
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, githubInstallManageAction, accountID, githubInstallManageCSRFCookie)
+	return s.issueGitHubManagementCSRF(w, accountID, githubInstallManageAction, githubInstallManageCSRFCookie)
+}
+
+func (s *server) issueGitHubManagementCSRF(w http.ResponseWriter, accountID, action, cookie string) string {
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, action, accountID, cookie)
 	if err != nil {
 		return ""
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: githubInstallManageCSRFCookie, Value: token, Path: "/", HttpOnly: true,
+		Name: cookie, Value: token, Path: "/", HttpOnly: true,
 		Secure: s.domain != "", SameSite: http.SameSiteLaxMode,
 		MaxAge: int(middleware.DefaultCSRFTTL.Seconds()),
 	})

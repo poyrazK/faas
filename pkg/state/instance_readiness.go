@@ -207,7 +207,16 @@ func validateReadinessTargets(targets []ReadinessTarget) error {
 	return nil
 }
 
+// InstanceReadinessForTargetsReader fences observations to the current VM lifetime.
+type InstanceReadinessForTargetsReader interface {
+	LatestInstanceReadinessForTargets(context.Context, []ReadinessTarget) (map[string]map[string]InstanceReadiness, error)
+}
+
 func (s *PgStore) LatestInstanceReadinessForTargets(ctx context.Context, targets []ReadinessTarget) (map[string]map[string]InstanceReadiness, error) {
+	return latestInstanceReadinessForTargets(ctx, s.pool, targets)
+}
+
+func latestInstanceReadinessForTargets(ctx context.Context, db sqlc.DBTX, targets []ReadinessTarget) (map[string]map[string]InstanceReadiness, error) {
 	if err := validateReadinessTargets(targets); err != nil {
 		return nil, err
 	}
@@ -222,7 +231,7 @@ func (s *PgStore) LatestInstanceReadinessForTargets(ctx context.Context, targets
 		args.WakeIds = append(args.WakeIds, target.WakeID)
 		args.NodeIds = append(args.NodeIds, target.NodeID)
 	}
-	rows, err := sqlc.New().LatestInstanceReadinessForTargets(ctx, s.pool, args)
+	rows, err := sqlc.New().LatestInstanceReadinessForTargets(ctx, db, args)
 	if err != nil {
 		return nil, err
 	}
@@ -242,13 +251,17 @@ func (m *MemStore) LatestInstanceReadinessForTargets(_ context.Context, targets 
 	if err := validateReadinessTargets(targets); err != nil {
 		return nil, err
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.latestInstanceReadinessForTargetsLocked(targets), nil
+}
+
+func (m *MemStore) latestInstanceReadinessForTargetsLocked(targets []ReadinessTarget) map[string]map[string]InstanceReadiness {
 	out := make(map[string]map[string]InstanceReadiness)
 	wanted := make(map[string]ReadinessTarget, len(targets))
 	for _, target := range targets {
 		wanted[target.InstanceID] = target
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	for _, event := range m.events {
 		if event.Kind != "wake.app_readiness" && event.Kind != "wake.sidecar_health" {
 			continue
@@ -283,5 +296,5 @@ func (m *MemStore) LatestInstanceReadinessForTargets(_ context.Context, targets 
 			out[payload.InstanceID][source] = InstanceReadiness{Source: source, Ready: payload.Status == "ready", At: event.At, EventID: event.ID}
 		}
 	}
-	return out, nil
+	return out
 }

@@ -109,7 +109,7 @@ func bindingApplicationAckPending(item api.AppBindingInventoryItem, now time.Tim
 		return false
 	}
 	adoption := bindingcheck.SummarizeApplicationAdoption(*input, now)
-	if !adoption.Complete || adoption.Status == "failed" || adoption.ObservedAt.IsZero() || adoption.ObservedAt.After(now) || adoption.SecretsExpected <= 0 || adoption.SecretsExpected != len(api.BindingCredentialSecretKeys(item.Type, item.Binding)) || adoption.SecretsExpected != adoption.SecretsObserved {
+	if !adoption.Complete || adoption.Status == "failed" || adoption.ObservedAt.IsZero() || serverTimeAhead(adoption.ObservedAt, now) || adoption.SecretsExpected <= 0 || adoption.SecretsExpected != len(api.BindingCredentialSecretKeys(item.Type, item.Binding)) || adoption.SecretsExpected != adoption.SecretsObserved {
 		return false
 	}
 	for _, target := range adoption.Targets {

@@ -38,7 +38,26 @@ def _gregale_restore_reseed():
             legacy_seed = getattr(getattr(numpy, "random", None), "seed", None)
             if callable(legacy_seed):
                 legacy_seed()
+        _reset_id_libraries(modules)
         return "ok"
+
+    def _reset_id_libraries(modules):
+        # ADR-20261110170000: pymongo's bson.ObjectId keeps a 5-byte
+        # per-process random value and a counter; it regenerates them only
+        # when the PID changes, which a restore keeps. Best effort.
+        objectid = modules.get("bson.objectid")
+        cls = getattr(objectid, "ObjectId", None)
+        if cls is None:
+            return
+        try:
+            import random as _r
+
+            if hasattr(cls, "_ObjectId__random"):
+                cls._ObjectId__random = os.urandom(5)
+            if hasattr(cls, "_inc"):
+                cls._inc = _r.SystemRandom().randint(0, 0xFFFFFF)
+        except Exception:  # noqa: BLE001 - a version this does not know
+            pass
 
     def serve():
         try:

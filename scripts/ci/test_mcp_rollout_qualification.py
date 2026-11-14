@@ -28,9 +28,15 @@ class QualificationTests(unittest.TestCase):
                 self.assertEqual(config['tasks']['database_url_env'], 'DATABASE_URL')
                 self.assertFalse((source / 'node_modules').exists())
                 generation = 'old' if name == 'worker-old' else 'candidate'
-                self.assertIn("const generation = '" + generation + "'", (source / 'tasks.js').read_text())
-            self.assertIn('res.status(503)', (target / 'web-bad/app.js').read_text())
-            self.assertNotIn('res.status(503)', (target / 'web/app.js').read_text())
+                handlers = (source / 'tasks.js').read_text()
+                self.assertIn("const generation = '" + generation + "'", handlers)
+                self.assertIn('export const mcpTaskHandlers = new Proxy(', handlers)
+                self.assertEqual(handlers.count("registerMcpTaskHandler('build_report', {"), 1)
+                self.assertEqual(handlers.count('export function installMcpTaskHandlers('), 1)
+                self.assertIn('requestedSchema:', handlers)
+                self.assertTrue((source / 'task-worker-receipts.js').exists())
+            self.assertIn("error: 'qualification rejection'", (target / 'web-bad/app.js').read_text())
+            self.assertNotIn("error: 'qualification rejection'", (target / 'web/app.js').read_text())
             self.assertIn('mcp_qualification_observer_role', (target / 'observer/tasks-observer.js').read_text())
             with self.assertRaises(ValueError):
                 MODULE.prepare(ROOT / 'cmd/gregale/templates/mcp-node', target)

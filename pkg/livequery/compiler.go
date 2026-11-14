@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -96,8 +97,15 @@ func RemoteCompiler(baseURL string, client *http.Client) Compiler {
 	if client == nil {
 		client = http.DefaultClient
 	}
+	copy := *client
+	client = &copy
 	url := strings.TrimSuffix(baseURL, "/") + "/compile"
 	return func(ctx context.Context, sql string) (*Plan, error) {
+		if _, bounded := ctx.Deadline(); !bounded && client.Timeout <= 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+		}
 		body, err := json.Marshal(compileRequest{SQL: sql})
 		if err != nil {
 			return nil, fmt.Errorf("livequery: encode compile request: %w", err)

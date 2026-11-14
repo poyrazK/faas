@@ -60,6 +60,9 @@ type realtimeFleetReceiver struct {
 	registerPush PushRegistrar
 	usage        state.RealtimeUsageStore
 	connections  state.RealtimeConnectionSyncStore
+	// endpointConnections shares capped endpoints' counts; nil keeps
+	// endpoint caps per node.
+	endpointConnections state.RealtimeEndpointConnectionSyncStore
 	// occupancy reads the fleet for live channel occupancy (ADR-1324).
 	occupancy      RealtimeOccupancyReader
 	occupancyCache *realtimeOccupancyCache
@@ -524,11 +527,12 @@ func RegisterRealtimeFleetReceiver(server *grpc.Server, store state.Store, owner
 	router, _ := owner.(RealtimeEphemeralRouter)
 	usage, _ := store.(state.RealtimeUsageStore)
 	connections, _ := store.(state.RealtimeConnectionSyncStore)
+	endpointConnections, _ := store.(state.RealtimeEndpointConnectionSyncStore)
 	occupancy, _ := owner.(RealtimeOccupancyReader)
 	var feed *RealtimeAccessFeed
 	if len(accessFeed) > 0 {
 		feed = accessFeed[0]
 	}
-	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router, registerPush: registerPush, usage: usage, connections: connections,
+	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router, registerPush: registerPush, usage: usage, connections: connections, endpointConnections: endpointConnections,
 		occupancy: occupancy, occupancyCache: newRealtimeOccupancyCache(), accessFeed: feed, relayLookups: newRealtimeRelayLookups()})
 }

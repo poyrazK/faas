@@ -43,6 +43,11 @@ func (m *MemStore) EnvironmentOnlyProjectAppIDs(ctx context.Context, accountID, 
 
 func (m *MemStore) environmentOnlyProjectAppIDsLocked(accountID, projectID string) []string {
 	stage, production := make(map[string]bool), make(map[string]bool)
+	for appID, admittedProject := range m.projectAppStageAdmissions {
+		if admittedProject == projectID {
+			stage[appID] = true
+		}
+	}
 	for _, specID := range m.projectEnvironmentWorkloadHeads {
 		spec := m.projectEnvironmentWorkloadSpecs[specID]
 		if spec.AccountID != accountID || spec.ProjectID != projectID {
@@ -69,4 +74,14 @@ func (m *MemStore) environmentOnlyProjectAppIDsLocked(accountID, projectID strin
 	}
 	slices.Sort(ids)
 	return ids
+}
+
+func (m *MemStore) putWorkloadSpecHeadLocked(spec ProjectEnvironmentWorkloadSpec) {
+	m.projectEnvironmentWorkloadHeads[workloadSpecHeadKey(spec.EnvironmentID, spec.AppID)] = spec.ID
+	if spec.EnvironmentSlug != "production" {
+		if m.projectAppStageAdmissions == nil {
+			m.projectAppStageAdmissions = make(map[string]string)
+		}
+		m.projectAppStageAdmissions[spec.AppID] = spec.ProjectID
+	}
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/incidents"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -16,6 +17,48 @@ import (
 type incidentsHost struct{ s *server }
 
 var _ incidents.Host = incidentsHost{}
+
+// TeamApps lists the apps of the caller's organizations that teammates
+// created and the caller may read (ADR-20261109153000): their alert rules
+// and incidents are held under the creating member's account, so the
+// caller's own account never lists them. A failed read lists none.
+func (h incidentsHost) TeamApps(ctx context.Context, acct state.Account) []state.App {
+	lister, ok := h.s.store.(state.OrgAppLister)
+	if !ok {
+		return nil
+	}
+	actor := acct
+	if principal, _, ok := middleware.AccountFromCtx(ctx); ok {
+		actor = principal
+	}
+	orgs, err := h.s.store.ListOrgsForAccount(ctx, actor.ID)
+	if err != nil {
+		h.s.log.WarnContext(ctx, "incidents: list organizations", "err", err)
+		return nil
+	}
+	var apps []state.App
+	for _, org := range orgs {
+		if org.Personal {
+			continue
+		}
+		orgApps, err := lister.ListAppsByOrg(ctx, org.ID)
+		if err != nil {
+			h.s.log.WarnContext(ctx, "incidents: list organization apps", "org_id", org.ID, "err", err)
+			continue
+		}
+		for _, app := range orgApps {
+			if app.AccountID != acct.ID {
+				apps = append(apps, app)
+			}
+		}
+	}
+	visible, err := accountViewApps(ctx, h.s.store, acct, apps)
+	if err != nil {
+		h.s.log.WarnContext(ctx, "incidents: organization app access", "err", err)
+		return nil
+	}
+	return visible
+}
 
 func (h incidentsHost) LoadApp(w http.ResponseWriter, r *http.Request, acct state.Account, slug string) (state.App, bool) {
 	return h.s.loadApp(w, r, acct, slug) //nolint:contextcheck // loadApp uses r.Context().

@@ -20,12 +20,15 @@ type fakeReadStore struct {
 	recorded []state.ObjectReadUsage
 }
 
-func (f *fakeReadStore) ObjectReadAdmission(_ context.Context, _, _ string, at time.Time, _ api.ObjectStoragePolicy) (state.ObjectReadAdmission, error) {
+func (f *fakeReadStore) ObjectReadAdmission(_ context.Context, account, _ string, at time.Time, _ api.ObjectStoragePolicy) (state.ObjectReadAdmission, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reads++
 	d := f.decision
 	d.Period = state.ObjectStoragePeriod(at)
+	if d.SubjectID == "" {
+		d.SubjectID = account
+	}
 	return d, f.readErr
 }
 
@@ -141,7 +144,7 @@ func TestReadAdmitterRefusesBodiesAboveTheStorageCeiling(t *testing.T) {
 		t.Fatalf("a body above the ceiling = %v", err)
 	}
 	a.mu.Lock()
-	pending := a.pendingLocked(readBucket().ID, read.period).EgressBytes
+	pending := a.pendingLocked(readBucket().ID, read.period, read.owner).EgressBytes
 	a.mu.Unlock()
 	if pending != 0 {
 		t.Fatalf("a refused body counted %d egress bytes", pending)

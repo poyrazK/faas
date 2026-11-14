@@ -138,7 +138,7 @@ func (e *Engine) instanceBootingFor(ctx context.Context, appID, deploymentID str
 		return false, err
 	}
 	for _, instance := range instances {
-		if instance.DeploymentID != deploymentID || state.IsFork(instance.Mode) {
+		if instance.DeploymentID != deploymentID || state.NeverServes(instance.Mode) {
 			continue
 		}
 		switch state.State(instance.State) {

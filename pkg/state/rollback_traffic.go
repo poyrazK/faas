@@ -64,5 +64,8 @@ func (m *MemStore) rollbackTrafficTargetLocked(ctx context.Context, d Deployment
 	if !rollbackPairValid(r, d, m.deployments[selection.currentID], m.rollbackRowsLocked(r)) {
 		return d, ErrCheckedRollbackChanged
 	}
+	if err := m.preserveRollbackSuccessLocked(d); err != nil {
+		return d, err
+	}
 	return resetRollbackTrafficTarget(d), nil
 }

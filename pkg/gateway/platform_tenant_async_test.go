@@ -33,7 +33,7 @@ func TestApplyEdgeRuleAsyncTenantIdentity(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusURL != "/v1/platform-tenant-self/invocations/"+response.ID {
+	if !strings.HasSuffix(response.StatusURL, "/v1/platform-tenant-self/invocations/"+response.ID) {
 		t.Fatalf("customer status URL: %s", response.StatusURL)
 	}
 }

@@ -55,7 +55,9 @@ func cmdBillingBudgets(args []string) int {
 		fs.Int64Var(&after, "after-revision", 0, "continue after this revision")
 		fs.IntVar(&limit, "limit", api.FinancialBudgetHistoryMax, "maximum revisions in this page")
 	}
-	if err := fs.Parse(args[1:]); err != nil {
+	// The usage reads `update ID [flags]`; accept the ID on either side of
+	// the flags (Hunt 33 H33-10).
+	if err := parseInterspersed(fs, args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
@@ -65,7 +67,7 @@ func cmdBillingBudgets(args []string) int {
 	needsID := verb == "get" || verb == "update" || verb == "delete" || verb == "history" || verb == "channels"
 	if needsID {
 		if fs.NArg() != 1 || uuid.Validate(fs.Arg(0)) != nil {
-			return printErr("Invalid budget ID", errors.New("expected one UUID after flags"))
+			return printErr("Invalid budget ID", errors.New("expected one budget UUID"))
 		}
 		id = fs.Arg(0)
 	} else if fs.NArg() != 0 {

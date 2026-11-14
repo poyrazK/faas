@@ -160,12 +160,18 @@ func (s *StateStore) update(namespace string, value any) error {
 	return s.updateSnapshot(namespace, value, 0)
 }
 
-// updateSnapshot sets namespace to value and commits what changed. A record
-// whose bytes did not change is not written again: discovery GETs and reads
-// used to rewrite the whole state. seq orders snapshots taken under the
-// caller's lock but committed outside it; a value older than the record's
-// last seq is already covered by it. Zero is unordered.
+// updateMany commits related history, lookup and replay records atomically.
+func (s *StateStore) updateMany(values map[string]any) error {
+	return s.updateManySnapshot(values, nil)
+}
+
+// updateSnapshot preserves the ordering of snapshots taken under the caller's
+// lock and committed outside it. Unchanged bytes need no durable write.
 func (s *StateStore) updateSnapshot(namespace string, value any, seq uint64) error {
+	return s.updateManySnapshot(map[string]any{namespace: value}, map[string]uint64{namespace: seq})
+}
+
+func (s *StateStore) updateManySnapshot(values map[string]any, sequences map[string]uint64) error {
 	if s == nil {
 		return nil
 	}
@@ -174,39 +180,49 @@ func (s *StateStore) updateSnapshot(namespace string, value any, seq uint64) err
 	if s.failure != nil || s.closed {
 		return errors.New("MCP state unavailable; restart after restoring storage")
 	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		return err
+	encoded := make(map[string]json.RawMessage, len(values))
+	for namespace, value := range values {
+		data, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		encoded[namespace] = data
 	}
 	if s.seqs == nil {
 		s.seqs = map[string]uint64{}
 	}
 	var changed []string
-	stale := seq != 0 && seq < s.seqs[namespace]
-	switch {
-	case stale:
-	case value == nil:
-		if _, ok := s.records[namespace]; ok {
-			delete(s.records, namespace)
+	for namespace, value := range values {
+		seq := sequences[namespace]
+		if seq != 0 && seq < s.seqs[namespace] {
+			continue
+		}
+		if seq != 0 {
+			s.seqs[namespace] = seq
+		}
+		if value == nil {
+			if _, ok := s.records[namespace]; ok {
+				delete(s.records, namespace)
+				changed = append(changed, namespace)
+			}
+		} else if !bytes.Equal(s.records[namespace], encoded[namespace]) {
+			s.records[namespace] = encoded[namespace]
 			changed = append(changed, namespace)
 		}
-	case !bytes.Equal(s.records[namespace], data):
-		s.records[namespace] = data
-		changed = append(changed, namespace)
 	}
-	if !stale && seq != 0 {
-		s.seqs[namespace] = seq
-	}
-	if snapshot, ok := value.(oauthSnapshot); ok && namespace == "oauth" && !stale {
+	if snapshot, ok := values["oauth"].(oauthSnapshot); ok && (sequences["oauth"] == 0 || sequences["oauth"] >= s.seqs["oauth"]) {
+		now := time.Now()
 		for key := range s.records {
-			if strings.HasPrefix(key, "plans/") || strings.HasPrefix(key, "environment-plans/") {
-				grantID := strings.TrimPrefix(strings.TrimPrefix(key, "environment-plans/"), "plans/")
-				if strings.HasPrefix(grantID, "agent-key/") && liveAgentPlans(s.records[key], time.Now()) {
-					continue
-				}
-				if _, active := snapshot.Grants[grantID]; !active {
-					delete(s.records, key)
-					changed = append(changed, key)
+			for _, prefix := range []string{"plans/", "environment-plans/", "actions/", workloadActionsNamespace, environmentActionsNamespace, budgetActionsNamespace, budgetOutcomeNamespace, deploymentOutcomeNamespace, promotionOutcomeNamespace, rollbackOutcomeNamespace, serviceRollbackOutcomeNamespace, serviceAbortOutcomeNamespace, namedServiceAbortOutcomeNamespace, environmentRollbackOutcomeNamespace, environmentPromotionOutcomeNamespace, scalingActionsNamespace, configActionsNamespace, configRollbackActionsNamespace, cronActionsNamespace, scalingOutcomeNamespace, configOutcomeNamespace, configRollbackOutcomeNamespace} {
+				if grantID, matched := strings.CutPrefix(key, prefix); matched {
+					if strings.HasPrefix(grantID, "agent-key/") && retainedAgentState(s.records, grantID, now) {
+						break
+					}
+					if _, active := snapshot.Grants[grantID]; !active {
+						delete(s.records, key)
+						changed = append(changed, key)
+					}
+					break
 				}
 			}
 		}
@@ -214,13 +230,37 @@ func (s *StateStore) updateSnapshot(namespace string, value any, seq uint64) err
 	if len(changed) == 0 {
 		return nil
 	}
-	// Memory is now ahead of storage, so a failed commit disables the store
-	// and the bridge exits to reload (ADR-20261026195952 amendment 2).
+	// Memory is ahead of storage after a failed commit. Disable the bridge so
+	// neither a replay nor a receipt can use an uncommitted snapshot.
 	if err := s.persist.commit(s.records, changed); err != nil {
 		s.failure = err
 		return errors.New("MCP state could not be committed; further access disabled")
 	}
 	return nil
+}
+
+// Headless connections retain read-only recovery for the same bounded history
+// lifetime as OAuth grants, even after their replay plans expire.
+func retainedAgentState(records map[string]json.RawMessage, grantID string, now time.Time) bool {
+	if liveAgentPlans(records["plans/"+grantID], now) || liveAgentPlans(records["environment-plans/"+grantID], now) {
+		return true
+	}
+	for _, prefix := range []string{"actions/", workloadActionsNamespace, environmentActionsNamespace, budgetActionsNamespace, scalingActionsNamespace, configActionsNamespace, configRollbackActionsNamespace, cronActionsNamespace} {
+		var saved struct {
+			Items map[string]struct {
+				RetainedUntil time.Time `json:"retained_until"`
+			}
+		}
+		if json.Unmarshal(records[prefix+grantID], &saved) != nil {
+			continue
+		}
+		for _, entry := range saved.Items {
+			if now.Before(entry.RetainedUntil) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // fail disables further access, as a failed commit does.

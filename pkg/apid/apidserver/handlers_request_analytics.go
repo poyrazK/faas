@@ -26,6 +26,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/analyticsrollup"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
@@ -52,7 +53,7 @@ const requestAnalyticsRouteMaxLength = 256
 
 var requestAnalyticsMethods = map[string]struct{}{
 	"GET": {}, "POST": {}, "PUT": {}, "PATCH": {},
-	"DELETE": {}, "HEAD": {}, "OPTIONS": {},
+	"DELETE": {}, "HEAD": {}, "OPTIONS": {}, "OTHER": {},
 }
 
 var requestAnalyticsGroupBys = map[string]struct{}{
@@ -71,18 +72,47 @@ type requestAnalyticsCompletenessReader interface {
 	RequestTelemetryCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error)
 }
 
+type requestAnalyticsRollupCompletenessReader interface {
+	RequestAnalyticsCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error)
+}
+
+// rollupCompleteness reads the analytics completeness through the raw
+// reader's shape.
+type rollupCompleteness struct {
+	r requestAnalyticsRollupCompletenessReader
+}
+
+func (c rollupCompleteness) RequestTelemetryCompleteness(ctx context.Context, appID string, from, until time.Time) ([]string, error) {
+	return c.r.RequestAnalyticsCompleteness(ctx, appID, from, until)
+}
+
 // requestAnalyticsCompleteness says whether every gateway delivered the
 // window's telemetry. Losses (a ring overwrite, an exhausted retry, an app
 // over its ingest cap) otherwise only lowered the totals without a trace.
 // The newest RequestAnalyticsSettleLag is still arriving and is not judged;
 // a window entirely inside it is reported as pending. A failed check leaves
 // the verdict unknown rather than failing the read.
+//
+// When the app's rollups answer the window, a gateway counting analytics
+// itself is judged by its analytics gaps, not raw delivery: a raw row it
+// counted and then lost leaves the rollups whole (ADR-20261103113952
+// amendment 6).
 func (s *server) requestAnalyticsCompleteness(ctx context.Context, appID string, window requestAnalyticsWindow) (*bool, []string) {
-	reader, ok := s.store.(requestAnalyticsCompletenessReader)
-	if !ok {
-		return nil, nil
+	var reader requestAnalyticsCompletenessReader
+	if analytics, ok := s.store.(requestAnalyticsRollupCompletenessReader); ok {
+		if _, covered := analyticsrollup.Covers(ctx, s.store, appID, window.From); covered {
+			reader = rollupCompleteness{analytics}
+		}
 	}
-	return requestAnalyticsCompletenessFrom(ctx, reader, s.log, appID, window)
+	if reader == nil {
+		raw, ok := s.store.(requestAnalyticsCompletenessReader)
+		if !ok {
+			return nil, nil
+		}
+		reader = raw
+	}
+	complete, gaps := requestAnalyticsCompletenessFrom(ctx, reader, s.log, appID, window)
+	return analyticsrollup.WithRollupGaps(ctx, s.store, s.log, appID, window.From, window.Until, complete, gaps)
 }
 
 func requestAnalyticsCompletenessFrom(ctx context.Context, reader requestAnalyticsCompletenessReader, log *slog.Logger, appID string, window requestAnalyticsWindow) (*bool, []string) {
@@ -268,6 +298,7 @@ func parseRequestAnalyticsWindow(r *http.Request, now time.Time, retention time.
 			windowClamped = true
 		}
 	}
+	from, until = analyticsrollup.AlignWindow(from, until, now, retention)
 	return requestAnalyticsWindow{
 		From:           from,
 		Until:          until,
@@ -312,7 +343,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		ReceivedAt:   pgtype.Timestamptz{Time: window.From, Valid: true},
 		ReceivedAt_2: pgtype.Timestamptz{Time: window.Until, Valid: true},
 	}
-	summary, groupRows, err := s.requestAnalyticsTotals(ctx, app, acct, window, groupBy, params)
+	summary, groupRows, sampledOK, err := s.requestAnalyticsTotals(ctx, app, acct, window, groupBy, params)
 	if err != nil {
 		return api.RequestAnalyticsResponse{}, err
 	}
@@ -323,7 +354,7 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 	var otherRouteRequests, otherRouteTimeMS int64
 	for _, row := range groupRows {
 		value := requestAnalyticsDimensionString(row.Dimension)
-		method := requestAnalyticsDimensionString(row.Method)
+		method := api.NormalizeRequestAnalyticsMethod(requestAnalyticsDimensionString(row.Method))
 		group := api.RequestAnalyticsGroup{
 			Value:               value,
 			Method:              method,
@@ -372,17 +403,24 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 			})
 		}
 	}
+	omitted := make([]string, 0)
+	if !sampledOK {
+		omitted = append(omitted, "sampled_measures")
+	}
 	dependenciesTruncated := false
 	if groupBy == "route" && len(routes) > 0 {
-		dependencyRows, err := s.store.ListRequestTelemetryDependencySpans(ctx, sqlc.ListRequestTelemetryDependencySpansParams{
-			AppID:        params.AppID,
-			AccountID:    params.AccountID,
-			ReceivedAt:   params.ReceivedAt,
-			ReceivedAt_2: params.ReceivedAt_2,
-			Limit:        requestAnalyticsDependencyRowLimit + 1,
+		dependencyRows, err := analyticsrollup.OptionalRead(ctx, func(ctx context.Context) ([]sqlc.ListRequestTelemetryDependencySpansRow, error) {
+			return s.store.ListRequestTelemetryDependencySpans(ctx, sqlc.ListRequestTelemetryDependencySpansParams{
+				AppID:        params.AppID,
+				AccountID:    params.AccountID,
+				ReceivedAt:   params.ReceivedAt,
+				ReceivedAt_2: params.ReceivedAt_2,
+				Limit:        requestAnalyticsDependencyRowLimit + 1,
+			})
 		})
 		if err != nil {
-			return api.RequestAnalyticsResponse{}, err
+			omitted = append(omitted, "dependencies")
+			dependencyRows = nil
 		}
 		if len(dependencyRows) > requestAnalyticsDependencyRowLimit {
 			dependenciesTruncated = true
@@ -409,116 +447,141 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		// (ADR-743), or request count when no timing exists. This
 		// intentionally excludes the account's shared included allowance and
 		// any egress charge: it is a cost allocation estimate, not invoice math.
-		usage, _, err := meter.BuildAppWindowSummary(ctx, s.store, acct.ID, app.ID, window.From, window.Until)
+		usage, err := analyticsrollup.OptionalRead(ctx, func(ctx context.Context) (meter.AppWindowSummary, error) {
+			value, _, err := meter.BuildAppWindowSummary(ctx, s.store, acct.ID, app.ID, window.From, window.Until)
+			return value, err
+		})
 		if err != nil {
-			return api.RequestAnalyticsResponse{}, err
+			omitted = append(omitted, "compute_cost", "deployment_costs")
 		}
-		estimatedMillicents := api.OverageMillicentsForBillableMBSeconds(usage.MBSeconds)
-		requestCount, allocatedMillicents, otherRouteMillicents, allocationMethod := allocateRequestAnalyticsRouteCostByTime(routes, otherRouteRequests, otherRouteTimeMS, estimatedMillicents)
-		otherRouteRequestSharePct := 0.0
-		if requestCount > 0 {
-			otherRouteRequestSharePct = float64(otherRouteRequests) * 100 / float64(requestCount)
-		}
-		computeCost = &api.RequestAnalyticsComputeCost{
-			EstimatedMillicents:       estimatedMillicents,
-			AllocatedMillicents:       allocatedMillicents,
-			UnallocatedMillicents:     estimatedMillicents - allocatedMillicents,
-			OtherRouteMillicents:      otherRouteMillicents,
-			OtherRouteRequests:        otherRouteRequests,
-			OtherRouteRequestSharePct: otherRouteRequestSharePct,
-			RateMillicentsPerGBHour:   api.OverageMillicentsPerGBHour,
-			Currency:                  api.BillingCurrency,
-			AllocationMethod:          allocationMethod,
-			Basis:                     "raw_ram_hours_at_current_overage_rate_before_allowance",
-			RequestCount:              requestCount,
-		}
+		if err == nil {
+			estimatedMillicents := api.OverageMillicentsForBillableMBSeconds(usage.MBSeconds)
+			requestCount, allocatedMillicents, otherRouteMillicents, allocationMethod := allocateRequestAnalyticsRouteCostByTime(routes, otherRouteRequests, otherRouteTimeMS, estimatedMillicents)
+			otherRouteRequestSharePct := 0.0
+			if requestCount > 0 {
+				otherRouteRequestSharePct = float64(otherRouteRequests) * 100 / float64(requestCount)
+			}
+			computeCost = &api.RequestAnalyticsComputeCost{
+				EstimatedMillicents:       estimatedMillicents,
+				AllocatedMillicents:       allocatedMillicents,
+				UnallocatedMillicents:     estimatedMillicents - allocatedMillicents,
+				OtherRouteMillicents:      otherRouteMillicents,
+				OtherRouteRequests:        otherRouteRequests,
+				OtherRouteRequestSharePct: otherRouteRequestSharePct,
+				RateMillicentsPerGBHour:   api.OverageMillicentsPerGBHour,
+				Currency:                  api.BillingCurrency,
+				AllocationMethod:          allocationMethod,
+				Basis:                     "raw_ram_hours_at_current_overage_rate_before_allowance",
+				RequestCount:              requestCount,
+			}
 
-		if deploymentStore, ok := s.store.(requestAnalyticsDeploymentReader); ok {
-			deploymentRows, err := deploymentStore.RequestTelemetryAnalyticsByDeployment(ctx, sqlc.RequestTelemetryAnalyticsByDeploymentParams{
-				AppID:        params.AppID,
-				AccountID:    params.AccountID,
-				ReceivedAt:   params.ReceivedAt,
-				ReceivedAt_2: params.ReceivedAt_2,
-				Limit:        requestAnalyticsDeploymentLimit,
-			})
-			if err != nil {
-				return api.RequestAnalyticsResponse{}, err
-			}
-			var totalDeploymentRequests int64
-			if len(deploymentRows) > 0 {
-				totalDeploymentRequests = deploymentRows[0].TotalRequests
-			}
-			deploymentCounts := make([]int64, len(deploymentRows)+1)
-			var listedRequests int64
-			for i, row := range deploymentRows {
-				deploymentCounts[i] = row.Requests
-				listedRequests += row.Requests
-			}
-			if totalDeploymentRequests < listedRequests {
-				totalDeploymentRequests = listedRequests
-			}
-			otherDeploymentRequests := totalDeploymentRequests - listedRequests
-			deploymentCounts[len(deploymentRows)] = otherDeploymentRequests
-			deploymentAllocations, deploymentRequestCount, deploymentAllocatedMillicents := allocateRequestShareMillicents(deploymentCounts, estimatedMillicents)
-			deployments := make([]api.RequestAnalyticsDeploymentCost, 0, len(deploymentRows))
-			for i, row := range deploymentRows {
-				sharePct := 0.0
-				if deploymentRequestCount > 0 {
-					sharePct = float64(row.Requests) * 100 / float64(deploymentRequestCount)
-				}
-				var guestCPUAvgMS *int
-				if row.GuestCpuMeasuredRequests > 0 {
-					cpuAvg := int(row.GuestCpuAvgMs)
-					guestCPUAvgMS = &cpuAvg
-				}
-				deployments = append(deployments, api.RequestAnalyticsDeploymentCost{
-					DeploymentID:                   row.DeploymentID,
-					CommitSHA:                      requestAnalyticsDimensionString(row.CommitSha),
-					DeploymentTag:                  requestAnalyticsDimensionString(row.DeploymentTag),
-					DeploymentCreatedAt:            requestAnalyticsDimensionString(row.DeploymentCreatedAt),
-					Requests:                       row.Requests,
-					RequestSharePct:                sharePct,
-					EstimatedComputeCostMillicents: deploymentAllocations[i],
-					GuestCPUAvgMS:                  guestCPUAvgMS,
-					GuestCPUMeasuredRequests:       row.GuestCpuMeasuredRequests,
-					GuestCPURegression:             false,
+			if deploymentStore, ok := s.store.(requestAnalyticsDeploymentReader); ok {
+				deploymentRows, err := analyticsrollup.OptionalRead(ctx, func(ctx context.Context) ([]sqlc.RequestTelemetryAnalyticsByDeploymentRow, error) {
+					return s.requestAnalyticsDeploymentRows(ctx, deploymentStore, app, acct, window, sqlc.RequestTelemetryAnalyticsByDeploymentParams{
+						AppID:        params.AppID,
+						AccountID:    params.AccountID,
+						ReceivedAt:   params.ReceivedAt,
+						ReceivedAt_2: params.ReceivedAt_2,
+						Limit:        requestAnalyticsDeploymentLimit,
+					})
 				})
+				if err != nil {
+					omitted = append(omitted, "deployment_costs")
+				}
+				if err == nil {
+					var totalDeploymentRequests int64
+					if len(deploymentRows) > 0 {
+						totalDeploymentRequests = deploymentRows[0].TotalRequests
+					}
+					deploymentCounts := make([]int64, len(deploymentRows)+1)
+					var listedRequests int64
+					for i, row := range deploymentRows {
+						deploymentCounts[i] = row.Requests
+						listedRequests += row.Requests
+					}
+					if totalDeploymentRequests < listedRequests {
+						totalDeploymentRequests = listedRequests
+					}
+					otherDeploymentRequests := totalDeploymentRequests - listedRequests
+					deploymentCounts[len(deploymentRows)] = otherDeploymentRequests
+					deploymentAllocations, deploymentRequestCount, deploymentAllocatedMillicents := allocateRequestShareMillicents(deploymentCounts, estimatedMillicents)
+					deployments := make([]api.RequestAnalyticsDeploymentCost, 0, len(deploymentRows))
+					for i, row := range deploymentRows {
+						sharePct := 0.0
+						if deploymentRequestCount > 0 {
+							sharePct = float64(row.Requests) * 100 / float64(deploymentRequestCount)
+						}
+						var guestCPUAvgMS *int
+						if row.GuestCpuMeasuredRequests > 0 {
+							cpuAvg := int(row.GuestCpuAvgMs)
+							guestCPUAvgMS = &cpuAvg
+						}
+						deployments = append(deployments, api.RequestAnalyticsDeploymentCost{
+							DeploymentID:                   row.DeploymentID,
+							CommitSHA:                      requestAnalyticsDimensionString(row.CommitSha),
+							DeploymentTag:                  requestAnalyticsDimensionString(row.DeploymentTag),
+							DeploymentCreatedAt:            requestAnalyticsDimensionString(row.DeploymentCreatedAt),
+							Requests:                       row.Requests,
+							RequestSharePct:                sharePct,
+							EstimatedComputeCostMillicents: deploymentAllocations[i],
+							GuestCPUAvgMS:                  guestCPUAvgMS,
+							GuestCPUMeasuredRequests:       row.GuestCpuMeasuredRequests,
+							GuestCPURegression:             false,
+						})
+					}
+					annotateDeploymentCPURegressions(deployments)
+					otherSharePct := 0.0
+					if deploymentRequestCount > 0 {
+						otherSharePct = float64(otherDeploymentRequests) * 100 / float64(deploymentRequestCount)
+					}
+					deploymentCosts = &api.RequestAnalyticsDeploymentCostBreakdown{
+						EstimatedMillicents:   estimatedMillicents,
+						AllocatedMillicents:   deploymentAllocatedMillicents,
+						UnallocatedMillicents: estimatedMillicents - deploymentAllocatedMillicents,
+						OtherMillicents:       deploymentAllocations[len(deploymentRows)],
+						OtherRequests:         otherDeploymentRequests,
+						OtherRequestSharePct:  otherSharePct,
+						RequestCount:          deploymentRequestCount,
+						Deployments:           deployments,
+					}
+				}
 			}
-			annotateDeploymentCPURegressions(deployments)
-			otherSharePct := 0.0
-			if deploymentRequestCount > 0 {
-				otherSharePct = float64(otherDeploymentRequests) * 100 / float64(deploymentRequestCount)
-			}
-			deploymentCosts = &api.RequestAnalyticsDeploymentCostBreakdown{
-				EstimatedMillicents:   estimatedMillicents,
-				AllocatedMillicents:   deploymentAllocatedMillicents,
-				UnallocatedMillicents: estimatedMillicents - deploymentAllocatedMillicents,
-				OtherMillicents:       deploymentAllocations[len(deploymentRows)],
-				OtherRequests:         otherDeploymentRequests,
-				OtherRequestSharePct:  otherSharePct,
-				RequestCount:          deploymentRequestCount,
-				Deployments:           deployments,
-			}
+
 		}
 
 		if routeDeploymentStore, ok := s.store.(requestAnalyticsRouteDeploymentReader); ok && len(routes) > 0 {
-			routeDeploymentRows, err := routeDeploymentStore.RequestTelemetryAnalyticsByRouteDeployment(ctx, sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams{
-				AppID:           params.AppID,
-				AccountID:       params.AccountID,
-				ReceivedAt:      params.ReceivedAt,
-				ReceivedAt_2:    params.ReceivedAt_2,
-				DeploymentLimit: requestAnalyticsRouteDeploymentLimit,
-				RouteLimit:      requestAnalyticsRouteLimit,
+			routeDeploymentRows, err := analyticsrollup.OptionalRead(ctx, func(ctx context.Context) ([]sqlc.RequestTelemetryAnalyticsByRouteDeploymentRow, error) {
+				return s.requestAnalyticsRouteDeploymentRows(ctx, routeDeploymentStore, app, acct, window, sqlc.RequestTelemetryAnalyticsByRouteDeploymentParams{
+					AppID:           params.AppID,
+					AccountID:       params.AccountID,
+					ReceivedAt:      params.ReceivedAt,
+					ReceivedAt_2:    params.ReceivedAt_2,
+					DeploymentLimit: requestAnalyticsRouteDeploymentLimit,
+					RouteLimit:      requestAnalyticsRouteLimit,
+				})
 			})
 			if err != nil {
-				return api.RequestAnalyticsResponse{}, err
+				omitted = append(omitted, "route_deployments")
+			} else {
+				attachRequestAnalyticsRouteDeploymentObservations(routes, routeDeploymentRows, summary.Requests)
+				for _, route := range routes {
+					known := route.OtherDeploymentRequests
+					for _, deployment := range route.DeploymentObservations {
+						known += deployment.Requests
+					}
+					if known < route.Requests {
+						omitted = append(omitted, "route_deployments_partial")
+						break
+					}
+				}
 			}
-			attachRequestAnalyticsRouteDeploymentObservations(routes, routeDeploymentRows, summary.Requests)
 		}
 	}
 
 	telemetryComplete, telemetryGaps := s.requestAnalyticsCompleteness(ctx, app.ID, window)
 	return api.RequestAnalyticsResponse{
+		Omitted:               omitted,
+		SampledMeasures:       requestAnalyticsSampledMeasuresState(sampledOK),
 		TelemetryComplete:     telemetryComplete,
 		TelemetryGaps:         telemetryGaps,
 		Slug:                  app.Slug,
@@ -545,6 +608,15 @@ func (s *server) requestAnalyticsResponse(ctx context.Context, app state.App, ac
 		DeploymentCosts:       deploymentCosts,
 		AsOf:                  window.AsOf.Format(time.RFC3339Nano),
 	}, nil
+}
+
+// requestAnalyticsSampledMeasuresState names whether the response carries
+// the detail only raw sampled rows hold (api.RequestAnalyticsSampledMeasures*).
+func requestAnalyticsSampledMeasuresState(ok bool) string {
+	if ok {
+		return api.RequestAnalyticsSampledMeasuresIncluded
+	}
+	return api.RequestAnalyticsSampledMeasuresOmitted
 }
 
 // annotateDeploymentCPURegressions compares the mean measured guest CPU time
@@ -662,18 +734,13 @@ func attachRequestAnalyticsRouteDeploymentObservations(routes []api.RequestAnaly
 			listedRequests += counts[j]
 		}
 		remainingRequests := otherRequests[i]
-		if remainingRequests != route.Requests-listedRequests {
-			remainingRequests = route.Requests - listedRequests
-			if remainingRequests < 0 {
-				remainingRequests = 0
-			}
-		}
-		// The route query uses the same window and route ranking, so its
-		// __other__ row and this residual should agree. Fall back to the route
-		// total to keep the public split internally consistent if either query
-		// ever changes its top-N policy independently.
 		counts[len(counts)-1] = remainingRequests
-		allocations, _, _ := allocateRequestShareMillicents(counts, route.EstimatedComputeCostMillicents)
+		coveredRequests := listedRequests + remainingRequests
+		allocatable := route.EstimatedComputeCostMillicents
+		if route.Requests > coveredRequests {
+			allocatable = proportionMillicents(allocatable, coveredRequests, route.Requests)
+		}
+		allocations, _, _ := allocateRequestShareMillicents(counts, allocatable)
 		for j := range route.DeploymentObservations {
 			observation := &route.DeploymentObservations[j]
 			observation.EstimatedComputeCostMillicents = allocations[j]
@@ -1168,6 +1235,7 @@ func (s *server) requestAnalyticsGroupedTimeseriesResponse(ctx context.Context, 
 		WindowClamped:     window.WindowClamped,
 		Bucket:            "1h",
 		Series:            series,
+		Points:            []api.RequestAnalyticsTimeseriesPoint{},
 		AsOf:              window.AsOf.Format(time.RFC3339Nano),
 	}, nil
 }
@@ -1340,6 +1408,7 @@ func (s *server) fetchDashboardRequestAnalytics(ctx context.Context, log *slog.L
 		RoutesLimit:           response.RoutesLimit,
 		RoutesTruncated:       response.RoutesTruncated,
 		DependenciesTruncated: response.DependenciesTruncated,
+		Omitted:               analyticsOmissionLabels(response.Omitted),
 		ComputeCost:           requestAnalyticsComputeCostView(response.ComputeCost),
 		DeploymentCosts:       requestAnalyticsDeploymentCostBreakdownView(response.DeploymentCosts),
 		AsOf:                  response.AsOf,
@@ -1466,4 +1535,12 @@ func intFromAnalyticsPointer(value *int) int {
 		return 0
 	}
 	return *value
+}
+
+func analyticsOmissionLabels(omitted []string) []string {
+	labels := make([]string, 0, len(omitted))
+	for _, name := range omitted {
+		labels = append(labels, strings.ReplaceAll(name, "_", " "))
+	}
+	return labels
 }

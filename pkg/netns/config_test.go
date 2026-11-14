@@ -880,7 +880,7 @@ func TestForwardAllowlistRuleHelper(t *testing.T) {
 	// Single v4 CIDR: single argv with the expected shape.
 	one := testConfig()
 	one.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
-	wantOne := `ip netns exec fc-test nft add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } tcp dport != 25 accept`
+	wantOne := `ip netns exec fc-test nft add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`
 	if got := strings.Join(one.ForwardAllowlistRule(nft), " "); got != wantOne {
 		t.Errorf("single v4 CIDR:\n got  %s\n want %s", got, wantOne)
 	}
@@ -892,7 +892,7 @@ func TestForwardAllowlistRuleHelper(t *testing.T) {
 		netip.MustParsePrefix("8.8.8.0/24"),
 		netip.MustParsePrefix("9.9.9.0/24"),
 	}
-	wantMany := `ip netns exec fc-test nft add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24,8.8.8.0/24,9.9.9.0/24 } tcp dport != 25 accept`
+	wantMany := `ip netns exec fc-test nft add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24,8.8.8.0/24,9.9.9.0/24 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`
 	if got := strings.Join(many.ForwardAllowlistRule(nft), " "); got != wantMany {
 		t.Errorf("multiple v4 CIDRs:\n got  %s\n want %s", got, wantMany)
 	}
@@ -912,7 +912,7 @@ func TestForwardAllowlistRuleHelper(t *testing.T) {
 		netip.MustParsePrefix("1.2.3.0/24"),
 		netip.MustParsePrefix("fe80::/10"),
 	}
-	wantMixedV4 := `ip netns exec fc-test nft add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } tcp dport != 25 accept`
+	wantMixedV4 := `ip netns exec fc-test nft add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`
 	if got := strings.Join(mixed.ForwardAllowlistRule(nft), " "); got != wantMixedV4 {
 		t.Errorf("mixed input on v4 helper:\n got  %s\n want %s", got, wantMixedV4)
 	}
@@ -938,7 +938,7 @@ func TestForwardAllowlistRule6Helper(t *testing.T) {
 	// Single v6 CIDR: single argv with the expected v6 shape.
 	one := testConfig()
 	one.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("fe80::/10")}
-	wantOne := `ip netns exec fc-test nft add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } accept`
+	wantOne := `ip netns exec fc-test nft add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`
 	if got := strings.Join(one.ForwardAllowlistRule6(nft), " "); got != wantOne {
 		t.Errorf("single v6 CIDR:\n got  %s\n want %s", got, wantOne)
 	}
@@ -949,7 +949,7 @@ func TestForwardAllowlistRule6Helper(t *testing.T) {
 		netip.MustParsePrefix("fe80::/10"),
 		netip.MustParsePrefix("2001:db8::/32"),
 	}
-	wantMany := `ip netns exec fc-test nft add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10,2001:db8::/32 } accept`
+	wantMany := `ip netns exec fc-test nft add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10,2001:db8::/32 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`
 	if got := strings.Join(many.ForwardAllowlistRule6(nft), " "); got != wantMany {
 		t.Errorf("multiple v6 CIDRs:\n got  %s\n want %s", got, wantMany)
 	}
@@ -968,7 +968,7 @@ func TestForwardAllowlistRule6Helper(t *testing.T) {
 		netip.MustParsePrefix("1.2.3.0/24"),
 		netip.MustParsePrefix("fe80::/10"),
 	}
-	wantMixedV6 := `ip netns exec fc-test nft add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } accept`
+	wantMixedV6 := `ip netns exec fc-test nft add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`
 	if got := strings.Join(mixed.ForwardAllowlistRule6(nft), " "); got != wantMixedV6 {
 		t.Errorf("mixed input on v6 helper:\n got  %s\n want %s", got, wantMixedV6)
 	}
@@ -1004,7 +1004,7 @@ func TestNftCommandsEmitsAllowlistRule(t *testing.T) {
 				netip.MustParsePrefix("8.8.8.0/24"),
 			},
 			want:     wantCounts{v4: 1, v6: 0},
-			v4Substr: `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24,8.8.8.0/24 } tcp dport != 25 accept`,
+			v4Substr: `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24,8.8.8.0/24 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`,
 		},
 		{
 			name: "v6-only",
@@ -1013,7 +1013,7 @@ func TestNftCommandsEmitsAllowlistRule(t *testing.T) {
 				netip.MustParsePrefix("2001:db8::/32"),
 			},
 			want:     wantCounts{v4: 0, v6: 1},
-			v6Substr: `add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10,2001:db8::/32 } accept`,
+			v6Substr: `add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10,2001:db8::/32 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`,
 		},
 		{
 			name: "mixed-v4-and-v6",
@@ -1022,8 +1022,8 @@ func TestNftCommandsEmitsAllowlistRule(t *testing.T) {
 				netip.MustParsePrefix("fe80::/10"),
 			},
 			want:     wantCounts{v4: 1, v6: 1},
-			v4Substr: `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } tcp dport != 25 accept`,
-			v6Substr: `add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } accept`,
+			v4Substr: `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`,
+			v6Substr: `add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`,
 		},
 	}
 	for _, tc := range cases {
@@ -1162,9 +1162,9 @@ func TestAllowlistAndConnlimitCoexist(t *testing.T) {
 	}
 	cmds := c.NftCommands()
 	v4Cap := `add rule ip faas forward ct count over 4096 counter name "faas_cap" drop`
-	v4Allow := `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } tcp dport != 25 accept`
+	v4Allow := `add rule ip faas forward iifname tap0 ip daddr { 1.2.3.0/24 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`
 	v6Cap := `add rule ip6 faas forward ct count over 4096 counter name "faas_cap" drop`
-	v6Allow := `add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } accept`
+	v6Allow := `add rule ip6 faas forward iifname tap0 ip6 daddr { fe80::/10 } tcp dport != { ` + AllowlistBlockedPortsSet() + ` } accept`
 	var v4CapIdx, v4AllowIdx = -1, -1
 	var v6CapIdx, v6AllowIdx = -1, -1
 	for i, cmd := range cmds {
@@ -1229,8 +1229,20 @@ func TestForwardChainPolicyHelper(t *testing.T) {
 // actually delivers deny-by-default behaviour. Both chains (v4 + v6)
 // must switch in lock-step.
 func TestNftCommandsChainPolicySwitchesWithAllowlist(t *testing.T) {
+	// Auxiliary base chains continue to the normal forward policy. Count
+	// only the two chains whose default controls tenant public egress.
+	forwardChains := func(c Config) string {
+		var chains [][]string
+		for _, cmd := range c.NftCommands() {
+			line := strings.Join(cmd, " ")
+			if strings.Contains(line, "add chain ip faas forward") || strings.Contains(line, "add chain ip6 faas forward") {
+				chains = append(chains, cmd)
+			}
+		}
+		return flatten(chains)
+	}
 	// Empty case: BOTH chains use policy accept.
-	empty := flatten(testConfig().NftCommands())
+	empty := forwardChains(testConfig())
 	if got := strings.Count(empty, "policy accept"); got != 2 {
 		t.Errorf("empty allowlist: expected 2 `policy accept` occurrences (v4 + v6), found %d:\n%s", got, empty)
 	}
@@ -1245,7 +1257,7 @@ func TestNftCommandsChainPolicySwitchesWithAllowlist(t *testing.T) {
 	// produces one v4 rule and zero v6 rules).
 	pop := testConfig()
 	pop.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("1.2.3.0/24")}
-	ruleset := flatten(pop.NftCommands())
+	ruleset := forwardChains(pop)
 	// Both chains `policy drop`: the literal appears in the chain-create argv.
 	if !strings.Contains(ruleset, "add chain ip faas forward") || !strings.Contains(ruleset, "policy drop ;") {
 		t.Errorf("populated allowlist: v4 chain must be `policy drop`:\n%s", ruleset)

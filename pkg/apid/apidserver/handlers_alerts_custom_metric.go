@@ -38,6 +38,22 @@ func validateCustomMetricAlert(metric, name, window string, action *string, hist
 	return validateCustomMetricAlertWindow(window)
 }
 
+// validateCustomMetricAlertLabels checks a custom_metric rule's label filter
+// (ADR-20261108160000 slice C2), mirroring alert_rules_custom_metric_labels_chk:
+// only a custom_metric rule takes one, of the same shape a pushed label set has.
+func validateCustomMetricAlertLabels(metric string, labels map[string]string) *api.Problem {
+	if len(labels) == 0 {
+		return nil
+	}
+	if metric != api.AlertRuleMetricCustomMetric {
+		return api.ErrAlertRuleInvalid("custom_metric_labels must be empty when metric is not custom_metric")
+	}
+	if msg := api.ValidateCustomMetricLabels(labels); msg != "" {
+		return api.ErrAlertRuleInvalid("custom_metric_labels: " + msg)
+	}
+	return nil
+}
+
 func validateCustomMetricAlertWindow(window string) *api.Problem {
 	if !slices.Contains(api.CustomMetricAlertWindowSpecs, window) {
 		return api.ErrAlertRuleInvalid("custom_metric window_spec must be one of " + strings.Join(api.CustomMetricAlertWindowSpecs, ", "))

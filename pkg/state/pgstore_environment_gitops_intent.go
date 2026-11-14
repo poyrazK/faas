@@ -253,15 +253,25 @@ func compileGitOpsObservation(snapshot gitOpsIntentSnapshot, desired environment
 		observeEnvironmentServiceBindings(&out, app, resource)
 		observeGitOpsQueues(&out, snapshot, desired, resource, app)
 		relevant := map[string]bool{}
+		pruned := map[string]bool{}
 		for key := range desired.Definition.Workloads[strings.TrimPrefix(resource, "workload/")].SecretRefs {
 			relevant[key] = true
 		}
 		for _, owner := range snapshot.Owners {
 			if owner.Resource == resource && strings.HasPrefix(owner.Path, "secret_refs/") {
-				relevant[strings.TrimPrefix(owner.Path, "secret_refs/")] = true
+				key := strings.TrimPrefix(owner.Path, "secret_refs/")
+				if !relevant[key] && snapshot.Prune && owner.Manager == snapshot.SourceID {
+					pruned[key] = true
+					for _, override := range snapshot.Overrides {
+						if override.Resource == resource && override.Path == owner.Path && override.ExpiresAt.After(time.Now()) {
+							pruned[key] = false
+						}
+					}
+				}
+				relevant[key] = true
 			}
 		}
-		refs, baselineIDs, reason := observedGitOpsSecretReferences(app, relevant)
+		refs, baselineIDs, reason := observedGitOpsSecretReferences(app, relevant, pruned)
 		out.State.ResourceIDs[gitOpsSecretBaselineResource(resource)] = baselineIDs
 		if reason != "" {
 			out.State.Unsupported = append(out.State.Unsupported, resource+": "+reason)

@@ -59,7 +59,7 @@ func TestSweep_PlanMinMaxInstances(t *testing.T) {
 
 func TestSweep_PlanWarmSnapshot(t *testing.T) {
 	for _, p := range []Plan{PlanFree, PlanHobby, PlanPro, PlanScale} {
-		_ = p.WarmSnapshotEnabled()
+		_ = p.WarmSnapshotNewAppDefault()
 		_ = p.WarmSnapshotAllowed()
 	}
 }

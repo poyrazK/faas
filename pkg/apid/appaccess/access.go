@@ -116,13 +116,15 @@ func Wrap(store Store, audit authz.AuditEmitter, next authmw.AccountHandler) aut
 func addressedApp(r *http.Request, store Store, actorID string) (state.App, bool, error) {
 	// No app lookup is needed on account, authentication or organization
 	// management endpoints, including degraded-server health tests.
-	if r.PathValue("organization") != "" && strings.Contains(r.Pattern, "/apps/{slug}") {
+	// An organization path, or an organization storage path apid's mirror
+	// dispatched to the /v1/apps/{slug}/... handler (object storage audit OS-4).
+	if organization := authmw.OrganizationSlug(r); organization != "" && strings.Contains(r.Pattern, "/apps/{slug}") {
 		app, err := store.AppBySlug(r.Context(), r.PathValue("slug"))
 		if err != nil {
 			return state.App{}, true, err
 		}
 		org, err := store.OrgByID(r.Context(), app.OrgID)
-		if err != nil || org.Personal || org.Slug != r.PathValue("organization") {
+		if err != nil || org.Personal || org.Slug != organization {
 			return state.App{}, true, state.ErrNotFound
 		}
 		return app, true, nil

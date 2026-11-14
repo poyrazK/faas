@@ -8,7 +8,7 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.problem import Problem
 from ...models.project_environment_promotion_status_response import ProjectEnvironmentPromotionStatusResponse
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
@@ -18,9 +18,17 @@ def _get_kwargs(
     promotion: str,
     *,
     idempotency_key: str,
+    environment_rollback_attempt_id: str | Unset = UNSET,
+    environment_rollback_request_hash: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     headers["Idempotency-Key"] = idempotency_key
+
+    if not isinstance(environment_rollback_attempt_id, Unset):
+        headers["Environment-Rollback-Attempt-ID"] = environment_rollback_attempt_id
+
+    if not isinstance(environment_rollback_request_hash, Unset):
+        headers["Environment-Rollback-Request-Hash"] = environment_rollback_request_hash
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -99,6 +107,8 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     idempotency_key: str,
+    environment_rollback_attempt_id: str | Unset = UNSET,
+    environment_rollback_request_hash: str | Unset = UNSET,
 ) -> Response[Problem | ProjectEnvironmentPromotionStatusResponse]:
     """Restore company workloads from a recorded promotion.
 
@@ -111,6 +121,8 @@ def sync_detailed(
         environment (str):
         promotion (str):
         idempotency_key (str):
+        environment_rollback_attempt_id (str | Unset):
+        environment_rollback_request_hash (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -126,6 +138,8 @@ def sync_detailed(
         environment=environment,
         promotion=promotion,
         idempotency_key=idempotency_key,
+        environment_rollback_attempt_id=environment_rollback_attempt_id,
+        environment_rollback_request_hash=environment_rollback_request_hash,
     )
 
     response = client.get_httpx_client().request(
@@ -143,6 +157,8 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     idempotency_key: str,
+    environment_rollback_attempt_id: str | Unset = UNSET,
+    environment_rollback_request_hash: str | Unset = UNSET,
 ) -> Problem | ProjectEnvironmentPromotionStatusResponse | None:
     """Restore company workloads from a recorded promotion.
 
@@ -155,6 +171,8 @@ def sync(
         environment (str):
         promotion (str):
         idempotency_key (str):
+        environment_rollback_attempt_id (str | Unset):
+        environment_rollback_request_hash (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -171,6 +189,8 @@ def sync(
         promotion=promotion,
         client=client,
         idempotency_key=idempotency_key,
+        environment_rollback_attempt_id=environment_rollback_attempt_id,
+        environment_rollback_request_hash=environment_rollback_request_hash,
     ).parsed
 
 
@@ -182,6 +202,8 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     idempotency_key: str,
+    environment_rollback_attempt_id: str | Unset = UNSET,
+    environment_rollback_request_hash: str | Unset = UNSET,
 ) -> Response[Problem | ProjectEnvironmentPromotionStatusResponse]:
     """Restore company workloads from a recorded promotion.
 
@@ -194,6 +216,8 @@ async def asyncio_detailed(
         environment (str):
         promotion (str):
         idempotency_key (str):
+        environment_rollback_attempt_id (str | Unset):
+        environment_rollback_request_hash (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -209,6 +233,8 @@ async def asyncio_detailed(
         environment=environment,
         promotion=promotion,
         idempotency_key=idempotency_key,
+        environment_rollback_attempt_id=environment_rollback_attempt_id,
+        environment_rollback_request_hash=environment_rollback_request_hash,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -224,6 +250,8 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     idempotency_key: str,
+    environment_rollback_attempt_id: str | Unset = UNSET,
+    environment_rollback_request_hash: str | Unset = UNSET,
 ) -> Problem | ProjectEnvironmentPromotionStatusResponse | None:
     """Restore company workloads from a recorded promotion.
 
@@ -236,6 +264,8 @@ async def asyncio(
         environment (str):
         promotion (str):
         idempotency_key (str):
+        environment_rollback_attempt_id (str | Unset):
+        environment_rollback_request_hash (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -253,5 +283,7 @@ async def asyncio(
             promotion=promotion,
             client=client,
             idempotency_key=idempotency_key,
+            environment_rollback_attempt_id=environment_rollback_attempt_id,
+            environment_rollback_request_hash=environment_rollback_request_hash,
         )
     ).parsed

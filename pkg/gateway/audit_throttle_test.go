@@ -40,7 +40,11 @@ func TestRepeatThrottledAuditor(t *testing.T) {
 		{name: "rules are separate series", kind: "edge_rule.route_matched", data: func(i int) map[string]any { return cors(fmt.Sprint(i)) }, emits: 5, wantRows: 5},
 		{name: "instances are separate series", kind: "vm.inflight_threshold_reached", data: func(i int) map[string]any { return map[string]any{"instance_id": fmt.Sprint(i % 2)} }, emits: 10, wantRows: 2},
 		{name: "denials pass through", kind: "edge_rule.cors_blocked", data: func(int) map[string]any { return cors("r1") }, emits: 7, wantRows: 7},
-		{name: "other kinds pass through", kind: "edge_rule.validate_failed", data: func(int) map[string]any { return cors("r1") }, emits: 3, wantRows: 3},
+		{name: "other kinds pass through", kind: "webhook.forwarded", data: func(int) map[string]any { return cors("r1") }, emits: 3, wantRows: 3},
+		{name: "client-driven refusals repeat per rule", kind: "edge_rule.throttle_rejected", data: func(int) map[string]any { return map[string]any{"rule_id": "r1", "app_id": "a1"} }, emits: 500, advance: auditRepeatWindow, wantRows: 2, wantSuppressed: int64(499)},
+		{name: "refusals of different apps are separate series", kind: "edge_rule.ingress_ip_forged", data: func(i int) map[string]any { return map[string]any{"app_id": fmt.Sprint(i % 3)} }, emits: 30, wantRows: 3},
+		{name: "validate refusals repeat per rule", kind: "edge_rule.validate_failed", data: func(int) map[string]any { return cors("r1") }, emits: 3, wantRows: 1},
+		{name: "async enqueues repeat per rule", kind: "edge_rule.async_enqueued", data: func(int) map[string]any { return map[string]any{"rule_id": "r1", "app_id": "a1"} }, emits: 9, wantRows: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := &recordingAuditor{}

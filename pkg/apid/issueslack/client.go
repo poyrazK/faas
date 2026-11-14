@@ -33,7 +33,7 @@ func NewClient(c *http.Client) *Client {
 	copyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return &Client{http: &copyClient}
 }
-func (c *Client) Send(ctx context.Context, claim state.IssueSlackClaim, token, base string) state.IssueSlackResult {
+func (c *Client) Send(ctx context.Context, claim state.IssueSlackClaim, token, base string) (result state.IssueSlackResult) {
 	if !ValidBotToken(token) {
 		return state.IssueSlackResult{Status: "dead", Error: "token_unavailable"}
 	}
@@ -47,6 +47,7 @@ func (c *Client) Send(ctx context.Context, claim state.IssueSlackClaim, token, b
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	defer func() { result.Attempted = true }()
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return retry(claim, "transport_error", 0, "")

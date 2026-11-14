@@ -24,7 +24,7 @@ func (s *server) dashboardMFASettings(w http.ResponseWriter, r *http.Request) {
 	}
 	page := dashboard.Page{
 		Title: "Two-factor authentication", Body: "mfa_settings", Account: acctViewFrom(acct),
-		Data: map[string]any{"Enrolled": acct.MFAEnrolled(), "PendingSetup": len(acct.MFASecretEncrypted) > 0, "HasPassword": passwordErr == nil},
+		Data: map[string]any{"Enrolled": acct.MFAEnrolled(), "PendingSetup": len(acct.MFASecretEncrypted) > 0, "HasPassword": passwordErr == nil, "Next": dashboardMFANext(r.URL.Query().Get("next"))},
 	}
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, s.log, err)

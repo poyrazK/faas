@@ -20,6 +20,18 @@ type DataApiAccessConfig struct {
 	ReportedAt pgtype.Timestamptz
 }
 
+type DataApiChangeHookReport struct {
+	AppID           pgtype.UUID
+	ReportedAt      pgtype.Timestamptz
+	Pending         int64
+	Failed          int64
+	OldestPendingAt pgtype.Timestamptz
+	LastPublishedAt pgtype.Timestamptz
+	LastFailureCode pgtype.Text
+	Publishing      string
+	LastDroppedAt   pgtype.Timestamptz
+}
+
 type DataApiUsageHourly struct {
 	AppID             pgtype.UUID
 	Hour              pgtype.Timestamptz

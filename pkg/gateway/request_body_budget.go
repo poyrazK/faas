@@ -1,6 +1,8 @@
 package gateway
 
 import (
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"sync"
@@ -25,6 +27,37 @@ type requestBodyBudget struct {
 	used      int64
 	perOwner  map[string]int64
 	perClient map[string]int
+}
+
+// newRequestBodyMemoryBudget is the node's heap budget for validate-rule
+// bodies, with its per-owner and per-client shares (ADR-091 amendment
+// 2026-11-04, round 12).
+func newRequestBodyMemoryBudget() *requestBodyBudget {
+	b := newRequestBodyBudget(api.RequestBodyMemoryNodeBytes, api.RequestBodyMemoryPerClient)
+	b.ownerMax = api.RequestBodyMemoryNodeBytes / api.RequestBodyMemoryOwnerShareDivisor
+	return b
+}
+
+// errRequestBodyBudget is a body read the budget refused to hold.
+var errRequestBodyBudget = errors.New("gateway: request body budget spent")
+
+// budgetedBodyReader grows its lease as body bytes arrive, a step at a
+// time, and fails the read once the budget refuses.
+type budgetedBodyReader struct {
+	r     io.Reader
+	lease *requestBodyLease
+	read  int64
+}
+
+func (b *budgetedBodyReader) Read(p []byte) (int, error) {
+	n, err := b.r.Read(p)
+	b.read += int64(n)
+	if over := b.read - b.lease.bytes; over > 0 && b.lease.budget != nil {
+		if !b.lease.grow(max(over, api.RequestBodyMemoryReserveStep)) {
+			return n, errRequestBodyBudget
+		}
+	}
+	return n, err
 }
 
 func newRequestBodyBudget(maxBytes int64, perClientMax int) *requestBodyBudget {

@@ -13,6 +13,7 @@ The manifest's `public_edge.dns` turns it on and renders its settings:
 |---|---|
 | `faas_edgednsd_names` | `public_edge.dns.zone_id` with each of `public_edge.dns.names`, `:dns-only` under `public_edge.front: none`, and each of `public_edge.dns.proxied`, proxied |
 | `faas_edgednsd_node_addresses` | each compute host's `public_ipv4`, or its `entry_ipv4` under `public_edge.front: none`, under its registry name |
+| `faas_edgednsd_node_private_addresses` | each compute host's `address` (host part) under its registry name: where edgednsd probes the edge's `/readyz`, never the registry's `target_url`, which every compute node can write (ADR-20261107180000) |
 | `faas_edgednsd_dry_run` | `public_edge.dns.live`, inverted: dry run until set |
 | `faas_edgednsd_certificate_names`, `faas_edgednsd_certificate_zone_id`, `faas_edgednsd_acme_ca` | `public_edge.dns.certificate.names`, `public_edge.dns.zone_id` and `public_edge.dns.certificate.ca` (`letsencrypt-staging` by default) |
 
@@ -35,7 +36,8 @@ With `faas_edgednsd_certificate_names` set (for example `["*.gregale.dev"]`),
 edgednsd also keeps the apps domains' publicly trusted certificate
 (ADR-20261103163954 §3). It orders the certificate from Let's Encrypt with
 the DNS-01 challenge in the zone `faas_edgednsd_certificate_zone_id`, with the
-same token, and renews it 30 days before it expires. Each certificate gets a
+same token, under Let's Encrypt's `shortlived` profile (about 160 hours),
+and renews it 4 days before it expires (ADR-20261108100000). Each certificate gets a
 new ECDSA P-256 key, sealed to the `edge-tls` seal domain before it is
 stored; only the compute edges hold that identity, so edgednsd cannot read
 the key back.

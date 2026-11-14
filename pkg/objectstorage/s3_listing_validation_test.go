@@ -32,6 +32,7 @@ func TestS3ObjectListingRejectsIncompleteProof(t *testing.T) {
 		name, body string
 	}{
 		{"missing completeness", ``},
+		{"contradictory completion", `<IsTruncated>false</IsTruncated><NextContinuationToken>next</NextContinuationToken>` + object},
 		{"missing continuation", `<IsTruncated>true</IsTruncated>` + object},
 		{"empty truncated page", `<IsTruncated>true</IsTruncated><NextContinuationToken>next</NextContinuationToken>`},
 		{"repeated continuation", `<IsTruncated>true</IsTruncated><NextContinuationToken>current</NextContinuationToken>` + object},
@@ -63,6 +64,7 @@ func TestS3PartsListingRejectsIncompleteProof(t *testing.T) {
 		name, body string
 	}{
 		{"missing completeness", ``},
+		{"contradictory completion", `<IsTruncated>false</IsTruncated><NextPartNumberMarker>2</NextPartNumberMarker>` + part},
 		{"duplicate part", `<IsTruncated>false</IsTruncated>` + part + part},
 		{"before marker", `<IsTruncated>false</IsTruncated><Part><PartNumber>1</PartNumber><ETag>&quot;part&quot;</ETag><Size>10</Size></Part>`},
 		{"out of order", `<IsTruncated>false</IsTruncated><Part><PartNumber>3</PartNumber><ETag>&quot;part&quot;</ETag><Size>10</Size></Part>` + part},
@@ -91,6 +93,15 @@ func TestS3AbortRejectsMissingCompleteness(t *testing.T) {
 	})
 	if err := VerifyMultipartAbort(t.Context(), p, "gregale-test", MultipartAbortRequest{Key: "key", ProviderUploadID: "private-upload"}); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("malformed empty listing proved abort: %v", err)
+	}
+}
+
+func TestS3PartsCompletePageAllowsZeroContinuation(t *testing.T) {
+	p := listingFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `<ListPartsResult><IsTruncated>false</IsTruncated><NextPartNumberMarker>0</NextPartNumberMarker></ListPartsResult>`)
+	})
+	if err := VerifyMultipartAbort(t.Context(), p, "bucket", MultipartAbortRequest{Key: "key", ProviderUploadID: "upload"}); err != nil {
+		t.Fatal("explicit zero is not a continuation", err)
 	}
 }
 

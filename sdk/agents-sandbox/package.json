@@ -1,0 +1,37 @@
+{
+  "name": "@gregale/agents-sandbox",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Gregale sandbox sessions as an OpenAI Agents SDK sandbox backend (ADR-20261027090013 §8). Not published until sandbox sessions launch.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.10.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test:build": "tsc -p tsconfig.test.json",
+    "test": "npm run test:build && node --test --test-concurrency=1 'dist-test/test/**/*.test.js'"
+  },
+  "peerDependencies": {
+    "@openai/agents-core": "0.21.0"
+  },
+  "devDependencies": {
+    "@openai/agents": "0.21.0",
+    "@openai/agents-core": "0.21.0",
+    "@types/node": "22.10.0",
+    "typescript": "5.6.3"
+  }
+}

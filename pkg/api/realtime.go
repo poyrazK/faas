@@ -385,7 +385,9 @@ type ManagedRealtimeOccupancyResponse struct {
 }
 
 // ManagedRealtimeDrainRequest selects a bounded set of live connections to
-// close, or every match up to the server safety cap when All is true. A
+// close, or every match up to the server safety cap when All is true. It must
+// name a channel, principal, connection IDs or a limit, or set All (which
+// takes no limit). A
 // non-dry-run request must acknowledge a partial fleet snapshot with
 // AllowPartial before the control plane will mutate the known subset.
 type ManagedRealtimeDrainRequest struct {
@@ -560,7 +562,10 @@ func ValidateRealtimeAuth(mode string, hasStaticToken bool, issuer, jwksURL stri
 			return fmt.Errorf("auth_jwks_url must not point to a private or loopback address")
 		}
 	}
-	if len(audience) > 16 || len(algorithms) == 0 || len(algorithms) > 16 {
+	if len(algorithms) == 0 {
+		return fmt.Errorf("auth_algorithms is required for oidc_jwt: name at least one of RS256, RS384, RS512, ES256, ES384 or ES512")
+	}
+	if len(audience) > 16 || len(algorithms) > 16 {
 		return fmt.Errorf("auth_audience and auth_algorithms are bounded to 16 entries")
 	}
 	allowed := map[string]struct{}{"RS256": {}, "RS384": {}, "RS512": {}, "ES256": {}, "ES384": {}, "ES512": {}}

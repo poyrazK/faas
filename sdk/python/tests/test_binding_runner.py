@@ -776,7 +776,11 @@ def test_pending_acknowledgment(graph, asynchronous, mode):
         if mode == "callback":
             assert error.cause is callback_error
         if mode == "deadline":
-            assert isinstance(error.cause, TimeoutError)
+            # A runner loaded past the 1 s deadline refuses the late server
+            # answer instead of timing out while waiting; both enforce it.
+            assert isinstance(error.cause, TimeoutError) or str(error.cause) == (
+                "server did not confirm original member and deadline"
+            )
 
     async def execute():
         async with httpx.AsyncClient(

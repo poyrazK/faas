@@ -106,3 +106,79 @@ func testDeploySettingsGuard(t *testing.T, store state.Store) {
 		t.Fatalf("deployments=%d err=%v", len(deployments), err)
 	}
 }
+
+func TestSourceDeploySettingsGuardMem(t *testing.T) {
+	testSourceDeploySettingsGuard(t, state.NewMemStore())
+}
+
+// Source compensation starts before a deployment exists, or beside a queued
+// deployment. Public recovery still requires a live release by default.
+func testSourceDeploySettingsGuard(t *testing.T, store state.Store) {
+	t.Helper()
+	ctx := t.Context()
+	account, err := store.CreateAccount(ctx, "source-guard@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "source-guard", Type: state.AppTypeApp, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := func(expected, desired int, deployment state.Deployment) state.UpdateAppParams {
+		return state.UpdateAppParams{DeploySettingsGuard: &state.DeploySettingsGuard{AppID: app.ID, AccountID: account.ID, DeploymentID: deployment.ID, MatchDeploymentIDOnly: true, Prepare: func(current state.App) (state.UpdateAppParams, error) {
+			if current.Manifest.RequestTimeoutS != expected {
+				return state.UpdateAppParams{}, state.ErrConflict
+			}
+			manifest := current.Manifest
+			manifest.RequestTimeoutS = desired
+			return state.UpdateAppParams{Manifest: &manifest}, nil
+		}}}
+	}
+	initial := params(0, 10, state.Deployment{})
+	if _, err := store.UpdateApp(ctx, app.ID, initial); err != nil {
+		t.Fatalf("empty-history guard: %v", err)
+	}
+	public := params(10, 20, state.Deployment{})
+	public.DeploySettingsGuard.MatchDeploymentIDOnly = false
+	if _, err := store.UpdateApp(ctx, app.ID, public); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("public recovery accepted empty history: %v", err)
+	}
+	current, err := store.AppByID(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := current.Manifest
+	manifest.RequestTimeoutS = 120
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateApp(ctx, app.ID, params(10, 0, state.Deployment{})); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("stale fields were restored: %v", err)
+	}
+	pending, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("a", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateApp(ctx, app.ID, params(120, 0, state.Deployment{})); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("new deployment did not fence empty-history compensation: %v", err)
+	}
+	if _, err := store.UpdateApp(ctx, app.ID, params(120, 30, pending)); err != nil {
+		t.Fatalf("pending-deployment guard: %v", err)
+	}
+	if err := store.MarkDeploymentLive(ctx, pending.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateApp(ctx, app.ID, params(30, 45, pending)); err != nil {
+		t.Fatalf("baseline status progress prevented compensation: %v", err)
+	}
+	if _, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("b", 64)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateApp(ctx, app.ID, params(45, 0, pending)); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("new deployment did not fence pending-deployment compensation: %v", err)
+	}
+	got, err := store.AppByID(ctx, app.ID)
+	if err != nil || got.Manifest.RequestTimeoutS != 45 {
+		t.Fatalf("timeout=%d err=%v", got.Manifest.RequestTimeoutS, err)
+	}
+}

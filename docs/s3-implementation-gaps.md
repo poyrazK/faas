@@ -49,6 +49,14 @@ the [ListObjectsV2](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObje
 [ListMultipartUploads](https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListMultipartUploads.html)
 protocols for general-purpose buckets.
 
+The 2026-11-05 hardening also rejects a completed S3 inventory page carrying
+continuation evidence, for both current-object and all-version capacity scans.
+Unknown completion cannot publish partial usage. GCS multipart discovery and
+abort verification require the expected XML root and an explicit completion
+flag, bounded ordered entries and consistent continuation boundaries. Empty
+successful bodies and HTTP 200 error documents cannot establish absence;
+encoded keys are decoded while upload IDs remain opaque.
+
 Regression coverage includes malformed native HTTP responses, complete and
 ambiguous paginated discovery, encoded keys and opaque tokens, one uncertain
 initiation followed by adapter reconstruction, accounting publication failures,

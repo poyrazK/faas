@@ -108,6 +108,11 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 		return printErr("Not logged in", err)
 	}
 	// Source-ref is a first-deploy transport as well as a redeploy transport.
+	// The deploy session is written after the app exists; prove it can be
+	// before creating one (#6625).
+	if err := preflightDeploySessionStorage(client); err != nil {
+		return printErr("Could not save deploy session", err)
+	}
 	// Probe first so an existing app can redeploy even when the account is at
 	// its app cap; create only after the account-scoped lookup returns 404.
 	app, err := ensureSourceRefApp(ctx, client, slug, appPolicy...)
@@ -138,7 +143,7 @@ func cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx c
 	}
 	session, sessionLock, err := newSavedDeploySession(ctx, client, slug, app.ID, "", idempotencyKey, nil, waitForRollout, darkDeploy)
 	if err != nil {
-		return printErr("Could not save deploy session", err)
+		return printErr("Could not save deploy session", appExistsNothingDeployed(slug, err))
 	}
 	defer func() { _ = sessionLock.Close() }()
 	ctx = context.WithValue(ctx, deploySessionContextKey{}, session)

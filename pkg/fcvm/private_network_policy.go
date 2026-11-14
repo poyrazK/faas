@@ -54,35 +54,41 @@ func (m *Manager) replaceNetworkPolicy(ctx context.Context, inst *Instance, nc n
 		m.mu.Unlock()
 		return errors.New("fcvm: private network original live targets changed")
 	}
+	commands = append(commands, nc.PrivateNetworkHistoryCommands(inst.Net.PrivateNetworkCIDRs)...)
 	if nc.DNSGated {
 		for addr, until := range inst.resolvedEgress {
-			if until.After(now) {
+			if until.Sub(now) >= time.Second {
 				commands = append(commands, nc.ResolvedEgressAddCommands([]netip.Addr{addr}, until.Sub(now))...)
 			}
 		}
 	}
 	if nc.DatabaseEgress {
 		for key, until := range inst.databaseEgress {
-			if until.After(now) {
+			if until.Sub(now) >= time.Second {
 				commands = append(commands, nc.DatabaseEgressAddCommands([]netip.Addr{key.addr}, key.port, until.Sub(now))...)
 			}
 		}
 	}
 	m.mu.Unlock()
-	if err := m.runAtomicNetworkPolicy(ctx, nc.Netns, commands); err != nil {
-		return err
-	}
-	// Full replacement changes kernel handles, including public allowlists.
+	err := m.runAtomicNetworkPolicy(ctx, nc.Netns, commands)
+	// A replacement may commit before an error is returned. Never reuse
+	// handles from the old tables, including on an uncertain acknowledgement.
 	m.mu.Lock()
 	inst.AllowlistHandleV4, inst.AllowlistHandleV6 = 0, 0
 	inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
+	inst.egressAllowlistUncertain, inst.egressPortsUncertain = true, true
+	m.markAdoptionDirty(inst.Lease.Instance)
 	m.mu.Unlock()
+	if err != nil {
+		return err
+	}
 	h4, h6, err := m.captureAllowlistHandlesForWake(ctx, nc.Netns, nc.EgressAllowlist)
 	if err != nil {
 		return err
 	}
 	m.mu.Lock()
 	inst.AllowlistHandleV4, inst.AllowlistHandleV6 = h4, h6
+	inst.egressAllowlistUncertain, inst.egressPortsUncertain = false, false
 	m.markAdoptionDirty(inst.Lease.Instance)
 	m.mu.Unlock()
 	return nil
@@ -95,8 +101,12 @@ func (m *Manager) runAtomicNetworkPolicy(ctx context.Context, namespace string, 
 	if err != nil {
 		return err
 	}
-	if _, ok := runner.(InputRunner); ok {
-		return m.runNftCommands(ctx, namespace, commands)
+	return runAtomicNftPolicy(ctx, runner, namespace, commands)
+}
+
+func runAtomicNftPolicy(ctx context.Context, runner Runner, namespace string, commands [][]string) error {
+	if len(commands) == 0 {
+		return nil
 	}
 	prefix := []string{"ip", "netns", "exec", namespace, "nft"}
 	parts := make([]string, 0, len(commands))
@@ -106,5 +116,12 @@ func (m *Manager) runAtomicNetworkPolicy(ctx context.Context, namespace string, 
 		}
 		parts = append(parts, strings.Join(argv[len(prefix):], " "))
 	}
-	return runner.Run(ctx, append(prefix, strings.Join(parts, "\n")))
+	script := strings.Join(parts, "\n") + "\n"
+	if inputRunner, ok := runner.(InputRunner); ok {
+		if err := inputRunner.RunInput(ctx, append(prefix, "-f", "-"), []byte(script)); err != nil {
+			return fmt.Errorf("nft ruleset batch: %w", err)
+		}
+		return nil
+	}
+	return runner.Run(ctx, append(prefix, script))
 }

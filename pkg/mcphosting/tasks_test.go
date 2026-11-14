@@ -290,6 +290,166 @@ func TestWaitTaskPrefersTaskStatusSubscription(t *testing.T) {
 	}
 }
 
+func TestWaitTaskReconcilesSilentSubscription(t *testing.T) {
+	var gets, cancellations atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		switch request.Method {
+		case "subscriptions/listen":
+			w.Header().Set("Content-Type", "text/event-stream")
+			writeTaskSSEMessage(w, map[string]any{"jsonrpc": "2.0", "method": "notifications/subscriptions/acknowledged", "params": map[string]any{"notifications": map[string]any{"taskIds": []string{"quiet-task"}}}})
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+		case "tasks/get":
+			gets.Add(1)
+			writeTaskResponse(w, request.ID, fmt.Sprintf(`{"resultType":"complete","taskId":"quiet-task","status":"completed","createdAt":%q,"lastUpdatedAt":%q,"ttlMs":60000,"result":{"content":[]}}`, taskTimestamp, taskTimestamp))
+		case "tasks/cancel":
+			cancellations.Add(1)
+		default:
+			t.Errorf("unexpected method %q", request.Method)
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL+"/mcp", "", ProtocolVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advertiseTasks(client)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	task, err := client.waitForTaskWithReconcileInterval(ctx, "tool", Task{TaskID: "quiet-task", Status: "working"}, CallOptions{CancelOnTimeout: true}, 40*time.Millisecond)
+	if err != nil || task.Status != "completed" || gets.Load() != 1 || cancellations.Load() != 0 {
+		t.Fatalf("task=%+v err=%v gets=%d cancellations=%d", task, err, gets.Load(), cancellations.Load())
+	}
+}
+
+func TestResumedWaitCancellationIsOptIn(t *testing.T) {
+	for _, cancelOnTimeout := range []bool{false, true} {
+		t.Run(fmt.Sprint(cancelOnTimeout), func(t *testing.T) {
+			var cancellations atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					ID     int    `json:"id"`
+					Method string `json:"method"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				switch request.Method {
+				case "tasks/get":
+					writeTaskResponse(w, request.ID, fmt.Sprintf(`{"resultType":"complete","taskId":"saved","status":"working","createdAt":%q,"lastUpdatedAt":%q,"ttlMs":60000}`, taskTimestamp, taskTimestamp))
+				case "subscriptions/listen":
+					w.Header().Set("Content-Type", "text/event-stream")
+					writeTaskSSEMessage(w, map[string]any{"jsonrpc": "2.0", "method": "notifications/subscriptions/acknowledged", "params": map[string]any{"notifications": map[string]any{"taskIds": []string{"saved"}}}})
+					w.(http.Flusher).Flush()
+					<-r.Context().Done()
+				case "tasks/cancel":
+					cancellations.Add(1)
+					writeTaskResponse(w, request.ID, `{"resultType":"complete"}`)
+				default:
+					t.Errorf("unexpected method %q", request.Method)
+				}
+			}))
+			defer server.Close()
+			client, err := NewClient(server.URL+"/mcp", "", ProtocolVersion)
+			if err != nil {
+				t.Fatal(err)
+			}
+			advertiseTasks(client)
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			_, err = client.WaitTask(ctx, "saved", CallOptions{CancelOnTimeout: cancelOnTimeout})
+			if err == nil {
+				t.Fatal("expected deadline error")
+			}
+			want := int32(0)
+			if cancelOnTimeout {
+				want = 1
+			}
+			if cancellations.Load() != want {
+				t.Fatalf("cancellations=%d want=%d", cancellations.Load(), want)
+			}
+		})
+	}
+}
+
+func TestResumedWaitDoesNotCancelWhenInitialReadTimesOut(t *testing.T) {
+	var cancellations atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		switch request.Method {
+		case "tasks/get":
+			<-r.Context().Done()
+		case "tasks/cancel":
+			cancellations.Add(1)
+			writeTaskResponse(w, request.ID, `{"resultType":"complete"}`)
+		default:
+			t.Errorf("unexpected method %q", request.Method)
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL+"/mcp", "", ProtocolVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advertiseTasks(client)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err = client.WaitTask(ctx, "saved", CallOptions{})
+	if err == nil || cancellations.Load() != 0 {
+		t.Fatalf("err=%v cancellations=%d", err, cancellations.Load())
+	}
+}
+
+func TestCallWaitPreservesFailedTask(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		switch request.Method {
+		case "tools/call":
+			writeTaskResponse(w, request.ID, fmt.Sprintf(`{"resultType":"task","taskId":"failed-task","status":"working","createdAt":%q,"lastUpdatedAt":%q,"ttlMs":60000,"pollIntervalMs":0}`, taskTimestamp, taskTimestamp))
+		case "subscriptions/listen":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"error":{"code":-32601}}`, request.ID)
+		case "tasks/get":
+			writeTaskResponse(w, request.ID, fmt.Sprintf(`{"resultType":"complete","taskId":"failed-task","status":"failed","createdAt":%q,"lastUpdatedAt":%q,"ttlMs":60000,"error":{"code":-32000,"message":"backend unavailable"}}`, taskTimestamp, taskTimestamp))
+		default:
+			t.Errorf("unexpected method %q", request.Method)
+		}
+	}))
+	defer server.Close()
+	client, err := NewClient(server.URL+"/mcp", "", ProtocolVersion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advertiseTasks(client)
+	x, err := client.CallWithOptions(context.Background(), Tool{Name: "tool", InputSchema: map[string]any{"type": "object"}}, nil, CallOptions{WaitForTask: true})
+	if err == nil || !strings.Contains(string(x.Result), `"status":"failed"`) || !strings.Contains(string(x.Result), "backend unavailable") {
+		t.Fatalf("exchange=%s err=%v", x.Result, err)
+	}
+}
+
 func TestWaitTaskReconnectsAfterSubscriptionCloses(t *testing.T) {
 	var gets, subscriptions atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -472,7 +632,7 @@ func TestWaitForTaskRequestsCancellationWhenContextEnds(t *testing.T) {
 	advertiseTasks(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	_, err = client.CallWithOptions(ctx, Tool{Name: "long", InputSchema: map[string]any{"type": "object"}}, nil, CallOptions{WaitForTask: true})
+	_, err = client.CallWithOptions(ctx, Tool{Name: "long", InputSchema: map[string]any{"type": "object"}}, nil, CallOptions{WaitForTask: true, CancelOnTimeout: true})
 	if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
 		t.Fatalf("expected task wait timeout, got %v", err)
 	}

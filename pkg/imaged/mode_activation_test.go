@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -31,7 +32,7 @@ func seedModeActivation(t *testing.T, mode string) (*state.MemStore, *Handler, s
 		t.Fatalf("CreateApp: %v", err)
 	}
 	dep, err := store.CreateDeployment(ctx, state.Deployment{
-		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:activation", Status: state.DeploySnapshotting,
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("a", 64), Status: state.DeploySnapshotting,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
@@ -73,13 +74,28 @@ func TestDeploymentReadyWorkerRequiresMatchingRunningInstance(t *testing.T) {
 	if err := store.UpdateInstanceState(context.Background(), stopped.ID, string(state.StateColdBooting)); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("revived worker without fresh reservation: %v", err)
 	}
+	node, err := store.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	running, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
-		string(state.StateColdBooting), app.RAMMB, state.DefaultLocalNodeName, "wake-worker-fresh", string(state.InstanceModeWorker))
+		string(state.StateColdBooting), app.RAMMB, node.ID, uuid.NewString(), string(state.InstanceModeWorker))
 	if err != nil {
 		t.Fatalf("reserve fresh worker: %v", err)
 	}
-	if err := store.UpdateInstanceState(context.Background(), running.ID, string(state.StateRunning)); err != nil {
-		t.Fatalf("run worker state: %v", err)
+	values, err := store.RuntimeAppValuesForDeployment(t.Context(), app.AccountID, app.ID, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := state.NewRuntimeAppConfigFence(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublishOwnedInstanceRuntime(t.Context(), state.RuntimeInstancePublication{
+		AccountID: app.AccountID, AppID: app.ID, InstanceID: running.ID, NodeID: running.NodeID, WakeID: running.WakeID,
+		ExpectedState: "cold_booting", Netns: "worker-test", HostIP: "10.0.0.1", GuestUID: 20001, Fence: fence.SecretFence, ConfigFence: fence,
+	}); err != nil {
+		t.Fatalf("publish worker readiness: %v", err)
 	}
 	if err := handler.handleDeploymentReady(context.Background(), deploymentReadyPayload{
 		DeploymentID: dep.ID, ExecutionMode: api.ExecutionModeWorker, InstanceID: running.ID,
@@ -94,10 +110,31 @@ func TestDeploymentReadyWorkerRequiresMatchingRunningInstance(t *testing.T) {
 
 func TestDeploymentReadyEphemeralSecretRequiresStoppedMatchingInstance(t *testing.T) {
 	store, handler, app, dep := seedModeActivation(t, api.ExecutionModeRequest)
-	instance, err := store.CreateInstanceWithMode(context.Background(), app.ID, dep.ID,
-		string(state.StateStopped), app.RAMMB, state.DefaultLocalNodeName, "prime-ephemeral", string(state.InstanceModeNormal))
+	node, err := store.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := store.CreateInstanceWithMode(t.Context(), app.ID, dep.ID,
+		string(state.StateColdBooting), app.RAMMB, node.ID, uuid.NewString(), string(state.InstanceModeNormal))
 	if err != nil {
 		t.Fatalf("CreateInstanceWithMode: %v", err)
+	}
+	values, err := store.RuntimeAppValuesForDeployment(t.Context(), app.AccountID, app.ID, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := state.NewRuntimeAppConfigFence(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublishOwnedInstanceRuntime(t.Context(), state.RuntimeInstancePublication{
+		AccountID: app.AccountID, AppID: app.ID, InstanceID: instance.ID, NodeID: node.ID, WakeID: instance.WakeID,
+		ExpectedState: "cold_booting", Netns: "ephemeral-prime", HostIP: "10.0.0.1", GuestUID: 20001, Fence: fence.SecretFence, ConfigFence: fence,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateInstanceState(t.Context(), instance.ID, "stopped"); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := handler.handleDeploymentReady(context.Background(), deploymentReadyPayload{

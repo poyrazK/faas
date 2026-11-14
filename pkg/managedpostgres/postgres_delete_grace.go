@@ -58,10 +58,18 @@ func (s *PostgresStore) ClaimScheduledDelete(ctx context.Context, accountID, dat
 	if err != nil {
 		return Database{}, mapPostgresError(err)
 	}
+	claimed := databaseFromSQL(row)
+	if notice, expired := restoreSlotExpiryNotice(claimed, now); expired {
+		// The delete and its customer notice commit together. A process
+		// crash or failed notice write cannot leave an unannounced expiry.
+		if _, err := recordPostgresRestoreSlotNotice(ctx, tx, notice); err != nil {
+			return Database{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Database{}, mapPostgresError(err)
 	}
-	return databaseFromSQL(row), nil
+	return claimed, nil
 }
 
 func (s *PostgresStore) ClaimUndelete(ctx context.Context, accountID, databaseID, leaseToken string, now, leaseUntil time.Time) (Database, error) {

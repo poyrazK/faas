@@ -5,9 +5,11 @@
 package incidents
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"sort"
 	"strings"
@@ -43,6 +45,10 @@ type Host interface {
 	// app's incidents: the account inventories' rule, so a company app is
 	// hidden from a creator who left the company or a key bound to another.
 	AppVisible(ctx context.Context, acct state.Account, app state.App) bool
+	// TeamApps lists the apps of the caller's organizations that teammates
+	// created and the caller may read; their incidents are held under the
+	// creating member's account (ADR-20261109153000).
+	TeamApps(ctx context.Context, acct state.Account) []state.App
 	// Actor names who made the request: the signed-in email, or
 	// api_key:<id>.
 	Actor(r *http.Request, acct state.Account) string
@@ -132,13 +138,18 @@ func (s *Service) list(ctx context.Context, acct state.Account, app state.App, s
 	resp := api.IncidentsResponse{Since: since, Incidents: []api.Incident{}, UnavailableSources: []string{}}
 	apps := s.apps(ctx, acct, app)
 	store := s.Host.Store()
+	// owners names the account holding each listed alert incident, which
+	// keeps its acknowledgement; every other incident is the caller's.
+	owners := map[string]string{}
 	sources := []source{
 		{api.IncidentSourceAlert, func(ctx context.Context) ([]api.Incident, error) {
-			eps, err := store.ListAlertEpisodes(ctx, acct.ID, app.ID, since, sourceRows)
+			eps, err := s.alertEpisodes(ctx, acct, app, since)
 			out := make([]api.Incident, 0, len(eps))
 			for _, ep := range eps {
 				if slug, visible := apps(ep.AppID); visible {
-					out = append(out, alertIncident(ep, slug))
+					inc := alertIncident(ep, slug)
+					owners[inc.ID] = ep.AccountID
+					out = append(out, inc)
 				}
 			}
 			return out, err
@@ -191,8 +202,49 @@ func (s *Service) list(ctx context.Context, acct state.Account, app state.App, s
 	if len(resp.Incidents) > api.IncidentsMaxEntries {
 		resp.Incidents, resp.Truncated = resp.Incidents[:api.IncidentsMaxEntries], true
 	}
-	s.addAcknowledgements(ctx, acct, &resp)
+	s.addAcknowledgements(ctx, acct, owners, &resp)
 	return resp
+}
+
+// alertEpisodes reads the caller's own alert episodes and those of the
+// organization apps teammates created that the caller may read
+// (ADR-20261109153000), at most sourceRows, newest opened first.
+func (s *Service) alertEpisodes(ctx context.Context, acct state.Account, app state.App, since time.Time) ([]state.AlertEpisode, error) {
+	store := s.Host.Store()
+	var eps []state.AlertEpisode
+	var err error
+	if app.ID == "" || app.AccountID == acct.ID {
+		eps, err = store.ListAlertEpisodes(ctx, acct.ID, app.ID, since, sourceRows)
+	}
+	team, ok := store.(state.TeamIncidentStore)
+	if !ok {
+		return eps, err
+	}
+	var teamApps []state.App
+	switch {
+	case app.ID == "":
+		teamApps = s.Host.TeamApps(ctx, acct)
+	case app.AccountID != acct.ID:
+		teamApps = []state.App{app}
+	}
+	if len(teamApps) == 0 {
+		return eps, err
+	}
+	more, teamErr := team.ListAlertEpisodesForApps(ctx, teamApps, since, sourceRows)
+	seen := make(map[string]bool, len(eps))
+	for _, ep := range eps {
+		seen[ep.ID] = true
+	}
+	for _, ep := range more {
+		if !seen[ep.ID] {
+			eps = append(eps, ep)
+		}
+	}
+	sort.SliceStable(eps, func(i, j int) bool { return eps[i].OpenedAt.After(eps[j].OpenedAt) })
+	if len(eps) > sourceRows {
+		eps = eps[:sourceRows]
+	}
+	return eps, errors.Join(err, teamErr)
 }
 
 // Recent is the list the dashboard page shows: every app, the default
@@ -201,21 +253,29 @@ func (s *Service) Recent(ctx context.Context, acct state.Account) api.IncidentsR
 	return s.list(ctx, acct, state.App{}, s.now().Add(-api.IncidentsDefaultWindow))
 }
 
-// addAcknowledgements marks the listed incidents the account acknowledged,
-// with one read for the page.
-func (s *Service) addAcknowledgements(ctx context.Context, acct state.Account, resp *api.IncidentsResponse) {
+// addAcknowledgements marks the listed incidents acknowledged, with one read
+// per account holding them: an alert incident's acknowledgement is kept by
+// the account its episode belongs to, so every teammate sees the same one
+// (ADR-20261109153000); owners names those accounts, and any other incident
+// is the caller's.
+func (s *Service) addAcknowledgements(ctx context.Context, acct state.Account, owners map[string]string, resp *api.IncidentsResponse) {
 	if len(resp.Incidents) == 0 {
 		return
 	}
-	ids := make([]string, len(resp.Incidents))
-	for i, inc := range resp.Incidents {
-		ids[i] = inc.ID
+	byOwner := map[string][]string{}
+	for _, inc := range resp.Incidents {
+		owner := cmp.Or(owners[inc.ID], acct.ID)
+		byOwner[owner] = append(byOwner[owner], inc.ID)
 	}
-	acks, err := s.Host.Store().IncidentAcknowledgements(ctx, acct.ID, ids)
-	if err != nil {
-		s.Host.Logger().WarnContext(ctx, "incidents: read acknowledgements", "err", err)
-		resp.UnavailableSources = append(resp.UnavailableSources, "acknowledgements")
-		return
+	acks := map[string]state.IncidentNote{}
+	for owner, ids := range byOwner {
+		got, err := s.Host.Store().IncidentAcknowledgements(ctx, owner, ids)
+		if err != nil {
+			s.Host.Logger().WarnContext(ctx, "incidents: read acknowledgements", "err", err)
+			resp.UnavailableSources = append(resp.UnavailableSources, "acknowledgements")
+			return
+		}
+		maps.Copy(acks, got)
 	}
 	for i := range resp.Incidents {
 		if ack, ok := acks[resp.Incidents[i].ID]; ok {
@@ -231,8 +291,10 @@ func markAcknowledged(inc *api.Incident, ack state.IncidentNote) {
 
 // apps maps app ids to slugs, reading each app once per request, and
 // reports whether the caller may read the app's incidents. An app that is
-// hidden, or that cannot be read, hides its incidents. The filtered app is
-// known up front.
+// hidden, or that cannot be read, hides its incidents. A purged app's
+// incidents outlive it (ADR-20261030214500): they have no slug, and only the
+// account's own view, never an organization member's or an app-bound key's,
+// reads them (ADR-20261031144636). The filtered app is known up front.
 func (s *Service) apps(ctx context.Context, acct state.Account, known state.App) func(string) (string, bool) {
 	type resolved struct {
 		slug    string
@@ -248,9 +310,12 @@ func (s *Service) apps(ctx context.Context, acct state.Account, known state.App)
 		}
 		var r resolved
 		app, err := s.Host.Store().AppByID(ctx, id)
-		if err != nil {
+		switch {
+		case errors.Is(err, state.ErrNotFound):
+			r = resolved{"", s.Host.AppVisible(ctx, acct, state.App{ID: id, AccountID: acct.ID})}
+		case err != nil:
 			s.Host.Logger().WarnContext(ctx, "incidents: resolve app", "app_id", id, "err", err)
-		} else {
+		default:
 			r = resolved{app.Slug, s.Host.AppVisible(ctx, acct, app)}
 		}
 		seen[id] = r

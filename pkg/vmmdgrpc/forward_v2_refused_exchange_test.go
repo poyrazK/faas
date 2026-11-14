@@ -27,7 +27,11 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 )
 
-// A bridge refuses the exchange past api.TrafficBridgeCompletionMaxEntries
+// refusedExchangeTestLimit is the test bridge's open-exchange limit; production
+// bridges allow api.TrafficBridgeCompletionMaxEntries.
+const refusedExchangeTestLimit = 128
+
+// A bridge refuses the exchange past its open-exchange limit
 // open ones. vmmd used to wait for that exchange's completion, get 404 and
 // fence the bridge, which ended every open exchange on the instance. Now the
 // refused request alone fails as "App busy" and the others finish.
@@ -57,12 +61,12 @@ func TestForwardHTTPStreamV2_RefusedExchangeKeepsTheBridge(t *testing.T) {
 	var releaseOnce sync.Once
 	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
 	var open atomic.Int32
-	bridge := bridgecompletion.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	bridge := bridgecompletion.WrapLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		open.Add(1)
 		<-release
 		w.WriteHeader(http.StatusOK)
-	}))
+	}), refusedExchangeTestLimit)
 	var connsMu sync.Mutex
 	var conns []net.Conn
 	t.Cleanup(func() {
@@ -111,16 +115,16 @@ func TestForwardHTTPStreamV2_RefusedExchangeKeepsTheBridge(t *testing.T) {
 		status int32
 		err    error
 	}
-	held := make(chan result, api.TrafficBridgeCompletionMaxEntries)
-	for range api.TrafficBridgeCompletionMaxEntries {
+	held := make(chan result, refusedExchangeTestLimit)
+	for range refusedExchangeTestLimit {
 		go func() {
 			status, _, err := forwardV2LifecycleRoundTrip(ctx, client, instance, "hold")
 			held <- result{status, err}
 		}()
 	}
-	for open.Load() < api.TrafficBridgeCompletionMaxEntries {
+	for open.Load() < refusedExchangeTestLimit {
 		if ctx.Err() != nil {
-			t.Fatalf("only %d of %d exchanges reached the bridge", open.Load(), api.TrafficBridgeCompletionMaxEntries)
+			t.Fatalf("only %d of %d exchanges reached the bridge", open.Load(), refusedExchangeTestLimit)
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -139,7 +143,7 @@ func TestForwardHTTPStreamV2_RefusedExchangeKeepsTheBridge(t *testing.T) {
 	}
 
 	releaseOnce.Do(func() { close(release) })
-	for range api.TrafficBridgeCompletionMaxEntries {
+	for range refusedExchangeTestLimit {
 		r := <-held
 		if r.err != nil || r.status != http.StatusOK {
 			t.Fatalf("open exchange after a refusal = (%d, %v), want 200", r.status, r.err)

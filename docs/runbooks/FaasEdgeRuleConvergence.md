@@ -9,6 +9,8 @@ Alerts (warn, family `edge_rules`), in
   converging.
 - `FaasEdgeRuleConvergenceStuck`: a gateway has had hosts with prepared,
   unapplied edge-rule changes for 10 minutes.
+- `FaasEdgeRuleHeaderBackfillStalled`: credential header values have stayed
+  stored as written for 6 hours (see the last section).
 
 Decision: ADR-091 amendments (2026-10-27); ADR-20261101141123 (hosts keep
 serving during a change).
@@ -109,3 +111,30 @@ an apply, or one account is changing rules continuously.
 
 **Mitigation**: stop the loop. Fences clear by themselves 10 s after the last
 prepare.
+
+## FaasEdgeRuleHeaderBackfillStalled
+
+apid seals credential header values in edge rules, their saved versions and
+environment policies only once every serving gateway reports that it opens
+sealed values (ADR-20261108110000, amendments 2026-11-09). A background pass
+runs 2 minutes after apid starts and every 15 minutes after.
+
+1. `apid_edge_rule_header_fleet_ready == 0`: a gateway blocks sealing, and
+   new credential values are stored as written too. Run
+   `gregale app traffic status <app>`: "Sealed edge-rule header values" shows
+   `disabled` or `mixed` when a gateway runs a release without the feature,
+   `unverified` when a gateway's report is missing or stale. Finish the
+   gatewayd-internal rollout, or fix the gateway whose wiring report is stale.
+   Values are sealed on the next pass after every gateway reports.
+2. Fleet ready but still pending: read
+   `apid_edge_rule_header_backfill_items_total{outcome="failed"}` by `kind`
+   and the apid warnings starting `edge rule header backfill` or
+   `environment policy header backfill`. `changed` alone is harmless: someone
+   wrote the item during the pass, and the next pass retries it.
+3. `apid_edge_rule_header_backfill_passes_total{result="error"}` rising: the
+   scan itself fails (database); the apid log line `edge rule header backfill
+   pass failed` has the error.
+
+Nothing here changes request handling: gateways serve stored values either
+way. The risk is credentials at rest in the database as written.
+

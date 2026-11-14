@@ -3,6 +3,7 @@
 package managedpostgres
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +39,23 @@ func TestPostgresStoreCapEvents(t *testing.T) {
 	if next, err := store.MostSevereCapEvent(ctx, accountID, month.AddDate(0, 1, 0)); err != nil || next != nil {
 		t.Fatalf("next month: %+v, %v", next, err)
 	}
+	// ADR-20261110160000: the egress hold is read on its own and never
+	// ranks among the compute thresholds.
+	held := CapEvent{SubjectID: accountID, PeriodStart: month, Threshold: CapThresholdEgressHeld,
+		ReachedAt: month.Add(96 * time.Hour), Used: 600 << 30, Allowance: 500 << 30, Ceiling: 500 << 30}
+	if recorded, err := store.RecordCapEvent(ctx, held); err != nil || !recorded {
+		t.Fatalf("egress hold record: %v, %v", recorded, err)
+	}
+	if severe, err := store.MostSevereCapEvent(ctx, accountID, month); err != nil || severe == nil || severe.Threshold != CapThresholdSuspended {
+		t.Fatalf("most severe with an egress hold %+v, %v; want the suspension", severe, err)
+	}
+	read, err := store.CapEvent(ctx, accountID, month.Add(time.Hour), CapThresholdEgressHeld)
+	if err != nil || read == nil || read.Used != held.Used || read.Ceiling != held.Ceiling || read.Mailed || !read.ReachedAt.Equal(held.ReachedAt) {
+		t.Fatalf("egress hold read %+v, %v", read, err)
+	}
+	if none, err := store.CapEvent(ctx, accountID, month, CapThresholdCeilingWarning); err != nil || none != nil {
+		t.Fatalf("absent threshold %+v, %v", none, err)
+	}
 	at, err := store.CapSuspendedAt(ctx, accountID, month.Add(10*24*time.Hour))
 	if err != nil || at == nil || !at.Equal(event.ReachedAt) {
 		t.Fatalf("suspended at %v, %v; want the first record's %v", at, err, event.ReachedAt)
@@ -54,5 +72,52 @@ func TestPostgresStoreCapEvents(t *testing.T) {
 	if _, err := store.RecordCapEvent(ctx, CapEvent{SubjectID: uuid.NewString(), PeriodStart: month, Threshold: CapThresholdWarning,
 		ReachedAt: month, Allowance: 1, Ceiling: 1}); err == nil {
 		t.Fatal("event stored for a subject that is not a resource namespace")
+	}
+}
+
+// ADR-20261110160000 amendment 2026-11-13: the egress hold is recorded once
+// per database and month, and read back by database.
+func TestPostgresStoreEgressHoldNotices(t *testing.T) {
+	store, pool, ctx, accountID := postgresStoreFixture(t)
+	month := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	database := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_databases(id,account_id,name,region,postgres_major,service_class,availability,backend_id,backend_fingerprint)
+		VALUES($1,$2,'heldb','eu',17,'development','single_zone','test',$3)`, database, accountID, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	held := CapEvent{SubjectID: accountID, DatabaseID: database, PeriodStart: month, Threshold: CapThresholdEgressHeld,
+		ReachedAt: month.Add(96 * time.Hour), Used: 600 << 30, Allowance: 500 << 30, Ceiling: 1000 << 30, Overage: true}
+	if none, err := store.EgressHoldNotice(ctx, database, month); err != nil || none != nil {
+		t.Fatalf("before any notice: %+v, %v", none, err)
+	}
+	if recorded, err := store.RecordEgressHoldNotice(ctx, held); err != nil || !recorded {
+		t.Fatalf("first record: %v, %v", recorded, err)
+	}
+	repeat := held
+	repeat.ReachedAt, repeat.Used = held.ReachedAt.Add(time.Hour), held.Used+1
+	if recorded, err := store.RecordEgressHoldNotice(ctx, repeat); err != nil || recorded {
+		t.Fatalf("repeat record: %v, %v", recorded, err)
+	}
+	read, err := store.EgressHoldNotice(ctx, database, month.Add(10*24*time.Hour))
+	if err != nil || read == nil || read.SubjectID != accountID || read.DatabaseID != database || read.Used != held.Used ||
+		read.Allowance != held.Allowance || read.Ceiling != held.Ceiling || !read.Overage || read.Mailed || !read.ReachedAt.Equal(held.ReachedAt) {
+		t.Fatalf("notice read %+v, %v; want the first record", read, err)
+	}
+	if next, err := store.EgressHoldNotice(ctx, database, month.AddDate(0, 1, 0)); err != nil || next != nil {
+		t.Fatalf("next month: %+v, %v", next, err)
+	}
+	// The per-database notice never becomes a subject cap event.
+	if event, err := store.CapEvent(ctx, accountID, month, CapThresholdEgressHeld); err != nil || event != nil {
+		t.Fatalf("subject egress event %+v, %v", event, err)
+	}
+	for name, bad := range map[string]CapEvent{
+		"compute threshold": {SubjectID: accountID, DatabaseID: database, PeriodStart: month, Threshold: CapThresholdWarning, ReachedAt: month, Allowance: 1, Ceiling: 1},
+		"no database":       {SubjectID: accountID, PeriodStart: month, Threshold: CapThresholdEgressHeld, ReachedAt: month, Allowance: 1, Ceiling: 1},
+		"unknown database":  {SubjectID: accountID, DatabaseID: uuid.NewString(), PeriodStart: month, Threshold: CapThresholdEgressHeld, ReachedAt: month, Allowance: 1, Ceiling: 1},
+		"mid-month period":  {SubjectID: accountID, DatabaseID: database, PeriodStart: month.Add(time.Hour), Threshold: CapThresholdEgressHeld, ReachedAt: month.Add(2 * time.Hour), Allowance: 1, Ceiling: 1},
+	} {
+		if _, err := store.RecordEgressHoldNotice(ctx, bad); err == nil {
+			t.Errorf("%s accepted", name)
+		}
 	}
 }

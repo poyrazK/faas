@@ -518,7 +518,7 @@ func TestGetAppsMetrics_HappyPath_WithProm(t *testing.T) {
 		// histogramQuantile walk against the QueryBuckets result —
 		// not zeroed, not silently-NaN. The fixture's p95 (39.9/42
 		// for foo-app, 16.15/17 for bar-app) lands above the last
-		// finite bucket (0.5) so the walk returns prevNonEmptyUpper
+		// finite bucket (0.5) so the walk returns previousUpper
 		// = 0.5 (the +Inf bucket is skipped per PromQL semantics).
 		wantP50 := map[string]float64{"foo-app": 126.66666666666667, "bar-app": 85}[slug]
 		if math.Abs(row.LatencyP50MS-wantP50) > 1e-9 {
@@ -661,6 +661,10 @@ func TestListAccountSecrets_RequiresMFA(t *testing.T) {
 	if _, err := store.CreateSession(context.Background(), sid, acct.ID, "192.0.2.30", "mfa-test-ua"); err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
+	// A pending envelope models a live MFA requirement (ADR-20261106210000).
+	if _, err := store.SetMFARequired(context.Background(), acct.ID, true); err != nil {
+		t.Fatal(err)
+	}
 	token, err := mgr.IssueWithSession(sid, acct.ID, true) // mfaPending=true
 	if err != nil {
 		t.Fatal(err)
@@ -691,7 +695,7 @@ func TestListAccountSecrets_RequiresMFA(t *testing.T) {
 //
 //   - skip the +Inf bucket (would otherwise return +Inf for q<1)
 //   - find the first bucket whose cumulative ≥ q·N
-//   - interpolate linearly in (prevNonEmptyUpper, upper) by count ratio
+//   - interpolate linearly in (previousUpper, upper) by count ratio
 //   - empty / nil maps → 0 (matches appmetrics.SafeFloat's NaN clamp)
 //   - malformed `le` strings → row dropped, rest still computes
 //   - q outside [0,1] → returns 0 / prevUpper (PromQL returns NaN; we
@@ -754,7 +758,7 @@ func TestHistogramQuantile(t *testing.T) {
 			// cum = {le=0.1: 20, le=0.5: 35, le=+Inf: 42}, total = 42.
 			// p95 target = 39.9 → first bucket with cum ≥ 39.9 is +Inf.
 			// +Inf is skipped → returns prevUpper (the last
-			// finite-non-empty bucket), which is 0.5.
+			// finite bucket), which is 0.5.
 			q:       0.95,
 			buckets: map[string]float64{"0.1": 20, "0.5": 35, "+Inf": 42},
 			want:    0.5,

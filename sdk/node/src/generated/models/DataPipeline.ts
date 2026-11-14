@@ -4,10 +4,12 @@
 /* eslint-disable */
 import type { DataPipelineCapacity } from './DataPipelineCapacity.js';
 import type { DataPipelineHealth } from './DataPipelineHealth.js';
+import type { DataPipelineWALRetention } from './DataPipelineWALRetention.js';
 /**
  * Managed replication intent with bounded, revision-specific worker observations.
  */
 export type DataPipeline = {
+  wal_retention?: DataPipelineWALRetention;
   /**
    * Conservative source checkpoint time confirmed applied by the destination replication origin. Historical evidence, not measured time lag.
    */

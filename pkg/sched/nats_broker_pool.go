@@ -169,7 +169,23 @@ func (p *pooledNATSPoller) Close() error {
 
 // Closed reports that nats.go closed the poller's connection for good: the
 // trigger tick builds the trigger a new poller on a new connection.
-func (p *pooledNATSPoller) Closed() bool { return natsBrokerClosed(p.broker) }
+func (p *pooledNATSPoller) Closed() bool {
+	return natsBrokerClosed(p.broker) || triggerSourceClosed(p.triggerSource)
+}
+
+func (p *pooledNATSPoller) Defer(ctx context.Context, t sqlc.Trigger, ids []string) error {
+	if source, ok := p.triggerSource.(triggerDeferrer); ok {
+		return source.Defer(ctx, t, ids)
+	}
+	return p.Nack(ctx, t, ids, triggerReasonBrokerError)
+}
+
+func (p *pooledNATSPoller) NackUntil(ctx context.Context, t sqlc.Trigger, ids []string, until []time.Time) error {
+	if source, ok := p.triggerSource.(triggerRetryScheduler); ok {
+		return source.NackUntil(ctx, t, ids, until)
+	}
+	return p.Nack(ctx, t, ids, triggerReasonBrokerError)
+}
 
 // BrokerStats forwards the consumer's pending counts.
 func (p *pooledNATSPoller) BrokerStats(ctx context.Context, t sqlc.Trigger) BrokerStats {

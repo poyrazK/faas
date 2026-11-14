@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/api"
+	"net/netip"
 	"testing"
 )
 
@@ -43,5 +44,39 @@ func TestPrivateTransportCollisionReservations(t *testing.T) {
 	}
 	if _, ok := m.privateNetworkTransportIDs[networks[0]]; !ok {
 		t.Fatal("deleted reservation was reused")
+	}
+}
+
+func TestPrivateMemberWildcardReleaseFindsOwnerOnlyClaim(t *testing.T) {
+	m := NewMemStore()
+	m.privateNetworkServiceOwners = map[string]privateNetworkServiceOwner{privateNetworkServiceKey("network", "app"): {AccountID: "account", AppID: "app", NetworkID: "network", InstanceID: "instance"}}
+	if err := m.ReleasePrivateNetworkMember(t.Context(), "", "", "", "instance", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(m.privateNetworkServiceOwners) != 0 {
+		t.Fatal("wildcard cleanup ignored owner without an instance address")
+	}
+}
+
+func TestPrivateMemberWithdrawalIdentityIsOwnerOnly(t *testing.T) {
+	m := NewMemStore()
+	n, err := m.CreatePrivateNetwork(t.Context(), PrivateNetwork{ID: "net-withdrawal", AccountID: "account", Name: "withdrawal", Region: "fra1", CIDR: netip.MustParsePrefix("10.92.0.0/24")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.UpsertAppPrivateNetworkAttachment(t.Context(), AppPrivateNetworkAttachment{AccountID: "account", AppID: "app", NetworkID: n.ID, Region: n.Region, CIDRs: []netip.Prefix{n.CIDR}}); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := m.EnsurePrivateNetworkMember(t.Context(), "account", "app", n.ID, "owner", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withdraw, err := m.EnsurePrivateNetworkMember(t.Context(), "account", "app", n.ID, "owner", false)
+	if err != nil || withdraw.Service.IsValid() || withdraw.WithdrawService != owner.Service {
+		t.Fatalf("owned claim not projected for cleanup: %+v %v", withdraw, err)
+	}
+	other, err := m.EnsurePrivateNetworkMember(t.Context(), "account", "app", n.ID, "other", false)
+	if err != nil || other.Service.IsValid() || other.WithdrawService.IsValid() {
+		t.Fatalf("non-owner received service identity: %+v %v", other, err)
 	}
 }

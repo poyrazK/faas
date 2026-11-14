@@ -6,6 +6,14 @@
  * Queue inspection of the current credential, optionally including a ready, empty managed mirror.
  */
 export type RequestDataConnectionCheck = {
+  /**
+   * Exact public table names to inspect, bypassing the default discovery page. Mutually exclusive with search.
+   */
+  tables?: Array<string>;
+  /**
+   * Discover names containing this literal text before applying the metadata limit. Mutually exclusive with tables.
+   */
+  search?: string;
   expected_revision: number;
   database_id?: string;
 };

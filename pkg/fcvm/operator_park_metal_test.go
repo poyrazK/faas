@@ -9,9 +9,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -72,7 +74,13 @@ func TestMetalOperatorParkCapture(t *testing.T) {
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
-	backend, err := storage.NewLocalStorageBackend(t.TempDir())
+	// Production's storage root already holds snap/ (the storage role creates
+	// it); a local capture only creates the directories below it.
+	storeRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(storeRoot, "snap"), 0o2770); err != nil {
+		t.Fatal(err)
+	}
+	backend, err := storage.NewLocalStorageBackend(storeRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +102,9 @@ func TestMetalOperatorParkCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := "snap/operator-park-capture/mem"
+	// Operator parks take a v2 capture key: memory, vmstate and the private
+	// drive captured with them (state.OperatorParkTarget validation).
+	key := state.SnapshotCaptureMemKey(uuid.NewString(), state.SnapshotTierInit, uuid.NewString())
 	target := state.OperatorParkTarget{OperatorRestartTarget: state.OperatorRestartTarget{InstanceID: request.Instance, Generation: generation}, Action: state.OperatorParkCapture, MemoryKey: key, VMStateKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: key}), FCVersion: m.fcVersion}
 	r, err := m.ExecuteOperatorPark(ctx, target)
 	if err != nil || r.Outcome != string(state.StateParked) || r.MemBytes <= 0 || r.VMStateBytes <= 0 || m.LiveCount() != 0 || m.LeasedCount() != 0 {

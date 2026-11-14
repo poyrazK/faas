@@ -1,0 +1,5 @@
+=== RUN   TestInvestigationBusyWorkerKeepsCapabilitiesFresh
+    zz_investigation_round3_test.go:84: completed executions=2523; queued=3477; capability heartbeat age=6.948s (freshness budget=45s)
+--- PASS: TestInvestigationBusyWorkerKeepsCapabilitiesFresh (47.59s)
+PASS
+ok  	github.com/onebox-faas/faas/cmd/gregale/templates/mcp-go	47.602s

@@ -756,11 +756,8 @@ func (b *Builder) publishExt4FullRootfs(ctx context.Context, in BuildFullRootfsI
 	if err != nil {
 		return ArtifactIdentity{}, fmt.Errorf("rootfs: publish full-rootfs %q: %w", in.StorageKey, err)
 	}
-	if b.signer != nil {
-		sigKey := "sigs/" + in.StorageKey + ".sig"
-		if err := b.signer.Sign(ctx, in.StorageKey, sigKey); err != nil {
-			return ArtifactIdentity{}, fmt.Errorf("rootfs: sign full-rootfs %q: %w", in.StorageKey, err)
-		}
+	if err := b.signPublished(ctx, in.StorageKey, identity); err != nil {
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: sign full-rootfs %q: %w", in.StorageKey, err)
 	}
 	return identity, nil
 }
@@ -916,11 +913,8 @@ func (b *Builder) publishBaseFile(ctx context.Context, be storage.StorageBackend
 	// startup restages + signs the base on first run if no sig
 	// exists (see pkg/imaged/base_stage.go); app layers re-sign on
 	// the next deploy.
-	if b.signer != nil {
-		sigKey := "sigs/" + key + ".sig"
-		if err := b.signer.Sign(ctx, key, sigKey); err != nil {
-			return ArtifactIdentity{}, fmt.Errorf("rootfs: sign base %q: %w", key, err)
-		}
+	if err := b.signPublished(ctx, key, identity); err != nil {
+		return ArtifactIdentity{}, fmt.Errorf("rootfs: sign base %q: %w", key, err)
 	}
 	return identity, nil
 }

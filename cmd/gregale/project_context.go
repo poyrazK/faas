@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/projectconfig"
 )
 
 const (
@@ -213,8 +214,98 @@ func linkedProjectContext(start string) (localProjectContext, string, error) {
 	return findProjectContext(start)
 }
 
+// targetProjectContext is the checkout's CLI target for commands that only
+// read it (ADR-20261107180000 slice 3). The local .gregale/project.json wins;
+// without one, the committed gregale.yaml `project:` block's name and app
+// apply, so a fresh clone targets the right project without `gregale link`.
+// The returned path names the file the target came from. Commands that
+// rewrite or delete the link file (link, unlink, context set) keep using
+// findProjectContext, which never returns a manifest.
+func targetProjectContext(start string) (localProjectContext, string, error) {
+	context, path, err := findProjectContext(start)
+	if !errors.Is(err, errProjectContextNotFound) {
+		return context, path, err
+	}
+	return committedProjectContext(start)
+}
+
+// committedProjectContext walks from start towards the repository root and
+// takes the nearest manifest's project.app and the nearest project.name, so a
+// service directory's gregale.yaml can name its app while the root names the
+// project. The walk stops at the Git root (or the filesystem root).
+func committedProjectContext(start string) (localProjectContext, string, error) {
+	abs, err := filepath.Abs(start)
+	if err != nil {
+		return localProjectContext{}, "", fmt.Errorf("resolve project context directory: %w", err)
+	}
+	if info, statErr := os.Stat(abs); statErr == nil && !info.IsDir() {
+		abs = filepath.Dir(abs)
+	}
+	var project, app, source string
+	for projectContextRootAllowed(abs) {
+		cfg, path, found, err := manifestTargetIn(abs)
+		if err != nil {
+			return localProjectContext{}, path, err
+		}
+		if found {
+			if app == "" && cfg.App != "" {
+				app = cfg.App
+				if source == "" {
+					source = path
+				}
+			}
+			if cfg.Name != "" {
+				project = cfg.Name
+				if source == "" {
+					source = path
+				}
+				break
+			}
+		}
+		if _, err := os.Stat(filepath.Join(abs, ".git")); err == nil {
+			break
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			break
+		}
+		abs = parent
+	}
+	if project == "" && app == "" {
+		return localProjectContext{}, "", errProjectContextNotFound
+	}
+	context := localProjectContext{Version: projectContextVersion, Project: project, App: app}
+	if project == "" {
+		context.Version = standaloneContextVersion
+	}
+	if err := context.validate(); err != nil {
+		return localProjectContext{}, source, fmt.Errorf("validate %s project: name/app: %w", source, err)
+	}
+	return context, source, nil
+}
+
+// manifestTargetIn reads the project block of dir's gregale.yaml (or .yml).
+func manifestTargetIn(dir string) (projectconfig.Config, string, bool, error) {
+	for _, name := range projectconfig.ManifestNames {
+		path := filepath.Join(dir, name)
+		body, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return projectconfig.Config{}, path, false, fmt.Errorf("read %s: %w", path, err)
+		}
+		cfg, found, err := projectconfig.FromManifest(body)
+		if err != nil {
+			return projectconfig.Config{}, path, false, fmt.Errorf("parse %s: %w", path, err)
+		}
+		return cfg, path, found, nil
+	}
+	return projectconfig.Config{}, "", false, nil
+}
+
 func linkedAppSlug(start string) (string, error) {
-	context, _, err := linkedProjectContext(start)
+	context, _, err := targetProjectContext(start)
 	if err != nil {
 		return "", err
 	}
@@ -222,6 +313,19 @@ func linkedAppSlug(start string) (string, error) {
 		return "", fmt.Errorf("project %q has multiple or no workloads; link again with --app <slug>", context.Project)
 	}
 	return context.App, nil
+}
+
+// linkedProjectSlug returns the linked project's slug, or "" when there is
+// no link or the link is a standalone app.
+func linkedProjectSlug(start string) (string, error) {
+	context, _, err := linkedProjectContext(start)
+	if errors.Is(err, errProjectContextNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return context.Project, nil
 }
 
 func resolveLinkedApp(explicit, start string) (string, error) {

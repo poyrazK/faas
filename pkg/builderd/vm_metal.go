@@ -78,6 +78,10 @@ type VMMDriver struct {
 	// so source staging and mke2fs do not serialize the two builder slots.
 	dependencyCacheMu sync.Mutex
 
+	// seeds is the node's BuildKit seed store (ADR-20261030122204); nil while
+	// BuildKitSeedEnv is off.
+	seeds *buildkitSeedStore
+
 	// dockerHubMirrors go into every build manifest; the builder's BuildKit
 	// daemon tries them before Docker Hub (ADR-20261025114554).
 	dockerHubMirrors []string
@@ -97,6 +101,18 @@ func (d *VMMDriver) WithSharedPlatformBlobs(on bool) *VMMDriver {
 	d.platformLayers = nil
 	if on {
 		d.platformLayers = platformLayers
+	}
+	return d
+}
+
+// WithBuildKitSeed turns on the node's BuildKit seed (BuildKitSeedEnv,
+// ADR-20261030122204): Spawn gives an eligible build a reflink copy of the
+// ready seed as drive2, and CreateBuildKitSeed makes the seed. Call before
+// serving.
+func (d *VMMDriver) WithBuildKitSeed(on bool) *VMMDriver {
+	d.seeds = nil
+	if on {
+		d.seeds = &buildkitSeedStore{dir: buildkitSeedDir(d.driveDir)}
 	}
 	return d
 }
@@ -314,6 +330,19 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		return BuildHandle{}, err
 	}
 	bManifest.DockerHubMirrors = d.dockerHubMirrors
+	seedDrive, err := d.prepareBuildKitSeedDrive(ctx, req, &bManifest, instance)
+	if err != nil {
+		_ = os.Remove(drive1Path)
+		return BuildHandle{}, err
+	}
+	// A failed Spawn leaves no seed drive behind; a booted build's drive goes
+	// with WaitForCompletion or the seed run's caller.
+	spawned := false
+	defer func() {
+		if !spawned && seedDrive != "" {
+			_ = os.Remove(seedDrive)
+		}
+	}()
 	cachePath := ""
 	if req.DependencyCacheKey != "" {
 		var cachePathErr error
@@ -357,6 +386,8 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		WarmScopeKey:                req.WarmScopeKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
 		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+		HostSeedDrive:               seedDrive,
+		SeedOnly:                    req.BuildKitSeedOnly,
 	}
 	if bManifest.DeferCacheExport {
 		handle.DeferredCache = &DeferredCacheSpec{Manifest: bManifest, Plan: req.Plan}
@@ -383,6 +414,10 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 			// Docker config for its base-image pulls. A build that has
 			// them never uses a warm builder.
 			RegistryCredentials: registryCredentialsToProto(req.RegistryCredentials),
+			// ADR-20261030122204: the build's copy of the BuildKit seed, or a
+			// seed run's empty drive. An older vmmd ignores it and the guest
+			// keeps BuildKit on drive1.
+			BuildkitSeedDrive: seedDrive,
 		},
 		// Issue #301 / ADR-043: vmmd validates Plan on every cold
 		// boot and routes the VM into the per-plan cgroup slice.
@@ -412,6 +447,7 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		return BuildHandle{}, errors.Join(errors.New("builderd: vmmd boot did not acknowledge secret alias support"), cleanupErr)
 	}
 
+	spawned = true
 	return handle, nil
 }
 
@@ -696,11 +732,16 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 	if d == nil || d.cli == nil {
 		return BuildOutcome{}, fmt.Errorf("builderd: VMMDriver not wired")
 	}
-	// A deferred cache export keeps the drive for ExportDeferredCache.
-	deferred := false
+	// A deferred cache export keeps the drive for ExportDeferredCache, and
+	// the seed copy when BuildKit's state is on it. A seed run's caller
+	// keeps or removes its drive.
+	deferred, seeded := false, false
 	defer func() {
 		if h.HostDrive1 != "" && !retainDrive && !deferred {
 			_ = os.Remove(h.HostDrive1)
+		}
+		if h.HostSeedDrive != "" && !h.SeedOnly && (!deferred || !seeded) {
+			_ = os.Remove(h.HostSeedDrive)
 		}
 	}()
 
@@ -767,6 +808,8 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.SharedRuntime = done.SharedRuntime
 		res.DependencyCacheUnchanged = done.DependencyCacheUnchanged
 		res.Timings = done.Timings
+		res.BuildKitSeeded = done.BuildKitSeeded
+		seeded = done.BuildKitSeeded
 		// Only a build whose manifest asked for it may leave the cache owed.
 		deferred = done.DependencyCacheDeferred && h.DeferredCache != nil && !retainDrive && exitCode == 0
 		res.DependencyCacheDeferred = deferred
@@ -842,6 +885,15 @@ func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) (Bui
 	manifest := h.DeferredCache.Manifest
 	manifest.DeferCacheExport = false
 	manifest.CacheExportOnly = true
+	// The build's BuildKit state is on its seed copy when it ran seeded;
+	// WaitForCompletion kept that copy only then (ADR-20261030122204).
+	seedDrive := ""
+	if manifest.BuildKitSeed && h.HostSeedDrive != "" {
+		if info, err := os.Stat(h.HostSeedDrive); err == nil && info.Mode().IsRegular() {
+			seedDrive = h.HostSeedDrive
+		}
+	}
+	manifest.BuildKitSeed = seedDrive != ""
 	manifest.DependencyCacheImport = h.DependencyCacheRestored
 	manifest.TimeoutSec = api.BuildCacheExportTimeoutSeconds
 	exportDir := filepath.Join(d.exportDir, h.BuildID+DeferredCacheInstanceSuffix)
@@ -861,6 +913,7 @@ func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) (Bui
 		DependencyCacheKey:          h.DependencyCacheKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
 		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+		HostSeedDrive:               seedDrive,
 	}
 	// The second VM gets no build secrets or registry credentials: builderd
 	// defers only builds that have neither.
@@ -873,8 +926,9 @@ func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) (Bui
 			MemSizeMib: int32(api.BuildVMRAMMB),
 		},
 		Build: &vmmdpb.BuildSpec{
-			ExportDir:  exportDir,
-			TimeoutSec: int32(manifest.TimeoutSec),
+			ExportDir:         exportDir,
+			TimeoutSec:        int32(manifest.TimeoutSec),
+			BuildkitSeedDrive: seedDrive,
 		},
 		Plan:      h.DeferredCache.Plan,
 		AccountId: manifest.TenantID,
@@ -904,6 +958,9 @@ func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) (Bui
 func (d *VMMDriver) DiscardDeferredCache(h BuildHandle) {
 	if h.HostDrive1 != "" {
 		_ = os.Remove(h.HostDrive1)
+	}
+	if h.HostSeedDrive != "" {
+		_ = os.Remove(h.HostSeedDrive)
 	}
 }
 

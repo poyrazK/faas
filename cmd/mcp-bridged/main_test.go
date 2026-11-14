@@ -29,12 +29,15 @@ func TestConfigDefaultsToThePlatformAPIHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.resourceURL != "https://api.gregale.dev/mcp" || cfg.apiBase != "http://127.0.0.1:8081" || cfg.cliPath != "/opt/faas/current/bin/gregale" || len(cfg.toolsets) != 1 || cfg.toolsets[0] != "core" {
+	if cfg.resourceURL != "https://api.gregale.dev/mcp" || cfg.apiBase != "http://127.0.0.1:8081" || cfg.cliPath != "/opt/faas/current/bin/gregale" || len(cfg.toolsets) != 1 || cfg.toolsets[0] != "all" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	t.Setenv("FAAS_PLATFORM_DOMAIN", "gregale.io")
 	if cfg, err := parse(t, "--state-key-file", "k", "--oauth-redirect-uri", "http://localhost/callback"); err != nil || cfg.resourceURL != "https://api.gregale.io/mcp" {
 		t.Fatalf("platform domain ignored: %+v %v", cfg, err)
+	}
+	if cfg, err := parse(t, "--state-key-file", "k", "--oauth-redirect-uri", "http://localhost/callback", "--tools", "core"); err != nil || len(cfg.toolsets) != 1 || cfg.toolsets[0] != "core" {
+		t.Fatalf("operator ceiling ignored: %+v %v", cfg, err)
 	}
 }
 
@@ -51,6 +54,34 @@ func TestConfigRefusesUnsafeSettings(t *testing.T) {
 	} {
 		if _, err := parse(t, args...); err == nil {
 			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func TestHostedToolInvocationDefaultsOff(t *testing.T) {
+	base := []string{"--state-key-file", "/k", "--oauth-redirect-uri", "http://localhost/callback"}
+	for _, enabled := range []bool{false, true} {
+		args := append([]string{}, base...)
+		if enabled {
+			args = append(args, "--allow-tool-invocation")
+		}
+		cfg, err := parse(t, args...)
+		if err != nil || cfg.allowToolInvocation != enabled {
+			t.Fatalf("invocation config: %+v %v", cfg, err)
+		}
+	}
+}
+
+func TestHostedToolPublishingDefaultsOff(t *testing.T) {
+	base := []string{"--state-key-file", "/k", "--oauth-redirect-uri", "http://localhost/callback"}
+	for _, enabled := range []bool{false, true} {
+		args := append([]string{}, base...)
+		if enabled {
+			args = append(args, "--allow-tool-publishing")
+		}
+		cfg, err := parse(t, args...)
+		if err != nil || cfg.allowToolPublishing != enabled || cfg.allowToolInvocation {
+			t.Fatalf("publishing config: %+v %v", cfg, err)
 		}
 	}
 }
@@ -76,5 +107,17 @@ func TestMetricsListenerServesBridgeAndProcessMetrics(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("metrics lack %s", want)
 		}
+	}
+}
+
+func TestPrivateToolInvocationDefaultsOff(t *testing.T) {
+	base := []string{"--state-key-file", "/k", "--oauth-redirect-uri", "http://localhost/callback"}
+	cfg, err := parse(t, base...)
+	if err != nil || cfg.allowPrivateToolInvocation {
+		t.Fatal("private invocation enabled by default", err)
+	}
+	cfg, err = parse(t, append(base, "--allow-private-tool-invocation", "--allow-tool-invocation")...)
+	if err != nil || !cfg.allowPrivateToolInvocation || !cfg.allowToolInvocation || cfg.allowToolPublishing {
+		t.Fatal("private invocation flags widened publication", err)
 	}
 }

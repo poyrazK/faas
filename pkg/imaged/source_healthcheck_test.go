@@ -116,8 +116,8 @@ func TestSourceBuildAppliesComposeHealthcheck(t *testing.T) {
 }
 
 // The verdict merges into the profile as stored: fields this binary does not
-// know survive, a build without a profile gets one, and a build without a
-// command HEALTHCHECK writes nothing (ADR-20261024100000).
+// know survive, a build without a profile gets one, and an unchanged command
+// HEALTHCHECK verdict needs no update (ADR-20261024100000).
 func TestSourceBuildRecordsDockerfileHealthcheck(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
@@ -142,9 +142,9 @@ func TestSourceBuildRecordsDockerfileHealthcheck(t *testing.T) {
 					t.Fatalf("new profile = %s (%v)", stored, err)
 				}
 			}},
-		{"no HEALTHCHECK writes nothing", nil, []byte(`{"version":"v1","framework":"docker"}`), false,
+		{"no HEALTHCHECK and unchanged port writes nothing", nil, []byte(`{"version":"v1","framework":"docker","port":8080}`), false,
 			func(t *testing.T, stored []byte) {
-				if string(stored) != `{"version":"v1","framework":"docker"}` {
+				if string(stored) != `{"version":"v1","framework":"docker","port":8080}` {
 					t.Fatalf("profile rewritten without a check: %s", stored)
 				}
 			}},

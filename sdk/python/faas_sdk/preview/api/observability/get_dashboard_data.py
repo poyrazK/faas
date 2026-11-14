@@ -57,7 +57,9 @@ def sync_detailed(
      Resolves every widget for its window through the code behind the
     per-app endpoints: request metrics, log search counts, pushed custom
     metrics and SLO status. A widget that cannot be read carries `error`
-    and no value; the rest still resolve.
+    and no value; the rest still resolve. An account reads at most two
+    dashboards at once; a third read is refused with 429
+    `dashboard_data_busy` and `Retry-After`.
 
     Args:
         id (UUID):
@@ -91,7 +93,9 @@ def sync(
      Resolves every widget for its window through the code behind the
     per-app endpoints: request metrics, log search counts, pushed custom
     metrics and SLO status. A widget that cannot be read carries `error`
-    and no value; the rest still resolve.
+    and no value; the rest still resolve. An account reads at most two
+    dashboards at once; a third read is refused with 429
+    `dashboard_data_busy` and `Retry-After`.
 
     Args:
         id (UUID):
@@ -120,7 +124,9 @@ async def asyncio_detailed(
      Resolves every widget for its window through the code behind the
     per-app endpoints: request metrics, log search counts, pushed custom
     metrics and SLO status. A widget that cannot be read carries `error`
-    and no value; the rest still resolve.
+    and no value; the rest still resolve. An account reads at most two
+    dashboards at once; a third read is refused with 429
+    `dashboard_data_busy` and `Retry-After`.
 
     Args:
         id (UUID):
@@ -152,7 +158,9 @@ async def asyncio(
      Resolves every widget for its window through the code behind the
     per-app endpoints: request metrics, log search counts, pushed custom
     metrics and SLO status. A widget that cannot be read carries `error`
-    and no value; the rest still resolve.
+    and no value; the rest still resolve. An account reads at most two
+    dashboards at once; a third read is refused with 429
+    `dashboard_data_busy` and `Retry-After`.
 
     Args:
         id (UUID):

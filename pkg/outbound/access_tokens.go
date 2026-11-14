@@ -112,6 +112,9 @@ type PublicHandler struct {
 	unknown map[[32]byte]time.Time
 	lookups chan struct{}
 	touched map[string]time.Time
+	// guesses refuses a client network that keeps presenting unknown
+	// tokens (bug hunt H82).
+	guesses accessTokenGuessLimiter
 }
 
 // errAccessTokenLookupsBusy reports that too many uncached tokens are being
@@ -123,7 +126,8 @@ type cachedAccessToken struct {
 	expires time.Time
 }
 
-// publicTokenCacheMax bounds each lookup cache; a full one is cleared.
+// publicTokenCacheMax bounds each lookup cache; a full one is trimmed
+// (trimCache), never cleared.
 const publicTokenCacheMax = 10_000
 
 func (p *PublicHandler) now() time.Time {
@@ -144,10 +148,18 @@ func (p *PublicHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusUnauthorized, "outbound_access_token_invalid", "An AI gateway access token is required", "")
 		return
 	}
+	client := accessTokenClientKey(r)
+	if p.guesses.blocked(client, p.now()) {
+		p.Handler.Metrics.ObserveAIAccessTokenLookup("limited")
+		w.Header().Set("Retry-After", "60")
+		writeProblem(w, http.StatusTooManyRequests, "outbound_access_token_rate_limited", "Too many unknown AI gateway access tokens from this network; retry later", "")
+		return
+	}
 	token, err := p.lookup(r.Context(), sha256.Sum256([]byte(raw)))
 	p.Handler.Metrics.ObserveAIAccessTokenLookup(accessTokenLookupResult(err))
 	switch {
 	case errors.Is(err, ErrAIAccessTokenNotFound):
+		p.guesses.fail(client, p.now())
 		writeProblem(w, http.StatusUnauthorized, "outbound_access_token_invalid", "The AI gateway access token is unknown, revoked or expired", "")
 		return
 	case err != nil:
@@ -199,14 +211,16 @@ func (p *PublicHandler) lookup(ctx context.Context, hash [32]byte) (AIAccessToke
 	expires := now.Add(api.OutboundAIAccessTokenCacheSeconds * time.Second)
 	p.mu.Lock()
 	if err != nil {
-		if p.unknown == nil || len(p.unknown) >= publicTokenCacheMax {
+		if p.unknown == nil {
 			p.unknown = make(map[[32]byte]time.Time)
 		}
+		trimCache(p.unknown, publicTokenCacheMax, func(e time.Time) bool { return !now.Before(e) })
 		p.unknown[hash] = expires
 	} else {
-		if p.known == nil || len(p.known) >= publicTokenCacheMax {
+		if p.known == nil {
 			p.known = make(map[[32]byte]cachedAccessToken)
 		}
+		trimCache(p.known, publicTokenCacheMax, func(c cachedAccessToken) bool { return !now.Before(c.expires) })
 		p.known[hash] = cachedAccessToken{token: token, expires: expires}
 	}
 	p.mu.Unlock()
@@ -234,9 +248,10 @@ func accessTokenLookupResult(err error) string {
 func (p *PublicHandler) touch(ctx context.Context, id string) {
 	now := p.now()
 	p.mu.Lock()
-	if p.touched == nil || len(p.touched) >= publicTokenCacheMax {
+	if p.touched == nil {
 		p.touched = make(map[string]time.Time)
 	}
+	trimCache(p.touched, publicTokenCacheMax, func(last time.Time) bool { return now.Sub(last) >= time.Minute })
 	if last, ok := p.touched[id]; ok && now.Sub(last) < time.Minute {
 		p.mu.Unlock()
 		return

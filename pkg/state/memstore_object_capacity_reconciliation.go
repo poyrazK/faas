@@ -190,6 +190,7 @@ func (m *MemStore) RequestObjectCapacityReconciliation(ctx context.Context, acco
 		m.objectCapacityJobs = map[string]ObjectCapacityReconciliation{}
 	}
 	m.objectCapacityJobs[j.ID] = j
+	m.markObjectBucketMutatedLocked(j.BucketID)
 	return cloneObjectCapacityJob(j), nil
 }
 func cloneObjectCapacityJob(j ObjectCapacityReconciliation) ObjectCapacityReconciliation {
@@ -239,6 +240,7 @@ func (m *MemStore) CancelObjectCapacityReconciliation(ctx context.Context, accou
 		j.UpdatedAt = now
 		j.FinishedAt = &now
 		m.objectCapacityJobs[id] = j
+		m.markObjectBucketMutatedLocked(j.BucketID)
 	}
 	return cloneObjectCapacityJob(j), nil
 }
@@ -292,6 +294,7 @@ func (m *MemStore) ClaimObjectCapacityReconciliation(ctx context.Context, id, to
 		j.InventoryCursors = nil
 	}
 	m.objectCapacityJobs[id] = j
+	m.markObjectBucketMutatedLocked(j.BucketID)
 	return cloneObjectCapacityJob(j), nil
 }
 func (m *MemStore) FinishObjectCapacityReconciliation(ctx context.Context, id, token string, bytes, keys int64) (ObjectCapacityReconciliation, error) {
@@ -337,6 +340,7 @@ func (m *MemStore) FinishObjectCapacityReconciliation(ctx context.Context, id, t
 	}
 	j = completeObjectCapacityJob(j, bytes, keys, now)
 	m.objectCapacityJobs[id] = j
+	m.markObjectBucketMutatedLocked(j.BucketID)
 	return cloneObjectCapacityJob(j), nil
 }
 func validObjectCapacityFinish(j ObjectCapacityReconciliation, token string, bytes, keys int64, now time.Time) bool {
@@ -364,5 +368,6 @@ func (m *MemStore) RetryObjectCapacityReconciliation(ctx context.Context, id, to
 	j.RetryAt = now.Add(api.ObjectCapacityReconciliationRetry)
 	j.LastErrorCode = "inventory_failed"
 	m.objectCapacityJobs[id] = j
+	m.markObjectBucketMutatedLocked(j.BucketID)
 	return nil
 }

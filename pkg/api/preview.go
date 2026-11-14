@@ -42,8 +42,21 @@ func (c *Client) GetPreviewEnvironmentStatus(ctx context.Context, slug string) (
 // typed helper. A missing latest deployment is a valid empty state, while a
 // non-preview app remains an error so callers cannot accidentally wait on
 // production traffic.
+//
+// It reads GET /v1/preview/{slug} first: that route accepts the credentials a
+// pull request's CI holds, an app-bound deploy token or a preview-read bearer,
+// which /v1/apps refuses (ADR-20261105090226). A 404 falls back to the app
+// routes, which name a production app or an unknown slug precisely.
 func (c *Client) GetPreviewStatus(ctx context.Context, slug string) (PreviewStatusResponse, error) {
 	var out PreviewStatusResponse
+	resource, err := c.GetPreviewSlug(ctx, slug)
+	if err == nil && resource.App.PreviewOfSlug != "" {
+		return PreviewStatusResponse{App: resource.App, LatestDeployment: resource.LatestDeployment}, nil
+	}
+	var routeErr *APIError
+	if err != nil && (!errors.As(err, &routeErr) || routeErr.Problem.Status != http.StatusNotFound) {
+		return out, err
+	}
 	app, err := c.GetApp(ctx, slug)
 	if err != nil {
 		return out, err

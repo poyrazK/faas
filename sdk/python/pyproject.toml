@@ -30,8 +30,8 @@ include = [
 
 [tool.poetry.urls]
 Homepage = "https://gregale.dev/docs/cli"
-Repository = "https://github.com/poyrazK/faas"
-Issues = "https://github.com/poyrazK/faas/issues"
+Repository = "https://github.com/gregale-dev/gregale-python"
+Issues = "https://github.com/gregale-dev/gregale-python/issues"
 
 [tool.poetry.dependencies]
 python = "^3.11"

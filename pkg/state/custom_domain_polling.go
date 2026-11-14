@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -154,6 +156,7 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		    last_cert_issuance_failed_email_at = null,
 		    verification_next_check_at = now(),
 		    verification_attempts = 0,
+		    verification_manual_check_at = NULL,
 		    verification_expires_at = now() + interval '7 days'
 		where custom_domains.verified_at is null
 		  and (custom_domains.verification_expires_at <= now()
@@ -191,7 +194,7 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 }
 
 func (s *PgStore) ClaimCustomDomainsForVerification(ctx context.Context, limit int) ([]CustomDomain, error) {
-	rows, err := s.pool.Query(ctx, `with accounts_due as (select a.account_id,min(d.verification_next_check_at) oldest from custom_domains d join apps a on a.id=d.app_id where d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() group by a.account_id order by oldest limit $1), due as (select candidate.domain from accounts_due q cross join lateral (select d.domain from custom_domains d join apps a on a.id=d.app_id where a.account_id=q.account_id and d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() order by d.verification_next_check_at,d.domain limit 1 for update of d skip locked) candidate), bumped as (update custom_domains d set verification_attempts=d.verification_attempts+1, verification_next_check_at=now()+least(interval '1 hour',interval '30 seconds'*power(2,least(d.verification_attempts,7))) from due where d.domain=due.domain returning d.*) select domain,app_id,challenge_token,coalesce(verified_at,'epoch'),cert_status,coalesce(cert_expires_at,'epoch'),coalesce(cert_last_error,''),coalesce(dns_last_checked_at,'epoch'),coalesce(cert_failed_at,'epoch'),verification_next_check_at,verification_expires_at,verification_attempts,coalesce(environment_id::text,'') from bumped`, limit)
+	rows, err := s.pool.Query(ctx, `with accounts_due as (select a.account_id,min(d.verification_next_check_at) oldest from custom_domains d join apps a on a.id=d.app_id where d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() group by a.account_id order by oldest limit $1), due as (select candidate.domain from accounts_due q cross join lateral (select d.domain from custom_domains d join apps a on a.id=d.app_id where a.account_id=q.account_id and d.verified_at is null and d.verification_next_check_at<=now() and d.verification_expires_at>now() order by d.verification_next_check_at,d.domain limit 1 for update of d skip locked) candidate), bumped as (update custom_domains d set verification_attempts=d.verification_attempts+1, verification_next_check_at=now()+least(interval '1 hour',interval '30 seconds'*power(2,least(d.verification_attempts,7))*(0.8+random()*0.4)) from due where d.domain=due.domain returning d.*) select domain,app_id,challenge_token,coalesce(verified_at,'epoch'),cert_status,coalesce(cert_expires_at,'epoch'),coalesce(cert_last_error,''),coalesce(dns_last_checked_at,'epoch'),coalesce(cert_failed_at,'epoch'),verification_next_check_at,verification_expires_at,verification_attempts,coalesce(environment_id::text,'') from bumped`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +338,7 @@ func (m *MemStore) createCustomDomainIfUnderQuotaLocked(ctx context.Context, dom
 	if ac >= accountLimit {
 		return CustomDomain{}, &CustomDomainQuotaError{"account", accountLimit}
 	}
-	d := CustomDomain{Domain: domain, AppID: appID, EnvironmentID: environmentID, ChallengeToken: token, CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now, VerificationExpiresAt: now.Add(7 * 24 * time.Hour)}
+	d := CustomDomain{Domain: domain, AppID: appID, EnvironmentID: environmentID, ChallengeToken: token, BindingVersion: uuid.NewString(), CertStatus: CustomDomainCertPending, VerificationNextCheckAt: now, VerificationExpiresAt: now.Add(7 * 24 * time.Hour)}
 	if err := m.checkMemTrafficDomainChangeLocked(ctx, d); err != nil {
 		return CustomDomain{}, err
 	}
@@ -362,7 +365,7 @@ func (m *MemStore) ClaimCustomDomainsForVerification(_ context.Context, limit in
 		}
 		if !d.VerificationExpiresAt.IsZero() {
 			d.VerificationAttempts++
-			delay := 30 * time.Second * time.Duration(1<<min(d.VerificationAttempts-1, 7))
+			delay := time.Duration(float64(30*time.Second*time.Duration(1<<min(d.VerificationAttempts-1, 7))) * (0.8 + rand.Float64()*0.4))
 			if delay > time.Hour {
 				delay = time.Hour
 			}

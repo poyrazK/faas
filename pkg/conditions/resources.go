@@ -125,6 +125,9 @@ func Domain(d api.CustomDomainResponse, observedAt time.Time) api.ResourceStatus
 			break
 		}
 	}
+	if d.Readiness != nil && !d.HTTPSReadyAt(observedAt) && ready.Status == api.ConditionTrue {
+		ready.Status, ready.Reason, ready.Message = api.ConditionFalse, d.Readiness.Status, "Domain activation is incomplete: "+d.Readiness.Status+"."
+	}
 	return api.ResourceStatus{
 		Kind: api.ResourceKindDomain, Name: d.Domain, ObservedAt: observedAt.UTC().Format(time.RFC3339Nano),
 		Conditions: []api.Condition{ready, verified, cert},

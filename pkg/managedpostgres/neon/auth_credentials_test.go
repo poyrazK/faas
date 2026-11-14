@@ -150,15 +150,15 @@ func TestSQLAuthCredentialRejectsOwnershipDrift(t *testing.T) {
 	}
 }
 
-// PostgreSQL 14 reaches upstream end of life in November 2026 and Neon has no
-// in-place major upgrade: existing databases keep it, new ones cannot pick it.
-func TestNeonRetiresPostgres14ForNewDatabases(t *testing.T) {
+// PostgreSQL 14 reached upstream end of life in November 2026 and is not
+// offered at all (owner, 2026-11-12).
+func TestNeonDoesNotOfferPostgres14(t *testing.T) {
 	p, err := New(testBackend(), func(string) string { return "test-only" })
 	if err != nil {
 		t.Fatal(err)
 	}
 	capabilities := p.Capabilities()
-	if err := capabilities.Validate(); err != nil || !slices.Equal(capabilities.RetiringMajors, []int{14}) || !slices.Contains(capabilities.PostgresMajors, 14) {
+	if err := capabilities.Validate(); err != nil || len(capabilities.RetiringMajors) != 0 || !slices.Equal(capabilities.PostgresMajors, []int{15, 16, 17, 18}) {
 		t.Fatalf("capabilities = %+v, %v", capabilities, err)
 	}
 }

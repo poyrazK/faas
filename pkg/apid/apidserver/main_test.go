@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -300,6 +301,10 @@ func withTestStore(deps *runDeps) {
 }
 
 func TestRunWithDeps_ListenErrorReturns(t *testing.T) {
+	// ADR-20261023115741: stopped server wiring must not hide capabilities
+	// for a later server in the same process.
+	page := dashboard.Page{Account: &dashboard.AccountView{ID: "later-server", Plan: "pro"}}
+	previouslyReleased := page.On("production-debugger")
 	withTestHMACFiles(t)
 	withBillingKeysForTest(t)
 	withTestMailTransport(t)
@@ -314,6 +319,9 @@ func TestRunWithDeps_ListenErrorReturns(t *testing.T) {
 	}
 	if !contains(err.Error(), "addr in use") {
 		t.Errorf("error %q missing 'addr in use'", err.Error())
+	}
+	if page.On("production-debugger") != previouslyReleased {
+		t.Fatal("stopped server retained its dashboard capability decider")
 	}
 }
 

@@ -82,14 +82,14 @@ func TestPrintParkedWindowLogs(t *testing.T) {
 			{ID: "live", State: "running", StartedAt: now.Add(-10 * time.Minute).Format(time.RFC3339)},
 			{ID: "parked", State: "parked", StartedAt: start.Format(time.RFC3339), ParkedAt: now.Add(-90 * time.Minute).Format(time.RFC3339)},
 		},
-		archives: map[string]string{"parked/" + day: line(since.Add(-time.Minute), "before window marker") + line(start.Add(time.Minute), "h10log marker") + line(start.Add(2*time.Minute), "unrelated")},
+		archives: map[string]string{"parked/" + day: line(since.Add(-time.Minute), "before window marker") + line(start.Add(time.Minute), "[error] h10log marker") + line(start.Add(90*time.Second), "info marker") + line(start.Add(2*time.Minute), "unrelated")},
 	}
 	var out, errOut bytes.Buffer
 	n := main.PrintParkedWindowLogs(context.Background(), client, "h9-echo", api.LogFilter{Grep: "marker", Level: "error"}, since, &out, &errOut)
-	if n != 1 || !strings.Contains(out.String(), "h10log marker") || strings.Contains(out.String(), "before window") || strings.Contains(out.String(), "unrelated") {
+	if n != 1 || !strings.Contains(out.String(), "h10log marker") || strings.Contains(out.String(), "before window") || strings.Contains(out.String(), "unrelated") || strings.Contains(out.String(), "info marker") {
 		t.Fatalf("printed %d lines:\n%s", n, out.String())
 	}
-	if h := errOut.String(); !strings.Contains(h, "Retained logs of parked instance parked") || !strings.Contains(h, "--level is not applied") {
+	if h := errOut.String(); !strings.Contains(h, "Retained logs of parked instance parked") || strings.Contains(h, "--level is not applied") {
 		t.Fatalf("header = %q", h)
 	}
 }

@@ -41,6 +41,13 @@ func (m *MemStore) CreateScheduledCronInvocationOccurrence(_ context.Context, cr
 	invocation.FailureRules = workpolicy.Clone(cron.FailureRules)
 	cronIDCopy := cronID
 	invocation.CronID = &cronIDCopy
+	if cron.DeploymentScope != "" {
+		env, err := m.cronEnvironmentLocked(app, cron)
+		if err != nil {
+			return Invocation{}, ScheduleOccurrence{}, false, err
+		}
+		invocation.EnvironmentID, invocation.DeploymentScope = env.ID, env.Slug
+	}
 	if err := m.platformTenantInvocationAllowedLocked(invocation); err != nil {
 		return Invocation{}, ScheduleOccurrence{}, false, err
 	}

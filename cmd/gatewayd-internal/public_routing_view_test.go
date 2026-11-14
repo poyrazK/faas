@@ -73,6 +73,7 @@ func TestPublicRoutingViewPostgresMatchesExactRead(t *testing.T) {
 		t.Fatalf("active graph: %+v", snapshot)
 	}
 	assertViewMatchesExact(t, f, app, async)
+	f.environment(t, "staging")
 	stage := f.deployment(t, "staging", "sha256:staging")
 	if snapshot := assertViewMatchesExact(t, f, app, staging); len(snapshot.Weights) != 1 || snapshot.Weights[0].ID != stage.ID {
 		t.Fatalf("scoped roster: %+v", snapshot)
@@ -288,6 +289,8 @@ func TestPublicRoutingViewPostgresAnswersPinsLikeExactRead(t *testing.T) {
 	if _, err := f.pool.Exec(t.Context(), `UPDATE deployments SET status = 'superseded', traffic_percent = 0 WHERE id = $1`, first.ID); err != nil {
 		t.Fatal(err)
 	}
+	f.environment(t, "staging")
+	f.environment(t, "preview")
 	stage := f.deployment(t, "staging", "sha256:stage")
 	quiet := f.deployment(t, "preview", "sha256:quiet")
 	if _, err := f.pool.Exec(t.Context(), `UPDATE deployments SET traffic_percent = 0 WHERE id = $1`, quiet.ID); err != nil {

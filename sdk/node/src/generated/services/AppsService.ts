@@ -89,6 +89,7 @@ import type { DeletedAppSummary } from '../models/DeletedAppSummary.js';
 import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { DiscoveredRoutesResponse } from '../models/DiscoveredRoutesResponse.js';
 import type { EdgeProtectionResponse } from '../models/EdgeProtectionResponse.js';
+import type { EnvironmentRouteBudgetReceipt } from '../models/EnvironmentRouteBudgetReceipt.js';
 import type { EnvironmentRouteBudgets } from '../models/EnvironmentRouteBudgets.js';
 import type { GuardedDebugRegressionActionRequest } from '../models/GuardedDebugRegressionActionRequest.js';
 import type { Issue } from '../models/Issue.js';
@@ -240,6 +241,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AppsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List saved production cutover plans.
    * Return the latest app-owned production switch plans, newest first. Revalidate
@@ -258,7 +260,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<MigrationCutoverList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/migration-cutovers',
       path: {
@@ -304,7 +306,7 @@ export class AppsService {
     slug: string,
     requestBody: CreateMigrationCutoverRequest,
   }): CancelablePromise<MigrationCutover> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/migration-cutovers',
       path: {
@@ -352,7 +354,7 @@ export class AppsService {
      */
     plan: string,
   }): CancelablePromise<MigrationCutover> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/migration-cutovers/{plan}',
       path: {
@@ -405,7 +407,7 @@ export class AppsService {
     plan: string,
     requestBody: MigrationCutoverActionRequest,
   }): CancelablePromise<MigrationCutover> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/migration-cutovers/{plan}/actions',
       path: {
@@ -451,7 +453,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<MigrationVerificationList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/migration-verifications',
       path: {
@@ -498,7 +500,7 @@ export class AppsService {
     slug: string,
     requestBody: CreateMigrationVerificationRequest,
   }): CancelablePromise<MigrationVerification> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/migration-verifications',
       path: {
@@ -546,7 +548,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<MigrationVerification> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/migration-verifications/{run}',
       path: {
@@ -601,7 +603,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<MigrationVerification> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/migration-verifications/{run}/advance',
       path: {
@@ -653,7 +655,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<MigrationVerification> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/migration-verifications/{run}/cancel',
       path: {
@@ -695,7 +697,7 @@ export class AppsService {
      */
     scope?: string,
   }): CancelablePromise<BindingReleasePolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings/release-policy',
       path: {
@@ -751,7 +753,7 @@ export class AppsService {
      */
     scope?: string,
   }): CancelablePromise<BindingReleasePolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/bindings/release-policy',
       path: {
@@ -807,7 +809,7 @@ export class AppsService {
      */
     scope?: string,
   }): CancelablePromise<BindingReleasePolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/bindings/release-policy-with-object-storage',
       path: {
@@ -883,7 +885,7 @@ export class AppsService {
      */
     path?: string,
   }): CancelablePromise<ServiceBindingExplanation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings/services/{service}/explanation',
       path: {
@@ -965,7 +967,7 @@ export class AppsService {
      */
     scope?: string,
   }): CancelablePromise<AppBindingInventory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings',
       path: {
@@ -1004,7 +1006,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<CrashSnapshotSettingsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/crash-snapshots/settings',
       path: {
@@ -1039,7 +1041,7 @@ export class AppsService {
     slug: string,
     requestBody: CrashSnapshotSettingsRequest,
   }): CancelablePromise<CrashSnapshotSettingsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/crash-snapshots/settings',
       path: {
@@ -1070,7 +1072,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<CrashCaptureListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/crash-snapshots',
       path: {
@@ -1110,7 +1112,7 @@ export class AppsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<CrashCaptureResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/crash-snapshots',
       path: {
@@ -1147,7 +1149,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<CrashCaptureResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/crash-snapshots/{id}',
       path: {
@@ -1197,7 +1199,7 @@ export class AppsService {
     idempotencyKey?: string,
     requestBody?: CreateAppForkRequest,
   }): CancelablePromise<AppForkResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/crash-snapshots/{id}/fork',
       path: {
@@ -1241,7 +1243,7 @@ export class AppsService {
      */
     limit?: number,
   }): CancelablePromise<AppForkListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/forks',
       path: {
@@ -1295,7 +1297,7 @@ export class AppsService {
     idempotencyKey?: string,
     requestBody?: CreateAppForkRequest,
   }): CancelablePromise<AppForkResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/forks',
       path: {
@@ -1340,7 +1342,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<AppForkResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/forks/{id}',
       path: {
@@ -1389,7 +1391,7 @@ export class AppsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppForkResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/forks/{id}',
       path: {
@@ -1436,7 +1438,7 @@ export class AppsService {
      */
     limit?: number,
   }): CancelablePromise<AppForkExecListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/forks/{id}/execs',
       path: {
@@ -1494,7 +1496,7 @@ export class AppsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppForkExecResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/forks/{id}/execs',
       path: {
@@ -1544,7 +1546,7 @@ export class AppsService {
      */
     execId: string,
   }): CancelablePromise<AppForkExecResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/forks/{id}/execs/{exec_id}',
       path: {
@@ -1571,7 +1573,7 @@ export class AppsService {
    * @throws ApiError
    */
   public static listApps(): CancelablePromise<Array<AppResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps',
       errors: {
@@ -1604,7 +1606,7 @@ export class AppsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps',
       headers: {
@@ -1644,7 +1646,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}',
       path: {
@@ -1693,7 +1695,7 @@ export class AppsService {
      */
     ifWorkloadRevision?: number,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}',
       path: {
@@ -1735,7 +1737,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}',
       path: {
@@ -1798,7 +1800,7 @@ export class AppsService {
      */
     edgeRulesScope?: 'app' | 'account' | 'fleet',
   }): CancelablePromise<RuntimePolicyStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/policy/status',
       path: {
@@ -1837,7 +1839,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<Array<TCPListenerResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/tcp-listeners',
       path: {
@@ -1886,7 +1888,7 @@ export class AppsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<TCPListenerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/tcp-listeners',
       path: {
@@ -1931,7 +1933,7 @@ export class AppsService {
     name: string,
     requestBody: UpdateTCPListenerRequest,
   }): CancelablePromise<TCPListenerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/tcp-listeners/{name}',
       path: {
@@ -1970,7 +1972,7 @@ export class AppsService {
      */
     name: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/tcp-listeners/{name}',
       path: {
@@ -2011,7 +2013,7 @@ export class AppsService {
      */
     name: string,
   }): CancelablePromise<TCPListenerTLSStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/tcp-listeners/{name}/tls-status',
       path: {
@@ -2043,7 +2045,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<Array<UDPListenerResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/udp-listeners',
       path: {
@@ -2088,7 +2090,7 @@ export class AppsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<UDPListenerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/udp-listeners',
       path: {
@@ -2137,7 +2139,7 @@ export class AppsService {
     name: string,
     requestBody: UpdateUDPListenerRequest,
   }): CancelablePromise<UDPListenerResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/udp-listeners/{name}',
       path: {
@@ -2181,7 +2183,7 @@ export class AppsService {
      */
     name: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/udp-listeners/{name}',
       path: {
@@ -2226,7 +2228,7 @@ export class AppsService {
      */
     cursor?: string,
   }): CancelablePromise<DeletedAppListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deleted-apps',
       query: {
@@ -2263,7 +2265,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<DeletedAppSummary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deleted-apps/{id}',
       path: {
@@ -2310,7 +2312,7 @@ export class AppsService {
      */
     requestBody?: Record<string, any>,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deleted-apps/{id}/restore',
       path: {
@@ -2361,7 +2363,7 @@ export class AppsService {
       expected_app_id?: string;
     },
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/restore',
       path: {
@@ -2395,7 +2397,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ListDeployTokensResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deploy-tokens',
       path: {
@@ -2427,7 +2429,7 @@ export class AppsService {
     slug: string,
     requestBody?: CreateDeployTokenRequest,
   }): CancelablePromise<DeployTokenResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deploy-tokens',
       path: {
@@ -2465,7 +2467,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/deploy-tokens/{id}',
       path: {
@@ -2503,7 +2505,7 @@ export class AppsService {
     id: string,
     requestBody?: RotateDeployTokenRequest,
   }): CancelablePromise<RotateDeployTokenResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deploy-tokens/{id}/rotate',
       path: {
@@ -2538,7 +2540,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<CustomMetricListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/custom-metrics',
       path: {
@@ -2570,7 +2572,7 @@ export class AppsService {
     name: string,
     requestBody: CustomMetricRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/custom-metrics/{name}',
       path: {
@@ -2605,7 +2607,7 @@ export class AppsService {
      */
     name: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/custom-metrics/{name}',
       path: {
@@ -2634,6 +2636,7 @@ export class AppsService {
     slug,
     name,
     range = '24h',
+    labels,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -2647,8 +2650,12 @@ export class AppsService {
      * History window. Default 24h.
      */
     range?: '1h' | '6h' | '24h' | '7d' | '15d',
+    /**
+     * One labelled series, by the `key` the metric list returns for it (for example `queue=emails`). Omitted: the metric's aggregate.
+     */
+    labels?: string,
   }): CancelablePromise<CustomMetricSeriesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/custom-metrics/{name}/series',
       path: {
@@ -2657,6 +2664,7 @@ export class AppsService {
       },
       query: {
         'range': range,
+        'labels': labels,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -2695,7 +2703,7 @@ export class AppsService {
     slug: string,
     requestBody: Record<string, any>,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/otlp/v1/metrics',
       path: {
@@ -2728,7 +2736,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<Array<SLOResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/slos',
       path: {
@@ -2756,7 +2764,7 @@ export class AppsService {
     slug: string,
     requestBody: CreateSLORequest,
   }): CancelablePromise<SLOResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/slos',
       path: {
@@ -2792,7 +2800,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<SLOResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/slos/{id}',
       path: {
@@ -2824,7 +2832,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/slos/{id}',
       path: {
@@ -2847,7 +2855,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<Array<SyntheticCheckResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/synthetics',
       path: {
@@ -2875,7 +2883,7 @@ export class AppsService {
     slug: string,
     requestBody: CreateSyntheticCheckRequest,
   }): CancelablePromise<SyntheticCheckResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/synthetics',
       path: {
@@ -2911,7 +2919,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<SyntheticCheckResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/synthetics/{id}',
       path: {
@@ -2945,7 +2953,7 @@ export class AppsService {
     id: string,
     requestBody: UpdateSyntheticCheckRequest,
   }): CancelablePromise<SyntheticCheckResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/synthetics/{id}',
       path: {
@@ -2979,7 +2987,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/synthetics/{id}',
       path: {
@@ -3021,7 +3029,7 @@ export class AppsService {
      */
     range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
   }): CancelablePromise<PreAuthObservationsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/pre-auth-observations',
       path: {
@@ -3062,7 +3070,7 @@ export class AppsService {
      */
     range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
   }): CancelablePromise<EdgeProtectionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/edge-protection',
       path: {
@@ -3096,7 +3104,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<AppReleaseReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/release-review',
       path: {
@@ -3140,7 +3148,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<AppHealthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/health',
       path: {
@@ -3184,7 +3192,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<ResourceStatus | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/status',
       path: {
@@ -3227,7 +3235,7 @@ export class AppsService {
     slug: string,
     requestBody: LabelChange,
   }): CancelablePromise<LabelsResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/labels',
       path: {
@@ -3271,7 +3279,7 @@ export class AppsService {
      */
     before?: string,
   }): CancelablePromise<AppHealthHistoryPage | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/health/history',
       path: {
@@ -3286,7 +3294,7 @@ export class AppsService {
   /**
    * Read an app's change timeline.
    * Internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
-   * otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+   * otherwise 403 `change_timeline_unavailable`. Requires apps:read or
    * admin; no MFA required.
    *
    * Merges deployment audit, edge-rule changes, the latest runtime-config
@@ -3320,7 +3328,7 @@ export class AppsService {
      */
     until?: string,
   }): CancelablePromise<AppChangeTimelineResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/changes',
       path: {
@@ -3362,7 +3370,7 @@ export class AppsService {
      */
     range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
   }): CancelablePromise<AppMetricsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/metrics',
       path: {
@@ -3466,7 +3474,7 @@ export class AppsService {
      */
     cursor?: string,
   }): CancelablePromise<AppWakeTimelineResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/wake-timeline',
       path: {
@@ -3518,7 +3526,7 @@ export class AppsService {
    * Overage computation: `overage_gb_hours = max(0, gb_hours -
    * plan_included_gb_hours)`. The included band is echoed from
    * `acct.Plan.PlanIncludedGBHours`; the overage figure is the
-   * integer-rounded float the Stripe pusher bills at $0.01/GB-h.
+   * integer-rounded float the Stripe pusher bills at $0.05/GB-h.
    *
    * Source: `usage_minutes` today (after the 30d retention cap).
    * `usage_daily` / `mixed` land with the trail-period reader
@@ -3545,7 +3553,7 @@ export class AppsService {
      */
     until?: string,
   }): CancelablePromise<AppUsageSummaryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/usage',
       path: {
@@ -3633,7 +3641,7 @@ export class AppsService {
      */
     groupBy?: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status' | 'consumer_id',
   }): CancelablePromise<RequestAnalyticsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/analytics',
       path: {
@@ -3705,7 +3713,7 @@ export class AppsService {
      */
     until?: string,
   }): CancelablePromise<RouteCustomerUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/analytics/route-customers',
       path: {
@@ -3777,13 +3785,13 @@ export class AppsService {
     /**
      * Exact HTTP method for the selected route. Must be provided together with `route`; omitted means all methods.
      */
-    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS',
+    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER',
     /**
      * Return grouped series for the selected dimension. Omitted preserves the app-wide points shape; route/method filters require group_by=route or omission.
      */
     groupBy?: 'route' | 'country' | 'referrer_host' | 'ua_family' | 'status' | 'consumer_id',
   }): CancelablePromise<RequestAnalyticsTimeseriesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/analytics/timeseries',
       path: {
@@ -3843,7 +3851,7 @@ export class AppsService {
      */
     scope?: 'default',
   }): CancelablePromise<AppRoutesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/routes',
       path: {
@@ -3904,7 +3912,7 @@ export class AppsService {
      */
     limit?: number,
   }): CancelablePromise<RequestAuditListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/audit/requests',
       path: {
@@ -3941,7 +3949,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<DiscoveredRoutesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/discovered-routes',
       path: {
@@ -4011,7 +4019,7 @@ export class AppsService {
      */
     method?: string,
   }): CancelablePromise<AppStreamingStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/streaming-cap',
       path: {
@@ -4078,7 +4086,7 @@ export class AppsService {
      */
     window?: '1h' | '24h' | '7d',
   }): CancelablePromise<AppSLOResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/slo',
       path: {
@@ -4133,7 +4141,7 @@ export class AppsService {
       errorMessage?: string;
     };
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issue-events/otlp/{signal}',
       path: {
@@ -4175,7 +4183,7 @@ export class AppsService {
     slug: string,
     requestBody: IssueEvent,
   }): CancelablePromise<IssueEventResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issue-events',
       path: {
@@ -4216,7 +4224,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<IssueLifecycleAlertPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-lifecycle-alert-policy',
       path: {
@@ -4251,7 +4259,7 @@ export class AppsService {
     slug: string,
     requestBody: UpdateIssueLifecycleAlertPolicyRequest,
   }): CancelablePromise<IssueLifecycleAlertPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/issue-lifecycle-alert-policy',
       path: {
@@ -4289,7 +4297,7 @@ export class AppsService {
     slug: string,
     requestBody: PreviewIssueLifecycleAlertRequest,
   }): CancelablePromise<IssueLifecycleAlertPreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issue-lifecycle-alert-policy/preview',
       path: {
@@ -4323,7 +4331,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<IssueCompoundAlertPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-compound-alert-policy',
       path: {
@@ -4357,7 +4365,7 @@ export class AppsService {
     slug: string,
     requestBody: UpdateIssueCompoundAlertPolicyRequest,
   }): CancelablePromise<IssueCompoundAlertPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/issue-compound-alert-policy',
       path: {
@@ -4395,7 +4403,7 @@ export class AppsService {
     slug: string,
     requestBody: PreviewIssueCompoundAlertRequest,
   }): CancelablePromise<IssueCompoundAlertPreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issue-compound-alert-policy/preview',
       path: {
@@ -4429,7 +4437,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<IssueFrequencyAlertPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-frequency-alert-policy',
       path: {
@@ -4463,7 +4471,7 @@ export class AppsService {
     slug: string,
     requestBody: UpdateIssueFrequencyAlertPolicyRequest,
   }): CancelablePromise<IssueFrequencyAlertPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/issue-frequency-alert-policy',
       path: {
@@ -4499,7 +4507,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<IssueImpactAlertPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-impact-alert-policy',
       path: {
@@ -4533,7 +4541,7 @@ export class AppsService {
     slug: string,
     requestBody: UpdateIssueImpactAlertPolicyRequest,
   }): CancelablePromise<IssueImpactAlertPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/issue-impact-alert-policy',
       path: {
@@ -4568,7 +4576,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<IssueOwnershipRules> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-ownership-rules',
       path: {
@@ -4602,7 +4610,7 @@ export class AppsService {
     slug: string,
     requestBody: IssueOwnershipRules,
   }): CancelablePromise<IssueOwnershipRules> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/issue-ownership-rules',
       path: {
@@ -4644,7 +4652,7 @@ export class AppsService {
     deploymentId: string,
     requestBody: PublishIssueSourceMapsRequest,
   }): CancelablePromise<IssueSourceMapsMetadata> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps',
       path: {
@@ -4685,7 +4693,7 @@ export class AppsService {
      */
     deploymentId: string,
   }): CancelablePromise<IssueSourceMapsMetadata> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps',
       path: {
@@ -4723,7 +4731,7 @@ export class AppsService {
      */
     deploymentId: string,
   }): CancelablePromise<IssueSourceMapsMetadata> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps',
       path: {
@@ -4755,7 +4763,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ListIssueSavedViewsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-saved-views',
       path: {
@@ -4791,7 +4799,7 @@ export class AppsService {
      */
     viewKey: string,
   }): CancelablePromise<IssueSavedView> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-saved-views/{view_key}',
       path: {
@@ -4832,7 +4840,7 @@ export class AppsService {
     viewKey: string,
     requestBody: PutIssueSavedViewRequest,
   }): CancelablePromise<IssueSavedView> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/issue-saved-views/{view_key}',
       path: {
@@ -4874,7 +4882,7 @@ export class AppsService {
      */
     viewKey: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/issue-saved-views/{view_key}',
       path: {
@@ -4907,7 +4915,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ListIssueTeamsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-teams',
       path: {
@@ -4943,7 +4951,7 @@ export class AppsService {
      */
     teamKey: string,
   }): CancelablePromise<IssueTeam> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-teams/{team_key}',
       path: {
@@ -4984,7 +4992,7 @@ export class AppsService {
     teamKey: string,
     requestBody: PutIssueTeamRequest,
   }): CancelablePromise<IssueTeam> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/issue-teams/{team_key}',
       path: {
@@ -5026,7 +5034,7 @@ export class AppsService {
      */
     teamKey: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/issue-teams/{team_key}',
       path: {
@@ -5076,7 +5084,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<IssueReleaseComparison> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-release-comparison',
       path: {
@@ -5124,7 +5132,7 @@ export class AppsService {
      */
     requestBody: CreateNativeIssueTicketRequest,
   }): CancelablePromise<NativeIssueTicketResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issues/{issue_id}/native-tickets',
       path: {
@@ -5172,7 +5180,7 @@ export class AppsService {
      */
     linkId: string,
   }): CancelablePromise<NativeLinearIssueTrackerStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status',
       path: {
@@ -5224,7 +5232,7 @@ export class AppsService {
      */
     requestBody: UpdateNativeLinearIssueTrackerStatusRequest,
   }): CancelablePromise<NativeLinearIssueTrackerStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status',
       path: {
@@ -5273,7 +5281,7 @@ export class AppsService {
      */
     requestBody: CreateNativeLinearIssueTicketRequest,
   }): CancelablePromise<NativeIssueTicketResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issues/{issue_id}/native-linear-tickets',
       path: {
@@ -5311,7 +5319,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<IssueTrackerLinearConnection> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-tracker-linear-connection',
       path: {
@@ -5347,7 +5355,7 @@ export class AppsService {
      */
     requestBody: UpdateIssueTrackerLinearConnectionRequest,
   }): CancelablePromise<IssueTrackerLinearConnection> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/issue-tracker-linear-connection',
       path: {
@@ -5393,7 +5401,7 @@ export class AppsService {
      */
     linkId: string,
   }): CancelablePromise<IssueTrackerAutoSync> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync',
       path: {
@@ -5443,7 +5451,7 @@ export class AppsService {
      */
     requestBody: UpdateIssueTrackerAutoSyncRequest,
   }): CancelablePromise<IssueTrackerAutoSync> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync',
       path: {
@@ -5492,7 +5500,7 @@ export class AppsService {
      */
     linkId: string,
   }): CancelablePromise<NativeIssueTrackerStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status',
       path: {
@@ -5541,7 +5549,7 @@ export class AppsService {
     linkId: string,
     requestBody: UpdateNativeIssueTrackerStatusRequest,
   }): CancelablePromise<NativeIssueTrackerStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status',
       path: {
@@ -5590,7 +5598,7 @@ export class AppsService {
      */
     cursor?: string,
   }): CancelablePromise<ListIssueTrackerLinksResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links',
       path: {
@@ -5634,7 +5642,7 @@ export class AppsService {
     issueId: string,
     requestBody: PutIssueTrackerLinkRequest,
   }): CancelablePromise<IssueTrackerLink> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links',
       path: {
@@ -5681,7 +5689,7 @@ export class AppsService {
      */
     linkId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}',
       path: {
@@ -5718,7 +5726,7 @@ export class AppsService {
     slug: string,
     requestBody: BulkIssueActionRequest,
   }): CancelablePromise<BulkIssueActionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issues/bulk-actions',
       path: {
@@ -5793,7 +5801,7 @@ export class AppsService {
      */
     cursor?: string,
   }): CancelablePromise<ListIssuesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issues',
       path: {
@@ -5866,7 +5874,7 @@ export class AppsService {
      */
     activityCursor?: string,
   }): CancelablePromise<IssueDetail> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issues/{issue_id}',
       path: {
@@ -5922,7 +5930,7 @@ export class AppsService {
      */
     abandonUnconfirmedTickets?: boolean,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/issues/{issue_id}',
       path: {
@@ -5967,7 +5975,7 @@ export class AppsService {
     issueId: string,
     requestBody: IssueSplitMatcher,
   }): CancelablePromise<IssueSplitPreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issues/{issue_id}/split-preview',
       path: {
@@ -6015,7 +6023,7 @@ export class AppsService {
     issueId: string,
     requestBody: IssueSplitMatcher,
   }): CancelablePromise<IssueSplitRule> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issues/{issue_id}/split-rules',
       path: {
@@ -6069,7 +6077,7 @@ export class AppsService {
     ruleId: string,
     requestBody: IssueSplitRuleUpdate,
   }): CancelablePromise<IssueSplitRule> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}',
       path: {
@@ -6124,7 +6132,7 @@ export class AppsService {
     ruleId: string,
     requestBody: IssueSplitRuleUndoRequest,
   }): CancelablePromise<IssueSplitRule> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo',
       path: {
@@ -6173,7 +6181,7 @@ export class AppsService {
     issueId: string,
     requestBody: IssueActionRequest,
   }): CancelablePromise<Issue> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issues/{issue_id}/actions',
       path: {
@@ -6216,7 +6224,7 @@ export class AppsService {
     slug: string,
     requestBody: CreateIssueIngestTokenRequest,
   }): CancelablePromise<IssueIngestToken> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/issue-ingest-tokens',
       path: {
@@ -6256,7 +6264,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ListIssueIngestTokensResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/issue-ingest-tokens',
       path: {
@@ -6299,7 +6307,7 @@ export class AppsService {
      */
     tokenId: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/issue-ingest-tokens/{token_id}',
       path: {
@@ -6382,7 +6390,7 @@ export class AppsService {
      */
     limit?: number,
   }): CancelablePromise<AppErrorsSummaryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/errors/summary',
       path: {
@@ -6445,7 +6453,7 @@ export class AppsService {
      */
     limit?: number,
   }): CancelablePromise<AppErrorRequestsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/errors/{fingerprint}',
       path: {
@@ -6492,7 +6500,7 @@ export class AppsService {
      */
     fingerprint: string,
   }): CancelablePromise<AppErrorSampleResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/errors/{fingerprint}/first',
       path: {
@@ -6590,7 +6598,7 @@ export class AppsService {
      */
     cursor?: string | null,
   }): CancelablePromise<DebugTelemetryListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/requests',
       path: {
@@ -6627,9 +6635,12 @@ export class AppsService {
    * available for spreadsheet and support workflows. The export uses the
    * same plan retention boundary as the debugger list, never includes
    * request bodies, headers, source IPs, or raw span attributes, and is
-   * capped at 10,000 rows. `X-Faas-Request-Log-Window` and
-   * `X-Faas-Request-Log-Retention-Clamped` describe the effective window
-   * applied to the artifact.
+   * capped at 10,000 rows. It takes the request list's filters.
+   * `X-Faas-Request-Log-Window` and `X-Faas-Request-Log-Retention-Clamped`
+   * describe the effective window applied to the artifact, and
+   * `X-Faas-Request-Log-Truncated` says whether the row limit cut it short.
+   * In CSV, a value that would start a spreadsheet formula is written
+   * with a leading apostrophe.
    *
    * @returns binary Metadata-only request telemetry export.
    * @throws ApiError
@@ -6640,6 +6651,11 @@ export class AppsService {
     route,
     format = 'ndjson',
     limit,
+    deploymentId,
+    status,
+    coldBoot,
+    consumerId,
+    minLatencyMs,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -6661,8 +6677,28 @@ export class AppsService {
      * Maximum number of retained rows to export.
      */
     limit?: number | null,
+    /**
+     * Export only rows served by this deployment UUID.
+     */
+    deploymentId?: string | null,
+    /**
+     * Export only rows with this HTTP status.
+     */
+    status?: number | null,
+    /**
+     * Export only cold-start rows when true, or only warm rows when false.
+     */
+    coldBoot?: boolean | null,
+    /**
+     * Export only one consumer's rows (UUID), or __anonymous__ for rows without a stable consumer identity.
+     */
+    consumerId?: string | null,
+    /**
+     * Export only rows whose latency bucket bound is at least this many milliseconds.
+     */
+    minLatencyMs?: number | null,
   }): CancelablePromise<Blob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       responseType: 'blob',
       method: 'GET',
       url: '/v1/apps/{slug}/debug/requests/export',
@@ -6674,6 +6710,11 @@ export class AppsService {
         'route': route,
         'format': format,
         'limit': limit,
+        'deployment_id': deploymentId,
+        'status': status,
+        'cold_boot': coldBoot,
+        'consumer_id': consumerId,
+        'min_latency_ms': minLatencyMs,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -6702,7 +6743,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ProfileDeploymentPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/deployment-policy',
       path: {
@@ -6744,7 +6785,7 @@ export class AppsService {
      */
     requestBody: SaveProfileDeploymentPolicyRequest,
   }): CancelablePromise<ProfileDeploymentPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/profiles/deployment-policy',
       path: {
@@ -6785,7 +6826,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ListProfilePeriodicMonitorsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/periodic-monitors',
       path: {
@@ -6821,7 +6862,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ListProfileDeploymentChecksResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/deployment-checks',
       path: {
@@ -6863,7 +6904,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<ProfileDeploymentCheck> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/deployment-checks/{id}',
       path: {
@@ -6916,7 +6957,7 @@ export class AppsService {
      */
     before?: string,
   }): CancelablePromise<ProfileCanaryHistoryPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/canary-checks/{deployment}',
       path: {
@@ -6958,7 +6999,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ListProfileInvestigationsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/investigations',
       path: {
@@ -7000,7 +7041,7 @@ export class AppsService {
      */
     requestBody: SaveProfileInvestigationRequest,
   }): CancelablePromise<ProfileInvestigationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/profiles/investigations',
       path: {
@@ -7045,7 +7086,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<ProfileInvestigationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/investigations/{id}',
       path: {
@@ -7093,7 +7134,7 @@ export class AppsService {
      */
     requestBody: SaveProfileInvestigationRequest,
   }): CancelablePromise<ProfileInvestigationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/profiles/investigations/{id}',
       path: {
@@ -7144,7 +7185,7 @@ export class AppsService {
      */
     expectedRevision: number,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/profiles/investigations/{id}',
       path: {
@@ -7196,7 +7237,7 @@ export class AppsService {
      */
     requestBody: CheckProfileRegressionRequest,
   }): CancelablePromise<ProfileInvestigationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/profiles/investigations/{id}/check',
       path: {
@@ -7262,7 +7303,7 @@ export class AppsService {
      */
     route?: string,
   }): CancelablePromise<ProfileResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles',
       path: {
@@ -7312,7 +7353,7 @@ export class AppsService {
      */
     requestBody: ProfileCompareRequest,
   }): CancelablePromise<ProfileCompareResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/profiles/compare',
       path: {
@@ -7372,7 +7413,7 @@ export class AppsService {
      */
     end: string,
   }): CancelablePromise<ProfileHeapResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/heap',
       path: {
@@ -7415,7 +7456,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ProfileCaptureList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/captures',
       path: {
@@ -7455,7 +7496,7 @@ export class AppsService {
     slug: string,
     requestBody?: CreateProfileCaptureRequest,
   }): CancelablePromise<ProfileCapture> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/profiles/captures',
       path: {
@@ -7500,7 +7541,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<ProfileCapture> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/captures/{id}',
       path: {
@@ -7544,7 +7585,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/profiles/captures/{id}',
       path: {
@@ -7592,7 +7633,7 @@ export class AppsService {
      */
     kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
   }): CancelablePromise<ProfileCaptureView> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/captures/{id}/view',
       path: {
@@ -7644,7 +7685,7 @@ export class AppsService {
      */
     kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
   }): CancelablePromise<Blob> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       responseType: 'blob',
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/captures/{id}/pprof',
@@ -7703,7 +7744,7 @@ export class AppsService {
      */
     kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
   }): CancelablePromise<ProfileCaptureDiff> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/profiles/captures/{id}/diff',
       path: {
@@ -7759,7 +7800,7 @@ export class AppsService {
      */
     since?: string | null,
   }): CancelablePromise<DebugCoverageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/coverage',
       path: {
@@ -7812,7 +7853,7 @@ export class AppsService {
      */
     since?: string | null,
   }): CancelablePromise<DebugDependencyLatencyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/dependencies',
       path: {
@@ -7864,7 +7905,7 @@ export class AppsService {
      */
     since?: string | null,
   }): CancelablePromise<DebugCriticalPathHistoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/critical-paths',
       path: {
@@ -7917,7 +7958,7 @@ export class AppsService {
      */
     limit?: number | null,
   }): CancelablePromise<DebugRunningResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/running',
       path: {
@@ -7967,7 +8008,7 @@ export class AppsService {
      */
     since?: string | null,
   }): CancelablePromise<DebugStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/status',
       path: {
@@ -8017,7 +8058,7 @@ export class AppsService {
      */
     deploymentId?: string | null,
   }): CancelablePromise<DebugRolloutExplanation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/rollout',
       path: {
@@ -8067,7 +8108,7 @@ export class AppsService {
      */
     reqId: string,
   }): CancelablePromise<DebugTelemetryRequestItem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/requests/{req_id}',
       path: {
@@ -8113,7 +8154,7 @@ export class AppsService {
      */
     reqId: string,
   }): CancelablePromise<DebugRequestEvidenceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/requests/{req_id}/evidence',
       path: {
@@ -8159,7 +8200,7 @@ export class AppsService {
      */
     since?: string | null,
   }): CancelablePromise<DebugRegressionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/regressions',
       path: {
@@ -8204,7 +8245,7 @@ export class AppsService {
     slug: string,
     requestBody: DebugRegressionActionRequest,
   }): CancelablePromise<DebugRegressionActionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/debug/regressions',
       path: {
@@ -8255,7 +8296,7 @@ export class AppsService {
     slug: string,
     requestBody: GuardedDebugRegressionActionRequest,
   }): CancelablePromise<DebugRegressionActionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/debug/regressions/actions',
       path: {
@@ -8309,7 +8350,7 @@ export class AppsService {
      */
     route: string,
   }): CancelablePromise<DebugRegressionReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/debug/regressions/review',
       path: {
@@ -8360,7 +8401,7 @@ export class AppsService {
     slug: string,
     requestBody: DebugCompareRequest,
   }): CancelablePromise<DebugCompareResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/debug/compare',
       path: {
@@ -8408,7 +8449,7 @@ export class AppsService {
     reqId: string,
     requestBody?: DebugReplayRequest,
   }): CancelablePromise<DebugReplayResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/debug/requests/{req_id}/replay',
       path: {
@@ -8448,7 +8489,7 @@ export class AppsService {
     slug: string,
     requestBody: SourceReviewRequest,
   }): CancelablePromise<SourceReviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/source-review',
       path: {
@@ -8488,7 +8529,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<RouteRemovalPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-removal/policy',
       path: {
@@ -8521,7 +8562,7 @@ export class AppsService {
     slug: string,
     requestBody: SetRouteRemovalPolicyRequest,
   }): CancelablePromise<RouteRemovalPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/route-removal/policy',
       path: {
@@ -8566,7 +8607,7 @@ export class AppsService {
      */
     before?: string,
   }): CancelablePromise<RouteLifecycleHistoryPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-lifecycle/history',
       path: {
@@ -8600,7 +8641,7 @@ export class AppsService {
     slug: string,
     requestBody: ApproveRouteLifecycleRequest,
   }): CancelablePromise<RouteLifecycleApproval> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/route-lifecycle/approvals',
       path: {
@@ -8640,7 +8681,7 @@ export class AppsService {
      */
     approvalId: string,
   }): CancelablePromise<RouteLifecycleApproval> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-lifecycle/approvals/{approval_id}',
       path: {
@@ -8675,7 +8716,7 @@ export class AppsService {
     slug: string,
     requestBody: ApproveRouteRemovalRequest,
   }): CancelablePromise<RouteRemovalApproval> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/route-removal/approvals',
       path: {
@@ -8715,7 +8756,7 @@ export class AppsService {
      */
     deploymentId: string,
   }): CancelablePromise<RouteRemovalCheck> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-removal/check',
       path: {
@@ -8750,7 +8791,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<SavedRouteRequirements> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-requirements',
       path: {
@@ -8783,7 +8824,7 @@ export class AppsService {
     slug: string,
     requestBody: SaveRouteRequirementsRequest,
   }): CancelablePromise<SavedRouteRequirements> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/route-requirements',
       path: {
@@ -8820,7 +8861,7 @@ export class AppsService {
     slug: string,
     requestBody: CheckRouteRequirementsRequest,
   }): CancelablePromise<RouteRequirementsCheck> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/route-requirements/check',
       path: {
@@ -8865,7 +8906,7 @@ export class AppsService {
      */
     scope?: 'default',
   }): CancelablePromise<AppOperationalSummary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/operational-summary',
       path: {
@@ -8912,7 +8953,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<EnvironmentRouteBudgets> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-budgets',
       path: {
@@ -8961,7 +9002,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<EnvironmentRouteBudgets> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/route-budgets',
       path: {
@@ -8988,6 +9029,59 @@ export class AppsService {
     });
   }
   /**
+   * Read an original durable environment budget receipt.
+   * Requires current app read access and completed MFA. Matches account, app and current immutable project/environment identities. Returns historical committed policy revisions and the exact original request fingerprint, excluding configuration values. Later policy edits do not replace this receipt. A missing, inaccessible or unavailable receipt never proves non-commit. This endpoint performs no mutation, replay, approval or expiry renewal and does not establish runtime health.
+   * @returns EnvironmentRouteBudgetReceipt Historical policy-intent receipt, not current configuration or runtime completion.
+   * @throws ApiError
+   */
+  public static getEnvironmentRouteBudgetReceipt({
+    slug,
+    requestId,
+    scope,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Exact original nonzero request UUID.
+     */
+    requestId: string,
+    /**
+     * Select scope=default or one registered environment; exactly one selector is required.
+     */
+    scope?: 'default',
+    /**
+     * Current named environment containing the original receipt; mutually exclusive with scope=default.
+     */
+    environment?: string,
+  }): CancelablePromise<EnvironmentRouteBudgetReceipt> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/route-budgets/receipts/{request_id}',
+      path: {
+        'slug': slug,
+        'request_id': requestId,
+      },
+      query: {
+        'scope': scope,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Read advisory production route monitoring intent.
    * Defaults to disabled, revision zero and no routes. Requires app read access and completed MFA. Configuration is independent of the canary guard. customer_group_by optionally evaluates the same absolute budgets per request-time tenant or API consumer.
    * @returns RouteMonitorConfig Current advisory production monitor configuration.
@@ -9001,7 +9095,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<RouteMonitorConfig> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-monitor',
       path: {
@@ -9035,7 +9129,7 @@ export class AppsService {
     slug: string,
     requestBody: SetRouteMonitorRequest,
   }): CancelablePromise<RouteMonitorConfig> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/route-monitor',
       path: {
@@ -9104,7 +9198,7 @@ export class AppsService {
      */
     cacheMaxAge?: number,
   }): CancelablePromise<RouteAdviceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/routes/advice',
       path: {
@@ -9175,7 +9269,7 @@ export class AppsService {
      */
     until?: string,
   }): CancelablePromise<RouteAwakeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/routes/awake',
       path: {
@@ -9231,7 +9325,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<RouteInsightsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/routes/insights',
       path: {
@@ -9291,7 +9385,7 @@ export class AppsService {
     id: string,
     requestBody: RouteInsightFixRequest,
   }): CancelablePromise<RouteInsightFixResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/routes/insights/{id}/fix',
       path: {
@@ -9340,7 +9434,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<ServiceWakeAheadResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/service-wake-ahead',
       path: {
@@ -9383,7 +9477,7 @@ export class AppsService {
     slug: string,
     requestBody: SetServiceWakeAheadRequest,
   }): CancelablePromise<ServiceWakeAheadResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/service-wake-ahead',
       path: {
@@ -9432,7 +9526,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<RoutePrioritiesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-priorities',
       path: {
@@ -9476,7 +9570,7 @@ export class AppsService {
     slug: string,
     requestBody: SetRoutePrioritiesRequest,
   }): CancelablePromise<RoutePrioritiesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/route-priorities',
       path: {
@@ -9515,7 +9609,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<RoutePrioritiesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/route-priorities',
       path: {
@@ -9556,7 +9650,7 @@ export class AppsService {
      */
     customerDetails?: boolean,
   }): CancelablePromise<RouteMonitorReport> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-monitor/report',
       path: {
@@ -9598,7 +9692,7 @@ export class AppsService {
      */
     customerDetails?: boolean,
   }): CancelablePromise<RouteMonitorPreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/route-monitor/preview',
       path: {
@@ -9645,7 +9739,7 @@ export class AppsService {
      */
     before?: string,
   }): CancelablePromise<RouteMonitorIncidentPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-monitor/incidents',
       path: {
@@ -9692,7 +9786,7 @@ export class AppsService {
      */
     customerDetails?: boolean,
   }): CancelablePromise<RouteMonitorIncident> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-monitor/incidents/{incident}',
       path: {
@@ -9729,7 +9823,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<RouteHealthGate> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-health/gate',
       path: {
@@ -9762,7 +9856,7 @@ export class AppsService {
     slug: string,
     requestBody: SetRouteHealthGateRequest,
   }): CancelablePromise<RouteHealthGate> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/route-health/gate',
       path: {
@@ -9817,7 +9911,7 @@ export class AppsService {
      */
     customerDetails?: boolean,
   }): CancelablePromise<RouteHealthReport> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-health/deployments/{deployment}',
       path: {
@@ -9890,7 +9984,7 @@ export class AppsService {
      */
     customerId?: string,
   }): CancelablePromise<RouteHealthInvestigation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-health/deployments/{deployment}/investigation',
       path: {
@@ -9947,7 +10041,7 @@ export class AppsService {
      */
     before?: string,
   }): CancelablePromise<RouteHealthHistoryPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-health/deployments/{deployment}/history',
       path: {
@@ -9994,7 +10088,7 @@ export class AppsService {
      */
     decisionId: string,
   }): CancelablePromise<RouteHealthHistoryEntry> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-health/deployments/{deployment}/history/{decision_id}',
       path: {
@@ -10028,7 +10122,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<CanaryRouteGate> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-requirements/gate',
       path: {
@@ -10061,7 +10155,7 @@ export class AppsService {
     slug: string,
     requestBody: SetCanaryRouteGateRequest,
   }): CancelablePromise<CanaryRouteGate> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/route-requirements/gate',
       path: {
@@ -10101,7 +10195,7 @@ export class AppsService {
      */
     deployment: string,
   }): CancelablePromise<AutomaticRouteCheck> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-requirements/checks/{deployment}',
       path: {
@@ -10150,7 +10244,7 @@ export class AppsService {
      */
     before?: string,
   }): CancelablePromise<RouteCheckHistoryPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-requirements/checks/{deployment}/history',
       path: {
@@ -10198,7 +10292,7 @@ export class AppsService {
      */
     checkId: string,
   }): CancelablePromise<RouteCheckHistoryEntry> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-requirements/checks/{deployment}/history/{check_id}',
       path: {
@@ -10242,7 +10336,7 @@ export class AppsService {
     deployment_id: string;
     status: 'queued';
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/route-requirements/checks/{deployment}/refresh',
       path: {
@@ -10278,7 +10372,7 @@ export class AppsService {
     slug: string,
     requestBody: RoutePolicyPlanRequest,
   }): CancelablePromise<RoutePolicyPlan> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/route-policy/plan',
       path: {
@@ -10320,7 +10414,7 @@ export class AppsService {
     idempotencyKey: string,
     requestBody: RoutePolicyApplyRequest,
   }): CancelablePromise<RoutePolicyApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/route-policy/apply',
       path: {
@@ -10363,7 +10457,7 @@ export class AppsService {
      */
     receiptId: string,
   }): CancelablePromise<RoutePolicyReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/route-policy/receipts/{receipt_id}',
       path: {
@@ -10407,7 +10501,7 @@ export class AppsService {
       expected_deployment_id?: string;
     },
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/park',
       path: {
@@ -10462,7 +10556,7 @@ export class AppsService {
      */
     fresh?: boolean,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/park/conditional',
       path: {
@@ -10504,7 +10598,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<AppWakeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/wake',
       path: {
@@ -10558,7 +10652,7 @@ export class AppsService {
      */
     fresh?: boolean,
   }): CancelablePromise<AppRestartResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/restart',
       path: {
@@ -10612,7 +10706,7 @@ export class AppsService {
      */
     wakeId: string,
   }): CancelablePromise<RuntimeConfigRestartStatusResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/runtime-config-restarts/{wake_id}',
       path: {
@@ -10657,7 +10751,7 @@ export class AppsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<PrewarmIntentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/prewarm',
       path: {
@@ -10695,7 +10789,7 @@ export class AppsService {
      */
     slug: string,
   }): CancelablePromise<Array<PrewarmIntentResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/prewarms',
       path: {
@@ -10731,7 +10825,7 @@ export class AppsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/prewarms/{id}',
       path: {
@@ -10781,7 +10875,7 @@ export class AppsService {
      */
     tag?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/cache',
       path: {
@@ -10830,7 +10924,7 @@ export class AppsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/rename',
       path: {
@@ -10934,7 +11028,7 @@ export class AppsService {
      */
     date?: string,
   }): CancelablePromise<any> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/logs',
       path: {
@@ -10981,7 +11075,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<AppScalingSnapshot> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/scaling',
       path: {
@@ -11036,7 +11130,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<AppScalingReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/scaling',
       path: {
@@ -11086,7 +11180,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<AppScalingReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/scaling/requests/{request_id}',
       path: {
@@ -11138,7 +11232,7 @@ export class AppsService {
      */
     range?: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '15d',
   }): CancelablePromise<AppsMetricsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/metrics',
       query: {
@@ -11233,7 +11327,7 @@ export class AppsService {
      */
     cursor?: string,
   }): CancelablePromise<WakeTimelineResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/wakes/{wake_id}/timeline',
       path: {
@@ -11297,7 +11391,7 @@ export class AppsService {
      */
     limit?: number,
   }): CancelablePromise<SidecarTimelineResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/sidecars/{sidecar_name}/timeline',
       path: {
@@ -11364,7 +11458,7 @@ export class AppsService {
      */
     offset?: number,
   }): CancelablePromise<AppResourceInventoryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/resource-inventory',
       path: {
@@ -11417,7 +11511,7 @@ export class AppsService {
      */
     environment?: string,
   }): CancelablePromise<AppOperationPreview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/operation-preview',
       path: {
@@ -11457,7 +11551,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<BindingVerificationRunDiagnostics> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}/diagnostics',
       path: {
@@ -11487,7 +11581,7 @@ export class AppsService {
     slug: string,
     requestBody: ReviewBindingVerificationRequest,
   }): CancelablePromise<BindingVerificationReview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/bindings/verification-runs/review',
       path: {
@@ -11525,7 +11619,7 @@ export class AppsService {
      */
     step: number,
   }): CancelablePromise<BindingVerificationRunStep> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}/steps/{step}/admit',
       path: {
@@ -11565,7 +11659,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}/complete',
       path: {
@@ -11604,7 +11698,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}/resume',
       path: {
@@ -11643,7 +11737,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}',
       path: {
@@ -11682,7 +11776,7 @@ export class AppsService {
      */
     run: string,
   }): CancelablePromise<BindingVerificationRun> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/bindings/verification-runs/{run}',
       path: {
@@ -11747,7 +11841,7 @@ export class AppsService {
      */
     includeMembers?: boolean,
   }): CancelablePromise<BindingVerificationRunList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings/verification-runs',
       path: {
@@ -11789,7 +11883,7 @@ export class AppsService {
     slug: string,
     requestBody: CreateBindingVerificationRunRequest,
   }): CancelablePromise<BindingVerificationRun> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/bindings/verification-runs',
       path: {
@@ -11829,7 +11923,7 @@ export class AppsService {
      */
     canary: string,
   }): CancelablePromise<QueueBindingCanary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/bindings/queue-canaries/{canary}',
       path: {
@@ -11867,7 +11961,7 @@ export class AppsService {
      */
     canary: string,
   }): CancelablePromise<QueueBindingCanary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/bindings/queue-canaries/{canary}',
       path: {
@@ -11903,7 +11997,7 @@ export class AppsService {
     slug: string,
     requestBody: CreateQueueBindingCanaryRequest,
   }): CancelablePromise<QueueBindingCanary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/bindings/queue-canaries',
       path: {
@@ -11958,7 +12052,7 @@ export class AppsService {
      */
     scope?: string,
   }): CancelablePromise<BindingReleasePolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/bindings/release-policy-with-queues',
       path: {

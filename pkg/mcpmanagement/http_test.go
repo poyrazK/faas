@@ -64,7 +64,7 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/v1/cli-auth/code" {
 			var input api.CliAuthCodeRequest
-			if json.NewDecoder(req.Body).Decode(&input) != nil || (input.Purpose != api.CliAuthPurposeMCPRead && input.Purpose != api.CliAuthPurposeMCP) {
+			if json.NewDecoder(req.Body).Decode(&input) != nil || (input.Purpose != api.CliAuthPurposeMCPRead && input.Purpose != api.CliAuthPurposeMCPWrite && input.Purpose != api.CliAuthPurposeMCP) {
 				t.Error("unexpected native purpose")
 			}
 			f.mu.Lock()
@@ -407,14 +407,12 @@ func TestRemoteManagementOAuthAccountIsolation(t *testing.T) {
 			aliceSession, ctx := f.connect(alice, version)
 			bobSession, _ := f.connect(bob, version)
 			aliceCatalog, err := aliceSession.ListTools(ctx, nil)
-			// A remote grant lists the secret request pair only with consented
-			// secrets:request (ADR-20261026195952).
-			if err != nil || len(aliceCatalog.Tools) < 58 {
+			if err != nil || len(aliceCatalog.Tools) != 91 {
 				t.Fatalf("alice tools=%+v error=%v", aliceCatalog, err)
 			}
 			bobCatalog, err := bobSession.ListTools(ctx, nil)
-			if err != nil || len(bobCatalog.Tools) < 49 {
-				t.Fatalf("bob tools=%+v error=%v", bobCatalog, err)
+			if err != nil || len(bobCatalog.Tools) != 80 {
+				t.Fatalf("bob count=%d tools=%+v error=%v", len(bobCatalog.Tools), bobCatalog, err)
 			}
 			aliceContext := callTool(t, ctx, aliceSession, "gregale_context", map[string]any{}, false)
 			bobContext := callTool(t, ctx, bobSession, "gregale_context", map[string]any{}, false)

@@ -30,7 +30,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -105,11 +104,6 @@ func (m *memStoreInstalls) Upsert(_ context.Context, inst state.GitHubInstall) e
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, existing := range m.items {
-		if existing.InstallationID == inst.InstallationID && existing.AccountID != inst.AccountID {
-			return state.ErrConflict
-		}
-	}
 	inst.SealedAt = time.Now()
 	m.items[inst.AccountID+"\x00"+strconv.FormatInt(inst.InstallationID, 10)] = inst
 	return nil
@@ -346,10 +340,9 @@ func TestRealService_ExchangeOAuthCode_MakesRealAPICall(t *testing.T) {
 	}
 }
 
-// A verified GitHub installation still cannot be reassigned to another
-// Gregale account by reconnecting it. Failure must leave storage and caches
-// unchanged and must not report a successful connection.
-func TestRealService_ExchangeOAuthCode_AccountConflict(t *testing.T) {
+// Each verified account may connect the same installation independently.
+// Connecting another account never overwrites the first account's credentials.
+func TestRealService_ExchangeOAuthCode_SharedDeploymentInstallation(t *testing.T) {
 	ident, recipient := newTestAgeKeypair(t)
 	fake := newFakeGithubServer(t, fakeGithubOpts{
 		accessToken: "user-token", installToken: "installation-token", appID: "100",
@@ -367,22 +360,20 @@ func TestRealService_ExchangeOAuthCode_AccountConflict(t *testing.T) {
 	auth := newTestAppAuth(t, "100", fake.URL)
 	svc := NewRealService(auth, NewTokenCache(auth, time.Minute), nil, newMemBindingsStore(), store, recipient, ident, audit.AuditEvent)
 	installID, branch, err := svc.ExchangeOAuthCode("other", "oauth-code", "state")
-	p := api.AsProblem(err)
-	if p == nil || p.Code != api.CodeGitHubAccountConflict || p.Status != http.StatusConflict || installID != "" || branch != "" {
-		t.Fatalf("conflicting OAuth exchange = (%q, %q, %v), want account conflict", installID, branch, err)
+	if err != nil || installID != "4242" || branch != "" {
+		t.Fatalf("shared OAuth exchange = (%q, %q, %v)", installID, branch, err)
 	}
 	got, err := store.ForAccount(context.Background(), "original")
 	if err != nil || string(got.SealedToken) != "original-seal" {
 		t.Fatalf("original binding changed: %v", err)
 	}
-	st, _, _, err := svc.GetInstallState("other")
-	if err != nil || st != githubdgrpc.InstallStateUnspecified {
-		t.Fatalf("rejected account appears connected: %v, %v", st, err)
+	st, gotID, _, err := svc.GetInstallState("other")
+	if err != nil || st != githubdgrpc.InstallStateInstalled || gotID != "4242" {
+		t.Fatalf("second account not connected: %v, %v, %v", st, gotID, err)
 	}
-	for _, event := range audit.events {
-		if event.event == "auth.install.token_sealed" {
-			t.Fatal("rejected reconnect emitted a successful connection audit")
-		}
+	second, err := store.ForAccount(context.Background(), "other")
+	if err != nil || second.AccountID != "other" || len(second.SealedToken) == 0 {
+		t.Fatalf("missing independent credentials: %v", err)
 	}
 }
 
@@ -1061,3 +1052,16 @@ func newRecordingAuditFn() *recordingAuditFn {
 
 // _ pins the closure shape: AuditEvent is func(string, string, map[string]any).
 var _ AuditEvent = (&recordingAuditFn{}).AuditEvent
+
+func (m *memStoreInstalls) RefreshToken(_ context.Context, previous []byte, inst state.GitHubInstall) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := inst.AccountID + "\x00" + strconv.FormatInt(inst.InstallationID, 10)
+	current, ok := m.items[key]
+	if !ok || string(current.SealedToken) != string(previous) {
+		return state.ErrConflict
+	}
+	inst.SealedAt = time.Now()
+	m.items[key] = inst
+	return nil
+}

@@ -40,7 +40,7 @@ func TestRoundTrip_StableCodes(t *testing.T) {
 		{api.CodeInvalidRef, codes.InvalidArgument, "Invalid ref"},
 		{api.CodeNotFound, codes.NotFound, "Not found"},
 		{api.CodeGitHubInstallNotFound, codes.NotFound, "GitHub install not found"},
-		{api.CodeGitHubAccountConflict, codes.AlreadyExists, "GitHub account conflict"},
+		{api.CodeGitHubAccountConflict, codes.AlreadyExists, "GitHub deployment connection could not be saved"},
 		{api.CodeSourceRefUnavailable, codes.Unavailable, "Source ref unavailable"},
 		{api.CodeUnauthorized, codes.PermissionDenied, "Unauthorized"},
 		{api.CodeCapacity, codes.ResourceExhausted, "No capacity"},

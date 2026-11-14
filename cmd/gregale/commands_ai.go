@@ -148,7 +148,9 @@ const aiPolicyUsage = "usage: gregale ai policy <integration-id> [--provider ope
 	"[--request-log-content on|off] [--user-daily-tokens N|none] [--user-daily-cost USD|none] [--log-export on|off] " +
 	"[--allow-unmetered on|off] [--prompt-cache on|off] [--trace-max-calls N|none] [--trace-max-cost USD|none] " +
 	"[--trace-max-repeated-tool-calls N|none] [--online-eval-percent N|none] [--online-eval-judge INTEGRATION-ID] " +
-	"[--online-eval-model MODEL] [--online-eval-rubric TEXT|none] [--quality-alerts on|off]"
+	"[--online-eval-model MODEL] [--online-eval-rubric TEXT|none] [--quality-alerts on|off] [--semantic-cache on|off] " +
+	"[--semantic-threshold 0.85..0.99] [--semantic-embedding-integration INTEGRATION-ID] [--semantic-embedding-model MODEL] " +
+	"[--semantic-share-users on|off]"
 
 func cmdAIPolicy(args []string) int {
 	fs := newFlagSet("ai policy", flag.ContinueOnError)
@@ -171,6 +173,7 @@ func cmdAIPolicy(args []string) int {
 	evalModel := fs.String("online-eval-model", "", "the judge model")
 	evalRubric := fs.String("online-eval-rubric", "", "what a good answer does for this app, or none")
 	qualityAlerts := fs.String("quality-alerts", "", "alert when a model's quality drifts from its previous 7 days: on or off")
+	semantic := addSemanticCacheFlags(fs)
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 {
 		return printErr("Invalid ai policy arguments", errors.New(aiPolicyUsage))
 	}
@@ -189,7 +192,7 @@ func cmdAIPolicy(args []string) int {
 		LogExport: current.AILogExport, AllowUnmetered: current.AIAllowUnmetered, AutoPromptCache: current.AIAutoPromptCache,
 		TraceMaxCalls: current.AITraceMaxCalls, TraceMaxCostMillicents: current.AITraceMaxCostMillicents,
 		TraceMaxRepeatedToolCalls: current.AITraceMaxRepeatedToolCalls, OnlineEvaluation: current.AIOnlineEvaluation,
-		QualityAlerts: current.AIQualityAlerts}
+		QualityAlerts: current.AIQualityAlerts, SemanticCache: current.AISemanticCache}
 	switch *provider {
 	case "":
 	case "off":
@@ -258,8 +261,11 @@ func cmdAIPolicy(args []string) int {
 	if err == nil {
 		err = applyQualityPolicy(&req, *evalPercent, *evalJudge, *evalModel, *evalRubric, *qualityAlerts)
 	}
+	if err == nil {
+		err = semantic.apply(&req)
+	}
 	if err != nil || !req.Valid() {
-		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits, log export, allow-unmetered and prompt-cache need a provider; tokens 1..1e11, costs up to USD 10,000,000; trace calls 1..1,000,000 and repeated tool calls 1..1,000; content capture needs the request log; online evaluations need content capture, a judge integration and model")))
+		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits, log export, allow-unmetered and prompt-cache need a provider; tokens 1..1e11, costs up to USD 10,000,000; trace calls 1..1,000,000 and repeated tool calls 1..1,000; content capture needs the request log; online evaluations need content capture, a judge integration and model; the semantic cache needs an embedding integration and model")))
 	}
 	if err := client.SetOutboundIntegrationAIPolicy(context.Background(), fs.Arg(0), req); err != nil {
 		return printErr("Could not update AI policy", err)

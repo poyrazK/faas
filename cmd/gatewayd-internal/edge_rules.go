@@ -103,6 +103,14 @@ type gatewaydEdgeRules struct {
 	// capabilityAllowed drops the rules of an off capability per request
 	// (ADR-20261023115741); nil keeps every rule.
 	capabilityAllowed func(capability, accountID string) bool
+	// headerSecretOpener opens sealed request header values
+	// (ADR-20261108110000); nil leaves rules using them unapplied.
+	headerSecretOpener edgeRuleHeaderSecretOpener
+	headerSecrets      edgeRuleHeaderSecrets
+	// headerSecretsInject leaves sealed request header values sealed: the
+	// instance's vmmd opens them (ADR-20261110210000 slice 3i,
+	// FAAS_GATEWAY_EDGE_HEADER_SECRETS=inject).
+	headerSecretsInject bool
 }
 
 // edgeRuleFenceKey scopes a fence to the account whose mutation raised it;
@@ -477,6 +485,10 @@ func (g *gatewaydEdgeRules) compileHostRules(ctx context.Context, host string, s
 		return nil, err
 	}
 	storeRules, err := g.resolveEdgeRuleLists(ctx, storeRules)
+	if err != nil {
+		return nil, err
+	}
+	storeRules, err = g.resolveEdgeRuleHeaderSecrets(ctx, storeRules)
 	if err != nil {
 		return nil, err
 	}
@@ -1412,12 +1424,12 @@ func compileHeadersRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleHeaders
 			parseErrs = append(parseErrs, errs...)
 			continue
 		}
-		requestOps, err := convertHeaderOps(r.Action.Headers.RequestHeaders)
+		requestOps, err := convertHeaderOps(r.Action.Headers.RequestHeaders, r.AppID)
 		if err != nil {
 			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "header_op", Err: err})
 			continue
 		}
-		responseOps, err := convertHeaderOps(r.Action.Headers.ResponseHeaders)
+		responseOps, err := convertHeaderOps(r.Action.Headers.ResponseHeaders, r.AppID)
 		if err != nil {
 			parseErrs = append(parseErrs, gateway.PathGlobError{RuleID: r.ID, Glob: "header_op", Err: err})
 			continue
@@ -2550,6 +2562,7 @@ func (g *gatewaydEdgeRules) compileValidateRules(storeRules []state.EdgeRule) ([
 			Methods:             buildMethodsMap(r.MatchMethods),
 			MatchHeaders:        buildMatchHeadersMap(r.MatchHeaders),
 			SchemaDigest:        digest,
+			Schema:              append([]byte(nil), schemaBytes...),
 			ContentTypes:        contentTypes,
 			ApplyWhileStreaming: action.ApplyWhileStreaming,
 			RejectUnknownFields: action.RejectOnUnknown,
@@ -2589,7 +2602,7 @@ func (g *gatewaydEdgeRules) compileValidateParameters(p *api.EdgeRuleValidatePar
 		if err != nil {
 			return nil, err
 		}
-		*loc.into = gateway.EdgeRuleParamSchemaResolved{Set: true, Digest: digest, Kinds: kinds}
+		*loc.into = gateway.EdgeRuleParamSchemaResolved{Set: true, Digest: digest, Schema: append([]byte(nil), loc.raw...), Kinds: kinds}
 	}
 	return out, nil
 }
@@ -2641,7 +2654,7 @@ func buildMatchHeadersMap(headers map[string]string) map[string]string {
 // instead of importing state from pkg/gateway (pkg/gateway keeps
 // zero-dep-on-pkg/state). A reserved name drops the rule: rules saved
 // before apid compared names case-sensitively can still hold "host".
-func convertHeaderOps(in []state.EdgeRuleHeaderOp) ([]gateway.EdgeRuleHeaderOp, error) {
+func convertHeaderOps(in []state.EdgeRuleHeaderOp, appID string) ([]gateway.EdgeRuleHeaderOp, error) {
 	if len(in) == 0 {
 		return nil, nil
 	}
@@ -2651,6 +2664,12 @@ func convertHeaderOps(in []state.EdgeRuleHeaderOp) ([]gateway.EdgeRuleHeaderOp, 
 			return nil, fmt.Errorf("header %q is reserved", op.Name)
 		}
 		out[i] = gateway.EdgeRuleHeaderOp{Name: op.Name, Value: op.Value, Action: op.Action}
+		if op.SecretID != "" && op.Value == "" {
+			// Inject mode (ADR-20261110210000 slice 3i): the instance's
+			// vmmd opens the value; resolveEdgeRuleHeaderSecrets left it
+			// sealed. The value's app is the rule's.
+			out[i].SecretAppID, out[i].SecretID = appID, op.SecretID
+		}
 		if op.Template {
 			t, err := api.CompileEdgeRuleTemplate(op.Value, api.EdgeRuleTemplateHeader)
 			if err != nil {

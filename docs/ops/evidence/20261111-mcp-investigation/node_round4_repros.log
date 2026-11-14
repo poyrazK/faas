@@ -1,0 +1,54 @@
+✖ runtime startup finishes while a fast-task backlog remains busy (206.930668ms)
+ℹ startup=still starting; completed handlers before readiness=18
+✖ shutdown releases a task whose committed claim returns during drain (184.114905ms)
+ℹ stop={"timedOut":false}; after shutdown={"status":"running","attempt_count":1,"resume_pending":false}; after lease expiry=failed; handler executions=0
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2569.92583
+
+✖ failing tests:
+
+test at docs/ops/evidence/20261111-mcp-investigation/node_round4_repro_test.mjs:21:1
+✖ runtime startup finishes while a fast-task backlog remains busy (206.930668ms)
+  AssertionError [ERR_ASSERTION]: startup waits for queue drain rather than initialization
+  + actual - expected
+
+  + 'still starting'
+  - 'started'
+       ^
+
+      at TestContext.<anonymous> (file:///workspace/faas/docs/ops/evidence/20261111-mcp-investigation/node_round4_repro_test.mjs:43:12)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'still starting',
+    expected: 'started',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at docs/ops/evidence/20261111-mcp-investigation/node_round4_repro_test.mjs:52:1
+✖ shutdown releases a task whose committed claim returns during drain (184.114905ms)
+  AssertionError [ERR_ASSERTION]: graceful shutdown leaves a never-executed task leased and consumes its attempt
+  + actual - expected
+
+  + 'running'
+  - 'queued'
+
+      at TestContext.<anonymous> (file:///workspace/faas/docs/ops/evidence/20261111-mcp-investigation/node_round4_repro_test.mjs:107:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'running',
+    expected: 'queued',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

@@ -106,11 +106,13 @@ def export_tree(sha, dest, root="."):
         raise RuntimeError(f"export {sha}: {untar.stderr.decode().strip()}")
 
 
-def elf_digests(path):
+def elf_digests(path, ignore=()):
     """(whole file, code) sha256 digests of a 64-bit little-endian ELF
     binary. The code digest covers the name, size and contents of every
     section the program loads, except the line table and the module data,
-    and no addresses (see the module docstring)."""
+    and no addresses (see the module docstring). ignore names more sections
+    to leave out of the code digest: guest_init_reuse.py leaves out the Go
+    build ID note of a binary it did not build with an empty one."""
     with open(path, "rb") as fh:
         data = fh.read()
     if data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
@@ -122,7 +124,7 @@ def elf_digests(path):
     code = hashlib.sha256()
     for name_off, kind, flags, _, offset, size in headers:
         name = names[name_off:names.index(b"\0", name_off)]
-        if not flags & SHF_ALLOC or name.decode() in (LINE_TABLE, MODULE_DATA):
+        if not flags & SHF_ALLOC or name.decode() in (LINE_TABLE, MODULE_DATA, *ignore):
             continue
         body = b"" if kind == SHT_NOBITS else data[offset:offset + size]
         code.update(name + b"\0" + struct.pack("<Q", size) + hashlib.sha256(body).digest())

@@ -543,6 +543,12 @@ type jwkResolver struct {
 	keys        []jsonWebKey
 	loadedAt    time.Time
 	lastRefresh time.Time
+	refresh     *jwkRefresh
+}
+
+type jwkRefresh struct {
+	done chan struct{}
+	err  error
 }
 
 type jsonWebKeySet struct {
@@ -550,15 +556,16 @@ type jsonWebKeySet struct {
 }
 
 type jsonWebKey struct {
-	Kty string `json:"kty"`
-	Kid string `json:"kid"`
-	Use string `json:"use"`
-	Alg string `json:"alg"`
-	Crv string `json:"crv"`
-	N   string `json:"n"`
-	E   string `json:"e"`
-	X   string `json:"x"`
-	Y   string `json:"y"`
+	Kty    string          `json:"kty"`
+	Kid    string          `json:"kid"`
+	Use    string          `json:"use"`
+	Alg    string          `json:"alg"`
+	KeyOps json.RawMessage `json:"key_ops,omitempty"`
+	Crv    string          `json:"crv"`
+	N      string          `json:"n"`
+	E      string          `json:"e"`
+	X      string          `json:"x"`
+	Y      string          `json:"y"`
 }
 
 func newJWKResolver(jwksURL string) *jwkResolver {
@@ -686,38 +693,46 @@ func numericDate(raw json.RawMessage) (float64, bool) {
 }
 
 func (r *jwkResolver) resolve(kid, algorithm string) (crypto.PublicKey, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	now := time.Now()
-	refresh := false
-	if r.loadedAt.IsZero() {
-		// A failed fetch still gets a cooldown, so unauthenticated traffic
-		// cannot turn every bad token into a JWKS request.
-		refresh = r.lastRefresh.IsZero() || now.Sub(r.lastRefresh) >= 30*time.Second
-	} else if now.Sub(r.loadedAt) >= 5*time.Minute {
-		refresh = r.lastRefresh.IsZero() || now.Sub(r.lastRefresh) >= 30*time.Second
-	} else {
-		if key, ok := findJWK(r.keys, kid, algorithm); ok {
-			return key, nil
+	for {
+		r.mu.Lock()
+		now := time.Now()
+		if !r.loadedAt.IsZero() && now.Sub(r.loadedAt) < 5*time.Minute {
+			if key, ok := findJWK(r.keys, kid, algorithm); ok {
+				r.mu.Unlock()
+				return key, nil
+			}
 		}
-		// Refresh unknown key IDs for key rotation, with a cooldown to prevent
-		// arbitrary token headers from turning verification into a fetch loop.
-		refresh = now.Sub(r.lastRefresh) >= 30*time.Second
+		if pending := r.refresh; pending != nil {
+			r.mu.Unlock()
+			<-pending.done
+			if pending.err != nil {
+				return nil, pending.err
+			}
+			continue
+		}
+		if !r.lastRefresh.IsZero() && now.Sub(r.lastRefresh) < 30*time.Second {
+			r.mu.Unlock()
+			return nil, errors.New("unknown JWT key")
+		}
+		pending := &jwkRefresh{done: make(chan struct{})}
+		r.refresh = pending
+		r.mu.Unlock()
+		// Network I/O never holds the cache lock. Fresh cached keys remain
+		// available while other callers share this one bounded refresh.
+		keys, err := r.fetch()
+		r.mu.Lock()
+		r.lastRefresh = time.Now()
+		if err == nil {
+			r.keys, r.loadedAt = keys, r.lastRefresh
+		}
+		pending.err = err
+		r.refresh = nil
+		close(pending.done)
+		r.mu.Unlock()
+		if err != nil {
+			return nil, err
+		}
 	}
-	if !refresh {
-		return nil, errors.New("unknown JWT key")
-	}
-	keys, err := r.fetch()
-	r.lastRefresh = now
-	if err != nil {
-		return nil, err
-	}
-	r.keys = keys
-	r.loadedAt = now
-	if key, ok := findJWK(r.keys, kid, algorithm); ok {
-		return key, nil
-	}
-	return nil, errors.New("unknown JWT key")
 }
 
 func (r *jwkResolver) fetch() ([]jsonWebKey, error) {
@@ -745,11 +760,31 @@ func (r *jwkResolver) fetch() ([]jsonWebKey, error) {
 	return set.Keys, nil
 }
 
+func jwkAllowsVerification(operations json.RawMessage) bool {
+	if len(operations) == 0 {
+		return true
+	}
+	var values []any
+	if json.Unmarshal(operations, &values) != nil {
+		return false
+	}
+	allowed := false
+	for _, value := range values {
+		operation, ok := value.(string)
+		if !ok {
+			return false
+		}
+		allowed = allowed || operation == "verify"
+	}
+	return allowed
+}
+
 func findJWK(keys []jsonWebKey, kid, algorithm string) (crypto.PublicKey, bool) {
 	var selected *jsonWebKey
 	for index := range keys {
 		key := &keys[index]
-		if key.Use != "" && key.Use != "sig" || key.Alg != "" && key.Alg != algorithm || kid != "" && key.Kid != kid {
+		if key.Use != "" && key.Use != "sig" || key.Alg != "" && key.Alg != algorithm || kid != "" && key.Kid != kid || !jwkAllowsVerification(key.KeyOps) ||
+			algorithm == "RS256" && key.Kty != "RSA" || algorithm == "ES256" && (key.Kty != "EC" || key.Crv != "P-256") {
 			continue
 		}
 		if selected != nil {

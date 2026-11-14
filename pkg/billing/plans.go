@@ -26,7 +26,7 @@ func PlanMonthlyMillicents(p api.Plan) int64 {
 // in integer millicents.
 //
 // The rate is defined by pkg/api because it is part of the financial model
-// (CLAUDE.md "Overage $0.01/GB-h" → 1_000 millicents). Stripe represents
+// (CLAUDE.md "Overage $0.05/GB-h" → 5_000 millicents, ADR-20261107192333). Stripe represents
 // overage through a metered subscription; Paddle uses this value as the
 // flat-rate monthly overage line-item price posted at month-rollover (see
 // pkg/billing/paddle/usage.go).
@@ -38,8 +38,8 @@ func PlanOverageMillicentsPerGBHour() int64 {
 // GB-RAM-hours into the wire quantity both providers' metered surfaces
 // accept. Stripe's metered subscription_item takes an int64 quantity;
 // Paddle's per-line-item Quantity is the same integer axis multiplied by the
-// overage price handle. 1000 wire units = 1 GB-RAM-hour = 1 cent at the
-// $0.01/GB-h overage rate (CLAUDE.md "Overage $0.01/GB-h").
+// overage price handle. One wire unit is one millicent: 5,000 wire units =
+// 1 GB-RAM-hour = 5 cents at the $0.05/GB-h overage rate (ADR-20261107192333).
 //
 // Defined here (pkg/billing) rather than in pkg/billing/stripe because the
 // unit is a financial-model constant — the float-to-int truncation that
@@ -66,13 +66,13 @@ const SecondsPerGBHour int64 = api.SecondsPerGBHour
 // so the money-critical conversion is pinned by a hermetic unit test (no
 // live Stripe / Paddle). The canonical acceptance case is a 256 MB Hobby
 // app (billed at ram+8 = 264 MB) resident for a full 24 h:
-// 264 * 60 * 60 * 24 = 22_809_600 mb-s → 6187 wire units.
+// 264 * 60 * 60 * 24 = 22_809_600 mb-s → 30_937 wire units.
 //
 // Truncation is by design — the sub-milliunit remainder is dropped exactly
 // the way the spec's integer money model requires (CLAUDE.md: "Floats near
 // money fail review"). Range guard: the largest billable window under
 // spec §4.7 is a 1 TB instance resident for 24 h = ~2.1e9 mb_seconds, so
-// mbSeconds * 1000 ≈ 2.1e12, well below int64 max (~9.2e18).
+// mbSeconds * 5000 ≈ 1.1e13, well below int64 max (~9.2e18).
 func WireQuantityForMBSeconds(mbSeconds int64) int64 {
 	return mbSeconds * WireQuantityMillicentsPerGBHour / SecondsPerGBHour
 }

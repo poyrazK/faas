@@ -18,6 +18,7 @@ var actions = map[string]authz.OrgAction{
 	"POST /v1/postgres/databases/{id}/undelete":                          authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/resize":                            authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/compute-policy":                    authz.OrgActionManagePostgres,
+	"PUT /v1/postgres/databases/{id}/previews":                           authz.OrgActionManagePostgres,
 	"DELETE /v1/postgres/databases/{id}":                                 authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/bindings":                          authz.OrgActionBindPostgres,
 	"DELETE /v1/postgres/bindings/{id}":                                  authz.OrgActionBindPostgres,

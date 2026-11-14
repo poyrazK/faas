@@ -71,6 +71,8 @@ func pipelineMirrorError(err error) error {
 		return datapipeline.ErrQuota
 	case errors.Is(err, managedpostgres.ErrConflict):
 		return datapipeline.ErrConflict
+	case errors.Is(err, managedpostgres.ErrNotFound):
+		return datapipeline.ErrNotFound
 	case errors.Is(err, managedpostgres.ErrInvalid), errors.Is(err, managedpostgres.ErrNotInPlan), errors.Is(err, managedpostgres.ErrUnsupported):
 		return datapipeline.ErrInvalid
 	default:

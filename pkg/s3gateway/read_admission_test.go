@@ -19,9 +19,9 @@ type cachedReadStore struct {
 	recorded []state.ObjectReadUsage
 }
 
-func (s *cachedReadStore) ObjectReadAdmission(_ context.Context, _, _ string, at time.Time, _ api.ObjectStoragePolicy) (state.ObjectReadAdmission, error) {
+func (s *cachedReadStore) ObjectReadAdmission(_ context.Context, account, _ string, at time.Time, _ api.ObjectStoragePolicy) (state.ObjectReadAdmission, error) {
 	s.reads++
-	return state.ObjectReadAdmission{Period: state.ObjectStoragePeriod(at), MaxRequests: 10, MaxEgressBytes: 10, MaxAuthorizations: 10}, nil
+	return state.ObjectReadAdmission{SubjectID: account, Period: state.ObjectStoragePeriod(at), MaxRequests: 10, MaxEgressBytes: 10, MaxAuthorizations: 10}, nil
 }
 
 func (s *cachedReadStore) RecordObjectReadUsage(_ context.Context, usage []state.ObjectReadUsage) error {

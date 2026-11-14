@@ -40,7 +40,7 @@ func (p *GCS) ListSnapshotObjectVersions(ctx context.Context, bucket, cursor str
 }
 
 func (s *googleGCSStore) ReadObjectVersion(ctx context.Context, bucket, key string, generation int64) (io.ReadCloser, error) {
-	return s.client.Bucket(bucket).Object(key).Generation(generation).NewReader(ctx)
+	return s.client.Bucket(bucket).Object(key).Generation(generation).NewReader(context.WithValue(ctx, gcsObjectStreamContextKey{}, true))
 }
 
 func (p *GCS) ReadObjectVersion(ctx context.Context, bucket, key, version string) (io.ReadCloser, error) {

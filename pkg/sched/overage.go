@@ -65,8 +65,8 @@ func (s OverageStatus) String() string {
 type OverageChecker interface {
 	// Check returns the cap-reached status for the account plus the
 	// observed and cap cents (so the caller can lift them into the
-	// *api.Problem Extensions without re-reading). MUST fail open
-	// (OverageOK, 0, 0, nil) on a transient read error.
+	// *api.Problem Extensions without re-reading). A transient read error
+	// retains a known reached decision for its month; otherwise it fails open.
 	Check(ctx context.Context, accountID string) (status OverageStatus, observedCents, capCents int64, err error)
 	// RecordReached emits an overage.cap_reached audit row for the
 	// account, deduped per UTC day. Implementations MUST be safe to
@@ -88,6 +88,7 @@ type overageEntry struct {
 	observedCents int64
 	capCents      int64
 	exp           time.Time
+	month         time.Time // month for which a reached decision was observed
 	// lastEmittedDay is the UTC day the audit row was last written
 	// for this account. Empty string = never emitted.
 	lastEmittedDay string
@@ -148,7 +149,7 @@ func newMemCacheOverageChecker(store overageReadStore, ttl time.Duration) *memCa
 
 // Check consults the cache, falling through to the store on a miss or
 // expiry. A store error is logged at the metric level (callers see
-// OverageOK so the wake proceeds; meterd is the safety net).
+// the last reached decision for this month, or OverageOK if none is known).
 func (c *memCacheOverageChecker) Check(ctx context.Context, accountID string) (OverageStatus, int64, int64, error) {
 	now := c.now()
 	// Fast path: cache hit, not expired.
@@ -168,18 +169,7 @@ func (c *memCacheOverageChecker) load(ctx context.Context, accountID string, now
 	// FaaS scale both are bounded (~1ms each), so we do not batch.
 	capCents, ok, err := c.store.GetAccountOverageCapCents(ctx, accountID)
 	if err != nil {
-		// Fail open: a transient PG error must not freeze the wake
-		// hot path. The audit row's day-dedupe still kicks in if the
-		// store recovers before the next tick.
-		c.mu.Lock()
-		c.cache[accountID] = overageEntry{
-			status:        OverageOK,
-			observedCents: 0,
-			capCents:      0,
-			exp:           now.Add(c.ttl),
-		}
-		c.mu.Unlock()
-		return OverageOK, 0, 0, err
+		return c.readFailure(accountID, now, err)
 	}
 	if !ok {
 		// No cap (NULL). Cache the OK outcome for the TTL window so
@@ -196,16 +186,7 @@ func (c *memCacheOverageChecker) load(ctx context.Context, accountID string, now
 	}
 	obsCents, err := c.store.CurrentMonthOverageCents(ctx, accountID)
 	if err != nil {
-		// Same fail-open treatment.
-		c.mu.Lock()
-		c.cache[accountID] = overageEntry{
-			status:        OverageOK,
-			observedCents: 0,
-			capCents:      capCents,
-			exp:           now.Add(c.ttl),
-		}
-		c.mu.Unlock()
-		return OverageOK, 0, capCents, err
+		return c.readFailure(accountID, now, err)
 	}
 	status := OverageOK
 	if obsCents >= capCents {
@@ -214,14 +195,17 @@ func (c *memCacheOverageChecker) load(ctx context.Context, accountID string, now
 		// Compute alone is under the cap, but the cap also bounds live
 		// secondary meters (egress) that only meterd prices. Its hold counts
 		// while the cap and month it was computed for still apply
-		// (ADR-20261026120843). A read failure fails open like the reads above.
-		if hold, found, holdErr := holds.GetSpendCapHold(ctx, accountID); holdErr == nil && found && hold.Holds(capCents, now) {
+		// (ADR-20261026120843). A read failure preserves a known reached hold for this month.
+		if hold, found, holdErr := holds.GetSpendCapHold(ctx, accountID); holdErr != nil {
+			return c.readFailure(accountID, now, holdErr)
+		} else if found && hold.Holds(capCents, now) {
 			status, obsCents = OverageReached, max(obsCents, hold.ObservedCents)
 		}
 	}
 	c.mu.Lock()
 	c.cache[accountID] = overageEntry{
 		status:         status,
+		month:          time.Date(now.UTC().Year(), now.UTC().Month(), 1, 0, 0, 0, 0, time.UTC),
 		observedCents:  obsCents,
 		capCents:       capCents,
 		exp:            now.Add(c.ttl),
@@ -229,6 +213,22 @@ func (c *memCacheOverageChecker) load(ctx context.Context, accountID string, now
 	}
 	c.mu.Unlock()
 	return status, obsCents, capCents, nil
+}
+
+// readFailure keeps a known reached decision for its UTC month. An outage
+// cannot release a hold; a successful read or month rollover can. Subjects
+// without a known hold retain the ordinary cap's availability tradeoff.
+func (c *memCacheOverageChecker) readFailure(accountID string, now time.Time, err error) (OverageStatus, int64, int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	month := time.Date(now.UTC().Year(), now.UTC().Month(), 1, 0, 0, 0, 0, time.UTC)
+	d := c.cache[accountID]
+	if d.status != OverageReached || !d.month.Equal(month) {
+		d.status, d.observedCents, d.capCents = OverageOK, 0, 0
+	}
+	d.exp = now.Add(c.ttl)
+	c.cache[accountID] = d
+	return d.status, d.observedCents, d.capCents, err
 }
 
 // RecordReached emits overage.cap_reached audit row once per UTC day
@@ -250,13 +250,8 @@ func (c *memCacheOverageChecker) RecordReached(ctx context.Context, accountID st
 		c.mu.Unlock()
 		return
 	}
-	c.cache[accountID] = overageEntry{
-		status:         entry.status,
-		observedCents:  entry.observedCents,
-		capCents:       entry.capCents,
-		exp:            entry.exp,
-		lastEmittedDay: today,
-	}
+	entry.lastEmittedDay = today
+	c.cache[accountID] = entry
 	c.mu.Unlock()
 
 	payload, err := json.Marshal(map[string]any{

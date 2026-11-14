@@ -166,7 +166,7 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketBusy)
 	}
 	if fenced {
-		return ObjectDeletion{}, false, ErrConflict
+		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketTransition)
 	}
 	now, e := q.ObjectVersioningNow(ctx, tx)
 	if e != nil {
@@ -182,6 +182,9 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 		}
 	}
 	if !immutableDeletion(j) && ready.Versions.Bool && (!versionAdmissionMode(snapshot, j.BucketID) || j.ProviderStatus == "") {
+		if objectVersioningTransitionActive(v) {
+			return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketTransition)
+		}
 		return ObjectDeletion{}, false, ErrConflict
 	}
 	if j.Selector == "" && j.ProviderStatus != "" && !nativeGCSDeletionStatus(j.ProviderStatus) {

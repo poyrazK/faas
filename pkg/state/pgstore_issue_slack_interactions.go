@@ -28,7 +28,21 @@ func (s *PgStore) ApplyIssueSlackInteraction(ctx context.Context, app string, in
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
-	if _, err = q.IssueLockApp(ctx, tx, issueUUID(app)); err != nil {
+	identityArgs := sqlc.IssueSlackIdentityGetParams{AppID: issueUUID(app), SlackUserID: in.UserID}
+	initialIdentity, identityErr := q.IssueSlackIdentityGet(ctx, tx, identityArgs)
+	hadIdentity := identityErr == nil
+	if identityErr != nil && !errors.Is(identityErr, pgx.ErrNoRows) {
+		return out, identityErr
+	}
+	if hadIdentity {
+		appPolicy, err := q.IssuePolicyApp(ctx, tx, issueUUID(app))
+		if err != nil {
+			return out, mapErr(err)
+		}
+		if _, err = lockIssueResponseActor(ctx, tx, app, issueID(appPolicy.AccountID), issueID(initialIdentity.AccountID)); err != nil {
+			return out, err
+		}
+	} else if _, err = q.IssueLockApp(ctx, tx, issueUUID(app)); err != nil {
 		return out, mapErr(err)
 	}
 	c, err := q.IssueSlackActionContext(ctx, tx, sqlc.IssueSlackActionContextParams{AppID: issueUUID(app), DeliveryID: issueUUID(in.DeliveryID), ChannelID: in.ChannelID, MessageTs: in.MessageTS, PolicyRevision: in.PolicyRevision, EntitledPlans: issueSlackEntitledPlans()})
@@ -64,8 +78,11 @@ func (s *PgStore) ApplyIssueSlackInteraction(ctx context.Context, app string, in
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
 	}
-	identity, err := q.IssueSlackIdentityGet(ctx, tx, sqlc.IssueSlackIdentityGetParams{AppID: c.AppID, SlackUserID: in.UserID})
+	identity, err := q.IssueSlackIdentityGet(ctx, tx, identityArgs)
 	if errors.Is(err, pgx.ErrNoRows) {
+		if hadIdentity {
+			return out, ErrNotFound
+		}
 		out.LinkToken, err = createSlackLinkChallenge(ctx, q, tx, c.AppID, in)
 		if err != nil {
 			return out, err
@@ -75,6 +92,9 @@ func (s *PgStore) ApplyIssueSlackInteraction(ctx context.Context, app string, in
 	}
 	if err != nil {
 		return out, err
+	}
+	if !hadIdentity || identity.AccountID != initialIdentity.AccountID {
+		return out, ErrNotFound
 	}
 	actor := issueID(identity.AccountID)
 	scope, err := applicationTriageScope(ctx, q, tx, app, issueID(c.AccountID), actor, issueID(c.IssueID))

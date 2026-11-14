@@ -127,3 +127,52 @@ tests:
               summary: "faas-cgroup-metrics on fsn-2 has not written for over 5 minutes"
               description: "The per-slice resource numbers on fsn-2 are stale, so the other cgroup_resources alerts cannot fire there. Check systemctl status faas-cgroup-metrics.timer and journalctl -u faas-cgroup-metrics."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCgroupResources.md"
+
+  # ADR-20261109172421: a node whose tenants use over 90% of the tenant
+  # slice's per-host CPUQuota while their tasks wait for a CPU over 20% of the
+  # time is saturated. Either alone is not: a busy slice whose tasks do not
+  # wait has CPU to spare, and waits under a half-used quota are one app's
+  # own vCPUs.
+  - interval: 30s
+    name: "tenant slice at its CPU quota with tasks waiting warns"
+    input_series:
+      # compute-1: 1.9 of 2 cores (95%), tasks waiting 30% of the time.
+      - series: 'faas_cgroup_cpu_usage_seconds_total{job="node",instance="compute-1",cgroup="faas-tenant.slice"}'
+        values: '0+57x80'
+      - series: 'faas_cgroup_cpu_quota_cores{job="node",instance="compute-1",cgroup="faas-tenant.slice"}'
+        values: '2x80'
+      - series: 'faas_cgroup_pressure_stall_seconds_total{job="node",instance="compute-1",cgroup="faas-tenant.slice",resource="cpu",kind="some"}'
+        values: '0+9x80'
+      # compute-2: as busy, but tasks wait only 5% of the time.
+      - series: 'faas_cgroup_cpu_usage_seconds_total{job="node",instance="compute-2",cgroup="faas-tenant.slice"}'
+        values: '0+57x80'
+      - series: 'faas_cgroup_cpu_quota_cores{job="node",instance="compute-2",cgroup="faas-tenant.slice"}'
+        values: '2x80'
+      - series: 'faas_cgroup_pressure_stall_seconds_total{job="node",instance="compute-2",cgroup="faas-tenant.slice",resource="cpu",kind="some"}'
+        values: '0+1.5x80'
+      # compute-3: tasks wait 30% of the time, but at half the quota.
+      - series: 'faas_cgroup_cpu_usage_seconds_total{job="node",instance="compute-3",cgroup="faas-tenant.slice"}'
+        values: '0+30x80'
+      - series: 'faas_cgroup_cpu_quota_cores{job="node",instance="compute-3",cgroup="faas-tenant.slice"}'
+        values: '2x80'
+      - series: 'faas_cgroup_pressure_stall_seconds_total{job="node",instance="compute-3",cgroup="faas-tenant.slice",resource="cpu",kind="some"}'
+        values: '0+9x80'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasNodeCPUSaturated
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: FaasNodeCPUSaturated
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: node
+              family: cgroup_resources
+              public_status: internal
+              job: node
+              instance: compute-1
+              cgroup: faas-tenant.slice
+            exp_annotations:
+              summary: "Tenants on compute-1 have used over 90% of their CPU for 15m"
+              description: "faas-tenant.slice on compute-1 has run at over 90% of its CPUQuota for 15 minutes while tenant tasks waited for a CPU over 20% of the time. Wakes still land (memory is the only capacity limit, ADR-20261109172421), so requests there get slower instead. Add a node or move hot apps; do not lower the platform reserve to buy tenant CPU."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNodeCPUSaturated.md"

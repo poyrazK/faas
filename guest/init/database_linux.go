@@ -103,6 +103,8 @@ type databaseGuest struct {
 	exited   chan struct{}
 	done     chan struct{}
 	stopOnce sync.Once
+	// replicas are the sessions a hot standby serves as the read replica.
+	replicas replicaSessions
 }
 
 // databaseBoot is what the kernel command line asks of database mode.
@@ -858,7 +860,9 @@ func (g *databaseGuest) query(ctx context.Context, sql string) (string, error) {
 
 // serveData bridges each vsock session to PostgreSQL's local socket.
 // Sessions arriving before the database is ready are closed at once; the
-// host waits for the ready state on the control port first.
+// host waits for the ready state on the control port first. A hot standby
+// serves read sessions as the database's replica (ADR-1027 amendment
+// 2026-11-11) until it is promoted.
 func (g *databaseGuest) serveData(ln net.Listener) {
 	socket := filepath.Join(databaseSocketDir, ".s.PGSQL.5432")
 	for {
@@ -866,11 +870,17 @@ func (g *databaseGuest) serveData(ln net.Listener) {
 		if err != nil {
 			return
 		}
-		if g.currentState() != dbguest.StateReady {
+		switch state := g.currentState(); {
+		case state == dbguest.StateReady:
+			go bridgeDatabaseSession(conn, socket)
+		case state == dbguest.StateStandby && g.replicas.add(conn):
+			go func() {
+				defer g.replicas.remove(conn)
+				bridgeDatabaseSession(conn, socket)
+			}()
+		default:
 			_ = conn.Close()
-			continue
 		}
-		go bridgeDatabaseSession(conn, socket)
 	}
 }
 

@@ -38,7 +38,8 @@ class ManagedPostgresResize:
     connection_interruption_expected: bool
     created_at: datetime.datetime
     last_error_code: str | Unset = UNSET
-    """Safe diagnostic code; pending intent remains recoverable after uncertain provider outcomes."""
+    """Safe diagnostic code. A failed resize retains the confirmed source configuration; uncertain outcomes remain
+    pending."""
     completed_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

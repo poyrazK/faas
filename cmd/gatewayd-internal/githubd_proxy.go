@@ -102,11 +102,18 @@ func newGithubdProxy(target string, secret []byte, platformDomain string, next h
 		replay = replayStores[0]
 	}
 	return &githubdProxy{
-		target:         u,
-		secret:         secret,
-		next:           next,
-		log:            log,
-		transport:      &http.Transport{},
+		target: u,
+		secret: secret,
+		next:   next,
+		log:    log,
+		transport: &http.Transport{
+			DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 30 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   8,
+		},
 		auditor:        auditor,
 		replay:         replay,
 		platformDomain: normalizeWebhookHost(platformDomain),
@@ -213,7 +220,9 @@ func (g *githubdProxy) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	// as a taint flow we don't actually have.
 	upstream := *g.target
 	upstream.Path = r.URL.Path
-	req2, err := http.NewRequest(http.MethodPost, upstream.String(), bytes.NewReader(body))
+	upstreamCtx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	req2, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, upstream.String(), bytes.NewReader(body))
 	if err != nil {
 		g.releaseReplay(r.Context(), deliveryID)
 		g.log.Error("githubd proxy build upstream request", "err", err)

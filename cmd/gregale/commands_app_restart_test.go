@@ -248,3 +248,26 @@ func TestCmdAppRestartSnapshotBehaviorAndArgumentValidation(t *testing.T) {
 		t.Fatalf("invalid arguments submitted a restart: %d", posts)
 	}
 }
+
+// When --timeout ends the wait, the restart is still running server-side: the
+// CLI says so with the last status, not "Could not reach Gregale".
+func TestFollowAppRestartTimeoutSaysTheRestartContinues(t *testing.T) {
+	row := restartStatusTestReceipt("retrying")
+	row.FailureReason = "restart_attempt_failed"
+	client := &restartPollTestClient{rows: []api.RuntimeConfigRestartStatusResponse{row}}
+	var stdout, stderr strings.Builder
+	oldOut, oldErr := osStdout, osStderr
+	osStdout, osStderr = &stdout, &stderr
+	t.Cleanup(func() { osStdout, osStderr = oldOut, oldErr })
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	options := appRestartOptions{wakeID: row.WakeID, wait: true, fresh: true, timeout: 20 * time.Millisecond, interval: time.Hour}
+	if code := followAppRestart(ctx, t.Context(), client, "demo", options, false); code == 0 {
+		t.Fatal("a wait that ran out of time exited 0")
+	}
+	got := stderr.String()
+	if !strings.Contains(got, "Restart still processing") || !strings.Contains(got, "the restart continues") ||
+		!strings.Contains(got, "last status: retrying") || strings.Contains(got, "Could not reach") {
+		t.Fatalf("timeout output does not say the restart continues:\n%s", got)
+	}
+}

@@ -14,13 +14,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"github.com/onebox-faas/faas/api/proto/onebox/faas/apid/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -122,8 +122,8 @@ func (a *advisoryReceiver) ForwardStatelessAdvisory(ctx context.Context, req *ap
 	// `data.severity` field and the counter increment use the same
 	// value so they can't drift if severityForPath ever gains a new
 	// branch (e.g. a future "low" tier). advisoryBatchSeverity's
-	// vocabulary is the receiver-internal set (severityHigh /
-	// severityWarn / severityInfo) and is exactly the wire-side
+	// vocabulary is pkg/api's StatelessAdvisorySeverity{High,Warn,Info}
+	// and is exactly the wire-side
 	// counter vocabulary (AdvisorySeverity{High,Warn,Info}) so no
 	// translation is needed.
 	severity := advisoryBatchSeverity(req.Events)
@@ -216,75 +216,24 @@ func joinMasksForJSON(masks []string) string {
 	return out
 }
 
-// Severity labels written into the stateless.advisory audit row's
-// "severity" field (Move 1 PR-A). Defined here as named consts so
-// the goconst gate doesn't fire (test and receiver share the same
-// vocabulary, and the previous string literals appeared >3× each).
-// Mirrors pkg/dashboard/templates/audit_events.html's .badge.high /
-// .badge.warn / .badge.info CSS — a future vocabulary change means
-// touching both.
-const (
-	severityHigh = "high"
-	severityWarn = "warn"
-	severityInfo = "info"
-)
+// Severity labels on the stateless.advisory audit row ("high", "warn",
+// "info") live in pkg/api so vmmd, which writes the row on compute nodes
+// (ADR-047 amendment 2026-11-12), stamps the same value.
 
-// statelessAdvisoryHighPaths is the subset of the closed-path list
-// that warrants the "high" severity badge (Move 1 PR-A). Mirrors
-// pkg/dashboard/dashboard.go's StatelessClosedPaths severity field
-// and guest/init/stateless_advisory_linux.go's statelessRuntimePaths.
-// Kept here as the single source of truth for the apid-side emit;
-// the dashboard mirrors the same set so a future path addition
-// means touching both — see ADR-048 for the lockstep rationale.
-var statelessAdvisoryHighPaths = []string{
-	"/data",
-	"/db",
-	"/var/lib/postgresql",
-	"/var/lib/mysql",
-}
+// severityForPath returns "high" for a high root or any path under one
+// (/data/foo matches /data), else "warn".
+func severityForPath(p string) string { return api.StatelessAdvisoryPathSeverity(p) }
 
-// severityForPath returns severityHigh / severityWarn for a
-// closed-path string, or severityInfo for paths outside the closed
-// list. Pure function — the events list is processed by
-// advisoryBatchSeverity. Tests pin the classification
-// (advisory_receiver_test.go).
-//
-// Match rule: a path is "high" if it equals one of the high-paths
-// OR is a strict sub-path (e.g. /data/foo matches /data, /db/log
-// matches /db). The closed-path list is the *root* of each
-// watched directory; the guest-init fanotify watcher matches by
-// prefix (spec §17 G13), so we mirror that here. Without the
-// prefix match, a customer writing /data/foo would render as
-// "warn" because /data/foo isn't a member of the high list.
-func severityForPath(p string) string {
-	for _, hp := range statelessAdvisoryHighPaths {
-		if p == hp || strings.HasPrefix(p, hp+"/") {
-			return severityHigh
-		}
-	}
-	return severityWarn
-}
-
-// advisoryBatchSeverity returns the highest severity in the batch.
-// A batch with any "high" path is severityHigh; otherwise
-// severityWarn. An empty batch is severityInfo (no paths to
-// classify — defensive default so the audit row's severity field
-// is always populated).
+// advisoryBatchSeverity returns the highest severity in the batch; "info"
+// for an empty one.
 func advisoryBatchSeverity(events []*apidpb.AdvisoryEvent) string {
-	if len(events) == 0 {
-		return severityInfo
-	}
-	high := false
+	paths := make([]string, 0, len(events))
 	for _, e := range events {
-		if severityForPath(e.Path) == severityHigh {
-			high = true
-			break
+		if e != nil {
+			paths = append(paths, e.Path)
 		}
 	}
-	if high {
-		return severityHigh
-	}
-	return severityWarn
+	return api.StatelessAdvisoryBatchSeverity(paths)
 }
 
 // isStateNotFound recognises pkg/state's "not found" sentinel.

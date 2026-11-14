@@ -144,6 +144,9 @@ func standardEnvironmentReviewRevisions(t *testing.T, s standardEnvironmentRevie
 		t.Fatal(err)
 	}
 	f.assertStale(t, s, p)
+	if err := s.UpdateDeploymentStatus(t.Context(), f.dep.ID, state.DeployCancelled, "stopped before environment deletion"); err != nil {
+		t.Fatal(err)
+	}
 	p = f.preview(t, s)
 	if err := s.DeleteProjectEnvironment(t.Context(), f.app.AccountID, f.app.ProjectID, f.env.Slug); err != nil {
 		t.Fatal(err)

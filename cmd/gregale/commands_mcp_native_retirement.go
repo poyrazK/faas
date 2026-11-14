@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
 
 func checkMCPNativeRetirement(ctx context.Context, c *Client, p mcpNativeReleasePlan, s *mcpNativeReleaseState) error {
@@ -79,16 +77,8 @@ func retireMCPNativeWorker(ctx context.Context, c *Client, p mcpNativeReleasePla
 	if !isWorkerApp(app) {
 		return errors.New("candidate retirement requires a worker app")
 	}
-	cfg, err := mcphosting.Load(p.WorkerPath)
-	if err != nil {
+	if _, err := mcpNativeDrainableWorkerIDs(ctx, c, app, p.WorkerApp, s.WorkerDeployment, true); err != nil {
 		return err
-	}
-	deadline := 30 * time.Second
-	if cfg.Tasks != nil && cfg.Tasks.ShutdownTimeoutMS != 0 {
-		deadline = time.Duration(cfg.Tasks.ShutdownTimeoutMS) * time.Millisecond
-	}
-	if app.Manifest.StopGracePeriod <= deadline {
-		return errors.New("candidate stop grace must exceed the Task shutdown deadline")
 	}
 	s.Stage = "retirement_pending"
 	if err := saveMCPNativeState(state, s); err != nil {

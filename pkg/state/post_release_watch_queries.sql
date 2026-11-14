@@ -27,6 +27,7 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
            AND COALESCE(NULLIF(p.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
            AND p.status = 'superseded' AND p.created_at < d.created_at
            AND NOT (p.canary_total_steps > 0 AND p.rollout_state = 'aborted' AND p.rollout_completed_at IS NULL)
+           AND p.last_auto_rollback_reason IS NULL
          ORDER BY COALESCE(p.serving_ended_at, p.created_at) DESC, p.created_at DESC, p.id DESC LIMIT 1) AS pred ON true
  WHERE d.status = 'live'
    AND d.rollback_on_5xx
@@ -37,6 +38,8 @@ SELECT d.id, d.app_id, d.scope, d.created_at,
    AND d.rollout_state = 'complete'
    AND d.rollout_completed_at IS NOT NULL
    AND d.rollout_completed_at > now() - make_interval(secs => sqlc.arg('window_seconds')::int)
+   AND (sqlc.narg(after_completed_at)::timestamptz IS NULL OR
+        (d.rollout_completed_at, d.id) > (sqlc.narg(after_completed_at)::timestamptz, sqlc.narg(after_id)::uuid))
    AND NOT EXISTS (
         SELECT 1 FROM deployments AS n
          WHERE n.app_id = d.app_id

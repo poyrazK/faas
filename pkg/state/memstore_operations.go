@@ -232,7 +232,7 @@ func (m *MemStore) admitOperationLocked(admission OperationAdmission, releaseErr
 	}
 	pending := 0
 	for _, existing := range data.operations {
-		if existing.AccountID == admission.AccountID && !existing.State.Terminal() {
+		if existing.AccountID == admission.AccountID && operationCountsPending(existing, now) {
 			pending++
 		}
 	}
@@ -310,7 +310,7 @@ func (m *MemStore) OperationEvents(_ context.Context, accountID, tenantID, id st
 		return api.OperationEventsResponse{}, ErrOperationExpired
 	}
 	page := api.OperationEventsResponse{Events: []api.OperationEvent{}, LatestSequence: op.LatestSequence}
-	if after > op.LatestSequence || !op.EventExpiresAt.After(now) {
+	if after > op.LatestSequence || !op.EventExpiresAt.After(now) && !repairRetainsHistory(op) {
 		page.ResyncRequired = true
 		return page, nil
 	}

@@ -91,7 +91,7 @@ func assertNativeLiveTableRepair(t *testing.T, ctx context.Context, store *Postg
 	}
 	checkGate := func() {
 		t.Helper()
-		if status, body := client.requestTable("GET", currentReader, "customers", "id=eq.3&select=id,name", ""); status != 200 || strings.TrimSpace(body) != "[]" {
+		if status, body := client.requestTable("GET", currentReader, "customers", "id=eq.3&select=id,name", ""); status != 503 || !strings.Contains(body, "mirror_unavailable") {
 			t.Fatal("failed live table is readable", status, body)
 		}
 		_ = healthyValue()

@@ -1,6 +1,8 @@
 // adr: 20261102124306 — step 3: the RAM an app under memory pressure needs.
 package api
 
+import "fmt"
+
 // MemoryRightSizing is the RAM an app under memory pressure needs: enough
 // that its lowest point would have left ProfileMemoryPressureRearmAvailablePercent
 // of the guest's memory available, the level at which the guest stops
@@ -53,4 +55,19 @@ func RightSizeMemory(plan Plan, appRAMMB, guestTotalMB, lowestAvailableMB int) (
 		}
 	}
 	return out, true
+}
+
+// Advice says how much RAM would have left
+// ProfileMemoryPressureRearmAvailablePercent free at the low point, and
+// whether the plan allows it. App health and debug status both show it.
+func (s MemoryRightSizing) Advice() string {
+	need := fmt.Sprintf("about %d MB would have kept %d%% free", s.SuggestedMB, ProfileMemoryPressureRearmAvailablePercent)
+	switch {
+	case s.FitsPlan:
+		return fmt.Sprintf("Raise ram_mb from %d MB: %s, and the %s plan allows up to %d MB.", s.CurrentMB, need, s.Plan, s.PlanMB)
+	case s.UpgradePlan != "":
+		return fmt.Sprintf("At %d MB, %s, more than the %s plan's %d MB; the %s plan allows %d MB.", s.CurrentMB, need, s.Plan, s.PlanMB, s.UpgradePlan, s.UpgradeMB)
+	default:
+		return fmt.Sprintf("At %d MB, %s, more than any plan allows; trim in-memory state such as caches and buffered request bodies.", s.CurrentMB, need)
+	}
 }

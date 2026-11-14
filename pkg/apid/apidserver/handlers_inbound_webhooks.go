@@ -337,7 +337,7 @@ func (s *server) receiveInboundWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) receiveVerifiedInboundWebhook(w http.ResponseWriter, r *http.Request, endpoint state.InboundWebhookEndpoint, providerEventID, eventType string, body []byte) {
-	if s.receiveWebhookAutomation(w, r, endpoint, providerEventID, eventType, body) {
+	if s.receiveWebhookWorkflow(w, r, endpoint, providerEventID, eventType, body) {
 		return
 	}
 	if s.receiveBoundWorkflowCallback(w, r, endpoint, body) {

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AppPostgresBindingList } from '../models/AppPostgresBindingList.js';
 import type { AppTaskResponse } from '../models/AppTaskResponse.js';
 import type { ChangeManagedPostgresComputePolicyRequest } from '../models/ChangeManagedPostgresComputePolicyRequest.js';
 import type { CreateDataAPIContractTaskRequest } from '../models/CreateDataAPIContractTaskRequest.js';
@@ -9,9 +10,11 @@ import type { CreateManagedPostgresBindingRequest } from '../models/CreateManage
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
 import type { DataAPIChangeEventBatch } from '../models/DataAPIChangeEventBatch.js';
 import type { DataAPIChangeEventBatchResponse } from '../models/DataAPIChangeEventBatchResponse.js';
+import type { DataAPIChangeHookReport } from '../models/DataAPIChangeHookReport.js';
 import type { DataAPIConnectionBudgets } from '../models/DataAPIConnectionBudgets.js';
 import type { DataAPIRuntime } from '../models/DataAPIRuntime.js';
 import type { DataAPIRuntimeConnectionReport } from '../models/DataAPIRuntimeConnectionReport.js';
+import type { DataAPIStatus } from '../models/DataAPIStatus.js';
 import type { DataAPIUsage } from '../models/DataAPIUsage.js';
 import type { DataAPIUsageReport } from '../models/DataAPIUsageReport.js';
 import type { DataAPIUsageReportResponse } from '../models/DataAPIUsageReportResponse.js';
@@ -39,6 +42,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ManagedPostgresService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Show plan and region PostgreSQL feature support
    * Returns configured provider-neutral support after plan limits without provider calls. provisioning_enabled includes qualification and canary gates. Current usage, budget, and quota admission are checked separately at reservation. Existing databases remain pinned to their original backend.
@@ -54,7 +58,7 @@ export class ManagedPostgresService {
      */
     region?: string,
   }): CancelablePromise<ManagedPostgresCapabilities | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/capabilities',
       query: {
@@ -70,7 +74,7 @@ export class ManagedPostgresService {
    * @throws ApiError
    */
   public static getManagedPostgresOverage(): CancelablePromise<ManagedPostgresOverage | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/overage',
     });
@@ -87,7 +91,7 @@ export class ManagedPostgresService {
   }: {
     requestBody: ManagedPostgresOverageRequest,
   }): CancelablePromise<ManagedPostgresOverage | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/postgres/overage',
       body: requestBody,
@@ -101,7 +105,7 @@ export class ManagedPostgresService {
    * @throws ApiError
    */
   public static listManagedPostgresDatabases(): CancelablePromise<ManagedPostgresDatabaseList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases',
     });
@@ -124,7 +128,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresDatabase> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases',
       headers: {
@@ -157,7 +161,7 @@ export class ManagedPostgresService {
     id: string,
     requestBody: LabelChange,
   }): CancelablePromise<LabelsResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/postgres/databases/{id}/labels',
       path: {
@@ -181,7 +185,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases/{id}',
       path: {
@@ -216,7 +220,7 @@ export class ManagedPostgresService {
      */
     purge?: boolean,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/postgres/databases/{id}',
       path: {
@@ -252,7 +256,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ResourceStatus | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases/{id}/status',
       path: {
@@ -282,7 +286,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases/{id}/undelete',
       path: {
@@ -316,7 +320,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresCutover> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/cutovers',
       headers: {
@@ -341,7 +345,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresCutover | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/cutovers/{id}',
       path: {
@@ -371,7 +375,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresCutover> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/cutovers/{id}/verify',
       path: {
@@ -411,7 +415,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresCutoverPreflight> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/cutovers/{id}/preflight',
       path: {
@@ -442,7 +446,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresCutoverPreflight | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/cutovers/{id}/preflight',
       path: {
@@ -472,7 +476,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresCutover> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/cutovers/{id}/cancel',
       path: {
@@ -494,7 +498,7 @@ export class ManagedPostgresService {
    * @throws ApiError
    */
   public static getManagedPostgresUsage(): CancelablePromise<ManagedPostgresUsageResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/managed-postgres-usage',
     });
@@ -516,7 +520,7 @@ export class ManagedPostgresService {
     id: string,
     requestBody: ChangeManagedPostgresComputePolicyRequest,
   }): CancelablePromise<Problem | ManagedPostgresComputePolicyChange> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases/{id}/compute-policy',
       path: {
@@ -546,7 +550,7 @@ export class ManagedPostgresService {
      */
     changeId: string,
   }): CancelablePromise<ManagedPostgresComputePolicyChange | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases/{id}/compute-policy-changes/{change_id}',
       path: {
@@ -572,7 +576,7 @@ export class ManagedPostgresService {
     id: string,
     requestBody: ResizeManagedPostgresDatabaseRequest,
   }): CancelablePromise<Problem | ManagedPostgresResize> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases/{id}/resize',
       path: {
@@ -602,7 +606,7 @@ export class ManagedPostgresService {
      */
     resizeId: string,
   }): CancelablePromise<ManagedPostgresResize | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases/{id}/resizes/{resize_id}',
       path: {
@@ -635,7 +639,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresDatabase> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases/{id}/restore',
       path: {
@@ -663,7 +667,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresConnectionBudget | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases/{id}/connection-budget',
       path: {
@@ -686,7 +690,7 @@ export class ManagedPostgresService {
      */
     slug: string,
   }): CancelablePromise<DataAPIConnectionBudgets | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/data-api/connection-budget',
       path: {
@@ -716,9 +720,39 @@ export class ManagedPostgresService {
      */
     slug: string,
   }): CancelablePromise<DataAPIRuntime | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/data-api/runtime',
+      path: {
+        'slug': slug,
+      },
+    });
+  }
+  /**
+   * Read a Data API's platform status
+   * Returns what the platform knows about the app's Data API without
+   * waking it: the runtime version this control plane serves, whether
+   * this installation accepts runtime reports, and the change hook
+   * delivery the app's runtime last reported. Without runtime reports,
+   * usage reports, monthly caps, keyless live reads and change hooks do
+   * not reach the platform. `change_hooks` is absent until a runtime with
+   * change hooks on has reported.
+   *
+   * @returns DataAPIStatus The Data API's status
+   * @returns Problem App lookup, permission or status read failure
+   * @throws ApiError
+   */
+  public static getDataApiStatus({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DataAPIStatus | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/data-api/status',
       path: {
         'slug': slug,
       },
@@ -753,7 +787,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<AppTaskResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/data-api/contract-tasks',
       path: {
@@ -798,7 +832,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<AppTaskResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/data-api/contract-tasks/{id}',
       path: {
@@ -843,7 +877,7 @@ export class ManagedPostgresService {
      */
     granularity?: 'hour' | 'day',
   }): CancelablePromise<DataAPIUsage | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/data-api/usage',
       path: {
@@ -852,6 +886,34 @@ export class ManagedPostgresService {
       query: {
         'since': since,
         'granularity': granularity,
+      },
+    });
+  }
+  /**
+   * List an app's managed PostgreSQL bindings
+   * Lists the app's live managed PostgreSQL bindings on every database it
+   * is bound to, including organization databases and project environment
+   * copies. Deleting the app is refused while a binding listed here is not
+   * being deleted. Bindings on an environment copy are removed by tearing
+   * down that environment.
+   *
+   * @returns AppPostgresBindingList The app's bindings on every database, without credential material
+   * @returns Problem App lookup, permission or binding listing error
+   * @throws ApiError
+   */
+  public static listAppPostgresBindings({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<AppPostgresBindingList | Problem> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/postgres-bindings',
+      path: {
+        'slug': slug,
       },
     });
   }
@@ -869,7 +931,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresBindingList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/databases/{id}/bindings',
       path: {
@@ -901,7 +963,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresBinding> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/databases/{id}/bindings',
       path: {
@@ -928,7 +990,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/postgres/bindings/{id}',
       path: {
@@ -957,7 +1019,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/postgres/bindings/{id}',
       path: {
@@ -990,7 +1052,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/postgres/bindings/{id}/rotate',
       path: {
@@ -1012,7 +1074,7 @@ export class ManagedPostgresService {
   }: {
     requestBody: DataAPIRuntimeConnectionReport,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/runtime/data-api/connection-observations',
       body: requestBody,
@@ -1031,7 +1093,7 @@ export class ManagedPostgresService {
   }
   /**
    * Report Data API usage deltas
-   * Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion; account, app and instance come from it, never from the body. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
+   * Private runtime surface. Requires a short-lived gregale:data-api:usage workload assertion from a live instance of an active app; account, app and instance come from it, never from the body. Only a production deployment reports; a stage, preview or cloned environment is refused for good with 403 workload_not_production, so its usage never counts against production's caps and its access settings never govern production's live reads. Each report id is applied once, so retried or snapshot-duplicated reports add nothing. Hours must be aligned and at most 48 hours old. Owner API keys and application JWTs are not accepted.
    * @returns DataAPIUsageReportResponse Report applied, or already applied; month-to-date totals for owner caps.
    * @throws ApiError
    */
@@ -1040,7 +1102,7 @@ export class ManagedPostgresService {
   }: {
     requestBody: DataAPIUsageReport,
   }): CancelablePromise<DataAPIUsageReportResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/runtime/data-api/usage',
       body: requestBody,
@@ -1048,6 +1110,7 @@ export class ManagedPostgresService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
@@ -1057,8 +1120,42 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Spend shared Data API request credit
+   * Private runtime surface. Requires a dedicated gregale:data-api:budget workload assertion. Account and app come from the assertion. The body contains a digest of a verified subject or tenant and owner deployment policy. Admission spends one credit atomically across replicas; a lost reply may spend credit without customer SQL. No automatic replay is permitted.
+   * @returns any Admission decision; a refusal does not dispatch customer SQL.
+   * @throws ApiError
+   */
+  public static admitDataApiSharedBudget({
+    requestBody,
+  }: {
+    requestBody: {
+      version: 1;
+      key: string;
+      requests: number;
+      window_seconds: number;
+    },
+  }): CancelablePromise<{
+    allowed: boolean;
+    retry_after_seconds: number;
+  }> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/data-api/budget',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
    * Publish recorded Data API row changes
-   * Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload assertion from a live instance of an active app; account and app come from it, never from the body. Each event publishes as an app-scoped producer-key event under the app's own source with key data-api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in order; publication stops at the first event that may succeed later, and later events are reported as retryable without being attempted. Owner API keys and application JWTs are not accepted.
+   * Private runtime surface for change hooks. Requires a short-lived gregale:data-api:events workload assertion from a live instance of an active app; account and app come from it, never from the body. Only a production deployment publishes; a stage, preview or cloned environment is refused for good with 403 workload_not_production. Each event publishes as an app-scoped producer-key event under the app's own source with key data-api.change.ID, so a republished change deduplicates while its receipt is retained. Events publish in order; publication stops at the first event that may succeed later, and later events are reported as retryable without being attempted. Owner API keys and application JWTs are not accepted.
    * @returns DataAPIChangeEventBatchResponse Per-event outcomes in input order.
    * @throws ApiError
    */
@@ -1067,7 +1164,7 @@ export class ManagedPostgresService {
   }: {
     requestBody: DataAPIChangeEventBatch,
   }): CancelablePromise<DataAPIChangeEventBatchResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/runtime/data-api/events',
       body: requestBody,
@@ -1075,7 +1172,35 @@ export class ManagedPostgresService {
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         413: `The publication exceeds 1 MiB.`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Report Data API change hook delivery
+   * Private runtime surface for change hook delivery. Requires the same gregale:data-api:events workload assertion from a live instance of an active app as publication; account and app come from it, never from the body. The report carries counts the runtime read from its change event table (waiting and rejected changes, when the oldest waiting change was recorded, the latest rejection code, whether publications keep failing) and when it last published; it never carries change data. Owners read the latest report in the app's Data API status. Owner API keys and application JWTs are not accepted.
+   * @returns void
+   * @throws ApiError
+   */
+  public static reportDataApiChangeStatus({
+    requestBody,
+  }: {
+    requestBody: DataAPIChangeHookReport,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/data-api/change-status',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
@@ -1098,7 +1223,7 @@ export class ManagedPostgresService {
      */
     organization: string,
   }): CancelablePromise<ManagedPostgresDatabaseList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/databases',
       path: {
@@ -1135,7 +1260,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresDatabase> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases',
       path: {
@@ -1173,7 +1298,7 @@ export class ManagedPostgresService {
      */
     region?: string,
   }): CancelablePromise<ManagedPostgresCapabilities | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/capabilities',
       path: {
@@ -1209,7 +1334,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/databases/{id}',
       path: {
@@ -1255,7 +1380,7 @@ export class ManagedPostgresService {
      */
     purge?: boolean,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/postgres/databases/{id}',
       path: {
@@ -1295,7 +1420,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresBindingList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/bindings',
       path: {
@@ -1338,7 +1463,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresBinding> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/bindings',
       path: {
@@ -1377,7 +1502,7 @@ export class ManagedPostgresService {
      */
     id: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/bindings/{id}',
       path: {
@@ -1418,7 +1543,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/postgres/bindings/{id}',
       path: {
@@ -1460,7 +1585,7 @@ export class ManagedPostgresService {
      */
     resizeId: string,
   }): CancelablePromise<ManagedPostgresResize | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/resizes/{resize_id}',
       path: {
@@ -1500,7 +1625,7 @@ export class ManagedPostgresService {
      */
     changeId: string,
   }): CancelablePromise<ManagedPostgresComputePolicyChange | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/compute-policy-changes/{change_id}',
       path: {
@@ -1542,7 +1667,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/undelete',
       path: {
@@ -1588,7 +1713,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Problem | ManagedPostgresDatabase> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/restore',
       path: {
@@ -1629,7 +1754,7 @@ export class ManagedPostgresService {
     id: string,
     requestBody: ResizeManagedPostgresDatabaseRequest,
   }): CancelablePromise<Problem | ManagedPostgresResize> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/resize',
       path: {
@@ -1667,7 +1792,7 @@ export class ManagedPostgresService {
     id: string,
     requestBody: ChangeManagedPostgresComputePolicyRequest,
   }): CancelablePromise<Problem | ManagedPostgresComputePolicyChange> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/databases/{id}/compute-policy',
       path: {
@@ -1710,7 +1835,7 @@ export class ManagedPostgresService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/postgres/bindings/{id}/rotate',
       path: {
@@ -1742,7 +1867,7 @@ export class ManagedPostgresService {
      */
     organization: string,
   }): CancelablePromise<ManagedPostgresUsageResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/postgres/usage',
       path: {

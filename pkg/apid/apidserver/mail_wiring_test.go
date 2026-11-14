@@ -88,9 +88,16 @@ func TestMailFactory_PicksCorrectTransport(t *testing.T) {
 			wantType: "*mail.LogSender",
 		},
 		{
-			name:     "noop",
-			env:      map[string]string{"FAAS_MAIL_TRANSPORT": "noop"},
+			name:     "noop-on-dev",
+			env:      map[string]string{"FAAS_MAIL_TRANSPORT": "noop", "FAAS_DEV": "1"},
 			wantType: "mail.NoopSender",
+		},
+		{
+			// A production box that selected noop drops every email; it
+			// boots, but through the sender that logs and counts each drop.
+			name:     "noop-on-prod-is-loud",
+			env:      map[string]string{"FAAS_MAIL_TRANSPORT": "noop"},
+			wantType: "*mail.DroppingSender",
 		},
 		{
 			name: "resend-with-key",

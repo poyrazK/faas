@@ -20,6 +20,9 @@ const (
 	ExecutionEventStdout   ExecutionEventType = "stdout"
 	ExecutionEventStderr   ExecutionEventType = "stderr"
 	ExecutionEventTerminal ExecutionEventType = "terminal"
+	// Gap is synthesized on reads when the requested cursor predates the
+	// retained replay log. The complete bounded output remains in the receipt.
+	ExecutionEventGap      ExecutionEventType = "gap"
 	ExecutionEventMaxBytes                    = 64 * 1024
 )
 
@@ -216,6 +219,12 @@ type ExecutionQueueStore interface {
 	ExecutionQueueStats(ctx context.Context, at time.Time) (ExecutionQueueStats, error)
 	ListExecutionQueueAccounts(ctx context.Context, at time.Time, limit int) ([]ExecutionQueueAccount, error)
 	ClaimExecutionForAccount(ctx context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error)
+}
+
+// ExecutionQueueCursorStore advances the bounded account page across the
+// complete queue, rather than repeatedly sampling the same UUID prefix.
+type ExecutionQueueCursorStore interface {
+	ListExecutionQueueAccountsAfter(ctx context.Context, at time.Time, afterAccountID string, limit int) ([]ExecutionQueueAccount, error)
 }
 
 // ExecutionUsageSummary is the account-scoped aggregate of terminal

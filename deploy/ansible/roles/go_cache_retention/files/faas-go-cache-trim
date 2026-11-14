@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""Trim Go build caches on a native acceptance host when its disk fills.
+
+The native runners (scripts/ci/run-native-*.sh) and operators building by hand
+each keep a Go build cache on the root filesystem. Go trims an entry only after
+five unused days, so a busy host's caches grow faster than they shrink and the
+root disk fills: then every metal run fails at its first write.
+
+This helper does nothing until the filesystem passes the high-water mark. It
+then takes the native acceptance lock without waiting (a run in progress may be
+reading the cache, so it skips and the next tick retries) and removes cache
+entries oldest-use first, in age steps, until usage is below the low-water
+mark. Go refreshes an entry's mtime when it uses one that is more than an hour
+old, so mtime is last use to within an hour. A removed entry is rebuilt on the
+next build that needs it; nothing else is touched.
+"""
+
+import argparse
+import contextlib
+import dataclasses
+import errno
+import fcntl
+import glob
+import json
+import os
+import pathlib
+import re
+import sys
+import tempfile
+import time
+from typing import Iterable, List, Optional
+
+
+DEFAULT_CONFIG = "/etc/faas/go-cache-trim.json"
+DEFAULT_METRICS = "/var/lib/node_exporter/textfile_collector/faas_go_cache_trim.prom"
+
+# The first line of the README Go writes into every build cache. A directory
+# without it is not a Go build cache and is never touched.
+GO_CACHE_README = "This directory holds cached build artifacts from the Go build system."
+SHARD = re.compile(r"^[0-9a-f]{2}$")
+ENTRY = re.compile(r"^[0-9a-f]{64}-[ad]$")
+
+
+class PolicyError(RuntimeError):
+    pass
+
+
+@dataclasses.dataclass
+class Policy:
+    filesystem: str
+    high_water_percent: float
+    low_water_percent: float
+    lock_path: str
+    cache_globs: List[str]
+    age_steps_hours: List[float]
+
+
+@dataclasses.dataclass
+class Result:
+    used_percent_before: float
+    used_percent_after: float
+    freed_bytes: int = 0
+    removed_entries: int = 0
+    caches: int = 0
+    outcome: str = "below_high_water"
+
+
+def load_policy(path: str) -> Policy:
+    with open(path, encoding="utf-8") as stream:
+        raw = json.load(stream)
+    try:
+        policy = Policy(
+            filesystem=str(raw["filesystem"]),
+            high_water_percent=float(raw["high_water_percent"]),
+            low_water_percent=float(raw["low_water_percent"]),
+            lock_path=str(raw["lock_path"]),
+            cache_globs=[str(item) for item in raw["cache_globs"]],
+            age_steps_hours=[float(item) for item in raw["age_steps_hours"]],
+        )
+    except (KeyError, TypeError, ValueError) as err:
+        raise PolicyError(f"go cache trim policy {path}: {err}") from err
+    if not 0 < policy.low_water_percent < policy.high_water_percent <= 100:
+        raise PolicyError(
+            f"go cache trim policy {path}: need 0 < low_water_percent "
+            f"({policy.low_water_percent}) < high_water_percent ({policy.high_water_percent}) <= 100"
+        )
+    if not policy.age_steps_hours or any(step < 1 for step in policy.age_steps_hours):
+        # Under an hour Go may not have refreshed the mtime of an entry in use.
+        raise PolicyError(f"go cache trim policy {path}: age_steps_hours must be non-empty and each >= 1")
+    if any(not item.startswith("/") for item in policy.cache_globs):
+        raise PolicyError(f"go cache trim policy {path}: cache_globs must be absolute")
+    policy.age_steps_hours = sorted(policy.age_steps_hours, reverse=True)
+    return policy
+
+
+def used_percent(filesystem: str) -> float:
+    stat = os.statvfs(filesystem)
+    total = stat.f_blocks * stat.f_frsize
+    if total == 0:
+        return 0.0
+    # Match df: used / (used + available to unprivileged users).
+    used = (stat.f_blocks - stat.f_bfree) * stat.f_frsize
+    available = stat.f_bavail * stat.f_frsize
+    return 100.0 * used / max(used + available, 1)
+
+
+def is_go_cache(path: pathlib.Path) -> bool:
+    try:
+        with open(path / "README", encoding="utf-8", errors="replace") as stream:
+            return stream.readline().strip() == GO_CACHE_README
+    except OSError:
+        return False
+
+
+def find_caches(policy: Policy) -> List[pathlib.Path]:
+    device = os.stat(policy.filesystem).st_dev
+    found = []
+    seen = set()
+    for pattern in policy.cache_globs:
+        for match in sorted(glob.glob(pattern)):
+            path = pathlib.Path(match)
+            try:
+                info = os.stat(path, follow_symlinks=False)
+            except OSError:
+                continue
+            # Only caches on the filesystem being relieved, and never through a
+            # symlink: trimming another disk frees nothing here.
+            if not path.is_dir() or path.is_symlink() or info.st_dev != device:
+                continue
+            key = (info.st_dev, info.st_ino)
+            if key in seen or not is_go_cache(path):
+                continue
+            seen.add(key)
+            found.append(path)
+    return found
+
+
+def entries(cache: pathlib.Path) -> Iterable[os.DirEntry]:
+    with os.scandir(cache) as shards:
+        for shard in shards:
+            if not SHARD.match(shard.name) or not shard.is_dir(follow_symlinks=False):
+                continue
+            with os.scandir(shard.path) as files:
+                for entry in files:
+                    if ENTRY.match(entry.name) and entry.is_file(follow_symlinks=False):
+                        yield entry
+
+
+def trim_older_than(caches: List[pathlib.Path], cutoff: float, result: Result) -> None:
+    for cache in caches:
+        for entry in entries(cache):
+            try:
+                info = entry.stat(follow_symlinks=False)
+                if info.st_mtime >= cutoff:
+                    continue
+                os.unlink(entry.path)
+            except FileNotFoundError:
+                continue
+            result.freed_bytes += info.st_blocks * 512
+            result.removed_entries += 1
+
+
+@contextlib.contextmanager
+def try_lock(path: str):
+    """Yield True while holding the acceptance lock, False when a run holds it."""
+    pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as stream:
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as err:
+            if err.errno in (errno.EAGAIN, errno.EACCES):
+                yield False
+                return
+            raise
+        try:
+            yield True
+        finally:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+def sweep(policy: Policy, now: Optional[float] = None) -> Result:
+    now = time.time() if now is None else now
+    before = used_percent(policy.filesystem)
+    result = Result(used_percent_before=before, used_percent_after=before)
+    if before < policy.high_water_percent:
+        return result
+    with try_lock(policy.lock_path) as held:
+        if not held:
+            result.outcome = "skipped_locked"
+            return result
+        caches = find_caches(policy)
+        result.caches = len(caches)
+        result.outcome = "above_low_water"
+        for hours in policy.age_steps_hours:
+            trim_older_than(caches, now - hours * 3600, result)
+            result.used_percent_after = used_percent(policy.filesystem)
+            if result.used_percent_after < policy.low_water_percent:
+                result.outcome = "trimmed"
+                break
+    return result
+
+
+def render_metrics(result: Result, now: float) -> str:
+    outcomes = ("below_high_water", "skipped_locked", "trimmed", "above_low_water")
+    lines = [
+        "# HELP faas_go_cache_trim_last_run_timestamp_seconds Time of the last Go cache trim check.",
+        "# TYPE faas_go_cache_trim_last_run_timestamp_seconds gauge",
+        f"faas_go_cache_trim_last_run_timestamp_seconds {now:.0f}",
+        "# HELP faas_go_cache_trim_freed_bytes Bytes removed from Go build caches by the last check.",
+        "# TYPE faas_go_cache_trim_freed_bytes gauge",
+        f"faas_go_cache_trim_freed_bytes {result.freed_bytes}",
+        "# HELP faas_go_cache_trim_removed_entries Go build cache entries removed by the last check.",
+        "# TYPE faas_go_cache_trim_removed_entries gauge",
+        f"faas_go_cache_trim_removed_entries {result.removed_entries}",
+        "# HELP faas_go_cache_trim_used_percent Filesystem usage after the last check.",
+        "# TYPE faas_go_cache_trim_used_percent gauge",
+        f"faas_go_cache_trim_used_percent {result.used_percent_after:.2f}",
+        "# HELP faas_go_cache_trim_outcome Outcome of the last check (1 for the current outcome).",
+        "# TYPE faas_go_cache_trim_outcome gauge",
+    ]
+    for outcome in outcomes:
+        value = 1 if outcome == result.outcome else 0
+        lines.append(f'faas_go_cache_trim_outcome{{outcome="{outcome}"}} {value}')
+    return "\n".join(lines) + "\n"
+
+
+def write_metrics(path: str, content: str) -> None:
+    target = pathlib.Path(path)
+    if not target.parent.is_dir():
+        return
+    fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=str(target.parent))
+    try:
+        os.fchmod(fd, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(content)
+        os.replace(temporary, target)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary)
+        raise
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("command", choices=["sweep", "status"])
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
+    parser.add_argument("--metrics", default=DEFAULT_METRICS)
+    args = parser.parse_args(argv)
+    policy = load_policy(args.config)
+    if args.command == "status":
+        caches = find_caches(policy)
+        print(json.dumps({
+            "filesystem": policy.filesystem,
+            "used_percent": round(used_percent(policy.filesystem), 2),
+            "high_water_percent": policy.high_water_percent,
+            "low_water_percent": policy.low_water_percent,
+            "caches": [str(cache) for cache in caches],
+        }, indent=2))
+        return 0
+    now = time.time()
+    result = sweep(policy, now)
+    write_metrics(args.metrics, render_metrics(result, now))
+    print(json.dumps(dataclasses.asdict(result)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -79,7 +79,7 @@ func TestTaskSchemaRestrictedRuntimePostgres(t *testing.T) {
 	if err = migration.QueryRow(ctx, `SELECT count(*) FROM gregale_mcp_tasks`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("migration lost existing tasks: count=%d err=%v", count, err)
 	}
-	if _, err = admin.Exec(ctx, "GRANT USAGE ON SCHEMA "+quoted+" TO "+quoted+"; GRANT SELECT,INSERT,UPDATE,DELETE ON "+quoted+".gregale_mcp_tasks,"+quoted+".gregale_mcp_task_worker_handlers,"+quoted+".gregale_mcp_task_owners TO "+quoted+"; GRANT SELECT ON "+quoted+".gregale_mcp_task_starter_schema TO "+quoted); err != nil {
+	if _, err = admin.Exec(ctx, "GRANT USAGE ON SCHEMA "+quoted+" TO "+quoted+"; GRANT SELECT,INSERT,UPDATE,DELETE ON "+quoted+".gregale_mcp_tasks,"+quoted+".gregale_mcp_task_worker_handlers,"+quoted+".gregale_mcp_task_owners,"+quoted+".gregale_mcp_task_workers TO "+quoted+"; GRANT SELECT ON "+quoted+".gregale_mcp_task_starter_schema TO "+quoted); err != nil {
 		t.Fatal(err)
 	}
 	runtimeURL, err := neturl.Parse(url)
@@ -110,7 +110,7 @@ func TestTaskSchemaRestrictedRuntimePostgres(t *testing.T) {
 	if err = checkTaskSchema(ctx, runtime.pool); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"gregale_mcp_tasks", "gregale_mcp_task_worker_handlers", "gregale_mcp_task_owners"} {
+	for _, table := range []string{"gregale_mcp_tasks", "gregale_mcp_task_worker_handlers", "gregale_mcp_task_owners", "gregale_mcp_task_workers"} {
 		if _, err := admin.Exec(ctx, "REVOKE INSERT,UPDATE,DELETE ON "+quoted+"."+pgx.Identifier{table}.Sanitize()+" FROM "+quoted); err != nil {
 			t.Fatal(err)
 		}

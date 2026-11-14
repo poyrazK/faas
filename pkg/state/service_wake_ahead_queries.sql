@@ -27,5 +27,5 @@ SELECT COALESCE(
 -- Billable RAM of live instances against the active nodes' admission ceilings.
 SELECT
     COALESCE((SELECT SUM(ram_mb + sqlc.arg(overhead_mb)::integer) FROM instances
-              WHERE state IN ('waking', 'cold_booting', 'running', 'draining', 'warm')), 0)::bigint AS resident_mb,
+              WHERE state IN ('waking', 'cold_booting', 'running', 'draining', 'warm', 'snapshotting')), 0)::bigint AS resident_mb,
     COALESCE((SELECT SUM(admission_ceiling_mb) FROM compute_nodes WHERE active), 0)::bigint AS ceiling_mb;

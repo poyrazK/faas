@@ -38,7 +38,7 @@ func confirmProjectPlan(plan api.PlanResponse, excludeList []string, showAffecte
 	// the machine-readable stdout stream. Emit the complete plan first, then
 	// fail closed so an operator or CI job must make the approval explicit.
 	if jsonOutput {
-		if code := jsonOut(writeJSON(plan)); code != 0 {
+		if code := jsonOut(writeJSON(withFeatureHints(plan))); code != 0 {
 			return code
 		}
 		return printErr("Confirmation required", errors.New("project deploy requires --yes in JSON mode"))

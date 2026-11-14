@@ -130,22 +130,15 @@ them, attach a read/write PostgreSQL binding to the app, keep a stable
 }
 ```
 
-The starter creates and migrates its namespaced task table, queue index,
-notification function, and update trigger in that database. The bound role
-must be able to create and alter the table, index, function, and trigger. The
-store hashes owner identity and encrypts arguments, results, and errors with
-AES-256-GCM before writing them.
-The default payload format preserves the current task encryption wire format.
-Configure the same active and previous keys on every serving replica and task
-worker that shares the PostgreSQL database.
-For rotation, first deploy a rotation-capable starter everywhere, distribute
-the next key as a previous key while the current key remains active, then
-switch the active key and keep the previous key configured. After that rollout
-completes, set `payload_encryption_version` to `2`; live payloads are rewrapped
-in bounded background batches. Keep the old owner key configured for at least
-30 days after the active-key rollout completes because existing caller
-ownership hashes cannot be recomputed. Tasks expire after the configured TTL
-(60 seconds to 30 days).
+Run the explicit schema migration with a separate schema-owner binding before
+starting the runtime. Application bindings require Task DML and metadata SELECT
+privileges; startup validates the schema and retained encryption keys without DDL.
+The store hashes caller identity and encrypts payloads with AES-256-GCM.
+Keep the Node queue's owner key stable. Use `tasks.encryption_keys_env` for
+independent payload-key rotation, as described below. `owner_key_id` and
+`previous_owner_keys` also retain native Go/Python payload readers during a
+handoff; `payload_encryption_version` does not select Node's writer format.
+Keep reader keys until all retained payloads using them have expired.
 `MCP_TASK_NAMESPACE` overrides
 
 Run `npm run tasks:migrate -- apply` with a separate schema-owner binding in
@@ -195,6 +188,12 @@ adapter is process-local; pass a shared `resourceUpdateAdapter` with
 another web replica. PostgreSQL `LISTEN`/`NOTIFY` carries task changes to web
 replicas; bounded polling remains the recovery path if a database listener is
 unavailable.
+
+The Node web process permits 128 Task/resource notification streams, including
+setups waiting on task lookups or resource adapters. Disconnects and setup
+failures release that capacity. An adapter's `subscribe(uri, listener)` may return an
+unsubscribe function or a promise for one; handles that arrive after cancellation
+are disposed immediately. Application drain also closes pending setups.
 
 ```sh
 # Set this in the HTTP app so it accepts tasks without executing them.
@@ -262,6 +261,14 @@ matching MCP tool with `createApp().registerTool(...)`; clients that advertise
 MCP Tasks are queued automatically for registered task handlers, while other
 clients use the regular tool callback. The registered handler's `validate`
 function checks arguments before they are persisted.
+Catalog registration and replacement snapshot plain nested metadata and JSON
+schemas. Catalog readers receive independent metadata copies; use the explicit
+replace APIs to publish a change and notify subscribers. Standard Schema validators
+(including Zod) retain their validation behavior, while their JSON schemas and
+nested metadata are captured at registration. Prompt completion callbacks are
+preserved. Mutating a Zod `.meta()` object cannot change an existing registration.
+Task tool names accept 1–128 visible ASCII characters, including uppercase names
+and punctuation. Registration, admission and worker inventory use the same rule.
 
 ```js
 registerMcpTaskHandler('lookup', {
@@ -311,6 +318,9 @@ after a dropped connection; clients can continue using `tasks/get` polling when
 notifications are unavailable. PostgreSQL `LISTEN`/`NOTIFY` carries updates
 from a separate worker to the web process; bounded polling takes over if the
 database connection or pooler cannot keep a listener open.
+When the last watched Task expires or becomes inaccessible, its subscription
+slot and database listener are released. A Task-only SSE stream finishes; any
+resource or catalog filters on the same stream continue receiving updates.
 
 The portable suite exercises the MCP wire with a memory store and checks SQL
 parameters through a fake PostgreSQL pool. The repository's PostgreSQL 16
@@ -441,12 +451,22 @@ The returned object also provides `replaceTool`/`removeTool`,
 `registerResource`/`replaceResource`/`removeResource`, and
 `registerPrompt`/`replacePrompt`/`removePrompt`. Resource registration uses the
 same `(name, uriOrTemplate, definition, handler)` arguments as the MCP SDK.
+Visible-ASCII names such as `constructor` and `__proto__` are supported for tools,
+prompts and resource templates. Replacing the sample `customer_record` resource
+uses the supplied URI/template, data handler and completion callbacks; the sample
+record guard belongs only to the original built-in handler.
 Handlers must validate their own tool arguments and enforce ownership for
 application data. Successful catalog changes notify active subscribers when
 that caller's authorized catalog changed. In external OAuth mode, add every
 dynamic name or resource URI pattern to the matching scope allow-list; missing
 policy entries stay hidden and denied. The registry is local to one process, so
 every serving replica needs the same application registration code.
+
+Resource subscriptions require a synchronous `authorize(uri, {authInfo, config})`
+callback as the fifth argument to `registerResource`/`replaceResource`. Return
+`true` only for a verified caller allowed to read the resource. The same callback
+guards reads, subscription setup and every update. Omitting it preserves existing
+read-handler checks but denies subscriptions to custom resources.
 
 `gregale mcp server deploy` reads this digest from its zero-traffic candidate and pins
 the promoted deployment revision with `MCP_CATALOG_EXPECTED_SHA256`. For other
@@ -476,6 +496,23 @@ requested cancellations remain cancelled. Observe the handler cancellation
 signal and make external side effects idempotent using the task ID. HTTP
 connections also have a bounded drain window. Queue recovery falls back to lease
 expiry if the database is unavailable or the process is killed before cleanup.
+
+The drain also waits for an outstanding claim. A Task claimed during shutdown
+is returned without starting its handler and resumes the same attempt, including
+when the attempt budget is one. An unresolved claim at the deadline reports a
+timed-out drain.
+
+Execution has a local 30-second lease deadline independent of heartbeat requests.
+Failed or blocked renewals cancel the handler at the last proven deadline;
+successful renewals exclude database response latency. Continue to observe the
+handler cancellation signal and make external effects idempotent by Task ID.
+Database renewal locks the Task row before checking lease and Task expiry, so
+a row-lock wait cannot revive ownership that expired while it was blocked.
+
+A recorded cancellation prevents a new execution attempt. If its worker dies,
+the next claim settles the Task as cancelled after lease expiry without invoking
+the handler or spending another attempt. Cancellation of an active handler
+continues to use its cooperative signal.
 
 
 ### Running Task capacity
@@ -707,6 +744,28 @@ enabled. Database owners can bypass enforcement; restrict policy administration.
 
 ### Explicit migrations and role grants
 
+Tasks now save the tool's advertised `outputSchema` in a nullable `output_schema`
+JSONB column when admitted. Dedicated and retained-version workers validate final
+successful `structuredContent` against that saved contract before completing the
+task. Local references work without fetching external schemas or changing result
+values. Invalid output fails the task with a redacted error and is never stored as
+a successful result; `isError: true` tool results may omit structured output.
+Retries, input pauses, worker restarts and later catalog replacements retain the
+original contract. Schemas are reviewed catalog metadata stored in plaintext;
+arguments, results, errors and input state keep their existing encryption.
+
+Existing queues must run `npm run tasks:migrate -- apply` to add this column,
+even when schema version 1 is already installed. Startup checks the column
+without running DDL. Migrate first, then upgrade and drain every older worker
+before deploying producers that rely on output validation: older workers ignore
+the saved contract. Tasks admitted without a schema retain their prior behavior;
+the migration does not infer a contract from today's catalog.
+
+Node awaits asynchronous task validators before inserting a row and rechecks
+drain state afterward. Task-capable calls return the accepted handle without
+applying the final output schema to it; discovery and synchronous calls keep the
+advertised schema and normal SDK validation.
+
 Before starting any Task process, run `npm run tasks:migrate -- apply` with
 `MCP_TASK_MIGRATION_DATABASE_URL`, `MCP_TASK_NAMESPACE`, the stable owner secret
 and candidate payload-key ring. The migration account must own the dedicated
@@ -738,6 +797,8 @@ owner. All accounts must target the same database and trusted schema.
 
 ```json
 {
+  "releaseId": "candidate-image-v2",
+  "checkpointPath": "../release-state.json",
   "timeoutMs": 60000,
   "start": ["/deployment/start-candidate", "candidate-image"],
   "drain": ["/deployment/drain-workers"]
@@ -745,13 +806,27 @@ owner. All accounts must target the same database and trusted schema.
 ```
 
 Hooks are executable argument arrays, without a shell. They receive JSON in
-`MCP_TASK_RELEASE_INPUT`: start receives `previousWorkerIDs` and `timeoutMs`;
+`MCP_TASK_RELEASE_INPUT`: start receives `releaseID`, `previousWorkerIDs` and `timeoutMs`;
 drain also receives `replacementWorkerIDs`. Start must launch the candidate
 artifact and return only `{"workerIDs":["uuid"]}` on stdout. Dedicated workers
 emit their ID in `mcp_task_worker_started`; orchestrator adapters must associate
-these IDs with their deployment processes. Drain must signal exactly the
+these IDs with their deployment processes. The event also reports
+`shutdownTimeoutMs`, the effective drain budget after environment overrides.
+Drain must signal exactly the
 previous workers and await their exit within the platform shutdown deadline.
 Migration credentials are removed from hook environments.
+
+With `checkpointPath`, supply a stable `releaseId` (1–128 letters, digits, dots,
+underscores, colons or hyphens) for the candidate artifact. Keep it unchanged
+while retrying and use it as the start hook's idempotency key. Version 1
+checkpoints record previous workers, replacement workers and completion. A
+retry reuses recorded replacements; a completed retry rechecks readiness without
+starting or draining workers again. After completion, a new `releaseId` captures
+the currently running workers for the next rollout. A different ID cannot
+replace a pending release. Legacy or malformed checkpoints fail at `checkpoint`:
+retain the original tools/artifacts to finish that release, or reconcile live
+worker inventory before creating a new checkpoint. Keep the existing file for
+recovery. A failed completion save remains resumable with the same ID.
 
 The gate serializes cooperating releases per namespace, migrates first, checks
 runtime privileges, retained keys, retained handlers and every allowed admission
@@ -780,7 +855,16 @@ candidates, verifies endpoint/observer health, captures worker IDs from runtime
 logs, promotes web traffic with a serving-revision guard, and parks old worker
 apps after Task readiness. Use separate worker apps to prevent early retirement
 by the worker scheduler. Configure previous worker stop grace longer than the
-Task shutdown deadline. See `docs/mcp.md`'s native adapter section for the full
+running generation's reported Task shutdown deadline. The Node default is
+10 seconds; `MCP_DRAIN_TIMEOUT_SECONDS` takes precedence over
+`tasks.shutdown_timeout_ms`. Native promotion and each park require a valid
+budget receipt from every current replica. Workers refresh the same process
+receipt every ten seconds; if startup logs have left the live log buffer, the
+CLI waits up to thirty seconds for fresh receipts. Update older workers to emit
+refreshed receipts before a native handoff; an absent budget cannot be inferred
+from the candidate's configuration. Previous pools already scaled to zero require
+no receipt and remain subject to generation checks and conditional parking.
+See `docs/mcp.md`'s native adapter section for the full
 plan and recovery contract. Keep the journal and `.gate` checkpoint outside
 source directories; rerunning unchanged sources resumes recorded deployments.
 

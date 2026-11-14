@@ -1,6 +1,66 @@
 """Execution limits and retry policy shared by web, workers and observers."""
 
 import random
+import threading
+import time
+
+TASK_LEASE_SECONDS = 30
+
+
+class TaskLeaseDeadline:
+    """Cancel execution when renewal cannot prove a live lease in time."""
+
+    def __init__(self, on_expired, started_at=None, *, clock=None, timer_factory=None):
+        self._clock = clock or time.monotonic
+        self._timer_factory = timer_factory or threading.Timer
+        self._on_expired = on_expired
+        self._lock = threading.Lock()
+        self._closed = False
+        self._timer = None
+        self._deadline = None
+        self.renew(self._clock() if started_at is None else started_at)
+
+    def _arm_locked(self, remaining):
+        if self._timer is not None:
+            self._timer.cancel()
+        self._timer = self._timer_factory(max(0, remaining), self._expire)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def renew(self, request_started_at):
+        expired = False
+        with self._lock:
+            if self._closed:
+                return
+            now = self._clock()
+            deadline = request_started_at + TASK_LEASE_SECONDS
+            if (self._deadline is not None and now >= self._deadline) or now >= deadline:
+                self._closed = True
+                if self._timer is not None:
+                    self._timer.cancel()
+                expired = True
+            else:
+                self._deadline = deadline
+                self._arm_locked(deadline - now)
+        if expired:
+            self._on_expired()
+
+    def _expire(self):
+        with self._lock:
+            if self._closed:
+                return
+            remaining = self._deadline - self._clock()
+            if remaining > 0:
+                self._arm_locked(remaining)
+                return
+            self._closed = True
+        self._on_expired()
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+            if self._timer is not None:
+                self._timer.cancel()
 
 
 class RetryableTaskError(Exception):

@@ -33,6 +33,8 @@ func verificationView(p datapipeline.Pipeline) dashboard.DataPipelineVerificatio
 		view.Reason = "Source and mirror differ. Review sync health and explicit recovery."
 	}
 	switch v.Phase {
+	case "queued":
+		view.Phase = "Waiting to start verification"
 	case "backfill":
 		view.Phase = "Backfilling and verifying new columns"
 	case "scan":
@@ -52,8 +54,9 @@ func verificationView(p datapipeline.Pipeline) dashboard.DataPipelineVerificatio
 			*field.dest = field.value.UTC().Format(time.RFC3339)
 		}
 	}
-	view.CanCancel = p.DesiredState == "running" && p.ObservationFresh && (v.State == "running" || v.State == "waiting")
-	view.CanRetry = p.DesiredState == "running" && p.State == "live" && !p.VerifyRequested && (v.State == "cancelled" || v.State == "limited")
+	view.CanCancel = p.DesiredState != "deleted" && p.State != "deleted" && (v.State == "running" || v.State == "waiting")
+	qualification := p.Reason == "source_storage_verification" || p.Reason == "replication_continuity_verification"
+	view.CanRetry = p.DesiredState == "running" && (p.State == "live" || p.State == "blocked" && qualification && p.ObservationFresh) && !p.VerifyRequested && (v.State == "cancelled" || v.State == "limited")
 	if p.DesiredState == "paused" && v.State == "running" {
 		view.State = "paused"
 	}

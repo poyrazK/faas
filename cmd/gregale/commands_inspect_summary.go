@@ -557,6 +557,12 @@ func routeNotOffered(err error) bool {
 	return errors.As(err, &ae) && ae.Problem.Status == http.StatusNotFound && ae.Problem.Detail == noSuchRouteDetail
 }
 
+// inspectDeploymentInFlight reports a selected deployment that has not
+// reached a terminal state (queued, building, imaging, snapshotting, ...).
+func inspectDeploymentInFlight(release inspectReleaseSummary) bool {
+	return release.Available && release.DeploymentID != "" && release.Status != "" && !isTerminalDeploymentStatus(release.Status)
+}
+
 func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	out := make([]inspectRecommendation, 0)
 	add := func(code, severity, message, next string) {
@@ -589,7 +595,15 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		}
 		add("app_parked", severity, message, next)
 	}
-	if summary.App.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
+	if summary.App.DeploymentAvailability == api.AppDeploymentAvailabilityMissing && inspectDeploymentInFlight(summary.Release) {
+		// A first deployment still building is not a failure: inspect told
+		// the customer to redeploy while it built, which queues a duplicate
+		// (CLI journey 2026-11-05, #6626).
+		id, slug := summary.Release.DeploymentID, summary.App.Slug
+		add("deployment_in_progress", "info",
+			"Deployment "+id+" is "+summary.Release.Status+"; this app has no live deployment until it finishes, so requests cannot run yet.",
+			"Wait for it with `gregale release wait "+id+"` or follow its build with `gregale logs "+slug+" --deployment "+id+" --follow`. Do not deploy again: a second deployment does not speed this one up.")
+	} else if summary.App.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
 		add("no_live_deployment", "error", "This app has no live deployment, so requests, wakes, and app-backed workflows cannot run.", "Redeploy from current source with `gregale deploy`; if the latest attempt failed, inspect it with `gregale inspect "+summary.App.Slug+" --errors`. Restore an old revision only after its artifact and rollout history have been verified.")
 	} else if !summary.Release.Available && !containsString(summary.Unavailable, "deployment") {
 		add("deploy_required", "warning", "No deployment was found for this app.", "Run `gregale deploy` from the application source directory.")

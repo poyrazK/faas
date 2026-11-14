@@ -16,7 +16,7 @@ import (
 
 func TestAtomicEnvBatchAppBoundAuthorization(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	apidserver.MustSeedApp(t, e, "batch-agent")
+	appID := apidserver.MustSeedApp(t, e, "batch-agent")
 	apidserver.MustSeedApp(t, e, "batch-other")
 	created := e.Do(t, http.MethodPost, "/v1/apps/batch-agent/deploy-tokens", api.CreateDeployTokenRequest{Agent: true, Scopes: []string{api.ScopeEnvWrite}}, nil)
 	var token api.DeployTokenResponse
@@ -24,7 +24,8 @@ func TestAtomicEnvBatchAppBoundAuthorization(t *testing.T) {
 		t.Fatalf("mint app agent: %d %s", created.Code, created.Body.String())
 	}
 	zero := int64(0)
-	data, err := json.Marshal(api.EnvBatchRequest{RequestID: uuid.NewString(), ExpectedRevision: &zero, Values: map[string]string{"FIRST": "one", "SECOND": "two"}})
+	proof := strings.Repeat("a", 64)
+	data, err := json.Marshal(api.EnvBatchRequest{ExpectedAppID: appID, ReceiptProof: proof, RequestID: uuid.NewString(), ExpectedRevision: &zero, Values: map[string]string{"FIRST": "one", "SECOND": "two"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,6 +42,52 @@ func TestAtomicEnvBatchAppBoundAuthorization(t *testing.T) {
 			t.Fatalf("%s batch status %d: %s", tc.app, out.Code, out.Body.String())
 		}
 	}
+	readOnly := e.Do(t, http.MethodPost, "/v1/apps/batch-agent/deploy-tokens", api.CreateDeployTokenRequest{Agent: true, Scopes: []string{api.ScopeAppsRead}}, nil)
+	var reader api.DeployTokenResponse
+	if readOnly.Code != 201 || json.Unmarshal(readOnly.Body.Bytes(), &reader) != nil {
+		t.Fatal("mint reader")
+	}
+	for _, tc := range []struct {
+		app    string
+		status int
+	}{{"batch-agent", 200}, {"batch-other", 404}} {
+		out := e.DoAs(t, http.MethodGet, "/v1/apps/"+tc.app+"/env/batch/requests/"+bodyRequestID(data), nil, map[string]string{api.EnvBatchReceiptProofHeader: proof}, reader.Plaintext)
+		if out.Code != tc.status || strings.Contains(out.Body.String(), `"one"`) || strings.Contains(out.Body.String(), `"two"`) || strings.Contains(out.Body.String(), proof) {
+			t.Fatalf("%s receipt=%d %s", tc.app, out.Code, out.Body.String())
+		}
+	}
+}
+
+func TestEnvBatchReceiptRequiresOriginalProof(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	appID := apidserver.MustSeedApp(t, e, "batch-proof")
+	zero := int64(0)
+	proof := strings.Repeat("a", 64)
+	request := api.EnvBatchRequest{ExpectedAppID: appID, ReceiptProof: proof, RequestID: uuid.NewString(), ExpectedRevision: &zero, Values: map[string]string{"MODE": "private-value"}}
+	path := "/v1/apps/batch-proof/env/batch"
+	write := e.Do(t, http.MethodPost, path, request, nil)
+	if write.Code != 200 || strings.Contains(write.Body.String(), proof) || strings.Contains(write.Body.String(), "private-value") {
+		t.Fatalf("write=%d %s", write.Code, write.Body.String())
+	}
+	for _, tc := range []struct {
+		proof  string
+		status int
+	}{{"", 404}, {strings.Repeat("b", 64), 404}, {proof, 200}} {
+		headers := map[string]string{}
+		if tc.proof != "" {
+			headers[api.EnvBatchReceiptProofHeader] = tc.proof
+		}
+		out := e.Do(t, http.MethodGet, path+"/requests/"+request.RequestID, nil, headers)
+		if out.Code != tc.status || strings.Contains(out.Body.String(), proof) || strings.Contains(out.Body.String(), "private-value") {
+			t.Fatalf("read=%d %s", out.Code, out.Body.String())
+		}
+	}
+}
+
+func bodyRequestID(raw []byte) string {
+	var request api.EnvBatchRequest
+	_ = json.Unmarshal(raw, &request)
+	return request.RequestID
 }
 
 func TestAtomicEnvBatchHTTP(t *testing.T) {
@@ -62,6 +109,16 @@ func TestAtomicEnvBatchHTTP(t *testing.T) {
 	}
 	if replay := e.Do(t, http.MethodPost, path, body, nil); replay.Code != 200 || replay.Body.String() != first.Body.String() {
 		t.Fatalf("replay %d %s", replay.Code, replay.Body.String())
+	}
+	read := e.Do(t, http.MethodGet, path+"/requests/"+body.RequestID, nil, nil)
+	if read.Code != 200 || read.Body.String() != first.Body.String() {
+		t.Fatalf("read original receipt %d %s", read.Code, read.Body.String())
+	}
+	if invalid := e.Do(t, http.MethodGet, path+"/requests/not-a-uuid", nil, nil); invalid.Code != 400 {
+		t.Fatalf("malformed receipt id=%d", invalid.Code)
+	}
+	if missing := e.Do(t, http.MethodGet, path+"/requests/"+uuid.NewString(), nil, nil); missing.Code != 404 {
+		t.Fatalf("unknown receipt=%d", missing.Code)
 	}
 	changed := body
 	changed.Values = map[string]string{"FIRST": "changed"}

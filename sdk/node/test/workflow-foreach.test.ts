@@ -40,7 +40,7 @@ test('iteration preserves action mappings, ordered output and zero inspection in
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'fixture-token', retry: { maxAttempts: 1, backoffMs: 0 } });
-  const saved = await WorkflowsService.saveAutomationDraft({ slug: 'billing', name: 'batch', requestBody: { expected_version: 0, definition } });
+  const saved = await WorkflowsService.saveStoredWorkflowDraft({ slug: 'billing', name: 'batch', requestBody: { expected_version: 0, definition } });
   assert.deepEqual(posted, { expected_version: 0, definition });
   assert.deepEqual(saved.draft, definition);
   const inspected = await WorkflowsService.listWorkflowSteps({ id: 'run' });

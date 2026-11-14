@@ -173,7 +173,7 @@ func cmdScan(args []string) int {
 		return printErr("Scan failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(plan))
+		return jsonOut(writeJSON(withFeatureHints(plan)))
 	}
 	return printPlanTextWithExplain(osStdout, plan, excludeList, *showAffected, *explain)
 }
@@ -241,7 +241,7 @@ func executeConnectedRepoScan(opts connectedRepoScanOptions) int {
 		return printErr("Scan failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(plan))
+		return jsonOut(writeJSON(withFeatureHints(plan)))
 	}
 	return printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
 }
@@ -258,7 +258,7 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 		return code
 	}
 	if emitJSON {
-		if code := jsonOut(writeJSON(plan)); code != 0 {
+		if code := jsonOut(writeJSON(withFeatureHints(plan))); code != 0 {
 			return code
 		}
 		if strict && !plan.CanApply {
@@ -380,7 +380,7 @@ func runProjectDeployPreviewWithMode(
 		return printErr("Scan failed", err)
 	}
 	if emitJSON {
-		if code := jsonOut(writeJSON(plan)); code != 0 {
+		if code := jsonOut(writeJSON(withFeatureHints(plan))); code != 0 {
 			return code
 		}
 		if strict && !plan.CanApply {
@@ -675,12 +675,29 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 //
 //nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
 func printManagedServices(w io.Writer, managed []api.PlanManaged) {
-	var provided, listed []api.PlanManaged
+	var provided, buckets, listed []api.PlanManaged
 	for _, m := range managed {
-		if m.Provision != nil {
+		switch {
+		case m.Provision != nil && m.Kind == "bucket":
+			buckets = append(buckets, m)
+		case m.Provision != nil:
 			provided = append(provided, m)
-		} else {
+		default:
 			listed = append(listed, m)
+		}
+	}
+	if len(buckets) > 0 {
+		// gregale.yaml buckets (ADR-20261106105015 §1): Database is the
+		// bucket and each binding's EnvKey the S3 settings prefix.
+		fmt.Fprintln(w, "\nObject storage (from gregale.yaml):")
+		for _, m := range buckets {
+			verb := "creates"
+			if m.Provision.Existing {
+				verb = "binds"
+			}
+			for _, b := range m.Provision.Bindings {
+				fmt.Fprintf(w, "  - %-20s %s bucket for %s as %s_*\n", m.Name, verb, b.Workload, b.EnvKey)
+			}
 		}
 	}
 	if len(provided) > 0 {
@@ -709,6 +726,13 @@ func printManagedServices(w io.Writer, managed []api.PlanManaged) {
 				reason = "   (" + text + ")"
 			}
 			fmt.Fprintf(w, "  - %s [%s]   hint=%s   image=%s%s\n", m.Name, m.Kind, m.EnvHint, m.Image, reason)
+			if len(m.Unbound) > 0 {
+				if m.Kind != "postgres" {
+					fmt.Fprintf(w, "      not run on Gregale and no managed equivalent; set to an external %s: %s\n", m.Kind, strings.Join(m.Unbound, ", "))
+				} else {
+					fmt.Fprintf(w, "      no value for: %s\n", strings.Join(m.Unbound, ", "))
+				}
+			}
 		}
 	}
 }
@@ -741,7 +765,22 @@ func printPublicURLs(w io.Writer, workloads []api.PlanWorkload) {
 	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
 	fmt.Fprintln(w, "\nPublic on the internet:")
 	for _, wl := range ws {
-		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, wl.PublicURL)
+		fmt.Fprintf(w, "  - %-20s %s%s\n", wl.Name, wl.PublicURL, publicAuthNote(wl.PublicAuthMode))
+	}
+}
+
+// publicAuthNote says when a public URL refuses anonymous requests, so the
+// list does not promise access the app's auth will refuse (Hunt 32 H32-30).
+func publicAuthNote(mode string) string {
+	switch mode {
+	case "":
+		return ""
+	case api.AppPublicAuthModeBearer:
+		return " (needs an API key)"
+	case api.AppPublicAuthModeBasic:
+		return " (needs HTTP basic auth)"
+	default:
+		return " (" + mode + " access only)"
 	}
 }
 
@@ -871,6 +910,7 @@ func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanRes
 //
 //nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
+	plan = withFeatureHints(plan)
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
 	if plan.Environment != "" {
 		fmt.Fprintf(w, "Environment: %s\n", plan.Environment)
@@ -930,6 +970,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 		printPublicURLs(w, plan.Workloads)
 		printUnsetEnvKeys(w, plan.Workloads)
 		printDefaultMemoryServices(w, plan)
+		printFeatureHints(w, plan.FeatureHints)
 		if explain {
 			printPlanDetectionTrace(w, plan.Workloads)
 			printPlanDetectionWarnings(w, plan.DetectionWarnings)
@@ -1001,6 +1042,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			fmt.Fprintln(w, "  - "+wn)
 		}
 	}
+	printFeatureHints(w, plan.FeatureHints)
 	if explain && len(plan.Workloads) == 0 {
 		printPlanDetectionTrace(w, nil)
 	}
@@ -1314,26 +1356,18 @@ func planProblem(plan api.PlanResponse) api.Problem {
 			Detail: fmt.Sprintf("plan caps apps at %d; you have %d.", plan.LimitApps, plan.ObservedApps),
 		}
 	}
-	if !plan.CanApplyPreExclude {
-		// The OLD test invariant: when ObservedCrons > LimitCrons
-		// (the implicit cron-quota case that fell through to the
-		// CronQuota fallback), the wire code stays plan_cron_quota.
-		// The GateBlocked path catches every other gate-block
-		// case — typically a future gate type that doesn't have a
-		// specific wire code yet, or a multi-reason block where
-		// cron-quota is not the primary reason. Without the
-		// ObservedCrons <= LimitCrons guard we would re-route the
-		// `cron-limit` case (TestPlanProblem_Mapping/cron-limit in
-		// commands_decompose_test.go) onto CodePlanGateBlocked,
-		// breaking the wire-shape parity test that ADRs pin.
-		if plan.ObservedCrons <= plan.LimitCrons {
-			return api.Problem{
-				Status: 403,
-				Code:   api.CodePlanGateBlocked,
-				Title:  "Plan gate blocked",
-				Detail: fmt.Sprintf("gate was blocked pre-exclude; reasons: %s",
-					strings.Join(plan.CanApplyReasons, "; ")),
-			}
+	// Only an account over its cron cap keeps plan_cron_quota
+	// (TestPlanProblem_Mapping/cron-limit). Every other block — a
+	// pre-exclude gate, or an admission reason found after --only /
+	// --exclude such as a dependency or slug-ownership problem — carries
+	// its own reasons. Reporting those as "plan caps crons at 500; you
+	// have 10" hid the real cause (ChronoLake finding 11).
+	if plan.ObservedCrons <= plan.LimitCrons {
+		return api.Problem{
+			Status: 403,
+			Code:   api.CodePlanGateBlocked,
+			Title:  "Plan gate blocked",
+			Detail: "project plan cannot be applied: " + planBlockedError(plan).Error(),
 		}
 	}
 	return api.Problem{

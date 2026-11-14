@@ -69,6 +69,24 @@ func (s *Service) GetEventRetentionHealth(w http.ResponseWriter, r *http.Request
 	case err != nil:
 		api.WriteProblem(w, api.ErrInternal("event retention health"))
 	default:
+		access, accessErr := s.eventAccess(ctx, acct)
+		if accessErr != nil {
+			api.WriteProblem(w, api.ErrInternal("event retention access"))
+			return
+		}
+		visible := out.Sample[:0]
+		for _, sample := range out.Sample {
+			_, accessErr = access.event(acct.ID, sample.EventSource, sample.EventID, "")
+			if errors.Is(accessErr, state.ErrNotFound) {
+				continue
+			}
+			if accessErr != nil {
+				api.WriteProblem(w, api.ErrInternal("event retention access"))
+				return
+			}
+			visible = append(visible, sample)
+		}
+		out.Sample = visible
 		httpkit.WriteJSON(w, http.StatusOK, out)
 	}
 }

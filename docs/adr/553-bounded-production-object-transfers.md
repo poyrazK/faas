@@ -98,3 +98,30 @@ even with "Normalize URLs to origin" off (H9-S149), and it decompresses
 `Content-Encoding: gzip` objects for clients that do not send
 `Accept-Encoding: gzip`, with or without `no-transform` (H9-S145). Both go away
 with the `direct` profile.
+
+## Amendment (2026-11-05): Streaming upload routes obey the single-PUT ceiling
+
+An app-hosted upload route sends one provider PUT. Its policy therefore defaults
+to, and cannot be configured above, the registry's `max_single_put_bytes` (also
+bounded by `max_upload_bytes`), for encrypted and unencrypted routes alike.
+Existing routes whose stored policy exceeds a lowered runtime ceiling reject
+oversized requests with 413 before provider dispatch. The refusal names the
+effective byte limit, requested bytes and limits documentation. Multipart
+uploads retain the separate total object ceiling.
+
+## Amendment (2026-11-05): Pinned version reads use the transfer budget
+
+Reading an immutable S3 object version for snapshot-copy verification uses the
+same bounded stream client as current-object reads. The metadata client's
+20-second HTTP timeout must not truncate a version body while the caller's
+transfer budget is still open; the caller's cancellation and hard transfer
+ceiling still bound the read.
+
+Pinned native GCS reads also select the stream deadline instead of the shared
+metadata deadline. Current and pinned verification reads explicitly request
+gzip in the stream transport, preserving stored bytes and their checksums
+instead of permitting GCS or Go to decompress them. The transport sets the
+header after SDK validation because the JSON reader rejects the SDK's
+`ReadCompressed(true)` header before dispatch. JSON and XML SDK fixtures cover
+compressed and plain objects. GCS full-environment clones remain unqualified
+under ADR-20261103160000.

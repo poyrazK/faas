@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // FleetPolicy bounds the platform's managed PostgreSQL fleet across every
@@ -19,6 +21,16 @@ type FleetPolicy struct {
 	// PaidReserve, so Free sign-ups cannot pause paying customers
 	// (ADR-20261031091607).
 	PaidReserve int
+}
+
+// PreviewShare is how many PR preview databases one account may hold under
+// the fleet cap: api.ManagedPostgresPreviewFleetSharePercent of MaxDatabases,
+// at least one. Zero means no fleet cap is set.
+func (p FleetPolicy) PreviewShare() int {
+	if p.MaxDatabases <= 0 {
+		return 0
+	}
+	return max(1, p.MaxDatabases*api.ManagedPostgresPreviewFleetSharePercent/100)
 }
 
 // Complete reports whether both ceilings are set, as production requires.
@@ -113,4 +125,35 @@ func (s *Service) admitFleet(ctx context.Context, subjectID string, addsDatabase
 		}
 	}
 	return nil
+}
+
+// admitPreviewFleet is admitFleet for a PR preview database, which also stays
+// out of the paid reserve whatever the plan: a preview is disposable, and the
+// reserve's last databases are for production creates (ADR-20261102123523
+// amendment 2026-11-10).
+func (s *Service) admitPreviewFleet(ctx context.Context, subjectID string) error {
+	if err := s.admitFleet(ctx, subjectID, true); err != nil {
+		return err
+	}
+	policy := s.registry.Fleet()
+	if policy.MaxDatabases <= 0 || policy.PaidReserve <= 0 {
+		return nil
+	}
+	totals, _, err := s.FleetStatus(ctx)
+	if err != nil {
+		return err
+	}
+	if totals.Databases >= policy.MaxDatabases-policy.PaidReserve {
+		return ErrFleetPaused
+	}
+	return nil
+}
+
+// previewLimit is the preview databases an account may hold: its plan's
+// allowance, capped at its fleet share.
+func (s *Service) previewLimit(planLimit int) int {
+	if share := s.registry.Fleet().PreviewShare(); share > 0 && share < planLimit {
+		return share
+	}
+	return planLimit
 }

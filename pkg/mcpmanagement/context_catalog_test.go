@@ -1,4 +1,6 @@
 // adr: 1618
+// adr: 20261105000511
+// adr: 20261024160000
 package mcpmanagement
 
 import (
@@ -12,15 +14,21 @@ import (
 func TestContextCatalogReadOnlyResourcesAndPrompts(t *testing.T) {
 	f, cs, ctx := newReleaseFixture(t, true)
 	resources, err := cs.ListResources(ctx, nil)
-	if err != nil || len(resources.Resources) != 2 {
+	if err != nil || len(resources.Resources) != 3 {
 		t.Fatalf("resources=%+v %v", resources, err)
 	}
+	// The error contract tools no longer repeat in their output schemas is
+	// served once (ADR-20261103193000, amendment 2026-11-13).
+	contract, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: errorContractURI})
+	if err != nil || len(contract.Contents) != 1 || !strings.Contains(contract.Contents[0].Text, `"recovery"`) || !strings.Contains(contract.Contents[0].Text, `"retry_original"`) {
+		t.Fatalf("error contract = %+v %v", contract, err)
+	}
 	templates, err := cs.ListResourceTemplates(ctx, nil)
-	if err != nil || len(templates.ResourceTemplates) != 8 {
+	if err != nil || len(templates.ResourceTemplates) != 11 {
 		t.Fatalf("templates=%+v %v", templates, err)
 	}
 	prompts, err := cs.ListPrompts(ctx, nil)
-	if err != nil || len(prompts.Prompts) != 6 {
+	if err != nil || len(prompts.Prompts) != 8 {
 		t.Fatalf("prompts=%+v %v", prompts, err)
 	}
 	resource, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "gregale://default/apps/alpha/health"})
@@ -123,7 +131,7 @@ func TestContextCatalogRemoteProtocols(t *testing.T) {
 				t.Fatal(err)
 			}
 			prompts, err := cs.ListPrompts(ctx, nil)
-			if err != nil || len(prompts.Prompts) != 6 {
+			if err != nil || len(prompts.Prompts) != 8 {
 				t.Fatalf("remote prompts=%+v %v", prompts, err)
 			}
 			if _, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "gregale_deployment_review", Arguments: map[string]string{"app": "alpha"}}); err != nil {

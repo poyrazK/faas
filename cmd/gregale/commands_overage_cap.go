@@ -1,6 +1,6 @@
 // commands_overage_cap.go — `gregale overage-cap` (Tier B audit gap).
 // PATCH /v1/account/overage-cap lets the customer set or clear the
-// per-account overage cap ($0.01/GB-h above the plan's included GB-h).
+// per-account overage cap ($0.05/GB-h above the plan's included GB-h).
 // schedd refuses new wakes once the current-month overage meets the
 // cap; the CLI is the only path to flip the cap outside the dashboard.
 //
@@ -38,7 +38,7 @@ func cmdOverageCap(args []string) int {
 		}
 	}
 	fs := newFlagSet("overage-cap", flag.ContinueOnError)
-	clear := fs.Bool("clear", false, "clear the per-account overage cap (no limit)")
+	clear := fs.Bool("clear", false, "remove the cap (Free accounts only; a paid plan keeps one)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -77,7 +77,7 @@ func cmdOverageCap(args []string) int {
 		return jsonOut(writeJSON(acct))
 	}
 	if cap == nil {
-		PrintOK(osStdout, "Overage cap cleared (no limit).")
+		PrintOK(osStdout, "Overage cap cleared.")
 	} else {
 		PrintOK(osStdout, "Overage cap set to %d cents (%s).", *cap, api.FormatBillingCents(*cap))
 	}

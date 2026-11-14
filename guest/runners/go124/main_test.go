@@ -204,3 +204,37 @@ func TestHandle_PersistentHandlerIsReused(t *testing.T) {
 		t.Fatalf("responses %q, want one go124 worker process for every request", seen)
 	}
 }
+
+// ADR-20261112160000 §5: a Go function checks typed-client calls against its
+// input schema like Node and Python functions; the handler never sees a call
+// that breaks it, and unmarked requests are not checked.
+func TestHandle_ChecksTypedCallInput(t *testing.T) {
+	t.Setenv(api.FunctionInputSchemaEnv, `{"type":"object","required":["email"]}`)
+	path := filepath.Join(t.TempDir(), "handler")
+	script := "#!/bin/sh\ncat >/dev/null\n" +
+		`printf '{"status":200,"headers":{"Content-Type":"text/plain"},"body_b64":"%s"}\n' "$(printf ran | base64)"` + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	call := func(body string, marked bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		if marked {
+			req.Header.Set(api.FunctionCallHeader, "1")
+		}
+		rec := httptest.NewRecorder()
+		handle(rec, req, path, internal.NewRunnerSignal("go-input-test", time.Now()), 0, "")
+		return rec
+	}
+	if rec := call(`{}`, true); rec.Code != http.StatusUnprocessableEntity ||
+		!strings.Contains(rec.Body.String(), api.CodeFunctionInputInvalid) || !strings.Contains(rec.Body.String(), "input.email is required") {
+		t.Fatalf("bad typed call = %d %s, want 422 function_input_invalid", rec.Code, rec.Body.String())
+	}
+	for _, tc := range []struct {
+		body   string
+		marked bool
+	}{{`{"email":"a@b"}`, true}, {`{}`, false}} {
+		if rec := call(tc.body, tc.marked); rec.Code != http.StatusOK || rec.Body.String() != "ran" {
+			t.Fatalf("call %s marked=%v = %d %q, want the handler's answer", tc.body, tc.marked, rec.Code, rec.Body.String())
+		}
+	}
+}

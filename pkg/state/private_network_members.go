@@ -14,6 +14,9 @@ import (
 type PrivateNetworkMemberIdentity struct {
 	Address netip.Addr
 	Service netip.Addr
+	// WithdrawService identifies a retained claim when eligibility is lost.
+	// It authorizes cleanup, never publication, including after partial setup.
+	WithdrawService netip.Addr
 }
 
 type PrivateNetworkMemberStore interface {
@@ -49,11 +52,14 @@ func (m *MemStore) EnsurePrivateNetworkMember(ctx context.Context, accountID, ap
 		return PrivateNetworkMemberIdentity{}, err
 	}
 	result := PrivateNetworkMemberIdentity{Address: member.Address}
-	if !eligible {
-		return result, nil
-	}
 	key := privateNetworkServiceKey(networkID, appID)
 	owner, claimed := m.privateNetworkServiceOwners[key]
+	if !eligible {
+		if claimed && owner.InstanceID == instanceID {
+			result.WithdrawService = service.Address
+		}
+		return result, nil
+	}
 	if !claimed {
 		if m.privateNetworkServiceOwners == nil {
 			m.privateNetworkServiceOwners = make(map[string]privateNetworkServiceOwner)
@@ -76,7 +82,7 @@ func (m *MemStore) ReleasePrivateNetworkMember(ctx context.Context, accountID, a
 	if networkID == "" && accountID == "" {
 		m.mu.Lock()
 		type identity struct{ account, app, network string }
-		var identities []identity
+		identities := make(map[identity]bool)
 		for _, a := range m.privateNetworkAddresses {
 			if a.OwnerType == "instance" && a.OwnerID == instanceID {
 				app := ""
@@ -85,11 +91,16 @@ func (m *MemStore) ReleasePrivateNetworkMember(ctx context.Context, accountID, a
 						app = o.AppID
 					}
 				}
-				identities = append(identities, identity{a.AccountID, app, a.NetworkID})
+				identities[identity{a.AccountID, app, a.NetworkID}] = true
+			}
+		}
+		for _, owner := range m.privateNetworkServiceOwners {
+			if owner.InstanceID == instanceID {
+				identities[identity{owner.AccountID, owner.AppID, owner.NetworkID}] = true
 			}
 		}
 		m.mu.Unlock()
-		for _, id := range identities {
+		for id := range identities {
 			if err := m.ReleasePrivateNetworkMember(ctx, id.account, id.app, id.network, instanceID, serviceOnly); err != nil {
 				return err
 			}
@@ -167,6 +178,14 @@ func (s *PgStore) EnsurePrivateNetworkMember(ctx context.Context, accountID, app
 			result.Service = service.Address
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return PrivateNetworkMemberIdentity{}, mapErr(err)
+		}
+	} else {
+		owned, err := q.OwnsPrivateNetworkService(ctx, tx, sqlc.OwnsPrivateNetworkServiceParams{AccountID: mustPgUUID(accountID), NetworkID: networkID, AppID: mustPgUUID(appID), InstanceID: instanceID, ServiceAddressID: mustPgUUID(service.ID)})
+		if err != nil {
+			return PrivateNetworkMemberIdentity{}, mapErr(err)
+		}
+		if owned {
+			result.WithdrawService = service.Address
 		}
 	}
 	return result, tx.Commit(ctx)

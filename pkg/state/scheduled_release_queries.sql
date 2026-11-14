@@ -13,12 +13,14 @@ RETURNING *;
 -- name: InsertScheduledRelease :one
 INSERT INTO scheduled_releases (
   id, account_id, app_id, deployment_id, release_at, canary, notify_channel_ids,
-  override_freeze, override_freeze_ids, scheduled_by, created_at, updated_at
+  override_freeze, override_freeze_ids, scheduled_by, scheduled_by_account_id, scheduled_by_key_id,
+  created_at, updated_at
 )
 VALUES (
   sqlc.arg(id)::uuid, sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(deployment_id)::uuid,
   sqlc.arg(release_at)::timestamptz, sqlc.narg(canary)::jsonb, sqlc.arg(notify_channel_ids)::uuid[],
   sqlc.arg(override_freeze)::text, sqlc.arg(override_freeze_ids)::uuid[], sqlc.arg(scheduled_by)::text,
+  sqlc.narg(scheduled_by_account_id)::uuid, sqlc.narg(scheduled_by_key_id)::uuid,
   sqlc.arg(now)::timestamptz, sqlc.arg(now)::timestamptz
 )
 RETURNING *;
@@ -54,6 +56,8 @@ SELECT sqlc.embed(sr), d.revision
   FROM scheduled_releases sr
   JOIN deployments d ON d.id = sr.deployment_id
  WHERE sr.state = 'scheduled' AND sr.release_at <= sqlc.arg(now)::timestamptz
+   AND (sqlc.narg(after_release_at)::timestamptz IS NULL OR
+        (sr.release_at, sr.id) > (sqlc.narg(after_release_at)::timestamptz, sqlc.narg(after_id)::uuid))
  ORDER BY sr.release_at, sr.id
  LIMIT sqlc.arg(max_rows)::integer;
 

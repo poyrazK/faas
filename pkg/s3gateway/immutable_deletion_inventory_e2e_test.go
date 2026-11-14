@@ -82,8 +82,11 @@ func TestImmutableDeletionInventorySDKE2E(t *testing.T) {
 				f.handler.requestMetrics = st
 			}
 			input := &awss3.DeleteObjectInput{Bucket: aws.String("assets"), Key: aws.String(publicVersionTestKey), VersionId: aws.String(refs[0].ID)}
-			_, e = f.client.DeleteObject(t.Context(), input)
-			assertSDKErrorCode(t, e, "OperationAborted")
+			// An all-version inventory fences the bucket until it finishes
+			// on its own: retryable SlowDown, not OperationAborted
+			// (ADR-20261023223000 amendment 2026-11-07).
+			_, e = f.client.DeleteObject(t.Context(), input, func(o *awss3.Options) { o.RetryMaxAttempts = 1 })
+			assertSDKErrorCode(t, e, "SlowDown")
 			if p.count() != 0 {
 				t.Fatal("delete invalidated cursor", p.count())
 			}

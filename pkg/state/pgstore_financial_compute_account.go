@@ -43,7 +43,9 @@ func (t *pgFinancialComputeTxn) allowance(month time.Time) (int64, error) {
 		if err := json.Unmarshal(row.Price, &p); err != nil {
 			return 0, err
 		}
-		prices = append(prices, FinancialPriceSnapshot{Price: p, PeriodStart: row.PeriodStart.Time, EffectiveFrom: row.EffectiveFrom.Time})
+		// Several activations can share a minute. Preserve recorded order so
+		// weighted allowance selection agrees with MemStore and delivery.
+		prices = append(prices, FinancialPriceSnapshot{Price: p, PeriodStart: row.PeriodStart.Time, PeriodEnd: row.PeriodEnd.Time, EffectiveFrom: row.EffectiveFrom.Time, RecordedAt: row.RecordedAt.Time})
 	}
 	return computeAllowance(prices, month, t.now)
 }
@@ -94,6 +96,7 @@ func (t *pgFinancialComputeTxn) initializeAccount() error {
 	}
 	month := financial.ComputeMonth(t.now)
 	b, err := t.accountBook(month)
+	newBook := errors.Is(err, ErrNotFound)
 	if errors.Is(err, ErrNotFound) {
 		b = financial.ComputeBook{AccountID: pgUUIDString(t.account), PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0)}
 	} else if err != nil {
@@ -115,7 +118,11 @@ func (t *pgFinancialComputeTxn) initializeAccount() error {
 		return financial.ErrOverflow
 	}
 	b.QuantityCommitted = max(b.QuantityCommitted, quantity)
-	b.AllowanceGranted = max(b.AllowanceGranted, grant)
+	if newBook {
+		b.AllowanceGranted = grant
+	} else {
+		b.AllowanceGranted = min(b.AllowanceGranted, grant)
+	}
 	if err := computeAccountReprice(&b); err != nil {
 		return err
 	}

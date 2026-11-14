@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type namedStageFixture struct {
@@ -20,6 +21,8 @@ type namedStageFixture struct {
 	requests                     []string
 	keys                         []string
 	cache                        map[string]api.DeploymentResponse
+	submissions                  map[string]api.DeploymentSubmissionReceipt
+	attempts                     []string
 }
 
 func (f *namedStageFixture) review() api.AppReleaseReview {
@@ -36,6 +39,8 @@ func (f *namedStageFixture) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	encode := func(v any) { _ = json.NewEncoder(w).Encode(v) }
 	if r.Method == http.MethodPost && r.URL.Path == "/v1/apps/alpha/deployments" {
+		attempt := r.Header.Get(api.DeploymentAttemptHeader)
+		f.attempts = append(f.attempts, attempt)
 		body, _ := io.ReadAll(r.Body)
 		key := r.Header.Get("Idempotency-Key")
 		f.requests = append(f.requests, string(body))
@@ -61,6 +66,12 @@ func (f *namedStageFixture) serve(w http.ResponseWriter, r *http.Request) {
 			f.current = d.ID
 		}
 		f.cache[key] = d
+		if attempt != "" {
+			if f.submissions == nil {
+				f.submissions = map[string]api.DeploymentSubmissionReceipt{}
+			}
+			f.submissions[attempt] = api.DeploymentSubmissionReceipt{AttemptID: attempt, AppID: d.AppID, DeploymentID: d.ID, AcceptedAt: time.Now().UTC()}
+		}
 		if f.ambiguous {
 			f.ambiguous = false
 			w.WriteHeader(504)
@@ -78,6 +89,15 @@ func (f *namedStageFixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.writes++
 		f.current = "stage-new"
 		encode(api.DeploymentResponse{ID: "stage-new", AppID: "app-one", Scope: "staging", Status: "live", TrafficPercent: 100})
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/apps/alpha/deployment-submissions/") && r.Method == http.MethodGet {
+		ref, ok := f.submissions[strings.TrimPrefix(r.URL.Path, "/v1/apps/alpha/deployment-submissions/")]
+		if !ok {
+			w.WriteHeader(404)
+			return
+		}
+		encode(ref)
 		return
 	}
 	switch r.URL.Path {
@@ -113,6 +133,12 @@ func (f *namedStageFixture) serve(w http.ResponseWriter, r *http.Request) {
 	case "/v1/deployments/stage-base":
 		encode(api.DeploymentResponse{ID: "stage-base", AppID: "app-one", Scope: "staging", Status: "live", TrafficPercent: 100})
 	case "/v1/deployments/stage-new":
+		for _, d := range f.cache {
+			if d.ID == "stage-new" {
+				encode(d)
+				return
+			}
+		}
 		encode(api.DeploymentResponse{ID: "stage-new", AppID: "app-one", Scope: "staging", Status: "live", TrafficPercent: 0})
 	default:
 		w.WriteHeader(404)

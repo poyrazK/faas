@@ -108,7 +108,7 @@ func issueCommentsFixture(t *testing.T) (*fakeIssue, *RealService) {
 		t.Fatal(err)
 	}
 	client := &singleHostClient{base: server.Client(), api: server.URL}
-	return issue, &RealService{Installs: installs, IssueComments: NewHTTPIssueComments(tokens, client)}
+	return issue, &RealService{Installs: installs, IssueComments: NewHTTPIssueComments(tokens, client, 0)}
 }
 
 func TestUpsertIssueCommentKeepsOneCommentPerMarker(t *testing.T) {

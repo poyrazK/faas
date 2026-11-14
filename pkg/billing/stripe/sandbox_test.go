@@ -32,11 +32,11 @@ import (
 // The test plants 24 h of billable usage via state.MemStore.AppendUsage,
 // accumulates the mb_seconds integer sum, calls
 // PushUsageRecordSumWithID once against the real Stripe SDK, and
-// asserts `record.Quantity == 6187` exactly — the integer answer for
+// asserts `record.Quantity == 30937` exactly — the integer answer for
 // (256 MB Hobby admission + 8 MB overhead) * 60 min/h * 24 h, run
 // through the wire-quantity formula
 //
-//	qty = mbSeconds * 1000 / 1024 / 3600
+//	qty = mbSeconds * 5000 / 1024 / 3600
 //
 // with mbSeconds = api.BillableRAMMB(256) * 60 * 60 * 24 =
 // 264 * 86_400 = 22_809_600. The hand-computed expected value is the
@@ -109,15 +109,15 @@ func TestInvoiceShadow24h_Sandbox(t *testing.T) {
 
 	// Sum across the 24h window in pure int64 — must match what the
 	// SDK sees. The integer wire-quantity formula is qty = mbSec *
-	// 1000 / 1024 / 3600, evaluated in Go int64 arithmetic (no float).
+	// 5000 / 1024 / 3600, evaluated in Go int64 arithmetic (no float).
 	wantMB := billableMB * 60 * minutesPerDay // 264 * 3600 * 24 = 22_809_600
 	wantQty := wantMB * WireQuantityMillicentsPerGBHour / secondsPerGBHour
-	if wantQty != 6187 {
+	if wantQty != 30937 {
 		// Surface this loudly: a future change to BillableRAMMB or
 		// PerVMOverheadMB shifts the expected integer answer. The test
-		// will fail anyway, but a clear "x != 6187" message at the
+		// will fail anyway, but a clear "x != 30937" message at the
 		// top of the failure saves the operator a hand-calculation.
-		t.Fatalf("expected wire quantity = %d (hard-coded in plan as 6187); "+
+		t.Fatalf("expected wire quantity = %d (hard-coded in plan as 30937); "+
 			"update both if BillableRAMMB(256) or WireQuantityMillicentsPerGBHour changed",
 			wantQty)
 	}
@@ -143,8 +143,8 @@ func TestInvoiceShadow24h_Sandbox(t *testing.T) {
 	// previous float path produced 6168 (0.315 % short); the spec's
 	// 0.1 % gate would still catch that, but exact-integer equality
 	// is the cleaner regression guard.
-	if record.Quantity != 6187 {
-		t.Fatalf("wire Quantity = %d, want 6187 exactly (integer-arithmetic M7 acceptance)",
+	if record.Quantity != 30937 {
+		t.Fatalf("wire Quantity = %d, want 30937 exactly (integer-arithmetic M7 acceptance)",
 			record.Quantity)
 	}
 }

@@ -84,7 +84,7 @@ func (m *MemStore) putWorkloadSpecLocked(env ProjectEnvironment, appID string, e
 		Hash: hash, Settings: copy, CreatedAt: time.Now().UTC(),
 	}
 	m.projectEnvironmentWorkloadSpecs[spec.ID] = spec
-	m.projectEnvironmentWorkloadHeads[key] = spec.ID
+	m.putWorkloadSpecHeadLocked(spec)
 	return cloneWorkloadSpec(spec)
 }
 

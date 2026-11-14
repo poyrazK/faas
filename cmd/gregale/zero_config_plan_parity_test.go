@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apihostingcontract"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
+	"github.com/onebox-faas/faas/pkg/sourcecontext"
 )
 
 // TestZeroConfigPlanMatchesDeployedSourceAndReceipt keeps the customer-facing
@@ -207,6 +208,9 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 			if fixture.SourceRoot != "" {
 				wantSourceRoot = fixture.SourceRoot
 			}
+			if wantSourceRoot == "" {
+				wantSourceRoot = "."
+			}
 			if sourceRoot != wantSourceRoot || len(uploaded) == 0 {
 				t.Fatalf("uploaded source root = %q, bytes = %d; want %q and nonempty source", sourceRoot, len(uploaded), wantSourceRoot)
 			}
@@ -222,7 +226,11 @@ func TestZeroConfigPlanMatchesDeployedSourceAndReceipt(t *testing.T) {
 					}
 				}
 			}
-			profile, err := frameworkprofile.Analyze(paritySelectedSource(entries, sourceRoot))
+			buildRoot, err := sourcecontext.StorageRoot(sourceRoot)
+			if err != nil {
+				t.Fatalf("uploaded source root: %v", err)
+			}
+			profile, err := frameworkprofile.Analyze(paritySelectedSource(entries, buildRoot))
 			if err != nil {
 				t.Fatalf("analyze uploaded source: %v", err)
 			}

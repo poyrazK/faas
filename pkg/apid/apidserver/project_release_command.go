@@ -19,7 +19,6 @@ func (s *server) prepareSafeProjectCommands(ctx context.Context, acct state.Acco
 	var command *api.ProjectReleaseCommand
 	for i, app := range apps {
 		workload := scan.Workloads[i]
-		resolved := deploymentReleaseCommand{command: workload.ReleaseCommand, shell: workload.ReleaseCommandShell}
 		manifest, problem := loadSourceRefManifest(source, app, acct.Plan, s.agentStepsAllowed(acct))
 		if problem != nil {
 			return problem
@@ -27,16 +26,17 @@ func (s *server) prepareSafeProjectCommands(ctx context.Context, acct state.Acco
 		if len(sourceOperationSpecs(manifest)) > 0 {
 			return api.ErrValidation("atomic migration deploy cannot change operation declarations")
 		}
-		if len(apps) == 1 {
-			resolved, problem = resolveSourceReleaseCommand(source, app, manifest)
-			if problem != nil {
-				return problem
-			}
-		} else if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
-			return api.ErrValidation("multi-workload migration deploy requires a single Procfile release declaration")
+		// The same per-service resolution as the apply that runs the
+		// command (ADR-20261019120007 amendment 1).
+		resolved, problem := projectWorkloadReleaseCommand(source, scan.Workloads, workload, app, manifest)
+		if problem != nil {
+			return problem
 		}
 		if len(resolved.command) == 0 {
 			continue
+		}
+		if s.releasePhaseOff {
+			return releasePhaseOffProblem()
 		}
 		if command != nil {
 			return api.ErrValidation("atomic migration deploy supports one release command per project")

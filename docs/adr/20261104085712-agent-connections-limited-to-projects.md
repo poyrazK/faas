@@ -43,6 +43,11 @@ limit (one primary-key read) onto the principal.
   with the 404 they give a cross-account app. This covers routes that address
   the app by path and those that resolve it from the body or a stored session
   (uploads, domains, crons, deployment reads).
+- **Storage copy sources.** Granting cross-bucket copy authority checks the
+  source bucket's owning app against the same project set independently of
+  the destination app in the route. An excluded source, including an app
+  outside every project, returns 404 without creating a grant. Admin scope
+  does not override a key's project restriction.
 - **Projects.** `/v1/projects/{slug}` routes refuse a project outside the set
   (404).
 - **Lists.** `GET /v1/apps`, `GET /v1/orgs/{slug}/apps` and
@@ -89,3 +94,54 @@ return `projects`.
 - Limiting by environment within a project.
 - Changing a connection's projects without reconnecting.
 - Limits for keys other than agent and `mcp-login` keys.
+
+## Amendment (2026-11-05): App-hosted object uploads enforce key boundaries
+
+`POST /uploads/{route}` and `GET /uploads/{route}/receipts/{id}` run at the
+public edge outside apid's HTTP middleware. They enforce the key's organization
+as well as its existing account and app boundaries. An explicitly organization-
+bound key cannot reach an app of another organization or an unattributed legacy
+app. Unscoped legacy account keys retain their account boundary.
+
+For agent and `mcp-login` keys the edge reads the immutable project restriction
+through `EdgeStore`'s narrow `APIKeyProjectLimitReader`. Credential resolution
+still belongs to apid; this read contains no credential material and works even
+while an older apid returns a key without the middleware's project projection.
+A missing or failed restriction read returns 503, never unlimited access. An
+app outside the allowed projects, including an app with no project, returns 403
+before an upload is admitted or a receipt is read. Unlimited keys and allowed
+projects retain upload and receipt access.
+
+## Amendment (2026-11-07): the gateway and key rotation honour the limit
+
+Two more paths authenticate the same keys outside apid's middleware:
+
+- **The gateway's private-app unlock** (`require_authn` and public auth with
+  a bearer key). gatewayd-internal reads the limit of an agent or
+  `mcp-login` key with the key and keeps it in its key cache; a limited key
+  opens only its projects' apps (403 `insufficient_scope`, audited as
+  `instances.authn_scope`). An app-bound credential opens only its app; the
+  gateway had dropped the binding.
+- **Key rotation** copies the predecessor's limit to the successor in the
+  rotation's transaction, on the account and organization paths, so
+  rotating never turns a limited key into an account-wide one.
+
+A gateway reads one primary-key row per agent key on a cache miss.
+
+## Amendment (2026-11-10): company projects
+
+Company projects live under `/v1/orgs/{organization}/projects/{slug}`, and
+their slugs are unique only within the company. Limits on them did not work:
+
+- **Minting** an organization's key resolved project slugs among the
+  creator's own projects, so a company project answered 404. It now looks in
+  the key's organization first.
+- **Using** the key: the middleware knew only `/v1/apps/{slug}` and
+  `/v1/projects/{slug}`, so every organization project and app route
+  answered 403 "Key limited to projects". Now an organization project route
+  resolves its project within `{organization}` and passes only a project in
+  the limit. `/v1/orgs/{organization}/apps/{slug}` routes are checked like
+  `/v1/apps/{slug}`; app slugs are unique across accounts. Anything outside
+  the limit answers 404.
+- **Listing:** `GET /v1/orgs/{organization}/projects` lists only the key's
+  projects.

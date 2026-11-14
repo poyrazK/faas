@@ -11,31 +11,13 @@
 package db
 
 import (
-	"context"
-	"sync/atomic"
-
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/onebox-faas/faas/pkg/pgpoolbounds"
 )
 
-// acquireAbandonTracer implements pgxpool.AcquireTracer. ConnConfig.Tracer is
-// typed as pgx.QueryTracer, so the query hooks exist only to satisfy it.
-type acquireAbandonTracer struct {
-	abandoned atomic.Int64
-}
-
-// precanceledAcquireKey marks an acquisition whose context had ended before
-// it began. Only that rare path allocates.
-type precanceledAcquireKey struct{}
-
-// instrumentAcquires installs the tracer on an ordinary daemon pool. A config
-// that already carries a tracer keeps it; the collector then falls back to
-// pgxpool's own count.
-func instrumentAcquires(cfg *pgxpool.Config) {
-	if cfg.ConnConfig.Tracer == nil {
-		cfg.ConnConfig.Tracer = &acquireAbandonTracer{}
-	}
-}
+// Keep daemon pool metrics on the same lightweight tracer the guest uses.
+type acquireAbandonTracer = pgpoolbounds.Tracer
 
 // abandonedAcquires reports the tracer's count for pool, or false when the
 // pool was built without it.
@@ -44,28 +26,5 @@ func abandonedAcquires(pool *pgxpool.Pool) (int64, bool) {
 	if !ok {
 		return 0, false
 	}
-	return t.abandoned.Load(), true
+	return t.AbandonedAcquires(), true
 }
-
-func (t *acquireAbandonTracer) TraceAcquireStart(ctx context.Context, _ *pgxpool.Pool, _ pgxpool.TraceAcquireStartData) context.Context {
-	if ctx.Err() != nil {
-		return context.WithValue(ctx, precanceledAcquireKey{}, struct{}{})
-	}
-	return ctx
-}
-
-// TraceAcquireEnd counts a failed acquisition only when the caller's context
-// ended during it. A dial or authentication failure under a live context is
-// not an abandonment.
-func (t *acquireAbandonTracer) TraceAcquireEnd(ctx context.Context, _ *pgxpool.Pool, data pgxpool.TraceAcquireEndData) {
-	if data.Err == nil || ctx.Err() == nil || ctx.Value(precanceledAcquireKey{}) != nil {
-		return
-	}
-	t.abandoned.Add(1)
-}
-
-func (t *acquireAbandonTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
-	return ctx
-}
-
-func (t *acquireAbandonTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}

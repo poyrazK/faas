@@ -971,7 +971,14 @@ func TestSeverityOrdinal(t *testing.T) {
 // bypass branch would forward the request — a 302 success that
 // lets the attacker delete the account.
 func TestSessionAuth_StampsStepUpOnRequestContext(t *testing.T) {
-	srv, sid := newAuthedDashboardServer(t)
+	srv, sid, store, mgr := newAuthedDashboardServerFull(t)
+	env, err := mgr.Verify(sid.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkMFAEnrolled(t.Context(), env.AccountID); err != nil {
+		t.Fatal(err)
+	}
 	csrfCookie, deleteToken, _ := renderDashboardAccount(t, srv, sid)
 	if deleteToken == "" {
 		t.Fatal("rendered account page is missing the delete csrf_token")
@@ -1176,7 +1183,14 @@ func TestDashboardRaiseOverageCap_PostsForm(t *testing.T) {
 // requires the same login envelope, and the step-up gate fires
 // regardless of which account is involved.
 func TestDashboardRaiseOverageCap_RejectsPreStepUpCookie(t *testing.T) {
-	srv, sid := newAuthedDashboardServer(t)
+	srv, sid, store, mgr := newAuthedDashboardServerFull(t)
+	env, err := mgr.Verify(sid.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkMFAEnrolled(t.Context(), env.AccountID); err != nil {
+		t.Fatal(err)
+	}
 	csrfCookie, raiseToken := renderDashboardBilling(t, srv, sid)
 	if raiseToken == "" {
 		t.Fatal("rendered billing page is missing the raise-cap csrf_token")

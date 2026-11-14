@@ -116,6 +116,8 @@ func TestManagedPostgresPlanDenialIsNotAQuota(t *testing.T) {
 	}{
 		{managedpostgres.ErrNotInPlan, "managed_postgres_not_in_plan", "not included in this plan"},
 		{managedpostgres.ErrQuotaExceeded, "managed_postgres_quota_exceeded", "quota exceeded"},
+		// ChronoLake finding 18: the usage ceiling is not a database count.
+		{managedpostgres.ErrUsageLimitReached, "managed_postgres_usage_limit_reached", "usage ceiling reached"},
 	} {
 		recorder := httptest.NewRecorder()
 		apidserver.ManagedPostgresProblem(recorder, tc.err)

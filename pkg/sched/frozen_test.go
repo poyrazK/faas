@@ -129,10 +129,9 @@ func newFrozenFixtureInStore(t *testing.T, store *state.MemStore, withSnapshot b
 	}
 	vmm := &frozenFakeVMM{fakeVMM: &fakeVMM{}}
 	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0").WithOpsMetrics(wire.NewOpsMetrics("schedd"))
-	limits := api.MustLimitsFor(api.PlanPro)
 	if err := e.Ledger().Admit(Request{
 		Instance: ins.ID, AppID: app.ID, DeploymentID: dep.ID, Plan: api.PlanPro,
-		RAMMB: app.RAMMB, VCPU: limits.VCPU, CPUMillicores: 1000, MaxConcurrency: app.MaxConcurrency, NodeID: node.ID,
+		RAMMB: app.RAMMB, VCPU: api.SizeVCPUs(app.RAMMB), CPUMillicores: 1000, MaxConcurrency: app.MaxConcurrency, NodeID: node.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -28,9 +28,10 @@ WHERE (org_id = $1::uuid OR
        (org_id IS NULL AND account_id = $2::uuid AND $3::boolean))
   AND status IN ('active', 'evicted_cold')
   AND CASE $4::text
-      WHEN 'developer_apps' THEN preview_of_slug IS NOT NULL AND coalesce(preview_pr_number, 0) = 0
-      WHEN 'preview_apps' THEN preview_of_slug IS NOT NULL AND preview_pr_number > 0
-      ELSE preview_of_slug IS NULL END
+      WHEN 'sandbox_templates' THEN sandbox_template
+      WHEN 'developer_apps' THEN NOT sandbox_template AND preview_of_slug IS NOT NULL AND coalesce(preview_pr_number, 0) = 0
+      WHEN 'preview_apps' THEN NOT sandbox_template AND preview_of_slug IS NOT NULL AND preview_pr_number > 0
+      ELSE NOT sandbox_template AND preview_of_slug IS NULL END
 `
 
 type CountAppsParams struct {
@@ -115,8 +116,9 @@ WHERE account_id = $1::uuid
        WHERE personal_org AND personal_owner_account_id = $1::uuid))
   AND status IN ('active', 'evicted_cold')
   AND CASE $2::text
-      WHEN 'developer_apps' THEN preview_of_slug IS NOT NULL AND coalesce(preview_pr_number, 0) = 0
-      ELSE preview_of_slug IS NULL END
+      WHEN 'sandbox_templates' THEN sandbox_template
+      WHEN 'developer_apps' THEN NOT sandbox_template AND preview_of_slug IS NOT NULL AND coalesce(preview_pr_number, 0) = 0
+      ELSE NOT sandbox_template AND preview_of_slug IS NULL END
 `
 
 type CountPersonalAppsParams struct {

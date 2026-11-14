@@ -1,6 +1,7 @@
 package objectstorage
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -26,6 +27,9 @@ type publicMountEntry struct {
 	// valid serve_at. Empty means the host has none, or names no app.
 	buckets []state.ObjectBucket
 	expires time.Time
+	// stored is when the answer was read, for a forwarder that may route by
+	// it past expires (staleFor).
+	stored time.Time
 }
 
 type publicMountCache struct {
@@ -50,6 +54,21 @@ func (c *publicMountCache) get(host string, now time.Time) ([]state.ObjectBucket
 	return entry.buckets, true
 }
 
+// getStale returns host's answer even past its expiry, while it is younger
+// than maxAge; fresh reports whether it is still inside publicMountTTL.
+func (c *publicMountCache) getStale(host string, now time.Time, maxAge time.Duration) (buckets []state.ObjectBucket, fresh, ok bool) {
+	if c == nil {
+		return nil, false, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, found := c.hosts[host]
+	if !found || now.Sub(entry.stored) >= maxAge {
+		return nil, false, false
+	}
+	return entry.buckets, now.Before(entry.expires), true
+}
+
 func (c *publicMountCache) put(host string, buckets []state.ObjectBucket, now time.Time) {
 	if c == nil {
 		return
@@ -70,7 +89,7 @@ func (c *publicMountCache) put(host string, buckets []state.ObjectBucket, now ti
 			delete(c.hosts, name)
 		}
 	}
-	c.hosts[host] = publicMountEntry{buckets: buckets, expires: now.Add(publicMountTTL)}
+	c.hosts[host] = publicMountEntry{buckets: buckets, expires: now.Add(publicMountTTL), stored: now}
 }
 
 // servableMounts keeps the buckets the public edge may serve.
@@ -81,5 +100,8 @@ func servableMounts(buckets []state.ObjectBucket) []state.ObjectBucket {
 			out = append(out, bucket)
 		}
 	}
+	// Lookup takes the first matching mount. A nested mount owns its subtree
+	// independently of catalog creation order, on both serving and forwarding edges.
+	sort.SliceStable(out, func(i, j int) bool { return len(out[i].ServeAt) > len(out[j].ServeAt) })
 	return out
 }

@@ -5,6 +5,7 @@
 import type { DeploymentBuildDependencyGate } from './DeploymentBuildDependencyGate.js';
 import type { DeploymentDependencyGate } from './DeploymentDependencyGate.js';
 import type { DeploymentHostingVerification } from './DeploymentHostingVerification.js';
+import type { DeploymentRetryIntent } from './DeploymentRetryIntent.js';
 import type { DeploymentStageHistoryEntry } from './DeploymentStageHistoryEntry.js';
 /**
  * Customer-visible deployment stage progress. `current` is the open stage, or an empty string once the deployment is live, failed or cancelled and that stage has moved into `history`.
@@ -27,6 +28,7 @@ export type DeploymentStageState = {
    * Why a retry restarted from source_download rather than retry_requested_stage.
    */
   retry_restart_reason?: string;
+  retry_intent?: DeploymentRetryIntent;
   dependency_gate?: DeploymentDependencyGate;
   build_dependency_gate?: DeploymentBuildDependencyGate;
   hosting_verification?: DeploymentHostingVerification;

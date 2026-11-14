@@ -166,7 +166,8 @@ The same rules as the [Compose import](multi-service-apps.md#configuration)
 apply: a value already set on the app is never overwritten, names that look like
 credentials and values that look like secrets are skipped, and the plan shows
 names, never values. Imports happen on reviewed deploys (`gregale deploy`, the
-dashboard, `--repo … --project`); a GitHub push deploy imports nothing.
+dashboard, `--repo … --project`); a GitHub push imports only the addresses of
+sibling services.
 
 A value that calls another scanned Service over HTTP is rewritten to that
 service's Gregale address, and the plan names each rewrite. These forms are

@@ -33,7 +33,7 @@ func (s *Service) advanceObjectInventory(ctx context.Context, st state.ObjectSto
 		err = s.listObjectInventory(ctx, b, &scan, page)
 	}
 	if err == nil && scan.Complete {
-		if err = scans.FinishObjectInventoryScan(ctx, b.ID, token, scan); err == nil {
+		if err = s.finishObjectInventoryScan(ctx, scans, b, token, scan); err == nil {
 			report("success")
 			return nil
 		}
@@ -111,7 +111,7 @@ func ResumeObjectInventory(ctx context.Context, p objectstorage.ObjectV2Lister, 
 			}
 			return err
 		}
-		if len(page.Items) > api.MaxObjectS3ListItems || len(page.CommonPrefixes) != 0 || len(page.Items) == 0 && page.NextCursor != "" {
+		if len(page.Items) > api.MaxObjectS3ListItems || len(page.CommonPrefixes) != 0 {
 			return objectstorage.ErrInvalid
 		}
 		next := *scan
@@ -134,4 +134,19 @@ func ResumeObjectInventory(ctx context.Context, p objectstorage.ObjectV2Lister, 
 		cursor = page.NextCursor
 	}
 	return nil
+}
+
+// finishObjectInventoryScan publishes a complete listing and, when the store
+// can tell, reports a quiet bucket whose listing changed (ADR-20261110151628
+// §2).
+func (s *Service) finishObjectInventoryScan(ctx context.Context, scans state.ObjectInventoryScanStore, b state.ObjectBucket, token string, scan state.ObjectInventoryScan) error {
+	verified, ok := scans.(state.ObjectInventoryVerificationStore)
+	if !ok {
+		return scans.FinishObjectInventoryScan(ctx, b.ID, token, scan)
+	}
+	v, err := verified.FinishObjectInventoryScanVerified(ctx, b.ID, token, scan)
+	if err == nil {
+		s.recordInventoryVerification(b, v)
+	}
+	return err
 }

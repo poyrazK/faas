@@ -1,7 +1,7 @@
 // adr: 521
 package preview
 
-import "github.com/poyrazK/faas/sdk/go/internal/api"
+import "github.com/gregale-dev/gregale-go/internal/api"
 
 // Operations keep business state, native execution and completion delivery
 // separate. The embedded Client methods use these public wire types.

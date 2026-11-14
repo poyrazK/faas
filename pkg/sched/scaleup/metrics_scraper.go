@@ -1,6 +1,7 @@
 package scaleup
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -30,11 +31,17 @@ type HTTPPromScraper struct {
 	Client HTTPFetcher
 }
 
-// metricsResponseMaxBytes is deliberately well above the expected metrics
-// payload while still bounding memory if the endpoint is misconfigured or
-// compromised. A metrics scrape is a control-plane input, not a streaming
-// payload, so an oversized response fails closed.
-const metricsResponseMaxBytes = 1 << 20
+// metricsResponseMaxBytes bounds how much of the response a scrape reads.
+// The body is parsed as it streams, so memory follows the number of apps,
+// not the body size. The exposition holds one row per app per exact HTTP
+// status code, so at density it outgrew the former 1 MiB cap, and an
+// oversized scrape fails closed: scale-up and the recent-load mirror went
+// blind together (ADR 20261104091530). This cap is far above any real node.
+const metricsResponseMaxBytes = 32 << 20
+
+// metricsLineMaxBytes bounds one exposition line; a longer one fails the
+// scrape instead of growing the scanner's buffer.
+const metricsLineMaxBytes = 64 << 10
 
 // Scrape implements PromScraper. Reads the metrics body into memory up to
 // metricsResponseMaxBytes (gatewayd-internal's /metrics is small — every
@@ -43,11 +50,8 @@ const metricsResponseMaxBytes = 1 << 20
 // trigger's Touch path treats the tick as a no-op without a spammy
 // error log.
 func (s *HTTPPromScraper) Scrape(ctx context.Context) (map[string]int64, error) {
-	body, err := s.fetch(ctx)
-	if err != nil {
-		return map[string]int64{}, err
-	}
-	return parseGatewayRequestsTotal(body), nil
+	counts, _, err := s.scrape(ctx)
+	return counts, err
 }
 
 // ScrapeLoad returns the per-app cumulative request counts and the per-app
@@ -55,33 +59,32 @@ func (s *HTTPPromScraper) Scrape(ctx context.Context) (map[string]int64, error) 
 // scale-in mirror needs both: completions collapse while an overloaded app
 // stalls, but its in-flight requests do not.
 func (s *HTTPPromScraper) ScrapeLoad(ctx context.Context) (counts, inflight map[string]int64, err error) {
-	body, err := s.fetch(ctx)
-	if err != nil {
-		return map[string]int64{}, map[string]int64{}, err
-	}
-	return parseGatewayRequestsTotal(body), parseGatewayAppInflight(body), nil
+	return s.scrape(ctx)
 }
 
-func (s *HTTPPromScraper) fetch(ctx context.Context) (string, error) {
+// scrape fetches the exposition and parses both families as it streams.
+// Any error returns empty maps.
+func (s *HTTPPromScraper) scrape(ctx context.Context) (counts, inflight map[string]int64, err error) {
 	if s == nil || s.URL == "" || s.Client == nil {
-		return "", nil
+		return map[string]int64{}, map[string]int64{}, nil
 	}
 	resp, err := s.Client.Get(ctx, s.URL)
 	if err != nil {
-		return "", fmt.Errorf("scaleup: scrape GET: %w", err)
+		return map[string]int64{}, map[string]int64{}, fmt.Errorf("scaleup: scrape GET: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("scaleup: scrape status %d", resp.StatusCode)
+		return map[string]int64{}, map[string]int64{}, fmt.Errorf("scaleup: scrape status %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, metricsResponseMaxBytes+1))
+	limited := &io.LimitedReader{R: resp.Body, N: metricsResponseMaxBytes + 1}
+	counts, inflight, err = parseGatewayLoad(limited)
+	if err == nil && limited.N <= 0 {
+		err = fmt.Errorf("scaleup: scrape response exceeds %d bytes", metricsResponseMaxBytes)
+	}
 	if err != nil {
-		return "", fmt.Errorf("scaleup: scrape read: %w", err)
+		return map[string]int64{}, map[string]int64{}, fmt.Errorf("scaleup: scrape read: %w", err)
 	}
-	if int64(len(body)) > metricsResponseMaxBytes {
-		return "", fmt.Errorf("scaleup: scrape response exceeds %d bytes", metricsResponseMaxBytes)
-	}
-	return string(body), nil
+	return counts, inflight, nil
 }
 
 // parseGatewayRequestsTotal parses the Prometheus exposition for
@@ -95,56 +98,59 @@ func (s *HTTPPromScraper) fetch(ctx context.Context) (string, error) {
 // more sophisticated parser (e.g. prometheus/common) would pull in a
 // substantial dependency for what is fundamentally a 20-line parse loop.
 func parseGatewayRequestsTotal(body string) map[string]int64 {
-	return sumGatewayAppSamples(body, "gateway_requests_total{")
+	counts, _, _ := parseGatewayLoad(strings.NewReader(body))
+	return counts
 }
 
-// parseGatewayAppInflight parses `gateway_app_inflight_requests{app="..."}`
-// rows into `appID → requests in flight`. An app absent from a successful
-// scrape has no in-flight requests on that gateway.
-func parseGatewayAppInflight(body string) map[string]int64 {
-	return sumGatewayAppSamples(body, "gateway_app_inflight_requests{")
-}
+const (
+	gatewayRequestsPrefix = "gateway_requests_total{"
+	gatewayInflightPrefix = "gateway_app_inflight_requests{"
+)
 
-// sumGatewayAppSamples sums every sample of the family whose line starts with
-// prefix, keyed by its app label.
-func sumGatewayAppSamples(body, prefix string) map[string]int64 {
-	out := map[string]int64{}
-	for _, line := range strings.Split(body, "\n") {
-		// Skip comments + empty lines + HELP/TYPE metadata.
-		if len(line) == 0 || line[0] == '#' {
-			continue
+// parseGatewayLoad reads the exposition line by line and sums both
+// families' samples by their app label, without holding the body.
+func parseGatewayLoad(r io.Reader) (counts, inflight map[string]int64, err error) {
+	counts, inflight = map[string]int64{}, map[string]int64{}
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 4096), metricsLineMaxBytes)
+	for scanner.Scan() {
+		line := scanner.Text()
+		switch {
+		case strings.HasPrefix(line, gatewayRequestsPrefix):
+			addGatewayAppSample(counts, line)
+		case strings.HasPrefix(line, gatewayInflightPrefix):
+			addGatewayAppSample(inflight, line)
 		}
-		// The two families have distinct prefixes, so a startswith
-		// check is sufficient.
-		if !strings.HasPrefix(line, prefix) {
-			continue
-		}
-		// Find the app="..." label. The label order is
-		// unspecified, so a substring search is the safe
-		// shape.
-		idx := strings.Index(line, `app="`)
-		if idx < 0 {
-			continue
-		}
-		start := idx + len(`app="`)
-		end := strings.IndexByte(line[start:], '"')
-		if end < 0 {
-			continue
-		}
-		appID := line[start : start+end]
-		// The value is the last whitespace-separated token on the
-		// line. Sum across all label tuples for this app.
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		v, err := strconv.ParseFloat(fields[len(fields)-1], 64)
-		if err != nil {
-			continue
-		}
-		out[appID] += int64(v)
 	}
-	return out
+	return counts, inflight, scanner.Err()
+}
+
+// addGatewayAppSample adds one sample line's value to out under its app label.
+func addGatewayAppSample(out map[string]int64, line string) {
+	// Find the app="..." label. The label order is
+	// unspecified, so a substring search is the safe
+	// shape.
+	idx := strings.Index(line, `app="`)
+	if idx < 0 {
+		return
+	}
+	start := idx + len(`app="`)
+	end := strings.IndexByte(line[start:], '"')
+	if end < 0 {
+		return
+	}
+	appID := line[start : start+end]
+	// The value is the last whitespace-separated token on the
+	// line. Sum across all label tuples for this app.
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return
+	}
+	v, err := strconv.ParseFloat(fields[len(fields)-1], 64)
+	if err != nil {
+		return
+	}
+	out[appID] += int64(v)
 }
 
 // NewHTTPPromScraper constructs the production scraper with a

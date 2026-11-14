@@ -53,6 +53,8 @@ type RecordIssueParams struct {
 	TimeBuckets [][2]int64
 	Limits      api.IssueLimits
 	Now         time.Time
+	// EnforceResourcePolicy rechecks the owner under database locks.
+	EnforceResourcePolicy bool
 }
 
 type IssueCursor struct {
@@ -88,6 +90,7 @@ var ErrIssueGroupingConflict = errors.New("issue group membership conflicts with
 var ErrIssueTicketPending = errors.New("issue has a native ticket awaiting creation or attachment")
 var ErrIssueQuota = errors.New("issue storage quota exceeded")
 var ErrIssueRateLimited = errors.New("issue ingestion rate exceeded")
+var ErrIssuePolicyChanged = errors.New("issue ingestion is not allowed by current owner policy")
 
 type IssueDetailCursors struct{ Events, Releases, Activity IssueCursor }
 

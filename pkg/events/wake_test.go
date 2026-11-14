@@ -487,3 +487,22 @@ func TestBootCompleted_Shape_IncludesNewFields(t *testing.T) {
 		t.Errorf("payload.concurrency_at_admit = %v, want 1", got)
 	}
 }
+
+func TestServedByInstancePayload(t *testing.T) {
+	now := time.Date(2026, 11, 5, 11, 53, 45, 0, time.UTC)
+	ev := ServedByInstance{EmitAt: now, WakeID: "w-new", AppID: "a", InstanceID: "i", InstanceWakeID: "w-own", NodeID: "n"}
+	var _ WakeEvent = ev
+	if ev.Kind() != WakeServedByInstance || !ev.At().Equal(now) || ev.Subject() != nil {
+		t.Fatalf("event = %s at %s subject %v", ev.Kind(), ev.At(), ev.Subject())
+	}
+	want := map[string]any{"wake_id": "w-new", "app_id": "a", "instance_id": "i", "instance_wake_id": "w-own", "node_id": "n"}
+	got := ev.Payload()
+	if len(got) != len(want) {
+		t.Fatalf("payload = %v, want %v", got, want)
+	}
+	for key, value := range want {
+		if got[key] != value {
+			t.Fatalf("payload[%s] = %v, want %v", key, got[key], value)
+		}
+	}
+}

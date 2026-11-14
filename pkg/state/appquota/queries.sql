@@ -32,9 +32,10 @@ WHERE (org_id = sqlc.narg(org_id)::uuid OR
        (org_id IS NULL AND account_id = sqlc.arg(account_id)::uuid AND sqlc.arg(personal)::boolean))
   AND status IN ('active', 'evicted_cold')
   AND CASE sqlc.arg(kind)::text
-      WHEN 'developer_apps' THEN preview_of_slug IS NOT NULL AND coalesce(preview_pr_number, 0) = 0
-      WHEN 'preview_apps' THEN preview_of_slug IS NOT NULL AND preview_pr_number > 0
-      ELSE preview_of_slug IS NULL END;
+      WHEN 'sandbox_templates' THEN sandbox_template
+      WHEN 'developer_apps' THEN NOT sandbox_template AND preview_of_slug IS NOT NULL AND coalesce(preview_pr_number, 0) = 0
+      WHEN 'preview_apps' THEN NOT sandbox_template AND preview_of_slug IS NOT NULL AND preview_pr_number > 0
+      ELSE NOT sandbox_template AND preview_of_slug IS NULL END;
 
 -- name: CountOpenPreviewEnvironments :one
 -- PreviewApps caps open PR preview environments: the open previews of one
@@ -69,5 +70,6 @@ WHERE account_id = sqlc.arg(account_id)::uuid
        WHERE personal_org AND personal_owner_account_id = sqlc.arg(account_id)::uuid))
   AND status IN ('active', 'evicted_cold')
   AND CASE sqlc.arg(kind)::text
-      WHEN 'developer_apps' THEN preview_of_slug IS NOT NULL AND coalesce(preview_pr_number, 0) = 0
-      ELSE preview_of_slug IS NULL END;
+      WHEN 'sandbox_templates' THEN sandbox_template
+      WHEN 'developer_apps' THEN NOT sandbox_template AND preview_of_slug IS NOT NULL AND coalesce(preview_pr_number, 0) = 0
+      ELSE NOT sandbox_template AND preview_of_slug IS NULL END;

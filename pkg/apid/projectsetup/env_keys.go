@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -59,5 +58,5 @@ func UnsetEnvKeys(ctx context.Context, store EnvKeyReader, accountID, scope stri
 // PlatformProvidedEnvKey reports keys Gregale sets itself: the listener
 // port, platform settings, service URLs and identity headers.
 func PlatformProvidedEnvKey(key string) bool {
-	return key == "PORT" || strings.HasPrefix(key, "GREGALE_") || strings.HasPrefix(key, "FAAS_") || api.IsPlatformIdentityEnvKey(key)
+	return api.PlatformProvidedEnvKey(key)
 }

@@ -48,8 +48,32 @@ func (s *Service) GetPriceCatalog(w http.ResponseWriter, r *http.Request, _ stat
 			// ADR 20261019072722 audio token prices.
 			InputAudioMillicentsPerMTok:       copyInt64(entry.Price.InputAudio),
 			CachedInputAudioMillicentsPerMTok: copyInt64(entry.Price.CachedInputAudio),
+			CacheWrite1hMillicentsPerMTok:     catalogCacheWrite1h(entry),
+			LongContext:                       catalogLongContext(entry.Model),
 			OutputAudioMillicentsPerMTok:      copyInt64(entry.Price.OutputAudio)})
 	}
 	w.Header().Set("Cache-Control", "private, max-age=300")
 	httpkit.WriteJSON(w, http.StatusOK, out)
+}
+
+// catalogCacheWrite1h is the one-hour cache-write price billing charges a
+// catalog model, for the models whose provider bills one (ADR 20261027132936
+// amendment 3).
+func catalogCacheWrite1h(entry aiprices.Entry) *int64 {
+	if !aiprices.HasCacheWrite1h(entry.Model) {
+		return nil
+	}
+	price := aiprices.CacheWrite1hFallback(entry.Price.CacheWrite, entry.Price.Input)
+	return &price
+}
+
+// catalogLongContext is the long-context tier billing applies to a catalog
+// model, if it has one.
+func catalogLongContext(model string) *api.OutboundAILongContextTier {
+	tier, ok := aiprices.LongContextTierFor(model)
+	if !ok {
+		return nil
+	}
+	return &api.OutboundAILongContextTier{AboveInputTokens: tier.AboveInputTokens, InputPercent: tier.InputPercent,
+		OutputPercent: tier.OutputPercent}
 }

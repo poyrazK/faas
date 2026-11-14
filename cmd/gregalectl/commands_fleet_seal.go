@@ -153,23 +153,30 @@ func runFleetSealVerify(args []string) error {
 	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN")
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
 	metricsFile := fs.String("metrics-file", "", "optional node_exporter textfile output")
+	fleetRetired := fs.Bool("fleet-retired", false, "this node holds no fleet identity: prove the cluster signing key with the control identity alone")
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	fleet, err := secretbox.LoadHostKey(*fleetKey)
-	if err != nil {
-		_ = writeFleetSealMetric(*metricsFile, fleetseal.VerificationReport{}, false)
-		return err
+	var fleet *age.X25519Identity
+	failed := fleetseal.VerificationReport{FleetRetired: *fleetRetired}
+	if !*fleetRetired {
+		loaded, err := secretbox.LoadHostKey(*fleetKey)
+		if err != nil {
+			_ = writeFleetSealMetric(*metricsFile, fleetseal.VerificationReport{}, false)
+			return err
+		}
+		fleet = loaded
+		failed.FleetRecipient = fleet.Recipient().String()
 	}
 	host, err := secretbox.LoadHostKey(*hostKey)
 	if err != nil {
-		_ = writeFleetSealMetric(*metricsFile, fleetseal.VerificationReport{FleetRecipient: fleet.Recipient().String()}, false)
+		_ = writeFleetSealMetric(*metricsFile, failed, false)
 		return err
 	}
 	pool, err := openFleetSealPool(*dsn, *dbEnv)
 	if err != nil {
-		_ = writeFleetSealMetric(*metricsFile, fleetseal.VerificationReport{FleetRecipient: fleet.Recipient().String()}, false)
+		_ = writeFleetSealMetric(*metricsFile, failed, false)
 		return err
 	}
 	defer pool.Close()
@@ -177,6 +184,7 @@ func runFleetSealVerify(args []string) error {
 	defer cancel()
 	control, err := loadFleetSealControlKey(*controlKey)
 	if err != nil {
+		_ = writeFleetSealMetric(*metricsFile, failed, false)
 		return err
 	}
 	report, err := fleetseal.Verify(ctx, state.NewPgStore(pool), fleet, host, control)
@@ -188,6 +196,10 @@ func runFleetSealVerify(args []string) error {
 	}
 	if *jsonOut || jsonOutput {
 		return json.NewEncoder(osStdout).Encode(report)
+	}
+	if report.FleetRetired {
+		PrintOK(osStdout, "Fleet seal ready without the fleet key: cluster kid %s opened with the control identity, JWT round-trip verified\n", report.ClusterKID)
+		return nil
 	}
 	PrintOK(osStdout, "Fleet seal ready: recipient %s, cluster kid %s, customer probe and JWT round-trip verified\n", report.FleetRecipient, report.ClusterKID)
 	return nil

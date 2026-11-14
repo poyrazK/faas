@@ -316,6 +316,37 @@ tests:
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/outbound-integrations.md"
 
   - interval: 1m
+    name: "a managed PostgreSQL approval with a day left pages"
+    input_series:
+      # Ends one day after the test starts.
+      - series: 'apid_managed_postgres_production_approval_until_timestamp_seconds{job="apid",instance="127.0.0.1:9101"}'
+        values: '86400x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasManagedPostgresProductionApprovalImminent
+        exp_alerts:
+          - exp_labels:
+              severity: "page"
+              component: "apid"
+              family: "managed_postgres"
+              job: "apid"
+              instance: "127.0.0.1:9101"
+            exp_annotations:
+              summary: "Production managed PostgreSQL approval ends within 48 hours"
+              description: "The production approval ends in under two days. When it ends, new databases, bindings, restores and resizes close until an operator approves the backend again. Set a new FAAS_MANAGED_POSTGRES_PRODUCTION_APPROVED_AT/UNTIL window and restart apid now."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+  - interval: 1m
+    name: "a managed PostgreSQL approval with ten days left does not page"
+    input_series:
+      - series: 'apid_managed_postgres_production_approval_until_timestamp_seconds{job="apid",instance="127.0.0.1:9101"}'
+        values: '864000x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasManagedPostgresProductionApprovalImminent
+        exp_alerts: []
+
+  - interval: 1m
     name: "admitted outbound calls stay quiet"
     input_series:
       - series: 'outbound_admissions_total{job="outboundd",instance="127.0.0.1:9108",integration_id="int-1",outcome="admitted"}'

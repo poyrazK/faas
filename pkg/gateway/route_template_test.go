@@ -16,6 +16,15 @@ func TestInferredObservedPath(t *testing.T) {
 		{"/2024", "/2024"},
 		{"/objects/0123456789abcdef01234567", "/objects/{id}"},
 		{"/" + strings.Repeat("x", 249), otherRouteLabel},
+		// ADR-20261028110044 amendment 7: typed IDs, dates and ID-named files.
+		{"/v1/exports/exports/2026-11-07/qry_cc7569fa5a1a2632.json.gz", "/v1/exports/exports/{date}/{id}.json.gz"},
+		{"/customers/cus_N2kQ8XyZ4a", "/customers/{id}"},
+		{"/events/evt-01HZX3K9QJ7B2M", "/events/{id}"},
+		{"/reports/2026-11-07", "/reports/{date}"},
+		{"/streams/edge-prod-1zrhb/ingest", "/streams/edge-prod-1zrhb/ingest"},
+		{"/users/user-settings", "/users/user-settings"},
+		{"/assets/app.js", "/assets/app.js"},
+		{"/assets/styles.css", "/assets/styles.css"},
 	} {
 		if got := inferredObservedPath(tc.in); got != tc.want {
 			t.Errorf("inferredObservedPath(%q) = %q, want %q", tc.in, got, tc.want)

@@ -24,12 +24,22 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp serve|connections|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp serve|connect|connections|approval-channels|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
+	case "tool-connection":
+		return cmdMCPToolConnection(args[1:])
+	case "tool-grant":
+		return cmdMCPToolGrant(args[1:])
+	case "invocation-run":
+		return cmdMCPInvocationRun(args[1:])
+	case "connect":
+		return cmdMCPConnect(args[1:])
 	case "connections":
 		return cmdMCPConnections(args[1:])
+	case "approval-channels":
+		return cmdMCPApprovalChannels(args[1:])
 	case "serve":
 		return cmdMCPServe(args[1:])
 	case "init":
@@ -413,6 +423,7 @@ func cmdMCPRemote(command string, args []string) int {
 	inputResponsesFile := fs.String("input-responses-file", "", "JSON file with elicitation responses keyed by request ID (call only)")
 	enableTasks := fs.Bool("tasks", false, "accept modern MCP task handles for later inspection (call only)")
 	waitForTask := fs.Bool("wait", false, "wait for a task result and request cancellation if this command times out (call only; implies --tasks)")
+	cancelOnTimeout := fs.Bool("cancel-on-timeout", false, "request task cancellation if a resumed wait times out (task-wait only)")
 	tool := fs.String("tool", "", "tool to call")
 	streamTool := fs.String("stream-tool", "", "explicitly execute this tool to verify live progress (doctor)")
 	inline := fs.String("arguments", "", "tool arguments as a JSON object")
@@ -446,6 +457,9 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	if (*enableTasks || *waitForTask) && (command != "call" || *legacy) {
 		return printErr("Invalid MCP Tasks flags", errors.New("MCP Tasks support is available only for modern mcp call"))
+	}
+	if *cancelOnTimeout && (command != "task-wait" || *legacy) {
+		return printErr("Invalid MCP task flags", errors.New("--cancel-on-timeout is supported only by modern task-wait"))
 	}
 	if *taskID != "" && command != "task-get" && command != "task-wait" && command != "task-cancel" {
 		return printErr("Invalid MCP task flags", errors.New("--task-id is supported only by mcp task-get, mcp task-wait and mcp task-cancel"))
@@ -524,10 +538,10 @@ func cmdMCPRemote(command string, args []string) int {
 	if command == "prompt-get" && *promptName == "" {
 		return printErr("MCP prompt get", errors.New("--prompt is required"))
 	}
-	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, responder, *enableTasks || *waitForTask, *waitForTask)
+	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, responder, *enableTasks || *waitForTask, *waitForTask, *cancelOnTimeout)
 }
 
-func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName, taskID string, args map[string]any, respond mcphosting.InputResponder, enableTasks, waitForTask bool) int {
+func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName, taskID string, args map[string]any, respond mcphosting.InputResponder, enableTasks, waitForTask, cancelOnTimeout bool) int {
 	if command == "config" {
 		return jsonOut(writeJSON(mcphosting.ConnectionConfig(name, c.Endpoint)))
 	}
@@ -601,7 +615,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		return jsonOut(writeJSON(task))
 	case "task-wait":
 		task, err := c.WaitTask(ctx, taskID, mcphosting.CallOptions{
-			Responder: respond,
+			Responder: respond, CancelOnTimeout: cancelOnTimeout,
 			OnTask: func(task mcphosting.Task) {
 				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 			},
@@ -641,7 +655,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		}
 		var x mcphosting.Exchange
 		x, err = c.CallWithOptions(ctx, candidate, args, mcphosting.CallOptions{
-			Progress: true, Responder: respond, EnableTasks: enableTasks, WaitForTask: waitForTask,
+			Progress: true, Responder: respond, EnableTasks: enableTasks, WaitForTask: waitForTask, CancelOnTimeout: waitForTask,
 			OnTask: func(task mcphosting.Task) {
 				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 			},
@@ -668,6 +682,10 @@ type mcpDeployOptions struct {
 	accessAudit, accessAuditAlgorithms         string
 	mcpTaskMigrationOverride                   bool
 	timeout                                    int
+	expectedServing                            *string
+	expectedAppID                              string
+	requireCatalogPin                          bool
+	requireReviewedTools                       bool
 }
 
 func cmdMCPDeploy(args []string) int {
@@ -690,6 +708,10 @@ func cmdMCPDeploy(args []string) int {
 	// flag; without it the documented retry was an unknown-flag error
 	// (hunt #9 H9-63).
 	fs.StringVar(&o.idempotencyKey, "idempotency-key", "", "retry identity printed by a failed submission")
+	fs.Func("expected-serving-deployment", "require this reviewed serving deployment before promotion; empty requires no serving release", func(value string) error { o.expectedServing = &value; return nil })
+	fs.StringVar(&o.expectedAppID, "expected-app-id", "", "require this reviewed immutable app identity before promotion")
+	fs.BoolVar(&o.requireCatalogPin, "require-catalog-pin", false, "refuse promotion when the candidate cannot provide a catalog integrity pin")
+	fs.BoolVar(&o.requireReviewedTools, "require-reviewed-tools", false, "require discovered tools to exactly match configured tool_scopes before fixtures and promotion")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -711,6 +733,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	cfg, err := mcphosting.Load(dir)
 	if err != nil {
 		return printErr("MCP configuration", err)
+	}
+	if o.requireReviewedTools && len(cfg.Auth.ToolScopes) == 0 {
+		return printErr("MCP review", errors.New("--require-reviewed-tools requires an explicit tool_scopes allowlist"))
 	}
 	if err := validateMCPDeploySecretsFile(o.secretsFile); err != nil {
 		return printErr("MCP catalog pin", err)
@@ -773,6 +798,16 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	}
 	if pinnedDigest != "" {
 		pinReceipt = &mcpCatalogPinReceipt{DiscoveryDeploymentID: discoveryID, SHA256: pinnedDigest}
+	}
+	if o.requireCatalogPin && pinReceipt == nil {
+		return printErr("MCP catalog pin", errors.New("candidate does not support the required catalog integrity pin; no promotion performed"))
+	}
+	if pinReceipt == nil && (o.expectedServing != nil || o.expectedAppID != "" || o.requireReviewedTools) {
+		pinReceipt = &mcpCatalogPinReceipt{}
+	}
+	if pinReceipt != nil {
+		pinReceipt.expectedServing, pinReceipt.expectedAppID = o.expectedServing, o.expectedAppID
+		pinReceipt.requireReviewedTools = o.requireReviewedTools
 	}
 	verificationCtx, cancel := context.WithTimeout(ctx, time.Duration(o.timeout)*time.Second)
 	defer cancel()

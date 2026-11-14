@@ -113,7 +113,8 @@ type sub struct {
 	up      *upstream
 	// cred is the latest credential and query: a seal, or an RLS-mode read
 	// with its verified claims. A resubscription sends it again.
-	cred liveproto.ClientFrame
+	cred              liveproto.ClientFrame
+	accessFingerprint string
 	// offset maps upstream versions to the client's: an upstream session
 	// that starts over must not move the client's version backwards.
 	offset    uint64
@@ -213,6 +214,12 @@ func (s *Session) subscribe(ctx context.Context, f liveproto.ClientFrame) {
 		s.refuse(f.Subscription, code, msg, true)
 		return
 	}
+	// The hub applies the Data API's row-security gate with the app's own
+	// exemptions; whatever a client sent here is replaced.
+	f.AllowWithoutRLS = nil
+	if f.RLS() && route.Access != nil {
+		f.AllowWithoutRLS = route.Access.AllowWithoutRLS
+	}
 	up, err := s.proxy.upstream(route) //nolint:contextcheck // the upstream outlives the client frame that dialed it
 	if err != nil {
 		s.refuse(f.Subscription, liveproto.CodeUnavailable, err.Error(), true)
@@ -232,7 +239,7 @@ func (s *Session) subscribe(ctx context.Context, f liveproto.ClientFrame) {
 		return
 	}
 	// A client resuming from a version continues above it.
-	sb := &sub{session: s, client: f.Subscription, up: up, cred: credential(f), offset: f.Version, version: f.Version}
+	sb := &sub{session: s, client: f.Subscription, up: up, cred: credential(f), offset: f.Version, version: f.Version, accessFingerprint: accessFingerprint(route, f.Access)}
 	s.subs[f.Subscription] = sb
 	s.mu.Unlock()
 	up.add(sb)
@@ -272,6 +279,10 @@ func (s *Session) renew(ctx context.Context, f liveproto.ClientFrame) {
 		s.refuse(f.Subscription, code, msg, false)
 		return
 	}
+	// A successfully reauthorized keyless renewal adopts the current policy.
+	sb.up.mu.Lock()
+	sb.accessFingerprint = accessFingerprint(route, f.Access)
+	sb.up.mu.Unlock()
 	sb.up.renew(sb, f)
 }
 
@@ -312,7 +323,7 @@ func loginFor(route Route, f liveproto.ClientFrame) (string, string, string) {
 // credential keeps what a subscribe or renew frame authorizes with.
 func credential(f liveproto.ClientFrame) liveproto.ClientFrame {
 	return liveproto.ClientFrame{Sealed: f.Sealed, Database: f.Database, Rest: f.Rest, Schema: f.Schema,
-		Claims: f.Claims, ClaimsExpires: f.ClaimsExpires, Role: f.Role, Access: f.Access}
+		Claims: f.Claims, ClaimsExpires: f.ClaimsExpires, Role: f.Role, Access: f.Access, AllowWithoutRLS: f.AllowWithoutRLS}
 }
 
 // upstream returns the database's upstream, dialing it when new.
@@ -565,6 +576,18 @@ func (u *upstream) dispatch(frame any) {
 	sb := u.subs[id]
 	if sb == nil {
 		u.mu.Unlock()
+		return
+	}
+	if !sb.accessCurrent() {
+		delete(u.subs, id)
+		sb.attached = false
+		u.proxy.Metrics.addSubscriptions(-1)
+		u.mu.Unlock()
+		sb.session.mu.Lock()
+		delete(sb.session.subs, sb.client)
+		sb.session.mu.Unlock()
+		u.write(liveproto.ClientFrame{Type: liveproto.TypeUnsubscribe, Subscription: id})
+		sb.session.refuse(sb.client, liveproto.CodeForbidden, "Data API access changed; subscribe again with current credentials", true)
 		return
 	}
 	switch f := frame.(type) {

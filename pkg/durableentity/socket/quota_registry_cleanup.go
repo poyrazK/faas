@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/durableentity"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 var ErrRegistryCleanupPending = errors.New("durable registry cleanup blocks this mutation")
@@ -286,6 +288,9 @@ func (q *Quotas) StepRegistryCleanup(ctx context.Context, id durableentity.ID, o
 func (q *Quotas) commitRegistryCleanupCheckpoint(ctx context.Context, key string, r quotaRecord, version string, original RegistryCleanup) error {
 	next := *r.RegistryCleanup
 	for attempt := 0; attempt < 8; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return err
+		}
 		err := q.commitRegistryCleanup(ctx, key, r, version)
 		if !errors.Is(err, durableentity.ErrConflict) {
 			return err

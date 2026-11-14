@@ -13,6 +13,9 @@ if TYPE_CHECKING:
     from ..models.update_deployment_traffic_request_expected_mcp_access_policy import (
         UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy,
     )
+    from ..models.update_deployment_traffic_request_expected_traffic import (
+        UpdateDeploymentTrafficRequestExpectedTraffic,
+    )
 
 
 T = TypeVar("T", bound="UpdateDeploymentTrafficRequest")
@@ -33,6 +36,11 @@ class UpdateDeploymentTrafficRequest:
     """Optional 32-hex or dashed deployment id. An explicit empty string requires no live sibling with positive
     traffic, for guarded first deployment promotion. If the condition changes at the transaction boundary, the
     update returns 409 traffic_serving_changed without changing traffic."""
+    expected_traffic: UpdateDeploymentTrafficRequestExpectedTraffic | Unset = UNSET
+    """Optional split the change was planned from: every live release in the deployment's environment with positive
+    traffic, keyed by deployment id, mapped to its percent (1-100, summing to 100, at most 100 releases). If the
+    split differs at the transaction boundary, the update returns 409 traffic_serving_changed without changing
+    traffic. Cannot be combined with expected_serving_deployment_id or expected_review."""
     expected_mcp_access_policy: UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy | Unset = UNSET
     """Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping
     JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the
@@ -50,6 +58,10 @@ class UpdateDeploymentTrafficRequest:
 
         expected_serving_deployment_id = self.expected_serving_deployment_id
 
+        expected_traffic: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.expected_traffic, Unset):
+            expected_traffic = self.expected_traffic.to_dict()
+
         expected_mcp_access_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.expected_mcp_access_policy, Unset):
             expected_mcp_access_policy = self.expected_mcp_access_policy.to_dict()
@@ -65,6 +77,8 @@ class UpdateDeploymentTrafficRequest:
             field_dict["expected_review"] = expected_review
         if expected_serving_deployment_id is not UNSET:
             field_dict["expected_serving_deployment_id"] = expected_serving_deployment_id
+        if expected_traffic is not UNSET:
+            field_dict["expected_traffic"] = expected_traffic
         if expected_mcp_access_policy is not UNSET:
             field_dict["expected_mcp_access_policy"] = expected_mcp_access_policy
 
@@ -75,6 +89,9 @@ class UpdateDeploymentTrafficRequest:
         from ..models.app_release_review import AppReleaseReview
         from ..models.update_deployment_traffic_request_expected_mcp_access_policy import (
             UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy,
+        )
+        from ..models.update_deployment_traffic_request_expected_traffic import (
+            UpdateDeploymentTrafficRequestExpectedTraffic,
         )
 
         d = dict(src_dict)
@@ -89,6 +106,13 @@ class UpdateDeploymentTrafficRequest:
 
         expected_serving_deployment_id = d.pop("expected_serving_deployment_id", UNSET)
 
+        _expected_traffic = d.pop("expected_traffic", UNSET)
+        expected_traffic: UpdateDeploymentTrafficRequestExpectedTraffic | Unset
+        if isinstance(_expected_traffic, Unset):
+            expected_traffic = UNSET
+        else:
+            expected_traffic = UpdateDeploymentTrafficRequestExpectedTraffic.from_dict(_expected_traffic)
+
         _expected_mcp_access_policy = d.pop("expected_mcp_access_policy", UNSET)
         expected_mcp_access_policy: UpdateDeploymentTrafficRequestExpectedMcpAccessPolicy | Unset
         if isinstance(_expected_mcp_access_policy, Unset):
@@ -102,6 +126,7 @@ class UpdateDeploymentTrafficRequest:
             traffic_percent=traffic_percent,
             expected_review=expected_review,
             expected_serving_deployment_id=expected_serving_deployment_id,
+            expected_traffic=expected_traffic,
             expected_mcp_access_policy=expected_mcp_access_policy,
         )
 

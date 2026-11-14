@@ -78,6 +78,7 @@ type gcsListedVersionXML struct {
 	Size     *int64    `xml:"Size"`
 	Latest   *bool     `xml:"IsLatest"`
 	Modified time.Time `xml:"LastModified"`
+	Deleted  string    `xml:"DeletedTime"`
 }
 
 func (p *GCS) ListObjectVersionPage(ctx context.Context, bucket string, r ObjectVersionListRequest) (ObjectVersionListPage, error) {
@@ -141,7 +142,14 @@ func parseGCSVersionList(out gcsVersionListXML, r ObjectVersionListRequest) (Obj
 			return ObjectVersionListPage{}, ErrUnavailable
 		}
 		seen[key+"\x00"+v.ID] = true
-		page.Items = append(page.Items, ListedObjectVersion{Object: Object{Key: key, ETag: v.ETag, Size: *v.Size, LastModified: v.Modified}, ProviderVersionID: v.ID, IsLatest: *v.Latest, StorageClass: "STANDARD"})
+		var noncurrent time.Time
+		if v.Deleted != "" {
+			noncurrent, err = time.Parse(time.RFC3339Nano, v.Deleted)
+			if err != nil || noncurrent.IsZero() || *v.Latest {
+				return ObjectVersionListPage{}, ErrUnavailable
+			}
+		}
+		page.Items = append(page.Items, ListedObjectVersion{Object: Object{Key: key, ETag: v.ETag, Size: *v.Size, LastModified: v.Modified}, ProviderVersionID: v.ID, IsLatest: *v.Latest, NoncurrentSince: noncurrent, StorageClass: "STANDARD"})
 	}
 	for _, p := range out.Prefixes {
 		key, err := gcsVersionListKey(p.Prefix, encoding)

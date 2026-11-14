@@ -18,7 +18,10 @@ type quietPausedSnapshot struct {
 // batch on every tick, so the sample can be older than the tick.
 type quietPausedNode struct {
 	instances map[string]struct{}
-	sampledAt time.Time
+	// ladderFrozen is the subset vmmd reported at the idle ladder's freeze
+	// level (ADR-20261107122928).
+	ladderFrozen map[string]struct{}
+	sampledAt    time.Time
 }
 
 // publishQuietPaused records which instances each node reported
@@ -46,6 +49,12 @@ func (p *Poller) publishQuietPaused(rows []InstanceStat, asOf time.Time) {
 				node.instances = make(map[string]struct{})
 			}
 			node.instances[row.InstanceID] = struct{}{}
+			if row.IdleLadderLevel >= api.IdleLadderFreezeLevel {
+				if node.ladderFrozen == nil {
+					node.ladderFrozen = make(map[string]struct{})
+				}
+				node.ladderFrozen[row.InstanceID] = struct{}{}
+			}
 		}
 		byNode[row.NodeID] = node
 	}
@@ -59,19 +68,34 @@ func (p *Poller) publishQuietPaused(rows []InstanceStat, asOf time.Time) {
 // that reported nothing paused, or nothing at all this tick, returns an
 // empty set with ok true.
 func (r *Reader) QuietPaused(nodeID string, now time.Time) (map[string]struct{}, time.Time, bool) {
+	node, asOf, ok := r.quietNode(nodeID, now)
+	return node.instances, asOf, ok
+}
+
+// IdleLadderFrozen returns the instances a node last reported quiet-paused at
+// the idle ladder's freeze level (ADR-20261107122928), with QuietPaused's
+// freshness rules.
+func (r *Reader) IdleLadderFrozen(nodeID string, now time.Time) (map[string]struct{}, time.Time, bool) {
+	node, asOf, ok := r.quietNode(nodeID, now)
+	return node.ladderFrozen, asOf, ok
+}
+
+// quietNode is a node's latest quiet pause report if it is fresh. A node that
+// reported nothing this tick returns an empty report with ok true.
+func (r *Reader) quietNode(nodeID string, now time.Time) (quietPausedNode, time.Time, bool) {
 	maxAge := time.Duration(api.QuietPauseSampleMaxAgeMillis) * time.Millisecond
 	snap := r.quiet.Load()
 	if snap == nil || now.Sub(snap.asOf) > maxAge {
-		return nil, time.Time{}, false
+		return quietPausedNode{}, time.Time{}, false
 	}
 	node, reported := snap.byNode[nodeID]
 	if !reported {
-		return nil, snap.asOf, true
+		return quietPausedNode{}, snap.asOf, true
 	}
 	if now.Sub(node.sampledAt) > maxAge {
-		return nil, time.Time{}, false
+		return quietPausedNode{}, time.Time{}, false
 	}
-	return node.instances, node.sampledAt, true
+	return node, node.sampledAt, true
 }
 
 // QuietPausedAcross is quiet pause admission's source on a multi-node
@@ -86,5 +110,17 @@ func QuietPausedAcross(local, fleet *Reader, ownerNodeID string) func(nodeID str
 			return local.QuietPaused(nodeID, now)
 		}
 		return fleet.QuietPaused(nodeID, now)
+	}
+}
+
+// IdleLadderFrozenAcross reads the idle ladder's freeze level the way
+// QuietPausedAcross reads quiet pauses: own node locally, peer nodes from the
+// owner fleet reader.
+func IdleLadderFrozenAcross(local, fleet *Reader, ownerNodeID string) func(nodeID string, now time.Time) (map[string]struct{}, time.Time, bool) {
+	return func(nodeID string, now time.Time) (map[string]struct{}, time.Time, bool) {
+		if ownerNodeID == "" || nodeID == ownerNodeID || fleet == nil {
+			return local.IdleLadderFrozen(nodeID, now)
+		}
+		return fleet.IdleLadderFrozen(nodeID, now)
 	}
 }

@@ -192,7 +192,7 @@ func (b *PostgresBackend) AIQualityWindows(ctx context.Context) ([]AIQualityWind
 		  JOIN outbound_integrations integration ON integration.id = usage.integration_id
 		 WHERE integration.ai_quality_alerts AND integration.ai_provider IS NOT NULL
 		   AND usage.usage_date BETWEEN day.today - $1::int AND day.today
-		   AND usage.caller NOT IN ('replay', 'moderation', 'evaluation') AND usage.model <> $2
+		   AND usage.caller NOT IN ('replay', 'moderation', 'evaluation', 'semantic_cache') AND usage.model <> $2
 		 GROUP BY usage.integration_id, integration.account_id, integration.name, usage.model, day.today`,
 		api.OutboundAIQualityDriftBaselineDays, aiUsageOverflowModel)
 	if err != nil {

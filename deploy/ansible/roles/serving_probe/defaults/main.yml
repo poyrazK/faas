@@ -8,10 +8,17 @@
 # timeout is shorter than the probe interval, so every probe exercises a
 # wake and the app parks between probes (an app kept warm blocks node
 # drains; see the rc.290 fsn-3 outage).
-faas_serving_probe_urls: []
-faas_serving_probe_interval: 5min
-faas_serving_probe_timeout_seconds: 20
-faas_serving_probe_retry_delay_seconds: 30
+faas_serving_probe_fleet: null
+faas_serving_probe_node_policy: "{{ (faas_serving_probe_fleet | default({}, true)).get(faas_node_name | default(inventory_hostname), {}) }}"
+faas_serving_probe_urls: "{{ faas_serving_probe_node_policy.urls | default([]) }}"
+faas_serving_probe_interval: "{{ faas_serving_probe_node_policy.interval | default('5min') }}"
+faas_serving_probe_timeout_seconds: "{{ faas_serving_probe_node_policy.timeout_seconds | default(20) }}"
+faas_serving_probe_retry_delay_seconds: "{{ faas_serving_probe_node_policy.retry_delay_seconds | default(30) }}"
+# Existing URLs keep status-only content validation until their probe app
+# returns the configured exact marker. The latency budget is independent of
+# the socket timeout, which also bounds reading the optional body.
+faas_serving_probe_expected_body: "{{ faas_serving_probe_node_policy.expected_body | default('') }}"
+faas_serving_probe_max_first_byte_seconds: "{{ faas_serving_probe_node_policy.max_first_byte_seconds | default(faas_serving_probe_timeout_seconds) }}"
 # Operator-provisioned, root:root 0400. webhook_url is required (a
 # Slack-compatible incoming webhook; for Discord append /slack). heartbeat_url
 # is optional: an external check that alerts when the pings stop.

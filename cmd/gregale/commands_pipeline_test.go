@@ -41,6 +41,8 @@ func TestPipelineCreateRegistersSourceAndProvisionsMirror(t *testing.T) {
 			main.WriteJSONTest(w, api.DataConnection{ID: sourceID, Name: req.Name, Revision: 1})
 		case "GET /v1/data/connections":
 			main.WriteJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: sourceID, Name: "orders-source", Revision: 1}}})
+		case "GET /v1/data/pipelines":
+			main.WriteJSONTest(w, api.DataPipelineList{Items: []api.DataPipeline{}})
 		case "POST /v1/data/connections/" + sourceID + "/check":
 			var req api.RequestDataConnectionCheck
 			if json.NewDecoder(r.Body).Decode(&req) != nil || req.ExpectedRevision != 1 {
@@ -69,7 +71,7 @@ func TestPipelineCreateRegistersSourceAndProvisionsMirror(t *testing.T) {
 	if code := main.CmdPipeline([]string{"create", "orders", "--url-file", file, "--region", "test-region", "--tables", "orders", "--read-subjects", "alice", "--wait"}); code != 0 {
 		t.Fatalf("pipeline create exited %d", code)
 	}
-	if len(steps) != 7 {
+	if len(steps) != 8 {
 		t.Fatalf("unexpected journey: %v", steps)
 	}
 	steps = nil
@@ -92,6 +94,8 @@ func TestPipelineCheckFailureStopsBeforeProvisioning(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /v1/data/connections":
 			main.WriteJSONTest(w, api.DataConnectionList{Items: []api.DataConnection{{ID: sourceID, Revision: 1}}})
+		case "GET /v1/data/pipelines":
+			main.WriteJSONTest(w, api.DataPipelineList{Items: []api.DataPipeline{}})
 		case "POST /v1/data/connections/" + sourceID + "/check":
 			main.WriteJSONTest(w, api.DataConnectionCheck{ID: uuid.NewString(), ConnectionID: sourceID, State: "blocked", Fresh: true, Checks: []api.DataConnectionIssue{{Code: "source_replication_permission_required", State: "blocked", Remediation: "Grant REPLICATION"}}})
 		default:

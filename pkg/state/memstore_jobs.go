@@ -808,6 +808,10 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	if job.ImageMaterializationStatus == "failed" {
 		return JobRun{}, nil, ErrConflict
 	}
+	if opts.ExpectedImageStorageKey != "" &&
+		(job.ImageMaterializationStatus != "ready" || job.ImageStorageKey != opts.ExpectedImageStorageKey) {
+		return JobRun{}, nil, ErrConflict
+	}
 	if len(envOverrides) == 0 {
 		envOverrides = json.RawMessage("{}")
 	}
@@ -889,7 +893,7 @@ func (m *MemStore) JobRunCreate(_ context.Context, jobID, accountID, triggerKind
 	if err != nil {
 		return JobRun{}, nil, err
 	}
-	ramMB := job.RAMMB
+	ramMB := derefInt(opts.RAMMB, job.RAMMB)
 	if runID == "" {
 		runID = newUUIDString()
 	}

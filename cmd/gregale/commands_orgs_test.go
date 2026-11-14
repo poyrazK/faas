@@ -8,6 +8,7 @@
 package main_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -538,16 +539,20 @@ func TestInvitations_Accept_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
+	recorder := main.WithRecorder(t)
 
 	if code := main.CmdInvitations([]string{"accept", "tok-once"}); code != 0 {
 		t.Fatalf("invitations accept exit = %d, want 0", code)
 	}
-	if sawMethod != "POST" || sawPath != "/v1/invitations/tok-once/accept" {
-		t.Errorf("route = %s %s, want POST /v1/invitations/tok-once/accept", sawMethod, sawPath)
+	if sawMethod != "" || sawPath != "" {
+		t.Errorf("invitation handoff sent an API request: %s %s", sawMethod, sawPath)
+	}
+	if urls := *recorder.Urls(); len(urls) != 1 || urls[0] != srv.URL+"/dashboard/invitations/tok-once" {
+		t.Errorf("invitation handoff = %v", urls)
 	}
 }
 
-func TestInvitations_Accept_NoTokenExitsOne(t *testing.T) {
+func TestInvitations_Accept_WithoutCLIKeyOpensBrowser(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("FAAS_TOKEN", "")
@@ -557,8 +562,36 @@ func TestInvitations_Accept_NoTokenExitsOne(t *testing.T) {
 	}))
 	defer srv.Close()
 	t.Setenv("FAAS_API", srv.URL)
+	recorder := main.WithRecorder(t)
 
-	if code := main.CmdInvitations([]string{"accept", "tok-once"}); code != 2 {
-		t.Errorf("invitations accept (no token) exit = %d, want 2 (auth)", code)
+	if code := main.CmdInvitations([]string{"accept", "tok-once"}); code != 0 {
+		t.Errorf("invitations browser handoff exit = %d, want 0", code)
+	}
+	if urls := *recorder.Urls(); len(urls) != 1 || urls[0] != srv.URL+"/dashboard/invitations/tok-once" {
+		t.Errorf("invitation handoff = %v", urls)
+	}
+}
+
+func TestInvitations_Accept_JSONReturnsHandoffWithoutOpeningBrowser(t *testing.T) {
+	main.SetupCLIRegression(t)
+	main.WithResetJSONOutput(t, true)
+	t.Setenv("FAAS_API", "https://api.gregale.dev")
+	recorder := main.WithRecorder(t)
+	var output bytes.Buffer
+	previous := *main.OsStdout
+	*main.OsStdout = &output
+	t.Cleanup(func() { *main.OsStdout = previous })
+	if code := main.CmdInvitations([]string{"accept", "tok-once"}); code != 0 {
+		t.Fatalf("accept exit=%d", code)
+	}
+	var result struct {
+		URL             string `json:"url"`
+		RequiresBrowser bool   `json:"requires_browser"`
+	}
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.URL != "https://api.gregale.dev/dashboard/invitations/tok-once" || !result.RequiresBrowser || len(*recorder.Urls()) != 0 {
+		t.Fatalf("handoff=%+v opened=%v", result, *recorder.Urls())
 	}
 }

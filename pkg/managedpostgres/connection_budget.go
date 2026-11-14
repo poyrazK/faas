@@ -202,7 +202,7 @@ func describeConnectionBudget(s ConnectionBudgetSnapshot, now time.Time) api.Man
 	if out.Inventory.OtherBindings > 0 {
 		add("client_pool_sizes_unknown")
 	}
-	out.Demand.ModeledPeakConnections = out.Demand.DataAPIWakeEstimate + out.Demand.AuthWakeEstimate + out.Demand.ControlHeadroom + out.Demand.MigrationHeadroom
+	out.Demand.ModeledPeakConnections = out.Demand.DataAPIWakeEstimate + out.Demand.AuthWakeEstimate + out.Demand.SessionConnectionCeiling + out.Demand.ControlHeadroom + out.Demand.MigrationHeadroom
 	c := s.Capacity
 	if s.DatabaseState != string(StateReady) || !c.valid(s.DatabaseID, s.BackendFingerprint, s.Generation, s.CheckedAt, now) {
 		add("capacity_unverified")
@@ -286,6 +286,20 @@ func accountConnectionBudgetGroup(out *api.ManagedPostgresConnectionBudget, bind
 	}
 	if b.Access == string(CredentialMigration) {
 		out.Inventory.MigrationBindings += int64(len(bindings))
+		return
+	}
+	if b.Access == string(CredentialSession) {
+		// A session role carries CONNECTION LIMIT api.SessionBindingConnectionLimit
+		// (ADR-20261110120000), so its ceiling is known whatever the app's
+		// pool. A rotating binding may hold its old and new role at once.
+		out.Inventory.SessionBindings += int64(len(bindings))
+		for _, binding := range bindings {
+			roles := int64(1)
+			if binding.Rotation {
+				roles = 2
+			}
+			out.Demand.SessionConnectionCeiling += roles * api.SessionBindingConnectionLimit
+		}
 		return
 	}
 	if !slices.Contains([]string{string(CredentialDataAPI), string(CredentialAuth)}, b.Access) {

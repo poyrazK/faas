@@ -367,7 +367,7 @@ func TestWorkflowRecoveryPollingAlertCaptureRollback(t *testing.T) {
 		if err = (*pg.Pool()).QueryRow(ctx, "SELECT count(*) FROM workflow_recovery_history_events WHERE app_id=$1::uuid AND entry->>'kind'='polling_failed'", app.ID).Scan(&count); err != nil || count != 0 {
 			t.Fatal("partial alert history committed", count, err)
 		}
-		if err = (*pg.Pool()).QueryRow(ctx, "SELECT count(*) FROM app_webhook_event_outbox WHERE app_id=$1::uuid AND event='automation.recovery_polling_status'", app.ID).Scan(&count); err != nil || count != 0 {
+		if err = (*pg.Pool()).QueryRow(ctx, "SELECT count(*) FROM app_webhook_event_outbox WHERE app_id=$1::uuid AND event='stored_workflow.recovery_polling_status'", app.ID).Scan(&count); err != nil || count != 0 {
 			t.Fatal("partial alert outbox committed", count, err)
 		}
 		if _, err = (*pg.Pool()).Exec(ctx, "ALTER TABLE workflow_recovery_policies DROP CONSTRAINT test_polling_receipt_failure"); err != nil {

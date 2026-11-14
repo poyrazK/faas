@@ -67,8 +67,11 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 	row, err := q.FindManagedPostgresLifecycleDatabase(ctx, tx, sqlc.FindManagedPostgresLifecycleDatabaseParams{AccountID: accountID, Name: database.Name, OwnerOrgID: databaseNullableUUID(Organization(ctx))})
 	if err == nil {
 		existing := databaseFromSQL(row)
-		if existing.EnvironmentCloneOperationID != "" {
+		if existing.EnvironmentCloneOperationID != "" || !existing.Preview.IsZero() {
 			return Database{}, false, ErrConflict
+		}
+		if !restoreSlotAllowed(ctx) && !existing.RestoreSlotUntil.IsZero() {
+			return Database{}, false, ErrQuotaExceeded
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return Database{}, false, mapPostgresError(err)
@@ -98,29 +101,41 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 			return Database{}, false, ErrConflict
 		}
 	}
-	active, err := s.countReservationOwner(ctx, tx, database)
-	if err != nil {
-		return Database{}, false, mapPostgresError(err)
+	slot := false
+	if database.InBranchAllowance() {
+		// A short-lived branch takes a place in the branch allowance, never
+		// the database limit or the restore slot (ADR-20261106103654
+		// amendment 1). The owner lock above serializes the count.
+		held, err := s.countBranchAllowanceOwner(ctx, tx, database)
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+		if allowance := branchLimit(ctx); allowance < 1 || held >= int64(allowance) {
+			return Database{}, false, ErrBranchLimit
+		}
+	} else {
+		active, err := s.countReservationOwner(ctx, tx, database)
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+		if slot, err = s.reservationTakesRestoreSlot(ctx, tx, database, active, limit); err != nil {
+			return Database{}, false, err
+		}
 	}
-	slot, err := s.reservationTakesRestoreSlot(ctx, tx, database, active, limit)
-	if err != nil {
-		return Database{}, false, err
-	}
-	row, err = q.InsertManagedPostgresLifecycleDatabase(ctx, tx, sqlc.InsertManagedPostgresLifecycleDatabaseParams{
-		ID: databaseID, AccountID: accountID, OrgID: databaseNullableUUID(database.OrgID), Name: database.Name, Region: database.Spec.Region,
-		PostgresMajor: int16(database.Spec.PostgresMajor), ServiceClass: string(database.Spec.Class), Availability: string(database.Spec.Availability),
-		ScaleToZero: database.Spec.ScaleToZero, StorageLimitBytes: database.Spec.StorageLimitBytes, RestoreWindowSeconds: database.Spec.RestoreWindowSeconds,
-		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, RestoreSourceDatabaseID: databaseNullableUUID(database.RestoreSourceDatabaseID),
-		RestoreSourceResourceID: databaseNullableText(database.RestoreSourceResourceID), RestorePointInTime: databaseNullableTime(database.RestorePointInTime),
-		State: string(database.State), DesiredGeneration: database.DesiredGeneration, ObservedGeneration: database.ObservedGeneration,
-		RetryAt: databaseNullableTime(database.RetryAt), CreatedAt: databaseNullableTime(database.CreatedAt), UpdatedAt: databaseNullableTime(database.UpdatedAt),
-	})
+	row, err = q.InsertManagedPostgresLifecycleDatabase(ctx, tx, lifecycleInsertParams(database, accountID, databaseID))
 	if err != nil {
 		return Database{}, false, mapPostgresError(err)
 	}
 	if slot {
 		row, err = q.TakeManagedPostgresRestoreSlot(ctx, tx, sqlc.TakeManagedPostgresRestoreSlotParams{
 			ID: databaseID, Until: databaseNullableTime(database.CreatedAt.Add(api.ManagedPostgresRestoreSlotWindow))})
+		if err != nil {
+			return Database{}, false, mapPostgresError(err)
+		}
+	}
+	if !database.ExpiresAt.IsZero() {
+		row, err = q.SetManagedPostgresDatabaseExpiry(ctx, tx, sqlc.SetManagedPostgresDatabaseExpiryParams{
+			ID: databaseID, ExpiresAt: databaseNullableTime(database.ExpiresAt)})
 		if err != nil {
 			return Database{}, false, mapPostgresError(err)
 		}
@@ -171,7 +186,8 @@ func (s *PostgresStore) Due(ctx context.Context, includeProvisioning bool, limit
 		return nil, ErrInvalid
 	}
 	rows, err := new(sqlc.Queries).DueManagedPostgresLifecycleDatabases(ctx, s.catalog, sqlc.DueManagedPostgresLifecycleDatabasesParams{
-		IncludeProvisioning: includeProvisioning, At: databaseNullableTime(now), RowLimit: int32(limit)})
+		IncludeProvisioning: includeProvisioning, At: databaseNullableTime(now), RowLimit: int32(limit),
+		HoldRetryBefore: databaseNullableTime(now.Add(-defaultPollInterval))})
 	return databasesFromSQL(rows), mapPostgresError(err)
 }
 
@@ -350,15 +366,30 @@ func databaseNullableUUID(value string) pgtype.UUID {
 	return id
 }
 
+func lifecycleInsertParams(database Database, accountID, databaseID pgtype.UUID) sqlc.InsertManagedPostgresLifecycleDatabaseParams {
+	return sqlc.InsertManagedPostgresLifecycleDatabaseParams{
+		ID: databaseID, AccountID: accountID, OrgID: databaseNullableUUID(database.OrgID), Name: database.Name, Region: database.Spec.Region,
+		PostgresMajor: int16(database.Spec.PostgresMajor), ServiceClass: string(database.Spec.Class), Availability: string(database.Spec.Availability),
+		ScaleToZero: database.Spec.ScaleToZero, StorageLimitBytes: database.Spec.StorageLimitBytes, RestoreWindowSeconds: database.Spec.RestoreWindowSeconds,
+		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, RestoreSourceDatabaseID: databaseNullableUUID(database.RestoreSourceDatabaseID),
+		RestoreSourceResourceID: databaseNullableText(database.RestoreSourceResourceID), RestorePointInTime: databaseNullableTime(database.RestorePointInTime),
+		State: string(database.State), DesiredGeneration: database.DesiredGeneration, ObservedGeneration: database.ObservedGeneration,
+		RetryAt: databaseNullableTime(database.RetryAt), CreatedAt: databaseNullableTime(database.CreatedAt), UpdatedAt: databaseNullableTime(database.UpdatedAt),
+	}
+}
+
 func validateReservation(database Database, limit int) error {
 	validFingerprint := regexp.MustCompile(`^[a-f0-9]{64}$`)
-	if limit < 1 || limit > 100 || database.ID == "" || database.AccountID == "" ||
+	if limit < 1 || limit > 100 || database.ID == "" || database.AccountID == "" || !database.Preview.IsZero() ||
 		!ValidName(database.Name) || database.Spec.Validate() != nil ||
 		database.State != StateProvisioning || !ValidName(database.BackendID) ||
 		!validFingerprint.MatchString(database.BackendFingerprint) ||
 		database.DesiredGeneration < 1 || database.ObservedGeneration != 0 ||
 		database.CreatedAt.IsZero() || database.UpdatedAt.IsZero() ||
 		database.ProviderResourceID != "" || database.DataResourceID != "" || database.LeaseToken != "" || database.DeletedAt != nil || database.EnvironmentCloneOperationID != "" || database.AccountingRequired {
+		return ErrInvalid
+	}
+	if !validReservationExpiry(database) {
 		return ErrInvalid
 	}
 	if database.RestoreSourceDatabaseID == "" && database.RestoreSourceResourceID == "" && database.RestorePointInTime.IsZero() {

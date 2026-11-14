@@ -45,16 +45,17 @@ const createAppReleaseGateWithinLimit = `-- name: CreateAppReleaseGateWithinLimi
 INSERT INTO app_release_gates (
   id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events,
   metric_name, comparison, threshold, min_samples, created_by, created_at,
-  synthetic_check_id, max_failure_percent, max_change_percent
+  synthetic_check_id, max_failure_percent, max_change_percent, metric_labels
 )
 SELECT $1::uuid, $2::uuid, $3::uuid, $4::text,
   $5::text, $6::uuid, $7::integer,
   $8::integer, $9::integer, $10::text,
   $11::text, $12::double precision, $13::integer,
   $14::text, $15::timestamptz,
-  $16::uuid, $17::integer, $18::integer
-WHERE (SELECT count(*) FROM app_release_gates g WHERE g.app_id = $3::uuid) < $19::bigint
-RETURNING id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at, synthetic_check_id, max_failure_percent, max_change_percent
+  $16::uuid, $17::integer, $18::integer,
+  $19::jsonb
+WHERE (SELECT count(*) FROM app_release_gates g WHERE g.app_id = $3::uuid) < $20::bigint
+RETURNING id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at, synthetic_check_id, max_failure_percent, max_change_percent, metric_labels
 `
 
 type CreateAppReleaseGateWithinLimitParams struct {
@@ -76,6 +77,7 @@ type CreateAppReleaseGateWithinLimitParams struct {
 	SyntheticCheckID  pgtype.UUID
 	MaxFailurePercent pgtype.Int4
 	MaxChangePercent  pgtype.Int4
+	MetricLabels      []byte
 	MaxGates          int64
 }
 
@@ -101,6 +103,7 @@ func (q *Queries) CreateAppReleaseGateWithinLimit(ctx context.Context, db DBTX, 
 		arg.SyntheticCheckID,
 		arg.MaxFailurePercent,
 		arg.MaxChangePercent,
+		arg.MetricLabels,
 		arg.MaxGates,
 	)
 	var i AppReleaseGate
@@ -123,6 +126,7 @@ func (q *Queries) CreateAppReleaseGateWithinLimit(ctx context.Context, db DBTX, 
 		&i.SyntheticCheckID,
 		&i.MaxFailurePercent,
 		&i.MaxChangePercent,
+		&i.MetricLabels,
 	)
 	return i, err
 }
@@ -130,7 +134,7 @@ func (q *Queries) CreateAppReleaseGateWithinLimit(ctx context.Context, db DBTX, 
 const deleteAppReleaseGate = `-- name: DeleteAppReleaseGate :one
 DELETE FROM app_release_gates
  WHERE app_id = $1::uuid AND name = $2::text
-RETURNING id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at, synthetic_check_id, max_failure_percent, max_change_percent
+RETURNING id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at, synthetic_check_id, max_failure_percent, max_change_percent, metric_labels
 `
 
 type DeleteAppReleaseGateParams struct {
@@ -160,12 +164,13 @@ func (q *Queries) DeleteAppReleaseGate(ctx context.Context, db DBTX, arg DeleteA
 		&i.SyntheticCheckID,
 		&i.MaxFailurePercent,
 		&i.MaxChangePercent,
+		&i.MetricLabels,
 	)
 	return i, err
 }
 
 const listAppReleaseGates = `-- name: ListAppReleaseGates :many
-SELECT id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at, synthetic_check_id, max_failure_percent, max_change_percent FROM app_release_gates WHERE app_id = $1::uuid ORDER BY name
+SELECT id, account_id, app_id, name, kind, slo_id, max_burn_rate, max_new_groups, min_events, metric_name, comparison, threshold, min_samples, created_by, created_at, synthetic_check_id, max_failure_percent, max_change_percent, metric_labels FROM app_release_gates WHERE app_id = $1::uuid ORDER BY name
 `
 
 func (q *Queries) ListAppReleaseGates(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppReleaseGate, error) {
@@ -196,6 +201,7 @@ func (q *Queries) ListAppReleaseGates(ctx context.Context, db DBTX, appID pgtype
 			&i.SyntheticCheckID,
 			&i.MaxFailurePercent,
 			&i.MaxChangePercent,
+			&i.MetricLabels,
 		); err != nil {
 			return nil, err
 		}
@@ -313,6 +319,43 @@ func (q *Queries) RecordReleaseGateProbeResult(ctx context.Context, db DBTX, arg
 		arg.Failures,
 	)
 	return err
+}
+
+const releaseGateCustomMetricSeriesWindow = `-- name: ReleaseGateCustomMetricSeriesWindow :one
+SELECT COUNT(*)::bigint AS samples, COALESCE(AVG(value), 0)::double precision AS average
+  FROM app_custom_metric_series
+ WHERE app_id = $1::uuid
+   AND name = $2::text
+   AND series_key = $3::text
+   AND observed_at >= $4::timestamptz
+   AND observed_at < $5::timestamptz
+`
+
+type ReleaseGateCustomMetricSeriesWindowParams struct {
+	AppID     pgtype.UUID
+	Name      string
+	SeriesKey string
+	Since     pgtype.Timestamptz
+	Until     pgtype.Timestamptz
+}
+
+type ReleaseGateCustomMetricSeriesWindowRow struct {
+	Samples int64
+	Average float64
+}
+
+// ADR-20261108160000 slice C2: the latest value of one labelled series.
+func (q *Queries) ReleaseGateCustomMetricSeriesWindow(ctx context.Context, db DBTX, arg ReleaseGateCustomMetricSeriesWindowParams) (ReleaseGateCustomMetricSeriesWindowRow, error) {
+	row := db.QueryRow(ctx, releaseGateCustomMetricSeriesWindow,
+		arg.AppID,
+		arg.Name,
+		arg.SeriesKey,
+		arg.Since,
+		arg.Until,
+	)
+	var i ReleaseGateCustomMetricSeriesWindowRow
+	err := row.Scan(&i.Samples, &i.Average)
+	return i, err
 }
 
 const releaseGateCustomMetricWindow = `-- name: ReleaseGateCustomMetricWindow :one

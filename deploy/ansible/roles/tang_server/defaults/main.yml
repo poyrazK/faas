@@ -1,0 +1,14 @@
+---
+# ADR-20261109120000: every host runs a Tang key server so the other hosts'
+# encrypted data volumes can unlock at boot. A host never unlocks from its own
+# Tang server (its keys sit on the plain root disk), so the manifest renders
+# faas_tang_peer_urls without the host itself. Off unless the manifest's
+# disk_encryption section turns faas_disk_encryption on.
+faas_disk_encryption: false
+faas_tang_port: 7500
+faas_tang_key_dir: /var/lib/tang
+# The private address Tang binds to. The manifest renders the host's own
+# address; the discovery play's address is only the fallback.
+faas_tang_listen_address: "{{ faas_private_dns_address | default(faas_private_address | default('')) }}"
+# An IPv6 address is bracketed where a port follows it.
+faas_tang_listen_hostport: "{{ ('[' ~ faas_tang_listen_address ~ ']') if (':' in faas_tang_listen_address) else faas_tang_listen_address }}"

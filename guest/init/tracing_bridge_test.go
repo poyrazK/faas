@@ -162,7 +162,7 @@ func TestTraceBridgeBusy(t *testing.T) {
 
 func TestTraceBridgeRejectsOtherRoutes(t *testing.T) {
 	b := newTraceBridge(func(context.Context, []byte) (byte, error) { return api.TraceAckAccepted, nil })
-	req := httptest.NewRequest(http.MethodPost, "/v1/metrics", strings.NewReader("x"))
+	req := httptest.NewRequest(http.MethodPost, "/v1development/profiles", strings.NewReader("x"))
 	req.Header.Set("Content-Type", "application/x-protobuf")
 	rec := httptest.NewRecorder()
 	b.handler().ServeHTTP(rec, req)
@@ -242,6 +242,34 @@ func TestTracingEnvAtPaths(t *testing.T) {
 		got := tracingEnvAtPaths([]string{"OTEL_TRACES_SAMPLER=parentbased_traceidratio", "OTEL_METRICS_EXPORTER=prometheus"}, enabled, "/n.cjs", "/py", none)
 		if envValue(got, "OTEL_TRACES_SAMPLER") != "parentbased_traceidratio" || envValue(got, "OTEL_METRICS_EXPORTER") != "prometheus" {
 			t.Fatalf("app sampler/metrics overridden: %v", got)
+		}
+	})
+
+	// adr: 20261108160000 — tracing.metrics points the metrics exporter at
+	// the bridge with delta temporality, unless the app chose otherwise.
+	t.Run("tracing.metrics", func(t *testing.T) {
+		metrics := &api.TracingConfig{Enabled: true, Metrics: true}
+		got := tracingEnvAtPaths(nil, metrics, "/n.cjs", "/py", none)
+		for key, want := range map[string]string{
+			"OTEL_METRICS_EXPORTER":                             "otlp",
+			"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT":               "http://127.0.0.1:4318/v1/metrics",
+			"OTEL_EXPORTER_OTLP_METRICS_PROTOCOL":               "http/protobuf",
+			"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE": "delta",
+		} {
+			if v := envValue(got, key); v != want {
+				t.Fatalf("%s = %q, want %q", key, v, want)
+			}
+		}
+		got = tracingEnvAtPaths([]string{"OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative"}, metrics, "/n.cjs", "/py", none)
+		if envValue(got, "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE") != "cumulative" {
+			t.Fatalf("app temporality overridden: %v", got)
+		}
+		for _, own := range []string{"OTEL_METRICS_EXPORTER=prometheus", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://c.example/v1/metrics"} {
+			got = tracingEnvAtPaths([]string{own}, metrics, "/n.cjs", "/py", none)
+			name, value, _ := strings.Cut(own, "=")
+			if envValue(got, name) != value || envValue(got, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT") == api.TraceLocalEndpoint+api.TraceLocalMetricsPath {
+				t.Fatalf("app metrics choice %s overridden: %v", own, got)
+			}
 		}
 	})
 

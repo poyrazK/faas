@@ -35,7 +35,9 @@ func TestPostgresHelpShowsArgumentsAndParsedFlags(t *testing.T) {
 		{args: []string{"delete"}, positionals: []string{"<database>"}},
 		{args: []string{"restore"}, fn: "cmdPostgresRestore", positionals: []string{"<database>"}},
 		{args: []string{"resize"}, fn: "cmdPostgresResize", positionals: []string{"<database>"}},
-		{args: []string{"compute-policy"}, fn: "cmdPostgresComputePolicy", positionals: []string{"<database>"}},
+		// The group lists set and status; set's flags are on set, not on the
+		// group, whose verbs take different arguments.
+		{args: []string{"compute-policy", "set"}, fn: "cmdPostgresComputePolicy", positionals: []string{"<database>"}},
 		{args: []string{"compute-policy-status"}, positionals: []string{"<database>", "<request_uuid>"}},
 		{args: []string{"attach"}, fn: "cmdPostgresAttach", positionals: []string{"<database>", "<app>"}},
 		{args: []string{"bindings", "list"}, positionals: []string{"<database>"}},

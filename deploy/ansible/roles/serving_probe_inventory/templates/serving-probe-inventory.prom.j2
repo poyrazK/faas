@@ -1,0 +1,20 @@
+# Managed deployment intent; independent of compute-node probe execution.
+# HELP faas_serving_probe_inventory_configured 1 when a fleet inventory was explicitly supplied.
+# TYPE faas_serving_probe_inventory_configured gauge
+faas_serving_probe_inventory_configured {{ 0 if faas_serving_probe_fleet is none else 1 }}
+# HELP faas_serving_probe_expected_pairs Number of expected node/URL pairs.
+# TYPE faas_serving_probe_expected_pairs gauge
+faas_serving_probe_expected_pairs {{ (faas_serving_probe_fleet | default({}, true)).values() | map(attribute='urls') | flatten | length }}
+# HELP faas_serving_probe_expected Probe expected by deployment configuration.
+# TYPE faas_serving_probe_expected gauge
+# HELP faas_serving_probe_expected_first_byte_seconds Desired first-byte budget by stable node identity.
+# TYPE faas_serving_probe_expected_first_byte_seconds gauge
+# HELP faas_serving_probe_expected_max_age_seconds Maximum accepted result age by stable node identity.
+# TYPE faas_serving_probe_expected_max_age_seconds gauge
+{% for node, policy in (faas_serving_probe_fleet | default({}, true)) | dictsort %}
+faas_serving_probe_expected_first_byte_seconds{probe_node={{ node | to_json }}} {{ policy.max_first_byte_seconds | default(policy.timeout_seconds | default(20)) | float }}
+faas_serving_probe_expected_max_age_seconds{probe_node={{ node | to_json }}} {{ policy.max_age_seconds | default(900) | float }}
+{% for url in policy.urls | sort %}
+faas_serving_probe_expected{probe_node={{ node | to_json }},url={{ url | to_json }}} 1
+{% endfor %}
+{% endfor %}

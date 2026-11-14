@@ -84,6 +84,10 @@ type InstanceStat struct {
 	// QuietPaused (ADR-1151) is true while vmmd holds the instance
 	// quiet-paused between requests.
 	QuietPaused bool
+	// IdleLadderLevel (ADR-20261107122928) is the idle ladder level vmmd
+	// holds a quiet-paused instance at: 1 quiet pause, 2 freeze, which
+	// measured admission books at the frozen charge. 0 otherwise.
+	IdleLadderLevel int32
 	// Frozen (ADR-1151) is true while vmmd holds the instance frozen in
 	// place.
 	Frozen bool
@@ -224,7 +228,10 @@ type Reader struct {
 	snap atomic.Pointer[[]InstanceStat]
 	// shadow is the latest per-node ADR-909 measurement (memory_shadow.go).
 	shadow atomic.Pointer[memoryShadowSnapshot]
-	quiet  atomic.Pointer[quietPausedSnapshot]
+	// vmMemory is every VM's latest memory sample by node, agent run VMs
+	// included (memory_shadow.go).
+	vmMemory atomic.Pointer[vmMemorySnapshot]
+	quiet    atomic.Pointer[quietPausedSnapshot]
 	// cpu is the latest per-instance measured CPU (measured_cpu.go).
 	cpu atomic.Pointer[measuredCPUSnapshot]
 	// pressure is the latest per-node CPU pressure readings
@@ -451,8 +458,9 @@ func (r *Reader) SnapshotActivity(now time.Time) map[string]sched.InstanceActivi
 			continue
 		}
 		activity := sched.InstanceActivity{
-			Inflight:    row.InflightRequests,
-			LastRequest: row.LastRequestAt,
+			Inflight:        row.InflightRequests,
+			LastRequest:     row.LastRequestAt,
+			IdleLadderLevel: int(row.IdleLadderLevel),
 		}
 		if row.RSSMB > 0 {
 			activity.ResidentMB = int(row.RSSMB)

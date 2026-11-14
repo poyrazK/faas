@@ -721,7 +721,9 @@ func (h *Heartbeat) heartbeatPing(ctx context.Context, n state.ComputeNode) (*Pi
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	cli, err := h.dialer.Dial(probeCtx, n.TargetURL, h.tls)
+	// Only n's own vmmd leaf answers for n: target_url is a row compute
+	// nodes can write (ADR-20261108124106).
+	cli, err := h.dialer.Dial(probeCtx, n.TargetURL, wire.ExpectPeerCN(h.tls, n.Name))
 	if err != nil {
 		return nil, err
 	}

@@ -13,8 +13,8 @@ T = TypeVar("T", bound="WorkflowRecoveryPolicyPausedWebhookPayload")
 
 @_attrs_define
 class WorkflowRecoveryPolicyPausedWebhookPayload:
-    """Historical automation.recovery_policy_paused event emitted once per policy version after repeated proven automatic
-    retry failures. Frozen receivers and stable event identity survive retries and later policy updates.
+    """Historical stored_workflow.recovery_policy_paused event emitted once per policy version after repeated proven
+    automatic retry failures. Frozen receivers and stable event identity survive retries and later policy updates.
 
     """
 

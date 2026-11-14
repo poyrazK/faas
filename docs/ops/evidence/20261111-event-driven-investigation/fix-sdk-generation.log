@@ -1,0 +1,21 @@
+python-codegen (exit 0):
+gen: reconciled 5 cosmetic-drift file(s) against HEAD (31 structural drift left intact)
+gen: regenerated /workspace/faas/sdk/python from openapi.yaml
+
+python-model (exit 0):
+DataAPIChangeEvent versioned and legacy round trips passed
+
+node-codegen (exit 0):
+
+> @gregale/sdk-node@0.1.0 gen
+> node scripts/gen.mjs
+
+sdk/node: generated clients from /workspace/faas/api/openapi.yaml -> /workspace/faas/sdk/node/src/generated
+sdk/node: generated the public client from /workspace/faas/sdk/openapi.yaml -> /workspace/faas/sdk/node/src/generated-public (1268 models)
+sdk/node: post-processed 1523 files with extensionless imports
+sdk/node: wrote models barrel (3245 entries)
+
+node-sdk-build (exit 0):
+
+> @gregale/sdk-node@0.1.0 build
+> tsc -p tsconfig.json

@@ -46,6 +46,8 @@ func TestManagedPostgres(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
 	j := &postgresJourney{tg: tg, bindings: map[string]string{}}
+	hidden := hiddenCapabilities(t, tg)
+	skipHidden(t, hidden, "release-commands")
 	j.app = tg.app(t, "pg")
 	j.db, j.restored = tg.slug("pg"), tg.slug("pg-restored")
 	// Bindings go before databases and databases before the app (cleanups
@@ -66,7 +68,10 @@ func TestManagedPostgres(t *testing.T) {
 		}
 	})
 	s.step("attach_database", func(t *testing.T) { j.attach(t, j.db, "DATABASE_URL") })
+	s.step("migrate", j.migrate)
 	s.check("binding_verify", func(t *testing.T) {
+		// The probe runs as an app task.
+		skipHidden(t, hidden, "app-tasks")
 		tg.ok(t, 2*time.Minute, "app", "binding", "verify", j.app, "--postgres", "DATABASE_URL")
 	})
 	s.step("write_and_read", func(t *testing.T) {
@@ -155,10 +160,26 @@ func (j *postgresJourney) bind(t *testing.T, name, key string, extra ...string) 
 // database with a binding cannot be deleted.
 func (j *postgresJourney) detach(t *testing.T, name string) {
 	t.Helper()
-	id := j.bindings[name]
-	if id == "" {
-		return
+	if id := j.bindings[name]; id != "" {
+		j.unbind(t, name, id)
+		delete(j.bindings, name)
 	}
+}
+
+// migrate creates the probe's table the way docs/postgres.md tells
+// customers to run migrations: a release command connecting through a
+// migration binding, since serving credentials cannot change the schema.
+// The migration binding is deleted again, so the delete steps find only
+// DATABASE_URL.
+func (j *postgresJourney) migrate(t *testing.T) {
+	id := j.bind(t, j.db, "MIGRATION_DATABASE_URL", "--access", "migration")
+	j.tg.deploy(t, j.app, "--path", postgresProbeSource(t, "create"), "--rollout", "immediate")
+	j.unbind(t, j.db, id)
+}
+
+// unbind deletes one of name's bindings and waits until it is gone.
+func (j *postgresJourney) unbind(t *testing.T, name, id string) {
+	t.Helper()
 	j.tg.ok(t, time.Minute, "postgres", "bindings", "delete", id)
 	eventually(t, name+" binding deleted", 5*time.Minute, 5*time.Second, func() (bool, string) {
 		list := object(t, j.tg.ok(t, time.Minute, "postgres", "bindings", "list", name).stdout)
@@ -170,7 +191,6 @@ func (j *postgresJourney) detach(t *testing.T, name string) {
 		}
 		return true, ""
 	})
-	delete(j.bindings, name)
 }
 
 // notes calls the app's /notes for the database bound as key. The first
@@ -351,16 +371,31 @@ func (j *postgresJourney) purge(t *testing.T, name string) {
 	}
 	// A database switch moves the app's bindings to the restored copy, so
 	// the journey does not know every binding's ID: delete what is listed.
-	if ids := j.liveBindings(t, name); len(ids) > 0 {
-		for _, id := range ids {
-			j.tg.run(t, time.Minute, "postgres", "bindings", "delete", id)
+	for _, id := range j.liveBindings(t, name) {
+		j.tg.run(t, time.Minute, "postgres", "bindings", "delete", id)
+	}
+	// Binding deletion is asynchronous and a purge is refused while one is
+	// still live, so retry instead of guessing a delay: a single attempt
+	// after a fixed 30 s sleep left e2ej-*-pg-rb/-rc behind on 2026-11-04.
+	problem := ""
+	deadline := time.Now().Add(pgPurgeWait)
+	for {
+		res := j.tg.run(t, time.Minute, "postgres", "delete", name, "--purge", "--yes")
+		if res.exit == 0 || strings.Contains(res.problem(), "not_found") {
+			return
 		}
-		time.Sleep(30 * time.Second)
+		problem = res.problem()
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(15 * time.Second)
 	}
-	if res := j.tg.run(t, time.Minute, "postgres", "delete", name, "--purge", "--yes"); res.exit != 0 {
-		t.Logf("warning: could not purge %s (%s); delete it by hand: gregale postgres delete %s --purge --yes", name, res.problem(), name)
-	}
+	t.Logf("warning: could not purge %s (%s); the next run's sweeper retries, or: gregale postgres delete %s --purge --yes", name, problem, name)
 }
+
+// pgPurgeWait bounds a cleanup purge waiting for the database's bindings to
+// finish deleting.
+const pgPurgeWait = 5 * time.Minute
 
 // liveBindings lists name's bindings that are not deleted. It is for
 // cleanups, so a failed list returns none.

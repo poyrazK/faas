@@ -10,8 +10,14 @@ CREATE TABLE api_keys (
 );
 CREATE TABLE deploy_tokens (
     id uuid PRIMARY KEY, account_id uuid NOT NULL, app_id uuid NOT NULL,
-    status text NOT NULL, expires_at timestamptz
+    status text NOT NULL, expires_at timestamptz, created_by_account_id uuid
 );
 CREATE TABLE oidc_exchanged_tokens (
     id uuid PRIMARY KEY, account_id uuid NOT NULL, expires_at timestamptz NOT NULL
+);
+CREATE TABLE accounts (
+    id uuid PRIMARY KEY, mfa_enrolled_at timestamptz
+);
+CREATE TABLE org_security_policies (
+    org_id uuid PRIMARY KEY, require_mfa boolean NOT NULL
 );

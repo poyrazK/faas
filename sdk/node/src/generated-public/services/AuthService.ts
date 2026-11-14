@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { AuthCapabilities } from '../models/AuthCapabilities.js';
 import type { CSRFTokenResponse } from '../models/CSRFTokenResponse.js';
+import type { EmailVerificationResendResponse } from '../models/EmailVerificationResendResponse.js';
 import type { MagicLinkSignupRequest } from '../models/MagicLinkSignupRequest.js';
 import type { OAuthTokenExchangeResponse } from '../models/OAuthTokenExchangeResponse.js';
 import type { OIDCExchangeRequest } from '../models/OIDCExchangeRequest.js';
@@ -21,6 +22,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class AuthService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Email + password sign-in.
    * Verifies the email + password against the `account_passwords`
@@ -46,7 +48,7 @@ export class AuthService {
   }: {
     requestBody: PasswordLoginRequest,
   }): CancelablePromise<PasswordLoginResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/login',
       body: requestBody,
@@ -81,7 +83,7 @@ export class AuthService {
   }: {
     requestBody: PasswordSignupRequest,
   }): CancelablePromise<PasswordLoginResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/signup',
       body: requestBody,
@@ -114,7 +116,7 @@ export class AuthService {
   }): CancelablePromise<{
     status: 'ok';
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/login/forgot',
       body: requestBody,
@@ -152,7 +154,7 @@ export class AuthService {
   }: {
     requestBody: PasswordSignupRequest,
   }): CancelablePromise<ProgrammaticAuthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/signup',
       body: requestBody,
@@ -187,7 +189,7 @@ export class AuthService {
   }: {
     requestBody: PasswordLoginRequest,
   }): CancelablePromise<ProgrammaticAuthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/login',
       body: requestBody,
@@ -229,7 +231,7 @@ export class AuthService {
   }): CancelablePromise<{
     status: 'ok';
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/signup/magic-link',
       body: requestBody,
@@ -263,7 +265,7 @@ export class AuthService {
      */
     token: string,
   }): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/verify-email',
       query: {
@@ -298,7 +300,7 @@ export class AuthService {
       token: string;
     },
   }): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/verify-email',
       formData: formData,
@@ -332,7 +334,7 @@ export class AuthService {
      */
     token: string,
   }): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/auth/reset',
       query: {
@@ -357,7 +359,7 @@ export class AuthService {
   }: {
     formData: PasswordResetConfirm,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/auth/reset',
       formData: formData,
@@ -396,7 +398,7 @@ export class AuthService {
    * @throws ApiError
    */
   public static googleAuthRedirect(): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/google',
       errors: {
@@ -441,7 +443,7 @@ export class AuthService {
      */
     state: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/google/callback',
       query: {
@@ -483,7 +485,7 @@ export class AuthService {
    * @throws ApiError
    */
   public static githubAuthRedirect(): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/github',
       errors: {
@@ -533,7 +535,7 @@ export class AuthService {
      */
     state: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/github/callback',
       query: {
@@ -598,7 +600,7 @@ export class AuthService {
    * @throws ApiError
    */
   public static getAuthCapabilities(): CancelablePromise<AuthCapabilities> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/capabilities',
       errors: {
@@ -639,7 +641,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/logout',
       cookies: {
@@ -698,7 +700,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<CSRFTokenResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/csrf',
       cookies: {
@@ -743,7 +745,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<SessionListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/sessions',
       cookies: {
@@ -799,7 +801,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/auth/sessions/{id}',
       path: {
@@ -830,28 +832,48 @@ export class AuthService {
     });
   }
   /**
+   * Send a new email verification link.
+   * Mails a new 24-hour verification link when the account's address is
+   * unverified, at most once a minute and five times an hour. Returns
+   * `already_verified` when there is nothing to send. Available after the
+   * 30-day verification period ends, when other routes answer
+   * `email_verification_required`.
+   *
+   * @returns EmailVerificationResendResponse The address is already verified.
+   * @throws ApiError
+   */
+  public static resendEmailVerification(): CancelablePromise<EmailVerificationResendResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/auth/verify-email/resend',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Revoke every session except the calling one.
-   * Revokes all `sessions` rows for the calling account
-   * whose `id` is NOT the calling cookie's `sid`. The
-   * caller's session stays active. Returns the count of
-   * rows revoked so the dashboard can render "Signed out
-   * N other devices".
+   * From a browser session: revokes every other browser session of the
+   * calling account and keeps the caller's. CSRF: action
+   * `sessions_revoke_all`.
    *
-   * CSRF: action `sessions_revoke_all`.
+   * With an API key: revokes every browser session. API keys keep
+   * working, and no CSRF token is needed.
    *
-   * Emits `auth.sessions.revoke_all` with
-   * `{revoked_count, retained_sid}`.
+   * Returns the count of sessions revoked.
    *
    * @returns SessionsRevokeAllResponse Bulk revocation succeeded.
    * @throws ApiError
    */
   public static postAccountSessionsRevokeAll({
-    requestBody,
     faasSid,
+    requestBody,
   }: {
-    requestBody: {
-      csrf_token: string;
-    },
     /**
      * Dashboard session cookie. Sealed; opaque to the client
      * (`HttpOnly; Secure; SameSite=Lax`). 7-day fixed lifetime.
@@ -861,8 +883,11 @@ export class AuthService {
      *
      */
     faasSid?: string,
+    requestBody?: {
+      csrf_token: string;
+    },
   }): CancelablePromise<SessionsRevokeAllResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/sessions/revoke_all',
       cookies: {
@@ -920,7 +945,7 @@ export class AuthService {
   }: {
     requestBody: OIDCExchangeRequest,
   }): CancelablePromise<(OIDCExchangeResponse | OAuthTokenExchangeResponse)> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/oidc/exchange',
       body: requestBody,
@@ -985,7 +1010,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/dashboard/account/set-password',
       cookies: {

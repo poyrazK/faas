@@ -2,6 +2,7 @@ package frameworkprofile
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"testing/fstest"
@@ -142,6 +143,42 @@ func TestAnalyzeDockerfileUsesExposedPortAndDefersCommand(t *testing.T) {
 	}
 	if len(got.Warnings) != 1 || got.Warnings[0].Code != "container_command_deferred" {
 		t.Fatalf("warnings = %+v, want container_command_deferred", got.Warnings)
+	}
+}
+
+func TestAnalyzeDockerfileWarnsForRawTCPServer(t *testing.T) {
+	tests := []struct {
+		name       string
+		dockerfile string
+		want       bool
+		mention    string
+	}{
+		{"redis inherits its port", "FROM redis:7-alpine\nCMD [\"redis-server\"]\n", true, "builds redis"},
+		{"registry path and digest", "FROM --platform=linux/amd64 docker.io/library/postgres:16@sha256:abc\n", true, "port 5432"},
+		{"own EXPOSE of a raw port", "FROM alpine:3.20\nEXPOSE 9092\n", true, "port 9092 is a raw TCP port"},
+		{"server with HTTP sidecar", "FROM redis:7-alpine\nRUN apk add busybox-extras\nEXPOSE 8080\nCMD [\"/start.sh\"]\n", false, ""},
+		{"final stage decides", "FROM redis:7 AS tools\nFROM node:22\nEXPOSE 3000\n", false, ""},
+		{"http app", "FROM node:22\nEXPOSE 9000\n", false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Analyze(fstest.MapFS{"Dockerfile": &fstest.MapFile{Data: []byte(tt.dockerfile)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var found *Warning
+			for i := range got.Warnings {
+				if got.Warnings[i].Code == "non_http_service" {
+					found = &got.Warnings[i]
+				}
+			}
+			if (found != nil) != tt.want {
+				t.Fatalf("non_http_service = %v, want %v (warnings %+v)", found != nil, tt.want, got.Warnings)
+			}
+			if found != nil && (!strings.Contains(found.Message, tt.mention) || !strings.Contains(found.Message, "gregale deploy --image")) {
+				t.Fatalf("message = %q, want %q and the image deploy", found.Message, tt.mention)
+			}
+		})
 	}
 }
 

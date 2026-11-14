@@ -291,3 +291,36 @@ PRs 1, 2 and 7 do not depend on logs and can ship before the gate.
 - **Prometheus `remote_write` or Thanos to object storage:** more processes and RAM on the control plane than a longer local retention, and nowhere else to query from.
 - **Running the probe on the self-hosted runners:** they run on the control plane, so they fail together with what they watch.
 - **A GitHub-hosted scheduled probe:** Cloudflare blocks GitHub-hosted egress to the public host. A Cloudflare exception keyed on a secret header would depend on which bot protection the zone runs, and some modes cannot be skipped.
+
+## Amendment 2026-11-06: SSH sessions and the pre-stage yield too
+
+The capped observability slice works: in the week to 2026-11-06 it averaged
+0.10 of production-us's 2 control-plane cores, and 0.12 while the host was
+busy. Prometheus compactions took 1,290 CPU-seconds in 122 runs. The host was
+above 1.5 busy cores for 12.75 h of the week (7.6 %), and tasks waited for a
+CPU 18 % of the time (`node_pressure_cpu_waiting_seconds_total`). In those
+busy windows the largest consumers were:
+
+| cgroup | mean cores while busy |
+|---|---|
+| `user.slice` (operator and Ansible SSH sessions) | 0.42 |
+| `system-postgresql.slice` | 0.36 |
+| `faas-imaged-prestage.service` (release-time runtime base pre-stage) | 0.29 |
+| `faas-imaged.service` | 0.20 |
+| `faas-github-runner-2.service` (already `CPUWeight=20`) | 0.17 |
+| `faas-cp-build.slice` | 0.13 |
+| `faas-obs.slice` | 0.12 |
+
+`user.slice` ran at the default weight, so a session competed as an equal
+with all of `system.slice`, PostgreSQL included.
+
+- `systemd_slices` writes `user.slice.d/50-faas-priority.conf` with
+  `CPUWeight` and `IOWeight` of 20 (`faas_user_slice_cpu_weight`,
+  `faas_user_slice_io_weight`) on every host it converges. Under contention
+  a session gets about a sixth of what a service slice gets; on an idle host
+  it still gets every core.
+- `faas-imaged-prestage.service` runs at `CPUWeight=20`, like the runners.
+- No quota: an operator handling an incident still gets idle CPU.
+
+This reorders who waits; it adds no capacity. A larger control-plane host
+remains the owner's decision.

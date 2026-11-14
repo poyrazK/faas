@@ -25,6 +25,19 @@ func (q *Queries) ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, su
 	return enabled, err
 }
 
+const managedPostgresOverageSetting = `-- name: ManagedPostgresOverageSetting :one
+SELECT o.enabled FROM managed_postgres_account_overage o WHERE o.subject_id=$1::uuid
+`
+
+// ADR-20261025094915 amendment 2026-11-11: the subject's stored choice; no
+// row means it never chose and its plan's default applies.
+func (q *Queries) ManagedPostgresOverageSetting(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, managedPostgresOverageSetting, subjectID)
+	var enabled bool
+	err := row.Scan(&enabled)
+	return enabled, err
+}
+
 const managedPostgresUsageSubjects = `-- name: ManagedPostgresUsageSubjects :many
 SELECT d.id::text AS database_id, managed_postgres_usage_subject(d.org_id, d.account_id)::text AS subject_id
 FROM managed_postgres_databases d

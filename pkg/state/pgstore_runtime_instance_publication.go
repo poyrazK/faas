@@ -52,7 +52,8 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 	}
 	// ADR-1741: a boot's guarded publication is one statement when the
 	// database has the admission functions.
-	if guarded && p.RuntimeUpgradeColdBoot == nil && p.ExpectedState != string(StateWarm) &&
+	_, prime := ctx.Value(snapshotPrimeAttemptKey{}).(snapshotPrimeAttempt)
+	if guarded && !prime && p.RuntimeUpgradeColdBoot == nil && p.ExpectedState != string(StateWarm) &&
 		p.ExpectedState != string(StateFrozen) && s.admissionFunctionsUsable(ctx) {
 		instance, err := s.publishOnGenerationFunction(ctx, p, guard)
 		if err != nil {
@@ -69,6 +70,9 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 		if err := runtimeAppConfigFenceDB(ctx, tx, p); err != nil {
 			return Instance{}, fmt.Errorf("runtime publication: app config fence: %w", err)
 		}
+	}
+	if err := checkSnapshotPrimeAttemptTx(ctx, tx, p.AppID, p.Fence.DeploymentID); err != nil {
+		return Instance{}, err
 	}
 	if p.ExpectedState == string(StateWarm) || p.ExpectedState == string(StateFrozen) {
 		fresh, err := sqlc.New().InstanceSnapshotRecoveryFresh(ctx, tx, mustPgUUID(p.InstanceID))
@@ -193,12 +197,18 @@ func runtimeAppConfigFenceDB(ctx context.Context, db sqlc.DBTX, p RuntimeInstanc
 	case err != nil:
 		return fmt.Errorf("%w: rebuild app config fence: %w", ErrConflict, err)
 	case current.SecretFence != fence:
-		return fmt.Errorf("%w: secrets changed since the wake read them", ErrConflict)
+		return fmt.Errorf("%w: secrets changed since the wake read them", ErrRuntimeValuesChanged)
 	case current != p.ConfigFence:
-		return fmt.Errorf("%w: app config changed since the wake read it", ErrConflict)
+		return fmt.Errorf("%w: app config changed since the wake read it", ErrRuntimeValuesChanged)
 	}
 	return nil
 }
+
+// ErrRuntimeValuesChanged is the publication fence's conflict when the app's
+// configuration or secrets changed while the instance booted. It is an
+// ErrConflict; a deploy's snapshot prime retries it with the new values
+// instead of failing the deployment (deploy-path review P3).
+var ErrRuntimeValuesChanged = fmt.Errorf("%w (runtime values changed)", ErrConflict)
 
 func instanceFromRuntimePublication(row sqlc.PublishOwnedInstanceRuntimeRow) Instance {
 	instance := Instance{ID: row.ID, AppID: row.AppID, DeploymentID: row.DeploymentID,

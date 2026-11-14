@@ -53,6 +53,10 @@ export type CreateReleaseGateRequest = {
    */
   max_change_percent?: number;
   /**
+   * custom_metric and metric_change gates: judge the one labelled series with exactly these labels instead of the metric's aggregate. Keys match ^[a-z_][a-z0-9_]{0,62}$.
+   */
+  labels?: Record<string, string>;
+  /**
    * Default 20; 6 probes for synthetic gates.
    */
   min_samples?: number;

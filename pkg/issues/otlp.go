@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -54,7 +55,7 @@ func ExtractOTLPGroups(raw []byte, signal string) ([]OTLPGroup, error) {
 	// identical records within one export. A stable explicit ID remains the
 	// only way to distinguish identical records in independently sent exports.
 	seen := make(map[string]int)
-	add := func(group *OTLPGroup, attrs []*commonpb.KeyValue, trace, span []byte, nanos uint64) error {
+	add := func(group *OTLPGroup, attrs, parentAttrs []*commonpb.KeyValue, trace, span []byte, nanos uint64) error {
 		values := map[string]string{}
 		for _, a := range attrs {
 			values[a.GetKey()] = a.GetValue().GetStringValue()
@@ -86,6 +87,10 @@ func ExtractOTLPGroups(raw []byte, signal string) ([]OTLPGroup, error) {
 			typ = "Exception"
 		}
 		event := api.IssueEvent{OccurredAt: time.Unix(0, int64(nanos)).UTC(), ExceptionType: typ, Message: values["exception.message"], StackTrace: values["exception.stacktrace"], TraceID: hex.EncodeToString(trace), SpanID: hex.EncodeToString(span), RequestID: values["gregale.request_id"], InvocationID: values["gregale.invocation_id"], SourceKind: "exception"}
+		// The HTTP semantic conventions attach route and status to the span;
+		// log records (and explicit event attributes) may provide them directly.
+		issueOTLPHTTPContext(&event, parentAttrs)
+		issueOTLPHTTPContext(&event, attrs)
 		event.GroupingStrategy = values["gregale.issue.grouping_strategy"]
 		event.SymbolicationStrategy = values["gregale.issue.symbolication_strategy"]
 		event.FrameOrder = values["gregale.issue.frame_order"]
@@ -137,7 +142,7 @@ func ExtractOTLPGroups(raw []byte, signal string) ([]OTLPGroup, error) {
 					group := OTLPGroup{}
 					for _, event := range span.GetEvents() {
 						if event.GetName() == "exception" || event.GetName() == "http.server.request.exception" {
-							if err := add(&group, event.GetAttributes(), span.GetTraceId(), span.GetSpanId(), event.GetTimeUnixNano()); err != nil {
+							if err := add(&group, event.GetAttributes(), span.GetAttributes(), span.GetTraceId(), span.GetSpanId(), event.GetTimeUnixNano()); err != nil {
 								if count > api.IssueMaxBatchEvents {
 									return nil, err
 								}
@@ -164,7 +169,7 @@ func ExtractOTLPGroups(raw []byte, signal string) ([]OTLPGroup, error) {
 					if nanos == 0 {
 						nanos = record.GetObservedTimeUnixNano()
 					}
-					if err := add(&group, record.GetAttributes(), record.GetTraceId(), record.GetSpanId(), nanos); err != nil {
+					if err := add(&group, record.GetAttributes(), nil, record.GetTraceId(), record.GetSpanId(), nanos); err != nil {
 						if count > api.IssueMaxBatchEvents {
 							return nil, err
 						}
@@ -180,6 +185,21 @@ func ExtractOTLPGroups(raw []byte, signal string) ([]OTLPGroup, error) {
 		return nil, errors.New("unsupported OTLP signal")
 	}
 	return groups, nil
+}
+
+func issueOTLPHTTPContext(event *api.IssueEvent, attrs []*commonpb.KeyValue) {
+	for _, attr := range attrs {
+		switch attr.GetKey() {
+		case "http.route":
+			if value, ok := attr.GetValue().GetValue().(*commonpb.AnyValue_StringValue); ok && len(value.StringValue) <= api.IssueMaxTypeBytes && utf8.ValidString(value.StringValue) {
+				event.Route = value.StringValue
+			}
+		case "http.response.status_code", "http.status_code":
+			if value, ok := attr.GetValue().GetValue().(*commonpb.AnyValue_IntValue); ok && value.IntValue >= 400 && value.IntValue <= 599 {
+				event.HTTPStatus = int(value.IntValue)
+			}
+		}
+	}
 }
 
 // OTLP JSON uses hexadecimal IDs rather than protobuf JSON's base64 bytes.

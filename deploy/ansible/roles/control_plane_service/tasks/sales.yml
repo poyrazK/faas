@@ -1,0 +1,9 @@
+---
+- name: control_plane_service — configure the sales workspace
+  ansible.builtin.template:
+    src: zz-faas-sales.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-sales.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid

@@ -67,7 +67,7 @@ func cmdEventsSubscriptionCapacityCommand(args []string) int {
 		return printErr("Invalid capacity command evidence", fmt.Errorf("original expectations disagree with receipt"))
 	}
 	now := time.Now().UTC()
-	if receipt.RecordedAt.After(now) || !receipt.RetainUntil.After(now) {
+	if serverTimeAhead(receipt.RecordedAt, now) || !receipt.RetainUntil.After(now) {
 		return printErr("Capacity command evidence is no longer retained", fmt.Errorf("refresh the read-only lookup"))
 	}
 	if jsonOutput {

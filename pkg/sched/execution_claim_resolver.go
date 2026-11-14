@@ -156,7 +156,7 @@ func (r *ExecutionClaimResolver) ResolveExecutionClaim(ctx context.Context, clai
 		Limits: claim.Limits, DeadlineAt: claim.DeadlineAt,
 		OutboundIntegrationIDs: outboundIntegrationIDs,
 		KernelKey:              artifacts.KernelKey, BaseKey: artifacts.BaseKey, LayerKey: artifacts.LayerKey,
-		VcpuCount: api.VCPUPerPlan[account.Plan], MemSizeMiB: claim.Limits.MemoryMB,
+		VcpuCount: api.SizeVCPUs(claim.Limits.MemoryMB), MemSizeMiB: claim.Limits.MemoryMB,
 		CPUMillicores: claim.Limits.CPUMillicores,
 	}
 	if len(outboundIntegrationIDs) > 0 && claim.LeaseToken != nil {

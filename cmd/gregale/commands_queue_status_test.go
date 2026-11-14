@@ -102,6 +102,26 @@ func TestRenderQueueStatusIncludesActionableSignals(t *testing.T) {
 	}
 }
 
+// Async invocations and webhooks waiting for the scheduler are not queue
+// depth; `queue status` printed depth=0 while ~1,000 waited (prod
+// throughput test 2026-11-12). They show on their own line, sorted.
+func TestRenderQueueStatusShowsWaitingWorkBySource(t *testing.T) {
+	oldOut := (*main.OsStdout)
+	t.Cleanup(func() { (*main.OsStdout) = oldOut })
+	var out bytes.Buffer
+	(*main.OsStdout) = &out
+	main.RenderQueueStatus(main.QueueStatusReport{AppSlug: "demo", Health: "ok",
+		Queue: api.QueueStateResponse{BacklogBySource: map[string]int64{"queue": 3, "async_invoke": 812, "inbound_webhook": 40, "cron": 0}}})
+	if !strings.Contains(out.String(), "waiting:    async_invoke=812 inbound_webhook=40 queue=3\n") {
+		t.Fatalf("rendered status lacks the waiting line: %s", out.String())
+	}
+	out.Reset()
+	main.RenderQueueStatus(main.QueueStatusReport{AppSlug: "demo", Health: "ok"})
+	if strings.Contains(out.String(), "waiting:") {
+		t.Fatalf("an idle app printed a waiting line: %s", out.String())
+	}
+}
+
 // A scaling policy's unset bounds read as the app's own: "min=0 max=0"
 // described a consumer that can run max_concurrency instances (H10-75).
 func TestQueueScalingBoundsUseAppDefaults(t *testing.T) {

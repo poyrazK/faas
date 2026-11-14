@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createIssueReporter } from '../src/issues.js';
 
+test('HTTP status context is validated and delivered', async () => {
+  const sent: Array<Record<string, unknown>> = [];
+  const reporter = createIssueReporter({baseURL:'https://api.gregale.dev',app:'exports',token:'g_issue_test',
+    groupingStrategy:'failure-site-v1',
+    fetch:(async (_url, options) => {sent.push(JSON.parse(String(options?.body)));return new Response('{}',{status:202});}) as typeof fetch});
+  assert.ok(reporter.captureException(new Error('first'), {route:'/checkout',http_status:502}));
+  assert.ok(reporter.captureException(new Error('second'), {http_status:200}));
+  assert.equal(await reporter.close(), true);
+  assert.equal(sent[0]?.http_status, 502);
+  assert.equal(sent[1]?.http_status, undefined);
+});
+
 test('capture isolates throwing error properties and uses a valid fallback name', async () => {
   const sent: any[] = [];
   const reporter = createIssueReporter({baseURL:'https://api.gregale.dev',app:'exports',token:'g_issue_test',

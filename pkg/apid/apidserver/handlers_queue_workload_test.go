@@ -30,7 +30,7 @@ func TestConfigureQueueWorkloadCreatesAndConverges(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
-	if got.Binding.Name != "default" || got.Binding.QueueName != "default" || got.Binding.Mode != "push" || got.Binding.WorkloadClass != "worker" || !got.Binding.Enabled || got.Binding.MaxConcurrency != 1 {
+	if got.Binding.Name != "default" || got.Binding.QueueName != "default" || got.Binding.Mode != "push" || got.Binding.WorkloadClass != "worker" || !got.Binding.Enabled || got.Binding.MaxConcurrency != 10 {
 		t.Fatalf("binding = %+v", got.Binding)
 	}
 	if got.ScalingPolicy == nil || got.ScalingPolicy.Target == nil || got.ScalingPolicy.Target.Metric != "queue_depth" || got.ScalingPolicy.Target.Value != 10 {

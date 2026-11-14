@@ -10,7 +10,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/poyrazK/faas/sdk/go/internal/api"
+	"github.com/gregale-dev/gregale-go/internal/api"
 )
 
 type CreationOptions struct {

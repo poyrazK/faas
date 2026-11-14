@@ -40,14 +40,16 @@ type runtimeConfigRequest struct {
 }
 
 type runtimeConfigResponse struct {
-	Env        map[string]string  `json:"env,omitempty"`
-	Secrets    *map[string]string `json:"secrets,omitempty"`
-	Revision   string             `json:"revision,omitempty"`
-	Unchanged  bool               `json:"unchanged,omitempty"`
-	Accepted   bool               `json:"accepted,omitempty"`
-	Generation string             `json:"generation,omitempty"`
-	Error      string             `json:"error,omitempty"`
-	DevPatch   *devPatchWire      `json:"dev_patch,omitempty"`
+	Env     map[string]string  `json:"env,omitempty"`
+	Secrets *map[string]string `json:"secrets,omitempty"`
+	// Digest is the restore identity document's digest (kind "identity").
+	Digest     string        `json:"digest,omitempty"`
+	Revision   string        `json:"revision,omitempty"`
+	Unchanged  bool          `json:"unchanged,omitempty"`
+	Accepted   bool          `json:"accepted,omitempty"`
+	Generation string        `json:"generation,omitempty"`
+	Error      string        `json:"error,omitempty"`
+	DevPatch   *devPatchWire `json:"dev_patch,omitempty"`
 }
 
 // dialRuntimeConfigHost is a variable so the HTTP seam can be exercised with

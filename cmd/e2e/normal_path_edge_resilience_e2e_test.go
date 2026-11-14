@@ -206,6 +206,12 @@ func testEdgeRetryWithRule(t *testing.T) {
 		"kind": "retry", "match_host": api.EdgeRuleAppHosts, "match_path": "/**",
 		"action": map[string]any{"max_attempts": 2, "allow_non_idempotent": true, "budget_percent": 100, "budget_min_retries": 32},
 	})
+	// The shared retry budget fails closed past a 100 ms Postgres call; warm
+	// its connection while both siblings serve, so a loaded runner's first
+	// dial is not what refuses the replay below (nightly 11-07).
+	for i := 0; i < 4; i++ {
+		_, _, _ = doReqHeaders(t, f.h, f.host, http.MethodGet, fmt.Sprintf("/edge-retry/warm/%d", i), nil)
+	}
 	f.vmmd.FailAll(dead.ID, status.Error(codes.Unavailable, "simulated dead sibling"))
 
 	replayed := false

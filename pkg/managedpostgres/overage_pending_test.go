@@ -39,7 +39,7 @@ func TestOverageBillerResendsAStepThatWasSentButNotRecorded(t *testing.T) {
 	newBiller := func() *OverageBiller {
 		biller, err := NewOverageBiller(store, OverageBillerOptions{Provider: "polar", EffectiveFrom: november,
 			Now:       func() time.Time { return f.now },
-			Allowance: func(context.Context, string) (CapLimits, error) { return f.limits, nil },
+			Allowance: func(context.Context, string, time.Time) (CapLimits, error) { return f.limits, nil },
 			Publish: func(_ context.Context, step OverageChargeStep) error {
 				published = append(published, step)
 				return nil

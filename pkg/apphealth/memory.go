@@ -59,7 +59,7 @@ func assessMemory(out *api.AppHealthResponse, e Evidence) {
 			p.LowestAvailableMB, p.TotalMB, percent, times(p.Episodes), spoken(time.Duration(hours)*time.Hour), p.PeakAnonMB)
 		action := "metrics"
 		if size, ok := api.RightSizeMemory(e.Plan, e.App.RAMMB, p.TotalMB, p.LowestAvailableMB); ok {
-			detail += " " + rightSizeAdvice(size)
+			detail += " " + size.Advice()
 			action = "configuration"
 		}
 		add(out, "memory", Warning, detail, action, "")
@@ -67,18 +67,23 @@ func assessMemory(out *api.AppHealthResponse, e Evidence) {
 	}
 }
 
-// rightSizeAdvice says how much RAM would have left
-// api.ProfileMemoryPressureRearmAvailablePercent free at the low point, and
-// whether the plan allows it (ADR-20261102124306 step 3).
-func rightSizeAdvice(s api.MemoryRightSizing) string {
-	need := fmt.Sprintf("about %d MB would have kept %d%% free", s.SuggestedMB, api.ProfileMemoryPressureRearmAvailablePercent)
-	switch {
-	case s.FitsPlan:
-		return fmt.Sprintf("Raise ram_mb from %d MB: %s, and the %s plan allows up to %d MB.", s.CurrentMB, need, s.Plan, s.PlanMB)
-	case s.UpgradePlan != "":
-		return fmt.Sprintf("At %d MB, %s, more than the %s plan's %d MB; the %s plan allows %d MB.", s.CurrentMB, need, s.Plan, s.PlanMB, s.UpgradePlan, s.UpgradeMB)
-	default:
-		return fmt.Sprintf("At %d MB, %s, more than any plan allows; trim in-memory state such as caches and buffered request bodies.", s.CurrentMB, need)
+// DebugMemory is the memory-pressure summary `gregale debug status` shows
+// (ADR-20261102124306 step 3): nil unless the app's guests ran short of
+// memory within api.AppHealthMemoryPressureWindow and the plan is known, so
+// a RAM suggestion can be made.
+func DebugMemory(p state.AppMemoryPressure, recorded bool, plan api.Plan, appRAMMB int, now time.Time) *api.DebugStatusMemory {
+	if !recorded || now.Sub(p.LastAt) > api.AppHealthMemoryPressureWindow {
+		return nil
+	}
+	size, ok := api.RightSizeMemory(plan, appRAMMB, p.TotalMB, p.LowestAvailableMB)
+	if !ok {
+		return nil
+	}
+	return &api.DebugStatusMemory{
+		Episodes: p.Episodes, LowestAvailableMB: p.LowestAvailableMB, TotalMB: p.TotalMB, PeakAnonMB: p.PeakAnonMB,
+		LastAt: p.LastAt.UTC().Format(time.RFC3339), CurrentMB: size.CurrentMB, SuggestedMB: size.SuggestedMB,
+		Plan: string(size.Plan), PlanMB: size.PlanMB, FitsPlan: size.FitsPlan,
+		UpgradePlan: string(size.UpgradePlan), UpgradeMB: size.UpgradeMB, Advice: size.Advice(),
 	}
 }
 

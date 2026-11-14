@@ -79,11 +79,13 @@ func cmdArtifactDispatch(args []string) int {
 		return cmdArtifactVerify(args[1:])
 	case "lifecycle-check":
 		return cmdArtifactLifecycleCheck(args[1:])
+	case "resign":
+		return cmdArtifactResign(args[1:])
 	case flagHelpShort, flagHelpLong:
 		printArtifactUsage(os.Stderr)
 		return 0
 	default:
-		fmt.Fprintf(os.Stderr, "gregalectl artifact: unknown subcommand %q (expected: publish, verify, lifecycle-check)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl artifact: unknown subcommand %q (expected: publish, verify, lifecycle-check, resign)\n", args[0])
 		return 1
 	}
 }
@@ -91,6 +93,7 @@ func cmdArtifactDispatch(args []string) int {
 func printArtifactUsage(w io.Writer) {
 	_, _ = fmt.Fprintln(w, `usage: gregalectl artifact <publish|verify> --env-file PATH --manifest-file PATH [flags]
        gregalectl artifact lifecycle-check --env-file PATH --lifecycle-env-file PATH [flags]
+       gregalectl artifact resign --env-file PATH [--db-env PATH] [--sign-key PATH] [--dry-run] [--json]
 
 Publish copies the release-pinned kernel from --file into the shared storage
 backend at kernel/<release.firecracker_version>. Existing content is accepted
@@ -107,7 +110,13 @@ Flags:
 Examples:
   gregalectl artifact publish --env-file=/etc/faas/storage.env --manifest-file=/etc/faas/manifest.yaml --file=/var/lib/faas/bootstrap/vmlinux
   gregalectl artifact verify --env-file=/etc/faas/storage.env --manifest-file=/etc/faas/manifest.yaml
-  gregalectl artifact lifecycle-check --env-file=/etc/faas/storage.env --lifecycle-env-file=/etc/faas/imaged-storage.env`)
+  gregalectl artifact lifecycle-check --env-file=/etc/faas/storage.env --lifecycle-env-file=/etc/faas/imaged-storage.env
+  gregalectl artifact resign --env-file=/etc/faas/storage.env --db-env=/etc/faas/sealed.env --dry-run
+
+Resign converts every stored layer's v1 signature to a v2 one bound to its
+storage key, signed with --sign-key, and records app layers for signd
+(ADR-20261109170000). Run it once on the control plane before sign.key
+leaves the compute nodes. It exits 2 when it left a layer alone.`)
 }
 
 type artifactOptions struct {

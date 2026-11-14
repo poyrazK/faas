@@ -210,10 +210,10 @@ func (m *MemStore) DeleteInboundWebhookEndpoint(_ context.Context, id string) er
 		return ErrNotFound
 	}
 	delete(m.inboundWebhookEndpoints, id)
-	delete(m.webhookAutomationBindings, id)
-	for key, receipt := range m.webhookAutomationReceipts {
+	delete(m.webhookWorkflowBindings, id)
+	for key, receipt := range m.webhookWorkflowReceipts {
 		if receipt.EndpointID == id {
-			delete(m.webhookAutomationReceipts, key)
+			delete(m.webhookWorkflowReceipts, key)
 		}
 	}
 	delete(m.exclusiveTriggerBindings, "inbound_webhook\x00"+id)

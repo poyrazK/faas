@@ -322,6 +322,11 @@ func TestPGMagicLinkOwnershipProofCleanupAndConsumptionAreAtomic(t *testing.T) {
 			if _, err := f.pool.Exec(t.Context(), "INSERT INTO api_keys(id,account_id) VALUES($1,$2)", uuid.NewString(), accountID); err != nil {
 				t.Fatal(err)
 			}
+			// A squatter's authenticator goes with the claim (ADR 20261109120000).
+			if _, err := f.pool.Exec(t.Context(), "UPDATE accounts SET mfa_secret_encrypted=$2,mfa_recovery_codes_hash=$3,mfa_enrolled_at=now() WHERE id=$1",
+				accountID, []byte{1}, [][]byte{make([]byte, 32)}); err != nil {
+				t.Fatal(err)
+			}
 			first := queueMagic(t, f, accountID)
 			sibling := queueMagic(t, f, accountID)
 			if fail {
@@ -345,6 +350,13 @@ func TestPGMagicLinkOwnershipProofCleanupAndConsumptionAreAtomic(t *testing.T) {
 			}
 			if err != nil || !verified || !consumed || passwords != 0 || sessions != 0 || keys != 0 || result.AccountID != accountID || result.RevokedSessions != 1 || result.RevokedAPIKeys != 1 {
 				t.Fatal("ownership proof did not revoke pre-verification credentials", err)
+			}
+			var mfaLeft bool
+			if err := f.pool.QueryRow(t.Context(), "SELECT mfa_secret_encrypted IS NOT NULL OR mfa_recovery_codes_hash IS NOT NULL OR mfa_enrolled_at IS NOT NULL FROM accounts WHERE id=$1", accountID).Scan(&mfaLeft); err != nil {
+				t.Fatal(err)
+			}
+			if mfaLeft || !result.Claimed {
+				t.Fatalf("ownership claim kept the squatter's TOTP (left=%v) or did not report the claim (claimed=%v)", mfaLeft, result.Claimed)
 			}
 			if _, err := NewMagicLinkCredentials(f.pool).Redeem(t.Context(), sibling.VerificationTokenHash); !errors.Is(err, ErrMagicLinkInvalid) {
 				t.Fatal("ownership claim revived a pre-verification sibling", err)

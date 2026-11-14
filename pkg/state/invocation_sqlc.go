@@ -32,6 +32,7 @@ func invocationFromSQLC(row sqlc.Invocation) (Invocation, error) {
 		LastReplayedAt: invocationTimePointer(row.LastReplayedAt), OnSuccessDestinationID: pgUUIDString(row.OnSuccessDestinationID), OnFailureDestinationID: pgUUIDString(row.OnFailureDestinationID),
 		WorkPolicyName: row.WorkPolicyName.String, WorkKeyDigest: row.WorkKeyDigest, WorkExpiresAt: invocationTimePointer(row.WorkExpiresAt),
 		WorkSequence: row.WorkSequence.Int64, WorkPolicyRevision: row.WorkPolicyRevision.Int64, WorkFairnessDigest: row.WorkFairnessDigest, WorkFairnessLimit: int(row.WorkFairnessLimit.Int32),
+		EdgeJWTIssuer: row.EdgeJwtIssuer.String, EdgeJWTSubject: row.EdgeJwtSubject.String,
 	}
 	if row.CronID.Valid {
 		id := pgUUIDString(row.CronID)

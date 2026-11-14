@@ -204,7 +204,7 @@ flags in the table below release their capability; every other capability in
 | `operation_schedules` | Operation schedules: routes and firing (ADR-20261018161833) | apid | `FAAS_OPERATION_SCHEDULES_ACCOUNTS` |
 | `operation_children` | Child Operations and cancellation cascade (ADR-20261018183000) | apid | `FAAS_OPERATION_CHILDREN_ACCOUNTS` |
 | `service_map` | Service map preview (ADR-1131) | apid | `FAAS_SERVICE_MAP_ENABLED` |
-| `guest_tracing` | In-guest request tracing setting (ADR-958) | apid | `FAAS_GUEST_TRACING_ENABLED` (vmmd's receiver still needs it on the node) |
+| `guest_tracing` | In-guest request tracing setting (ADR-958) | apid | `FAAS_GUEST_TRACING_ENABLED` (vmmd's receiver is on by default; `0` turns it off on a node) |
 | `static_egress_ip` | Static egress IP management (ADR-119) | apid | `FAAS_STATIC_EGRESS_IP_ENABLED` |
 | `realtime_resume` | v2 resumable realtime protocol (ADR-369) | apid → realtimed | `FAAS_REALTIME_RESUME_PREVIEW_ENABLED` |
 | `realtime_tickets` | Realtime subscription tickets (ADR-1117) | apid → realtimed | `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED` |
@@ -215,7 +215,7 @@ flags in the table below release their capability; every other capability in
 | `app_health_workers` | App health assesses worker pools: replicas against the pool minimum, backlog age, recent dead letters (ADR-20261102091500) | apid | none (off until an operator writes it) |
 | `app_health_memory` | App health warns when an app's guests ran short of memory in the last day, before an OOM kill (ADR-20261102124306) | apid | none (off until an operator writes it) |
 | `postgres_pool_sizing` | Deployments carry `GREGALE_POSTGRES_POOL_MAX`, the per-instance concurrency capped at 10, which the SDKs' Postgres pool bindings use as the default pool size (ADR-20261104141122) | imaged | none (off until an operator writes it) |
-| `quiet_pause_unbilled` | Unbilled quiet pause: bill running seconds, not quiet-paused ones (ADR-20261023171905). Takes effect only where meterd's `quiet_pause_unbilled` mode is `on`; accounts it does not release are counted as in shadow mode and billed in full | meterd | none (off until an operator writes it) |
+| `quiet_pause_unbilled` | Unbilled quiet pause: bill running seconds, not quiet-paused ones (ADR-20261023171905). Takes effect only where meterd's `quiet_pause_unbilled` mode is `on`; accounts it does not release are counted as in shadow mode and billed in full. With schedd's `idle_ladder_idle_out` on, it also decides which accounts' quiet-paused instances the idle ladder keeps resident past their idle timeout (ADR-20261107122928) | meterd, schedd | none (off until an operator writes it) |
 | `edge_waf_blocking` | Warn and block modes of WAF edge rules (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
 | `edge_challenge` | Challenge edge rules, with difficulty escalation (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
 | `edge_penalty_box` | Edge rule penalties (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |

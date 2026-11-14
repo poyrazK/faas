@@ -20,10 +20,21 @@ worker may retain it as a secret in a protected work record until completion.
 
 ## API and clients
 
-All endpoints require authenticated app-scoped authority: `apps:read` for reads,
-`deploy:write` for writes, or `admin`. The token is an additional fence, not
-standalone authorization. Configure an appropriately scoped API credential in the
-worker. Reads never disclose a token.
+All endpoints require authenticated app-scoped authority. From inside the app,
+use the instance's [workload identity](workload-identity.md) token for the
+audience `gregale:events`; no API key is needed in the worker:
+
+```text
+GET $FAAS_WORKLOAD_IDENTITY_ENDPOINT?audience=gregale:events
+Authorization: Bearer <access_token>   # on each acknowledgment call
+```
+
+The token is accepted only from a live instance of the app named in the path,
+including a stage deployment's instance, and lasts five minutes, so fetch a
+fresh one before it expires. From outside the app, use an API key: `apps:read`
+for reads, `deploy:write` for writes, or `admin` (ADR-20261110200000).
+The delivery token is an additional fence, not standalone authorization.
+Reads never disclose a token.
 
 - `GET .../acknowledgment-policy` inspects future acceptance policy.
 - `GET /v1/apps/{slug}/event-deliveries/{invocationID}/acknowledgment` inspects

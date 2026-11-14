@@ -1,0 +1,20 @@
+# go_cache_retention — trim Go build caches on a native acceptance host when
+# its root filesystem fills (see README.md).
+
+go_cache_trim_filesystem: /
+# Trim starts above the high-water mark and stops below the low-water mark.
+go_cache_trim_high_water_percent: 85
+go_cache_trim_low_water_percent: 70
+# Entries unused for longer than each step are removed, oldest step first,
+# until usage is below the low-water mark. Never below 1 h: Go refreshes an
+# entry's mtime on use only when it is more than an hour old.
+go_cache_trim_age_steps_hours: [120, 48, 24, 6, 1]
+# The lock every native runner holds for its whole run. The trim skips (and
+# retries on the next tick) while a run holds it.
+go_cache_trim_lock_path: /var/lock/faas-builder-acceptance.lock
+# Only directories carrying Go's own cache README are trimmed, and only those
+# on go_cache_trim_filesystem.
+go_cache_trim_globs:
+  - /var/cache/faas-*/go-build
+  - /root/.cache/go-build
+  - /home/*/.cache/go-build

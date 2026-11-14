@@ -12,6 +12,7 @@ import (
 	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/retry"
 )
 
 // AIUsageBackend settles AI token usage after a response (ADR-988). It adds
@@ -460,7 +461,9 @@ func (h *Handler) recordAIUsage(ctx context.Context, record AIUsageRecord, metri
 			return alerts, err
 		}
 		h.Metrics.ObserveAIUsageRecord(metricIntegrationID, "retried")
-		time.Sleep(time.Duration(attempt) * aiUsageRecordRetryBackoff)
+		if err := retry.Wait(ctx, aiUsageRecordRetryBackoff, time.Second, attempt); err != nil {
+			return nil, err
+		}
 	}
 }
 

@@ -4,8 +4,7 @@ Write a durable workflow as an ordinary async function. Each `step` runs at
 least once and its result is recorded; `sleep` and `waitForEvent` park the run
 for seconds or months without keeping a VM alive. When the run resumes, your
 function is replayed: recorded steps return their stored result instantly and
-execution continues where it stopped. The design is
-[ADR-20261021204307](adr/20261021204307-code-first-workflows.md).
+execution continues where it stopped.
 
 Code-first workflows use the same engine, plans and quotas as
 [declarative workflows](event-driven.md#durable-workflow-waits): runs, steps
@@ -90,7 +89,7 @@ async. Python durations are seconds, `timedelta` or strings such as `"3d"`.
 ## Go
 
 ```go
-import faas "github.com/poyrazK/faas/sdk/go"
+import faas "github.com/gregale-dev/gregale-go"
 
 var orderFollowup = faas.DefineWorkflow("order_followup", func(ctx context.Context, wf *faas.Workflow, input json.RawMessage) (any, error) {
 	order, err := faas.WorkflowDecode[Order](input)
@@ -132,6 +131,10 @@ once. `faas.RunWorkflowLocally` is the local test runner.
 | `sleep(name, duration)` | Parks the run for 1 s up to the plan's maximum wait (30 days on Hobby, 90 on Pro, 365 on Scale). |
 | `waitForEvent(name, { event, timeout })` | Waits for an event named `event` (default: `name`) sent with `gregale workflow events RUN_ID approved --payload '{...}'` or `POST /v1/workflows/runs/{id}/events`. Resolves with the payload, or `null` after `timeout` (default: the plan's maximum wait). |
 
+The exact event or callback payload `{"timeout":true}` is reserved for internal
+timeouts. If customer data needs that shape, wrap it, for example as
+`{"data":{"timeout":true}}`.
+
 - **Parallel steps.** `Promise.all([wf.step(...), wf.step(...)])` (or
   `asyncio.gather`) runs the steps concurrently in one call.
 - **Loops.** Repeating a name records `poll`, `poll#2`, `poll#3`, …, so a step
@@ -165,7 +168,7 @@ steps must be deterministic:
 | Recorded results, payloads and errors per run | 1.5 MiB |
 | Results reported by one call (parallel steps share it) | 960 KiB of JSON |
 | Workflow output | 960 KiB of JSON |
-| Operation name | 1–128 of `A-Z a-z 0-9 _ . : / -`, starting with a letter or digit; `#` is reserved for repeated names |
+| Operation base name | 1–128 of `A-Z a-z 0-9 _ . : / -`, starting with a letter or digit; SDK-generated repeat suffixes are additional, and `#` is reserved for them |
 
 A step whose result would push one call's answer past 960 KiB fails without
 retry. Large data belongs in [object storage](object-storage.md); return its
@@ -181,7 +184,7 @@ key from the step.
   `gregale workflow attempts RUN_ID '$driver'`.
 - A run that exceeds a limit, or replays non-deterministically, is `dead`.
 - Code-first runs cannot be resumed with `gregale workflow resume`, linked to
-  Operations or simulated by the automation simulator; start a new run instead.
+  Operations or simulated by the stored workflow simulator; start a new run instead.
 
 ## Test locally
 

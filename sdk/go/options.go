@@ -42,15 +42,16 @@ func WithHTTPClient(hc *http.Client) Option {
 		if hc.Transport != nil {
 			c.Client.HTTPClient().Transport = hc.Transport
 		}
-		c.Client.HTTPClient().Timeout = hc.Timeout
+		if hc.Timeout > 0 {
+			c.Client.HTTPClient().Timeout = hc.Timeout
+		}
 		return nil
 	}
 }
 
-// WithRetry reserves the retry option slot. PR 4 wires the actual
-// exponential-backoff round-tripper; today the parameters are stored
-// on the Client so the PR 4 wiring can read them without refactoring
-// the signature. A negative max is treated as zero (no retries).
+// WithRetry configures the exponential-backoff round-tripper. A negative max disables retries; at
+// most eight retries are made. Nonpositive backoff uses 100ms, with an
+// eight-second cap. A longer Retry-After still respects the request deadline.
 func WithRetry(max int, backoff time.Duration) Option {
 	return func(c *Client) error {
 		if max < 0 {

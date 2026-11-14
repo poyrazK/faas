@@ -59,7 +59,7 @@ func TestRecoveryNextActionResumesOrGathersEvidence(t *testing.T) {
 				t.Fatalf("unsafe wait recovery: %+v", waiting)
 			}
 			failure := main.FailedDeploymentRecovery("sample-app", api.DeploymentResponse{ID: "failed-id", Status: "failed"})
-			if failure.ResumeCommand != "" || !strings.Contains(failure.NextCommand, "logs sample-app --deployment failed-id --explain") {
+			if failure.ResumeCommand != "" || !strings.HasSuffix(failure.NextCommand, "logs sample-app --deployment failed-id") {
 				t.Fatalf("wrong failed-build recovery: %+v", failure)
 			}
 			unknown := main.NewDeployRecovery("submit", "sample-app", "", "retry-id", 0, false)

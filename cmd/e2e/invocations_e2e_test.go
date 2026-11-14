@@ -496,7 +496,7 @@ func pollUntilCompleted(t *testing.T, h *e2etest.Harness, key, id string, deadli
 			t.Fatalf("decode invocation: %v body=%s", err, body)
 		}
 		switch inv.State {
-		case "completed", "failed", "cancelled":
+		case "completed", "failed", "cancelled", "dead_letter":
 			return inv
 		}
 		if time.Now().After(end) {

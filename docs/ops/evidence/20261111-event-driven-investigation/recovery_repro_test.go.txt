@@ -1,0 +1,114 @@
+package sched_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/sched"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/segmentio/kafka-go"
+)
+
+func TestAuditExternalDeadLetterReplayDoesNotNeedBrokerRedelivery(t *testing.T) {
+	t.Run("memory", func(t *testing.T) { auditExternalReplay(t, state.NewMemStore()) })
+	t.Run("postgres", func(t *testing.T) { auditExternalReplay(t, state.NewPgStore(pgtest.OpenMigrated(t))) })
+}
+
+func auditExternalReplay(t *testing.T, store state.Store) {
+	for _, mode := range []string{"record_retry", "unified_dlq"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := t.Context()
+			account, err := store.CreateAccount(ctx, "replay-"+uuid.NewString()+"@example.test", api.PlanScale)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := store.CreateApp(ctx, state.App{ID: strings.ReplaceAll(uuid.NewString(), "-", ""), AccountID: account.ID, Slug: "replay-" + uuid.NewString()[:8], RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
+			if err != nil {
+				t.Fatal(err)
+			}
+			trigger, err := store.CreateTriggerIfUnderQuota(ctx, app.ID, "kafka", "orders", true, []byte(`{}`), "", 10, 1000, 5, 1<<20, "commit", api.MustLimitsFor(api.PlanScale))
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := &scriptedKafka{queue: []kafka.Message{{Topic: "orders", Partition: 0, Offset: 7, Value: []byte(`{"id":1}`)}}}
+			poller := sched.NewKafkaPollerWithReader(reader)
+			sched.InstallPollerFactory(t, "kafka", func(sqlc.Trigger) (sched.TriggerSource, error) { return poller, nil })
+			var sent atomic.Int32
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var req sched.TriggerDispatchRequest
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					http.Error(w, err.Error(), 400)
+					return
+				}
+				var resp sched.TriggerDispatchResponse
+				for _, rec := range req.Records {
+					sent.Add(1)
+					resp.Results = append(resp.Results, sched.TriggerDispatchResult{ItemIdentifier: rec.ItemIdentifier, Status: "succeeded"})
+				}
+				_ = json.NewEncoder(w).Encode(resp)
+			}))
+			t.Cleanup(gateway.Close)
+			loop := sched.MakeLoopForDLQ()
+			*loop.GatewayHTTPClient(), *loop.GatewayBaseURL() = gateway.Client(), gateway.URL
+			dispatch := func() {
+				t.Helper()
+				if err := loop.DispatchOneTrigger(ctx, trigger, store, func(string) api.Plan { return api.PlanScale }); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const item = "orders/0/7"
+			record, err := store.InsertTriggerRecord(ctx, trigger.ID.String(), item, []byte(`{"id":1}`), nil, []byte(`{"topic":"orders"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			claims, err := store.(state.TriggerBatchClaimer).ClaimTriggerRecordsByItems(ctx, trigger.ID.String(), []string{item})
+			if err != nil || len(claims) != 1 {
+				t.Fatalf("claims=%+v error=%v", claims, err)
+			}
+			if err = store.(state.TriggerClaimFinisher).RouteClaimedTriggerDeadLetter(ctx, record, claims[0].ClaimGeneration, trigger.ID.String(), sched.TriggerReasonMaxAttempts, []byte(`{}`)); err != nil {
+				t.Fatal(err)
+			}
+			dispatch()
+			if got := reader.commits(); len(got) != 1 || got[0] != 7 {
+				t.Fatalf("initial dead letter did not commit broker offset: %v", got)
+			}
+			if sent.Load() != 0 {
+				t.Fatal("terminal record reached handler before replay")
+			}
+			if mode == "record_retry" {
+				err = store.RetryTriggerRecordByOperator(ctx, app.ID, trigger.ID.String(), record)
+			} else {
+				entries, listErr := store.ListDeadLetterEvents(ctx, app.ID, 10, "")
+				if listErr != nil || len(entries) != 1 {
+					t.Fatalf("DLQ entries=%+v error=%v", entries, listErr)
+				}
+				replayed, replayErr := store.ReplayDeadLetterEvent(ctx, account.ID, app.ID, entries[0].ID)
+				err = replayErr
+				if err == nil && replayed.ReplayedAt == nil {
+					t.Fatal("successful replay was not stamped")
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				dispatch()
+			}
+			states, err := store.(state.TriggerRecordStateReader).TriggerRecordStatesByItems(ctx, trigger.ID.String(), []string{item})
+			if err != nil || len(states) != 1 {
+				t.Fatalf("states=%+v error=%v", states, err)
+			}
+			if sent.Load() == 0 {
+				t.Fatalf("%s reported success after Kafka committed offset 7, but three dispatches did no work: record state=%s", mode, states[0].State)
+			}
+		})
+	}
+}

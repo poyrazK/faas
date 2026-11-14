@@ -3,10 +3,13 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -14,15 +17,27 @@ import (
 // api_key_project_limits CHECK enforces the same bound.
 const MaxKeyProjects = 100
 
+// APIKeyProjectLimitReader reads immutable key restrictions without credential
+// material. The object upload edge enforces them independently of apid's version.
+type APIKeyProjectLimitReader interface {
+	APIKeyProjectLimit(ctx context.Context, keyID string) ([]string, bool, error)
+}
+
+var _ APIKeyProjectLimitReader = (*EdgeStore)(nil)
+
+// ProjectLimitable reports whether a key can carry a project restriction.
+func (k APIKey) ProjectLimitable() bool {
+	return slices.Contains(k.Scopes, api.ScopeAgent) || k.Label == api.MCPLoginKeyLabel
+}
+
 // KeyProjectLimitStore keeps the projects an agent or mcp-login key is
 // limited to, and the projects a hosted MCP sign-in's code was limited to
 // on the approval page (ADR-20261104085712). apid is the only writer.
 type KeyProjectLimitStore interface {
+	APIKeyProjectLimitReader
 	// SetAPIKeyProjectLimit limits a key to projects; it is set once, when
 	// the key is minted. ErrConflict when the key already has a limit.
 	SetAPIKeyProjectLimit(ctx context.Context, keyID string, projectIDs []string) error
-	// APIKeyProjectLimit returns the key's projects and whether it is limited.
-	APIKeyProjectLimit(ctx context.Context, keyID string) ([]string, bool, error)
 	// SetCliAuthCodeProjects records the projects chosen for a code waiting
 	// for approval (nil: every project). ErrNotFound when no such code waits.
 	SetCliAuthCodeProjects(ctx context.Context, tokenHash []byte, projectIDs []string) error
@@ -43,7 +58,9 @@ func (s *PgStore) SetAPIKeyProjectLimit(ctx context.Context, keyID string, proje
 	return mapErr(err)
 }
 
-func (s *PgStore) APIKeyProjectLimit(ctx context.Context, keyID string) ([]string, bool, error) {
+// APIKeyProjectLimit returns the key's projects and whether it is limited.
+// It is also available on EdgeStore; only apid can change the restriction.
+func (s *pgCore) APIKeyProjectLimit(ctx context.Context, keyID string) ([]string, bool, error) {
 	ids, err := sqlc.New().GetAPIKeyProjectLimit(ctx, s.pool, mustPgUUID(keyID))
 	if err != nil {
 		if err = mapErr(err); errors.Is(err, ErrNotFound) {
@@ -73,6 +90,28 @@ func (s *PgStore) SetCliAuthCodeProjects(ctx context.Context, tokenHash []byte, 
 		return struct{}{}, nil
 	})
 	return err
+}
+
+// copyKeyProjectLimitSQL gives a rotated key's successor the predecessor's
+// project limit, if it has one.
+const copyKeyProjectLimitSQL = `insert into api_key_project_limits (key_id, project_ids)
+select $2::uuid, project_ids from api_key_project_limits where key_id = $1::uuid`
+
+// copyKeyProjectLimitTx runs in a rotation's transaction, so a key limited to
+// projects is never rotated into an account-wide one (ADR-20261104085712).
+func copyKeyProjectLimitTx(ctx context.Context, tx pgx.Tx, oldKeyID, newKeyID string) error {
+	if _, err := tx.Exec(ctx, copyKeyProjectLimitSQL, oldKeyID, newKeyID); err != nil {
+		return fmt.Errorf("copy key project limit: %w", mapErr(err))
+	}
+	return nil
+}
+
+// copyKeyProjectLimitLocked is copyKeyProjectLimitTx for the MemStore; the
+// caller holds m.mu.
+func (m *MemStore) copyKeyProjectLimitLocked(oldKeyID, newKeyID string) {
+	if ids, ok := m.keyProjectLimits[oldKeyID]; ok {
+		m.keyProjectLimits[newKeyID] = slices.Clone(ids)
+	}
 }
 
 func (s *PgStore) CliAuthCodeProjects(ctx context.Context, tokenHash []byte) ([]string, bool, error) {

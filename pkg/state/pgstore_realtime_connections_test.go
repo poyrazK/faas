@@ -78,3 +78,51 @@ func TestPgStoreSyncRealtimeNodeConnections(t *testing.T) {
 		t.Fatalf("empty node err = %v", err)
 	}
 }
+
+func TestPgStoreSyncRealtimeNodeEndpointConnections(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	ep, other := uuid.NewString(), uuid.NewString()
+	sync := func(node string, counts ...state.RealtimeEndpointConnections) map[string]int64 {
+		t.Helper()
+		if _, err := s.SyncRealtimeNodeConnections(ctx, node, nil); err != nil {
+			t.Fatalf("SyncRealtimeNodeConnections(%s): %v", node, err)
+		}
+		remote, err := s.SyncRealtimeNodeEndpointConnections(ctx, node, counts)
+		if err != nil {
+			t.Fatalf("SyncRealtimeNodeEndpointConnections(%s): %v", node, err)
+		}
+		out := map[string]int64{}
+		for _, r := range remote {
+			out[r.EndpointID] = r.Connections
+		}
+		return out
+	}
+	sync("node-1", state.RealtimeEndpointConnections{EndpointID: ep, Connections: 3}, state.RealtimeEndpointConnections{EndpointID: other, Connections: 2})
+	// node-2 holds none yet but asks for ep, and learns node-1's count; it
+	// did not ask for other, so other is not returned.
+	if got := sync("node-2", state.RealtimeEndpointConnections{EndpointID: ep}); got[ep] != 3 || len(got) != 1 {
+		t.Fatalf("node-2 remote = %v, want ep=3 only", got)
+	}
+	// A sync replaces node-1's set: ep drops to zero and is removed.
+	sync("node-1", state.RealtimeEndpointConnections{EndpointID: ep}, state.RealtimeEndpointConnections{EndpointID: other, Connections: 1})
+	if got := sync("node-2", state.RealtimeEndpointConnections{EndpointID: ep}, state.RealtimeEndpointConnections{EndpointID: other}); got[ep] != 0 || got[other] != 1 {
+		t.Fatalf("node-2 remote = %v, want ep gone and other=1", got)
+	}
+	// A stale node stops counting.
+	if _, err := pool.Exec(ctx, `update realtime_node_connection_syncs set synced_at=now()-interval '1 minute' where node_name='node-1'`); err != nil {
+		t.Fatal(err)
+	}
+	remote, err := s.SyncRealtimeNodeEndpointConnections(ctx, "node-2", []state.RealtimeEndpointConnections{{EndpointID: other}})
+	if err != nil || len(remote) != 0 {
+		t.Fatalf("remote with node-1 stale = %+v, %v; want none", remote, err)
+	}
+	for _, bad := range [][]state.RealtimeEndpointConnections{
+		{{EndpointID: "not-a-uuid"}},
+		{{EndpointID: ep, Connections: -1}},
+		{{EndpointID: ep}, {EndpointID: ep}},
+	} {
+		if _, err := s.SyncRealtimeNodeEndpointConnections(ctx, "node-2", bad); !errors.Is(err, state.ErrRealtimeConnectionSyncInvalid) {
+			t.Fatalf("sync %+v err = %v, want ErrRealtimeConnectionSyncInvalid", bad, err)
+		}
+	}
+}

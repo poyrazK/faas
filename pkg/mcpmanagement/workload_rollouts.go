@@ -120,6 +120,10 @@ func (m *management) applyWorkloadRollout(ctx context.Context, args applyArgs) (
 			return nil, err
 		}
 	}
+	writeCtx, err := m.prepareDeploymentSubmission(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.attempted = true
 	if err := m.persistPlans(); err != nil {
 		return nil, err
@@ -131,9 +135,9 @@ func (m *management) applyWorkloadRollout(ctx context.Context, args applyArgs) (
 	}
 	var d api.DeploymentResponse
 	if p.Source != nil {
-		d, err = m.stageSourcePlan(ctx, p)
+		d, err = m.stageSourcePlan(writeCtx, p)
 	} else {
-		d, err = m.client.Deploy(api.ContextWithIdempotencyKey(ctx, "mcp-workload-"+p.ID), p.App, req)
+		d, err = m.client.Deploy(api.ContextWithIdempotencyKey(writeCtx, "mcp-workload-"+p.ID), p.App, req)
 	}
 	if err != nil {
 		return nil, err
@@ -199,6 +203,10 @@ func (m *management) applyServiceAbort(ctx context.Context, args applyArgs) (any
 	}
 	if p.review == nil {
 		return nil, invalid("invalid_plan", "missing service recovery review")
+	}
+	ctx, err = m.prepareServiceAbortOutcome(ctx, p)
+	if err != nil {
+		return nil, err
 	}
 	// The native store checks configuration and both exact deployments inside its transaction.
 	p.attempted = true

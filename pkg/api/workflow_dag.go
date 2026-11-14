@@ -751,6 +751,17 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		}
 	}
 
+	// Exception routes also order their targets after the source. Include them
+	// in cycle detection so a wait cannot depend on its own fallback.
+	for _, step := range spec.Steps {
+		for _, target := range []string{step.OnTimeout, step.OnFailure} {
+			if target != "" {
+				adj[step.Name] = append(adj[step.Name], target)
+				inDegree[target]++
+			}
+		}
+	}
+
 	// Kahn's algorithm with a sorted ready queue makes the returned order
 	// stable across Go map iterations and therefore safe to persist/audit.
 	var queue []string

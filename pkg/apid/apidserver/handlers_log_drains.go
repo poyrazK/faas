@@ -14,6 +14,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
+	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -227,6 +229,10 @@ func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.appLogDrainSelfTargetProblem(r.Context(), app, req.TargetURL); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateAppLogDrainAuthHeader(req.AuthHeader); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -370,6 +376,10 @@ func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 			api.WriteProblem(w, prob)
 			return
 		}
+		if prob := s.appLogDrainSelfTargetProblem(r.Context(), app, targetURL); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 		if prob := resolveAndCheckEgress(r.Context(), targetURL); prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -462,6 +472,31 @@ func sealAppLogDrainAuthHeader(plaintext string) ([]byte, error) {
 	return secretbox.SealBytesTo(recipients, appLogDrainSecretSealLabel, []byte(plaintext), api.AppLogDrainAuthHeaderMaxBytes)
 }
 
+// environmentPolicyHost is the stable environment URL whose rules policy
+// changes (the host updateProjectEnvironmentPolicies fences).
+func (s *server) environmentPolicyHost(ctx context.Context, policy state.ProjectEnvironmentEdgePolicy) (string, error) {
+	environment, err := s.store.ProjectEnvironmentBySlug(ctx, policy.AccountID, policy.ProjectID, policy.EnvironmentSlug)
+	if err != nil {
+		return "", err
+	}
+	host := gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), environment.ID, policy.AppID)
+	if host == "" {
+		return "", errors.New("environment URL is unavailable")
+	}
+	return host, nil
+}
+
+// sealEdgeRuleHeaderValue seals a secret edge-rule request header value to
+// the edge domain, like a log drain header; gatewayd-internal opens it when
+// it compiles the rule (ADR-20261108110000).
+func sealEdgeRuleHeaderValue(plaintext string) ([]byte, error) {
+	recipients, err := edgeCredentialRecipients()
+	if err != nil {
+		return nil, fmt.Errorf("seal edge rule header value: %w", err)
+	}
+	return secretbox.SealBytesTo(recipients, api.EdgeRuleHeaderSecretSealNamespace, []byte(plaintext), api.EdgeRuleHeaderSecretMaxBytes)
+}
+
 func appLogDrainHealthResponse(health state.AppLogDrainHealth) api.AppLogDrainHealthResponse {
 	return api.AppLogDrainHealthResponse{
 		LogDrainID:            health.DrainID,
@@ -485,4 +520,39 @@ func appLogDrainHealthResponse(health state.AppLogDrainHealth) api.AppLogDrainHe
 		LastError:             api.SanitizeAppLogDrainHealthError(health.LastError),
 		UpdatedAt:             api.FormatAlertTime(health.UpdatedAt),
 	}
+}
+
+// appLogDrainSelfTargetProblem refuses a drain that delivers to the app it
+// drains: each delivery is a request to the app, whose log lines are drained
+// again, so the app never idles. Hunt 32 H32-52 saw 3,578 deliveries and an
+// instance that never parked until the drain was deleted.
+func (s *server) appLogDrainSelfTargetProblem(ctx context.Context, app state.App, targetURL string) *api.Problem {
+	// An unparsable URL is refused by the target validation; it has no
+	// host to compare here.
+	host := ""
+	if parsed, err := url.Parse(targetURL); err == nil {
+		host = strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	}
+	if host == "" {
+		return nil
+	}
+	domains := hostidentity.Configured()
+	self := host == strings.ToLower(app.Slug)+"."+domains.Apps
+	if canonical, ok := domains.CanonicalAppHost(host); ok && canonical == strings.ToLower(app.Slug)+"."+domains.Apps {
+		self = true
+	}
+	if !self {
+		if custom, err := s.store.ListDomainsForApp(ctx, app.ID); err == nil {
+			for _, d := range custom {
+				if strings.EqualFold(strings.TrimSuffix(d.Domain, "."), host) {
+					self = true
+					break
+				}
+			}
+		}
+	}
+	if !self {
+		return nil
+	}
+	return api.ErrAppLogDrainInvalid("a log drain cannot deliver to the app it drains: each delivery is a request whose log lines would be drained again, so the app would never idle")
 }

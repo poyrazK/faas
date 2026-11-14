@@ -9,7 +9,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/retry"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -22,6 +24,9 @@ func (s *PgStore) ObserveNextWorkflowFailureEligibility(ctx context.Context, now
 	var worked bool
 	var err error
 	for attempt := 0; attempt < api.WorkflowRecoveryFailureObserverTxnAttempts; attempt++ {
+		if err := retry.Wait(ctx, 25*time.Millisecond, 500*time.Millisecond, attempt); err != nil {
+			return false, err
+		}
 		worked, err = s.observeWorkflowFailureEligibility(ctx, now)
 		var conflict *pgconn.PgError
 		if !errors.As(err, &conflict) || conflict.Code != "40001" {

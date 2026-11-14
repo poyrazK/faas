@@ -754,6 +754,10 @@ func resolveTestLoadConfig(scenario testScenario, overrides testLoadOverrides) (
 						budget.Expect = &expected
 						phase.RequestDeadlines[name] = budget
 					}
+					request.Expect = *budget.Expect
+					if err := validateTestHTTPResponseContract(request); err != nil {
+						return nil, fmt.Errorf("phase %q request_deadlines.%s: %w", phase.Name, name, err)
+					}
 				}
 			}
 			if count != 1 {
@@ -1194,10 +1198,10 @@ func (c *testLoadCollector) reportChaosPhases(cfg *testLoadConfig) []testLoadCha
 func testLoadThresholdEvidenceFor(metrics testLoadMetrics, p95, p99 time.Duration, errorRate, successRate *float64, minSamples int) []testLoadThresholdEvidence {
 	var evidence []testLoadThresholdEvidence
 	if errorRate != nil {
-		evidence = append(evidence, testLoadThresholdEvidence{Metric: "error_rate", Operator: "<=", Limit: *errorRate, Actual: metrics.ErrorRate, Passed: metrics.Requests > 0 && metrics.ErrorRate <= *errorRate})
+		evidence = append(evidence, testLoadThresholdEvidence{Metric: "error_rate", Operator: "<=", Limit: *errorRate, Actual: metrics.ErrorRate, Passed: metrics.Requests > 0 && testRateAtMost(metrics.ErrorRate, *errorRate)})
 	}
 	if successRate != nil {
-		evidence = append(evidence, testLoadThresholdEvidence{Metric: "success_rate", Operator: ">=", Limit: *successRate, Actual: metrics.SuccessRate, Passed: metrics.Requests > 0 && metrics.SuccessRate >= *successRate})
+		evidence = append(evidence, testLoadThresholdEvidence{Metric: "success_rate", Operator: ">=", Limit: *successRate, Actual: metrics.SuccessRate, Passed: metrics.Requests > 0 && testRateAtLeast(metrics.SuccessRate, *successRate)})
 	}
 	if p95 > 0 {
 		evidence = append(evidence, testLoadThresholdEvidence{Metric: "p95_ms", Operator: "<=", Limit: loadMilliseconds(p95), Actual: metrics.Latency.P95MS, Passed: metrics.Requests > 0 && metrics.Latency.P95MS <= loadMilliseconds(p95)})

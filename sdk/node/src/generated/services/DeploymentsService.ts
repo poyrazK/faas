@@ -23,6 +23,7 @@ import type { DeploymentCronStagingRequest } from '../models/DeploymentCronStagi
 import type { DeploymentCronStagingSnapshot } from '../models/DeploymentCronStagingSnapshot.js';
 import type { DeploymentListResponse } from '../models/DeploymentListResponse.js';
 import type { DeploymentPreviewURL } from '../models/DeploymentPreviewURL.js';
+import type { DeploymentPromotionReceipt } from '../models/DeploymentPromotionReceipt.js';
 import type { DeploymentResponse } from '../models/DeploymentResponse.js';
 import type { DeploymentResponseCheckCapabilities } from '../models/DeploymentResponseCheckCapabilities.js';
 import type { DeploymentResponseCheckRequest } from '../models/DeploymentResponseCheckRequest.js';
@@ -41,6 +42,7 @@ import type { ListReleaseFreezesResponse } from '../models/ListReleaseFreezesRes
 import type { ListReleaseGatesResponse } from '../models/ListReleaseGatesResponse.js';
 import type { Problem } from '../models/Problem.js';
 import type { ProfileCanaryGateDecision } from '../models/ProfileCanaryGateDecision.js';
+import type { RecordReleaseOutcomeCheckRequest } from '../models/RecordReleaseOutcomeCheckRequest.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
 import type { ReleaseApprovalPolicy } from '../models/ReleaseApprovalPolicy.js';
 import type { ReleaseApprovalStatus } from '../models/ReleaseApprovalStatus.js';
@@ -48,6 +50,7 @@ import type { ReleaseDiff } from '../models/ReleaseDiff.js';
 import type { ReleaseFreeze } from '../models/ReleaseFreeze.js';
 import type { ReleaseFreezeStatus } from '../models/ReleaseFreezeStatus.js';
 import type { ReleaseGate } from '../models/ReleaseGate.js';
+import type { ReleaseOutcomeCheck } from '../models/ReleaseOutcomeCheck.js';
 import type { ReleaseTimeline } from '../models/ReleaseTimeline.js';
 import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
@@ -60,6 +63,7 @@ import type { ScheduledRelease } from '../models/ScheduledRelease.js';
 import type { ScheduledReleaseListResponse } from '../models/ScheduledReleaseListResponse.js';
 import type { ScheduleReleaseRequest } from '../models/ScheduleReleaseRequest.js';
 import type { SecretScanResult } from '../models/SecretScanResult.js';
+import type { ServiceAbortReceipt } from '../models/ServiceAbortReceipt.js';
 import type { SetDeploymentAliasRequest } from '../models/SetDeploymentAliasRequest.js';
 import type { SetReleaseApprovalPolicyRequest } from '../models/SetReleaseApprovalPolicyRequest.js';
 import type { SourceRefDeployRequest } from '../models/SourceRefDeployRequest.js';
@@ -70,6 +74,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DeploymentsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List named deployment aliases for an app.
    * Returns customer-managed names that point to exact immutable deployment rows, with their stable routing hosts. Changing an alias does not alter production traffic.
@@ -84,7 +89,7 @@ export class DeploymentsService {
      */
     slug: string,
   }): CancelablePromise<DeploymentAliasListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deployment-aliases',
       path: {
@@ -122,7 +127,7 @@ export class DeploymentsService {
     name: string,
     requestBody: SetDeploymentAliasRequest,
   }): CancelablePromise<DeploymentAliasResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/deployment-aliases/{name}',
       path: {
@@ -162,7 +167,7 @@ export class DeploymentsService {
      */
     name: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/deployment-aliases/{name}',
       path: {
@@ -185,23 +190,33 @@ export class DeploymentsService {
    * Read the HTTP cron set and its deployment staging revision.
    * Snapshots only HTTP scheduling intent for the owned app. Command crons,
    * execution progress and server-held original rows are excluded.
+   * `environment` reads one non-production environment's manifest crons
+   * and its own revision and latest deployment.
    *
    * @returns DeploymentCronStagingSnapshot The captured HTTP scheduling set.
    * @throws ApiError
    */
   public static getDeploymentCronStagingSnapshot({
     slug,
+    environment,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * A project environment of the app; omitted or `production` is production.
+     */
+    environment?: string,
   }): CancelablePromise<DeploymentCronStagingSnapshot> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deployment-cron-staging',
       path: {
         'slug': slug,
+      },
+      query: {
+        'environment': environment,
       },
       errors: {
         401: `code: unauthorized`,
@@ -244,7 +259,7 @@ export class DeploymentsService {
     slug: string,
     requestBody: DeploymentCronStagingRequest,
   }): CancelablePromise<DeploymentStagingReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deployment-cron-staging',
       path: {
@@ -285,7 +300,7 @@ export class DeploymentsService {
      */
     slug: string,
   }): CancelablePromise<DeploymentStagingSnapshot> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deployment-staging',
       path: {
@@ -328,7 +343,7 @@ export class DeploymentsService {
     slug: string,
     requestBody: DeploymentStagingRequest,
   }): CancelablePromise<DeploymentStagingReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deployment-staging',
       path: {
@@ -348,6 +363,100 @@ export class DeploymentsService {
         \`profile_investigation_limit\`.
         `,
         503: `Staging storage is unavailable; the journal remains pending.`,
+      },
+    });
+  }
+  /**
+   * Read the immutable acceptance receipt for a service-abort attempt.
+   * Requires deployment-read access to the owned app. Returns immutable acceptance
+   * of an exact reviewed default or named-environment service abort, including the original native
+   * reverse-handoff request ID, even after the current handoff changes. Acceptance
+   * does not establish gateway acknowledgement, request draining, completion or
+   * current health. Compare the request ID separately with the observed handoff.
+   * A 404 means no retained evidence; it never proves rejection or permits replay.
+   * The receipt is retained with the candidate deployment audit and app. Named receipts
+   * also require the original project/environment UUIDs to match the current app
+   * and environment. Deleted, replaced or moved targets return no evidence.
+   *
+   * @returns ServiceAbortReceipt The immutable receipt for the original reviewed service abort.
+   * @throws ApiError
+   */
+  public static getServiceAbortReceipt({
+    slug,
+    attemptId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The opaque attempt ID persisted before reviewed service abort.
+     */
+    attemptId: string,
+  }): CancelablePromise<ServiceAbortReceipt> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/service-aborts/{attempt_id}',
+      path: {
+        'slug': slug,
+        'attempt_id': attemptId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Service-abort receipt storage is unavailable.`,
+      },
+    });
+  }
+  /**
+   * Read the immutable acceptance receipt for a promotion attempt.
+   * Requires deployment-read access to the owned app. Returns the original
+   * candidate and original serving guard even after traffic changes. A 404 means no retained
+   * receipt is available; it does not establish rejection and must never
+   * trigger automatic resubmission. Receipts expire when their deployment
+   * or app is purged. Named environment identities must still exist. This lookup never changes traffic.
+   *
+   * @returns DeploymentPromotionReceipt The immutable receipt for the original guarded traffic promotion.
+   * @throws ApiError
+   */
+  public static getDeploymentPromotionReceipt({
+    slug,
+    attemptId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The opaque attempt ID persisted before guarded traffic promotion.
+     */
+    attemptId: string,
+  }): CancelablePromise<DeploymentPromotionReceipt> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/deployment-promotions/{attempt_id}',
+      path: {
+        'slug': slug,
+        'attempt_id': attemptId,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Promotion receipt storage is unavailable.`,
       },
     });
   }
@@ -375,7 +484,7 @@ export class DeploymentsService {
      */
     attemptId: string,
   }): CancelablePromise<DeploymentSubmissionReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deployment-submissions/{attempt_id}',
       path: {
@@ -425,7 +534,7 @@ export class DeploymentsService {
      */
     before?: string,
   }): CancelablePromise<DeploymentListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deployments',
       path: {
@@ -491,7 +600,7 @@ export class DeploymentsService {
      */
     deploymentAttemptId?: string,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deployments',
       path: {
@@ -559,7 +668,7 @@ export class DeploymentsService {
     slug: string,
     requestBody: CreateDeploymentRequest,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/image-published',
       path: {
@@ -606,7 +715,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<DeploymentSummaryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deployments/{id}/summary',
       path: {
@@ -642,7 +751,7 @@ export class DeploymentsService {
      */
     slug: string,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deployments/latest',
       path: {
@@ -713,6 +822,9 @@ export class DeploymentsService {
        * Startup readiness for this developer-source deployment, encoded as JSON with one HTTP path or standard gRPC health selector.
        */
       healthcheck?: string;
+      /**
+       * Build directory within the developer-source archive. Empty or omitted inherits the app's configured root; '.' selects the archive root.
+       */
       source_root?: string;
       /**
        * Named environment scope read by the deployment; omitted uses default.
@@ -730,7 +842,7 @@ export class DeploymentsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deployments/dev-source',
       path: {
@@ -806,7 +918,7 @@ export class DeploymentsService {
      */
     deploymentAttemptId?: string,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deployments/source-ref',
       path: {
@@ -839,7 +951,9 @@ export class DeploymentsService {
         \`profile_investigation_limit\`.
         `,
         503: `The GitHub integration unreachable or source-ref tarball fetch failed
-        (code: source_ref_unavailable). Retry in ~30s.
+        (code: source_ref_unavailable). Retry in ~30s. A PR preview whose
+        managed PostgreSQL database is still provisioning answers
+        code: preview_database_provisioning; retry after Retry-After.
         `,
       },
     });
@@ -927,7 +1041,7 @@ export class DeploymentsService {
      */
     deploymentAttemptId?: string,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deployments/source-tarball',
       path: {
@@ -997,7 +1111,7 @@ export class DeploymentsService {
      */
     scope?: 'default',
   }): CancelablePromise<WorkerRolloutObservation | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/rollouts/{id}/observation',
       path: {
@@ -1031,12 +1145,13 @@ export class DeploymentsService {
    * completion also waits for the existing gateway ACK and drain handoff.
    * Stored binding enforcement requires this exact workflow.
    *
-   * @returns DeploymentResponse The selected deployment and, for an exact checked request, its accepted durable rollback operation. Acceptance does not imply completion.
+   * @returns DeploymentResponse The selected deployment and, for an exact checked request or service rollback, its accepted durable rollback operation. Acceptance does not imply completion.
    * @throws ApiError
    */
   public static rollbackApp({
     slug,
     idempotencyKey,
+    rollbackAttemptId,
     requestBody,
   }: {
     /**
@@ -1049,9 +1164,13 @@ export class DeploymentsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Persisted opaque identity for an exact default-scope request or service rollback without alert attribution, database restoration or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
+     */
+    rollbackAttemptId?: string,
     requestBody?: RollbackRequest,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/rollback',
       path: {
@@ -1059,6 +1178,7 @@ export class DeploymentsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'Rollback-Attempt-ID': rollbackAttemptId,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -1094,7 +1214,7 @@ export class DeploymentsService {
      */
     operation: string,
   }): CancelablePromise<RollbackOperation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/rollbacks/{operation}',
       path: {
@@ -1132,7 +1252,7 @@ export class DeploymentsService {
      */
     slug: string,
   }): CancelablePromise<DatabaseSwitchList> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/database-switches',
       path: {
@@ -1173,7 +1293,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<DatabaseSwitch> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/database-switches/{id}',
       path: {
@@ -1215,7 +1335,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<DatabaseSwitch> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/database-switches/{id}/cancel',
       path: {
@@ -1295,6 +1415,7 @@ export class DeploymentsService {
     slug,
     requestBody,
     idempotencyKey,
+    serviceAbortAttemptId,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1307,8 +1428,19 @@ export class DeploymentsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Opaque identity saved before an exact reviewed default or named-environment service abort.
+     * Acceptance is recorded atomically with reverse-handoff intent. Accepted
+     * repeats return 409 service_abort_attempt_accepted; a changed reviewed
+     * request returns 409 service_abort_attempt_conflict. Read the retained
+     * service-aborts receipt after a lost response; never replay accepted intent.
+     * Named scopes require the complete project/environment release review and current
+     * unprotected write admission. Unsupported recovery modes reject this header.
+     *
+     */
+    serviceAbortAttemptId?: string,
   }): CancelablePromise<RolloutTransitionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/rollouts/recover',
       path: {
@@ -1316,6 +1448,7 @@ export class DeploymentsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'Service-Abort-Attempt-ID': serviceAbortAttemptId,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -1348,7 +1481,7 @@ export class DeploymentsService {
      */
     app?: string,
   }): CancelablePromise<ScheduledReleaseListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/scheduled-releases',
       query: {
@@ -1379,7 +1512,7 @@ export class DeploymentsService {
      */
     app?: string,
   }): CancelablePromise<ListReleaseFreezesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/freezes',
       query: {
@@ -1407,7 +1540,7 @@ export class DeploymentsService {
   }: {
     requestBody: CreateReleaseFreezeRequest,
   }): CancelablePromise<ReleaseFreeze> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/freezes',
       body: requestBody,
@@ -1439,7 +1572,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<ReleaseFreeze> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/freezes/{id}',
       path: {
@@ -1470,7 +1603,7 @@ export class DeploymentsService {
      */
     slug: string,
   }): CancelablePromise<ReleaseFreezeStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/freeze-status',
       path: {
@@ -1501,7 +1634,7 @@ export class DeploymentsService {
      */
     slug: string,
   }): CancelablePromise<ListReleaseFreezesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/freezes',
       path: {
@@ -1535,7 +1668,7 @@ export class DeploymentsService {
     slug: string,
     requestBody: CreateReleaseFreezeRequest,
   }): CancelablePromise<ReleaseFreeze> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/freezes',
       path: {
@@ -1576,7 +1709,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<ReleaseFreeze> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/freezes/{id}',
       path: {
@@ -1609,7 +1742,7 @@ export class DeploymentsService {
      */
     slug: string,
   }): CancelablePromise<ListReleaseGatesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/release-gates',
       path: {
@@ -1642,7 +1775,7 @@ export class DeploymentsService {
     slug: string,
     requestBody: CreateReleaseGateRequest,
   }): CancelablePromise<ReleaseGate> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/release-gates',
       path: {
@@ -1682,7 +1815,7 @@ export class DeploymentsService {
      */
     name: string,
   }): CancelablePromise<ReleaseGate> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/release-gates/{name}',
       path: {
@@ -1714,7 +1847,7 @@ export class DeploymentsService {
      */
     slug: string,
   }): CancelablePromise<ReleaseApprovalPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/release-approval-policy',
       path: {
@@ -1747,7 +1880,7 @@ export class DeploymentsService {
     slug: string,
     requestBody: SetReleaseApprovalPolicyRequest,
   }): CancelablePromise<ReleaseApprovalPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/release-approval-policy',
       path: {
@@ -1783,7 +1916,7 @@ export class DeploymentsService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/release-approval-policy',
       path: {
@@ -1815,7 +1948,7 @@ export class DeploymentsService {
      */
     slug: string,
   }): CancelablePromise<ListReleaseApprovalsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/release-approvals',
       path: {
@@ -1854,7 +1987,7 @@ export class DeploymentsService {
      */
     before?: string,
   }): CancelablePromise<DeploymentListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments',
       query: {
@@ -1881,7 +2014,7 @@ export class DeploymentsService {
    * @throws ApiError
    */
   public static listLatestDeploymentsByApp(): CancelablePromise<LatestDeploymentsByAppResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/latest-by-app',
       errors: {
@@ -1907,7 +2040,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}',
       path: {
@@ -1950,7 +2083,7 @@ export class DeploymentsService {
       min_instances: number;
     },
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/deployments/{id}',
       path: {
@@ -1996,7 +2129,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<any> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/deployments/{id}',
       path: {
@@ -2035,7 +2168,7 @@ export class DeploymentsService {
     id?: string;
     priority?: number;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deployments/{id}/reorder',
       path: {
@@ -2082,7 +2215,7 @@ export class DeploymentsService {
     cancel_reason?: string;
     cancelled_builds?: Array<string>;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deployments/{id}/cancel',
       path: {
@@ -2123,7 +2256,7 @@ export class DeploymentsService {
       older_than?: string;
     },
   }): CancelablePromise<ClearObsoleteReport> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deployments/clear-obsolete',
       path: {
@@ -2173,18 +2306,26 @@ export class DeploymentsService {
   public static updateDeploymentTraffic({
     id,
     requestBody,
+    deploymentPromotionAttemptId,
   }: {
     /**
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
     requestBody: UpdateDeploymentTrafficRequest,
+    /**
+     * Opaque durable identity for guarded 100 percent promotion. An accepted retry returns 409 deployment_promotion_attempt_accepted without changing traffic; read its receipt separately. Never reuse it with another body.
+     */
+    deploymentPromotionAttemptId?: string,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/deployments/{id}/traffic',
       path: {
         'id': id,
+      },
+      headers: {
+        'Deployment-Promotion-Attempt-ID': deploymentPromotionAttemptId,
       },
       body: requestBody,
       mediaType: 'application/json',
@@ -2249,7 +2390,7 @@ export class DeploymentsService {
     id: string,
     requestBody: BindingPromotionRequest,
   }): CancelablePromise<BindingPromotionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deployments/{id}/promote',
       path: {
@@ -2302,7 +2443,7 @@ export class DeploymentsService {
     id: string,
     requestBody: BindingPromotionRequest,
   }): CancelablePromise<BindingPromotionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deployments/{id}/promote-with-application-ack',
       path: {
@@ -2341,7 +2482,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<ProfileCanaryGateDecision> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/canary/profile-gate',
       path: {
@@ -2376,7 +2517,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<ReleaseApprovalStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/approvals',
       path: {
@@ -2409,9 +2550,47 @@ export class DeploymentsService {
     id: string,
     requestBody: DecideReleaseApprovalRequest,
   }): CancelablePromise<ReleaseApprovalStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deployments/{id}/approvals',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Record a database check after a release command with an unknown outcome.
+   * A release command that started but ended without an exit code (its worker was lost, it timed out or it was cancelled while running) may have changed the database partly. Until a person checks the database and records it here, or a later release command of the same scope succeeds, the app's next release fails with `release_outcome_uncertain` before its own command runs. 409 when this release's command never ran, ended with a known exit, or was checked already.
+   * @returns ReleaseOutcomeCheck The recorded check.
+   * @throws ApiError
+   */
+  public static recordReleaseOutcomeCheck({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: RecordReleaseOutcomeCheckRequest,
+  }): CancelablePromise<ReleaseOutcomeCheck> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/release-outcome',
       path: {
         'id': id,
       },
@@ -2450,7 +2629,7 @@ export class DeploymentsService {
      */
     against?: string,
   }): CancelablePromise<ReleaseDiff> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/diff',
       path: {
@@ -2485,7 +2664,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<ReleaseTimeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/timeline',
       path: {
@@ -2516,7 +2695,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<ScheduledRelease> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/schedule',
       path: {
@@ -2549,7 +2728,7 @@ export class DeploymentsService {
     id: string,
     requestBody: ScheduleReleaseRequest,
   }): CancelablePromise<ScheduledRelease> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/deployments/{id}/schedule',
       path: {
@@ -2584,7 +2763,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<ScheduledRelease> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/deployments/{id}/schedule',
       path: {
@@ -2634,7 +2813,7 @@ export class DeploymentsService {
     id: string,
     requestBody: AdvanceCanaryRequest,
   }): CancelablePromise<CanaryAdvanceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deployments/{id}/canary/advance',
       path: {
@@ -2704,7 +2883,7 @@ export class DeploymentsService {
      */
     follow?: 0 | 1,
   }): CancelablePromise<any> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/logs',
       path: {
@@ -2763,7 +2942,7 @@ export class DeploymentsService {
      */
     limit?: number,
   }): CancelablePromise<ListDeploymentAuditResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/audit',
       path: {
@@ -2803,7 +2982,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<ResourceStatus | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/status',
       path: {
@@ -2845,7 +3024,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<ScanResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/scan',
       path: {
@@ -2905,7 +3084,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<SecretScanResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/secret-scan',
       path: {
@@ -2941,7 +3120,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<DeploymentRuntimeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/runtime',
       path: {
@@ -2979,7 +3158,7 @@ export class DeploymentsService {
      */
     target: string,
   }): CancelablePromise<RuntimeUpgradePreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/runtime/upgrade-preview',
       path: {
@@ -3036,7 +3215,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<DeploymentStageState> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/stages',
       path: {
@@ -3067,7 +3246,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deployments/{id}/mcp-task-hold/retry',
       path: {
@@ -3119,7 +3298,7 @@ export class DeploymentsService {
     id: string,
     requestBody: RetryDeploymentRequest,
   }): CancelablePromise<DeploymentResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/deployments/{id}/retry',
       path: {
@@ -3181,7 +3360,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<DeploymentPreviewURL> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/{id}/url',
       path: {
@@ -3251,7 +3430,7 @@ export class DeploymentsService {
      */
     limit?: number,
   }): CancelablePromise<BuildListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/builds',
       query: {
@@ -3310,7 +3489,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<BuildResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/builds/{id}',
       path: {
@@ -3359,7 +3538,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<BuildProvenanceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/builds/{id}/provenance',
       path: {
@@ -3411,7 +3590,7 @@ export class DeploymentsService {
      */
     id: string,
   }): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/builds/{id}/sbom',
       path: {
@@ -3445,7 +3624,7 @@ export class DeploymentsService {
    * @throws ApiError
    */
   public static getDeploymentResponseCheckCapabilities(): CancelablePromise<DeploymentResponseCheckCapabilities> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/deployments/response-check/capabilities',
       errors: {
@@ -3493,7 +3672,7 @@ export class DeploymentsService {
     deployment: string,
     requestBody: DeploymentResponseCheckRequest,
   }): CancelablePromise<DeploymentResponseCheckResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deployments/{deployment}/response-check',
       path: {

@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 type slackActionTransport func(*http.Request) (*http.Response, error)
@@ -50,7 +52,7 @@ func TestPg_NativeSlackActionsAndAccountLinks(t *testing.T) {
 		}
 	}
 	exec("UPDATE apps SET org_id=$2 WHERE id=$1", app.ID, org.ID)
-	team, err := s.PutIssueTeam(ctx, app.ID, owner.ID, owner.ID, "responders", api.PutIssueTeamRequest{Name: "Responders", MemberAccountIDs: []string{member.ID}}, now)
+	team, err := s.PutIssueTeam(ctx, app.ID, owner.ID, owner.ID, "responders", api.PutIssueTeamRequest{Name: "Responders", MemberAccountIDs: []string{owner.ID, member.ID}}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +220,29 @@ func TestPg_NativeSlackActionsAndAccountLinks(t *testing.T) {
 		t.Fatal("stale response action")
 	}
 	issueD, inD := send("d")
+	// A previously linked responder loses mutation privileges on demotion,
+	// even while their issue-team membership and Slack identity remain.
+	exec("UPDATE org_memberships SET role='viewer' WHERE org_id=$1 AND account_id=$2", org.ID, member.ID)
+	if _, err = s.ApplyIssueSlackInteraction(ctx, app.ID, inD); !errors.Is(err, state.ErrNotFound) || get(issueD).AcknowledgedAt != nil {
+		t.Fatal("viewer acted through linked Slack identity", err)
+	}
+	exec("UPDATE org_memberships SET role='developer' WHERE org_id=$1 AND account_id=$2", org.ID, member.ID)
+	// The app's original creator is not a permanent organization member.
+	// Another responder keeps the delivery itself eligible after removal.
+	exec(`INSERT INTO issue_slack_identities(app_id,slack_user_id,account_id,policy_revision,mfa_enrolled_at,mfa_required,expires_at)
+		SELECT $1,'U1111111111',id,$2,mfa_enrolled_at,mfa_required,clock_timestamp()+interval '1 day' FROM accounts WHERE id=$3`, app.ID, policy.Revision, owner.ID)
+	exec("UPDATE org_memberships SET removed_at=clock_timestamp() WHERE org_id=$1 AND account_id=$2", org.ID, owner.ID)
+	creatorAction := fresh(inD)
+	creatorAction.UserID = "U1111111111"
+	if _, err = s.ApplyIssueSlackInteraction(ctx, app.ID, creatorAction); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("removed creator acted through linked Slack identity", err)
+	}
+	exec("UPDATE org_memberships SET removed_at=clock_timestamp() WHERE org_id=$1 AND account_id=$2", org.ID, member.ID)
+	_, err = sqlc.New().IssueApplicationSlackRoute(ctx, pool, sqlc.IssueApplicationSlackRouteParams{AppID: state.NewPgtypeUUID(uuid.MustParse(app.ID)), AccountID: state.NewPgtypeUUID(uuid.MustParse(owner.ID)), AssignedTeamID: state.NewPgtypeUUID(uuid.MustParse(team.ID))})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatal("departed-only team still routes Slack alerts", err)
+	}
+	exec("UPDATE org_memberships SET removed_at=NULL WHERE org_id=$1 AND account_id=$2", org.ID, owner.ID)
 	exec("UPDATE org_memberships SET removed_at=clock_timestamp() WHERE org_id=$1 AND account_id=$2", org.ID, member.ID)
 	if _, err = s.ApplyIssueSlackInteraction(ctx, app.ID, inD); !errors.Is(err, state.ErrNotFound) || get(issueD).AcknowledgedAt != nil {
 		t.Fatal("removed member acted", err)

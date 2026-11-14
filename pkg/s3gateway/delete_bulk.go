@@ -75,6 +75,12 @@ func (h *Handler) readDeleteObjects(w http.ResponseWriter, r *http.Request, req 
 		writeS3Error(w, http.StatusBadRequest, "MalformedXML", "The delete request contains invalid or unsupported fields.", r.URL.Path, req.requestID)
 		return deleteObjectsRequest{}, false
 	}
+	// A key-scoped binding deletes nothing when any key is outside its
+	// prefix (ADR-20261106114500).
+	if !deleteTargetsInScope(req.credential, request) {
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access Denied.", r.URL.Path, req.requestID)
+		return deleteObjectsRequest{}, false
+	}
 
 	return request, true
 }
@@ -87,7 +93,7 @@ func bulkDeleteError(target deleteObjectTarget, err error) deleteObjectError {
 		code, message = "NotImplemented", "This S3 operation is not implemented by the storage provider."
 	} else if errors.Is(err, state.ErrNotFound) {
 		code, message = "NoSuchVersion", "The specified version does not exist."
-	} else if errors.Is(err, state.ErrObjectBucketBusy) {
+	} else if errors.Is(err, state.ErrObjectBucketBusy) || errors.Is(err, state.ErrObjectBucketTransition) {
 		code, message = "SlowDown", objectBusyMessage
 	} else if errors.Is(err, state.ErrConflict) || errors.Is(err, objectstorage.ErrConflict) {
 		code, message = "OperationAborted", objectConflictMessage

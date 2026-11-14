@@ -180,9 +180,18 @@ func (s *PgStore) ExtendQueueLeases(ctx context.Context, accountID, appID, queue
 	if visibilitySeconds == 0 {
 		visibilitySeconds = api.QueueLeaseDefaultVisibilitySeconds
 	}
-	return s.settleQueueLeases(ctx, accountID, appID, queueName, receipts, func(ctx context.Context, tx pgx.Tx, inv Invocation, _ time.Time) (bool, error) {
+	lifetime := time.Duration(api.MustLimitsFor(account.Plan).MaxAsyncInvocationDeadlineSeconds) * time.Second
+	return s.settleQueueLeases(ctx, accountID, appID, queueName, receipts, func(ctx context.Context, tx pgx.Tx, inv Invocation, now time.Time) (bool, error) {
 		q := sqlc.New()
-		until, err := q.ExtendQueueLeaseInvocation(ctx, tx, sqlc.ExtendQueueLeaseInvocationParams{LeaseSeconds: int32(visibilitySeconds),
+		receipt, err := q.ReadQueueLeaseReceipt(ctx, tx, mustPgUUID(inv.ID))
+		if err != nil {
+			return false, mapErr(err)
+		}
+		seconds, ok := queueLeaseExtension(receipt.IssuedAt.Time, now, visibilitySeconds, lifetime)
+		if !ok {
+			return false, nil
+		}
+		until, err := q.ExtendQueueLeaseInvocation(ctx, tx, sqlc.ExtendQueueLeaseInvocationParams{LeaseSeconds: int32(seconds),
 			ID: mustPgUUID(inv.ID), Attempt: int32(inv.Attempts), ReplayGeneration: inv.ReplayGeneration})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
@@ -257,7 +266,16 @@ func (s *PgStore) settleQueueLease(ctx context.Context, accountID, appID, queueN
 		return "", err
 	}
 	held := queueLeaseReceipt{Attempt: int(r.Attempt), ReplayGeneration: r.ReplayGeneration, TokenHash: r.TokenHash}
-	if !queueLeaseOwned(inv, accountID, appID, queueName, held, digest, now.Time) {
+	bindingID := ""
+	if inv.QueueName != queueName && inv.QueueBindingID != "" {
+		id, err := q.QueueLeaseBindingForQueue(ctx, tx, sqlc.QueueLeaseBindingForQueueParams{
+			AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), QueueName: queueName})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return "", err
+		}
+		bindingID = uuidString(id)
+	}
+	if !queueLeaseOwned(inv, accountID, appID, queueName, bindingID, held, digest, now.Time) {
 		return QueueLeaseReasonExpired, nil
 	}
 	applied, err := apply(ctx, tx, inv, now.Time)
@@ -283,4 +301,28 @@ func (s *PgStore) QueueLeasesByInstance(ctx context.Context, appID string) (map[
 		out[row.InstanceID] = int(row.Leases)
 	}
 	return out, nil
+}
+
+func (s *PgStore) ReleaseQueueLeases(ctx context.Context, appID string, leases []QueueLease) error {
+	q := sqlc.New()
+	for _, lease := range leases {
+		inv := lease.Invocation
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		n, err := q.ReleaseQueueLeaseInvocation(ctx, tx, sqlc.ReleaseQueueLeaseInvocationParams{ID: mustPgUUID(inv.ID), AppID: mustPgUUID(appID),
+			Attempt: int32(inv.Attempts), ReplayGeneration: inv.ReplayGeneration})
+		if err == nil && n == 1 {
+			err = q.DeleteQueueLeaseReceiptForAttempt(ctx, tx, sqlc.DeleteQueueLeaseReceiptForAttemptParams{InvocationID: mustPgUUID(inv.ID), Attempt: int32(inv.Attempts)})
+		}
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		if err != nil {
+			return fmt.Errorf("state: release queue lease: %w", err)
+		}
+	}
+	return nil
 }

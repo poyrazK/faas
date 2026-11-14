@@ -25,6 +25,11 @@ func TestServiceRoutingSnapshotPostgresStaysInCallerEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, slug := range []string{"staging", "review"} {
+		if _, err := store.CreateProjectEnvironment(t.Context(), state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: slug}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	createApp := func(slug string) state.App {
 		t.Helper()
 		app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: slug, WorkloadName: slug,

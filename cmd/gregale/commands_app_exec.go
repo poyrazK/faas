@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -229,9 +230,12 @@ func printAppExecUsage() {
 	)
 }
 
+// renderAppTaskTerminal keeps stdout for the command's own output so
+// `gregale app <slug> exec -- cmd > file` captures exactly what cmd printed;
+// the task status line and notices go to stderr (Hunt 32 H32-78).
 func renderAppTaskTerminal(task api.AppTaskResponse) int {
 	if task.Status == api.AppTaskStatusSucceeded {
-		PrintOK(osStdout, "Task %s succeeded (deployment=%s).", task.ID, task.DeploymentID)
+		PrintOK(osStderr, "Task %s succeeded (deployment=%s).", task.ID, task.DeploymentID)
 	} else {
 		PrintFail(osStderr, "Task %s finished with status=%s.", task.ID, task.Status)
 	}
@@ -242,7 +246,12 @@ func renderAppTaskTerminal(task api.AppTaskResponse) int {
 		_, _ = fmt.Fprint(osStderr, task.StderrTail)
 	}
 	if task.OutputTruncated {
-		PrintWarn(osStderr, "task output was truncated at %d bytes", task.MaxOutputBytes)
+		if task.StdoutTail != "" && !strings.HasSuffix(task.StdoutTail, "\n") {
+			// Start the notice on its own line when stdout and stderr share a
+			// terminal; otherwise it is glued to the end of the last output line.
+			_, _ = fmt.Fprintln(osStderr)
+		}
+		PrintWarn(osStderr, "task output was truncated at %d bytes (stdout and stderr combined); rerun with --max-output-bytes up to %d to keep more", task.MaxOutputBytes, api.AppTaskMaxOutputBytes)
 	}
 	if task.Failure != nil {
 		PrintFail(osStderr, "%s: %s", task.Failure.Code, task.Failure.Message)

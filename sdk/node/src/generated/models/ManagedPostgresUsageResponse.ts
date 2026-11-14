@@ -40,5 +40,22 @@ export type ManagedPostgresUsageResponse = {
    * When the compute cap suspended the account's databases this month; present while compute_cap_state is suspended.
    */
   compute_suspended_at?: string;
+  /**
+   * Each database's own monthly egress allowance, 500 GB (10^9 bytes) as Neon includes per project. Database egress does not count toward the plan's app egress allowance. Absent on a plan without databases.
+   */
+  egress_allowance_bytes?: number;
+  /**
+   * Deprecated and always omitted. Apps no longer share the databases' egress allowance.
+   * @deprecated
+   */
+  app_egress_bytes?: number;
+  /**
+   * The state of the database that sent the most egress this month: healthy; warning at 80% of its hold; overage past its allowance while the account's egress overage election bills database egress (at Neon's price plus 5%, up to twice the allowance); held once it reaches its allowance (twice it with overage billed) and the platform enforces caps, until the month ends. Only that database is held.
+   */
+  egress_state?: 'healthy' | 'warning' | 'overage' | 'held';
+  /**
+   * Set while every database of the account is held, with the same reason each database reports. Egress holds one database at a time, so it is reported on that database, not here.
+   */
+  hold?: 'compute_ceiling' | 'egress' | 'inactive';
 };
 

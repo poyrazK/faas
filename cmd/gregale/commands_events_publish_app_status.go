@@ -19,7 +19,7 @@ func cmdEventsPublishAppStatus(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) || *limit < 1 {
-		return printErr("Invalid arguments", fmt.Errorf("use events publish-app-status APP --key KEY [--after CURSOR] [--limit N]"))
+		return printErr("Invalid arguments", fmt.Errorf("use event publication get APP --key KEY [--after CURSOR] [--limit N]"))
 	}
 	query := api.AppEventPublishStatusQuery{Key: *key, After: *after, Limit: *limit}
 	if err := query.Normalize(); err != nil {

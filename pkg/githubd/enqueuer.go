@@ -104,6 +104,13 @@ type BuildSpec struct {
 	// Dispatchers set it explicitly per call site; zero ==
 	// EVENT_KIND_UNSPECIFIED == legacy wire == DeploymentKindGitHub.
 	EventKind githubdpb.EnqueueBuildEventKind
+	// ComposeServiceAddresses are the service's Compose values that call a
+	// sibling, rewritten to its Gregale address; apid sets the unset ones
+	// (ADR-20261105104500). Push events only.
+	ComposeServiceAddresses map[string]string
+	// EnvironmentBranch marks a pull request build of a production app into
+	// the pull request's environment branch, Scope (ADR-20261113121342).
+	EnvironmentBranch bool
 }
 
 // BuildEnqueuer is the seam githubd uses to schedule a build

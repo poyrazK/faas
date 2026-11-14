@@ -18,6 +18,10 @@ func (s *server) requestPinnedServiceAbort(w http.ResponseWriter, r *http.Reques
 	}
 	updated, auditID, err := store.RequestServiceRolloutAbort(r.Context(), app.ID, candidate.ID, predecessor.ID, reason)
 	if err != nil {
+		if p := serviceAbortAttemptProblem(err); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
 		if writeReleaseReviewError(w, err) {
 			return
 		}

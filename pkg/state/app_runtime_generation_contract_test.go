@@ -30,9 +30,10 @@ func testAppRuntimeGeneration(t *testing.T, store runtimeAppEnvTestStore) {
 		return g
 	}
 	for _, tc := range []struct {
-		name   string
-		change func(context.Context, runtimeAppEnvFixture) error
-		moves  bool
+		name    string
+		prepare func(context.Context, runtimeAppEnvFixture) error
+		change  func(context.Context, runtimeAppEnvFixture) error
+		moves   bool
 	}{
 		{name: "app resized", moves: true, change: func(ctx context.Context, f runtimeAppEnvFixture) error {
 			_, err := store.UpdateApp(ctx, f.app.ID, state.UpdateAppParams{RAMMB: &ram})
@@ -63,7 +64,9 @@ func testAppRuntimeGeneration(t *testing.T, store runtimeAppEnvTestStore) {
 		{name: "plan changed", moves: true, change: func(ctx context.Context, f runtimeAppEnvFixture) error {
 			return store.UpdateAccountPlan(ctx, f.account.ID, scale)
 		}},
-		{name: "project environment removed", moves: true, change: func(ctx context.Context, f runtimeAppEnvFixture) error {
+		{name: "project environment removed", moves: true, prepare: func(ctx context.Context, f runtimeAppEnvFixture) error {
+			return store.UpdateDeploymentStatus(ctx, f.deployments["other"].ID, state.DeployCancelled, "stopped before environment deletion")
+		}, change: func(ctx context.Context, f runtimeAppEnvFixture) error {
 			return store.DeleteProjectEnvironment(ctx, f.account.ID, f.project.ID, "other")
 		}},
 		// An operator cold boot (ADR-1523) advances the deployment's recovery
@@ -83,6 +86,11 @@ func testAppRuntimeGeneration(t *testing.T, store runtimeAppEnvTestStore) {
 			ctx := t.Context()
 			f := seedRuntimeAppEnv(t, store)
 			bystander := seedRuntimeAppEnv(t, store)
+			if tc.prepare != nil {
+				if err := tc.prepare(ctx, f); err != nil {
+					t.Fatal(err)
+				}
+			}
 			before, other := generationOf(t, f.app.ID), generationOf(t, bystander.app.ID)
 			if err := tc.change(ctx, f); err != nil {
 				t.Fatalf("change: %v", err)

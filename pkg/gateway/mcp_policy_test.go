@@ -85,7 +85,16 @@ func TestMCPPolicyUsesJSONRPCBody(t *testing.T) {
 		status int
 	}{
 		{`{"method":"tools/call","params":{"name":"read"}}`, nil, 0},
-		{`{"method":"tools/call","Method":"tools/list","params":{"name":"write","Name":"read"}}`, nil, 403},
+		{`{"method":"tools/call","Method":"tools/list","params":{"name":"write","Name":"read"}}`, nil, 400},
+		{`{"method":"ping","Method":"tools/call","params":{"name":"write"}}`, nil, 400},
+		{`{"method":"ping","method":"tools/call","params":{"name":"write"}}`, nil, 400},
+		{`{"method":"ping","\u004dethod":"tools/call","params":{"name":"write"}}`, nil, 400},
+		{`{"method":"tools/call","params":{"name":"read","Name":"write"}}`, nil, 400},
+		{`{"method":"tools/call","params":{"name":"read","name":"write"}}`, nil, 400},
+		{`{"method":"tools/call","params":{"name":"read"},"Params":{"name":"write"}}`, nil, 400},
+		{`{"method":"tools/call","params":{"name":"read","arguments":{"name":"a","Name":"b"}}}`, nil, 0},
+		{`{"method":"completion/complete","params":{"ref":{"type":"ref/prompt","name":"read","Name":"write"}}}`, nil, 400},
+		{`{"method":"subscriptions/listen","params":{"notifications":{"resourceSubscriptions":[],"ResourceSubscriptions":["customer://records/private"]}}}`, nil, 400},
 		{`{"method":"tools/call","params":{"name":"write"}}`, []string{"write"}, 0},
 		{`{"method":"prompts/get","params":{"name":"read"}}`, nil, 403},
 		{`{"method":"resources/read","params":{"uri":"customer://records/42"}}`, []string{"read"}, 0},

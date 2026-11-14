@@ -47,3 +47,19 @@ func Serve(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(runtime)
 }
+
+// ServeStatus writes an app's Data API status: the current runtime's version
+// (without its archive), runtime report availability and the change hook
+// delivery its runtime last reported, if any. The caller has authorized the
+// app.
+func ServeStatus(w http.ResponseWriter, reports string, hooks *api.DataAPIChangeHookStatus) {
+	w.Header().Set("Cache-Control", "no-store")
+	runtime, err := Current()
+	if err != nil {
+		slog.Error("data api runtime unavailable", "err", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "data_api_runtime_unavailable", "Data API runtime unavailable", "the control plane could not load its Data API runtime"))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(api.DataAPIStatus{RuntimeVersion: runtime.Version, RuntimeReports: reports, ChangeHooks: hooks})
+}

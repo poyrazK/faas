@@ -253,3 +253,26 @@ fs.mkdirSync(path.join(prefix, 'bin'), {recursive:true}); fs.symlinkSync(binary,
   assert.match(corrupt.stderr, /differs from the verified release archive/);
   assert.equal(existsSync(marker), false, "unverified binary must never execute");
 });
+
+// rc.318 and rc.321: a platform package stayed "not public" past the old
+// 600 s wait, so the launcher was never published. The default wait now
+// covers that, and a stall past it says a re-run is safe.
+test("the default wait outlasts a platform that turns public after ten minutes", async t => {
+  const f = fixture(t);
+  const options = { ...f.options, pollMs: 10_000 };
+  delete options.timeoutMs;
+  f.state.pending.add(names[1]);
+  f.state.onPoll = () => { if (f.state.ticks >= 700_000) f.makePublic(names[1]); };
+  await publishPackages(f.packages, options);
+  assert.equal(f.state.accepted.has("gregale"), true);
+  assert.equal(f.state.tags.get("gregale").rc, "1.2.3-rc.4");
+});
+
+test("a platform held past the default wait fails with re-run guidance", async t => {
+  const f = fixture(t);
+  const options = { ...f.options, pollMs: 60_000 };
+  delete options.timeoutMs;
+  f.state.pending.add(names[1]);
+  await assert.rejects(publishPackages(f.packages, options), /after 1200s.*Re-running this job is safe/);
+  assert.equal(f.state.accepted.has("gregale"), false);
+});

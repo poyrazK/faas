@@ -1,0 +1,33 @@
+# Object storage audit OS-10 (2026-11-10): the control-plane S3 gateway behind
+# s3.<domain> pages when Prometheus cannot scrape it.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a control-plane gateway that stops answering pages; the compute job is not its
+    interval: 1m
+    input_series:
+      - series: up{job="s3-gatewayd",instance="127.0.0.1:9096"}
+        values: 1 1 0 0 0 0 0 0
+      - series: up{job="s3-gatewayd-compute",node="cn-1"}
+        values: 0+0x10
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FaasS3GatewayDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: FaasS3GatewayDown
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: s3-gatewayd
+              family: object_storage
+              public_status: internal
+              job: s3-gatewayd
+              instance: "127.0.0.1:9096"
+            exp_annotations:
+              summary: "The control-plane S3 gateway is not answering"
+              description: "Prometheus cannot scrape s3-gatewayd's control listener on the control plane. While it is down every request to s3.<domain> fails; check faas-s3-gatewayd there."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"

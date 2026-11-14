@@ -159,8 +159,8 @@ func TestMFARecoveryAlertOutboxPublicFlowAndFailureBoundaries(t *testing.T) {
 					// HTTPS sign-in sets __Host-faas_sid and expires the legacy name (#5522).
 					if sessioncookie.IsName(c.Name) && c.Value != "" {
 						envelope, err := manager.Verify(c.Value)
-						if err != nil || envelope.MfaPending || envelope.Sid != sid || envelope.AccountID != accountID || !envelope.StepUpAt.IsZero() {
-							t.Fatal("recovery changed existing MFA session rules", err)
+						if err != nil || envelope.MfaPending || envelope.Sid != sid || envelope.AccountID != accountID || envelope.StepUpAt.IsZero() {
+							t.Fatal("recovery did not retain its session and establish recent proof", err)
 						}
 						recovered = true
 					}

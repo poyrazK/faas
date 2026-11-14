@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -32,9 +33,12 @@ var ErrAppTaskCoordinatorNotWired = errors.New("sched: app task coordinator is n
 // exact opt-in so the coordinator can land before the vmmd adapter without
 // claiming durable work that no runtime can execute.
 type AppTaskCoordinatorConfig struct {
-	Metrics            *AppTaskMetrics
-	Enabled            bool
-	Owner              string
+	Metrics *AppTaskMetrics
+	Enabled bool
+	Owner   string
+	// NodeID scopes claims to apps this schedd's node owns or apps without an
+	// owner (state.NodeScopedAppTaskClaimer). Empty claims any app.
+	NodeID             string
 	MaxConcurrent      int
 	LeaseDuration      time.Duration
 	LeaseRenewInterval time.Duration
@@ -207,12 +211,22 @@ func (c *AppTaskCoordinator) Run(ctx context.Context) error {
 	return nil
 }
 
+// claimNext claims the next task this schedd may place. A node-scoped
+// schedd claims only its own and unowned apps; any other node's app would be
+// refused by placement after the claim.
+func (c *AppTaskCoordinator) claimNext(ctx context.Context) (state.AppTask, error) {
+	if claimer, ok := c.store.(state.NodeScopedAppTaskClaimer); ok && c.config.NodeID != "" {
+		return claimer.ClaimNextAppTaskForNode(ctx, c.config.Owner, c.config.NodeID, c.now().UTC(), c.config.LeaseDuration)
+	}
+	return c.store.ClaimNextAppTask(ctx, c.config.Owner, c.now().UTC(), c.config.LeaseDuration)
+}
+
 // ProcessNext claims and fully handles at most one task.
 func (c *AppTaskCoordinator) ProcessNext(ctx context.Context) (bool, error) {
 	if c == nil || c.store == nil || c.backend == nil {
 		return false, ErrAppTaskCoordinatorNotWired
 	}
-	task, err := c.store.ClaimNextAppTask(ctx, c.config.Owner, c.now().UTC(), c.config.LeaseDuration)
+	task, err := c.claimNext(ctx)
 	c.config.Metrics.operation(ctx, "claim", err)
 	if errors.Is(err, state.ErrNotFound) {
 		return false, nil
@@ -315,8 +329,20 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 			// normal safe replay sweep; the next claim remains budget-gated.
 			return restoreErr
 		}
+		if errors.Is(restoreErr, ErrAppTaskNotOwner) {
+			// No command was dispatched, and another node owns the app (its
+			// owner changed after the claim). The sweep requeues the expired
+			// restoring lease for the owner's schedd.
+			c.log.Info("schedd: app task left for its owning node", "task_id", task.ID, "node_id", c.config.NodeID)
+			return nil
+		}
+		if handled, err := c.deferForCapacity(parent, task, restoreErr); handled {
+			return err
+		}
 		if restoreTimedOut {
 			code, message = "restore_timeout", "app task environment preparation timed out"
+		} else if customerCapacityProblem(restoreErr) != nil {
+			code, message = appTaskCapacityFailureCode, appTaskCapacityFailureMessage
 		} else if errors.Is(restoreErr, ErrAppTaskAccountInactive) {
 			code, message = accountInactiveFailureCode, accountInactiveFailureMessage
 		} else if errors.Is(restoreErr, state.ErrManagedPostgresAdmissionFenced) {
@@ -623,6 +649,41 @@ func waitAppTaskInterval(ctx context.Context, interval time.Duration) bool {
 	}
 }
 
+// deferForCapacity returns a release command that node budgets refused
+// (memory, guest vCPUs, CPU) to the queue for api.AppTaskCapacityRetryDelay
+// instead of failing it, while api.AppTaskCapacityMaxWait has not passed since
+// its first refusal (ADR-20261029103512 amendment 3). The refusal happens at
+// placement, before a VM or a command exists, so placing it again is safe.
+// handled is false when the caller should fail the task: another error, a
+// task that is not a release, a store without the requeue, or a wait that is
+// over. Other app tasks fail at once; an interactive session must not hang.
+func (c *AppTaskCoordinator) deferForCapacity(ctx context.Context, task state.AppTask, restoreErr error) (bool, error) {
+	if customerCapacityProblem(restoreErr) == nil || task.Kind != state.AppTaskKindRelease || task.LeaseToken == nil {
+		return false, nil
+	}
+	deferrer, ok := c.store.(state.AppTaskCapacityDeferrer)
+	if !ok {
+		return false, nil
+	}
+	at := c.now().UTC()
+	waitStartedAt, deferred, err := deferrer.DeferAppTaskForCapacity(ctx, task.ID, *task.LeaseToken, at,
+		at.Add(api.AppTaskCapacityRetryDelay), api.AppTaskCapacityMaxWait)
+	switch {
+	case errors.Is(err, state.ErrAppTaskLeaseLost):
+		// Cancelled or swept meanwhile; whoever holds the task now owns it.
+		c.log.Info("schedd: app task lease lost while waiting for node capacity", "task_id", task.ID)
+		return true, nil
+	case err != nil:
+		// The restoring lease stays; the sweep requeues it once it expires.
+		return true, fmt.Errorf("defer app task %s for node capacity: %w", task.ID, err)
+	case !deferred:
+		return false, nil
+	}
+	c.log.Info("schedd: release command waits for node capacity", "task_id", task.ID,
+		"retry_in", api.AppTaskCapacityRetryDelay, "waiting_since", waitStartedAt, "max_wait", api.AppTaskCapacityMaxWait)
+	return true, nil
+}
+
 func appTaskErrorClass(err error) string {
 	switch {
 	case err == nil:
@@ -633,6 +694,8 @@ func appTaskErrorClass(err error) string {
 		return "timeout"
 	case errors.Is(err, state.ErrAppTaskLeaseLost):
 		return "lease_lost"
+	case customerCapacityProblem(err) != nil:
+		return "capacity"
 	default:
 		return "internal"
 	}

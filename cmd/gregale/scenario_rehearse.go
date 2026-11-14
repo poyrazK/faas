@@ -120,16 +120,19 @@ func cmdTestRehearse(args []string) int {
 		_, _ = fmt.Fprintf(osStderr, "Warning: %s, inside each checked-out revision and with your environment (FAAS_TOKEN removed). Rehearse only revisions you trust.\n", local)
 	}
 	report := runTestRehearsal(ctx, client, session, o)
-	if err := saveTestRehearsalReport(o, report); err != nil {
-		return printErr("Could not save rehearsal", err)
-	}
+	outputErr := saveTestRehearsalReport(o, report)
 	if jsonOutput {
-		if code := rehearsalJSONResult(report); code != 0 {
-			return code
+		if err := writeJSON(report); err != nil {
+			outputErr = errors.Join(outputErr, fmt.Errorf("JSON stdout: %w", err))
 		}
 	} else {
 		printTestReportComparison(osStdout, report.Comparison)
-		_, _ = fmt.Fprintf(osStdout, "Rehearsal: %s · combined receipt: %s\n", report.Status, o.Report)
+		if outputErr == nil {
+			_, _ = fmt.Fprintf(osStdout, "Rehearsal: %s · combined receipt: %s\n", report.Status, o.Report)
+		}
+	}
+	if outputErr != nil {
+		return printErr("Could not save rehearsal", &exitErr{msg: outputErr.Error(), code: 1})
 	}
 	if report.Status != "passed" {
 		return 1
@@ -326,21 +329,13 @@ func (s *testRehearsalSession) run(ctx context.Context, client *Client, o testRe
 
 func saveTestRehearsalReport(o testRehearsalOptions, report testRehearsalReport) error {
 	body, err := json.MarshalIndent(report, "", "  ")
+	if err == nil {
+		err = os.WriteFile(o.Report, append(body, '\n'), 0o600)
+	}
 	if err != nil {
-		return err
+		err = fmt.Errorf("JSON report: %w", err)
 	}
-	if err := os.WriteFile(o.Report, append(body, '\n'), 0o600); err != nil {
-		return err
-	}
-	if o.HTML != "" {
-		if err := writeTestComparisonHTML(o.HTML, report.Comparison); err != nil {
-			return err
-		}
-	}
-	if o.Markdown != "" {
-		return writeTestComparisonMarkdown(o.Markdown, report.Comparison)
-	}
-	return nil
+	return errors.Join(err, writeTestComparisonReports(report.Comparison, o.HTML, o.Markdown, ""))
 }
 
 func prepareTestRehearsal(ctx context.Context, o testRehearsalOptions) (*testRehearsalSession, error) {

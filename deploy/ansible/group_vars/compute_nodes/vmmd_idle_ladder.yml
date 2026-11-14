@@ -1,0 +1,35 @@
+# Idle ladder (docs/adr/20261107122928-*.md), per node.
+#
+# observe: vmmd measures, for every request-serving instance, the ladder level
+# its idle time reaches, the RAM held at each level and what its activity
+# guard would decide (vmmd_idle_ladder_observed_*,
+# vmmd_idle_ladder_guard_observed_*). It pauses nothing.
+#
+# on: vmmd also applies L1 and L2 to the instances quiet pause pauses: it
+# pauses them after 1 s of nothing in flight and reports those quiet for 10 s
+# at L2. Measured admission books an L2 instance at the frozen floor and
+# leaves it out of the node's reservation cap, up to 200% of the admission
+# ceiling, so a node holds more instances (schedd's quiet_pause_admission,
+# on by default, wires the discount).
+#
+# apps (needs on): also pauses apps that declared no pause, when the activity
+# guard agrees they are idle (no request for 1 s, VM CPU <= 10 ms, veth <= 512
+# bytes each way). Their first inbound byte resumes them.
+#
+# Names are canonical database node names. A node in more than one list takes
+# the strongest. Turning a node back to off is safe: the next vmmd start
+# resumes nothing it did not pause. L3/L4 (idle_ladder_compress) stay off
+# until a metal run on a zswap node.
+#
+# Step 1 (2026-11-12): observe on every compute node, to size L2 against this
+# week's booking peaks. Step 2: on for fsn-2.faas, then apps, then fsn-3.faas.
+vmmd_idle_ladder_observe_nodes:
+  - fsn-2.faas
+  - fsn-3.faas
+vmmd_idle_ladder_on_nodes: []
+vmmd_idle_ladder_apps_nodes: []
+vmmd_idle_ladder: >-
+  {{ 'on' if (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_on_nodes
+     else ('observe' if (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_observe_nodes
+     else 'off') }}
+vmmd_idle_ladder_apps: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_apps_nodes }}"

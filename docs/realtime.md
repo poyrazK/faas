@@ -22,6 +22,33 @@ Some features on this page are previews: they become available to your account
 when Gregale releases them to it. Until then their API routes answer 404 and
 their frames are ignored.
 
+## Long-lived connections and scale to zero
+
+Gregale's realtime service holds the client's WebSocket or SSE connection, not
+your app. A client can stay connected for hours while your app is parked, and
+you are billed for the app only while it runs ([billing](billing.md)).
+
+- **Idle connections cost your app nothing.** Gregale answers heartbeats and
+  keeps the socket open; it does not call your app.
+- **Client messages wake the app.** On the original protocol each client frame
+  is a `POST` to your `/realtime/message` callback (and connect and disconnect
+  are callbacks too). The app handles it and can park again after its idle
+  timeout.
+- **Your app broadcasts without holding connections.** Publish to a channel
+  from your backend with the SDK, the API, or
+  `gregale realtime publish <app> <endpoint-id> <channel> --data '…'`; send to
+  one connection with `gregale realtime send`. The publish is an ordinary
+  outbound request, so the app can park right after it.
+- **What still wakes the app:** callbacks (connect, message, disconnect,
+  `authorize-channel`), and channel re-authorization at most every 30 seconds
+  per subscription while messages are delivered on it. Use
+  [channel rules](#channel-rules) to authorize from the token instead.
+
+Compare an app that serves WebSockets itself (`gregale app <slug>
+--websocket-enabled`): there the socket ends inside your app, so the app stays
+running, and billed, for as long as any connection is open. Use managed
+realtime when connections are long and messages are sparse.
+
 ## Connect clients
 
 Create an endpoint on your app, then connect clients to
@@ -65,9 +92,13 @@ Each endpoint uses one client authentication mode:
 
 Browsers cannot set the `Authorization` header on a WebSocket, so a browser
 sends its token as a second requested subprotocol,
-`gregale.realtime.bearer.<token>` (the Node SDK does this for you). This works
-only on an endpoint with `allowed_origins`, and the browser's `Origin` must
-match one of them exactly. Tokens are at most 3,072 bytes.
+`gregale.realtime.bearer.<token>` (the Node SDK does this for you). This is
+part of the [resumable protocol](#resumable-protocol) (preview): the browser
+must also request `gregale.realtime.v2`, the token must be an OIDC JWT or a
+[subscription ticket](#subscription-tickets) (never a `static_bearer` token),
+and until the preview is enabled for your account the handshake is refused.
+It works only on an endpoint with `allowed_origins`, and the browser's
+`Origin` must match one of them exactly. Tokens are at most 3,072 bytes.
 
 Changing how an endpoint admits clients applies to open connections too. When
 you finalize a token rotation, its grace deadline passes, you change the
@@ -101,9 +132,11 @@ seconds and is checked again after that while the subscription stays open; a
 401 or 403 then removes the subscription with an `access_revoked` error, and
 any other failure of that check closes the connection with code 1013 so the
 client reconnects. Gregale retries a callback that times out or answers 408, 429 or
-5xx, up to three attempts. Callbacks wake a parked app and keep it running
-while subscriptions are active, so grant channels from the token with
-[channel rules](#channel-rules) where you can.
+5xx, up to three attempts. Callbacks wake a parked app. While messages are
+being delivered on a subscription, `authorize-channel` is called again at most
+every 30 seconds per subscription, which keeps the app awake through a busy
+channel; grant channels from the token with [channel rules](#channel-rules)
+where you can. An idle subscription calls nothing.
 
 To rotate the callback token, accept both tokens in your app, update the
 endpoint (`PATCH …/endpoints/{id}` with `callback_auth_token`), and keep
@@ -113,6 +146,10 @@ accepting the old one for a few minutes while queued callbacks drain.
 
 A client that requests no subprotocol uses the original protocol: your backend
 manages its subscriptions, and messages arrive as plain text or binary frames.
+A text message (`binary` false, the default) must be valid UTF-8: clients drop
+the connection on a text frame that is not, so publish and send refuse one with
+HTTP 400. Send other bytes with `binary: true`. A message larger than the
+endpoint's `max_message_bytes` is refused with HTTP 400 and the limit.
 
 ```bash
 gregale realtime connections my-app EP_ID --principal user-123   # find a user's connections
@@ -256,6 +293,9 @@ holds up to 32.
 
 ## Fair-use limits
 
+Messages delivered to subscribers count toward the app's monthly egress,
+like the app's own traffic ([plans](plans.md#what-each-limit-means)).
+
 Realtime has no separate charge. Gregale bills compute, and realtime channels,
 consumer groups and delivery are included in every paid plan. Limits apply only
 where realtime holds real capacity on our servers:
@@ -306,8 +346,9 @@ where realtime holds real capacity on our servers:
   Live publishes are not counted.
 - **Functions triggered by channel messages** bill as normal compute.
 
-An endpoint's `max_connections` still caps that endpoint; the account limit
-applies on top of it.
+An endpoint's `max_connections` caps that endpoint across all realtime nodes
+(counts are shared every few seconds, so a burst can briefly pass it); the
+account limit applies on top of it.
 
 See where you stand with `gregale realtime usage` (or `GET /v1/usage/realtime`,
 a preview that answers 404 until it is enabled for your account): connections open

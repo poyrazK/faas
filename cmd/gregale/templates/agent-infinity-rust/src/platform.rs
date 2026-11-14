@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use infinity_agent_core::message::InputMessage;
 use infinity_agent_core::traits::InputSender;
+use rap_client::http::HttpClient;
 use rap_protocol::ToolsetManifest;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -192,6 +193,46 @@ impl Platform {
             )));
         }
         Ok(())
+    }
+}
+
+/// The HTTP client of Gregale's toolset. Each invocation carries the app's
+/// workload token, which gregale_run needs to start a run in the app's
+/// account (ADR-20261030125501 step 5). Off Gregale there is no token, and
+/// the invocation goes without one: gregale_sleep needs only its callback
+/// URL.
+#[derive(Clone)]
+pub struct GregaleHttp {
+    pub platform: Arc<Platform>,
+}
+
+#[async_trait]
+impl HttpClient for GregaleHttp {
+    type Error = PlatformError;
+
+    async fn post(&self, url: &str, body: &str) -> Result<u16, PlatformError> {
+        let mut req = self
+            .platform
+            .http
+            .post(url)
+            .header("content-type", "application/json")
+            .body(body.to_owned());
+        if let Ok(token) = self.platform.token().await {
+            req = req.bearer_auth(token);
+        }
+        Ok(req.send().await?.status().as_u16())
+    }
+
+    async fn get(&self, url: &str) -> Result<(u16, Vec<u8>), PlatformError> {
+        let res = self
+            .platform
+            .http
+            .get(url)
+            .header("accept", "application/json")
+            .send()
+            .await?;
+        let status = res.status().as_u16();
+        Ok((status, res.bytes().await?.to_vec()))
     }
 }
 

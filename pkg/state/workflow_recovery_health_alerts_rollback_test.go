@@ -40,7 +40,7 @@ func TestWorkflowRecoveryHealthAlertAtomicCapture(t *testing.T) {
 		}
 		id := q.HealthIncident.EpisodeID
 		before := state.PolicyChangeEvidence(t, s, app.ID)
-		if _, err = (*pg.Pool()).Exec(ctx, "ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT health_alert_failure_test CHECK(event<>'automation.recovery_health_alert')"); err != nil {
+		if _, err = (*pg.Pool()).Exec(ctx, "ALTER TABLE app_webhook_event_outbox ADD CONSTRAINT health_alert_failure_test CHECK(event<>'stored_workflow.recovery_health_alert')"); err != nil {
 			t.Fatal(err)
 		}
 		if _, err = worker.ProcessNextWorkflowRecoveryHealthAlert(ctx, now.Add(time.Minute)); err == nil {

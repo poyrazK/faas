@@ -12,8 +12,22 @@ import (
 )
 
 func TestPublishProjectReleaseSetRequiresCompleteLiveGraph(t *testing.T) {
-	srv, store, acct, _, app := apidserver.NewProjectLifecycleFixture(t)
+	srv, store, acct, project, app := apidserver.NewProjectLifecycleFixture(t)
 	ctx := context.Background()
+	if _, err := store.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: acct.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	extra, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, ProjectID: project.ID, Slug: "release-stage-only", WorkloadName: "stage-only", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := state.WorkloadSettingsFromApp(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutProjectEnvironmentWorkloadSpec(ctx, acct.ID, project.ID, "staging", extra.ID, 0, settings); err != nil {
+		t.Fatal(err)
+	}
 	manifest := app.Manifest
 	manifest.RevisionPinTTLSeconds = 3600
 	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {

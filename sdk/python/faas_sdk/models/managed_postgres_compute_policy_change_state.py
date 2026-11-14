@@ -1,8 +1,9 @@
 from typing import Literal
 
-ManagedPostgresComputePolicyChangeState = Literal["pending", "succeeded"]
+ManagedPostgresComputePolicyChangeState = Literal["failed", "pending", "succeeded"]
 
 MANAGED_POSTGRES_COMPUTE_POLICY_CHANGE_STATE_VALUES: set[ManagedPostgresComputePolicyChangeState] = {
+    "failed",
     "pending",
     "succeeded",
 }
