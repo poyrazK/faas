@@ -9,13 +9,17 @@ import "time"
 // platform flags never appear here.
 type AccountHealth struct {
 	GeneratedAt time.Time `json:"generated_at"`
-	// Attention is the number of restrictions, failed deployments and
-	// domain issues; zero means nothing needs action.
-	Attention         int                        `json:"attention"`
-	Restrictions      []AccountHealthRestriction `json:"restrictions"`
-	FailedDeployments []AccountHealthDeployment  `json:"failed_deployments"`
-	DomainIssues      []AccountHealthDomain      `json:"domain_issues"`
-	RefusedRequests   AccountHealthRequests      `json:"refused_requests"`
+	// Attention is the number of restrictions, signals, failed deployments
+	// and domain issues; zero means nothing needs action.
+	Attention    int                        `json:"attention"`
+	Restrictions []AccountHealthRestriction `json:"restrictions"`
+	// Signals are the open stuck-customer signals Gregale detected for the
+	// account, in customer wording (ADR-20261114090000). Only kinds with
+	// customer wording appear; an apid release before it omits the key.
+	Signals           []AccountHealthSignal     `json:"signals"`
+	FailedDeployments []AccountHealthDeployment `json:"failed_deployments"`
+	DomainIssues      []AccountHealthDomain     `json:"domain_issues"`
+	RefusedRequests   AccountHealthRequests     `json:"refused_requests"`
 	// Unavailable names sections that could not be loaded; their lists are
 	// then empty and mean "unknown", not "none".
 	Unavailable []string `json:"unavailable,omitempty"`
@@ -31,6 +35,21 @@ type AccountHealthRestriction struct {
 	// ActionURL is a dashboard path for the next step, when there is one.
 	ActionURL string     `json:"action_url,omitempty"`
 	Since     *time.Time `json:"since,omitempty"`
+}
+
+// AccountHealthSignal is an open stuck-customer signal in customer wording:
+// something that keeps going wrong, on which subject (app slug, job name or
+// problem code), since when, and the next step. Kind uses the
+// AttentionKind* constants.
+type AccountHealthSignal struct {
+	Kind    string `json:"kind"`
+	Subject string `json:"subject"`
+	Title   string `json:"title"`
+	Detail  string `json:"detail"`
+	Action  string `json:"action,omitempty"`
+	// ActionURL is a dashboard path for the next step, when there is one.
+	ActionURL string    `json:"action_url,omitempty"`
+	Since     time.Time `json:"since"`
 }
 
 // AccountHealthDeployment is a failed deployment from the last

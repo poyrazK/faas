@@ -107,6 +107,6 @@ func (s *Service) Create(ctx context.Context, account string, r api.CreateDataPi
 	if err := s.ValidateTarget(ctx, account, r.DatabaseID); err != nil {
 		return api.DataPipeline{}, err
 	}
-	p, err := s.Store.Create(ctx, Pipeline{AccountID: account, DataPipeline: api.DataPipeline{ID: uuid.NewString(), Name: r.Name, SourceConnectionID: r.SourceConnectionID, DatabaseID: r.DatabaseID, Tables: r.Tables, ReadSubjects: r.ReadSubjects, DesiredState: "running", State: "validating", Revision: 1, Generation: 1, Verification: "unknown", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}})
+	p, err := s.Store.Create(ctx, Pipeline{AccountID: account, DataPipeline: api.DataPipeline{Serving: r.Serving, ID: uuid.NewString(), Name: r.Name, SourceConnectionID: r.SourceConnectionID, DatabaseID: r.DatabaseID, Tables: r.Tables, ReadSubjects: r.ReadSubjects, DesiredState: "running", State: "validating", Revision: 1, Generation: 1, Verification: "unknown", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}})
 	return p.DataPipeline, err
 }

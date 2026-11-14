@@ -5,6 +5,8 @@ from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="DataSourceColumn")
 
 
@@ -16,6 +18,7 @@ class DataSourceColumn:
     type_: str
     nullable: bool
     primary_key: bool
+    unsupported: bool | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
         name = self.name
@@ -25,6 +28,8 @@ class DataSourceColumn:
         nullable = self.nullable
 
         primary_key = self.primary_key
+
+        unsupported = self.unsupported
 
         field_dict: dict[str, Any] = {}
 
@@ -36,6 +41,8 @@ class DataSourceColumn:
                 "primary_key": primary_key,
             }
         )
+        if unsupported is not UNSET:
+            field_dict["unsupported"] = unsupported
 
         return field_dict
 
@@ -50,11 +57,14 @@ class DataSourceColumn:
 
         primary_key = d.pop("primary_key")
 
+        unsupported = d.pop("unsupported", UNSET)
+
         data_source_column = cls(
             name=name,
             type_=type_,
             nullable=nullable,
             primary_key=primary_key,
+            unsupported=unsupported,
         )
 
         return data_source_column
