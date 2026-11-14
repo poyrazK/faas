@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/markers"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
 const (
@@ -394,6 +395,18 @@ func nonHTTPServiceWarning(dockerfile string) (Warning, bool) {
 	if server != "" {
 		what = fmt.Sprintf("this builds %s, which serves its own TCP protocol on port %d", server, port)
 	}
+	// A datastore is refused as an image too (stateless_only_violation): an
+	// app parks to a snapshot and keeps no data. Name the hosted service.
+	if hosted, stateful := statefuldenylist.Set[server]; stateful {
+		managed := hosted
+		if server == "postgres" {
+			managed = "use managed PostgreSQL: `gregale postgres create <name>`"
+		}
+		return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
+			"%s. Gregale does not run datastores, built or as an image: an app parks to a snapshot and keeps no data. "+
+				"%s, and read its URL from the environment: `gregale env set --app <app> %s_URL=<url>`.",
+			what, upperFirst(managed), strings.ToUpper(server))}, true
+	}
 	return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
 		"%s. A source build must answer HTTP GET /healthz on its serving port, so this deploy fails with app_startup_timeout. "+
 			"Deploy the published image instead, which is ready once the port accepts connections: "+
@@ -674,4 +687,11 @@ func readFile(fsys fs.FS, path string) string {
 		return ""
 	}
 	return string(data)
+}
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

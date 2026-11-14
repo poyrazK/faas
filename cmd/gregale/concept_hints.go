@@ -39,7 +39,6 @@ var conceptHints = map[string][]conceptHint{
 	"probe":     {{Flag: "health-path", Then: "<path>", Why: "the path health probes request"}},
 	"memory":    {{Flag: "ram", Then: "<MB>", Why: "memory per instance"}},
 	"ram":       {{Sub: "scale", Then: "--ram <MB>", Why: "memory per instance"}},
-	"redis":     {{Flag: "ports", Then: "redis=tcp:6379:internal", Why: "a Redis you run as an app: declare its port internal; apps reach it at $GREGALE_SERVICE_<APP>_HOST"}},
 	"env":       {{Sub: "env", Then: "set KEY=<value>", Why: "set an environment variable"}},
 	"secret":    {{Sub: "secrets", Then: "set KEY=<value>", Why: "set a secret"}},
 	"forward":   {{Sub: "port-forward", Then: "[LOCAL:]HOST:PORT", Why: "reach a private port from your machine"}},
