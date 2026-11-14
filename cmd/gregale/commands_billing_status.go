@@ -219,4 +219,3 @@ func printCustomerBillingStatus(w io.Writer, resp api.BillingStatusResponse) {
 	_, _ = fmt.Fprintf(tw, "Subscription:\t%s\n", configured(resp.SubscriptionConfigured))
 	_, _ = fmt.Fprintf(tw, "Reconciliation:\t%s\n", reconcileState)
 }
-
