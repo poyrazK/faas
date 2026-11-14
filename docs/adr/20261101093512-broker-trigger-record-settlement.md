@@ -81,3 +81,28 @@ then never settled at the broker, or settled wrongly:
   record is never dropped by the server while Gregale still means to retry it.
 - At-least-once delivery is unchanged: a failed outcome write runs the
   record again rather than losing it.
+
+## Amendment 2026-11-13: lost replay claims, read-ahead and ack wait
+
+Event-driven hunts #14–#15 found three delivery gaps:
+
+- **Lost operator replays.** A replayed record (dead-letter replay of a Kafka,
+  NATS or Redis Streams record) is delivered from storage, because the broker
+  settled the original delivery. A dispatcher that claimed one and died left
+  it `claimed`; the replay list only read `pending`/`retry`, so it never ran
+  again. The list now also returns replays whose claim has lapsed, as every
+  other claim query does. Stored replays also hand out no more than the batch
+  the per-plan record rate reserved.
+- **Kafka read-ahead.** Read-ahead was one batch counted over open *and*
+  settled-but-uncommitted records of every partition, so one record cooling
+  in retry (or held by `seek-to-offset`) stopped the whole trigger after one
+  batch settled behind it. Open records (which hold payloads) stay within one
+  batch; settled records, which keep only topic/partition/offset, have a
+  separate bound of 100 batches (10,000 offsets at the default batch). Up to
+  that many records behind a stuck head can run again after a restart, which
+  at-least-once delivery already allows.
+- **NATS ack wait.** The consumer's ack wait is now explicit (30 s, the
+  JetStream default) and the poller signals `InProgress` every 10 s while a
+  batch is delivered, as Redis Streams renews its claims. A handler slower
+  than the ack wait is no longer redelivered mid-dispatch (the claim fence
+  stopped a second run, but every poll nakked and refetched it).

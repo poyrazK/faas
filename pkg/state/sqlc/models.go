@@ -3990,6 +3990,7 @@ type DataPipeline struct {
 	VerificationProgress []byte
 	ReaderChange         []byte
 	WalRetention         []byte
+	ServingConfig        []byte
 }
 
 type DataPipelineAlert struct {

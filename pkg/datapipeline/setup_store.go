@@ -177,8 +177,16 @@ func (s *PostgresStore) ControlSetup(ctx context.Context, account, id string, re
 	return setupRow(r)
 }
 func (s *PostgresStore) ClaimSetup(ctx context.Context, token string) (Setup, error) {
-	r, err := s.q.PipelineSetupClaim(ctx, s.pool, token)
+	tx, err := s.workerClaim(ctx)
 	if err != nil {
+		return Setup{}, storeError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	r, err := s.q.PipelineSetupClaim(ctx, tx, token)
+	if err != nil {
+		return Setup{}, storeError(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return Setup{}, storeError(err)
 	}
 	return setupRow(r)
