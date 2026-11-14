@@ -2,6 +2,7 @@ package journeys
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,7 +111,8 @@ await client.projects.applyPlan(plan,{statePath:resolve(state,'apply.json'),time
 process.exit(24);`
 	applied = true
 	output, err := run("--input-type=module", "-e", stop)
-	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 23 {
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 23 {
 		t.Fatalf("expected stop after acceptance: %v %s", err, tg.redact(tail(string(output), 2000)))
 	}
 	if err = os.RemoveAll(source); err != nil {
