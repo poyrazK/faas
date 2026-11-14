@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import pg from 'pg'
-import { adminKeyHashes, createAdminHandler, deleteOwnAccount, goTrueAdmin, goTrueError, signingKey } from './admin.mjs'
+import { adminKeyHashes, adminKeySummary, createAdminHandler, deleteOwnAccount, goTrueAdmin, goTrueError, signingKey } from './admin.mjs'
 import { createAuthzHandler, goTrueAuthenticator } from './authz.mjs'
 import { createHookServer, createMailer, hookAddress, hookEnv, loadEmailTemplates, newHookSecret } from './email.mjs'
 import { filterLogs } from './logs.mjs'
@@ -375,7 +375,8 @@ export function start(env = process.env) {
   // The dashboard is served from the Gregale API origin.
   let dashboard = []
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
-  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external, emails: { mailer, api: config.api, app: config.app },
+  const adminKeys = adminKeyHashes(env)
+  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeys, origins: dashboard, external: config.external, emails: { mailer, api: config.api, app: config.app },
     impersonation: config.impersonation ? { siteURL: config.gotrueEnv.GOTRUE_SITE_URL } : null, serviceAccounts: config.serviceAccounts })
   const scim = createScimHandler({ pool, admin: goTrue, base: config.external })
   const oauth = config.oauth ? {
@@ -384,7 +385,7 @@ export function start(env = process.env) {
     resource: id => authorizationResource(pool, id),
     clientCredentials: config.serviceAccounts,
   } : null
-  const server = createServer({ authz, ui, realtime, admin, settings: config.settings, smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
+  const server = createServer({ authz, ui, realtime, admin, settings: { ...config.settings, admin_keys: adminKeySummary(adminKeys) }, smsCountries: config.smsCountries, scim, oauth, serviceAccounts, attempts })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)

@@ -1264,7 +1264,27 @@ dashboard page and paste it:
 gregale auth admin-key create shop-auth
 ```
 
-The key is shown once; the Auth app stores only its SHA-256. The dashboard page
+The key is shown once; the Auth app stores only its SHA-256. A key expires after
+365 days unless you pass `--expires-in DAYS` (1 to 3650) or `--no-expiry`, and
+can do everything unless you narrow it with `--scopes`:
+
+| Scope | Allows |
+| --- | --- |
+| `users:read` | Listing and reading users, organizations, sign-up requests and activity |
+| `users:write` | Changing them too: import, claims, sign-out, bans, deletion, sign-up approval, organization changes |
+| `impersonate` | Opening a session as a user, and listing or ending those sessions |
+| `sso` | Identity providers and SCIM tokens |
+| `oauth-clients` | OAuth server clients |
+| `service-accounts` | Organizations' service accounts |
+| `emails` | Email templates |
+
+```sh
+gregale auth admin-key create shop-auth --scopes users:read --expires-in 30
+```
+
+A key used past its expiry answers `401 admin_key_expired`; one used outside its
+scopes answers `403 admin_key_scope`. Keys made before scopes existed keep every
+scope and never expire; replace them with `create` and `revoke`. The dashboard page
 sends the key only to your Auth app and keeps it in the browser tab until you
 close it or choose **Forget key**. User records go from your Auth app to your
 browser and never through Gregale. From the page you can search users, see their
@@ -1318,7 +1338,7 @@ gregale auth config shop-auth --activity-retention 90
 The Auth app deletes older entries in batches after requests, at most every six
 hours, so pruning never wakes it or your database.
 
-`gregale auth admin-key list shop-auth` shows key IDs and
+`gregale auth admin-key list shop-auth` shows key IDs with their scopes and expiry, and
 `gregale auth admin-key revoke shop-auth ID` removes one. Both restart the Auth
 app so running instances load the change.
 

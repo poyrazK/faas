@@ -16842,6 +16842,10 @@ const (
 	// which may rise to AuthStorageUploadMaxBytes (a single PUT).
 	AuthStorageUploadDefaultBytes       = 100 << 20
 	AuthStorageUploadMaxBytes     int64 = MaxObjectSinglePutBytes
+	// AuthAdminKeyDefaultDays is how long a new Auth admin key lasts unless
+	// created with --no-expiry; AuthAdminKeyMaxDays bounds --expires-in.
+	AuthAdminKeyDefaultDays = 365
+	AuthAdminKeyMaxDays     = 3650
 	// AuthProviderClientIDMaxBytes and AuthProviderSecretMaxBytes bound OAuth
 	// provider credentials; Apple's client secret is a signed JWT.
 	AuthProviderClientIDMaxBytes = 512

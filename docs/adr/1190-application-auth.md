@@ -376,7 +376,15 @@ platform ID tokens (Sign in with Apple, Google) need no browser at all.
 Owners administer users through `/admin/v1` on the Auth app with a key they
 hold. `gregale auth admin-key create` prints a 256-bit key once and seals only
 its SHA-256 as `AUTH_ADMIN_KEY_<id>`; without such a secret the API does not
-exist. The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
+exist. The secret may follow the digest with `;scopes=<a,b>` and
+`;expires=<Unix seconds>`: new keys expire after `AuthAdminKeyDefaultDays`
+unless created with `--no-expiry`, and may be narrowed to `users:read`,
+`users:write`, `impersonate`, `sso`, `oauth-clients`, `service-accounts` or
+`emails`. Each `/admin/v1` route needs one scope and a route no scope names
+needs every scope, so a route added later is closed to narrow keys until it
+is mapped. A bare digest, as keys made before scopes were, holds every scope
+and never expires. Secrets are write-only, so `/settings/v1` reports each
+key's ID, scopes and expiry (never its digest) for `admin-key list`. The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
 its script calls the Auth app directly from the owner's browser: apid adds the
 Auth app's exact origin to that page's `connect-src`, and the Auth app answers
 CORS only for the Gregale API origin sealed at creation. apid never receives
