@@ -18,7 +18,7 @@ type appHealthWaitRecovery struct {
 }
 
 func newAppHealthWaitRecovery(slug, environment string, timeout, interval time.Duration) *appHealthWaitRecovery {
-	if (!api.ValidAppSlug(slug) && !api.ValidPreviewAppSlug(slug)) ||
+	if !validCLISlug(slug) ||
 		(environment != "" && !api.ValidProjectEnvironmentSlug(environment)) ||
 		timeout <= 0 || interval < time.Second || interval > time.Hour {
 		return nil

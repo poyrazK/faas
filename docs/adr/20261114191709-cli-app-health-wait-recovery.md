@@ -15,7 +15,7 @@ read used the default-scope route. The reserved scope name is not a project
 environment. Inspection uses `app health --app APP`; continued waiting adds `--wait` with the
 original timeout and polling interval. Use the existing POSIX argument quoting
 and credential redaction. Invalid targets do not invent recovery commands;
-long valid preview app names remain supported.
+long preview and readable legacy app names use the existing CLI name rules.
 
 Recovery only reads recorded health evidence. It does not wake, restart,
 redeploy or probe an app. A recovery target does not prove the app exists or

@@ -311,7 +311,7 @@ func TestAppHealthWaitRecoveryPollingAndFreshness(t *testing.T) {
 }
 
 func TestAppHealthWaitRecoveryTargetValidation(t *testing.T) {
-	for _, app := range []string{"pr-7-" + strings.Repeat("a", 40), "not an app slug"} {
+	for _, app := range []string{"pr-7-" + strings.Repeat("a", 40), "tag-legacy-app", "not an app slug"} {
 		t.Run(app, func(t *testing.T) {
 			f, _ := newHealthWaitAPI(t, "error", "")
 			f.app, f.status = app, 404
@@ -326,9 +326,9 @@ func TestAppHealthWaitRecoveryTargetValidation(t *testing.T) {
 				Recovery *healthWaitRecoveryFields `json:"recovery"`
 			}
 			healthWaitDecode(t, stderr(), &got)
-			if strings.HasPrefix(app, "pr-") {
+			if app != "not an app slug" {
 				if got.Recovery == nil || got.Recovery.App != app || !strings.Contains(got.Recovery.InspectCommand, "app health --app "+app) {
-					t.Fatalf("valid long preview lost recovery: %s", stderr())
+					t.Fatalf("valid readable app lost recovery: %s", stderr())
 				}
 			} else if got.Recovery != nil {
 				t.Fatalf("invented recovery for invalid target: %s", stderr())
