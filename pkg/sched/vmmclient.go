@@ -677,6 +677,10 @@ type WakeOutcome struct {
 	// EnvironmentBranchContained: the runtime installed the contained
 	// environment branch profile (ADR-20261031193635).
 	EnvironmentBranchContained bool
+	// BaseScanGrace: vmmd booted this instance only inside the grace that
+	// keeps apps already serving on a base waking after a scan found a
+	// fixable CRITICAL in it (api.BaseScanCriticalBootGrace).
+	BaseScanGrace bool
 	// Populated only by CreateAdmittedRuntime after exact receipt validation.
 	RuntimeAdmissionReceipt *runtimeadmission.Receipt
 
@@ -2131,6 +2135,7 @@ func outcomeFromProto(r *vmmdpb.WakeResponse) *WakeOutcome {
 		Method:                     r.GetMethod(),
 		RequestedMethod:            r.GetRequestedMethod(),
 		RestoreFallbackReason:      r.GetRestoreFallbackReason(),
+		BaseScanGrace:              r.GetBaseScanGrace(),
 	}
 	// ADR-051 PR-D: decode the optional characterization struct
 	// back into pkg/api.CharacterizationReport. Empty struct =

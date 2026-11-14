@@ -328,6 +328,9 @@ type bringUpTimings struct {
 	// after_restore failure. RestoreFallbackNodeLocal tells schedd to keep the
 	// snapshot; other restore diagnostics stay operator-only.
 	restoreFallbackReason string
+	// baseScanGrace: the base scan gate admitted a fixable CRITICAL inside
+	// api.BaseScanCriticalBootGrace.
+	baseScanGrace bool
 	// prepare is filled by Wake from wakePhases just before bringUp so the
 	// RestoreSpec can carry the pre-restore phases onto the timeline
 	// (ADR-192). bringUp adds the ADR-510 backing check to it.
@@ -553,6 +556,9 @@ type Instance struct {
 	// only) when the failure was this node's. Empty for other failures,
 	// planned cold boots, and successful restores.
 	RestoreFallbackReason string
+	// BaseScanGrace reports that the base scan gate admitted this boot only
+	// inside api.BaseScanCriticalBootGrace (a fixable CRITICAL on its base).
+	BaseScanGrace bool
 	// AppID is the apps.id UUID the instance was woken for.
 	// UpdateEgressAllowlist (PR-B, ADR-031+033) uses it to walk
 	// the live map keyed by app instead of by instance, so a
@@ -5773,6 +5779,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		Characterization:       report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
+		BaseScanGrace: timings.baseScanGrace,
 	}
 	if err = m.stampNativeInstanceGeneration(inst); err != nil {
 		return nil, fmt.Errorf("wake %s: original launch identity: %w", req.Instance, err)
@@ -5994,9 +6001,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	// error — the wake-error channel expects it). No-op when storage
 	// is nil (unit tests that don't wire WithStorage continue to pass).
 	scanCheckStartedAt := time.Now()
-	scanErr := m.bringUpScanCheck(ctx, req.BaseKey)
+	scanGrace, scanErr := m.bringUpScanCheck(ctx, req.BaseKey)
 	if timings != nil {
 		timings.scanCheckMs = time.Since(scanCheckStartedAt).Milliseconds()
+		timings.baseScanGrace = scanGrace
 	}
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
@@ -6262,6 +6270,10 @@ type baseScanSidecar struct {
 	Image                string         `json:"image"`
 	Findings             map[string]int `json:"findings"`
 	FixAvailableFindings map[string]int `json:"fix_available_findings"`
+	// FixableCriticalSince is when a scan of this base generation first
+	// found a fixable CRITICAL; it starts api.BaseScanCriticalBootGrace.
+	// Absent (older imaged) means no grace.
+	FixableCriticalSince *time.Time `json:"fixable_critical_since,omitempty"`
 }
 
 func (m *Manager) readBaseScan(ctx context.Context, scanKey string) (baseScanSidecar, error) {
@@ -6385,9 +6397,9 @@ func (m *Manager) beginProcessAttempt(lease Lease) Lease {
 	return lease
 }
 
-func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
+func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) (grace bool, err error) {
 	if m.storage == nil {
-		return nil
+		return false, nil
 	}
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
 	if err := m.ensureBaseGeneration(ctx, baseKey, scanKey); err != nil {
@@ -6395,7 +6407,7 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 		if m.log != nil {
 			m.log.Warn("fcvm: runtime base could not adopt its configured generation", "base", baseKey, "err", err)
 		}
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return false, api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"runtime base generation unavailable",
 			fmt.Sprintf("runtime base %q could not adopt its configured generation", baseKey))
 	}
@@ -6413,7 +6425,15 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	}
 	if gateErr != nil {
 		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, reason)
-		return gateErr
+		return false, gateErr
+	}
+	if reason == baseScanGraceReason {
+		m.imageScanMetrics.ObserveBaseScanGraceAdmit(baseKey)
+		if m.log != nil {
+			m.log.Warn("fcvm: booting a base with a fixable CRITICAL vulnerability inside its grace window",
+				"base", baseKey, "critical_since", scan.FixableCriticalSince)
+		}
+		grace = true
 	}
 	// Forward per-severity finding counts to the vmmd Prometheus
 	// counter. The image label is the OCI ref imaged wrote into
@@ -6422,11 +6442,15 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	for sev, n := range scan.Findings {
 		m.metricsImageScan(scan.Image, sev, n)
 	}
-	return nil
+	return grace, nil
 }
 
 // baseScanVerdict applies the boot gate to one read of a base's scan sidecar.
 // A refusal also returns its wire.BaseScanRefusalReasons reason.
+// baseScanGraceReason is baseScanVerdict's reason for a fixable CRITICAL
+// admitted inside api.BaseScanCriticalBootGrace.
+const baseScanGraceReason = "critical_grace"
+
 func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar, readErr error) (string, error) {
 	if readErr != nil {
 		return "sidecar_missing", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
@@ -6462,6 +6486,12 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 		return "scan_failed", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"Base image scan unavailable",
 			fmt.Sprintf("Gregale could not finish the vulnerability scan of its base image %q, so Gregale will not start instances on it until the scan completes; this is a platform problem, not your code", baseKey))
+	}
+	if now := time.Now(); n > 0 && scan.FixableCriticalSince != nil && !scan.FixableCriticalSince.After(now) && now.Before(scan.FixableCriticalSince.Add(api.BaseScanCriticalBootGrace)) {
+		// Keep serving apps on the base while a patched one is published
+		// (deploy-path review P5). schedd refuses a new deployment's prime
+		// that comes back with this grace flag.
+		return baseScanGraceReason, nil
 	}
 	if n > 0 {
 		// The deploy and wake errors carry this detail to the customer, who

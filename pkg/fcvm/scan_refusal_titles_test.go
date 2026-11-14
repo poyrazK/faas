@@ -82,7 +82,7 @@ func TestBringUpScanCheck_RefusalTitlesSchedulerFailsOverOn(t *testing.T) {
 		},
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.manager(t).bringUpScanCheck(context.Background(), baseKey)
+			_, err := tc.manager(t).bringUpScanCheck(context.Background(), baseKey)
 			var p *api.Problem
 			if !errors.As(err, &p) || p.Code != api.CodeScanCritical {
 				t.Fatalf("bringUpScanCheck = %v, want a scan_critical Problem", err)
