@@ -294,6 +294,7 @@ export const catchErrorCodes = (options: ApiRequestOptions, result: ApiResult): 
  * @throws ApiError
  */
 export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions): CancelablePromise<T> => {
+  if (config.REQUEST) return config.REQUEST<T>(options);
   return new CancelablePromise(async (resolve, reject, onCancel) => {
     try {
       const url = getUrl(config, options);
