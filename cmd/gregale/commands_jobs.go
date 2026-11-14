@@ -783,6 +783,11 @@ func cmdJobsRun(args []string) int {
 	if err != nil {
 		return printRunSubmissionError("Run failed", err, recoveryCLI()+" job runs "+recoveryArgument(name), false)
 	}
+	// Report an incomplete wait receipt before attempting to journal it: the
+	// journal's warning would precede and corrupt the structured wait error.
+	if *wait && !collectResults && !validJobWaitAcceptance(run) {
+		return waitAcceptedJobRun(client, name, run, *waitTimeout, *pollInterval)
+	}
 	rememberAcceptedJob(name, run)
 	if collectResults {
 		if defaultResultsParent != "" {
