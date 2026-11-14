@@ -116,7 +116,7 @@ func (q *Queries) EventRetryFinishReceipt(ctx context.Context, db DBTX, arg Even
 }
 
 const eventRoutingRetryLockTarget = `-- name: EventRoutingRetryLockTarget :one
-SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
+SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
 WHERE s.id=$1::uuid AND s.app_id=$2::uuid AND s.account_id=$3::uuid AND a.status<>'deleted'
 FOR UPDATE OF s FOR SHARE OF a
 `
@@ -143,6 +143,8 @@ func (q *Queries) EventRoutingRetryLockTarget(ctx context.Context, db DBTX, arg 
 		&i.RoutingRetryPolicy,
 		&i.SchemaVersions,
 		&i.AcknowledgmentLeaseSeconds,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -163,7 +165,7 @@ func (q *Queries) EventRoutingRetrySet(ctx context.Context, db DBTX, arg EventRo
 }
 
 const eventRoutingRetryTarget = `-- name: EventRoutingRetryTarget :one
-SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
+SELECT s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
 WHERE s.id=$1::uuid AND s.app_id=$2::uuid AND s.account_id=$3::uuid AND a.status<>'deleted'
 `
 
@@ -189,6 +191,8 @@ func (q *Queries) EventRoutingRetryTarget(ctx context.Context, db DBTX, arg Even
 		&i.RoutingRetryPolicy,
 		&i.SchemaVersions,
 		&i.AcknowledgmentLeaseSeconds,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
 	)
 	return i, err
 }

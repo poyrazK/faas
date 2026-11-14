@@ -36,7 +36,7 @@ The earlier names keep working. Scripts, CI workflows and agents that call
   The earlier spellings (`--scope`, `--deployment`, `--after`, `--from`, …)
   keep working.
 - **A few daily verbs stay at the top level:** `init`, `dev`, `deploy`,
-  `logs`, `status`, `open`, `rollback`, `run`, `invoke`, `add`, `link`,
+  `logs`, `status`, `open`, `rollback`, `run`, `add`, `link`,
   `login`, `start` and `menu`.
 
 Run `gregale help --all` to see every noun by family, and `gregale <noun>` to
@@ -107,6 +107,7 @@ touch them. The tables below map each earlier name.
 | `gregale invitations` | `gregale org` |
 | `gregale invocations` | `gregale invocation` |
 | `gregale invoices` | `gregale billing invoices` |
+| `gregale invoke` | `gregale invocation run` |
 | `gregale issues` | `gregale debug issue` |
 | `gregale jobs` | `gregale job` |
 | `gregale keys` | `gregale key` |
@@ -421,6 +422,7 @@ touch them. The tables below map each earlier name.
 | `gregale mcp complete` | `gregale mcp client complete` |
 | `gregale mcp config` | `gregale mcp server export` |
 | `gregale mcp connections` | `gregale mcp connection` |
+| `gregale mcp invocation-run` | `gregale mcp server invocation run` |
 | `gregale mcp monitor provider-check` | `gregale mcp server monitor check` |
 | `gregale mcp prompt-get` | `gregale mcp client render` |
 | `gregale mcp prompts` | `gregale mcp client prompts` |

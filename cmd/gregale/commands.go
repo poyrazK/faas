@@ -784,6 +784,9 @@ func renderAPIError(w io.Writer, e *APIError) {
 	if p.Detail != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
 	}
+	if id := problemRequestID(p); id != "" {
+		_, _ = fmt.Fprintf(w, "  Request ID: %s\n", id)
+	}
 	if p.BindingsCheck != nil {
 		for _, blocker := range p.BindingsCheck.Blockers {
 			_, _ = fmt.Fprintf(w, "  %s: %s", blocker.Code, blocker.Message)

@@ -233,6 +233,22 @@ service Githubd {
   //   - ALREADY_EXISTS when the delivery ID names a different event.
   //   - UNAVAILABLE when nothing was published and a retry may succeed.
   rpc PublishGitHubEvent(PublishGitHubEventRequest) returns (PublishGitHubEventResponse);
+
+  // EnsurePullRequestBranch is served by apid's bridge (ADR-20261113121342).
+  // For a project on branch-backed PR previews it makes environment branch
+  // pr-{N} of production, or moves the expiry of the pull request's own
+  // branch out to expires_at_unix (capped by the branch's longest lifetime).
+  // ready=false with a fallback_reason tells githubd to give the pull
+  // request an app preview instead: the flag is off, the plan's branch
+  // limit is reached, or a branch the user made holds the name. An older
+  // apid answers UNIMPLEMENTED, which githubd treats the same way.
+  rpc EnsurePullRequestBranch(EnsurePullRequestBranchRequest) returns (EnsurePullRequestBranchResponse);
+
+  // ClosePullRequestBranch is served by apid's bridge (ADR-20261113121342).
+  // It moves the expiry of the pull request's own branch to
+  // expires_at_unix, the closed-preview grace; the branch sweeper deletes
+  // it then. closed=false when the pull request has no branch.
+  rpc ClosePullRequestBranch(ClosePullRequestBranchRequest) returns (ClosePullRequestBranchResponse);
 }
 
 message ListRecoveryQueueItemsRequest {
@@ -538,6 +554,13 @@ message EnqueueBuildRequest {
   // value for in deployment_scope before the build, as a reviewed project
   // deploy does; a value already set is kept. Push events only.
   map<string, string> compose_service_addresses = 19;
+  // environment_branch marks a pull request build into the pull request's
+  // environment branch (ADR-20261113121342): app_id is the production app,
+  // deployment_scope the branch, and event_kind EVENT_KIND_PULL_REQUEST.
+  // apid checks the scope is that pull request's branch and builds a github
+  // deployment in it, without the preview-app steps. An older apid never
+  // receives one: githubd sends it only after EnsurePullRequestBranch.
+  bool environment_branch = 20;
 }
 
 // EnqueueBuildEventKind is the githubd-side event taxonomy for
@@ -776,4 +799,44 @@ message GetInstallationAccessResponse {
  string account_type = 1;
  string repository_selection = 2;
  map<string,string> permissions = 3;
+}
+
+message EnsurePullRequestBranchRequest {
+  // account_id is the account the project's GitHub binding belongs to.
+  string account_id = 1;
+  string project_id = 2;
+  int32 pull_request_number = 3;
+  // expires_at_unix is when the branch should expire, in Unix seconds.
+  int64 expires_at_unix = 4;
+}
+
+message EnsurePullRequestBranchResponse {
+  // ready is true when the pull request's branch exists; its builds deploy
+  // into scope `environment`.
+  bool ready = 1;
+  string environment = 2;
+  // created is true when this call made the branch.
+  bool created = 3;
+  // fallback_reason, when ready is false, says why the pull request gets an
+  // app preview instead. It is written for the pull request's check run.
+  string fallback_reason = 4;
+  // workloads are the branch's workloads with their stable URLs.
+  repeated PullRequestBranchWorkload workloads = 5;
+}
+
+message PullRequestBranchWorkload {
+  string app_id = 1;
+  string workload = 2;
+  string url = 3;
+}
+
+message ClosePullRequestBranchRequest {
+  string account_id = 1;
+  string project_id = 2;
+  int32 pull_request_number = 3;
+  int64 expires_at_unix = 4;
+}
+
+message ClosePullRequestBranchResponse {
+  bool closed = 1;
 }

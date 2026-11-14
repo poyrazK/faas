@@ -27,10 +27,13 @@ type mcpReleaseRole struct {
 type mcpCatalogPinReceipt struct {
 	DiscoveryDeploymentID string `json:"discovery_deployment_id"`
 	SHA256                string `json:"sha256"`
+	expectedServing       *string
+	expectedAppID         string
+	requireReviewedTools  bool
 }
 
 func validateMCPDeploymentCatalogPin(pin *mcpCatalogPinReceipt, health mcpCatalogHealthReport) error {
-	if pin == nil {
+	if pin == nil || pin.SHA256 == "" {
 		return nil
 	}
 	if !health.Supported {
@@ -49,7 +52,7 @@ func validateMCPDeploymentCatalogPin(pin *mcpCatalogPinReceipt, health mcpCatalo
 }
 
 func validateMCPDeploymentCatalogFleetPin(pin *mcpCatalogPinReceipt, fleet mcpCatalogFleetHealthReport) error {
-	if pin == nil {
+	if pin == nil || pin.SHA256 == "" {
 		return nil
 	}
 	if !fleet.Supported {
@@ -273,9 +276,19 @@ func verifyMCPRole(ctx context.Context, candidate string, role mcpReleaseRole) (
 }
 
 func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, cfg mcphosting.Config, token string, roles []mcpReleaseRole, audit *mcpAccessAuditOptions, smoke *mcpSmokeGate, pin ...*mcpCatalogPinReceipt) int {
+	// Management publication plans pin the app and serving baseline before the
+	// build. Check these before ingress changes or executing any tool fixture.
+	if len(pin) > 0 && pin[0] != nil {
+		if err := checkMCPPublicationBaseline(ctx, c, slug, id, pin[0]); err != nil {
+			return printErr("MCP publication baseline", err)
+		}
+	}
 	endpoint, candidate, serving, err := prepareMCPCandidate(ctx, c, slug, id, cfg)
 	if err != nil {
 		return printErr("MCP candidate", err)
+	}
+	if len(pin) > 0 && pin[0] != nil && pin[0].expectedServing != nil && serving != *pin[0].expectedServing {
+		return printErr("MCP publication baseline", errors.New("serving release changed since review; candidate remains unpromoted"))
 	}
 	probe, err := mcphosting.NewClient(candidate, token, mcphosting.ProtocolVersion)
 	if err != nil {
@@ -297,6 +310,9 @@ func finishMCPDeployWithSmoke(ctx context.Context, c *Client, slug, id string, c
 	if len(pin) > 0 && pin[0] != nil {
 		catalogIntegrity["pin"] = pin[0]
 		pinErr = validateMCPDeploymentCatalogFleetPin(pin[0], catalogHealth)
+		if pin[0].requireReviewedTools {
+			pinErr = errors.Join(pinErr, validateMCPReviewedToolCatalog(cfg, report))
+		}
 	}
 	receipt := map[string]any{
 		"app": slug, "deployment_id": id, "endpoint": endpoint, "candidate_endpoint": candidate,

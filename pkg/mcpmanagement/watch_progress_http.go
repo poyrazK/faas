@@ -81,7 +81,7 @@ func newWatchHTTPHandler(getServer func(*http.Request) *mcp.Server, timeouts ...
 
 func managementToolTimeout(name string, fallback time.Duration) time.Duration {
 	switch name {
-	case "gregale_apply_local_deploy", "gregale_plan_upload_deploy", "gregale_apply_upload_deploy":
+	case "gregale_apply_local_deploy", "gregale_plan_upload_deploy", "gregale_apply_upload_deploy", "gregale_plan_uploaded_tool_deploy":
 		return localDeployTimeout
 	case "gregale_apply_provision":
 		return provisionTimeout

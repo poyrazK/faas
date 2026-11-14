@@ -36,6 +36,9 @@ RULES = [
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
     (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck", "TOOLING"),
     # --- attribution fixes: specific names that broader keywords would misfile
+    # Agent-authored tools and exact delegated execution remain management MCP preview.
+    (r"^/v1/(delegated-)?tool-(publications|registry|invocations|grants|oauth-connections|connections)(/|$)", "Gregale management MCP server"),
+    (r"^tool-(publications|invocations|grants|oauth-(connections|authorizations))$|^tool(connection|grant|invocation|publication)$|^mcp-private-tool-invocation$", "Gregale management MCP server"),
     (r"scheduled-release", "Scheduled releases"),
     (r"release-review", "Release review"),
     (r"image-run|interactive-run", "Image runs"),

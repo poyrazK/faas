@@ -106,7 +106,8 @@ const currentAIPricesSQL = `
 	       entry.millicents_per_audio_minute, entry.millicents_per_million_characters, entry.millicents_per_video_second,
 	       entry.millicents_per_web_search, entry.millicents_per_file_search, entry.millicents_per_code_session_gb,
 	       entry.input_audio_millicents_per_mtok, entry.cached_input_audio_millicents_per_mtok,
-	       entry.output_audio_millicents_per_mtok
+	       entry.output_audio_millicents_per_mtok, entry.cache_write_1h_millicents_per_mtok,
+	       entry.long_context_above_input_tokens, entry.long_context_input_percent, entry.long_context_output_percent
 	  FROM outbound_ai_price_entries entry
 	 WHERE entry.price_list_id = (
 	       SELECT list.id FROM outbound_ai_price_lists list
@@ -314,14 +315,17 @@ func scanAIPrices(rows pgx.Rows) ([]AIPrice, error) {
 	entries := make([]api.OutboundAIPriceEntry, 0)
 	for rows.Next() {
 		var entry api.OutboundAIPriceEntry
+		var above, inputPercent, outputPercent *int64
 		if err := rows.Scan(&entry.ModelPrefix, &entry.InputMillicentsPerMTok, &entry.CachedInputMillicentsPerMTok,
 			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
 			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
 			&entry.MillicentsPerMillionCharacters, &entry.MillicentsPerVideoSecond, &entry.MillicentsPerWebSearch,
 			&entry.MillicentsPerFileSearch, &entry.MillicentsPerCodeSessionGB, &entry.InputAudioMillicentsPerMTok,
-			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok); err != nil {
+			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok, &entry.CacheWrite1hMillicentsPerMTok,
+			&above, &inputPercent, &outputPercent); err != nil {
 			return nil, err
 		}
+		entry.LongContext = api.OutboundAILongContextFromColumns(above, inputPercent, outputPercent)
 		entries = append(entries, entry)
 	}
 	if err := rows.Err(); err != nil {

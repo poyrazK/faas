@@ -419,6 +419,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			"Source required", "multipart deploys require a 'source' file field"))
 		return
 	}
+	explicitSourceRoot := strings.TrimSpace(sourceRoot) != ""
 	sourceRoot, err = sourcecontext.DeploymentRoot(sourceRoot, app.RootDir)
 	if err != nil {
 		api.WriteProblem(w, api.ErrSourceInvalid("invalid source_root: "+err.Error()))
@@ -480,15 +481,16 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		devPatch = s.planDevPatch(r.Context(), app, sourcePath, sourceRoot, limits)
 	}
 	if sourceRoot != "" {
-		present, rootErr := archiveHasSourceRoot(sourcePath, sourceRoot)
+		resolved, present, rootErr := resolveArchiveSourceRoot(sourcePath, sourceRoot, explicitSourceRoot)
 		if rootErr != nil {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", rootErr.Error()))
 			return
 		}
 		if !present {
-			api.WriteProblem(w, api.ErrSourceInvalid(fmt.Sprintf("source_root %q is not present in the source archive", sourceRoot)))
+			api.WriteProblem(w, sourceRootMissingProblem(sourceRoot, explicitSourceRoot))
 			return
 		}
+		sourceRoot = resolved
 	}
 
 	// Wave 0 / year-one stateless-only: detect persistence-shaped
