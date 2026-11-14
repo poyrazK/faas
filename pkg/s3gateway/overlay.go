@@ -19,7 +19,10 @@ import (
 // never wrote, and has not deleted, is read through from the source; a
 // DELETE records a tombstone that hides the source's key; ListObjectsV2
 // merges both buckets. The branch's writes land in the branch bucket only.
-// Version, tagging, attribute and copy requests see the branch's own objects.
+// Version, tagging and attribute requests see the branch's own objects; a
+// copy whose source key only the parent holds copies from the parent
+// (copy-through). An as_of overlay reads each source key as it was at the
+// branch point (overlay_as_of.go).
 
 const (
 	overlayCacheTTL     = 30 * time.Second
@@ -93,15 +96,19 @@ func (h *Handler) bucketOverlay(ctx context.Context, bucket state.ObjectBucket) 
 // overlaySource is the request context that reads the overlay's source
 // bucket. It reports false when the bucket overlays nothing it can read:
 // no overlay, a deleted or unready source, or a consistency this gateway
-// does not serve.
+// does not serve. An as_of overlay whose source provider cannot list or
+// read versions is unavailable rather than read live, so a branch never
+// serves data newer than its branch point.
 func (h *Handler) overlaySource(ctx context.Context, req requestContext) (requestContext, bool, error) {
 	overlay, ok, err := h.bucketOverlay(ctx, req.bucket)
 	if err != nil || !ok {
 		return requestContext{}, false, err
 	}
 	source := overlay.Source
-	if source.ID == "" || source.State != "ready" || source.AccountID != req.bucket.AccountID ||
-		overlay.Consistency != state.ObjectBucketOverlayLiveParent {
+	if source.ID == "" || source.State != "ready" || source.AccountID != req.bucket.AccountID {
+		return requestContext{}, false, nil
+	}
+	if overlay.Consistency != state.ObjectBucketOverlayLiveParent && overlay.Consistency != state.ObjectBucketOverlayAsOf {
 		return requestContext{}, false, nil
 	}
 	backend, err := h.registry.Resolve(source.BackendID, source.BackendFingerprint)
@@ -111,7 +118,37 @@ func (h *Handler) overlaySource(ctx context.Context, req requestContext) (reques
 	through := req
 	through.bucket, through.provider = source, backend.Provider
 	through.encryptionConfig, through.objectLockConfig = backend.Encryption, backend.ObjectLock
+	through.copySource, through.copyGrantID = nil, ""
+	if overlay.Consistency == state.ObjectBucketOverlayAsOf {
+		_, lists := backend.Provider.(objectstorage.ObjectVersionLister)
+		_, reads := backend.Provider.(objectstorage.VersionReadPresigner)
+		if !lists || !reads || overlay.AsOf.IsZero() {
+			return requestContext{}, false, objectstorage.ErrUnavailable
+		}
+		through.overlayAsOf = overlay.AsOf
+	}
 	return through, true, nil
+}
+
+// overlayVersion is the source version an overlay reads for key: "" for a
+// live_parent overlay, the version current at the branch point for an
+// as_of one. found is false when an as_of source held no data for key then.
+// answered means the response is already written.
+func (h *Handler) overlayVersion(w http.ResponseWriter, r *http.Request, req, through requestContext, key string) (native string, found, answered bool) {
+	if through.overlayAsOf.IsZero() {
+		return "", true, false
+	}
+	lister := through.provider.(objectstorage.ObjectVersionLister)
+	version, live, err := asOfVersion(r.Context(), lister, through.bucket.PhysicalName, key, through.overlayAsOf,
+		func() bool { return h.recordProviderRequest(w, r, req) })
+	switch {
+	case errors.Is(err, errOverlayListAnswered):
+		return "", false, true
+	case err != nil:
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return "", false, true
+	}
+	return version.ProviderVersionID, live, false
 }
 
 // readThroughOverlay serves a GET or HEAD the branch bucket answered 404 from
@@ -136,7 +173,14 @@ func (h *Handler) readThroughOverlay(w http.ResponseWriter, r *http.Request, req
 	if hidden[key] {
 		return false
 	}
-	upstream, err := h.prepareGatewayRead(r, through, key, "")
+	native, found, answered := h.overlayVersion(w, r, req, through, key)
+	if answered {
+		return true
+	}
+	if !found {
+		return false
+	}
+	upstream, err := h.prepareGatewayRead(r, through, key, native)
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return true
@@ -242,14 +286,11 @@ func (h *Handler) listOverlayObjects(w http.ResponseWriter, r *http.Request, req
 	if err != nil {
 		return objectstorage.ObjectPage{}, err
 	}
-	if !h.recordProviderRequest(w, r, req) {
-		return objectstorage.ObjectPage{}, errOverlayListAnswered
-	}
-	sourcePage, err := listProviderObjects(r.Context(), through.provider, through.bucket.PhysicalName, list)
+	branch := overlayListEntries(branchPage)
+	source, sourceHorizon, err := h.overlaySourceEntries(w, r, req, through, list)
 	if err != nil {
 		return objectstorage.ObjectPage{}, err
 	}
-	branch, source := overlayListEntries(branchPage), overlayListEntries(sourcePage)
 	var keys []string
 	for _, e := range source {
 		if !e.prefix {
@@ -262,19 +303,15 @@ func (h *Handler) listOverlayObjects(w http.ResponseWriter, r *http.Request, req
 		return objectstorage.ObjectPage{}, objectstorage.ErrUnavailable
 	}
 	var horizon *overlayListEntry
-	for _, l := range []struct {
-		entries   []overlayListEntry
-		truncated bool
-	}{{branch, branchPage.NextCursor != ""}, {source, sourcePage.NextCursor != ""}} {
-		if !l.truncated {
-			continue
-		}
-		if len(l.entries) == 0 {
+	if branchPage.NextCursor != "" {
+		if len(branch) == 0 {
 			return objectstorage.ObjectPage{}, objectstorage.ErrUnavailable
 		}
-		if last := l.entries[len(l.entries)-1]; horizon == nil || last.key < horizon.key {
-			horizon = &last
-		}
+		last := branch[len(branch)-1]
+		horizon = &last
+	}
+	if sourceHorizon != nil && (horizon == nil || sourceHorizon.key < horizon.key) {
+		horizon = sourceHorizon
 	}
 	var out []overlayListEntry
 	i, j, full := 0, 0, false
@@ -319,6 +356,42 @@ func (h *Handler) listOverlayObjects(w http.ResponseWriter, r *http.Request, req
 		page.NextCursor = encodeOverlayListCursor(horizon.after())
 	}
 	return page, nil
+}
+
+// overlaySourceEntries lists the source side of a merged page: the source's
+// current objects, or for an as_of overlay its objects at the branch point.
+// horizon is set when the source has more: no source entry past it was read.
+func (h *Handler) overlaySourceEntries(w http.ResponseWriter, r *http.Request, req, through requestContext, list objectstorage.ObjectListRequest) ([]overlayListEntry, *overlayListEntry, error) {
+	if through.overlayAsOf.IsZero() {
+		if !h.recordProviderRequest(w, r, req) {
+			return nil, nil, errOverlayListAnswered
+		}
+		page, err := listProviderObjects(r.Context(), through.provider, through.bucket.PhysicalName, list)
+		if err != nil {
+			return nil, nil, err
+		}
+		entries := overlayListEntries(page)
+		if page.NextCursor == "" {
+			return entries, nil, nil
+		}
+		if len(entries) == 0 {
+			return nil, nil, objectstorage.ErrUnavailable
+		}
+		last := entries[len(entries)-1]
+		return entries, &last, nil
+	}
+	lister := through.provider.(objectstorage.ObjectVersionLister)
+	listing, err := listAsOf(r.Context(), lister, through.bucket.PhysicalName, list, through.overlayAsOf,
+		func() bool { return h.recordProviderRequest(w, r, req) })
+	if err != nil {
+		return nil, nil, err
+	}
+	if listing.horizon == "" {
+		return listing.entries, nil, nil
+	}
+	// The horizon is already a start-after boundary: a plain key entry's
+	// after() is its key.
+	return listing.entries, &overlayListEntry{key: listing.horizon}, nil
 }
 
 // errOverlayListAnswered means the listing already wrote its error response.
