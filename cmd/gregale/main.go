@@ -176,6 +176,11 @@ func run(args []string) (status int) {
 		invocationTrace = &httpDebugRecorder{out: osStderr}
 		activeHTTPDebug.Store(invocationTrace)
 	}
+	// ADR-20261112223000 §5: help read by a coding agent starts with a
+	// pointer to the task guide, on stderr so help's stdout is unchanged.
+	if hasHelpFlag(args) || (len(args) > 0 && args[0] == "help") || len(args) == 0 {
+		printAgentHint(osStderr)
+	}
 	// ADR-20261026145832: a path in the new command tree runs the command
 	// that implements it today, so help, gating and dispatch see that path.
 	typed := args
@@ -337,6 +342,9 @@ func run(args []string) (status int) {
 		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
 		// gregale-<command>(1). Dispatcher is in man.go.
 		return cmdMan(args[1:])
+	case "guide":
+		// ADR-20261112223000 §4: the task index; offline, like man.
+		return cmdGuide(args[1:])
 	}
 	if err := validateSelectedProfile(); err != nil {
 		return printErr("Invalid connection profile", err)

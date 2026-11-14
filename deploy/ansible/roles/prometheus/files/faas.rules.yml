@@ -5121,6 +5121,22 @@ groups:
           description: "vmmd's base scan gate has kept refusing boots on {{ $labels.base }} for fifteen minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
 
+      # Deploy-path review P5: a scan that newly finds a fixable CRITICAL in a
+      # base keeps admitting boots of apps already serving on it for
+      # api.BaseScanCriticalBootGrace (72 h) while new deployments on it are
+      # refused. Boots are sparse on a quiet base, so look back an hour; the
+      # base is refused outright when the grace ends.
+      - alert: FaasBaseScanCriticalInGrace
+        expr: sum by (node, base) (increase(vmmd_base_scan_grace_admits_total[1h])) > 0
+        labels:
+          severity: page
+          component: vmmd
+          family: base_scan_gate
+        annotations:
+          summary: "{{ $labels.base }} has a fixable CRITICAL; serving apps boot on grace, new deploys refused"
+          description: "A scan of {{ $labels.base }} found a fix-available CRITICAL vulnerability. vmmd on {{ $labels.node }} keeps booting apps already serving on it for 72 hours from the first finding, but every new deployment on the runtime fails with scan_critical. Publish a patched base before the grace ends, or every boot on it is refused and FaasBaseScanRefusingBoots follows."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
+
       # Bug hunt 2026-10-28 H102: a shared-base scan that fails for a reason
       # other than the bytes keeps the last complete scan in force for
       # api.SharedBaseScanFailureGrace instead of refusing every boot. Boots
