@@ -2788,11 +2788,17 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 		return false, nil
 	}
 	a.Status = AccountSuspended
-	a.PastDueAt = nil
 	m.storeRouteCheckAccountLocked(id, a)
 	m.freeQuotaSuspended[id] = true
 	m.syncPersonalOrgStatusLocked(id, AccountSuspended)
 	return true, nil
+}
+
+// QuotaSuspended mirrors PgStore.QuotaSuspended.
+func (m *MemStore) QuotaSuspended(_ context.Context, id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.freeQuotaSuspended[id], nil
 }
 
 // RestoreFreeQuotaSuspension mirrors PgStore.RestoreFreeQuotaSuspension.

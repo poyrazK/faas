@@ -62,3 +62,16 @@ func (d *Dunning) moveToFreeForNonpayment(ctx context.Context, acct state.Accoun
 	d.p.Log.Info("meter: dunning moved to free for non-payment", "account", acct.ID, "from_plan", previous, "from_status", from)
 	return nil
 }
+
+// quotaSuspended reports whether id is held by the Free quota stop rather
+// than suspended for non-payment. A store without the reader has no quota
+// stop to tell apart.
+func quotaSuspended(ctx context.Context, store any, id string) (bool, error) {
+	r, ok := store.(interface {
+		QuotaSuspended(context.Context, string) (bool, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	return r.QuotaSuspended(ctx, id)
+}

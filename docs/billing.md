@@ -63,6 +63,12 @@ Only the owner can change it, with MFA and a recent step-up. When the organizati
 
 When you change your sign-in email, your own billing customer moves to the new address, and so does the billing email of each organization that billed to your previous address. If the billing provider refuses a move (for example, the new address already pays for another account), that billing email stays as it was and the new address gets an email naming what to update.
 
+## Failed payments
+
+When a payment fails, the account goes past due and you get an email. Your apps, databases and storage keep running, but new deploys are blocked until the payment goes through. Pay from the billing portal (`/dashboard/billing`) to end it.
+
+If the payment is still unpaid seven days later, the account moves to the Free plan and you get an email saying so. It stays active: nothing is suspended or deleted because of the failed payment. From then on the Free plan's limits apply, as they do to any Free account, including the monthly Free quota stop. The unpaid balance stays on the account. Paying it, or starting a new paid subscription, clears it and returns you to a paid plan.
+
 ## Spend cap
 
 A spend cap is a hard ceiling on the overage an account is billed in a UTC

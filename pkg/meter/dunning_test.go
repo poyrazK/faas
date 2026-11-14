@@ -190,6 +190,21 @@ func TestDunning_PastDuePast7d_MovesToFree(t *testing.T) {
 	if err := d.RunOnce(ctx); err != nil || mailer.count() != 1 {
 		t.Fatalf("second sweep: %v, mails %d", err, mailer.count())
 	}
+	// A Free quota stop keeps the unpaid-balance marker, and the sweep
+	// neither lifts the stop nor moves the account again.
+	if ok, err := store.SuspendAccountForFreeQuota(ctx, acct.ID); err != nil || !ok {
+		t.Fatalf("quota stop: %v %v", ok, err)
+	}
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatalf("sweep under the quota stop: %v", err)
+	}
+	got, err = store.AccountByID(ctx, acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.AccountSuspended || got.PastDueAt == nil || !got.MovedToFreeForNonpayment() || mailer.count() != 1 {
+		t.Fatalf("under the quota stop: status %s past_due_at %v mails %d; want suspended with the balance marked", got.Status, got.PastDueAt, mailer.count())
+	}
 }
 
 // An account the old ladder suspended for non-payment, even past 21 days, is

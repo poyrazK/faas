@@ -221,6 +221,14 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 			if acct.PastDueAt == nil {
 				continue
 			}
+			// A Free quota stop on an account already moved to Free keeps
+			// its unpaid-balance marker; the stop is not lifted here.
+			if quota, err := quotaSuspended(ctx, d.p.Store, acct.ID); err != nil {
+				fail(acct, "quota suspension", err)
+				continue
+			} else if quota {
+				continue
+			}
 			if err := d.moveToFreeForNonpayment(ctx, acct, state.AccountSuspended, now); err != nil {
 				fail(acct, "move to free", err)
 			}

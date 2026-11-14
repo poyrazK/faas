@@ -160,6 +160,7 @@ func Run(t *testing.T, open Open) {
 		{"pending_billing_skips_free_subjects", testPendingBillingSkipsFreeSubjects},
 		{"account_lifecycle_leaves_the_dunning_ladder", testAccountLifecycleLeavesTheDunningLadder},
 		{"dunning_deletion_is_scheduled_and_paid_back", testDunningDeletionIsScheduledAndPaidBack},
+		{"nonpayment_marker_survives_the_quota_stop", testNonpaymentMarkerSurvivesTheQuotaStop},
 		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
 		{"app_restore_honours_quota", testAppRestoreHonoursQuota},
 		{"app_restore_keeps_crons", testAppRestoreKeepsCrons},

@@ -1018,6 +1018,8 @@ func syncPersonalOrgStatus(ctx context.Context, tx pgx.Tx, accountID string, sta
 // SuspendAccountForFreeQuota applies the Free plan's monthly hard stop.
 // Only an active account is suspended, so a dunning or operator suspension
 // is never relabelled as a quota stop that the next month would lift.
+// past_due_at is kept: an account moved to Free for non-payment keeps its
+// unpaid-balance marker through the stop (billing review 2026-11-13, R9-1).
 func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bool, error) {
 	if n, err := ownersql.New().SuspendForQuota(ctx, s.pool, mustPgUUID(id)); err != nil {
 		return false, mapErr(err)
@@ -1026,8 +1028,25 @@ func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bo
 	}
 	return s.flipAccountForFreeQuota(ctx, id, `
 		update accounts
-		   set status = 'suspended', suspended_reason = 'free_quota', past_due_at = null
+		   set status = 'suspended', suspended_reason = 'free_quota'
 		 where id = $1 and status = 'active'`, AccountSuspended)
+}
+
+// QuotaSuspended reports whether the account or resource-owning organization
+// id is suspended by the plan's monthly quota stop (SuspendAccountForFreeQuota:
+// the Free compute allowance or an unbilled egress allowance), rather than for
+// payment, abuse or by an operator. That stop parks the subject's apps until
+// the month ends or the plan grows; it does not stop its other resources.
+func (s *PgStore) QuotaSuspended(ctx context.Context, id string) (bool, error) {
+	var suspended bool
+	err := s.pool.QueryRow(ctx, `
+		select exists(select 1 from accounts where id = $1::uuid and status = 'suspended' and suspended_reason = 'free_quota')
+		    or exists(select 1 from orgs where id = $1::uuid and not personal_org and status = 'suspended' and suspended_reason = 'free_quota')`,
+		id).Scan(&suspended)
+	if err != nil {
+		return false, mapErr(err)
+	}
+	return suspended, nil
 }
 
 // RestoreFreeQuotaSuspension lifts only a suspension that
