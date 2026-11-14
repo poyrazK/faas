@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"fmt"
@@ -171,6 +172,9 @@ func renderProjectEnvironmentBranch(environment api.ProjectEnvironmentResponse) 
 			}
 			_, _ = fmt.Fprintf(osStdout, "  database %s: copy of %s (%s)\n", d.Name, d.SourceDatabaseID, copied)
 		}
+		for _, bucket := range b.Buckets {
+			_, _ = fmt.Fprintf(osStdout, "  bucket %s: %s\n", cmp.Or(bucket.Name, bucket.SourceBucketID), environmentBranchBucketLine(bucket))
+		}
 		for _, w := range b.Workloads {
 			switch {
 			case w.SourceDeployment != "":
@@ -218,4 +222,17 @@ func environmentBranchDataLine(state, message string) string {
 	default:
 		return state
 	}
+}
+
+// environmentBranchBucketLine says how a branch bucket reads its parent.
+func environmentBranchBucketLine(b api.ProjectEnvironmentBranchBucket) string {
+	switch {
+	case b.CopyBucketID == "":
+		return "not made yet"
+	case b.Consistency == "as_of":
+		return "reads the parent as of " + b.AsOf
+	case b.Consistency == "live_parent":
+		return "reads the parent's current objects (versioning was off)"
+	}
+	return b.Consistency
 }

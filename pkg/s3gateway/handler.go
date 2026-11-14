@@ -285,6 +285,12 @@ type requestContext struct {
 	encryption       objectstorage.ResolvedObjectEncryption
 	copySource       *state.ObjectBucket
 	copyGrantID      string
+	// overlayAsOf is set on an overlay's source context when the branch
+	// reads the source as of its branch point (ADR-20261031193635).
+	overlayAsOf time.Time
+	// overlayCopyVersion pins a copy-through to the source version an as_of
+	// overlay reads (overlay_copy.go).
+	overlayCopyVersion string
 	// read is set when the cached read admission let this GET or HEAD
 	// through; its counts are then batched instead of written.
 	read *objectstorage.AdmittedRead
@@ -929,6 +935,9 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, req request
 	copy.SourceProviderVersionID, ok = h.resolveCopyVersion(w, r, copySourceContext(req), source, false)
 	if !ok {
 		return
+	}
+	if req.overlayCopyVersion != "" {
+		copy.SourceProviderVersionID = req.overlayCopyVersion
 	}
 	if h.tryTrackedGatewayCopy(w, r, req, copy) {
 		return
