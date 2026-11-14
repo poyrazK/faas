@@ -376,6 +376,25 @@ func TestScheduledSnapshotRetainsLastGoodCaptureAndRecoversAcknowledgement(t *te
 func TestScheduledQualityCoverageUnknownAndTenantReferences(t *testing.T) {
 	s, store, w, source, target, p := scheduledFixture(t)
 	p = scheduledTick(t, store, w, p)
+	config := normalizedOperations(p.Operations)
+	now := time.Now().UTC()
+	minute := now.Hour()*60 + now.Minute()
+	config.Workload = &api.DataPipelineWorkload{Window: &api.DataPipelineWorkWindow{StartMinuteUTC: (minute + 2) % 1440, EndMinuteUTC: (minute + 3) % 1440}}
+	for _, window := range []*api.DataPipelineWorkWindow{config.Workload.Window, nil} {
+		config.Workload.Window = window
+		if err := s.Operations(t.Context(), p.AccountID, p.ID, api.DataPipelineOperationsRequest{ExpectedRevision: p.Revision, Action: "configure", Config: config}); err != nil {
+			t.Fatal(err)
+		}
+		var err error
+		p, err = store.Get(t.Context(), p.AccountID, p.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next, err := time.Parse(time.RFC3339Nano, p.OperationsStatus.Quality.NextRunAt)
+		if err != nil || !workAllowed(p, next) || p.OperationsStatus.Quality.State != "failed" {
+			t.Fatal("window edit lost the result or advertised a forbidden run", p.OperationsStatus.Quality, err)
+		}
+	}
 	if _, err := target.Exec(t.Context(), `UPDATE orders SET total=10`); err != nil {
 		t.Fatal(err)
 	}
@@ -458,15 +477,27 @@ func TestScheduledSnapshotPublishesAllTablesUnderTheFinalFence(t *testing.T) {
 	if p.State != "live" {
 		t.Fatal("two-table capture", p.Reason)
 	}
+	if _, err = target.Exec(t.Context(), `CREATE INDEX orders_total_advice ON orders(total)`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = source.Exec(t.Context(), `UPDATE customers SET name='after'; UPDATE orders SET total=30`); err != nil {
 		t.Fatal(err)
 	}
 	p.OperationsStatus.Snapshot.State = "running"
 	p.OperationsStatus.Snapshot.RunID = uuid.NewString()
+	access := w.Engine.Target
+	var active *pgx.Conn
+	w.Engine.Target = func(ctx context.Context, account, id string, run func(*pgx.Conn, string) error) error {
+		return access(ctx, account, id, func(c *pgx.Conn, owner string) error { active = c; return run(c, owner) })
+	}
 	fences := 0
-	ob := w.Engine.reconcileSnapshot(workloadContext(t.Context(), p), p, raw, func(context.Context) error {
+	ob := w.Engine.reconcileSnapshot(workloadContext(t.Context(), p), p, raw, func(checkCtx context.Context) error {
 		fences++
 		if fences == 2 {
+			var indexes int
+			if err := active.QueryRow(checkCtx, `SELECT count(*) FROM pg_index i JOIN pg_class t ON t.oid=i.indrelid WHERE t.relnamespace=pg_my_temp_schema() AND t.relname LIKE 'gregale_snapshot_%'`).Scan(&indexes); err != nil || indexes != len(p.Tables) {
+				t.Error("capture duplicated public target indexes in temporary staging", indexes, err)
+			}
 			return ErrConflict
 		}
 		return nil

@@ -173,6 +173,15 @@ func (s *PostgresStore) Operations(ctx context.Context, account, id string, r ap
 		if p.Operations == nil || string(operationsJSON(p.Operations.Quality)) != string(operationsJSON(c.Quality)) {
 			status.Quality = nil
 		}
+		if status.Quality != nil {
+			next, _ := time.Parse(time.RFC3339Nano, status.Quality.NextRunAt)
+			if next.Before(time.Now()) {
+				next = time.Now().UTC()
+			}
+			scheduled := p
+			scheduled.Operations = c
+			status.Quality.NextRunAt = nextWorkTime(scheduled, next).Format(time.RFC3339Nano)
+		}
 		if status.Snapshot != nil && c.Snapshot != nil {
 			// Editing quality or work budgets must not wake an idle source.
 			// Preserve attempts/receipts and adjust only the scheduled time.

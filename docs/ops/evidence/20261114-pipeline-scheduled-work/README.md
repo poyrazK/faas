@@ -31,7 +31,8 @@ the preview-only pipeline surface.
 The local TLS/native baseline passed: pipeline 591.015s, HTTP 28.758s, source
 adapter 0.374s and dashboard 0.563s. After the final configuration/safety-deadline
 fixes, the TLS snapshot/quality regressions and native verification window,
-cancellation and one-batch-budget regression passed again (10.746s). The final
+cancellation and one-batch-budget regression passed again (6.686s), including
+quality-window rescheduling and staging without redundant target indexes. The final
 domain suite passed in 97.691s; HTTP/dashboard control checks also passed.
 The public CLI, apidserver, clone-registry and migrated-capacity checks passed
 (5.920s, 0.494s, 36.075s and 30.523s respectively). Source qualification is still
@@ -41,7 +42,17 @@ Schema dump/migration and SQLC generation passed, along with OpenAPI AST parity,
 Node generation/build, Python generation/import/DTO round trip, migration online
 safety, test-store ownership, sealing/problem policy, text encoding, security-rule
 retention, ADR numbering and trimpath checks. Concise command output is collected
-beside this file. The existing full race-enabled pipeline acceptance remains
+beside this file. All changed runtime packages passed golangci-lint v2.14.0,
+including CLI/server and the final pipeline changes. Existing server dashboard
+CSRF/account-isolation journeys passed (1.195s).
+
+- [Native/TLS baseline](native-baseline.txt), [final scheduled/TLS checks](scheduled-tls.txt)
+- [Domain](domain.txt), [HTTP/dashboard](customer-controls.txt), [server dashboard](server-dashboard.txt)
+- [CLI/server/clone/capacity](public-and-capacity.txt)
+- [Core lint](lint-core.txt), [domain lint](lint-domains.txt), [final pipeline lint](lint-pipeline.txt), [generated lint](lint-generated.txt)
+- [OpenAPI parity](openapi.txt), [migration online safety](migration-safety.txt)
+
+The existing full race-enabled pipeline acceptance remains
 available through `make test-data-pipeline`; local TLS acceptance in this evidence
 uses the same pinned fixtures without the race build.
 

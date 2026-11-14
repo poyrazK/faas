@@ -225,7 +225,7 @@ func (e *Engine) copySnapshot(ctx context.Context, p Pipeline, target *pgx.Conn,
 		if _, err = tx.Exec(ctx, "SET LOCAL ROLE "+ident(owner)); err != nil {
 			return nil, err
 		}
-		if _, err = tx.Exec(ctx, "CREATE TEMP TABLE "+ident("gregale_snapshot_"+strconv.Itoa(i))+" (LIKE "+tableIdent(r.Name)+" INCLUDING ALL) ON COMMIT DROP"); err != nil {
+		if _, err = tx.Exec(ctx, snapshotStageDDL(r, "gregale_snapshot_"+strconv.Itoa(i))); err != nil {
 			return nil, err
 		}
 		if _, err = tx.Exec(ctx, "SET LOCAL ROLE NONE"); err != nil {
@@ -331,6 +331,24 @@ func (e *Engine) copySnapshot(ctx context.Context, p Pipeline, target *pgx.Conn,
 	return &receipt, nil
 }
 
+// Stage only the reviewed source columns and their primary key. Copying public
+// target indexes or expressions would add unbudgeted work to every refresh.
+func snapshotStageDDL(r relation, name string) string {
+	parts, keys := []string{}, []string{}
+	for _, c := range r.Columns {
+		definition := ident(c.Name) + " " + c.Type
+		if c.NotNull {
+			definition += " NOT NULL"
+		}
+		parts = append(parts, definition)
+	}
+	for _, c := range primaryColumns(r) {
+		keys = append(keys, ident(c.Name))
+	}
+	parts = append(parts, "PRIMARY KEY ("+strings.Join(keys, ",")+")")
+	return "CREATE TEMP TABLE " + ident(name) + " (" + strings.Join(parts, ",") + ") ON COMMIT DROP"
+}
+
 func (e *Engine) admitSnapshot(ctx context.Context, p Pipeline, raw string, source *pgxpool.Pool, target *pgx.Conn) error {
 	if e.Capacity == nil {
 		return nil
@@ -374,7 +392,7 @@ func validateSnapshotTarget(ctx context.Context, p Pipeline, tx pgx.Tx, r relati
 	}
 	for i, c := range actual.Columns {
 		want := r.Columns[i]
-		if c.Name != want.Name || c.Type != want.Type || c.NotNull != want.NotNull || c.Key != want.Key {
+		if c.Unsupported || c.Name != want.Name || c.Type != want.Type || c.NotNull != want.NotNull || c.Key != want.Key {
 			return ErrConflict
 		}
 	}
