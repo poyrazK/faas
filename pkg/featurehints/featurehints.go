@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
 // Hint IDs. They are stable: agents and the eval key on them.
@@ -352,7 +353,7 @@ func managed(in Input, _ []api.PlanWorkload) []api.FeatureHint {
 				ID:        IDNotRunDatastore,
 				Workloads: services,
 				Applied:   applied,
-				Change:    fmt.Sprintf("Point the services at a %s you run elsewhere.", m.Kind),
+				Change:    datastoreChange(m.Kind),
 				Commands:  commands,
 			})
 		}
@@ -434,4 +435,15 @@ func containsFold(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// datastoreChange says where a datastore Gregale does not run should live:
+// apps park to snapshots and keep no data, so a datastore image is refused
+// even when deployed on its own (stateless_only_violation).
+func datastoreChange(kind string) string {
+	change := fmt.Sprintf("Point the services at a hosted %s", kind)
+	if hosted, ok := statefuldenylist.Set[kind]; ok {
+		change += " (" + hosted + ")"
+	}
+	return change + ". Gregale will not run it as an app either: apps park to snapshots and keep no data."
 }
