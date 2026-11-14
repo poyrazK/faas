@@ -1372,7 +1372,7 @@ export class AdminService {
      */
     name: string,
   }): CancelablePromise<ObsNodeProbeNotifications> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/obs/nodes/{name}/probe-notifications',
       path: {
