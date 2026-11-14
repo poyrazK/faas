@@ -429,3 +429,11 @@ func ValidateOrgSlug(slug string) string {
 	}
 	return ""
 }
+
+// OrgSecurityPolicy is GET/PUT /v1/orgs/{slug}/security-policy (ADR
+// 20261113180000). RequireMFA keeps members without two-factor
+// authentication out of the organization until they turn it on.
+type OrgSecurityPolicy struct {
+	RequireMFA bool   `json:"require_mfa"`
+	UpdatedAt  string `json:"updated_at,omitempty"`
+}

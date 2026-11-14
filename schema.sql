@@ -18722,6 +18722,24 @@ END $$;
 
 
 --
+-- Name: guard_org_owner_account_active(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_org_owner_account_active() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.role = 'owner' AND NEW.removed_at IS NULL AND NOT EXISTS (
+        SELECT 1 FROM accounts a WHERE a.id = NEW.account_id AND a.status IN ('active', 'past_due')
+    ) THEN
+        RAISE EXCEPTION 'only an active account can own an organization'
+            USING ERRCODE = '23514', CONSTRAINT = 'org_owner_account_inactive';
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_org_queue_bindings(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -50738,6 +50756,19 @@ ALTER SEQUENCE public.org_memberships_access_revision_seq OWNED BY public.org_me
 
 
 --
+-- Name: org_security_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.org_security_policies (
+    org_id uuid NOT NULL,
+    require_mfa boolean DEFAULT false NOT NULL,
+    updated_by_account_id uuid,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT org_security_policies_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
 -- Name: outbound_admission_leases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -70814,6 +70845,14 @@ ALTER TABLE ONLY public.org_invitations
 
 ALTER TABLE ONLY public.org_memberships
     ADD CONSTRAINT org_memberships_pkey PRIMARY KEY (org_id, account_id);
+
+
+--
+-- Name: org_security_policies org_security_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_security_policies
+    ADD CONSTRAINT org_security_policies_pkey PRIMARY KEY (org_id);
 
 
 --
@@ -92811,6 +92850,13 @@ CREATE TRIGGER org_membership_access_revision BEFORE UPDATE ON public.org_member
 
 
 --
+-- Name: org_memberships org_memberships_owner_account_active; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_memberships_owner_account_active BEFORE INSERT OR UPDATE OF role, removed_at ON public.org_memberships FOR EACH ROW WHEN ((new.role = 'owner'::text)) EXECUTE FUNCTION public.guard_org_owner_account_active();
+
+
+--
 -- Name: orgs org_object_buckets_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -105299,6 +105345,22 @@ ALTER TABLE ONLY public.org_memberships
 
 ALTER TABLE ONLY public.org_memberships
     ADD CONSTRAINT org_memberships_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: org_security_policies org_security_policies_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_security_policies
+    ADD CONSTRAINT org_security_policies_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: org_security_policies org_security_policies_updated_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_security_policies
+    ADD CONSTRAINT org_security_policies_updated_by_account_id_fkey FOREIGN KEY (updated_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --
