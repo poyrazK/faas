@@ -13,7 +13,7 @@ synchronization does not require application Auth.
 
 ## Neon source onboarding
 
-Run `gregale pipeline connection guide neon` without logging in, or open
+Run `gregale pipeline connection explain neon` without logging in, or open
 **Connect a Neon source** in the dashboard. Use a direct PostgreSQL 16 endpoint;
 `-pooler` URLs are rejected before connecting. Keep `sslmode=verify-full`.
 Enable logical replication in Neon project settings only after reviewing its
@@ -77,10 +77,10 @@ To change tenant memberships, save the complete replacement array in a private
 `members.json` file, preview the diff, then approve its returned `tenant_change.id`:
 
 ```sh
-gregale pipeline access PIPELINE_ID --members-file ./members.json
-gregale pipeline access PIPELINE_ID --approve SAVED_CHANGE_ID --wait
+gregale pipeline access review PIPELINE_ID --members-file ./members.json
+gregale pipeline access review PIPELINE_ID --approve SAVED_CHANGE_ID --wait
 # Or discard an unapproved preview:
-gregale pipeline access PIPELINE_ID --discard
+gregale pipeline access review PIPELINE_ID --discard
 ```
 
 The public API is `POST /v1/data/pipelines/{id}/tenant-readers` with
@@ -1439,9 +1439,9 @@ The setup form also offers this preview in a separate tab before starting.
 ## Freshness confirmation targets
 
 ```sh
-gregale pipeline freshness PIPELINE_UUID --target 30s
-gregale pipeline freshness PIPELINE_UUID
-gregale pipeline freshness PIPELINE_UUID --target 0
+gregale pipeline freshness set PIPELINE_UUID --target 30s
+gregale pipeline freshness set PIPELINE_UUID
+gregale pipeline freshness set PIPELINE_UUID --target 0
 ```
 
 Targets are disabled by default; enabled targets range from 15 seconds to 24 hours
@@ -1464,11 +1464,11 @@ monitors from evaluating targets they do not understand.
 Describe the filter and order columns used by a read query, without SQL or values:
 
 ```sh
-gregale pipeline indexes PIPELINE_UUID --table orders \
+gregale pipeline index review PIPELINE_UUID --table orders \
   --filters status --order-by=-created_at --max-index-bytes 16777216 --wait
 # Review the returned statement, limits and frozen advice ID, then approve it:
-gregale pipeline indexes PIPELINE_UUID --approve ADVICE_ID --wait
-gregale pipeline indexes PIPELINE_UUID
+gregale pipeline index review PIPELINE_UUID --approve ADVICE_ID --wait
+gregale pipeline index review PIPELINE_UUID
 ```
 
 The dashboard offers the same preview and explicit approval. API/SDK clients use
@@ -1531,12 +1531,12 @@ review those separately. For a new table, add its explicit column list to the
 map. Run a fresh connection check/discovery first.
 
 ```sh
-gregale pipeline evolve PIPELINE_UUID --file selection.json --revision REVISION
+gregale pipeline evolution review PIPELINE_UUID --file selection.json --revision REVISION
 # Inspect evolution.before and evolution.after, then approve the saved ID:
-gregale pipeline evolve PIPELINE_UUID --approve EVOLUTION_ID --revision NEXT_REVISION
+gregale pipeline evolution review PIPELINE_UUID --approve EVOLUTION_ID --revision NEXT_REVISION
 gregale pipeline status PIPELINE_UUID
 # Review schema_review.changes and its supported flag, then approve that exact ID:
-gregale pipeline evolve PIPELINE_UUID --approve-schema SCHEMA_REVIEW_ID --revision CURRENT_REVISION
+gregale pipeline evolution review PIPELINE_UUID --approve-schema SCHEMA_REVIEW_ID --revision CURRENT_REVISION
 gregale pipeline wait PIPELINE_UUID
 ```
 
@@ -1648,7 +1648,7 @@ when the Data API configuration permits that route; the default read-only API
 uses embedded GET reads and retains its existing RPC method restrictions.
 
 A failed API refresh leaves the owner change approved. Retry it with
-`gregale pipeline evolve PIPELINE_UUID --retry EVOLUTION_ID --revision REVISION`
+`gregale pipeline evolution review PIPELINE_UUID --retry EVOLUTION_ID --revision REVISION`
 or **Retry API refresh** in the dashboard. This reuses the frozen declaration
 and a bounded new restart attempt. Remove a table's relationships through a
 reviewed declaration before retiring that table. Full resync retires

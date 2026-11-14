@@ -608,6 +608,28 @@ and control queries and proves that the stale control is rejected. This was
 found in the new local Auth synchronization implementation; no production impact
 is claimed.
 
+## PIPE-019 — New pipeline controls are missing command-tree names and help
+
+**Status:** common controls and evolution fixed during merge qualification;
+scheduled-work help is tracked in PR #7264.
+
+[Data API acceptance run 43618311957](https://github.com/poyrazK/faas/actions/runs/43618311957)
+exposed pipeline commands that bypassed the standard CLI tree and
+evolution/operations parsers that only returned a
+flag listing for `--help`. This omitted structured usage, completion and
+reference metadata. `TestCliTreeVerbBaseline` and
+`TestEveryUsageSubcommandHasManifestHelp` failed while the focused pipeline
+journeys passed. The same run caught an older deploy hint spelling
+`secrets check`; that hint now uses the standard `env check` path.
+
+Standard tree aliases now expose source guidance, tenant access, freshness,
+index advice and evolution without changing the existing command spellings.
+Evolution help lists every action and its revision requirement. Existing tree,
+usage/help, message and documentation checks cover discovery; the evolution
+approval regression runs both spellings and verifies the frozen change ID and
+revision without replacing saved intent. The scheduled-work branch adds the
+operations manifest and canonical alias using the same checks.
+
 ## Customer roadmap
 
 Reviewed 2026-11-13 against the operability branch. CUST-007–009 are now the
