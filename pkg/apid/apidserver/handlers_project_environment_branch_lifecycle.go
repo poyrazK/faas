@@ -69,6 +69,10 @@ func (s *server) getProjectEnvironmentBranch(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrCapacity("could not list the branch's database copies"))
 		return
 	}
+	if response.Branch.Buckets, err = s.environmentBranchBuckets(ctx, branch); err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not list the branch's buckets"))
+		return
+	}
 	if response.Branch.Workloads, err = s.environmentBranchWorkloadStatus(ctx, store, acct, project, branch); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list the branch's workloads"))
 		return
@@ -88,6 +92,38 @@ func (s *server) environmentBranchDatabases(ctx context.Context, branch state.Pr
 	out := make([]api.ProjectEnvironmentBranchDatabase, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, api.ProjectEnvironmentBranchDatabase{SourceDatabaseID: row.SourceDatabaseID, Name: row.CopyName, CopyDatabaseID: row.CopyDatabaseID})
+	}
+	return out, nil
+}
+
+// environmentBranchBuckets lists the overlay buckets the branch owns and how
+// each reads its parent bucket.
+func (s *server) environmentBranchBuckets(ctx context.Context, branch state.ProjectEnvironmentBranch) ([]api.ProjectEnvironmentBranchBucket, error) {
+	buckets, ok := s.store.(state.ProjectEnvironmentBranchBucketStore)
+	overlays, overlaid := s.store.(state.ObjectBucketOverlayStore)
+	if !ok || !overlaid {
+		return nil, nil
+	}
+	rows, err := buckets.ListProjectEnvironmentBranchBuckets(ctx, branch.EnvironmentID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.ProjectEnvironmentBranchBucket, 0, len(rows))
+	for _, row := range rows {
+		b := api.ProjectEnvironmentBranchBucket{SourceBucketID: row.SourceBucketID, CopyBucketID: row.CopyBucketID}
+		if row.CopyBucketID != "" {
+			overlay, err := overlays.ObjectBucketOverlay(ctx, row.CopyBucketID)
+			switch {
+			case err == nil:
+				b.Name, b.Consistency = overlay.Source.Name, overlay.Consistency
+				if overlay.Consistency == state.ObjectBucketOverlayAsOf {
+					b.AsOf = overlay.AsOf.UTC().Format(time.RFC3339Nano)
+				}
+			case !errors.Is(err, state.ErrNotFound):
+				return nil, err
+			}
+		}
+		out = append(out, b)
 	}
 	return out, nil
 }

@@ -76,6 +76,9 @@ func (h *Handler) multipartCopyRequest(w http.ResponseWriter, r *http.Request, r
 	}
 	c.SourceKey = source.Key
 	c.SourceProviderVersionID, ok = h.resolveCopyVersion(w, r, copySourceContext(req), source, true)
+	if req.overlayCopyVersion != "" {
+		c.SourceProviderVersionID = req.overlayCopyVersion
+	}
 	if !ok {
 		return c, req, false
 	}
