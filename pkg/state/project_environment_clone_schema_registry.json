@@ -10856,6 +10856,21 @@
     }
   },
   {
+    "table": "managed_postgres_egress_hold_notices",
+    "columns": [
+      "allowance_bytes",
+      "ceiling_bytes",
+      "database_id",
+      "mail_intent_id",
+      "overage_billed",
+      "period_start",
+      "reached_at",
+      "subject_id",
+      "used_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_health",
     "columns": [
       "account_id",
@@ -21610,6 +21625,69 @@
       "run_id",
       "starter_app_id",
       "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "tool_grants",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "key_id",
+      "payload",
+      "revoked_at",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "tool_invocations",
+    "columns": [
+      "account_id",
+      "deadline",
+      "id",
+      "payload",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "tool_oauth_authorizations",
+    "columns": [
+      "account_id",
+      "connection_id",
+      "expires_at",
+      "flow_ciphertext",
+      "phase",
+      "state_sha256"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "tool_oauth_connections",
+    "columns": [
+      "account_id",
+      "app_id",
+      "credentials_ciphertext",
+      "expires_at",
+      "generation",
+      "id",
+      "lease_id",
+      "lease_until",
+      "payload",
+      "revoked_at",
+      "state"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "tool_publications",
+    "columns": [
+      "account_id",
+      "id",
+      "payload",
+      "status"
     ],
     "kind": "operational"
   }

@@ -12,6 +12,10 @@
       - faas_seal_domain_delivery_writes in ['', 'fleet', 'dual', 'domain']
       - faas_seal_domain_delivery_writes != 'domain' or (faas_seal_domain_delivery_readers_verified | bool)
       - not (faas_seal_domain_delivery_contracted | bool) or faas_seal_domain_delivery_writes == 'domain'
+      - not (faas_seal_domain_delivery_retired_on_compute | bool) or faas_box_role | default('single-box') == 'compute-only'
+      - not (faas_seal_domain_delivery_retired_on_compute | bool) or ((faas_seal_domain_delivery_contracted | bool) and (faas_seal_domain_control_contracted | bool))
+      - not (faas_seal_domain_delivery_retired_on_compute | bool) or (faas_schedd_secretd_delivery | default(false) | bool)
+      - not (faas_seal_domain_delivery_retired_on_compute | bool) or faas_secretd_target | default('') | length > 0
     fail_msg: >-
       faas_seal_domain_delivery_writes is '', fleet, dual or domain. domain
       needs faas_seal_domain_delivery_readers_verified once every schedd on
@@ -19,6 +23,11 @@
       and the previous release left the rollback window.
       faas_seal_domain_delivery_contracted needs writes=domain; control.yml,
       which runs first, checks the pair before schedd drops the fleet key.
+      faas_seal_domain_delivery_retired_on_compute (ADR-20261110210000) is
+      for compute-only hosts and needs schedd's contract step
+      (faas_seal_domain_control_contracted and
+      faas_seal_domain_delivery_contracted), faas_schedd_secretd_delivery
+      and faas_secretd_target.
 
 # 0400 root:root. systemd hands the identity to schedd alone as a
 # credential; no other unit names it.
@@ -31,7 +40,28 @@
     mode: "0400"
   no_log: true
   notify: restart faas-schedd for seal domains
-  when: faas_seal_domain_delivery_identity_src | length > 0
+  when:
+    - faas_seal_domain_delivery_identity_src | length > 0
+    - not (faas_seal_domain_delivery_retired_on_compute | bool)
+
+# ADR-20261110210000 (retire compute identities): a retired compute node
+# holds no delivery identity. Its schedd asks secretd for trigger
+# credentials, leaves webhooks, execution dispatch and the commit relay to
+# the control plane, and refuses to start while the identity is still
+# loaded. The probe result the node published earlier is stale, so it goes
+# too.
+- name: seal_domains — take the delivery domain identity off a retired compute node
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  notify: restart faas-schedd for seal domains
+  loop:
+    - /etc/faas/secrets/domains/delivery.age
+    - /etc/faas/secrets/domains/delivery.age.previous
+    - "{{ faas_seal_domain_textfile_dir }}/faas_seal_domain_delivery.prom"
+  when:
+    - faas_box_role | default('single-box') == 'compute-only'
+    - faas_seal_domain_delivery_retired_on_compute | bool
 
 # Key rotation (ADR 20261022111812): while the previous identity is
 # set it stays beside the new one, so values sealed to it still open until
@@ -47,6 +77,7 @@
   notify: restart faas-schedd for seal domains
   when:
     - faas_seal_domain_delivery_previous_identity_src | length > 0
+    - not (faas_seal_domain_delivery_retired_on_compute | bool)
 
 - name: seal_domains — remove the previous delivery domain identity
   ansible.builtin.file:
@@ -63,7 +94,7 @@
     owner: root
     group: root
     mode: "0755"
-  when: faas_seal_domain_delivery_identity_src | length > 0
+  when: faas_seal_domain_delivery_identity_src | length > 0 or (faas_seal_domain_delivery_retired_on_compute | bool)
 
 - name: seal_domains — give schedd the delivery domain identity
   ansible.builtin.template:
@@ -73,7 +104,7 @@
     group: root
     mode: "0644"
   notify: restart faas-schedd for seal domains
-  when: faas_seal_domain_delivery_identity_src | length > 0
+  when: faas_seal_domain_delivery_identity_src | length > 0 or (faas_seal_domain_delivery_retired_on_compute | bool)
 
 - name: seal_domains — restart schedd before proving the delivery domain
   ansible.builtin.meta: flush_handlers
@@ -93,6 +124,22 @@
   when:
     - faas_seal_domain_control_contracted | bool
     - faas_seal_domain_delivery_contracted | bool
+    - not (faas_seal_domain_delivery_retired_on_compute | bool)
+    - not (faas_join_defer_service_handlers | default(false) | bool)
+
+# A retired schedd holds its control identity, host.age and the signing
+# public key, and neither a delivery nor a fleet identity.
+- name: seal_domains — prove a retired schedd runs without the delivery and fleet identities
+  ansible.builtin.find:
+    paths: /run/credentials/faas-schedd.service
+  register: faas_seal_domain_schedd_retired_credentials
+  failed_when: >-
+    'faas_seal_domain_control' not in (faas_seal_domain_schedd_retired_credentials.files | map(attribute='path') | map('basename') | list) or
+    (faas_seal_domain_schedd_retired_credentials.files | map(attribute='path') | map('basename') |
+     select('in', ['faas_seal_domain_delivery', 'faas_seal_domain_delivery_previous', 'fleet.age']) | list | length) > 0
+  when:
+    - faas_box_role | default('single-box') == 'compute-only'
+    - faas_seal_domain_delivery_retired_on_compute | bool
     - not (faas_join_defer_service_handlers | default(false) | bool)
 
 
@@ -112,7 +159,9 @@
       - --json
   register: faas_seal_domain_delivery_verify
   changed_when: (faas_seal_domain_delivery_verify.stdout | from_json).probe_written | default(false)
-  when: faas_seal_domain_delivery_identity_src | length > 0
+  when:
+    - faas_seal_domain_delivery_identity_src | length > 0
+    - not (faas_seal_domain_delivery_retired_on_compute | bool)
 
 - name: seal_domains — install the delivery domain recipient
   ansible.builtin.copy:

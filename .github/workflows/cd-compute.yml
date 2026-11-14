@@ -724,13 +724,21 @@ jobs:
       SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT }}
       SEAL_DOMAIN_BUILD_AGE_KEY: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_KEY }}
       SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
-      SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
+      # ADR-20261110210000 (retire compute identities): once every compute
+      # node's gateway opens edge values through secretd and verifiers, and
+      # every schedd opens delivery values through secretd, these variables
+      # stage nothing of either domain on compute, and this job is not handed
+      # their identities.
+      SEAL_DOMAIN_EDGE_RETIRED_ON_COMPUTE: ${{ vars.SEAL_DOMAIN_EDGE_RETIRED_ON_COMPUTE }}
+      SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE: ${{ vars.SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE }}
+      SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE: ${{ vars.SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE }}
+      SEAL_DOMAIN_EDGE_AGE_KEY: ${{ vars.SEAL_DOMAIN_EDGE_RETIRED_ON_COMPUTE != 'true' && secrets.SEAL_DOMAIN_EDGE_AGE_KEY || '' }}
       SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
       SEAL_DOMAIN_EDGE_TLS_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_KEY }}
       SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_TLS_AGE_RECIPIENT }}
       SEAL_DOMAIN_CONTROL_AGE_KEY: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_KEY }}
       SEAL_DOMAIN_CONTROL_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_RECIPIENT }}
-      SEAL_DOMAIN_DELIVERY_AGE_KEY: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_KEY }}
+      SEAL_DOMAIN_DELIVERY_AGE_KEY: ${{ vars.SEAL_DOMAIN_DELIVERY_RETIRED_ON_COMPUTE != 'true' && secrets.SEAL_DOMAIN_DELIVERY_AGE_KEY || '' }}
       SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT }}
       # ADR-20261031122757: the S3 gateway on the compute nodes reads the
       # storage domain. Its key reaches this job only while the environment

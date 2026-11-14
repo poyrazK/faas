@@ -10,6 +10,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class CorsPresetsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List CORS presets visible to the calling account.
    * Lists every cors_presets row the account owns — both
@@ -34,7 +35,7 @@ export class CorsPresetsService {
      */
     appId?: string,
   }): CancelablePromise<CorsPresetListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/cors-presets',
       query: {
@@ -87,7 +88,7 @@ export class CorsPresetsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<CorsPresetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/cors-presets',
       headers: {
@@ -155,7 +156,7 @@ export class CorsPresetsService {
      */
     id: string,
   }): CancelablePromise<CorsPresetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/cors-presets/{id}',
       path: {
@@ -204,7 +205,7 @@ export class CorsPresetsService {
     id: string,
     requestBody: UpdateCorsPresetRequest,
   }): CancelablePromise<CorsPresetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/cors-presets/{id}',
       path: {
@@ -262,7 +263,7 @@ export class CorsPresetsService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/cors-presets/{id}',
       path: {

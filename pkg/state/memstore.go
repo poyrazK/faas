@@ -150,6 +150,10 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	toolInvocations      map[string]api.ToolInvocationRecord
+	toolPublications     map[string]api.ToolPublicationRecord
+	toolGrants           map[string]api.ToolGrantRecord
+	toolOAuthConnections map[string]ToolOAuthConnection
 	// ownerReleaseRequests are app_owner_release_requests by app id
 	// (ADR-20261110210000 §4); allocated on first use under mu.
 	ownerReleaseRequests map[string]AppOwnerReleaseRequest
@@ -7543,8 +7547,26 @@ func (m *MemStore) CompareAndSetAppStatus(ctx context.Context, id string, from, 
 	if to != AppActive {
 		m.clearCurrentAppWakeTransitionLocked(id)
 	}
+	if from == AppEvictedCold && to == AppActive {
+		m.clearRecoverableDeploymentParksLocked(id)
+	}
 	m.apps[id] = a
 	return true, nil
+}
+
+// clearRecoverableDeploymentParksLocked mirrors PgStore.wakeAppStatus: a
+// wake clears the app's liveness and lifecycle parks, never a security park.
+func (m *MemStore) clearRecoverableDeploymentParksLocked(appID string) {
+	for id, d := range m.deployments {
+		if d.AppID != appID {
+			continue
+		}
+		switch ParkReason(d.ParkedReason) {
+		case ParkReasonLivenessExhausted, ParkReasonLifecyclePark, ParkReasonAdminPark:
+			d.ParkedReason, d.ParkedAt = "", nil
+			m.deployments[id] = d
+		}
+	}
 }
 
 // RenameApp atomically swaps an app's slug (issue #63). Scans the
@@ -7826,6 +7848,11 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	m.publishMemTrafficAppPurgeLocked(id)
 	m.forgetOwnedOperationsLocked("", id)
+	for key, connection := range m.toolOAuthConnections {
+		if connection.Record.AppID == id {
+			delete(m.toolOAuthConnections, key)
+		}
+	}
 	delete(m.appDeletionClaims, id)
 
 	m.deleteAppStandardSnapshotCapturesLocked(id)
@@ -25130,6 +25157,26 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		if org.Personal && org.PersonalOwnerAccountID != nil && *org.PersonalOwnerAccountID == id {
 			delete(m.orgsBySlug, org.Slug)
 			delete(m.orgs, orgID)
+		}
+	}
+	for key, record := range m.toolPublications {
+		if record.AccountID == id {
+			delete(m.toolPublications, key)
+		}
+	}
+	for key, record := range m.toolInvocations {
+		if record.AccountID == id {
+			delete(m.toolInvocations, key)
+		}
+	}
+	for key, record := range m.toolGrants {
+		if record.AccountID == id {
+			delete(m.toolGrants, key)
+		}
+	}
+	for key, record := range m.toolOAuthConnections {
+		if record.Record.AccountID == id {
+			delete(m.toolOAuthConnections, key)
 		}
 	}
 	delete(m.legalAcceptances, id) // ON DELETE CASCADE

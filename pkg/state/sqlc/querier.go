@@ -4936,6 +4936,7 @@ type Querier interface {
 	// under the same waivers as ManagedPostgresUsageForSubject. Neon's transfer
 	// allowance is per project, and every database is its own project.
 	ManagedPostgresEgressByDatabase(ctx context.Context, db DBTX, arg ManagedPostgresEgressByDatabaseParams) ([]ManagedPostgresEgressByDatabaseRow, error)
+	ManagedPostgresEgressHoldNotice(ctx context.Context, db DBTX, arg ManagedPostgresEgressHoldNoticeParams) (ManagedPostgresEgressHoldNoticeRow, error)
 	// ADR-20261028103115: the fleet database cap counts what reservation limits
 	// count; the spend breaker sums the month through the usage primary key, one
 	// index range per database, so the ledger's growth never forces a full scan.
@@ -6981,6 +6982,9 @@ type Querier interface {
 	// is sealed, and the bound apps that may reach them.
 	RecordManagedPostgresDatabaseEndpoint(ctx context.Context, db DBTX, arg RecordManagedPostgresDatabaseEndpointParams) error
 	RecordManagedPostgresDiscoveredResource(ctx context.Context, db DBTX, arg RecordManagedPostgresDiscoveredResourceParams) (int64, error)
+	// ADR-20261110160000 amendment 2026-11-13: the first sweep to hold a database
+	// for its own egress allowance in a month records it; later sweeps leave it.
+	RecordManagedPostgresEgressHoldNotice(ctx context.Context, db DBTX, arg RecordManagedPostgresEgressHoldNoticeParams) (bool, error)
 	RecordManagedPostgresLifecycleResource(ctx context.Context, db DBTX, arg RecordManagedPostgresLifecycleResourceParams) (int64, error)
 	// Advances the cumulative charge only from the row as read (previous_millicents
 	// and previous_live; zero: no row yet), so a replica that lost the race records

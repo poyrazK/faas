@@ -22,6 +22,58 @@ import (
 	"time"
 )
 
+// Private tool publication journals retain bounded metadata, never source or
+// credentials. The deadline fences abandoned publishers; it never grants a retry.
+const (
+	ToolPublicationIntentMaxBytes            = 64 << 10
+	ToolPublicationOutcomeMaxBytes           = 512 << 10
+	ToolPublicationCatalogMaxBytes           = 256 << 10
+	ToolPublicationMaxTools                  = 64
+	ToolPublicationMaxCases                  = 64
+	ToolPublicationsPerAccount               = 256
+	ToolPublicationDeadline                  = 35 * time.Minute
+	ToolRegistryPageMax                      = 20
+	ToolRegistryQueryMaxBytes                = 128
+	ToolPrivateInvocationWorkers             = 4
+	ToolPrivateInvocationRequestMaxBytes     = 256 << 10 // bounded JSON escaping of 32-KiB canonical arguments
+	ToolInvocationArgsMaxBytes               = 32 << 10
+	ToolInvocationResultMaxBytes             = 64 << 10
+	ToolInvocationRequestMaxBytes            = 4 << 10
+	ToolInvocationOutcomeMaxBytes            = 128 << 10
+	ToolInvocationEndpointMaxBytes           = 512
+	ToolInvocationsPerAccount                = 1024
+	ToolInvocationsActiveMax                 = 4
+	ToolInvocationDefaultTimeout             = 60
+	ToolInvocationMaxTimeout                 = 600
+	ToolInvocationReportGrace                = 30 * time.Second
+	ToolInvocationCancelPoll                 = time.Second
+	ToolGrantIntentMaxBytes                  = 4 << 10
+	ToolGrantsPerAccount                     = 1024
+	ToolGrantsPerKey                         = 64
+	ToolGrantPageMax                         = 20
+	ToolGrantMaxLifetime                     = 30 * 24 * time.Hour
+	ToolOAuthConnectionIntentMaxBytes        = 8 << 10
+	ToolOAuthConnectionRecordMaxBytes        = 16 << 10
+	ToolOAuthConnectionsPerAccount           = 128
+	ToolOAuthConnectionsPerApp               = 32
+	ToolOAuthConnectionPageMax               = 20
+	ToolOAuthURLMaxBytes                     = 2048
+	ToolOAuthClientIDMaxBytes                = 512
+	ToolOAuthScopesMax                       = 64
+	ToolOAuthScopeMaxBytes                   = 128
+	ToolOAuthRefreshTimeout                  = 15 * time.Second
+	ToolOAuthPersistTimeout                  = 5 * time.Second
+	ToolOAuthRenewalLease                    = 45 * time.Second
+	ToolOAuthRefreshSkew                     = 30 * time.Second
+	ToolOAuthProviderResponseMaxBytes        = 64 << 10
+	ToolOAuthCiphertextMaxBytes              = 128 << 10
+	ToolOAuthMaxTokenLifetimeSeconds         = 365 * 24 * 60 * 60
+	ToolOAuthAuthorizationLifetime           = 5 * time.Minute
+	ToolOAuthAuthorizationRequestMaxBytes    = 24 << 10
+	ToolOAuthAuthorizationCiphertextMaxBytes = 16 << 10
+	ToolOAuthCallbackTimeout                 = 5 * time.Second
+)
+
 // Referral program bounds. Rewards are estimates only; payout execution is
 // deliberately unavailable until a separately reviewed payment integration.
 const (

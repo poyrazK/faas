@@ -72,37 +72,9 @@ func (m *management) planUploadDeploy(ctx context.Context, args planUploadDeploy
 	if (args.UploadID == "") == (len(args.Files) == 0) {
 		return nil, invalid("invalid_argument", "pass either upload_id or files")
 	}
-	var dir string
-	if args.UploadID != "" {
-		up, archive, err := m.opts.uploads.take(m.opts.grantID, args.UploadID)
-		if err != nil {
-			return nil, err
-		}
-		if up.app != args.App {
-			_ = os.Remove(archive)
-			return nil, invalid("invalid_argument", "this upload was created for app "+up.app)
-		}
-		// The plan directory takes over the upload's reservation, unpacked.
-		dir, err = m.opts.uploads.newDir(up.accountID, up.maxBytes*unpackFactor)
-		if err != nil {
-			_ = os.Remove(archive)
-			return nil, err
-		}
-		err = extractUpload(archive, dir, up.maxBytes*unpackFactor)
-		_ = os.Remove(archive)
-		if err != nil {
-			m.opts.uploads.removeDir(dir)
-			return nil, invalid("invalid_upload", err.Error())
-		}
-	} else {
-		var err error
-		if dir, err = m.opts.uploads.newDir("grant:"+m.opts.grantID, maxInlineBytes); err != nil {
-			return nil, err
-		}
-		if err := writeInlineFiles(dir, args.Files); err != nil {
-			m.opts.uploads.removeDir(dir)
-			return nil, invalid("invalid_argument", err.Error())
-		}
+	dir, err := m.uploadedProject(args.App, args.UploadID, args.Files)
+	if err != nil {
+		return nil, err
 	}
 	plan, err := m.planDirDeploy(ctx, dir, planLocalDeployArgs{uploaded: true, Path: dir, App: args.App, Reason: args.Reason, CreateOnly: args.CreateOnly})
 	if err != nil {
@@ -110,4 +82,47 @@ func (m *management) planUploadDeploy(ctx context.Context, args planUploadDeploy
 		return nil, err
 	}
 	return plan, nil
+}
+
+// Both hosted deployment workflows consume the same connection-bound upload
+// or bounded inline source. Neither accepts a management-host path.
+func (m *management) uploadedProject(app, uploadID string, files []inlineFile) (string, error) {
+	var dir string
+	if uploadID != "" {
+		up, archive, err := m.opts.uploads.take(m.opts.grantID, uploadID)
+		if err != nil {
+			return "", err
+		}
+		if up.app != app || up.accountID != m.opts.accountID && m.opts.accountID != "" {
+			_ = os.Remove(archive)
+			return "", invalid("invalid_argument", "this upload belongs to another app or account")
+		}
+		// The reviewed source takes over the consumed upload's reservation.
+		dir, err = m.opts.uploads.newDir(up.accountID, up.maxBytes*unpackFactor)
+		if err != nil {
+			_ = os.Remove(archive)
+			return "", err
+		}
+		err = extractUpload(archive, dir, up.maxBytes*unpackFactor)
+		_ = os.Remove(archive)
+		if err != nil {
+			m.opts.uploads.removeDir(dir)
+			return "", invalid("invalid_upload", err.Error())
+		}
+	} else {
+		accountID := m.opts.accountID
+		if accountID == "" {
+			accountID = "grant:" + m.opts.grantID
+		}
+		var err error
+		dir, err = m.opts.uploads.newDir(accountID, maxInlineBytes)
+		if err != nil {
+			return "", err
+		}
+		if err := writeInlineFiles(dir, files); err != nil {
+			m.opts.uploads.removeDir(dir)
+			return "", invalid("invalid_argument", err.Error())
+		}
+	}
+	return dir, nil
 }
