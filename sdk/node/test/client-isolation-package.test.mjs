@@ -21,7 +21,7 @@ test('packed SDK exposes isolated public/preview clients and the legacy migratio
   const app = join(root, 'existing-app');
   await mkdir(app);
   await writeFile(join(app, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
-  await exec('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--omit=dev', join(root, filename)], { cwd: app });
+  await exec('npm', ['install', '--prefer-offline', '--ignore-scripts', '--no-audit', '--no-fund', '--omit=dev', join(root, filename)], { cwd: app });
   await writeFile(join(app, 'app.mjs'), `
     import assert from 'node:assert/strict';
     import { createClient, FaaSClient, AppsService, OpenAPI } from '@gregale/sdk-node';

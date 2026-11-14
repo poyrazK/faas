@@ -223,13 +223,14 @@ func TestPasswordChangedAlertPublicPathsAndAtomicFailures(t *testing.T) {
 				// A reset also sends its own API-key review notice; count
 				// only the password-changed alert.
 				inline := 0
-				for _, subject := range recorder.subjects {
+				sent := recorder.sent()
+				for _, subject := range sent {
 					if strings.HasPrefix(subject, "Password updated") {
 						inline++
 					}
 				}
 				if events != wantEvents || inline != wantInline {
-					t.Fatal("alert missing, duplicated or sent inline", events, inline, recorder.subjects)
+					t.Fatal("alert missing, duplicated or sent inline", events, inline, sent)
 				}
 				var revoked, currentRevoked bool
 				if err := pool.QueryRow(t.Context(), "SELECT (SELECT revoked_at IS NOT NULL FROM sessions WHERE id=$1),(SELECT revoked_at IS NOT NULL FROM sessions WHERE id=$2)", otherSID, sid).Scan(&revoked, &currentRevoked); err != nil || revoked != (success && mode != "first_password") || currentRevoked != (success && method != "dashboard") {
