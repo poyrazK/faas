@@ -13,7 +13,7 @@ export type FeatureFlag = {
   type?: 'boolean' | 'variant';
   enabled: boolean;
   /**
-   * Who decides about this flag
+   * Who decides about this flag, for example a team or an email. Not used in evaluation.
    */
   owner?: string;
   /**

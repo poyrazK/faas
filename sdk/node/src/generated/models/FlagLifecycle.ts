@@ -10,12 +10,12 @@ export type FlagLifecycle = {
   owner?: string;
   expires_at?: string;
   /**
-   * Newest version that changed this flag
+   * Newest version that changed this flag, within the last 200 versions.
    */
   last_changed_version: number;
   last_changed_at: string;
   /**
-   * True when every request gets the same value (disabled
+   * True when every request gets the same value (disabled, killed, no rules, or a first rule matching everybody).
    */
   serves_one_value: boolean;
   /**
