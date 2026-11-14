@@ -190,7 +190,7 @@ func TestToolBuildingPublicationJourney(t *testing.T) {
 			f, backend := newPublicationFixture(t)
 			cs, ctx := connectSelectedTestServer(t, backend, Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, LocalCLI: f.cli, Toolsets: []string{ToolsetBuildTools}}, protocol)
 			catalog, err := cs.ListTools(ctx, nil)
-			if err != nil || len(catalog.Tools) != 5 {
+			if err != nil || len(catalog.Tools) != 6 {
 				t.Fatalf("catalog=%v error=%v", catalog, err)
 			}
 			manifest := publicationCall(t, ctx, cs, "gregale_get_tool_template", toolTemplateArgs{Runtime: "go"}, false)
@@ -314,7 +314,7 @@ func TestToolBuildingConsentAndReadOnly(t *testing.T) {
 		opts  Options
 		count int
 	}{
-		{"read only", Options{}, 3},
+		{"read only", Options{}, 4},
 		{"hosted", Options{AllowWrites: true, Environments: &EnvironmentConsent{}}, 0},
 		{"headless hosted", Options{AllowWrites: true, agentKey: true}, 0},
 		{"app scope", Options{AllowWrites: true, AllowedApps: map[string]string{"alpha": "app-one"}}, 0},
