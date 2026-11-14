@@ -8979,11 +8979,13 @@ BEGIN
         recipients := event_recipients_in_producer_reach(NEW.subject, NEW.data->>'producer', recipients);
     END IF;
 
-    -- Platform events (gregale.*) nobody receives are not kept: an object
+    -- Object storage events nobody receives are not kept: an object
     -- write loop must not grow the outbox (ADR-614 amendment 2026-11-13).
+    -- Other platform events keep their row: publish acceptance and
+    -- receipts read it.
     -- Object notifications add their recipients after this trigger and
     -- insert the row themselves when it is missing.
-    IF jsonb_array_length(recipients) = 0 AND NEW.data->>'source' LIKE 'gregale.%' THEN
+    IF jsonb_array_length(recipients) = 0 AND NEW.data->>'source' = 'gregale.storage' THEN
         RETURN NULL;
     END IF;
 

@@ -69,7 +69,7 @@ func EventDeliveryHoldRecheck(accepted, now time.Time) time.Time {
 func EventDeliveryHeldExpiredProgress(previous PublishedEventRecipientProgress, attempts int, now time.Time) PublishedEventRecipientProgress {
 	p := previous
 	p.State, p.Attempts, p.UpdatedAt = PublishedEventRecipientFailed, attempts, now
-	p.FailureCode, p.RetryStopReason, p.LastError = EventFanoutFailureCodeDeliveryHeldExpired, "delivery_held_expired", ErrEventDeliveryHeldExpired.Error()
+	p.FailureCode, p.RetryStopReason, p.LastError = EventFanoutFailureCodeDeliveryHeldExpired, "non_retryable", ErrEventDeliveryHeldExpired.Error()
 	p.Retryable, p.NextAttemptAt, p.CapacityScope, p.DeliveryControlReason = false, nil, "", ""
 	return p
 }

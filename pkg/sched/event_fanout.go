@@ -1081,7 +1081,7 @@ func (l *Loop) expireHeldEventRecipient(ctx context.Context, store state.Publish
 	if !state.EventDeliveryHoldExpired(work.AcceptedAt, now) {
 		return false
 	}
-	expired := state.EventDeliveryHeldExpiredProgress(work.PreviousProgress, max(0, work.TotalAttempts-1), now)
+	expired := state.EventDeliveryHeldExpiredProgress(work.PreviousProgress, work.TotalAttempts, now)
 	if err := store.FinishPublishedEventRecipient(ctx, work, expired, now); err != nil && l.log != nil {
 		l.log.Error("sched: dead-letter held event delivery", "err", err)
 	}

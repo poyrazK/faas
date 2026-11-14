@@ -172,8 +172,10 @@ PUT or DELETE publishes `gregale.storage`) inserted an outbox row even when no
 subscription, workflow or notification received it. Such rows count towards
 no customer cap and stay for the plan's settled window, so a write loop on one
 small object grew the outbox without bound. `enqueue_event_fanout` now keeps
-no row for a `gregale.*` event with no recipient at publish time (migration
-`20261113192044318`). Bucket notification capture, which adds its recipients
-after the trigger, inserts the row from the event envelope when it is missing.
-Customer events are unchanged. The owner accepted the cost: a subscription
+no row for a `gregale.storage` event with no recipient at publish time
+(migration `20261113192044318`). Bucket notification capture, which adds its
+recipients after the trigger, inserts the row from the event envelope when it
+is missing. Other platform events keep their row: publish acceptance, receipts
+and webhook workflows read it, and none of them follows a customer write
+loop. Customer events are unchanged. The owner accepted the cost: a subscription
 created later cannot backfill or replay platform events nobody received.

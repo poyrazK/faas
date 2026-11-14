@@ -1,10 +1,13 @@
 -- migration-compat: expand
 -- filename: 20261113192044318_skip_unreceived_platform_events.sql
 
--- ADR-614 amendment 2026-11-13 (event-driven hunt #7): a gregale.* platform
--- event with no recipient at publish time (every object PUT/DELETE, for
--- example) inserted an uncounted outbox row kept for the plan's settled
--- window. Such events are no longer kept. Customer events are unchanged.
+-- ADR-614 amendment 2026-11-13 (event-driven hunt #7): an object storage
+-- event (gregale.storage, every object PUT/DELETE) with no recipient at
+-- publish time inserted an uncounted outbox row kept for the plan's settled
+-- window. Such events are no longer kept. Other platform events and customer
+-- events are unchanged: publish acceptance and receipts read their row.
+-- The function is 20261112181020456's (per-environment subscriptions) with
+-- that one early return; Down restores it unchanged.
 
 -- +goose Up
 -- +goose StatementBegin
@@ -18,6 +21,7 @@ DECLARE existing_schema_version text;
 DECLARE recipients jsonb;
 DECLARE target_app uuid;
 DECLARE target_tenant uuid;
+DECLARE event_environment uuid;
 BEGIN
     IF NEW.kind <> 'event.published' THEN
         RETURN NEW;
@@ -27,6 +31,22 @@ BEGIN
        NEW.data->'data' IS NULL THEN
         RAISE EXCEPTION 'event.published requires account, source, id, type and data'
             USING ERRCODE = '23514';
+    END IF;
+
+    -- ADR-20261104120000: an event belongs to one project environment of
+    -- its account; none is production. Subscriptions receive only their own
+    -- environment's events, and only production events reach workflows.
+    IF coalesce(NEW.data->>'environmentid', '') <> '' THEN
+        BEGIN
+            event_environment := (NEW.data->>'environmentid')::uuid;
+        EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION 'event environment must be a UUID' USING ERRCODE = '23514';
+        END;
+        IF NOT EXISTS (SELECT 1 FROM project_environments e
+                       WHERE e.id = event_environment AND e.account_id = NEW.subject) THEN
+            RAISE EXCEPTION 'event environment is not a project environment of its account'
+                USING ERRCODE = '23514';
+        END IF;
     END IF;
 
     IF NEW.data ? 'platformtenantid' THEN
@@ -48,6 +68,7 @@ BEGIN
             'routing_retry_policy', s.routing_retry_policy,
             'acknowledgment_lease_seconds', s.acknowledgment_lease_seconds,
             'schema_versions', s.schema_versions,
+            'deployment_scope', s.deployment_scope, 'environment_id', s.environment_id,
             'work_snapshot_captured', true,
             'work', CASE WHEN b.subscription_id IS NULL THEN NULL
                 ELSE jsonb_build_object(
@@ -74,21 +95,26 @@ BEGIN
         WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
           AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
           AND event_fanout_pattern_matches(s.type, NEW.data->>'type')
+          AND s.environment_id IS NOT DISTINCT FROM event_environment
           AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x WHERE x.app_id = s.app_id);
 
-        recipients := recipients || coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
-            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
-            WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
-                WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
+        IF event_environment IS NULL THEN
+            recipients := recipients || coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
+                FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
+                WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
+                    WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
+        END IF;
         -- ADR-20261025211616: keep the event inside its producer's company.
         recipients := event_recipients_in_producer_reach(NEW.subject, NEW.data->>'producer', recipients);
     END IF;
 
-    -- Platform events (gregale.*) nobody receives are not kept: an object
+    -- Object storage events nobody receives are not kept: an object
     -- write loop must not grow the outbox (ADR-614 amendment 2026-11-13).
+    -- Other platform events keep their row: publish acceptance and
+    -- receipts read it.
     -- Object notifications add their recipients after this trigger and
     -- insert the row themselves when it is missing.
-    IF jsonb_array_length(recipients) = 0 AND NEW.data->>'source' LIKE 'gregale.%' THEN
+    IF jsonb_array_length(recipients) = 0 AND NEW.data->>'source' = 'gregale.storage' THEN
         RETURN NULL;
     END IF;
 
@@ -126,6 +152,7 @@ DECLARE existing_schema_version text;
 DECLARE recipients jsonb;
 DECLARE target_app uuid;
 DECLARE target_tenant uuid;
+DECLARE event_environment uuid;
 BEGIN
     IF NEW.kind <> 'event.published' THEN
         RETURN NEW;
@@ -135,6 +162,22 @@ BEGIN
        NEW.data->'data' IS NULL THEN
         RAISE EXCEPTION 'event.published requires account, source, id, type and data'
             USING ERRCODE = '23514';
+    END IF;
+
+    -- ADR-20261104120000: an event belongs to one project environment of
+    -- its account; none is production. Subscriptions receive only their own
+    -- environment's events, and only production events reach workflows.
+    IF coalesce(NEW.data->>'environmentid', '') <> '' THEN
+        BEGIN
+            event_environment := (NEW.data->>'environmentid')::uuid;
+        EXCEPTION WHEN invalid_text_representation THEN
+            RAISE EXCEPTION 'event environment must be a UUID' USING ERRCODE = '23514';
+        END;
+        IF NOT EXISTS (SELECT 1 FROM project_environments e
+                       WHERE e.id = event_environment AND e.account_id = NEW.subject) THEN
+            RAISE EXCEPTION 'event environment is not a project environment of its account'
+                USING ERRCODE = '23514';
+        END IF;
     END IF;
 
     IF NEW.data ? 'platformtenantid' THEN
@@ -156,6 +199,7 @@ BEGIN
             'routing_retry_policy', s.routing_retry_policy,
             'acknowledgment_lease_seconds', s.acknowledgment_lease_seconds,
             'schema_versions', s.schema_versions,
+            'deployment_scope', s.deployment_scope, 'environment_id', s.environment_id,
             'work_snapshot_captured', true,
             'work', CASE WHEN b.subscription_id IS NULL THEN NULL
                 ELSE jsonb_build_object(
@@ -182,12 +226,15 @@ BEGIN
         WHERE s.account_id = NEW.subject AND s.enabled AND a.status <> 'deleted'
           AND event_fanout_pattern_matches(s.source, NEW.data->>'source')
           AND event_fanout_pattern_matches(s.type, NEW.data->>'type')
+          AND s.environment_id IS NOT DISTINCT FROM event_environment
           AND NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x WHERE x.app_id = s.app_id);
 
-        recipients := recipients || coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
-            FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
-            WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
-                WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
+        IF event_environment IS NULL THEN
+            recipients := recipients || coalesce((SELECT jsonb_agg(w.recipient ORDER BY w.recipient->>'id')
+                FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
+                WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
+                    WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
+        END IF;
         -- ADR-20261025211616: keep the event inside its producer's company.
         recipients := event_recipients_in_producer_reach(NEW.subject, NEW.data->>'producer', recipients);
     END IF;

@@ -59,24 +59,26 @@ func TestHeldEventDeliveryDeadLettersAfterHoldLimit(t *testing.T) {
 				t.Fatal(err)
 			}
 			loop := eventsSwitchLoop(t, store, decider, independent).WithWorkflowsDispatched(true)
-			deadLetters := func() []state.DeadLetterEvent {
+			// A failed recipient is on the event receipt (the dead-letter
+			// queue's event_route entries) until the settled receipt is
+			// pruned into the ledger.
+			routing := func() state.EventReceiptRouting {
 				t.Helper()
-				entries, err := store.ListDeadLetterEvents(ctx, app.ID, 10, "")
-				if err != nil {
-					t.Fatal(err)
+				receipt, err := store.EventReceipt(ctx, account.ID, envelope.Source, envelope.ID, state.EventReceiptCursor{}, 10)
+				if err != nil || len(receipt.Recipients) != 1 {
+					t.Fatalf("receipt = %+v, %v", receipt, err)
 				}
-				return entries
+				return receipt.Recipients[0].Routing
 			}
 			now := time.Now().UTC()
 			loop.XRunEventFanoutSweepAt(ctx, now)
 			loop.XRunEventFanoutSweepAt(ctx, now.Add(api.EventDeliveryHoldMax/2))
-			if got := deadLetters(); len(got) != 0 {
-				t.Fatalf("delivery dead-lettered while still within the hold limit: %+v", got)
+			if got := routing(); got.State != string(state.PublishedEventRecipientPending) {
+				t.Fatalf("delivery within the hold limit = %+v, want still pending", got)
 			}
 			loop.XRunEventFanoutSweepAt(ctx, now.Add(api.EventDeliveryHoldMax+time.Hour))
-			got := deadLetters()
-			if len(got) != 1 || got[0].Source != state.DeadLetterSourceEventRoute || got[0].ErrorKind != state.EventFanoutFailureCodeDeliveryHeldExpired {
-				t.Fatalf("dead letters after the hold limit = %+v, want one %s", got, state.EventFanoutFailureCodeDeliveryHeldExpired)
+			if got := routing(); got.State != string(state.PublishedEventRecipientFailed) || got.FailureCode != state.EventFanoutFailureCodeDeliveryHeldExpired || got.Retryable {
+				t.Fatalf("delivery after the hold limit = %+v, want failed %s", got, state.EventFanoutFailureCodeDeliveryHeldExpired)
 			}
 			_, total, err := store.ListWorkflowRuns(ctx, app.ID, state.ListWorkflowRunsOpts{Limit: 10})
 			if err != nil || total != 0 {

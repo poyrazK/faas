@@ -340,10 +340,10 @@ usage, the budgets and the window (`limits.settled_retention_seconds`).
 Unsettled receipts and receipts that a recovery or backfill holds are kept past
 the window.
 
-Events Gregale publishes for you (`gregale.*` sources, such as object-storage
-`gregale.storage` events) keep a receipt only when a subscription, workflow or
-bucket notification receives them at publish time. A subscription created later
-cannot backfill or replay platform events nobody received.
+Object-storage events (`gregale.storage`) keep a receipt only when a
+subscription, workflow or bucket notification receives them at publish time. A
+subscription created later cannot backfill or replay object events nobody
+received.
 
 ### Routing failures in the dead-letter queue
 
