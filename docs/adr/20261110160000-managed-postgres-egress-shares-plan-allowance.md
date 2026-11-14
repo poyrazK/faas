@@ -256,3 +256,22 @@ mailed per database:
 - Rejected: a separate database ceiling (two allowances to explain, and it
   doubles what a plan gives away), and the operator ceiling alone (not
   plan-aware, and never checked while a database runs).
+
+## Amendment 2026-11-13: a copy shares its source's allowance
+
+The billing review of 2026-11-13 (R6-1) found that the 2026-11-11 amendment
+gave every database its own 500 GB, but a restore, branch or PR preview copy
+on Neon is a branch of its source's project, and Neon's allowance is per
+project: a source with N copies got N + 1 allowances from Gregale while Neon
+billed past one.
+
+- A copy shares the allowance of the root of its restore chain
+  (`UsageSnapshot.RestoreSources`, `EgressScopeOf`). The hold compares each
+  database's scope total (`ScopedDatabaseEgress`), so the source and its
+  copies are held together; database egress overage is billed once per scope
+  (`EgressByScope`).
+- The rule is provider-neutral: on a backend whose restores are separate
+  resources a copy also shares its source's allowance, which only gives less
+  away.
+- `app_egress_bytes` is no longer sent with a charge step: it has been zero
+  since apps stopped sharing the databases' allowance.

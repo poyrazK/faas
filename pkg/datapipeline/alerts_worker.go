@@ -78,6 +78,9 @@ func (w *AlertWorker) CheckTick(ctx context.Context) (bool, error) {
 		return false, storeError(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err = w.Store.q.PipelineWorkerProtocol(ctx, tx); err != nil {
+		return false, storeError(err)
+	}
 	now := w.now()
 	a, err := w.Store.q.PipelineAlertLock(ctx, tx, sqlc.PipelineAlertLockParams{NowAt: alertTime(now), Accounts: accounts})
 	if errors.Is(err, pgx.ErrNoRows) {

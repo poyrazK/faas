@@ -20,6 +20,7 @@ func TestSubjectHoldFollowsTheSweepsOrder(t *testing.T) {
 		"shadow holds nothing": {in: HoldInputs{Mode: CapEnforcementShadow, Inactive: true, ComputeUsed: 100, ComputeCeiling: 100}, want: ""},
 		"inactive first":       {in: HoldInputs{Mode: CapEnforcementOn, Inactive: true, ComputeUsed: 100, ComputeCeiling: 100}, want: api.ManagedPostgresHoldInactive},
 		"compute ceiling":      {in: HoldInputs{Mode: CapEnforcementOn, ComputeUsed: 100, ComputeCeiling: 100, DatabaseEgress: spent, EgressAllowance: 1000}, want: api.ManagedPostgresHoldComputeCeiling},
+		"spend cap reached":    {in: HoldInputs{Mode: CapEnforcementOn, SpendCapReached: true, ComputeCeiling: 100}, want: api.ManagedPostgresHoldComputeCeiling},
 		"egress holds one database, not the subject": {in: HoldInputs{Mode: CapEnforcementOn, ComputeCeiling: 100, DatabaseEgress: spent, EgressAllowance: 1000}, want: ""},
 	}
 	for name, tc := range tests {

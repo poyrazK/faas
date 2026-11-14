@@ -63,7 +63,7 @@ var guidePages = []guidePage{
 		},
 		Notes: []string{
 			"Code that dials a Compose name (redis, db) must read $GREGALE_SERVICE_<NAME>_HOST (raw TCP) or $GREGALE_SERVICE_<NAME>_URL (HTTP); the caller lists the service in depends_on. The dry run names each place.",
-			"A postgres service becomes a managed database bound as DATABASE_URL. Other datastore images (redis, mongo) are not run: point the code at one you run elsewhere, or run it as an app (`gregale guide private-services`).",
+			"A postgres service becomes a managed database bound as DATABASE_URL. Gregale does not run other datastores (redis, mysql, mongo): an app parks to a snapshot and keeps no data. Point the code at a hosted one (Upstash, PlanetScale, Atlas) with an env URL.",
 			"A build target or command for development (target: dev, nodemon, --reload) is deployed as written.",
 		},
 	},
@@ -73,7 +73,7 @@ var guidePages = []guidePage{
 		Steps: []guideStep{
 			{Do: "Check an app's serving health and readiness", Command: "gregale app <app> health"},
 			{Do: "Use another health path (or set hosting.health in gregale.yaml)", Command: "gregale app <app> --health-path <path>"},
-			{Do: "Deploy a raw TCP server from its published image (TCP readiness)", Command: "gregale deploy --image <image>@sha256:<digest> --name <app>"},
+			{Do: "Deploy a stateless TCP server (a broker, memcached) from its image", Command: "gregale deploy --image <image>@sha256:<digest> --name <app>"},
 			{Do: "Read why a deploy did not become ready", Command: "gregale logs <app> --deployment <deployment>"},
 		},
 		Notes: []string{
@@ -81,7 +81,8 @@ var guidePages = []guidePage{
 			"A source build without one is probed with HTTP GET /healthz on its serving port; a 2xx is ready.",
 			"A Dockerfile HEALTHCHECK adds a command check; it does not replace the HTTP probe.",
 			"A directly deployed image is ready once its port accepts connections.",
-			"Redis, PostgreSQL and brokers never answer HTTP: built from source they fail with app_startup_timeout.",
+			"A message broker or memcached never answers HTTP: built from source it fails with app_startup_timeout; deploy its image.",
+			"Datastores (Redis, PostgreSQL, MySQL, MongoDB) are not run at all; see `gregale guide compose-project`.",
 		},
 	},
 	{
@@ -89,7 +90,7 @@ var guidePages = []guidePage{
 		Summary: "Apps in your account reach each other privately; a port declared :internal never gets a public listener.",
 		Steps: []guideStep{
 			{Do: "Give an app no public URL", Command: "gregale app <app> --visibility internal"},
-			{Do: "Declare a private TCP port (Redis, a broker)", Command: "gregale app <app> --ports <name>=tcp:<port>:internal"},
+			{Do: "Declare a private TCP port (a broker, memcached)", Command: "gregale app <app> --ports <name>=tcp:<port>:internal"},
 			{Do: "Declare a public raw TCP port, then give it a listener", Command: "gregale app <app> --ports <name>=tcp:<port>"},
 			{Do: "Create the public listener for that port", Command: "gregale app <app> tcp add --name <name> --guest-port <port>"},
 			{Do: "Reach a private port from your machine", Command: "gregale app <app> port-forward <local-port>:<host>:<port>"},
