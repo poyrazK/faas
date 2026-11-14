@@ -111,6 +111,9 @@ type fakeVMM struct {
 	// branchAck echoes a requested environment branch containment, as a
 	// current vmmd does (ADR-20261031193635).
 	branchAck bool
+	// baseScanGrace reports a boot vmmd admitted only inside the base scan
+	// grace (deploy-path review P5).
+	baseScanGrace bool
 
 	// ADR-051 PR-D: characterization report. The default zero
 	// value is "no observation" — the engine leaves apps.workload_class
@@ -137,6 +140,7 @@ func (f *fakeVMM) outcome(instance string, method vmmdpb.WakeMethod, requested v
 		Netns: "fc-" + instance, VethHost: "vh1", VethPeer: "vp1",
 		Method: method, RequestedMethod: requested,
 		Characterization: f.characterization,
+		BaseScanGrace:    f.baseScanGrace,
 	}
 }
 

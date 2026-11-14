@@ -316,15 +316,42 @@ func writeProducedBaseScanCompatibility(ctx context.Context, be storage.StorageB
 	if err != nil {
 		return err
 	}
+	since := fixableCriticalSince(ctx, be, key, ref, fixAvailable[SeverityCritical], time.Now().UTC())
 	raw, err := json.Marshal(struct {
 		Image                string         `json:"image"`
 		Source               string         `json:"source"`
 		Findings             map[string]int `json:"findings"`
 		FixAvailableFindings map[string]int `json:"fix_available_findings"`
 		ScannedAt            time.Time      `json:"scanned_at"`
-	}{ref, source, findings, fixAvailable, value.ScannedAt})
+		FixableCriticalSince *time.Time     `json:"fixable_critical_since,omitempty"`
+	}{ref, source, findings, fixAvailable, value.ScannedAt, since})
 	if err != nil {
 		return err
 	}
 	return be.Put(ctx, wire.ScanKeyForBaseKey(key), bytes.NewReader(raw))
+}
+
+// fixableCriticalSince is the start of vmmd's boot grace for a base whose scan
+// found fixable CRITICAL vulnerabilities (api.BaseScanCriticalBootGrace,
+// deploy-path review P5). It is nil unless the count is a real finding (a
+// scanner failure's placeholder never earns grace). A rescan of the same
+// generation keeps the clock the earlier sidecar started, so rescans cannot
+// extend the grace; a new generation or a first finding starts it at now.
+func fixableCriticalSince(ctx context.Context, be storage.StorageBackend, baseKey, ref string, fixableCritical int, now time.Time) *time.Time {
+	if fixableCritical <= 0 || fixableCritical >= wire.BaseScanFailedCount {
+		return nil
+	}
+	if rc, err := be.Get(ctx, wire.ScanKeyForBaseKey(baseKey)); err == nil {
+		var prior struct {
+			Image                string     `json:"image"`
+			FixableCriticalSince *time.Time `json:"fixable_critical_since"`
+		}
+		decodeErr := json.NewDecoder(rc).Decode(&prior)
+		_ = rc.Close()
+		if decodeErr == nil && prior.Image == ref && prior.FixableCriticalSince != nil && !prior.FixableCriticalSince.After(now) {
+			since := prior.FixableCriticalSince.UTC()
+			return &since
+		}
+	}
+	return &now
 }

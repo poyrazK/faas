@@ -59,3 +59,23 @@ tests:
               summary: "Scans of base/releases/runner-node22-amd64-33df.ext4 keep failing (scanner_unavailable); boots run on its last complete scan"
               description: "imaged's renewals of base/releases/runner-node22-amd64-33df.ext4 have kept failing with scanner_unavailable for ten minutes. Boots continue on the last complete scan of the same bytes, but vmmd refuses every boot on the base once that scan is 24 hours old. scanner_unavailable and scanner_invalid point at Grype or its database, artifact_read at the artifact store."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
+
+  - interval: 1m
+    name: "boots admitted on a base inside its fixable CRITICAL grace page"
+    input_series:
+      - series: 'vmmd_base_scan_grace_admits_total{job="vmmd",instance="10.0.0.3:9104",node="fsn-3",base="base/releases/runner-node22-amd64-33df.ext4"}'
+        values: '0 1 1x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FaasBaseScanCriticalInGrace
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: vmmd
+              family: base_scan_gate
+              node: fsn-3
+              base: base/releases/runner-node22-amd64-33df.ext4
+            exp_annotations:
+              summary: "base/releases/runner-node22-amd64-33df.ext4 has a fixable CRITICAL; serving apps boot on grace, new deploys refused"
+              description: "A scan of base/releases/runner-node22-amd64-33df.ext4 found a fix-available CRITICAL vulnerability. vmmd on fsn-3 keeps booting apps already serving on it for 72 hours from the first finding, but every new deployment on the runtime fails with scan_critical. Publish a patched base before the grace ends, or every boot on it is refused and FaasBaseScanRefusingBoots follows."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"

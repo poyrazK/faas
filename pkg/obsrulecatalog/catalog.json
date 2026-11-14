@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "98a61015cf1ac6e033283011edb165b0240993e1c3a181af9dfa0c2c62a53f46",
+      "revision": "20d40cf0c3aec2008bcb640f26b262d3f0f0de517af822adda73b3691dbc446c",
       "files": [
         "faas.rules.yml"
       ],
@@ -569,6 +569,19 @@
           }
         },
         {
+          "id": "11d4e0c85419ddfced1c87f873b688ba270f27b812c3b6d2eaa947b939a18fe1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_neond",
+          "rule_name": "FaasNeondDown",
+          "definition": {
+            "expression_hash": "42be8ff3f1ce6d71be2fbe8682ae91f56f40f0aea47f0d32f4cb4ee8a25ee989",
+            "labels_hash": "0150b93c1b56d5bd28a02af394a02e29796fe8f19862a7254c18b043077e5737",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "302fbb696dce83bd5da2591ae1495bd928a41734cfb059626f8ee592bcbbf4e1"
+          }
+        },
+        {
           "id": "1220d7f2bd42a480cf8785d8f711119ef55464c7a929d9df20ede25c6bfc4881",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -1112,6 +1125,19 @@
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
             "fingerprint": "51d9454f8c2b806d23b3673beb2914d95ffc4368ccc7e130137100ff7d91b7d5"
+          }
+        },
+        {
+          "id": "23663f9c9752dcadcbe8768fd3c1921d8d9b80d5534622556983e3200b454062",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_neond",
+          "rule_name": "FaasNeondRateLimited",
+          "definition": {
+            "expression_hash": "ab7641c4ed69aacb67b8ddc2478b646dc12cb0020df5cf135d78f9be4a62e456",
+            "labels_hash": "0150b93c1b56d5bd28a02af394a02e29796fe8f19862a7254c18b043077e5737",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "84d0ca4895116d67309efe48dc63b60ec47a67c57229097f32d368cfe1726c07"
           }
         },
         {
@@ -2363,6 +2389,19 @@
           }
         },
         {
+          "id": "4b1051784e9c9168d0f32206925bd4c6609c45ad29cc00fb91fc5a8db22bce55",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_neond",
+          "rule_name": "FaasNeondRefusing",
+          "definition": {
+            "expression_hash": "26f41553f5c45912712867bbbb2b9a09b3dcf4c6654768ba550b1d7809131ecf",
+            "labels_hash": "ed0a02dde98d4ed1877c995390bf874527c94dd30136e3103093f6da79d32d93",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9f6a6aa93eec94f5cadad9072d257ec60c39d26ff340ab2d4363e688e092ba13"
+          }
+        },
+        {
           "id": "4bf9ee570c69cd49527c86741344df7ba6b2bcdbbe0e6cea258f4ffdcbea096a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_object_storage",
@@ -2477,6 +2516,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "d854274e06ac1d212ac3c9c9b53f94252e95356c6eff10e213abeb8240337602"
+          }
+        },
+        {
+          "id": "4eca3d7ddd7c88cbafd89b5f02aa9289478d5e80bb4e5f71b90a5a71364e7c18",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_neond",
+          "rule_name": "FaasNeondProjectKeysFailing",
+          "definition": {
+            "expression_hash": "b3126fd53b4d840d09761a93e6bc6990db3a84447a5967b19ca003b86b32b4b7",
+            "labels_hash": "ed0a02dde98d4ed1877c995390bf874527c94dd30136e3103093f6da79d32d93",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "1e5dfe1f7da7b90099b829464456d7d04ee5b5c8be111ee2c330f605317bd52f"
           }
         },
         {
@@ -4014,6 +4066,19 @@
           }
         },
         {
+          "id": "8aacfb801e880ab128f488e7a30858c64cb1260c3c0e19268577714bb8048394",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_neond",
+          "rule_name": "FaasNeondBackfillStalled",
+          "definition": {
+            "expression_hash": "79a662330758e20794903fc9ddfe269576c952775c6b41cfaa528b0b3b759f30",
+            "labels_hash": "ed0a02dde98d4ed1877c995390bf874527c94dd30136e3103093f6da79d32d93",
+            "for_seconds": 7200,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fc6ab25295f0c7c6274e13124108693a0558183e74c881df7dc3358f0e36b537"
+          }
+        },
+        {
           "id": "8aef3cb7b51a4d0bfd4115949e5c8be5d20f91e60a858f2ebc19cefe0cbd681c",
           "file_name": "faas.rules.yml",
           "group_name": "faas_serving_probe_coverage",
@@ -4960,6 +5025,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9f9959c5ad1b06bf6dd200d9d7075ea3c336b7d767e7a5f618098a46bf72e022"
+          }
+        },
+        {
+          "id": "ab4d79b52a7adfe74dd1adea57d2d50037c185881e79c77b5a62934141a8b1eb",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseScanCriticalInGrace",
+          "definition": {
+            "expression_hash": "48c46810552b14dd8fbfbab4b0ba7b9bf61ac263fb08f4fd4b0fb8bd09993af4",
+            "labels_hash": "fe5e649389a6ea385686b19a4df3c52f947301a0cb28c9e4e981ceefb7461732",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "91e2736cd2f0108a4f38024ec1421458bf6f6f6286afe6f46936f298382b1061"
           }
         },
         {
@@ -7306,7 +7384,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "0559c01bb6b2d09bd4f81c36939911873250f1551e965ecada4644fcad6a6de2",
+      "revision": "b1ab154a6291d20c061c54cf2d4d106ef4511b2cbfa62e963a2cb4dce8c2f09f",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7885,6 +7963,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "8e42efb1f1b9df051098661de8423c22c1d200b90f4df1d4049c4d612573b646"
+          }
+        },
+        {
+          "id": "11d4e0c85419ddfced1c87f873b688ba270f27b812c3b6d2eaa947b939a18fe1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_neond",
+          "rule_name": "FaasNeondDown",
+          "definition": {
+            "expression_hash": "42be8ff3f1ce6d71be2fbe8682ae91f56f40f0aea47f0d32f4cb4ee8a25ee989",
+            "labels_hash": "0150b93c1b56d5bd28a02af394a02e29796fe8f19862a7254c18b043077e5737",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "302fbb696dce83bd5da2591ae1495bd928a41734cfb059626f8ee592bcbbf4e1"
           }
         },
         {
@@ -8496,6 +8587,19 @@
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
             "fingerprint": "51d9454f8c2b806d23b3673beb2914d95ffc4368ccc7e130137100ff7d91b7d5"
+          }
+        },
+        {
+          "id": "23663f9c9752dcadcbe8768fd3c1921d8d9b80d5534622556983e3200b454062",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_neond",
+          "rule_name": "FaasNeondRateLimited",
+          "definition": {
+            "expression_hash": "ab7641c4ed69aacb67b8ddc2478b646dc12cb0020df5cf135d78f9be4a62e456",
+            "labels_hash": "0150b93c1b56d5bd28a02af394a02e29796fe8f19862a7254c18b043077e5737",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "84d0ca4895116d67309efe48dc63b60ec47a67c57229097f32d368cfe1726c07"
           }
         },
         {
@@ -9747,6 +9851,19 @@
           }
         },
         {
+          "id": "4b1051784e9c9168d0f32206925bd4c6609c45ad29cc00fb91fc5a8db22bce55",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_neond",
+          "rule_name": "FaasNeondRefusing",
+          "definition": {
+            "expression_hash": "26f41553f5c45912712867bbbb2b9a09b3dcf4c6654768ba550b1d7809131ecf",
+            "labels_hash": "ed0a02dde98d4ed1877c995390bf874527c94dd30136e3103093f6da79d32d93",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9f6a6aa93eec94f5cadad9072d257ec60c39d26ff340ab2d4363e688e092ba13"
+          }
+        },
+        {
           "id": "4bf9ee570c69cd49527c86741344df7ba6b2bcdbbe0e6cea258f4ffdcbea096a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_object_storage",
@@ -9861,6 +9978,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "d854274e06ac1d212ac3c9c9b53f94252e95356c6eff10e213abeb8240337602"
+          }
+        },
+        {
+          "id": "4eca3d7ddd7c88cbafd89b5f02aa9289478d5e80bb4e5f71b90a5a71364e7c18",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_neond",
+          "rule_name": "FaasNeondProjectKeysFailing",
+          "definition": {
+            "expression_hash": "b3126fd53b4d840d09761a93e6bc6990db3a84447a5967b19ca003b86b32b4b7",
+            "labels_hash": "ed0a02dde98d4ed1877c995390bf874527c94dd30136e3103093f6da79d32d93",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "1e5dfe1f7da7b90099b829464456d7d04ee5b5c8be111ee2c330f605317bd52f"
           }
         },
         {
@@ -11515,6 +11645,19 @@
           }
         },
         {
+          "id": "8aacfb801e880ab128f488e7a30858c64cb1260c3c0e19268577714bb8048394",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_neond",
+          "rule_name": "FaasNeondBackfillStalled",
+          "definition": {
+            "expression_hash": "79a662330758e20794903fc9ddfe269576c952775c6b41cfaa528b0b3b759f30",
+            "labels_hash": "ed0a02dde98d4ed1877c995390bf874527c94dd30136e3103093f6da79d32d93",
+            "for_seconds": 7200,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fc6ab25295f0c7c6274e13124108693a0558183e74c881df7dc3358f0e36b537"
+          }
+        },
+        {
           "id": "8aef3cb7b51a4d0bfd4115949e5c8be5d20f91e60a858f2ebc19cefe0cbd681c",
           "file_name": "faas.rules.yml",
           "group_name": "faas_serving_probe_coverage",
@@ -12487,6 +12630,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9f9959c5ad1b06bf6dd200d9d7075ea3c336b7d767e7a5f618098a46bf72e022"
+          }
+        },
+        {
+          "id": "ab4d79b52a7adfe74dd1adea57d2d50037c185881e79c77b5a62934141a8b1eb",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseScanCriticalInGrace",
+          "definition": {
+            "expression_hash": "48c46810552b14dd8fbfbab4b0ba7b9bf61ac263fb08f4fd4b0fb8bd09993af4",
+            "labels_hash": "fe5e649389a6ea385686b19a4df3c52f947301a0cb28c9e4e981ceefb7461732",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "91e2736cd2f0108a4f38024ec1421458bf6f6f6286afe6f46936f298382b1061"
           }
         },
         {

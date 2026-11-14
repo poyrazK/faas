@@ -6487,7 +6487,7 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 			"Base image scan unavailable",
 			fmt.Sprintf("Gregale could not finish the vulnerability scan of its base image %q, so Gregale will not start instances on it until the scan completes; this is a platform problem, not your code", baseKey))
 	}
-	if n > 0 && scan.FixableCriticalSince != nil && time.Now().Before(scan.FixableCriticalSince.Add(api.BaseScanCriticalBootGrace)) {
+	if now := time.Now(); n > 0 && scan.FixableCriticalSince != nil && !scan.FixableCriticalSince.After(now) && now.Before(scan.FixableCriticalSince.Add(api.BaseScanCriticalBootGrace)) {
 		// Keep serving apps on the base while a patched one is published
 		// (deploy-path review P5). schedd refuses a new deployment's prime
 		// that comes back with this grace flag.

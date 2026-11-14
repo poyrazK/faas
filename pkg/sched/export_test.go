@@ -772,6 +772,7 @@ func (r *fakeVMM) StatsHook() *func(context.Context, string) (*StatsSnapshot, er
 	return &r.statsHook
 }
 func (r *fakeVMM) WakeErr() *error           { return &r.wakeErr }
+func (r *fakeVMM) BaseScanGrace() *bool      { return &r.baseScanGrace }
 func (r *fakeVMM) WarmSnapshotHook() *func() { return &r.warmSnapshotHook }
 func (r *fakeVMM) WarmSnapshots() *int       { return &r.warmSnapshots }
 
