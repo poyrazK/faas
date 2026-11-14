@@ -2828,24 +2828,30 @@ var methodRouteMap = map[string]string{
 	// the crons / alerts / keys clusters above. Account-scoped
 	// list + create skip the X-Active-Org hint, path-scoped routes
 	// require it (apid loadOrg middleware stamps the membership).
-	"GET /v1/orgs":                               "ListOrgs",
-	"POST /v1/orgs":                              "CreateOrg",
-	"GET /v1/orgs/{slug}":                        "GetOrg",
-	"GET /v1/orgs/{slug}/activity":               "ListOrgActivity",
-	"GET /v1/orgs/{slug}/apps":                   "ListOrgApps",
-	"POST /v1/orgs/{slug}/apps":                  "CreateOrgApp",
-	"PATCH /v1/orgs/{slug}":                      "PatchOrg",
-	"DELETE /v1/orgs/{slug}":                     "DeleteOrg",
-	"GET /v1/orgs/{slug}/members":                "ListOrgMembers",
-	"POST /v1/orgs/{slug}/members":               "InviteOrgMember",
-	"PATCH /v1/orgs/{slug}/members/{user_id}":    "ChangeOrgMemberRole",
-	"DELETE /v1/orgs/{slug}/members/{user_id}":   "RemoveOrgMember",
-	"POST /v1/orgs/{slug}/transfer_ownership":    "TransferOrgOwnership",
-	"GET /v1/orgs/{slug}/security-policy":        "GetOrgSecurityPolicy", // literal hyphen; follows operationId getOrgSecurityPolicy (ADR-20261113180000)
-	"PUT /v1/orgs/{slug}/security-policy":        "PutOrgSecurityPolicy", // follows operationId putOrgSecurityPolicy
-	"GET /v1/invitations/{token}":                "PeekInvitation",
-	"POST /v1/invitations/{token}/accept":        "AcceptInvitation",
-	"DELETE /v1/orgs/{slug}/invitations/{token}": "RevokeInvitation",
+	"GET /v1/orgs":                             "ListOrgs",
+	"POST /v1/orgs":                            "CreateOrg",
+	"GET /v1/orgs/{slug}":                      "GetOrg",
+	"GET /v1/orgs/{slug}/activity":             "ListOrgActivity",
+	"GET /v1/orgs/{slug}/apps":                 "ListOrgApps",
+	"POST /v1/orgs/{slug}/apps":                "CreateOrgApp",
+	"PATCH /v1/orgs/{slug}":                    "PatchOrg",
+	"DELETE /v1/orgs/{slug}":                   "DeleteOrg",
+	"GET /v1/orgs/{slug}/members":              "ListOrgMembers",
+	"POST /v1/orgs/{slug}/members":             "InviteOrgMember",
+	"PATCH /v1/orgs/{slug}/members/{user_id}":  "ChangeOrgMemberRole",
+	"DELETE /v1/orgs/{slug}/members/{user_id}": "RemoveOrgMember",
+	"POST /v1/orgs/{slug}/transfer_ownership":  "TransferOrgOwnership",
+	// Postgres change workers (ADR-20261112140000): literal hyphen; the SDK
+	// verbs follow the operationIds.
+	"GET /v1/apps/{slug}/postgres-changes":            "GetPostgresChanges",
+	"PUT /v1/apps/{slug}/postgres-changes":            "PutPostgresChanges",
+	"DELETE /v1/apps/{slug}/postgres-changes":         "DeletePostgresChanges",
+	"PUT /v1/apps/{slug}/postgres-changes/connection": "PutPostgresChangesConnection",
+	"GET /v1/orgs/{slug}/security-policy":             "GetOrgSecurityPolicy", // literal hyphen; follows operationId getOrgSecurityPolicy (ADR-20261113180000)
+	"PUT /v1/orgs/{slug}/security-policy":             "PutOrgSecurityPolicy", // follows operationId putOrgSecurityPolicy
+	"GET /v1/invitations/{token}":                     "PeekInvitation",
+	"POST /v1/invitations/{token}/accept":             "AcceptInvitation",
+	"DELETE /v1/orgs/{slug}/invitations/{token}":      "RevokeInvitation",
 	// PR-8 §2 — cursor-paginated list of every invitation minted on
 	// the org (pending/consumed/revoked/expired). Auto-derivation
 	// yields "GetOrgsSlugInvitations" which reads as a singleton
