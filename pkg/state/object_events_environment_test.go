@@ -42,7 +42,7 @@ func objectEventsCarryBucketEnvironment(t *testing.T, st accountingStore) {
 		if _, err = writes.FinishTrackedObjectUpload(ctx, c); err != nil {
 			t.Fatal(err)
 		}
-		envelope, _, _ := takeObjectEvent(t, st, b.AccountID, "write:"+c.ID, api.ObjectEventCreated)
+		envelope, _, _ := takeObjectEvent(t, st, b.AccountID, "write:"+c.ID, api.ObjectEventCreated) //nolint:contextcheck // takeObjectEvent claims with t.Context()
 		return envelope.EnvironmentID
 	}
 	if got := upload("before.txt"); got != "" {

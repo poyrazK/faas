@@ -115,7 +115,7 @@ func markDiscoveryRecordedTx(ctx context.Context, tx pgx.Tx, eventID string) err
 // apps and older gateways that report no deployment, and ok=false when the
 // deployment's stage no longer exists.
 func discoveredRouteEnvironmentTx(ctx context.Context, tx pgx.Tx, event APIConsumerUsageEvent) (string, bool, error) {
-	if _, err := uuid.Parse(discoveredDeploymentFor(event)); err != nil {
+	if !isUUIDString(discoveredDeploymentFor(event)) {
 		return "", true, nil
 	}
 	var scope, environmentID string
@@ -294,3 +294,7 @@ func (s *PgStore) ListDiscoveredAPIRoutes(ctx context.Context, accountID, appID 
 	}
 	return out, capHit, nil
 }
+
+// isUUIDString reports whether s is a UUID. A discovery without a valid
+// deployment is production's, not an error.
+func isUUIDString(s string) bool { return uuid.Validate(s) == nil }
