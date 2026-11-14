@@ -71,6 +71,10 @@ func TestDeployIdempotencyMutableRefsAndSecretBundles(t *testing.T) {
 		{"short SHA", main.DeployIdempotencyIntent{Repo: "acme/demo", Ref: "abcdef1"}, false},
 		{"commit", main.DeployIdempotencyIntent{Repo: "acme/demo", Ref: strings.Repeat("a", 40)}, true},
 		{"secrets", main.DeployIdempotencyIntent{SourceSHA256: "abc", HasSecrets: true}, false},
+		{"image tag", main.DeployIdempotencyIntent{Image: "ghcr.io/acme/app:latest"}, false},
+		{"untagged image", main.DeployIdempotencyIntent{Image: "ghcr.io/acme/app"}, false},
+		{"image digest", main.DeployIdempotencyIntent{Image: "ghcr.io/acme/app@sha256:" + strings.Repeat("b", 64)}, true},
+		{"tag and digest", main.DeployIdempotencyIntent{Image: "ghcr.io/acme/app:v1@sha256:" + strings.Repeat("c", 64)}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			first, err := main.DeployIdempotencyKey("", tc.intent)

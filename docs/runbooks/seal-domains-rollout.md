@@ -1554,8 +1554,10 @@ sudo systemctl is-active faas-schedd faas-imaged faas-gatewayd-internal faas-vmm
 
 `FaasFleetSealDomainUnverified` stays quiet. Rollback: set the switch back to
 `false` and run node join for the host; it stages `fleet.age` again. The
-`FLEET_AGE_KEY` secret stays in the compute environment until the control
-plane retires the fleet key too.
+`FLEET_AGE_KEY` secret stays in the deploy environment until the control
+plane retires the fleet key too: cd-controlplane reads it from the same
+environment. Compute CD no longer needs it for a retired node, and
+`gregalectl deploy join` refuses a missing key on a node that is not retired.
 
 ## 12. Account seal domain
 

@@ -143,7 +143,7 @@ test("says hello", async () => {
 ```
 
 To send a real request through the platform, use
-`gregale invoke APP --path /hello`, or `gregale dev` for a live
+`gregale invocation run APP --path /hello`, or `gregale dev` for a live
 edit-and-reload loop.
 
 ### CGO

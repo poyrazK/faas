@@ -906,8 +906,21 @@ from the catalog for the integration's provider. Reservations and settlement
 use the same price.
 
 - The file records its LiteLLM source commit, generation date and currency.
-  Prices are base-tier list prices; batch, priority, long-context tiers
-  and negotiated discounts are not modelled.
+  Prices are base-tier list prices; batch and priority tiers and negotiated
+  discounts are not modelled.
+- Long-context tiers and one-hour cache writes are (ADR 20261027132936
+  amendment 3). Claude Sonnet 4.x and Gemini 2.5 Pro cost 2x input and 1.5x
+  output above 200k prompt tokens, Gemini 1.5 Pro 2x both above 128k
+  (`pkg/outbound/aiprices/long_context.go`); Claude's one-hour cache writes
+  cost the higher of the cache-write price and twice the input price. The
+  catalog response shows both as `long_context` and
+  `cache_write_1h_millicents_per_mtok`.
+- A customer price list entry can set its own: `long_context`
+  (`above_input_tokens` 1,000 to 2,000,000, `input_percent` and
+  `output_percent` 100 to 1,000) and `cache_write_1h_millicents_per_mtok`.
+  An entry without a tier is billed flat; without a one-hour price, its
+  one-hour writes use the rule above. With the CLI:
+  `gregale ai prices set <id> --price model=claude,input=3,output=15,cache-write-1h=6,long-context=200000:200:150`.
 - A dated or versioned model the catalog lacks is priced as its family
   (`gpt-4o-2024-08-06` as `gpt-4o`, `claude-sonnet-4-5@20250929` as
   `claude-sonnet-4-5`). Bedrock cross-region prefixes and ARNs are stripped.

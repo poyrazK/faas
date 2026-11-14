@@ -51,7 +51,7 @@ func keyCapabilities(requested, keyScopes []string) []string {
 func grantScopes(requested, keyScopes []string) []string {
 	out := slices.Clone(requested)
 	if keyScopes != nil && !slices.Contains(keyScopes, api.ScopeDeployWrite) && !slices.Contains(keyScopes, api.ScopeAdmin) {
-		out = slices.DeleteFunc(out, func(scope string) bool { return scope == scopeWrite })
+		out = slices.DeleteFunc(out, func(scope string) bool { return scope == scopeWrite || scope == scopePublish })
 	}
 	return out
 }

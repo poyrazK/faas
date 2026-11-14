@@ -401,8 +401,8 @@ limit") and retried under the invocation's retry policy, so work that needs
 longer belongs in a job.
 
 ```bash
-gregale invoke --async --payload @payload.json APP_ID
-gregale invoke --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
+gregale invocation run --async --payload @payload.json APP_ID
+gregale invocation run --async --on-success-webhook WEBHOOK_ID --on-failure-webhook DLQ_WEBHOOK_ID APP_ID
 gregale job run nightly --tasks 10
 gregale cron create --app APP_ID --schedule "0 * * * *" --path /jobs/nightly
 gregale cron create --app APP_ID --schedule "*/15 * * * *" --command bin/maintenance --arg=--compact

@@ -2646,7 +2646,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.captureDialTLS != nil {
 			deps.captureDialTLS("bridge", bridgeTLS)
 		}
-		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed, srv.releasePhaseOff, srv.applyBridgeSourceSettings, srv.prepareBuildPreviewDatabases, srv.deliverGitHubSubscriptions)
+		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed, srv.releasePhaseOff, srv.applyBridgeSourceSettings, srv.prepareBuildPreviewDatabases, srv.deliverGitHubSubscriptions, srv)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: githubd bridge listen %q: %w", sock, err)
@@ -2907,6 +2907,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	privateStop := context.AfterFunc(ctx, srv.stopPrivateTools)
+	defer func() { privateStop(); srv.stopPrivateTools() }()
 	defer srv.startInternalCIWorker(ctx, log)()
 	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
 	defer srv.startEnvironmentGitAcceptanceEnforcement(ctx, deps.getenv)()
@@ -3356,7 +3358,7 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 // here are fatal — without the bridge listener githubd has no
 // way to enqueue builds and the dispatch path is silently
 // degraded (every push hits the noopEnqueuer path).
-func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error, githubSubscriptions func(context.Context, string, string, api.GitHubPullRequestEvent) error) (*grpc.Server, net.Listener, error) {
+func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error, githubSubscriptions func(context.Context, string, string, api.GitHubPullRequestEvent) error, prBranches pullRequestBranches) (*grpc.Server, net.Listener, error) {
 	// Same multi-box guard as runAdvisoryServer — a tcp/dns
 	// target without TLS would silently build an insecure server.
 	// ADR-052.
@@ -3383,7 +3385,7 @@ func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Conf
 	// apid_githubd_bridge_enqueued_total on each landed build.
 	// The accessor is nil-receiver safe so the metric stays zero
 	// when ops is nil (test path).
-	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps, releasePhaseOff, applySettings, previewDatabases, githubSubscriptions)
+	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps, releasePhaseOff, applySettings, previewDatabases, githubSubscriptions, prBranches)
 	return srv, lis, nil
 }
 

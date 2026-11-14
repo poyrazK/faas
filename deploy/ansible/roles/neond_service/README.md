@@ -20,10 +20,15 @@ Off by default. To turn it on (control plane or single box):
    - starts neond and waits for its socket.
 
    CD restarts neond from each new release.
-3. Check `neond_requests_total` and the journal, then set
-   `faas_neond_broker: true` and converge. apid gets a drop-in setting
+3. Check `neond_requests_total` (Prometheus job `neond`, scraped from
+   `faas_neond_metrics_addr`) and the journal.
+4. Remove `FAAS_NEON_API_KEY` (`faas_neond_apid_key_env`) from
+   `/etc/faas/sealed.env`, set `faas_neond_broker: true` and converge. apid
+   gets a drop-in setting
    `FAAS_MANAGED_POSTGRES_NEON_BROKER=unix:///run/faas/neond.sock` and
-   restarts; from then on every Neon call goes through neond.
+   restarts; from then on every Neon call goes through neond and apid holds
+   no Neon key. The role refuses the broker while `sealed.env` still sets the
+   key, and apid refuses to start with both.
 
 ## Project keys
 
@@ -54,13 +59,14 @@ hands it to neond and proves the domain probe. This role refuses project
 keys without it. Losing the identity leaves projects on the admin key until
 their keys are re-minted.
 
-To roll back, set `faas_neond_broker: false` (apid calls Neon with its own key
-again), then `faas_neond_enabled: false`.
+To roll back, put the key back in `sealed.env`, set `faas_neond_broker: false`
+and converge (apid calls Neon with its own key again), then
+`faas_neond_enabled: false`. The runbook is `docs/runbooks/FaasNeond.md`.
 
 neond logs in to Postgres as `faas_neond`, through peer authentication as
 `faas-neond`. That role is not a `faas_runtime` member: it can read
 `managed_postgres_databases` and nothing else.
 
-Slice 3 removes the key from apid's own configuration; until then apid still
-holds it, so the broker narrows what an apid bug can do but not what a leaked
-apid environment can.
+With the broker on, apid holds no Neon key, so a leaked apid environment
+reveals none. Alerts (`FaasNeond*`) cover neond being down, refusals, rate
+limits and project-key failures.

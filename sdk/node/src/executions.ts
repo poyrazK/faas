@@ -10,6 +10,7 @@ import { RunsService } from './generated/services/RunsService.js';
 import type { CreateExecutionRequest } from './generated/models/CreateExecutionRequest.js';
 import type { ExecutionResponse } from './generated/models/ExecutionResponse.js';
 import { streamSse, type SseEvent } from './sse.js';
+import type { CancelablePromise } from './generated/core/CancelablePromise.js';
 
 /** Event names emitted by `/v1/executions/{id}/events`. */
 export type ExecutionEventType =
@@ -59,12 +60,24 @@ export interface WatchExecutionOptions {
   retryMaxMs?: number;
 }
 
-/** Options for `FaaSClient.runExecution`. */
+/** Options for execution submission and observation. */
 export interface RunExecutionOptions extends WatchExecutionOptions {
   /** Stable key for replaying the create request, when desired. */
   idempotencyKey?: string;
   /** Called in stream order for every status, output, and terminal event. */
   onEvent?: (event: ExecutionEvent) => void | Promise<void>;
+}
+
+/** Convenience operations on the isolated preview client. */
+export interface ExecutionHelpers {
+  watchExecution(id: string, options?: WatchExecutionOptions): AsyncGenerator<ExecutionEvent, void, void>;
+  runExecution(requestBody: CreateExecutionRequest, options?: RunExecutionOptions): Promise<ExecutionResponse>;
+}
+
+/** Internal request boundary shared by isolated and legacy helpers. */
+export interface ExecutionRequests {
+  runs: Pick<typeof RunsService, 'createExecution' | 'getExecution'>;
+  fetchEvents(path: string, signal?: AbortSignal): Promise<Response>;
 }
 
 class ExecutionEventParseError extends Error {}
@@ -136,18 +149,11 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function executionEventsURL(
-  executionID: string,
-  after: number,
-  limit: number,
-): URL {
-  const url = new URL(
-    `/v1/executions/${encodeURIComponent(executionID)}/events`,
-    OpenAPI.BASE,
-  );
-  if (after > 0) url.searchParams.set('after', String(after));
-  url.searchParams.set('limit', String(limit));
-  return url;
+function executionEventsPath(executionID: string, after: number, limit: number): string {
+  const query = new URLSearchParams();
+  if (after > 0) query.set('after', String(after));
+  query.set('limit', String(limit));
+  return `/v1/executions/${encodeURIComponent(executionID)}/events?${query}`;
 }
 
 function executionHeaders(): Headers {
@@ -162,6 +168,26 @@ function executionHeaders(): Headers {
   return headers;
 }
 
+// Compatibility exports continue to resolve the process-wide configuration.
+const legacyRequests: ExecutionRequests = {
+  runs: RunsService,
+  fetchEvents(path, signal) {
+    return globalThis.fetch(new URL(path, OpenAPI.BASE), {
+      method: 'GET', headers: executionHeaders(), signal,
+    });
+  },
+};
+
+/** Watch using the legacy process-wide configuration. For independent callers,
+ * use createClient from the preview entry and client.watchExecution(...).
+ */
+export function watchExecution(
+  executionID: string,
+  options: WatchExecutionOptions = {},
+): AsyncGenerator<ExecutionEvent, void, void> {
+  return watchExecutionWithClient(legacyRequests, executionID, options);
+}
+
 /**
  * Watch a disposable execution until its terminal event.
  *
@@ -169,7 +195,8 @@ function executionHeaders(): Headers {
  * established, an EOF or transient read failure reconnects with the latest
  * event id, so callers do not need to implement cursor bookkeeping.
  */
-export async function* watchExecution(
+export async function* watchExecutionWithClient(
+  client: ExecutionRequests,
   executionID: string,
   options: WatchExecutionOptions = {},
 ): AsyncGenerator<ExecutionEvent, void, void> {
@@ -185,11 +212,7 @@ export async function* watchExecution(
 
     let response: Response;
     try {
-      response = await globalThis.fetch(executionEventsURL(executionID, after, limit), {
-        method: 'GET',
-        headers: executionHeaders(),
-        signal: options.signal,
-      });
+      response = await client.fetchEvents(executionEventsPath(executionID, after, limit), options.signal);
     } catch (err) {
       if (options.signal?.aborted) throw abortReason(options.signal);
       if (!connected || !isRetryableError(err)) throw err;
@@ -220,7 +243,12 @@ export async function* watchExecution(
       for await (const raw of streamSse(response, options.signal)) {
         if (options.signal?.aborted) throw abortReason(options.signal);
         const event = decodeEvent(raw);
-        if (event.id !== undefined && event.id > after) after = event.id;
+        // A reconnect may replay an overlapping batch. Deliver each identified
+        // event once; cursorless events keep their original delivery semantics.
+        if (event.id !== undefined) {
+          if (event.id <= after) continue;
+          after = event.id;
+        }
         if (event.type === 'terminal') terminal = true;
         yield event;
         if (terminal) return;
@@ -244,27 +272,50 @@ export async function* watchExecution(
  * as completion: agents receive live output and the final GET is made only
  * after the terminal event, when the VM has been destroyed.
  */
-export async function runExecution(
+export function runExecution(
+  requestBody: CreateExecutionRequest,
+  options: RunExecutionOptions = {},
+): Promise<ExecutionResponse> {
+  return runExecutionWithClient(legacyRequests, requestBody, options);
+}
+
+/** Internal execution workflow; its request boundary stays fixed throughout. */
+export async function runExecutionWithClient(
+  client: ExecutionRequests,
   requestBody: CreateExecutionRequest,
   options: RunExecutionOptions = {},
 ): Promise<ExecutionResponse> {
   const { idempotencyKey, onEvent, ...watchOptions } = options;
   if (watchOptions.signal?.aborted) throw abortReason(watchOptions.signal);
 
-  const createRequest = RunsService.createExecution({ requestBody, idempotencyKey });
-  const onAbort = () => createRequest.cancel();
-  watchOptions.signal?.addEventListener('abort', onAbort, { once: true });
-  let receipt: ExecutionResponse;
-  try {
-    receipt = await createRequest;
-  } finally {
-    watchOptions.signal?.removeEventListener('abort', onAbort);
-  }
+  const receipt = await withSignal(
+    client.runs.createExecution({ requestBody, idempotencyKey }), watchOptions.signal,
+  );
 
-  for await (const event of watchExecution(receipt.id, watchOptions)) {
+  for await (const event of watchExecutionWithClient(client, receipt.id, watchOptions)) {
     if (onEvent) await onEvent(event);
     if (event.type === 'terminal') break;
   }
   if (watchOptions.signal?.aborted) throw abortReason(watchOptions.signal);
-  return RunsService.getExecution({ id: receipt.id });
+  return withSignal(client.runs.getExecution({ id: receipt.id }), watchOptions.signal);
+}
+
+/** Cancel only this generated request and preserve the caller's abort reason. */
+async function withSignal<T>(request: CancelablePromise<T>, signal?: AbortSignal): Promise<T> {
+  const onAbort = () => request.cancel();
+  if (signal?.aborted) {
+    request.cancel();
+    // Observe the cancelled promise before propagating the caller's reason.
+    await request.catch(() => undefined);
+    throw abortReason(signal);
+  }
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await request;
+  } catch (error) {
+    if (signal?.aborted) throw abortReason(signal);
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
 }

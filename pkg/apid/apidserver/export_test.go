@@ -2378,6 +2378,12 @@ func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
 
+func (s *server) VerifyPrivateToolPinForTest(ctx context.Context, target api.ToolInvocationTarget, endpoint string) error {
+	return s.verifyPrivateToolPin(ctx, target, endpoint)
+}
+
+var ToolConnectionRecipientsForTest = toolConnectionRecipients
+
 func (s *server) ConfigureCustomerSupportForTest(ctx context.Context, pool *pgxpool.Pool) error {
 	return s.configureCustomerSupport(ctx, pool, func(string) string { return "" })
 }
@@ -2522,4 +2528,8 @@ var AppOOMRecommendation = appOOMRecommendation
 // (ADR-20261113160000); nil lookups leave the facts empty.
 func (s *server) SetSignupGeoForTest(country func(net.IP) string, asn func(net.IP) (uint32, string)) {
 	s.signupGeo = &signupGeo{country: country, asn: asn}
+}
+
+func (r pgHandlerEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map[string]string) *httptest.ResponseRecorder {
+	return r.doSession(p0, p1, p2, p3, p4, p5)
 }

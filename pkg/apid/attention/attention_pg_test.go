@@ -25,7 +25,19 @@ CREATE TABLE custom_domains (domain text PRIMARY KEY, app_id uuid NOT NULL, cert
   cert_failed_at timestamptz, cert_last_error text, verified_at timestamptz, verification_expires_at timestamptz NOT NULL);
 CREATE TABLE customer_api_errors (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, account_id uuid NOT NULL,
   occurred_at timestamptz NOT NULL, code text NOT NULL);
+CREATE TABLE events (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, at timestamptz NOT NULL, kind text NOT NULL, data jsonb);
+CREATE TABLE jobs (id uuid PRIMARY KEY, account_id uuid NOT NULL, name text NOT NULL, status text NOT NULL DEFAULT 'active');
+CREATE TABLE job_runs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), job_id uuid NOT NULL, trigger_kind text NOT NULL,
+  aggregate_status text NOT NULL, finished_at timestamptz);
+CREATE TABLE billing_payment_failure_receipts (account_id uuid NOT NULL, event_type text NOT NULL, processed_at timestamptz NOT NULL);
+CREATE TABLE billing_payment_recovery_receipts (account_id uuid NOT NULL, processed_at timestamptz NOT NULL);
 `
+
+// attentionMigrations create and widen the signal table.
+var attentionMigrations = []string{
+	"../../../migrations/20261113122715352_customer_attention_signals.sql",
+	"../../../migrations/20261113152905644_customer_attention_outcomes.sql",
+}
 
 func pgEvaluator(t *testing.T) (*Evaluator, *pgxpool.Pool) {
 	t.Helper()
@@ -56,22 +68,18 @@ func pgEvaluator(t *testing.T) (*Evaluator, *pgxpool.Pool) {
 		_, _ = root.Exec(context.Background(), "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		root.Close()
 	})
-	migration, err := os.ReadFile("../../../migrations/20261113122715352_customer_attention_signals.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	up := strings.SplitN(strings.SplitN(string(migration), "-- +goose Up", 2)[1], "-- +goose Down", 2)[0]
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, ddl := range []string{fixtureDDL, up} {
-		if _, err := tx.Exec(ctx, ddl); err != nil {
+	ddls := []string{fixtureDDL}
+	for _, path := range attentionMigrations {
+		migration, err := os.ReadFile(path)
+		if err != nil {
 			t.Fatal(err)
 		}
+		ddls = append(ddls, strings.SplitN(strings.SplitN(string(migration), "-- +goose Up", 2)[1], "-- +goose Down", 2)[0])
 	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
+	for _, ddl := range ddls {
+		if _, err := pool.Exec(ctx, ddl); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return New(pool, nil, nil), pool
 }
@@ -213,21 +221,25 @@ func TestEvaluateOpensRefreshesDismissesAndResolves(t *testing.T) {
 
 	// Dismissing keeps the signal quiet while its condition holds.
 	staff := f.account()
-	if err := e.Dismiss(ctx, signals[0].ID, staff, "  customer knows, fixing Dockerfile "); err != nil {
+	if err := e.Dismiss(ctx, signals[0].ID, staff, "contacted", "x"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("contacted is not a dismiss outcome: %v", err)
+	}
+	if err := e.Dismiss(ctx, signals[0].ID, staff, api.AttentionOutcomeNotNeeded, strings.Repeat("x", api.AttentionDismissReasonMax+1)); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("long note err = %v", err)
+	}
+	if err := e.Dismiss(ctx, signals[0].ID, staff, api.AttentionOutcomeAlreadyInTouch, "  customer knows, fixing Dockerfile "); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Dismiss(ctx, signals[0].ID, staff, "again"); !errors.Is(err, ErrNotFound) {
+	if err := e.Dismiss(ctx, signals[0].ID, staff, api.AttentionOutcomeNotNeeded, ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("second dismiss err = %v", err)
-	}
-	if err := e.Dismiss(ctx, signals[0].ID, staff, " "); err == nil {
-		t.Fatal("empty reason accepted")
 	}
 	now = now.Add(5 * time.Minute)
 	if result, err = e.Evaluate(ctx); err != nil || result.Opened != 0 || result.OpenByKind[api.AttentionKindDeployFailing] != 0 {
 		t.Fatalf("after dismiss = %+v, %v", result, err)
 	}
 	signals, _ = e.List(ctx, Filter{AccountID: stuck, Kind: api.AttentionKindDeployFailing})
-	if len(signals) != 1 || signals[0].State != api.AttentionStateDismissed || signals[0].DismissReason != "customer knows, fixing Dockerfile" || signals[0].DismissedBy != staff {
+	if len(signals) != 1 || signals[0].State != api.AttentionStateDismissed || signals[0].DismissReason != "customer knows, fixing Dockerfile" || signals[0].DismissedBy != staff ||
+		signals[0].Outcome != api.AttentionOutcomeAlreadyInTouch {
 		t.Fatalf("dismissed = %+v", signals)
 	}
 
@@ -238,7 +250,7 @@ func TestEvaluateOpensRefreshesDismissesAndResolves(t *testing.T) {
 		t.Fatalf("after live = %+v, %v", result, err)
 	}
 	resolved, _ := e.List(ctx, Filter{AccountID: stuck, Kind: api.AttentionKindDeployFailing, States: []string{api.AttentionStateResolved}})
-	if len(resolved) != 1 || resolved[0].ResolvedAt == nil {
+	if len(resolved) != 1 || resolved[0].ResolvedAt == nil || resolved[0].Outcome != api.AttentionOutcomeAlreadyInTouch {
 		t.Fatalf("resolved = %+v", resolved)
 	}
 
@@ -273,8 +285,17 @@ func TestNilEvaluatorAndBound(t *testing.T) {
 	if list, err := e.List(context.Background(), Filter{}); err != nil || list == nil || len(list) != 0 {
 		t.Fatalf("nil list = %v %v", list, err)
 	}
-	if e.Dismiss(context.Background(), 1, uuid.NewString(), "x") == nil {
+	if e.Dismiss(context.Background(), 1, uuid.NewString(), api.AttentionOutcomeNotNeeded, "") == nil {
 		t.Fatal("nil dismiss succeeded")
+	}
+	if e.Contacted(context.Background(), 1, uuid.NewString(), uuid.NewString()) == nil {
+		t.Fatal("nil contacted succeeded")
+	}
+	if _, err := e.Get(context.Background(), 1); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("nil get = %v", err)
+	}
+	if s, err := e.Summary(context.Background(), time.Now()); err != nil || s == nil {
+		t.Fatalf("nil summary = %v %v", s, err)
 	}
 	if got := bound("ééé", 3); got != "é" {
 		t.Fatalf("bound split a rune: %q", got)

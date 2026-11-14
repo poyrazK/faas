@@ -48,14 +48,6 @@ func testQueueBindingRetirement(t *testing.T, fx *Fixture) {
 	if err := fx.Store.FailInvocation(fx.Ctx, dead.ID, "exhausted", time.Nanosecond, 1); err != nil {
 		t.Fatal(err)
 	}
-	key, err := workpolicy.CanonicalScalar([]byte(`"order-1"`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	keyed, err := fx.Store.EnqueueKeyedInvocation(fx.Ctx, state.Invocation{AccountID: fx.Account.ID, AppID: app.ID, Source: state.InvocationQueue, QueueName: "orders", DueAt: time.Now()}, workpolicy.Policy{Name: "ordered", MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingAll}, key)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Pull mode retains delivery identity while freeing a consumer quota slot.
 	pull, push := "pull", "push"
 	changed, err := store.UpdateQueueBindingWithConsumer(fx.Ctx, fx.Account.ID, app.ID, created.Binding.ID, state.UpdateQueueBindingParams{Mode: &pull})
@@ -93,6 +85,18 @@ func testQueueBindingRetirement(t *testing.T, fx *Fixture) {
 	}
 	if id, err := fx.Store.TriggerRecordIDByItemIdentifier(fx.Ctx, triggerID, "receipt"); err != nil || id != receiptID {
 		t.Fatalf("pull/push lost receipt: %q %v", id, err)
+	}
+	key, err := workpolicy.CanonicalScalar([]byte(`"order-1"`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyed, err := fx.Store.EnqueueKeyedInvocation(fx.Ctx, state.Invocation{AccountID: fx.Account.ID, AppID: app.ID, Source: state.InvocationQueue, QueueName: "orders", DueAt: time.Now()}, workpolicy.Policy{Name: "ordered", MaxRunningPerKey: 1, PendingUpdates: workpolicy.PendingAll}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only push delivers keyed work, so a binding holding it stays push.
+	if _, err := store.UpdateQueueBindingWithConsumer(fx.Ctx, fx.Account.ID, app.ID, created.Binding.ID, state.UpdateQueueBindingParams{Mode: &pull}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("pull accepted with keyed work held: %v", err)
 	}
 	// The legacy deletion seam must retire the same private projection.
 	if err := fx.Store.DeleteQueueBinding(fx.Ctx, fx.Account.ID, app.ID, created.Binding.ID); err != nil {

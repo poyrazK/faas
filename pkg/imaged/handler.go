@@ -459,8 +459,30 @@ func (h *Handler) imageSignaturePublishers(ctx context.Context, app state.App) (
 // reads. Only a missing attachment is classified as missing; registry failures
 // remain failures. The signed source may be an index whose verified child is
 // selected by the resolver (ADR-435).
+//
+// The caller fails the deployment with the returned error. A missing or
+// untrusted signature returns a typed problem, so the deployment carries
+// deploy_signature_invalid with a fix instead of deploy_failed and raw cosign
+// text; a registry or database blip is retried a few times before it fails a
+// deploy that is otherwise fine (deploy-path review P6).
 func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep state.Deployment, ref, expectedDigest string, auth *oci.BasicAuth) (cosign.ImageSignatureProof, error) {
-	proof, err := h.checkImageSignatureProof(ctx, app, ref, auth)
+	var (
+		proof cosign.ImageSignatureProof
+		err   error
+	)
+	for attempt := 0; ; attempt++ {
+		proof, err = h.checkImageSignatureProof(ctx, app, ref, auth)
+		if err == nil || !transientSignatureError(err) || attempt >= len(externalVerifyRetryDelays) || ctx.Err() != nil {
+			break
+		}
+		if h.log != nil {
+			h.log.Warn("imaged: image signature verification failed transiently; retrying", "deployment", dep.ID, "attempt", attempt+1, "err", err)
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(externalVerifyRetryDelays[attempt]):
+		}
+	}
 	if err == nil && proof.SubjectDigest != expectedDigest {
 		err = fmt.Errorf("%w: verified subject differs from selected source", cosign.ErrSignatureInvalid)
 	}
@@ -469,18 +491,41 @@ func (h *Handler) verifyImageSignature(ctx context.Context, app state.App, dep s
 	}
 	switch {
 	case errors.Is(err, cosign.ErrSignatureMissing):
-		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_missing: no signature for ref")
 		h.emitSignatureAudit(ctx, "app.signature_missing", app, dep, ref, "")
+		return cosign.ImageSignatureProof{}, errors.Join(signatureProblem(app.Slug, ref, false), err)
 	case errors.Is(err, cosign.ErrSignatureInvalid):
-		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_invalid: no trusted publisher matched")
 		h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, ref, "")
+		return cosign.ImageSignatureProof{}, errors.Join(signatureProblem(app.Slug, ref, true), err)
 	case errors.Is(err, errTrustedPublishersUnavailable):
-		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_verify: trusted publisher list unavailable")
+		return cosign.ImageSignatureProof{}, fmt.Errorf("signature_verify: trusted publisher list unavailable: %w", err)
 	default:
-		_ = h.markDeployFailed(ctx, dep.ID, err, "signature_verify: registry error")
 		h.emitSignatureAudit(ctx, "app.signature_invalid", app, dep, ref, "")
+		return cosign.ImageSignatureProof{}, fmt.Errorf("signature_verify: registry error: %w", err)
 	}
-	return cosign.ImageSignatureProof{}, err
+}
+
+// externalVerifyRetryDelays are the waits between attempts when a go-live
+// check against an outside service (the image registry, the trusted-publisher
+// read, GitHub's branch head) fails for a reason that says nothing about the
+// deployment itself.
+var externalVerifyRetryDelays = []time.Duration{time.Second, 3 * time.Second, 9 * time.Second}
+
+// transientSignatureError reports a verification failure that says nothing
+// about the image: the registry or the trusted-publisher read failed.
+func transientSignatureError(err error) bool {
+	return !errors.Is(err, cosign.ErrSignatureMissing) && !errors.Is(err, cosign.ErrSignatureInvalid) &&
+		!errors.Is(err, context.Canceled)
+}
+
+// signatureProblem is the customer-facing refusal of an unsigned or
+// untrusted image.
+func signatureProblem(slug, ref string, untrusted bool) *api.Problem {
+	if untrusted {
+		return api.ErrDeploySignatureInvalid("image " + ref + " is signed, but by no trusted publisher of " + slug).
+			WithHint("List the app's trusted publishers with `gregale trusted-publishers list --app " + slug + "`, then sign the image with one of their keys or add the publisher that signed it.")
+	}
+	return api.ErrDeploySignatureInvalid("image " + ref + " has no signature, and " + slug + " requires signed images").
+		WithHint("Sign the image digest with a trusted publisher's key (for example `cosign sign --key <key> " + ref + "`) and deploy again; list the publishers with `gregale trusted-publishers list --app " + slug + "`.")
 }
 
 // emitSignatureAudit fires the audit row for verify failures. Mirrors
@@ -1250,6 +1295,12 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	}
 	defer cleanup()
 	markScanPhase(ctx, "stage")
+	// Grype runs while the artifact is hashed rather than after it: each took
+	// about 7 s on production and the deploy waited for both in turn
+	// (deploy-path review P15). The hash still decides reuse, which cancels
+	// the scan; the stop runs before cleanup removes the staged artifact.
+	scan := h.startDeployGrype(ctx, scanDir)
+	defer scan.stop()
 	artifactDigest, artifactErr := h.scanArtifactDigest(be, storagekey.AppLayer(scanLayer(app.Slug, dep)), scanDir)
 	markScanPhase(ctx, "digest")
 	if artifactErr != nil {
@@ -1263,10 +1314,12 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		result = h.reusableDeployScan(ctx, app, dep, artifactDigest)
 	}
 	if result != nil {
+		scan.stop()
 		markScanPhase(ctx, "reuse")
 	} else {
-		result, err = h.runGrype(ctx, scanDir)
+		result, err = scan.wait()
 		h.lastDeployScanner.record(result, err, time.Now())
+		markScanPhase(ctx, "scan_wait")
 	}
 	if err != nil {
 		// Fail the scan, not the deploy. Log the grype error
@@ -1342,7 +1395,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
 		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown,
 		"reused_from", result.ReusedFrom,
-	}, timing.attrs()...)...)
+	}, append(timing.attrs(), scan.phaseAttrs()...)...)...)
 	return checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
 }
 
@@ -4103,6 +4156,18 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	var promoteErr error
 	if !checkedRollback && dep.GitHubSourceRef != "" {
 		stale, verifyErr := h.gitHubSourceRefIsStale(ctx, dep)
+		if stale && verifyErr == nil {
+			// A newer push of the branch already has its own deployment:
+			// this one was overtaken, not broken. Failing it put a red
+			// "faas / build" check on the older commit (deploy-path review
+			// P11). Without a newer deployment the branch moved under a
+			// one-off deploy, which still fails as stale.
+			if superseded, err := h.supersedeOutpacedRelease(ctx, dep); err != nil {
+				return err
+			} else if superseded {
+				return nil
+			}
+		}
 		if stale || verifyErr != nil {
 			code := api.CodeSourceRefStale
 			detail := fmt.Sprintf("GitHub branch %q no longer points to deployment commit %s", dep.GitHubSourceRef, dep.CommitSHA)
@@ -4118,6 +4183,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			}
 			h.notifyDeploymentState(ctx, dep.AppID, dep.ID, state.DeployFailed)
 			return nil
+		}
+	}
+	if !checkedRollback {
+		if frozen, err := h.refuseReleaseFrozenSinceDeploy(ctx, dep); err != nil || frozen {
+			return err
 		}
 	}
 	recovering, _ := ctx.Value(mcpTaskRecoveryContextKey{}).(bool)

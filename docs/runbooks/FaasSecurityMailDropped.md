@@ -1,5 +1,7 @@
 # FaasSecurityMailDropped
 
+## Symptom
+
 apid sends security mail (password reset, sign-in links, email verification,
 email-change confirmations and account notices) off the request path through
 a pool of `api.PasswordResetMailInFlightMax` (64) concurrent sends per apid.
