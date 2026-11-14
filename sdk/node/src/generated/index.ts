@@ -2443,6 +2443,7 @@ export type { ProjectEnvironmentApprovalResponse } from './models/ProjectEnviron
 export type { ProjectEnvironmentApprovalStatusResponse } from './models/ProjectEnvironmentApprovalStatusResponse.js';
 export type { ProjectEnvironmentBindingChangeResponse } from './models/ProjectEnvironmentBindingChangeResponse.js';
 export type { ProjectEnvironmentBindingResponse } from './models/ProjectEnvironmentBindingResponse.js';
+export type { ProjectEnvironmentBranchBucket } from './models/ProjectEnvironmentBranchBucket.js';
 export type { ProjectEnvironmentBranchDatabase } from './models/ProjectEnvironmentBranchDatabase.js';
 export type { ProjectEnvironmentBranchListResponse } from './models/ProjectEnvironmentBranchListResponse.js';
 export type { ProjectEnvironmentBranchResponse } from './models/ProjectEnvironmentBranchResponse.js';
