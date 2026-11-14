@@ -44,8 +44,13 @@ func (m *MemStore) ListDueExternalTriggerReplays(ctx context.Context, trigger st
 		return nil, nil
 	}
 	var records []sqlc.TriggerRecord
+	now := time.Now()
 	for _, r := range m.records {
-		if r.TriggerID.String() == trigger && r.OperatorReplay && (r.State == "pending" || r.State == "retry") && !r.NextFireAt.Time.After(time.Now()) {
+		due := (r.State == "pending" || r.State == "retry") && !r.NextFireAt.Time.After(now)
+		// A lost dispatcher's claim lapses back to due (the broker will not
+		// redeliver an operator replay).
+		lapsed := r.State == "claimed" && r.ClaimExpiresAt.Valid && !r.ClaimExpiresAt.Time.After(now)
+		if r.TriggerID.String() == trigger && r.OperatorReplay && (due || lapsed) {
 			records = append(records, r)
 		}
 	}

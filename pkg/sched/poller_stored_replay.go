@@ -21,9 +21,16 @@ func (p *storedTriggerReplaySource) Ack(context.Context, sqlc.Trigger, []string)
 func (p *storedTriggerReplaySource) Nack(context.Context, sqlc.Trigger, []string, string) error {
 	return nil
 }
-func (p *storedTriggerReplaySource) Poll(context.Context, sqlc.Trigger) PollResult {
+func (p *storedTriggerReplaySource) Poll(_ context.Context, t sqlc.Trigger) PollResult {
 	result := PollResult{}
-	for _, r := range p.records {
+	records := p.records
+	// The records were listed before the per-plan record rate trimmed the
+	// batch; hand out only what the budget took. The rest stay due in the
+	// store for a later tick.
+	if t.BatchSizeMax > 0 && int(t.BatchSizeMax) < len(records) {
+		records = records[:t.BatchSizeMax]
+	}
+	for _, r := range records {
 		var headers map[string]string
 		var metadata map[string]any
 		if len(r.Headers) > 0 && json.Unmarshal(r.Headers, &headers) != nil {

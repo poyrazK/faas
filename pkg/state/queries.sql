@@ -14520,11 +14520,23 @@ WHERE r.id=sqlc.arg(id)::uuid
 FOR UPDATE OF r;
 
 -- name: ListDueExternalTriggerReplays :many
-SELECT r.* FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
-WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
- AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
- AND t.kind IN ('kafka','nats','redis_streams')
-ORDER BY r.next_fire_at,r.id LIMIT sqlc.arg(batch_limit)::integer;
+-- Two branches so each keeps its partial index: due replays
+-- (trigger_operator_replay_due_idx), and replays a dispatcher claimed and then
+-- lost, which return once the claim lapses (trigger_records_claim_expiry_idx):
+-- the broker already settled the original delivery and never hands it back.
+SELECT d.* FROM (
+  (SELECT r.* FROM trigger_records r
+    WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
+      AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
+    ORDER BY r.next_fire_at,r.id LIMIT sqlc.arg(batch_limit)::integer)
+  UNION ALL
+  (SELECT r.* FROM trigger_records r
+    WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
+      AND r.state='claimed' AND r.claim_expires_at<=clock_timestamp()
+    ORDER BY r.claim_expires_at,r.id LIMIT sqlc.arg(batch_limit)::integer)
+) d
+WHERE EXISTS (SELECT 1 FROM triggers t WHERE t.id=d.trigger_id AND t.kind IN ('kafka','nats','redis_streams'))
+ORDER BY d.next_fire_at,d.id LIMIT sqlc.arg(batch_limit)::integer;
 
 -- name: QueueFinishDeliveryClaims :many
 with targets as (
