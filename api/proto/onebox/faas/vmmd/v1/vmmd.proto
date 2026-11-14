@@ -1276,6 +1276,12 @@ message WakeResponse {
   // The contained environment branch profile was installed before guest
   // execution (ADR-20261031193635).
   bool environment_branch_contained = 20;
+  // The base scan gate admitted this boot only inside the grace that keeps
+  // apps already serving on a base waking after a scan finds a fixable
+  // CRITICAL vulnerability in it (api.BaseScanCriticalBootGrace). schedd
+  // refuses a new deployment's prime that reports it. Older vmmd never sets
+  // it; it refused such boots outright.
+  bool base_scan_grace = 21;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.
