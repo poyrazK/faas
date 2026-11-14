@@ -766,7 +766,7 @@ var ErrAPIKeyRevoked = errors.New("state: api key revoked")
 // refusedKey is the key AuthenticateKey and AuthenticateDeployToken return
 // with ErrAPIKeyRevoked or ErrAPIKeyExpired: only the key id and the owning
 // account, so the auth middleware can audit the key and attribute the
-// refusal to the account (ADR-20261114090000). It carries no scopes and
+// refusal to the account (ADR-20261114190002). It carries no scopes and
 // grants nothing; callers must still treat the error as a refusal.
 func refusedKey(id, accountID string) APIKey {
 	return APIKey{ID: id, AccountID: accountID}

@@ -496,6 +496,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Proposed 2026-10-29 for review (round 9: one-off verbs).
 	{"account dpa get", "account dpa"},
+	{"account health get", "account health"},
 	{"account billing-run schedule get", "account billing-run schedule"},
 	{"ai quality-alert list", "ai quality-alerts"},
 	{"api consumer plan history", "consumers plan-history"},
@@ -577,6 +578,15 @@ var cliTreeAliases = []cliTreeAlias{
 	{"api tenant activation wait", "platform-tenants activation"},
 	{"workflow stored recovery-policy get", "stored-workflows recovery-policy"},
 	{"workflow stored recovery-policy set", "stored-workflows recovery-policy"},
+	// Pipeline verbs from #7219 and #7239: freshness shows or sets the
+	// target; indexes and access preview a change, then approve it.
+	{"pipeline freshness get", "pipeline freshness"},
+	{"pipeline freshness set", "pipeline freshness"},
+	{"pipeline index check", "pipeline indexes"},
+	{"pipeline index approve", "pipeline indexes"},
+	{"pipeline access check", "pipeline access"},
+	{"pipeline access approve", "pipeline access"},
+	{"pipeline connection guide get", "pipeline connection guide"},
 	{"bucket protection legal-hold get", "bucket protection legal-hold"},
 	{"bucket protection legal-hold set", "bucket protection legal-hold"},
 	{"bucket protection event-hold set", "bucket protection event-hold"},

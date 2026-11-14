@@ -10,7 +10,7 @@ import (
 // Only an active account can become an organization's owner, operators can
 // give an organization a new owner, and an organization that requires
 // two-factor authentication does not admit a member without it (ADR
-// 20261113180000).
+// 20261114170352).
 func orgOwnerAndPolicy(t *testing.T, store state.Store) {
 	t.Helper()
 	ctx := t.Context()
