@@ -6074,6 +6074,13 @@ func deleteProjectEnvironmentRowsTx(ctx context.Context, tx pgx.Tx, accountID, p
 	`, accountID, projectID, slug); err != nil {
 		return mapErr(err)
 	}
+	// So do its event subscriptions; their work bindings cascade.
+	if _, err := tx.Exec(ctx, `
+		delete from event_subscriptions s using apps a
+		 where s.app_id = a.id and a.account_id = $1 and a.project_id = $2 and s.deployment_scope = $3
+	`, accountID, projectID, slug); err != nil {
+		return mapErr(err)
+	}
 
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_config_versions
@@ -27799,12 +27806,15 @@ func mapErr(err error) error {
 		case "environment_recovery_budget":
 			observed, _ := strconv.ParseInt(admission.Detail, 10, 64)
 			return &EnvironmentRecoveryQuotaError{Observed: observed}
-		case "environment_recovery_retained":
+		case "environment_recovery_retained",
+			"event_subscription_environment_membership", "event_subscription_scope_identity":
 			return ErrConflict
 		case "environment_recovery_artifact_unavailable":
 			return ErrLayerArtifactRetired
 		case "account_shared_app_ownership_pending":
 			return ErrOrgAppOwnershipPending
+		case "org_owner_account_inactive":
+			return ErrOrgOwnerInactive
 		case accountManagedPostgresDatabasesConstraint:
 			return accountManagedPostgresDatabasesError(admission.Detail)
 		case "migration_admission_current", "migration_source_current", "function_migration_node_pending":

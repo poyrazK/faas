@@ -288,15 +288,17 @@ func TestOwnershipTransferAppearsInOrgActivity(t *testing.T) {
 	if err := e.store.AddOrgMember(context.Background(), org.ID, newOwner.ID, state.OrgRoleDeveloper, nil); err != nil {
 		t.Fatalf("AddOrgMember new owner: %v", err)
 	}
-	rec := e.do(t, http.MethodPost, "/v1/orgs/"+org.Slug+"/transfer_ownership", api.TransferOwnershipRequest{
+	rec := e.doSession(t, "", http.MethodPost, "/v1/orgs/"+org.Slug+"/transfer_ownership", api.TransferOwnershipRequest{
 		NewOwnerAccountID: newOwner.ID,
 	}, map[string]string{"X-Active-Org": org.Slug})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("transfer ownership: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	rows := assertOrgActivityKinds(t, e.store, org.ID, "org.ownership_transferred")
-	if len(rows) != 1 || rows[0].ActorLabel != "test" || rows[0].ResourceLabel != newOwner.Email ||
-		orgActivitySummary(rows[0]) != "test transferred ownership to "+newOwner.Email {
+	// A browser session, not an API key, transfers ownership, so the actor
+	// is the signed-in account rather than a key label.
+	if len(rows) != 1 || rows[0].ActorLabel != e.acct.Email || rows[0].ResourceLabel != newOwner.Email ||
+		orgActivitySummary(rows[0]) != e.acct.Email+" transferred ownership to "+newOwner.Email {
 		t.Fatalf("ownership transfer activity = %#v", rows)
 	}
 }

@@ -55,7 +55,10 @@ AND oid NOT IN (SELECT to_regprocedure(signature)::oid FROM unnest($1::text[]) A
 	// CPU. Issued migrations are append-only, so 004 restores its own versions
 	// of these two functions. Check every other definition, then restore the
 	// current versions before independently replaying 003 against them.
-	laterFunctions := []string{"service_capacity_snapshot()", "migration_admission_node_usage(uuid,uuid)"}
+	// 20261110180538212_migration_capacity_memory_only later rewrote both
+	// migration admission guards too.
+	laterFunctions := []string{"service_capacity_snapshot()", "migration_admission_node_usage(uuid,uuid)",
+		"guard_instance_migration_admission()", "guard_migration_admission()"}
 	wantOtherFunctions := fingerprint(laterFunctions...)
 	currentDefinitions := make([]string, len(laterFunctions))
 	for i, signature := range laterFunctions {

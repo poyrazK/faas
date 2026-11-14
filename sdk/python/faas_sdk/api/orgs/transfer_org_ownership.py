@@ -100,9 +100,10 @@ def sync_detailed(
     (a single PostgreSQL tx with `FOR UPDATE` locks on both
     rows). The exactly-one-owner invariant is enforced by the
     partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-    member of the org. For a Free organization, the recipient must have
+    member of the org whose account is active. For a Free organization, the recipient must have
     available Free-organization ownership capacity; admission is serialized
-    with organization creation and other incoming transfers.
+    with organization creation and other incoming transfers. Needs a
+    signed-in browser session; an API key gets `browser_session_required`.
 
     Args:
         slug (str):
@@ -146,9 +147,10 @@ def sync(
     (a single PostgreSQL tx with `FOR UPDATE` locks on both
     rows). The exactly-one-owner invariant is enforced by the
     partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-    member of the org. For a Free organization, the recipient must have
+    member of the org whose account is active. For a Free organization, the recipient must have
     available Free-organization ownership capacity; admission is serialized
-    with organization creation and other incoming transfers.
+    with organization creation and other incoming transfers. Needs a
+    signed-in browser session; an API key gets `browser_session_required`.
 
     Args:
         slug (str):
@@ -187,9 +189,10 @@ async def asyncio_detailed(
     (a single PostgreSQL tx with `FOR UPDATE` locks on both
     rows). The exactly-one-owner invariant is enforced by the
     partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-    member of the org. For a Free organization, the recipient must have
+    member of the org whose account is active. For a Free organization, the recipient must have
     available Free-organization ownership capacity; admission is serialized
-    with organization creation and other incoming transfers.
+    with organization creation and other incoming transfers. Needs a
+    signed-in browser session; an API key gets `browser_session_required`.
 
     Args:
         slug (str):
@@ -231,9 +234,10 @@ async def asyncio(
     (a single PostgreSQL tx with `FOR UPDATE` locks on both
     rows). The exactly-one-owner invariant is enforced by the
     partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-    member of the org. For a Free organization, the recipient must have
+    member of the org whose account is active. For a Free organization, the recipient must have
     available Free-organization ownership capacity; admission is serialized
-    with organization creation and other incoming transfers.
+    with organization creation and other incoming transfers. Needs a
+    signed-in browser session; an API key gets `browser_session_required`.
 
     Args:
         slug (str):

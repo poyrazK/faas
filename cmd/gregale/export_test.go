@@ -1250,6 +1250,8 @@ var DefaultProjectSlug = defaultProjectSlug
 var DeployContextDirectory = deployContextDirectory
 var DeployDeveloperSource = deployDeveloperSource
 var DeployIdempotencyKey = deployIdempotencyKey
+
+var MissingRequiredSecretNames = missingRequiredSecretNames
 var DeployManifestObjectStorageBindings = deployManifestObjectStorageBindings
 var DeployManifestPostgresBindings = deployManifestPostgresBindings
 var DeployManifestQueueBindings = deployManifestQueueBindings
@@ -1367,6 +1369,15 @@ var FindProjectContext = findProjectContext
 var FindSecretStatus = findSecretStatus
 var FinishMCPDeploy = finishMCPDeploy
 var FinishMCPDeployWithSmoke = finishMCPDeployWithSmoke
+
+func CheckMCPPublicationBaselineForTest(ctx context.Context, c *Client, slug, candidate, appID string, serving *string) error {
+	return checkMCPPublicationBaseline(ctx, c, slug, candidate, &mcpCatalogPinReceipt{expectedAppID: appID, expectedServing: serving})
+}
+
+func ValidateMCPReviewedToolCatalogForTest(cfg mcphosting.Config, report mcphosting.Report) error {
+	return validateMCPReviewedToolCatalog(cfg, report)
+}
+
 var RunMCPVerificationJobs = runMCPVerificationJobs
 var FinishPreviewRequestComparison = finishPreviewRequestComparison
 var FinishPreviewSecurityComparison = finishPreviewSecurityComparison
@@ -1538,6 +1549,8 @@ var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
 var RetainedLineLevelMatches = retainedLineLevelMatches
 var ParseAIPriceSpec = parseAIPriceSpec
+
+var FormatPriceTiers = formatPriceTiers
 var ParseAIRouteTargets = parseAIRouteTargets
 var ParseStoredWorkflowLiveBaseline = parseStoredWorkflowLiveBaseline
 var ParseStoredWorkflowLiveGate = parseStoredWorkflowLiveGate
@@ -1908,6 +1921,10 @@ var RunLocalTest = runLocalTest
 var RunLocalTestWithLoad = runLocalTestWithLoad
 var RunLogs = runLogs
 var RunMCPBrowserConnection = runMCPBrowserConnection
+
+var RunToolBrowserConnectionForTest = runToolBrowserConnection
+var ToolAuthorizationCallbackForTest = toolAuthorizationCallback
+var RunToolConnectionBrowserCommandForTest = runMCPToolConnectionBrowser
 var RunMCPCatalogMonitor = runMCPCatalogMonitor
 var RunMCPNativeRelease = runMCPNativeRelease
 var RunMCPNativeRetirement = runMCPNativeRetirement
@@ -2394,10 +2411,11 @@ func (r *mcpReleaseAuthorization) InsufficientToken() *string { return &r.insuff
 func (r *mcpReleaseRole) Token() *string { return &r.token }
 
 // Members of mcpServeOptions
-func (r *mcpServeOptions) AllowWrites() *bool   { return &r.allowWrites }
-func (r *mcpServeOptions) Onboarding() *string  { return &r.onboarding }
-func (r *mcpServeOptions) Redirects() *[]string { return &r.redirects }
-func (r *mcpServeOptions) StateFile() *string   { return &r.stateFile }
+func (r *mcpServeOptions) AllowToolInvocation() *bool { return &r.allowToolInvocation }
+func (r *mcpServeOptions) AllowWrites() *bool         { return &r.allowWrites }
+func (r *mcpServeOptions) Onboarding() *string        { return &r.onboarding }
+func (r *mcpServeOptions) Redirects() *[]string       { return &r.redirects }
+func (r *mcpServeOptions) StateFile() *string         { return &r.stateFile }
 
 // Members of mcpTasksStatusResult
 func (r *mcpTasksStatusResult) Diagnose() { r.diagnose() }

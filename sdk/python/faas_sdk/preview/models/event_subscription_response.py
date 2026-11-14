@@ -54,6 +54,8 @@ class EventSubscriptionResponse:
     """Action taken on a matching event."""
     ordered: bool | Unset = UNSET
     """Whether this subscription waits for earlier matching keyed deliveries before routing."""
+    environment: str | Unset = UNSET
+    """Project environment slug whose events the subscription receives; omitted is production."""
 
     def to_dict(self) -> dict[str, Any]:
         id = str(self.id)
@@ -92,6 +94,8 @@ class EventSubscriptionResponse:
 
         ordered = self.ordered
 
+        environment = self.environment
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -120,6 +124,8 @@ class EventSubscriptionResponse:
             field_dict["work_action"] = work_action
         if ordered is not UNSET:
             field_dict["ordered"] = ordered
+        if environment is not UNSET:
+            field_dict["environment"] = environment
 
         return field_dict
 
@@ -169,6 +175,8 @@ class EventSubscriptionResponse:
 
         ordered = d.pop("ordered", UNSET)
 
+        environment = d.pop("environment", UNSET)
+
         event_subscription_response = cls(
             id=id,
             app_id=app_id,
@@ -185,6 +193,7 @@ class EventSubscriptionResponse:
             work_fairness_key=work_fairness_key,
             work_action=work_action,
             ordered=ordered,
+            environment=environment,
         )
 
         return event_subscription_response

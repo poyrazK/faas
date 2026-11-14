@@ -7662,7 +7662,10 @@ func (m *Manager) applyAppCPULimit(ctx context.Context, inst *Instance, cpuMilli
 // the process watcher to report a Firecracker exit. A VM that died fails the
 // step's vsock dial before the watcher has reaped it.
 var (
-	wakeStepExitGrace = time.Second
+	// Three seconds: a guest stopping right after readiness took longer than
+	// one to be reaped, so its refused vsock dial read as an internal CPU
+	// policy fault (deploy-path review P4, production h34b-comp 2026-11-12).
+	wakeStepExitGrace = 3 * time.Second
 	wakeStepExitPoll  = 20 * time.Millisecond
 )
 

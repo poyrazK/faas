@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -42,7 +43,25 @@ func (h *Handler) gitHubSourceRefIsStale(ctx context.Context, dep state.Deployme
 	if app.AccountID == "" {
 		return false, errors.New("deployment app has no owning account")
 	}
-	head, found, err := h.githubSourceRefVerifier.GetBranchHead(ctx, app.AccountID, dep.GitHubInstallationID, repo, dep.GitHubSourceRef)
+	// A GitHub or githubd blip at this point used to fail a deployment that
+	// had already built and primed (deploy-path review P11); retry it first.
+	var (
+		head  string
+		found bool
+	)
+	for attempt := 0; ; attempt++ {
+		head, found, err = h.githubSourceRefVerifier.GetBranchHead(ctx, app.AccountID, dep.GitHubInstallationID, repo, dep.GitHubSourceRef)
+		if err == nil || attempt >= len(externalVerifyRetryDelays) || ctx.Err() != nil {
+			break
+		}
+		if h.log != nil {
+			h.log.Warn("imaged: GitHub branch head lookup failed; retrying", "deployment", dep.ID, "attempt", attempt+1, "err", err)
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(externalVerifyRetryDelays[attempt]):
+		}
+	}
 	if err != nil {
 		return false, fmt.Errorf("query GitHub branch head: %w", err)
 	}
