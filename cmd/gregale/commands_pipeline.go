@@ -49,7 +49,7 @@ func cmdPipeline(args []string) int {
 	case "status", "wait", "pause", "resume", "resync", "verify", "delete":
 		return cmdPipelineControl(args[0], args[1:])
 	default:
-		return printErr("Unknown pipeline command", errors.New("use connection, create, access, list, status, wait, pause, resume, resync, verify or delete"))
+		return printErr("Unknown pipeline command", errors.New("use connection, setup, create, freshness, indexes, access, list, status, wait, pause, resume, resync, verify or delete"))
 	}
 }
 
