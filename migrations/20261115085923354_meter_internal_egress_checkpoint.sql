@@ -16,10 +16,24 @@ ALTER TABLE meter_network_checkpoints
   ADD COLUMN IF NOT EXISTS internal_tx_pending bigint NOT NULL DEFAULT 0;
 
 -- Every existing row holds the default 0, so NOT VALID loses nothing: new
--- writes are checked at once and no scan holds the table.
-ALTER TABLE meter_network_checkpoints
-  ADD CONSTRAINT meter_network_checkpoints_internal_tx_bytes_check CHECK (internal_tx_bytes >= 0) NOT VALID,
-  ADD CONSTRAINT meter_network_checkpoints_internal_tx_pending_check CHECK (internal_tx_pending >= 0) NOT VALID;
+-- writes are checked at once and no scan holds the table. The guards keep a
+-- replay of this migration from failing on the constraints it already made.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'meter_network_checkpoints'::regclass
+                    AND conname = 'meter_network_checkpoints_internal_tx_bytes_check') THEN
+    ALTER TABLE meter_network_checkpoints
+      ADD CONSTRAINT meter_network_checkpoints_internal_tx_bytes_check CHECK (internal_tx_bytes >= 0) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                  WHERE conrelid = 'meter_network_checkpoints'::regclass
+                    AND conname = 'meter_network_checkpoints_internal_tx_pending_check') THEN
+    ALTER TABLE meter_network_checkpoints
+      ADD CONSTRAINT meter_network_checkpoints_internal_tx_pending_check CHECK (internal_tx_pending >= 0) NOT VALID;
+  END IF;
+END
+$$;
 -- +goose StatementEnd
 
 -- +goose Down
