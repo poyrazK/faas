@@ -50,6 +50,9 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(typeof fileBrowser.createFileBucket,'function'); assert.equal(publicBrowser.createFileBucket,undefined);
     assert.equal(sourceSdk.FileError,undefined); assert.equal(typeof previewSdk.pathFileSource,'function');
     assert.equal(sourceSdk.createFilePipeline,undefined);assert.equal(typeof previewSdk.createFilePipeline,'function');assert.equal(fileBrowser.createFilePipeline,undefined);
+    assert.equal(sourceSdk.createLiveJob,undefined);assert.equal(publicBrowser.createLiveJob,undefined);
+    assert.equal(typeof previewSdk.createLiveJobBridge,'function');assert.equal(fileBrowser.createLiveJobBridge,undefined);
+    assert.equal(fileBrowser.createLiveJob,previewSdk.createLiveJob);assert.equal(typeof fileBrowser.realtimeLiveJobSource,'function');
     const sourceOptions = {timeoutMs:10000,onCheckpoint:value => sourceSdk.saveSourceUploadCheckpoint('source-state.json',value)};
     const staged = await sourceClient.uploads.uploadSource({path:'source.tar.gz',appSlug:'api'},sourceOptions);
     assert.equal(staged.stage,'ready');
@@ -307,6 +310,13 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     const triggered:Promise<import('@gregale/sdk-node/preview').FilePipelineOutcome> = filePipeline.handle({body:new Uint8Array(),invocationId:'id'},{timeoutMs:1000});
     const reconciled:Promise<import('@gregale/sdk-node/preview').FilePipelineOutcome> = filePipeline.reconcile('identity','run',{timeoutMs:1000});
     void triggered;void reconciled;
+    declare const live: import('@gregale/sdk-node/preview/browser').LiveJob;
+    const updates: AsyncIterableIterator<import('@gregale/sdk-node/preview').LiveJobSnapshot> = live.updates();
+    type Hook = typeof import('@gregale/sdk-node/preview/react').useLiveJob;
+    const view: import('@gregale/sdk-node/preview').LiveJobView = live.getView();
+    void updates;void view;
+    // @ts-expect-error live jobs remain preview-only
+    type PublicLiveJob = import('@gregale/sdk-node').LiveJob;
     // @ts-expect-error pipeline execution requires a total budget
     filePipeline.handle({body:new Uint8Array(),invocationId:'id'},{});
     // @ts-expect-error file pipelines remain preview-only

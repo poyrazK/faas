@@ -4875,3 +4875,19 @@ least once. Separate input/output filters when enabling native triggers.
 The [automatic CSV application](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
 includes trigger setup, two-user authorization, delayed delivery, cross-language
 recovery and PostgreSQL/Chrome tests. See [the design](../../docs/adr/20261115210000-sdk-file-triggered-jobs.md).
+
+## Live job and file-pipeline views (preview)
+
+`createLiveJob` provides an authenticated typed snapshot, shared subscriptions,
+Node/browser async iteration, and `useLiveJob` from `@gregale/sdk-node/preview/react`.
+`realtimeLiveJobSource` reuses private retained channels, fresh application-issued
+tickets, reconnects and history-gap recovery. Notifications invalidate a view;
+only native Jobs-confirmed snapshots can establish completion. Report-ready
+also requires an application-verified stored report. Existing Jobs and file
+callers need no migration.
+
+The optional server `createLiveJobBridge` shares bounded Jobs observation while
+viewer leases are active. Replace the live controller on session changes and
+revoke native tickets when revoking application access. See
+[the complete contract and examples](../../docs/sdk-live-jobs.md) and
+[the live CSV dashboard](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview).

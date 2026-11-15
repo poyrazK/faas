@@ -12,6 +12,7 @@ import {csvInputs} from './csv.mjs';
 import {fileStorageFixture} from './file-fixture.mjs';
 import {createFileImportServer} from './file-api.mjs';
 import {fileBroker} from './file-browser.mjs';
+import {liveFixture} from './live-fixture.mjs';
 
 const exec=promisify(execFile),here=fileURLToPath(new URL('.',import.meta.url)),root=resolve(here,'../..');
 const pgBin=process.env.GREGALE_LOCAL_PG_BIN??'/opt/homebrew/opt/postgresql@16/bin',python=process.env.GREGALE_LOCAL_PYTHON??resolve(root,'sdk/python/.venv/bin/python');
@@ -45,7 +46,7 @@ test('CSV import: cross-language resume, row rejection, failed-only replay and d
   };
   const storage=fileStorageFixture(()=>env.FAAS_API,{accountId:accountID});
   const control=createServer(async(req,res)=>{const send=(status,value)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value));};
-    try{if(await storage.handle(req,res))return;if(req.headers.authorization!=='Bearer fixture-owner'){send(404,{});return;}const url=new URL(req.url,'http://localhost'),parts=url.pathname.split('/');
+    try{if(await realtime.handle(req,res))return;if(await storage.handle(req,res))return;if(req.headers.authorization!=='Bearer fixture-owner'){send(404,{});return;}const url=new URL(req.url,'http://localhost'),parts=url.pathname.split('/');
       if(url.pathname==='/v1/jobs/csv-import'){send(200,{id:jobID,account_id:accountID,name:'csv-import'});return;}
       const source=runs.get(parts[5]);
       if(req.method==='POST'&&(url.pathname.endsWith('/runs')||url.pathname.endsWith('/replay-failed'))){
@@ -60,7 +61,8 @@ test('CSV import: cross-language resume, row rejection, failed-only replay and d
       send(200,native(source));
     }catch(error){send(500,{code:'fixture_failed'});}
   });
-  await new Promise(r=>control.listen(0,'127.0.0.1',r));cleanup.push(async()=>{for(const child of workers)await stop(child);await Promise.allSettled(pending);await new Promise(r=>control.close(r));});
+  const realtime=liveFixture(control);
+  await new Promise(r=>control.listen(0,'127.0.0.1',r));cleanup.push(async()=>{realtime.close();for(const child of workers)await stop(child);await Promise.allSettled(pending);await new Promise(r=>control.close(r));});
   env.FAAS_API=`http://127.0.0.1:${control.address().port}`;
   const free=createServer();await new Promise(r=>free.listen(0,'127.0.0.1',r));const apiPort=free.address().port;await new Promise(r=>free.close(r));
   const api=spawn(process.execPath,[join(home,'app/api.mjs')],{env:{...env,PORT:String(apiPort),GREGALE_IMPORT_STATE:join(home,'state'),GREGALE_IMPORT_APP_TOKEN:'application-only',GREGALE_CSV_FAIL_ROW:'2'},stdio:'ignore'});cleanup.push(()=>stop(api));const appURL=`http://127.0.0.1:${apiPort}`,headers={Authorization:'Bearer application-only'};
@@ -92,7 +94,7 @@ test('CSV import: cross-language resume, row rejection, failed-only replay and d
   const fileJob=client.jobs.defineJob(contract,{store}),users={alice:'alice-application-token',bob:'bob-application-token'},fileDirectory=join(home,'file-state');
   await pool.query(preview.filePipelineSchema);
   const pipelineConfig={scope:{...files.scope,account_id:accountID,app_id:storage.app},contract,jobStore:store,store:preview.postgresFilePipelineStore((sql,values)=>pool.query(sql,values))};
-  const makeApp=()=>createFileImportServer({client,files,job:fileJob,directory:fileDirectory,users,sdk:preview,browserModule:new URL('../../sdk/node/dist/files.js',import.meta.url),pipelineConfig});
+  const makeApp=()=>createFileImportServer({client,files,job:fileJob,directory:fileDirectory,users,sdk:preview,browserModule:new URL('../../sdk/node/dist/files.js',import.meta.url),pipelineConfig,liveConfig:realtime.config()});
   let fileApp=await makeApp();await new Promise(r=>fileApp.listen(0,'127.0.0.1',r));cleanup.push(()=>new Promise(r=>fileApp.close(r)));
   let fileURL=`http://127.0.0.1:${fileApp.address().port}`;
   env.GREGALE_FILE_ACCOUNT_ID=accountID;env.GREGALE_FILE_APP_ID=storage.app;env.GREGALE_IMPORT_STATE=fileDirectory;env.GREGALE_FILE_USERS=JSON.stringify(users);
@@ -118,8 +120,8 @@ test('CSV import: cross-language resume, row rejection, failed-only replay and d
     // Restart the app, keep its durable ownership records and resume in a new client.
     await new Promise(r=>fileApp.close(r));fileApp=await makeApp();await new Promise(r=>fileApp.listen(0,'127.0.0.1',r));fileURL=`http://127.0.0.1:${fileApp.address().port}`;
     const deniedBefore=storage.counts().issued;
-    for(const action of ['', '/begin','/session','/parts','/sign-part','/complete','/abort','/start','/progress','/rejections']){
-      const method=['','/progress','/rejections'].includes(action)?'GET':'POST';
+    for(const action of ['', '/begin','/session','/parts','/sign-part','/complete','/abort','/start','/progress','/rejections','/live-ticket','/snapshot']){
+      const method=['','/progress','/rejections','/live-ticket','/snapshot'].includes(action)?'GET':'POST';
       const denied=await fetch(fileURL+'/files/'+record.id+action,{method,headers:{Authorization:'Bearer '+users.bob},...(method==='POST'?{body:JSON.stringify({id:checkpoint.upload_id,part:1})}:{})});assert.equal(denied.status,404);
     }assert.equal(storage.counts().issued,deniedBefore);
     storage.setNotificationHandler(null);
@@ -143,8 +145,16 @@ asyncio.run(main())`],{env:{...env,FILE_CHECKPOINT:checkpointPath,FILE_SOURCE:so
     storage.setNotificationHandler(notify);
     // Processing is triggered by the durable notification, after the upload
     // caller has returned. No /start call participates in this journey.
-    await storage.flushNotifications();
-    await until(async()=>{const p=await appRequest('/files/'+record.id+'/progress');assert.notEqual(p.status,'failed');return p.status==='succeeded';});
+    const issuedBefore=realtime.counts().issued;
+    let pythonWatch;
+    if(workerLanguage==='python'){pythonWatch=exec(python,[join(here,'live-python-fixture.py')],{env:{...env,GREGALE_TEST_LIVE_APP:fileURL,GREGALE_TEST_IMPORT:record.id,GREGALE_TEST_APP_TOKEN:users.alice},timeout:90000});pythonWatch.catch(()=>{});}
+    const fetchTicket=()=>appRequest('/files/'+record.id+'/live-ticket');let ticket=await fetchTicket(),first=ticket;
+    const live=preview.createLiveJob({resourceId:record.id,timeoutMs:60000,loadSnapshot:signal=>appRequest('/files/'+record.id+'/snapshot',{signal}),
+      source:preview.realtimeLiveJobSource({url:ticket.url,channel:ticket.channel,retryInitialMs:0,retryMaxMs:0,webSocketFactory:preview.createBrowserRealtimeTicketSocketFactory(async()=>{const next=first??await fetchTicket();first=null;return next.ticket;})})});
+    const seen=[];for await(const p of live.updates()){seen.push(p.status);assert.notEqual(p.status,'failed');if(seen.length===1){realtime.expire();await storage.flushNotifications();}}
+    assert.equal(seen.at(-1),'succeeded');assert.equal(live.getView().snapshot.report,'ready');
+    assert.ok(realtime.counts().issued>=issuedBefore+2,'expiring tickets must be renewed');
+    if(pythonWatch)assert.equal(JSON.parse((await pythonWatch).stdout).at(-1),'succeeded');
     const report=await fetch(fileURL+'/files/'+record.id+'/rejections',{headers:{Authorization:'Bearer '+users.alice}});assert.equal(report.status,200);assert.ok((await report.text()).includes(record.id+':3,invalid_email'));
     assert.ok(storage.objects.has(record.key));assert.ok(storage.objects.has('imports/'+record.id+'/rejections.csv'));
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM sdk_csv_rows WHERE input_id LIKE $1',[record.id+':%'])).rows[0].n,2);
@@ -165,11 +175,13 @@ asyncio.run(main())`],{env:{...env,FILE_CHECKPOINT:checkpointPath,FILE_SOURCE:so
     language='node';const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
     page.on('request',request=>{const u=new URL(request.url());if(u.pathname.startsWith('/file-data/'))assert.equal(request.headers().authorization,undefined);assert.notEqual(request.headers().authorization,'Bearer fixture-owner');});
     await page.goto(fileURL);await page.fill('#token',users.alice);await page.setInputFiles('#file',{name:'rows.csv',mimeType:'text/csv',buffer:Buffer.from(csv)});
-    page.on('request',request=>assert.equal(new URL(request.url()).pathname.endsWith('/start'),false));
-    await page.click('#start');await page.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('succeeded:'),{},{timeout:60000});
+    page.on('request',request=>{const path=new URL(request.url()).pathname;assert.equal(path.endsWith('/start')||path.endsWith('/progress'),false);});
+    await page.click('#start');await page.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('succeeded:')||!document.querySelector('#start').disabled,{},{timeout:60000});
+    assert.ok((await page.textContent('#status')).startsWith('succeeded:'),JSON.stringify({status:await page.textContent('#status'),errors}));
     const pendingDownload=page.waitForEvent('download');await page.click('#report');const download=await pendingDownload;await download.saveAs(join(home,'browser-rejections.csv'));
     assert.ok((await readFile(join(home,'browser-rejections.csv'),'utf8')).includes('invalid_email'));assert.deepEqual(errors,[]);
     const persisted=JSON.parse(await page.evaluate(()=>localStorage.getItem('gregale-file-import')));assert.ok(persisted.checkpoint.parts.length);assert.equal(JSON.stringify(persisted).includes(users.alice),false);
-    await page.reload();await page.fill('#token',users.alice);await page.setInputFiles('#file',{name:'rows.csv',mimeType:'text/csv',buffer:Buffer.from(csv)});await page.click('#resume');await page.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('succeeded:'),{},{timeout:60000});
+    await page.reload();await page.fill('#token',users.alice);await page.click('#resume');await page.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('succeeded:'),{},{timeout:60000});
+    await page.fill('#token',users.bob);assert.equal(await page.isDisabled('#report'),true);await page.click('#resume');await page.waitForFunction(()=>document.querySelector('#status').textContent==='Subscription authorization changed');assert.equal(await page.isDisabled('#report'),true);
   }finally{await browser.close();}
 });

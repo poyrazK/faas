@@ -12,7 +12,7 @@ Then install example dependencies and initialize an isolated database:
 ```sh
 npm --prefix sdk/node run build
 npm --prefix examples/sdk-csv-jobs ci
-python -m pip install -e sdk/python -r examples/sdk-csv-jobs/requirements.txt
+python -m pip install -e 'sdk/python[realtime]' -r examples/sdk-csv-jobs/requirements.txt
 psql "$DATABASE_URL" -f examples/sdk-csv-jobs/schema.sql
 ```
 
@@ -82,7 +82,8 @@ on row 2; replaying that same input then succeeds. Expected invalid emails produ
 typed rejection results, rather than a failed task. Application writes already
 committed are retained after cancellation.
 
-Local integration requires PostgreSQL binaries and the example dependencies:
+Local integration requires PostgreSQL binaries, the SDK's Node development
+dependencies, and the Python example dependencies including the realtime extra:
 
 ```sh
 GREGALE_LOCAL_PG_BIN=/path/to/postgresql/bin \
@@ -102,7 +103,8 @@ result storage. Local tests do not establish deployed scheduler acceptance.
 
 `file-api.mjs` and `file-index.html` provide an automatic workflow: authenticated
 application record → resumable upload → native storage event → typed job →
-progress → stored rejection report. The browser never calls `/start`. Both SDKs
+private live progress → stored rejection report. The browser never calls
+`/start` or polls `/progress`. Both SDKs
 share a PostgreSQL submission ledger and the managed JobStore.
 
 Configure an existing app and bucket with storage preview access and read/write
@@ -116,6 +118,8 @@ export FAAS_TOKEN=your-backend-token
 export GREGALE_FILE_APP=imports
 export GREGALE_FILE_BUCKET=your-bucket-uuid
 export GREGALE_FILE_ACCOUNT_ID=the-bucket-owning-account-uuid
+export GREGALE_REALTIME_ENDPOINT_ID=your-private-32-hex-realtime-endpoint
+export GREGALE_REALTIME_URL=wss://your-app/__gregale/realtime/your-endpoint
 # On workers, prefer a credential scoped to this app/bucket:
 export GREGALE_FILE_TOKEN=your-worker-storage-token
 export GREGALE_IMPORT_STATE=/private/path/file-imports
@@ -154,16 +158,39 @@ source/app/account headers, then re-reads native invocation proof and checks the
 payload. Public body/header claims alone are refused. Set `HOST=0.0.0.0` for the
 deployed process behind Gregale's gateway; other hosting needs an authenticated
 proxy that strips forged platform claims. The backend token needs invocation
-read, app read, storage read/write and Jobs access. Output reports do not match the trigger.
+read, app read, storage read/write, Jobs, realtime publish and subscription-ticket
+issuance access. Output reports do not match the trigger. Enable the existing
+retained delivery and v2 resume preview gates and use an application-authorized
+private endpoint. Ticket issuance retains the backend MFA requirement. Browser
+users receive only a 30-second ticket scoped to their owned import channel.
 
 Pause preserves the remote session. After a reload, enter the same application's
-token, select the same file and choose **Resume saved import**. The browser saves
+token and choose **Resume saved import**. Select the same CSV when its upload is
+unfinished; a confirmed upload or completed import reopens without selecting a
+file. The browser saves
 only the file identity and credential-free checkpoint in localStorage. **Discard
 upload** explicitly aborts it. A completed upload resumes without another PUT.
-Every file/session/sign/complete/abort/start/progress/report route checks the
+Every file/session/sign/complete/abort/start/progress/snapshot/ticket/report route checks the
 durable record's owner first, so knowing a file ID does not grant another user
 access. The backend exposes only the operations for that record, with fixed
 keys, type and size; it does not proxy arbitrary storage requests.
+
+`file-live.mjs` shares one bounded native Jobs observer per import within a
+server process. It renews a 35-second viewer lease after issuing a ticket,
+observes at 500 ms while active, and stops after verified completion or lease
+expiry. This moves progress polling to the backend; native Jobs does not yet
+push its aggregate status. Notifications only invalidate authenticated
+snapshots, so duplicate messages and reconnects cannot claim completion.
+Report-ready additionally verifies results and the stored rejection CSV before
+enabling downloads. On process restart, the existing durable receipt restores
+the run. Observer leases and messages carry no business side-effect guarantee.
+
+Changing the demo token clears the old live view and download access immediately.
+In a product, also revoke the old principal's native subscription tickets when
+logging out or revoking membership; changing an app token alone does not revoke
+an already-issued ticket. Keep tickets in memory and return them with no-store.
+See [live job SDK usage](../../docs/sdk-live-jobs.md) for Node/Python async iterators,
+the React hook, custom transports and session lifecycle requirements.
 
 Before submitting rows the backend reads the stored bytes, checks the initially
 declared size and fixed-block source digest, and uses an immutable version when
@@ -177,10 +204,12 @@ cancellation, following the application's retention policy.
 The local command above now also checks browser uploads, application restarts,
 cross-language upload checkpoints, managed result storage with actual Node and
 Python workers, and Bob being denied every operation on Alice's files. When
-Chrome is available, it runs the real browser flow including progress, download
-and reload/resume. Set `GREGALE_LOCAL_CHROME` to a Chrome/Chromium executable on
-other systems. Storage and the scheduler are local protocol fixtures; this does
-not establish deployed preview access, provider behavior or bucket CORS.
+Chrome is available, it runs the real browser flow including private realtime
+progress, download, reload/resume without the CSV, and a switch to Bob. The
+agent flow exercises ticket expiry/reconnection. Set `GREGALE_LOCAL_CHROME` to a
+Chrome/Chromium executable on other systems. Storage, scheduling and realtime
+are local protocol fixtures; this does not establish deployed preview access,
+provider behavior or bucket CORS.
 
 `file_pipeline.py DELIVERY.json` consumes the same event/ledger using Python.
 Run it on a trusted host/adapter with the environment above and

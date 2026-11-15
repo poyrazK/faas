@@ -12,7 +12,7 @@ test('the default entry leaves preview services and helpers out', () => {
   for (const name of ['AppsService', 'CronsService', 'FaaSClient', 'verifyWebhook', 'ErrNotFound']) {
     assert.ok(pub[name], `${name} must stay in the default entry`);
   }
-  for (const name of ['RealtimeService', 'StorageService', 'QueuesService', 'McpService', 'createRealtimeClient', 'GregaleOperations', 'insertCommitEvent']) {
+  for (const name of ['RealtimeService', 'StorageService', 'QueuesService', 'McpService', 'createRealtimeClient', 'createLiveJob', 'createLiveJobBridge', 'realtimeLiveJobSource', 'GregaleOperations', 'insertCommitEvent']) {
     assert.equal(pub[name], undefined, `${name} is a preview export`);
     assert.ok(preview[name], `${name} must be in the preview entry`);
   }

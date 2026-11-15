@@ -173,6 +173,12 @@ asyncio.run(main())
 from __future__ import annotations
 from typing import assert_type
 from faas_sdk import JobContract,JobInput,JobSubmitOptions,JobRunOptions,JobProgress,JobItemOutcome,TypedJobRun
+from faas_sdk.preview import LiveJob,LiveJobSnapshot,LiveJobFailure,LiveJobSource,realtime_live_job_source
+async def typed_live_jobs(live: LiveJob) -> None:
+    async for snapshot in live.updates():
+        assert_type(snapshot,LiveJobSnapshot)
+        assert_type(snapshot.failures,tuple[LiveJobFailure,...])
+        assert_type(snapshot.complete,bool)
 async def typed_jobs(client: FaaSClient) -> None:
     contract:JobContract[str,int]=JobContract({"version":1,"name":"typed-job","input":{"type":"string"},"output":{"type":"integer"}})
     run=await client.define_job(contract).submit([JobInput("one","input")],options=JobSubmitOptions(timeout=1,idempotency_key="one"))

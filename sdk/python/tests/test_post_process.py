@@ -364,3 +364,12 @@ def test_regenerated_preview_barrel_exports_file_pipelines(tmp_path, monkeypatch
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_barrel_preserves_live_jobs(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    assert "live_jobs.py" in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("LiveJob", "LiveJobSnapshot", "LiveJobSink", "realtime_live_job_source"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")

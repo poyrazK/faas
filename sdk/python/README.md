@@ -3806,3 +3806,20 @@ submission. Job side effects remain at least once.
 The [CSV application](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
 shows native trigger setup, separate input/output filters, browser-free job
 submission, two-user isolation, restart recovery and shared Node/Python receipts.
+
+## Live job and file-pipeline views (preview)
+
+`faas_sdk.preview.LiveJob` exposes typed `LiveJobSnapshot` updates through an
+owned async iterator. `realtime_live_job_source` reuses the native realtime
+recovery coordinator and `RealtimeWebSocketClient` (install `gregale-sdk[realtime]`).
+Application-authorized exact-channel tickets are renewed on reconnect. Shared
+Node/Python snapshot validation and authenticated refreshes keep worker messages,
+duplicates, reordered messages and history gaps from declaring completion.
+
+Supply an async authenticated snapshot loader that verifies native Jobs status
+and results. Set `timeout` in seconds, optionally bound `max_snapshots`, cancel
+the consuming task to stop locally, and use `contextlib.aclosing` when leaving
+iteration early. Remote Jobs continue independently. Create a fresh iterator
+for the current application session. Existing Jobs/file callers keep their APIs.
+See [the contract and Node/Python examples](../../docs/sdk-live-jobs.md) and
+[the CSV dashboard](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview).

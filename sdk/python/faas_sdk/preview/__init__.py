@@ -10,6 +10,7 @@ elsewhere its calls answer 404 no such API route.
 """
 
 # ruff: noqa: F401
+from .live_jobs import LiveJob, LiveJobError, LiveJobFailure, LiveJobSink, LiveJobSnapshot, LiveJobSource, LiveJobStatus, realtime_live_job_source
 from .file_pipelines import FILE_PIPELINE_SCHEMA, FileCreatedEvent, FileDelivery, FilePipeline, FilePipelineError, FilePipelineInput, FilePipelineIntent, FilePipelineOptions, FilePipelineOutcome, FilePipelineOwner, FilePipelineReceipt, FilePipelineScope, FilePipelineStore, NativeFileVerifier, PostgresFilePipelineStore, file_event_invocation_id, file_pipeline_identity, parse_file_created_event
 from .files import BytesFileSource, FileBucket, FileCheckpoint, FileCode, FileError, FileMetadata, FileObject, FileOptions, FilePage, FilePart, FileProgress, FileSource, FileUploadResult, PathFileSource, file_source_digest
 from .. import (
@@ -636,6 +637,7 @@ from .realtime_workers import (
 )
 
 __all__ = (
+    'LiveJob', 'LiveJobError', 'LiveJobFailure', 'LiveJobSink', 'LiveJobSnapshot', 'LiveJobSource', 'LiveJobStatus', 'realtime_live_job_source',
     'FILE_PIPELINE_SCHEMA', 'FileCreatedEvent', 'FileDelivery', 'FilePipeline', 'FilePipelineError', 'FilePipelineInput', 'FilePipelineIntent', 'FilePipelineOptions', 'FilePipelineOutcome', 'FilePipelineOwner', 'FilePipelineReceipt', 'FilePipelineScope', 'FilePipelineStore', 'NativeFileVerifier', 'PostgresFilePipelineStore', 'file_event_invocation_id', 'file_pipeline_identity', 'parse_file_created_event',
     "BytesFileSource", "FileBucket", "FileCheckpoint", "FileCode", "FileError", "FileMetadata", "FileObject", "FileOptions", "FilePage", "FilePart", "FileProgress", "FileSource", "FileUploadResult", "PathFileSource", "file_source_digest",
     *_PACKAGE_ALL,
