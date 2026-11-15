@@ -16184,8 +16184,10 @@ type Snapshot struct {
 	// CPU template of the capturing node; a templated snapshot restores on any node class the template supports.
 	CpuTemplate string
 	// Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.
-	CpuModel string
-	StaleAt  pgtype.Timestamptz
+	CpuModel        string
+	StaleAt         pgtype.Timestamptz
+	SealedKey       []byte
+	SealedCaptureID pgtype.UUID
 }
 
 type SnapshotFanoutEvent struct {

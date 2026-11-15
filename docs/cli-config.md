@@ -157,6 +157,36 @@ Unknown topics or help options exit `1`, leave stdout empty, and write one
 Problem JSON object to stderr. Human help and command-local `--help` keep their
 formatted usage output, including when `FAAS_JSON=1` is set.
 
+### Discovering flag dependencies
+
+The JSON help for `build list` and `invocation list` also includes optional
+`flag_rules`, drawn from the same explicit registry as their existing validators.
+Each rule has a stable `id`, `kind: "requires"`, `when` conditions and required
+conditions. All `when` conditions must match; all `requires` conditions must
+hold. Conditions use registered option names, a `test` and a Boolean `value`:
+
+- `present` tests whether `--output` was supplied, including `--output=`.
+- `enabled` tests the parsed Boolean value of `--all` or `--stream`; explicit
+  `false` and repeated flags retain their normal parsing rules.
+- `effective` on `json` tests the selected output mode, including environment
+  or saved preferences, rather than requiring the literal `--json` spelling.
+
+An output flag requires enabled `--all`. Enabled stdout streaming requires
+both `--all` and effective JSON mode, conditional on output being absent.
+`--stream=false` adds no requirement. File output accepts redundant `--stream`
+with a human receipt. These rules do not replace other validation of paths,
+limits, arguments or flag values. Unregistered commands omit `flag_rules`;
+filtered options and rules requiring unavailable options remain undiscoverable.
+
+When one of these existing checks fails in JSON mode, the single stderr Problem
+adds `cli.kind: "invalid_flag_combination"`, its registered `rule`, the unmet
+`missing` conditions and validated offline `help_argv`. No supplied path, raw
+arguments or credential is retained in that metadata. The original detail,
+code, category and exit remain: stdout-stream usage has code
+`validation_failed`, output-without-all has code `invalid_request`, and both
+exit 1. The checks still run at their existing points before authentication
+and API reads. Human messages and valid invocation behavior are unchanged.
+
 ### Discovering list output formats
 
 `gregale --json help build list` and `gregale --json help invocation list`
@@ -785,6 +815,39 @@ with `--force`. Interactive confirmation displays a preview before asking for
 approval; JSON mutation calls require an explicit confirmation flag. Already
 confirmed scripted calls keep their existing mutation request/output contract.
 
+## Verify a saved export offline
+
+Save a JSON completion receipt alongside a file export, then check it after
+copying or archiving the data:
+
+```sh
+gregale --json build list --all --output builds.jsonl > builds.receipt.json
+gregale export verify builds.jsonl --receipt builds.receipt.json
+gregale --json export verify builds.jsonl --receipt builds.receipt.json
+```
+
+Verification reads local regular files without login or API requests. It checks
+SHA-256, exact bytes and the number of JSON Lines records. The receipt must name
+format `jsonl`, publication success and nonnegative integer counts. Its optional
+path is ignored; FILE always selects the data. Raw `-` is refused for either
+input; `./-` names a regular file instead. Flags can precede or follow FILE.
+
+Every line must contain one UTF-8 JSON value. Blank/multiline/malformed records
+fail with a line number without echoing their contents. Empty files, CRLF and a
+final record without a newline are accepted, with all exact bytes hashed.
+Records are read one at a time and numeric values are not reserialized.
+
+Exit 0 means all three checks matched. A mismatch exits 1 and prints a comparison
+result; JSON mode (also `FAAS_JSON=1`) emits `schema_version: 1`, `verified`,
+`format`, three Boolean `checks` and `observed` SHA-256/byte/record counts. Zero
+and false values are explicit. Invalid input/read errors use normal stderr
+Problems or human diagnostics and print no result. Output failures can leave
+partial stdout and retain normal error/signal behavior.
+
+The receipt is an integrity reference, not a signature or API snapshot. Page
+count cannot be reconstructed from JSON Lines. Results describe bytes read;
+verification does not lock concurrent writers, repair files or replay exports.
+
 ## List pagination
 
 Deployment and invocation lists use the same pagination controls:
@@ -1035,3 +1098,7 @@ a quoted continuation command with the scope, filters, and page size, even
 when the current page is empty. `--all` follows empty pages with continuation
 and stops without partial output on API errors, repeated cursors, or the
 1,000-page guard. Pages reflect live data rather than a fixed snapshot.
+
+Verification file inputs must name regular files directly; final-component
+symlinks, including dangling links, are refused. Symlinked parent directories
+retain the existing customer-file policy.

@@ -19,6 +19,13 @@ import type {
   RealtimeClient,
 } from './realtime-client.js';
 import type { RealtimePresenceMember } from './realtime-resume.js';
+import type { LiveJob, LiveJobView } from './live-jobs.js';
+
+/** Share one controller across components. Replace it when the session changes;
+ * the old identity's view is never used as the new identity's initial value. */
+export function useLiveJob(job: LiveJob): LiveJobView {
+  return useSyncExternalStore(job.subscribe, job.getView, job.getView);
+}
 
 const RealtimeClientContext = createContext<RealtimeClient | null>(null);
 

@@ -70,6 +70,10 @@ recovery; local preparation checks do not establish deployed acceptance.
 | 159 | Public OpenAPI spec and capabilities endpoint | `TestPublicSurface/openapi_spec`, `TestAccountAndKeys/capabilities` | — |
 | 161 | Docs site and trust pages | `TestDocsPages` (every route not marked `unpublished` in `docs/customer-pages.json`), `TestPublicSurface/security_txt` | pages of preview and internal capabilities, which are deliberately unpublished |
 
+`TestJSONHelpFlagRulesIsolatedCLI` extends row 156: discovers dependency
+rules offline, follows structured help after rejection before login, satisfies
+the declared requirements, and checks disabled streaming reaches authentication.
+
 `TestJSONHelpOutputIsolatedCLI` extends row 156: offline format discovery
 selects parsers for both list commands, buffered/stream/file output, empty
 inventories, completion integrity and partial API-error Problems.
@@ -80,6 +84,10 @@ and cancel live HTTP reads on SIGINT without publishing a partial destination.
 
 `TestListStreamingIsolatedCLI` extends row 156: early invocation rows, partial
 API failures with progress/correlation, and SIGINT cancelling the active read.
+
+`TestExportVerificationIsolatedCLI` extends row 156: saved build/invocation
+export receipts are verified offline by a built CLI; tampered files and malformed
+inputs fail without extra API requests or content leakage.
 
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
