@@ -182,9 +182,9 @@ type Server struct {
 	registry        *registryFetcher
 	// buildScope checks a build's pulls against its deployment's recorded
 	// registry scope (slice 3j-4).
-	buildScope BuildRegistryScopeMode
-	postgresHMAC    []byte
-	postgresProbe   func(context.Context, string, managedpostgres.CredentialAccess, int) error
+	buildScope    BuildRegistryScopeMode
+	postgresHMAC  []byte
+	postgresProbe func(context.Context, string, managedpostgres.CredentialAccess, int) error
 }
 
 // WithDeliveryIdentities lets secretd open delivery seal-domain values

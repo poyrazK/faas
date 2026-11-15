@@ -301,8 +301,8 @@ func (s *Store) BuildRunner(ctx context.Context, buildID string) (secretd.BuildR
 		return secretd.BuildRun{}, fmt.Errorf("secretpg: build runner: %w", err)
 	}
 	return secretd.BuildRun{
-		AppID:     uuid.UUID(row.AppID.Bytes).String(),
-		Running:   row.Status == "running",
+		AppID:         uuid.UUID(row.AppID.Bytes).String(),
+		Running:       row.Status == "running",
 		StartedAt:     row.StartedAt.Time,
 		Node:          row.BuilderNodeName,
 		ScopeRecorded: row.ScopeRecorded,
