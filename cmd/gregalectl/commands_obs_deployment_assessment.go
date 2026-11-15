@@ -19,10 +19,21 @@ func obsDeploymentCheckFor(name string) obsDeploymentCheck {
 func assessObsDeployment(snapshot obsDeploymentSnapshot, after, now time.Time) ([]obsDeploymentCheck, *api.ObsServingHealth, *obsDeploymentNotifications) {
 	servingCheck := obsDeploymentCheckFor("serving_probes")
 	var serving *api.ObsServingHealth
-	if snapshot.serving.err == nil && validObsServingHealth(snapshot.serving.value) {
-		value := snapshot.serving.value
+	value := snapshot.serving.value
+	// Optional submission diagnostics cannot become a serving qualification
+	// gate. Validate coverage first, then retain only safe optional metadata.
+	notifications := value.ProbeNotifications
+	value.ProbeNotifications = nil
+	if snapshot.serving.err == nil && validObsServingHealth(value) {
+		value.ProbeNotifications = notifications
+		if !operatorobs.ServingProbeNotificationsValid(value) {
+			value.ProbeNotifications = operatorobs.UnavailableServingProbeNotifications("metadata_inconsistent")
+		}
 		serving = &value
 		servingCheck = assessDeploymentServing(value, after, now)
+	}
+	if serving == nil {
+		servingCheck = obsDeploymentSourceFailureCheck(servingCheck, snapshot.serving.err, snapshot.serving.timing)
 	}
 	aggregate, receivers := obsDeploymentCheckFor("notification_pipeline"), obsDeploymentCheckFor("notification_receivers")
 	var notification *obsDeploymentNotifications
@@ -31,6 +42,10 @@ func assessObsDeployment(snapshot obsDeploymentSnapshot, after, now time.Time) (
 		notification = &value
 		aggregate = assessDeploymentNotification(value, complete, after, now)
 		receivers = assessDeploymentReceivers(value, after, now)
+	}
+	if notification == nil {
+		aggregate = obsDeploymentSourceFailureCheck(aggregate, snapshot.notificationErr, snapshot.notificationTiming)
+		receivers = obsDeploymentSourceFailureCheck(receivers, snapshot.notificationErr, snapshot.notificationTiming)
 	}
 	return []obsDeploymentCheck{servingCheck, aggregate, receivers}, serving, notification
 }

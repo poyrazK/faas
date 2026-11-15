@@ -22,11 +22,11 @@ func (s *server) reportDataAPIChangeEvents(w http.ResponseWriter, r *http.Reques
 // (ADR-20261026140000). The route belongs to the data-api capability, so
 // neither reaches it otherwise, and any app can mint its workload token
 // (bug hunt 36).
-func (s *server) admitDataAPIChangeEvents(_ context.Context, acct state.Account, app state.App, events int) *api.Problem {
+func (s *server) admitDataAPIChangeEvents(ctx context.Context, acct state.Account, app state.App, events int) *api.Problem {
 	if problem := s.eventsPausedProblem(acct, app); problem != nil {
 		return problem
 	}
-	return s.appEvents.PublishRateProblem(acct, events)
+	return s.appEvents.PublishRateProblem(ctx, acct, events)
 }
 
 // reportDataAPIChangeStatus is the private change hook delivery report route

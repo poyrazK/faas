@@ -41,7 +41,7 @@ func (s *Service) PublishEventBatch(w http.ResponseWriter, r *http.Request, acct
 	}
 	producer, problem := s.accountProducer(r.Context(), acct)
 	if problem == nil {
-		problem = s.PublishRateProblem(acct, len(wire.Events))
+		problem = s.PublishRateProblem(r.Context(), acct, len(wire.Events))
 	}
 	if problem != nil {
 		api.WriteProblem(w, problem)

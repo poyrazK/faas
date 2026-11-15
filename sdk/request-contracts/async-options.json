@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "cases": [
+    {"name":"success","responses":[{"status":200,"request_id":"11111111-1111-4111-8111-111111111111"}],"outcome":"success","calls":1,"statuses":[200],"attempts":[1],"ids":["11111111-1111-4111-8111-111111111111"]},
+    {"name":"retry_problem","max_attempts":2,"responses":[{"status":503},{"status":200}],"outcome":"success","calls":2,"statuses":[503,200],"attempts":[1,2],"ids":[null,null]},
+    {"name":"retry_disabled","max_attempts":1,"responses":[{"status":503}],"outcome":"capacity","calls":1,"statuses":[503],"attempts":[1],"ids":[null]},
+    {"name":"typed_not_found","responses":[{"status":404}],"outcome":"not_found","calls":1,"statuses":[404],"attempts":[1],"ids":[null]},
+    {"name":"invalid_request_id","responses":[{"status":200,"request_id":"private-header-value"}],"outcome":"success","calls":1,"statuses":[200],"attempts":[1],"ids":[null]},
+    {"name":"missing_request_id","responses":[{"status":200}],"outcome":"success","calls":1,"statuses":[200],"attempts":[1],"ids":[null]},
+    {"name":"cancel_headers","phase":"headers","outcome":"cancelled","calls":1,"statuses":[],"attempts":[],"ids":[]},
+    {"name":"deadline_headers","phase":"headers","timeout_ms":20,"outcome":"timeout","calls":1,"statuses":[],"attempts":[],"ids":[]},
+    {"name":"deadline_body","phase":"body","timeout_ms":20,"responses":[{"status":200}],"outcome":"timeout","calls":1,"statuses":[200],"attempts":[1],"ids":[null],"closed":1},
+    {"name":"deadline_retry_after","max_attempts":3,"timeout_ms":20,"responses":[{"status":503,"retry_after":"60"}],"outcome":"timeout","calls":1,"statuses":[503],"attempts":[1],"ids":[null]},
+    {"name":"network_error","phase":"network","outcome":"network","calls":1,"statuses":[],"attempts":[],"ids":[]},
+    {"name":"mutation_identity","method":"POST","max_attempts":2,"responses":[{"status":503},{"status":200}],"outcome":"success","calls":2,"statuses":[503,200],"attempts":[1,2],"ids":[null,null],"stable_key":true}
+  ]
+}
