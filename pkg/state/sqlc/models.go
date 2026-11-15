@@ -3088,15 +3088,17 @@ type CiWorkerHealth struct {
 }
 
 type CliAuthCode struct {
-	TokenHash  []byte
-	AccountID  pgtype.UUID
-	Status     string
-	ExpiresAt  pgtype.Timestamptz
-	ConsumedAt pgtype.Timestamptz
-	CreatedAt  pgtype.Timestamptz
-	DeviceHash []byte
-	OrgID      pgtype.UUID
-	ProjectIds []pgtype.UUID
+	TokenHash    []byte
+	AccountID    pgtype.UUID
+	Status       string
+	ExpiresAt    pgtype.Timestamptz
+	ConsumedAt   pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	DeviceHash   []byte
+	OrgID        pgtype.UUID
+	ProjectIds   []pgtype.UUID
+	VerifierHash []byte
+	RequesterIp  pgtype.Text
 }
 
 type CloneCheckpointAdmissionGuard struct {
@@ -16319,6 +16321,18 @@ type StatusObservationBucket struct {
 	BucketAt     pgtype.Timestamptz
 	Status       string
 	HasTelemetry bool
+}
+
+type StorageObjectDeletion struct {
+	StorageKey    string
+	Reason        string
+	RequestedBy   string
+	RequestedAt   pgtype.Timestamptz
+	State         string
+	NextAttemptAt pgtype.Timestamptz
+	Attempts      int32
+	LastError     string
+	DecidedAt     pgtype.Timestamptz
 }
 
 type StoredWorkflow struct {

@@ -116,6 +116,55 @@ func TestAdmit_StartupCPUBoostIsReservedUntilExpiry(t *testing.T) {
 	}
 }
 
+// vmmd reports the boost's real expiry after readiness: a future expiry keeps
+// the boost reserved until then; one already past releases it at once.
+func TestSetCPUStartupBoostUntil_FutureKeepsPastReleases(t *testing.T) {
+	t.Parallel()
+	ledger := sched.NewNodeLedger()
+	for _, id := range []string{"future", "past"} {
+		req := cpuAdmissionRequest(id)
+		req.CPUMillicores = 250
+		req.CPUStartupBoostMillicores = 1000
+		req.CPUStartupBoostUntil = time.Now().Add(time.Hour)
+		if err := ledger.Admit(req); err != nil {
+			t.Fatalf("admit %s: %v", id, err)
+		}
+	}
+	if got := ledger.UsedCPUMillicoresForNode("node-a"); got != 2000 {
+		t.Fatalf("two boosted reservations = %d, want 2000", got)
+	}
+	if !ledger.SetCPUStartupBoostUntil("future", time.Now().Add(time.Hour)) {
+		t.Fatal("SetCPUStartupBoostUntil(future) did not find the reservation")
+	}
+	if got := ledger.UsedCPUMillicoresForNode("node-a"); got != 2000 {
+		t.Fatalf("future expiry released the boost early: used %d, want 2000", got)
+	}
+	if !ledger.SetCPUStartupBoostUntil("past", time.Now().Add(-time.Second)) {
+		t.Fatal("SetCPUStartupBoostUntil(past) did not find the reservation")
+	}
+	if got := ledger.UsedCPUMillicoresForNode("node-a"); got != 1250 {
+		t.Fatalf("past expiry kept the boost: used %d, want 1000 + 250", got)
+	}
+}
+
+// Releasing an instance mid-boost returns both its sustained quota and the
+// boost still on top of it; nothing lingers in the node's CPU figure.
+func TestRelease_DuringStartupBoostReturnsAllCPU(t *testing.T) {
+	t.Parallel()
+	ledger := sched.NewNodeLedger()
+	req := cpuAdmissionRequest("boosted")
+	req.CPUMillicores = 250
+	req.CPUStartupBoostMillicores = 1000
+	req.CPUStartupBoostUntil = time.Now().Add(time.Hour)
+	if err := ledger.Admit(req); err != nil {
+		t.Fatalf("admit: %v", err)
+	}
+	ledger.Release("boosted")
+	if got := ledger.UsedCPUMillicoresForNode("node-a"); got != 0 {
+		t.Fatalf("CPU after releasing a boosted instance = %d, want 0", got)
+	}
+}
+
 func TestAdmit_StartupCPUBoostCountsAgainstPhysicalBudget(t *testing.T) {
 	t.Parallel()
 	ledger := sched.NewNodeLedger()

@@ -1,4 +1,4 @@
--- filename: 20261115160001200_event_subscription_clone_paused.sql
+-- filename: 20261115191402200_event_subscription_clone_paused.sql
 -- migration-compat: expand
 -- ADR-20261104120000 (amendment 2026-11-14): a full environment clone copies
 -- the source's event subscriptions into the stage disabled, as it does crons.

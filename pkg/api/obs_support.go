@@ -150,7 +150,7 @@ const (
 	AttentionKindDeployFailing = "deploy_failing"
 	AttentionKindRefusedBurst  = "refused_burst"
 	AttentionKindDomainStuck   = "domain_stuck"
-	// ADR-20261113180000 kinds.
+	// ADR-20261115175928 kinds.
 	AttentionKindAppOOM         = "app_oom"
 	AttentionKindBootFailing    = "boot_failing"
 	AttentionKindJobsFailing    = "jobs_failing"
@@ -162,7 +162,7 @@ const (
 	AttentionStateResolved  = "resolved"
 
 	// Outcomes record what support did about a signal
-	// (ADR-20261113180000). Contacting sets contacted; dismissing names one
+	// (ADR-20261115175928). Contacting sets contacted; dismissing names one
 	// of the next four; a signal that clears without one is resolved_on_own.
 	AttentionOutcomeContacted      = "contacted"
 	AttentionOutcomePlatformIssue  = "platform_issue"
@@ -213,4 +213,98 @@ type ObsAttentionSignal struct {
 type ObsAttentionListResponse struct {
 	Items []ObsAttentionSignal `json:"items"`
 	Limit int                  `json:"limit"`
+}
+
+// Operator console signal actions (ADR-20261115175927): the JSON twins of
+// the staff page at /dashboard/admin/support/attention.
+
+// ObsAttentionDismissRequest is the body of
+// POST /v1/admin/obs/attention/{id}/dismiss. Outcome is one of
+// AttentionDismissOutcomes; Note is optional, at most
+// AttentionDismissReasonMax bytes.
+type ObsAttentionDismissRequest struct {
+	Outcome string `json:"outcome"`
+	Note    string `json:"note,omitempty"`
+}
+
+// ObsAttentionContactRequest is the body of
+// POST /v1/admin/obs/attention/{id}/contact. The Idempotency-Key header is
+// also the support ticket's idempotency key, so a retry replays the ticket.
+type ObsAttentionContactRequest struct {
+	Subject  string `json:"subject"`
+	Category string `json:"category"`
+	Body     string `json:"body"`
+}
+
+// ObsAttentionActionResponse answers a dismiss or contact with the signal
+// as it now stands and, after a contact, the ticket that was opened.
+type ObsAttentionActionResponse struct {
+	Signal   ObsAttentionSignal `json:"signal"`
+	TicketID string             `json:"ticket_id,omitempty"`
+}
+
+// ObsAttentionContactDraft answers
+// GET /v1/admin/obs/attention/{id}/contact-draft: the prefilled message for
+// an open signal, worded with only what the customer can see in their own
+// dashboard.
+type ObsAttentionContactDraft struct {
+	Subject    string   `json:"subject"`
+	Category   string   `json:"category"`
+	Body       string   `json:"body"`
+	Categories []string `json:"categories"`
+	SubjectMax int      `json:"subject_max"`
+	BodyMax    int      `json:"body_max"`
+}
+
+// ObsAttentionKindSummary is how one signal kind fared: how many opened,
+// what support did and how long it took to act. FalsePositivePercent is -1
+// when nobody acted on any; MedianActSeconds is absent then too.
+type ObsAttentionKindSummary struct {
+	Kind                 string   `json:"kind"`
+	Total                int64    `json:"total"`
+	Open                 int64    `json:"open"`
+	Contacted            int64    `json:"contacted"`
+	FalsePositive        int64    `json:"false_positive"`
+	OtherDismissed       int64    `json:"other_dismissed"`
+	ResolvedOnOwn        int64    `json:"resolved_on_own"`
+	FalsePositivePercent int64    `json:"false_positive_percent"`
+	MedianActSeconds     *float64 `json:"median_act_seconds,omitempty"`
+}
+
+// ObsAttentionSummaryResponse answers GET /v1/admin/obs/attention/summary:
+// signals first seen in the last WindowDays, one row per kind that had any.
+type ObsAttentionSummaryResponse struct {
+	WindowDays int                       `json:"window_days"`
+	Items      []ObsAttentionKindSummary `json:"items"`
+}
+
+// ObsSupportTicketSnapshot is the customer's own account-health view saved
+// when they opened a ticket (ADR-20261112210000), with the refused request
+// matching the request id they attached.
+type ObsSupportTicketSnapshot struct {
+	CapturedAt time.Time             `json:"captured_at"`
+	Plan       string                `json:"plan"`
+	Status     string                `json:"status"`
+	Health     AccountHealth         `json:"health"`
+	Request    *AccountHealthRequest `json:"request,omitempty"`
+	RequestID  string                `json:"request_id,omitempty"`
+}
+
+// ObsSupportTicketCustomer answers GET /v1/admin/support/tickets/{ticket}/customer:
+// the account behind a ticket, its live diagnosis, the snapshot taken when
+// the ticket was opened, and the restriction kinds lifted or added since
+// (ADR-20261115175927). Unavailable means the account could not be loaded;
+// only the ticket id is then meaningful.
+type ObsSupportTicketCustomer struct {
+	TicketID    string                    `json:"ticket_id"`
+	Unavailable bool                      `json:"unavailable,omitempty"`
+	AccountID   string                    `json:"account_id,omitempty"`
+	OrgSlug     string                    `json:"org_slug,omitempty"`
+	Plan        string                    `json:"plan,omitempty"`
+	Status      string                    `json:"status,omitempty"`
+	Apps        int                       `json:"apps"`
+	Diagnosis   *ObsTenantDiagnosis       `json:"diagnosis,omitempty"`
+	Snapshot    *ObsSupportTicketSnapshot `json:"snapshot,omitempty"`
+	Lifted      []string                  `json:"lifted,omitempty"`
+	Added       []string                  `json:"added,omitempty"`
 }

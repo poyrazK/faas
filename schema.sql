@@ -8350,6 +8350,27 @@ $$;
 
 
 --
+-- Name: end_queue_leases_with_instance(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.end_queue_leases_with_instance() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.app_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+  UPDATE invocations i SET lease_expires_at = clock_timestamp()
+  WHERE i.app_id = NEW.app_id AND i.source = 'queue' AND i.state = 'dispatching'
+    AND i.instance_id = NEW.id::text AND i.lease_expires_at > clock_timestamp()
+    AND EXISTS (SELECT 1 FROM invocation_queue_lease_receipts r
+      WHERE r.invocation_id = i.id AND r.attempt = i.attempts AND r.replay_generation = i.replay_generation);
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: enforce_app_fork_status_transition(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13569,6 +13590,20 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: feature_flag_versions_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.feature_flag_versions_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('feature_flags_changed', NEW.environment_id::text);
+    RETURN NULL;
+END
 $$;
 
 
@@ -20508,10 +20543,17 @@ CREATE FUNCTION public.invocation_due_notify() RETURNS trigger
 declare
     payload jsonb;
 begin
+    if tg_op = 'UPDATE' and old.state = 'pending' then
+        return new;
+    end if;
+    if new.due_at > clock_timestamp() then
+        return new;
+    end if;
     payload := jsonb_build_object(
         'invocation_id', new.id::text,
         'app_id', new.app_id::text,
-        'source', new.source
+        'source', new.source,
+        'queue_name', coalesce(new.queue_name, '')
     );
     perform pg_notify('invocation_due', payload::text);
     return new;
@@ -29436,6 +29478,47 @@ END $$;
 
 
 --
+-- Name: storage_object_deletions_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.storage_object_deletions_scope() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    node text;
+BEGIN
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node USING session_user::text;
+    IF node IS NULL THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        IF TG_OP = 'INSERT' AND NEW.requested_by = '' THEN
+            NEW.requested_by := session_user::text;
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'a compute node login cannot remove object deletion requests'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s', session_user, node);
+    END IF;
+    IF TG_OP = 'UPDATE' AND NEW.storage_key IS DISTINCT FROM OLD.storage_key THEN
+        RAISE EXCEPTION 'a compute node login cannot rename an object deletion request'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s', session_user, node);
+    END IF;
+    -- Whatever the node sent, its row is a fresh request.
+    NEW.requested_by := node;
+    NEW.requested_at := clock_timestamp();
+    NEW.next_attempt_at := clock_timestamp() + interval '10 minutes';
+    NEW.state := 'requested';
+    NEW.attempts := 0;
+    NEW.last_error := '';
+    NEW.decided_at := NULL;
+    RETURN NEW;
+END;
+$_$;
+
+
+--
 -- Name: sync_app_task_schedule_occurrence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -35776,6 +35859,8 @@ CREATE TABLE public.cli_auth_codes (
     device_hash bytea,
     org_id uuid,
     project_ids uuid[],
+    verifier_hash bytea,
+    requester_ip text,
     CONSTRAINT cli_auth_codes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'consumed'::text, 'expired'::text])))
 );
 
@@ -60306,6 +60391,33 @@ CREATE TABLE public.status_observation_buckets (
 
 
 --
+-- Name: storage_object_deletions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.storage_object_deletions (
+    storage_key text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    requested_by text DEFAULT ''::text NOT NULL,
+    requested_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    state text DEFAULT 'requested'::text NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT (clock_timestamp() + '00:10:00'::interval) NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    decided_at timestamp with time zone,
+    CONSTRAINT storage_object_deletions_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT storage_object_deletions_check CHECK (((state = 'requested'::text) = (decided_at IS NULL))),
+    CONSTRAINT storage_object_deletions_decided_at_check CHECK (((decided_at IS NULL) OR isfinite(decided_at))),
+    CONSTRAINT storage_object_deletions_last_error_check CHECK ((length(last_error) <= 1000)),
+    CONSTRAINT storage_object_deletions_next_attempt_at_check CHECK (isfinite(next_attempt_at)),
+    CONSTRAINT storage_object_deletions_reason_check CHECK ((length(reason) <= 200)),
+    CONSTRAINT storage_object_deletions_requested_at_check CHECK (isfinite(requested_at)),
+    CONSTRAINT storage_object_deletions_requested_by_check CHECK ((length(requested_by) <= 253)),
+    CONSTRAINT storage_object_deletions_state_check CHECK ((state = ANY (ARRAY['requested'::text, 'deleted'::text, 'refused'::text]))),
+    CONSTRAINT storage_object_deletions_storage_key_check CHECK ((((length(storage_key) >= 1) AND (length(storage_key) <= 1024)) AND (storage_key !~ '(^/|\.\.|//)'::text)))
+);
+
+
+--
 -- Name: stored_workflow_failure_guards; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -75514,6 +75626,14 @@ ALTER TABLE ONLY public.status_observation_buckets
 
 
 --
+-- Name: storage_object_deletions storage_object_deletions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.storage_object_deletions
+    ADD CONSTRAINT storage_object_deletions_pkey PRIMARY KEY (storage_key);
+
+
+--
 -- Name: stored_workflow_failure_guards stored_workflow_failure_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86970,6 +87090,13 @@ CREATE INDEX status_observation_buckets_day_idx ON public.status_observation_buc
 
 
 --
+-- Name: storage_object_deletions_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_object_deletions_due_idx ON public.storage_object_deletions USING btree (next_attempt_at) WHERE (state = 'requested'::text);
+
+
+--
 -- Name: stored_workflow_failure_finished_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -91565,6 +91692,13 @@ CREATE TRIGGER executions_status_transition BEFORE UPDATE ON public.executions F
 
 
 --
+-- Name: feature_flag_versions feature_flag_versions_notify; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER feature_flag_versions_notify AFTER INSERT ON public.feature_flag_versions FOR EACH ROW EXECUTE FUNCTION public.feature_flag_versions_notify();
+
+
+--
 -- Name: financial_budget_revisions financial_budget_revision_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -91961,6 +92095,13 @@ CREATE TRIGGER inbound_webhooks_delete_exclusive_binding AFTER DELETE ON public.
 --
 
 CREATE TRIGGER initialize_clone_configuration_guard AFTER INSERT OR UPDATE OF account_id ON public.projects FOR EACH ROW EXECUTE FUNCTION public.initialize_clone_configuration_guard();
+
+
+--
+-- Name: instances instance_end_queue_leases; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instance_end_queue_leases AFTER UPDATE OF state ON public.instances FOR EACH ROW WHEN (((old.state IS DISTINCT FROM new.state) AND (new.state = ANY (ARRAY['stopped'::text, 'failed'::text])))) EXECUTE FUNCTION public.end_queue_leases_with_instance();
 
 
 --
@@ -95139,6 +95280,13 @@ CREATE TRIGGER status_incidents_legacy_resolution_fields BEFORE UPDATE OF resolv
 --
 
 CREATE TRIGGER status_incidents_legacy_resolution_update AFTER UPDATE OF resolved_at ON public.status_incidents FOR EACH ROW EXECUTE FUNCTION public.append_legacy_status_incident_resolution();
+
+
+--
+-- Name: storage_object_deletions storage_object_deletions_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER storage_object_deletions_scope BEFORE INSERT OR DELETE OR UPDATE ON public.storage_object_deletions FOR EACH ROW EXECUTE FUNCTION public.storage_object_deletions_scope();
 
 
 --
