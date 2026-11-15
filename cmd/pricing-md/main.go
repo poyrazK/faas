@@ -71,7 +71,7 @@ func render() string {
 	fmt.Fprintf(&b, "- **Max request timeout** is the longest `request_timeout_s` an app or function may set (`gregale app APP --request-timeout SECONDS`). Without one, a function request must start its response within %s and an app request within %s; a function's whole invocation, a streamed response included, may then run for the longer of its timeout and %s.\n\n",
 		api.RequestBudgetDefault, api.RequestBudgetAppDefault, api.RequestBudgetMax)
 	b.WriteString("## Developer environments\n\n")
-	fmt.Fprintf(&b, "Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync renews. The default lease is %s; `--ttl` or `dev.ttl` in `gregale.yaml` chooses another value from %s up to the plan maximum.\n\n",
+	fmt.Fprintf(&b, "Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync, and a running watcher, renews. The default lease is %s; `--ttl` or `dev.ttl` in `gregale.yaml` chooses another value from %s up to the plan maximum. Developer apps have their own budget, separate from your deployed apps; a developer database (`gregale dev --postgres`) counts toward the plan's managed PostgreSQL database limit together with your other databases. Free developer environments have 256 MB and no authentication, so they use production-shaped builds instead of watch mode.\n\n",
 		formatDuration(int(api.DeveloperLeaseDefault.Seconds())), formatDuration(int(api.DeveloperLeaseMin.Seconds())))
 	b.WriteString("| Plan | Developer apps | Maximum lease |\n")
 	b.WriteString("|---|---:|---:|\n")
