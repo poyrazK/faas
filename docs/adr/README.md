@@ -34,6 +34,8 @@
 
 - [ADR-20261115163305: Offline comparison of CLI export inventories](20261115163305-cli-offline-export-diff.md) — accepted; deterministic keyed JSON comparisons, exact decimal values and opt-in CI failures without API reads.
 
+- [ADR-20261115141842: Overall read budgets for CLI lists](20261115141842-cli-overall-list-timeout.md) — accepted; optional shared deadlines, preserved retries/progress and atomic publication boundaries.
+
 - [ADR-20261115135218: Discoverable CLI list flag dependencies](20261115135218-cli-list-flag-dependencies.md) — accepted; shared dependency registry, offline help and typed local advice with preserved validation contracts.
 
 - [ADR-20261115175928: Customer attention contact and outcomes](20261115175928-customer-attention-contact-and-outcomes.md) — accepted; distinct identifier for customer attention, preserving historical migration citations.

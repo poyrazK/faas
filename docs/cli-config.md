@@ -948,6 +948,40 @@ page requests; normal OS SIGPIPE behavior applies to a closed stdout pipe.
 Streaming does not resume or replay a failed read automatically. Inventory
 changes during traversal can affect the observed rows.
 
+### Overall timeout for list reads
+
+Build and invocation lists accept an optional positive `--timeout DURATION`
+for a single page, a complete `--all` walk, stdout streaming or a file export:
+
+```sh
+gregale --json build list --all --output builds.jsonl --timeout 2m
+gregale --json invocation list --all --stream --timeout 30s
+```
+
+One deadline starts after local validation, output preflight and client setup,
+then covers all list requests and response reads. Human invocation lists use
+the same deadline for their preliminary app-name lookup. Existing eligible
+HTTP retry waits share the remaining budget; retry eligibility/counts are
+unchanged. The list endpoints themselves retain the SDK's closed retry policy.
+`--http-timeout` still bounds individual requests, so the earlier applicable
+request or overall deadline wins. Omitting `--timeout` adds no overall deadline.
+An explicitly supplied zero, negative, empty, invalid or overflowing duration
+fails before authentication, API reads or creating a private output file.
+Repeated timeout flags keep the parser's usual last-value-wins behavior.
+
+Expiry uses the existing temporary-failure exit 3 and stderr Problem contract.
+An actual API failure retains its server code and request ID. Buffered reads
+emit no rows on expiry; stdout streams can retain earlier records and their
+existing `pagination` progress. Signal cancellation in stream/file mode keeps
+exit 130. No automatic resume or new retry policy is added.
+
+File exports check expiry before publication, including after sync/close, and
+clean up their own private file when possible. Once the atomic link publishes
+an artifact, later expiry or receipt failure retains that completed file.
+The timeout cooperatively bounds context-aware reads and publication checks;
+it cannot interrupt a blocked local stdout write or filesystem call. It does
+not promise a strict process wall-clock limit or change the file commit point.
+
 ### Export invocation and build lists to a file
 
 Use `--all --output PATH` for a complete JSON Lines file:
