@@ -791,6 +791,40 @@ page requests; normal OS SIGPIPE behavior applies to a closed stdout pipe.
 Streaming does not resume or replay a failed read automatically. Inventory
 changes during traversal can affect the observed rows.
 
+### Export invocation and build lists to a file
+
+Use `--all --output PATH` for a complete JSON Lines file:
+
+```sh
+gregale --json build list --app my-api --status failed --all --output builds.jsonl
+gregale --json invocation list --all --output invocations.jsonl
+```
+
+The parent directory must exist. Existing files, directories and symlinks are
+refused before requests; a destination that appears during the export is also
+preserved. Rows stream into a private mode-0600 temporary file. The destination
+appears only after every page succeeds and the file is synchronized and closed.
+Filters, cursor aliases, page-size validation and pagination guards still apply.
+Inventory changes during traversal can affect the observed rows.
+
+Stdout contains a completion receipt with `published: true`, `format: "jsonl"`,
+`pages_completed`, `items_emitted`, `bytes_written` and `sha256`. A safe absolute
+`path` is included; paths containing credentials or invalid UTF-8 are omitted.
+Without JSON mode, stdout prints a human receipt. `--stream` is optional with
+`--output`; the file format is always JSON Lines. An empty result creates an
+empty file with the empty-content checksum. Omit `--output` to retain the
+existing stdout behavior; `--output -` and an explicit empty path are invalid.
+
+Ctrl-C stops active reads with exit 130. Before publication, a failed read or
+write leaves the destination untouched and emits no stdout rows. API errors
+retain their code, exit and request ID; private partial bytes are not reported
+as partial stdout. Cleanup removes only the temporary file, when possible.
+
+If writing the final receipt fails, the completed file remains published.
+Inspect it before retrying: retry refuses the existing path and does not
+replace it. Filesystems without same-directory hard-link support fail safely.
+Atomic visibility does not guarantee directory-entry durability after power loss.
+
 ### Apps and builds
 
 `gregale apps` (or `gregale apps ls`) returns the complete account app list in
