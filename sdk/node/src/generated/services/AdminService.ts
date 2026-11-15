@@ -29,6 +29,7 @@ import type { ObsAlertTriageResponse } from '../models/ObsAlertTriageResponse.js
 import type { ObsAlertWorkloadSummary } from '../models/ObsAlertWorkloadSummary.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
 import type { ObsInputHealth } from '../models/ObsInputHealth.js';
+import type { ObsNodeProbeNotifications } from '../models/ObsNodeProbeNotifications.js';
 import type { ObsNotificationHealth } from '../models/ObsNotificationHealth.js';
 import type { ObsRecordingCoverage } from '../models/ObsRecordingCoverage.js';
 import type { ObsRuleCoverage } from '../models/ObsRuleCoverage.js';
@@ -1337,6 +1338,50 @@ export class AdminService {
         400: `Serving health accepts no query parameters.`,
         401: `code: unauthorized`,
         403: `Serving health read denied by operator scope or MFA or allowlist policy.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect both direct notification channels for one expected node.
+   * Requires operator read scope, MFA and the operator allowlist. Accepts a
+   * stable node name with no query parameters. Reads independent inventory
+   * and then node-filtered notification recordings under one pinned time
+   * and shared three-second deadline. It does not filter the truncated
+   * fleet preview. Returns both channels when the node is expected, even
+   * when their outcomes are unknown. Missing or unconfigured inventory has
+   * expected null; fresh configured inventory without that node has
+   * expected false and not_applicable. This is monitoring intent, not proof
+   * of registry existence. No writes, direct probes, messages or credential
+   * reads occur. Historical submissions do not prove current reachability,
+   * provider processing or human receipt. Raw URLs, addresses, arbitrary
+   * source labels and provider text are excluded.
+   *
+   * @returns ObsNodeProbeNotifications Complete two-channel lookup, an explicit unknown assessment or no expectation for this node.
+   * @throws ApiError
+   */
+  public static getObsNodeProbeNotifications({
+    name,
+  }: {
+    /**
+     * Stable node name, excluding double-dot path segments.
+     */
+    name: string,
+  }): CancelablePromise<ObsNodeProbeNotifications> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/nodes/{name}/probe-notifications',
+      path: {
+        'name': name,
+      },
+      errors: {
+        400: `Invalid node name or any query parameter, including an empty query.`,
+        401: `code: unauthorized`,
+        403: `Node notification read denied by operator scope or MFA or allowlist policy.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

@@ -5,6 +5,11 @@ Covers `FaasServingProbeFailing`, `FaasServingProbeStale`,
 (families `serving_probe` and `serving_probe_coverage`). Setup and configuration live in
 `docs/ops/serving-probe.md`.
 
+For failures in the probe's own webhook or heartbeat submissions, use
+[FaasServingProbeNotificationFailed](FaasServingProbeNotificationFailed.md).
+That warning assesses the direct notification path independently of serving
+validation.
+
 `faas-serving-probe.timer` on each compute node requests the platform-owned
 probe app through the public edge every 5 minutes.
 

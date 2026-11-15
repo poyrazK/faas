@@ -3,12 +3,14 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ApiRequestOptions } from './ApiRequestOptions.js';
+import type { CancelablePromise } from './CancelablePromise.js';
 
 type Resolver<T> = (options: ApiRequestOptions) => Promise<T>;
 type Headers = Record<string, string>;
 
 export type OpenAPIConfig = {
   FETCH?: typeof fetch;
+  REQUEST?: <T>(options: ApiRequestOptions) => CancelablePromise<T>;
   BASE: string;
   VERSION: string;
   WITH_CREDENTIALS: boolean;

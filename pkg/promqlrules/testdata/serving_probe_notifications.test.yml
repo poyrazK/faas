@@ -1,0 +1,86 @@
+# Direct notification failure, recovery, credential rotation and disablement.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: direct webhook warning waits five minutes and retains safe labels
+    interval: 1m
+    input_series:
+      - series: faas_serving_probe_inventory_configured{job="node",instance="cp:9100"}
+        values: 1x12
+      - series: faas_serving_probe_expected_pairs{job="node",instance="cp:9100"}
+        values: 1x12
+      - series: faas_serving_probe_expected{job="node",instance="cp:9100",probe_node="fsn-2",url="https://probe.example/"}
+        values: 1x12
+      - series: faas_serving_probe_expected_first_byte_seconds{job="node",instance="cp:9100",probe_node="fsn-2"}
+        values: 2x12
+      - series: faas_serving_probe_expected_max_age_seconds{job="node",instance="cp:9100",probe_node="fsn-2"}
+        values: 900x12
+      - series: up{job="node-compute",node="fsn-2",node_id="node-2",instance="fsn-2:9100"}
+        values: 1x12
+      - series: faas_serving_probe_last_run_timestamp_seconds{job="node-compute",node="fsn-2",node_id="node-2",instance="fsn-2:9100"}
+        values: 0+60x12
+      - series: faas_serving_probe_notification_enabled{job="node-compute",node="fsn-2",node_id="node-2",instance="fsn-2:9100",channel="webhook"}
+        values: 1x9 0x2
+      - series: faas_serving_probe_notification_attempted{job="node-compute",node="fsn-2",node_id="node-2",instance="fsn-2:9100",channel="webhook"}
+        values: 1x5 0x6
+      - series: faas_serving_probe_notification_last_attempt_success{job="node-compute",node="fsn-2",node_id="node-2",instance="fsn-2:9100",channel="webhook"}
+        values: 0x5 1x1 stale
+      - series: faas_serving_probe_notification_last_attempt_failure_code{job="node-compute",node="fsn-2",node_id="node-2",instance="fsn-2:9100",channel="webhook"}
+        values: 4x5 0x1 stale
+      - series: faas_serving_probe_notification_last_attempt_timestamp_seconds{job="node-compute",node="fsn-2",node_id="node-2",instance="fsn-2:9100",channel="webhook"}
+        values: 1x5 360x1 stale
+      - series: faas_serving_probe_notification_last_success_timestamp_seconds{job="node-compute",node="fsn-2",node_id="node-2",instance="fsn-2:9100",channel="webhook"}
+        values: _ _ _ _ _ _ 360x1 stale
+      - series: faas_serving_probe_notification_enabled{job="node-compute",node="fsn-2",node_id="node-2",instance="fsn-2:9100",channel="heartbeat"}
+        values: 0x12
+      - series: faas_serving_probe_notification_attempted{job="node-compute",node="fsn-2",node_id="node-2",instance="fsn-2:9100",channel="heartbeat"}
+        values: 0x12
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasServingProbeNotificationFailed
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: FaasServingProbeNotificationFailed
+        exp_alerts:
+          - exp_labels:
+              probe_node: fsn-2
+              channel: webhook
+              severity: warn
+              component: node
+              family: serving_probe_notifications
+              public_status: internal
+            exp_annotations:
+              summary: Serving probe webhook submission failed on fsn-2
+              description: "A fresh, unique probe source reports that its last completed webhook submission failed with code 4 and no later success is known. Codes: 1 DNS, 2 connection, 3 TLS, 4 timeout, 5 HTTP status, 8 unknown. Skipped runs retain this history. Check the node's journal and transport configuration; this is submission evidence, not a provider outage or human receipt."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbeNotificationFailed.md
+      - eval_time: 6m
+        alertname: FaasServingProbeNotificationFailed
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: FaasServingProbeNotificationFailed
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: FaasServingProbeNotificationFailed
+        exp_alerts: []
+    promql_expr_test:
+      - expr: faas_serving_probe_notification:state{channel="webhook"}
+        eval_time: 5m
+        exp_samples:
+          - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+            value: 3
+      - expr: faas_serving_probe_notification:state{channel="webhook"}
+        eval_time: 6m
+        exp_samples:
+          - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+            value: 2
+      - expr: faas_serving_probe_notification:state{channel="webhook"}
+        eval_time: 9m
+        exp_samples:
+          - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+            value: 1
+      - expr: faas_serving_probe_notification:state{channel="webhook"}
+        eval_time: 11m
+        exp_samples:
+          - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+            value: 0

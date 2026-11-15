@@ -3352,6 +3352,9 @@ from .obs_input_targets import ObsInputTargets
 from .obs_input_targets_reason import ObsInputTargetsReason
 from .obs_input_targets_state import ObsInputTargetsState
 from .obs_node_operation_preflight import ObsNodeOperationPreflight
+from .obs_node_probe_notifications import ObsNodeProbeNotifications
+from .obs_node_probe_notifications_reason import ObsNodeProbeNotificationsReason
+from .obs_node_probe_notifications_state import ObsNodeProbeNotificationsState
 from .obs_notification_api_status import ObsNotificationAPIStatus
 from .obs_notification_api_status_state import ObsNotificationAPIStatusState
 from .obs_notification_health import ObsNotificationHealth
@@ -3402,8 +3405,23 @@ from .obs_serving_health import ObsServingHealth
 from .obs_serving_health_state import ObsServingHealthState
 from .obs_serving_probe import ObsServingProbe
 from .obs_serving_probe_counts import ObsServingProbeCounts
+from .obs_serving_probe_diagnostics import ObsServingProbeDiagnostics
+from .obs_serving_probe_diagnostics_failure_code import ObsServingProbeDiagnosticsFailureCode
+from .obs_serving_probe_diagnostics_first_failure_code import ObsServingProbeDiagnosticsFirstFailureCode
+from .obs_serving_probe_diagnostics_reason import ObsServingProbeDiagnosticsReason
+from .obs_serving_probe_diagnostics_state import ObsServingProbeDiagnosticsState
 from .obs_serving_probe_inventory import ObsServingProbeInventory
 from .obs_serving_probe_inventory_state import ObsServingProbeInventoryState
+from .obs_serving_probe_notification import ObsServingProbeNotification
+from .obs_serving_probe_notification_channel import ObsServingProbeNotificationChannel
+from .obs_serving_probe_notification_counts import ObsServingProbeNotificationCounts
+from .obs_serving_probe_notification_evidence_reason import ObsServingProbeNotificationEvidenceReason
+from .obs_serving_probe_notification_failure_code import ObsServingProbeNotificationFailureCode
+from .obs_serving_probe_notification_health import ObsServingProbeNotificationHealth
+from .obs_serving_probe_notification_health_reason import ObsServingProbeNotificationHealthReason
+from .obs_serving_probe_notification_health_state import ObsServingProbeNotificationHealthState
+from .obs_serving_probe_notification_reason import ObsServingProbeNotificationReason
+from .obs_serving_probe_notification_state import ObsServingProbeNotificationState
 from .obs_serving_probe_state import ObsServingProbeState
 from .obs_wake_event import ObsWakeEvent
 from .obs_wake_event_data import ObsWakeEventData
@@ -4651,6 +4669,8 @@ from .project_environment_binding_change_response_change import ProjectEnvironme
 from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
 from .project_environment_binding_response import ProjectEnvironmentBindingResponse
 from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_branch_bucket import ProjectEnvironmentBranchBucket
+from .project_environment_branch_bucket_consistency import ProjectEnvironmentBranchBucketConsistency
 from .project_environment_branch_database import ProjectEnvironmentBranchDatabase
 from .project_environment_branch_list_response import ProjectEnvironmentBranchListResponse
 from .project_environment_branch_response import ProjectEnvironmentBranchResponse
@@ -9777,6 +9797,9 @@ __all__ = (
     "ObsInputTargetsReason",
     "ObsInputTargetsState",
     "ObsNodeOperationPreflight",
+    "ObsNodeProbeNotifications",
+    "ObsNodeProbeNotificationsReason",
+    "ObsNodeProbeNotificationsState",
     "ObsNotificationAPIStatus",
     "ObsNotificationAPIStatusState",
     "ObsNotificationHealth",
@@ -9827,8 +9850,23 @@ __all__ = (
     "ObsServingHealthState",
     "ObsServingProbe",
     "ObsServingProbeCounts",
+    "ObsServingProbeDiagnostics",
+    "ObsServingProbeDiagnosticsFailureCode",
+    "ObsServingProbeDiagnosticsFirstFailureCode",
+    "ObsServingProbeDiagnosticsReason",
+    "ObsServingProbeDiagnosticsState",
     "ObsServingProbeInventory",
     "ObsServingProbeInventoryState",
+    "ObsServingProbeNotification",
+    "ObsServingProbeNotificationChannel",
+    "ObsServingProbeNotificationCounts",
+    "ObsServingProbeNotificationEvidenceReason",
+    "ObsServingProbeNotificationFailureCode",
+    "ObsServingProbeNotificationHealth",
+    "ObsServingProbeNotificationHealthReason",
+    "ObsServingProbeNotificationHealthState",
+    "ObsServingProbeNotificationReason",
+    "ObsServingProbeNotificationState",
     "ObsServingProbeState",
     "ObsWakeEvent",
     "ObsWakeEventData",
@@ -10944,6 +10982,8 @@ __all__ = (
     "ProjectEnvironmentBindingChangeResponseKind",
     "ProjectEnvironmentBindingResponse",
     "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentBranchBucket",
+    "ProjectEnvironmentBranchBucketConsistency",
     "ProjectEnvironmentBranchDatabase",
     "ProjectEnvironmentBranchListResponse",
     "ProjectEnvironmentBranchResponse",

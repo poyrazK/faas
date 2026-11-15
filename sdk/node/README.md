@@ -301,6 +301,554 @@ pins an instance default for resuming one operation, and
 `setIdempotencyKey(undefined)` clears it. Explicit request keys take precedence.
 Use a distinct key for every independent mutation, especially concurrent ones.
 
+### Per-request options and response diagnostics
+
+Bound generated methods from both factories accept an optional second
+`RequestOptions` argument. Existing calls and `CancelablePromise` return types
+remain valid. Keep API parameters in the first argument:
+
+```ts
+import { createClient, type ResponseInfo } from '@gregale/sdk-node';
+
+const responses: ResponseInfo[] = [];
+const client = createClient('https://api.example.com', {
+  token: process.env.GREGALE_TOKEN,
+  onResponse: info => { responses.push(info); },
+});
+const app = await client.apps.getApp({ slug: 'hello' }, {
+  signal: AbortSignal.timeout(5000),
+  timeoutMs: 3000,
+  retry: false,
+  onResponse: info => { console.log(info.requestId, info.status); },
+});
+// Methods without API parameters use undefined in the first slot.
+const account = await client.account.getAccount(undefined, { timeoutMs: 1000 });
+```
+
+`signal` stops this call with the caller's abort reason. `timeoutMs` overrides
+the client timeout for this call; ordinary requests default to 30 seconds.
+The total budget covers asynchronous header resolution, fetch, all retry
+attempts and backoff, and response body consumption. A deadline rejects with
+`TimeoutError`. Accept integers from 0 through 2147483647; zero disables the
+deadline. `.cancel()` retains its existing `CancelError` contract. Options and
+retry policies are copied at invocation, so concurrent calls keep separate
+budgets and policies. `retry: false` disables HTTP retries for one call;
+`retry: { maxAttempts: 3, backoffMs: 100 }` overrides the client policy.
+
+Cancellation stops local work. It does not prove a mutation was rolled back
+on the server. Retain the operation's idempotency key and reconcile uncertain
+outcomes before retrying a write.
+
+Client and per-call `onResponse` observers both receive the same frozen
+`ResponseInfo` for each HTTP response, including intermediate retry responses:
+
+| Field | Meaning |
+| --- | --- |
+| `requestId` | UUIDv4 from `X-Request-ID`, or `null` when missing or invalid |
+| `status` | HTTP status, before body decoding |
+| `attempt` | One-based attempt number within this HTTP call |
+| `durationMs` | Monotonic time for this attempt until response headers; excludes body reads and backoff |
+
+Metadata contains no URL, credentials, body, or arbitrary headers. A response
+event does not indicate that body decoding or the operation completed.
+Failures without a response emit no event, and late custom-fetch responses
+after a scoped call was cancelled are discarded. Observers are not awaited;
+their exceptions and rejected promises do not affect the request.
+
+The second argument applies to isolated generated namespaces such as
+`client.apps` and `client.runs`. Legacy static services keep their existing
+signatures. Bound `runExecution` and `watchExecution` keep their own options;
+the client-wide observer also covers their submission, SSE connection, and
+receipt responses.
+
+### Lazy deployment and build pagination
+
+Both isolated factories expose typed async iterators on `client.deployments`:
+
+| List | Item iterator | Page iterator |
+| --- | --- | --- |
+| App deployments | `iterateAppDeployments({ slug, ... })` | `iterateAppDeploymentPages({ slug, ... })` |
+| Account deployments | `iterateDeployments(params?)` | `iterateDeploymentPages(params?)` |
+| Builds | `iterateBuilds(params?)` | `iterateBuildPages(params?)` |
+
+```ts
+const deployments = client.deployments.iterateAppDeployments(
+  { slug: 'api', limit: 50 },
+  { signal: AbortSignal.timeout(60_000), timeoutMs: 30_000, maxPages: 10, maxItems: 200 },
+);
+// No request has been sent yet.
+for await (const deployment of deployments) {
+  console.log(deployment.id);
+  if (deployment.status === 'live') break;
+}
+
+for await (const page of client.deployments.iterateBuildPages(
+  { app: 'api', status: 'failed', limit: 50 },
+  { maxPages: 5 },
+)) {
+  await saveBuildPage(page.items);
+  // Persist only after consuming the entire page, together with its filters.
+  await saveCursor(page.next_before);
+}
+```
+
+Each iterator captures its endpoint, token, filters, and options when created.
+It fetches only when `next()` needs another page, without prefetching. Item
+iterators exhaust a page before fetching another; page iterators preserve the
+generated `DeploymentListResponse` or `BuildListResponse` envelope. Existing
+`listAppDeployments`, `listDeployments`, and `getBuilds` still return a single
+`CancelablePromise` page, and legacy static services retain their surface.
+
+`PaginationOptions` accepts `signal`, `retry`, and `onResponse` as above.
+Here `timeoutMs` is one total traversal budget starting at the first `next()`,
+including requests, retry waits, body reads, and time spent processing items.
+It defaults to the client timeout or 30 seconds; zero disables it. An expired
+budget rejects with `TimeoutError`; caller abort retains its reason. Between
+requests, no timer or caller event listener is kept active: buffered iteration
+checks cancellation and expiry on the next `next()`. Breaking a loop or calling
+`return()` closes the iterator; closing also aborts an outstanding page request.
+
+`maxPages` and `maxItems` are optional nonnegative safe integers. Zero fetches
+nothing. Page limits include empty pages; HTTP retry attempts do not count as
+extra pages. Item limits reduce the requested page size to the remaining
+budget, so a page is never sliced while retaining a cursor past omitted rows.
+The API `limit` remains the page size (1–200, default 50).
+
+Cursors are opaque: pass a saved `next_before` as `before`, with the same
+filters. Empty pages with a cursor advance; an absent, null, or empty cursor
+ends traversal. `PaginationError` reports `repeated_cursor` for a cycle and
+`invalid_page` for an invalid envelope or an oversized server page. It excludes
+cursor values and response bodies. HTTP errors propagate without resetting the
+cursor or restarting the walk. Response observers run for each HTTP attempt;
+their attempt count restarts on each page.
+
+Lists are live retained reads, not a snapshot of the account. Limits can stop a
+walk before the server's end. Resume from a saved cursor only after its entire
+page has been processed; stopping partway through an item page does not create
+a resumable item checkpoint.
+
+### Build and deployment waiters
+
+Both isolated factories expose `client.deployments.waitForBuild({ id }, options)`
+and `waitForDeployment({ id }, options)`. They observe an existing resource ID
+and return a `Promise<BuildResponse>` or `Promise<ReleaseTimeline>`:
+
+```ts
+import { createClient, WaiterError } from '@gregale/sdk-node';
+
+const client = createClient('https://api.example.com', { token: process.env.GREGALE_TOKEN });
+const build = await client.deployments.waitForBuild({ id: buildId }, {
+  timeoutMs: 120_000,
+  signal: AbortSignal.timeout(120_000),
+  maxPolls: 60,
+  onProgress: (value, progress) => {
+    console.log(progress.poll, value.status);
+  },
+});
+
+try {
+  const timeline = await client.deployments.waitForDeployment({ id: deploymentId }, {
+    timeoutMs: 300_000,
+  });
+  console.log(timeline.phase, timeline.traffic_percent);
+} catch (error) {
+  if (error instanceof WaiterError && error.code === 'blocked') {
+    // Inspect error.lastObserved for the hold or approval requirement.
+    // Resume by calling the waiter again with the same deployment ID.
+  } else throw error;
+}
+```
+
+`timeoutMs` is required: a positive integer from 1 through 2147483647. One
+monotonic budget starts at invocation and covers header resolution, HTTP retries,
+body reads, polling delays, and awaited progress callbacks. This explicit budget
+overrides the client timeout for status reads. `signal` preserves the caller's
+abort reason. Caller cancellation stops observation; resource cancellation is a
+separate API operation.
+
+Poll immediately, then use exponential delays with jitter. `minDelayMs` defaults
+to 1000 and `maxDelayMs` to 5000; both are positive integer milliseconds, with
+minimum no greater than maximum. `maxPolls` optionally caps status reads with a
+positive safe integer. HTTP retry attempts stay within a poll. The existing
+`retry` and `onResponse` policies apply to each status read; ordinary HTTP errors
+and network failures stop the waiter when the configured HTTP policy is exhausted.
+
+| Observation | Outcome |
+| --- | --- |
+| Build queued or running | Continue polling |
+| Build succeeded | Return the build |
+| Build failed or cancelled | Reject with the matching `WaiterError.code` |
+| Release building, scheduled, rolling out, or watching | Continue polling |
+| Release awaiting approval or held | Reject with `blocked`; set `stopOnBlocked: false` to keep observing |
+| Release failed, cancelled, rolled back, or superseded | Reject with the matching failure code |
+| Release released, live, and serving positive traffic | Return the timeline, unless it records a watch regression |
+
+A recorded `watch_regressed` event rejects with `regressed`, including when
+automatic rollback left the release serving. A released deployment without
+positive live traffic rejects with `not_serving`. The returned timeline describes
+this release and its traffic share. Use separate health or traffic checks for
+application-specific readiness requirements.
+
+`WaiterError` carries `code`, `resource`, `id`, `polls`, and a deeply frozen
+`lastObserved` snapshot. Budget expiry uses code `timeout` and name `TimeoutError`;
+poll exhaustion uses `poll_limit`. Missing/mismatched resource identities and
+invalid state fields produce `invalid_response`; unknown states produce
+`unexpected_state`. Invalid observations never replace the last valid snapshot.
+HTTP errors, progress-callback exceptions, and caller abort retain their original
+identity.
+
+`onProgress(snapshot, { poll, elapsedMs })` runs for every valid observation,
+including terminal states. Its deeply frozen snapshot is separate from the
+returned result. Async callbacks are awaited within the deadline; after timeout
+or cancellation a late callback completion cannot cause another read. Callback
+work itself remains owned by the caller. Each waiter captures its client config
+and copied options at invocation, so concurrent waits and credential/endpoint
+rotation remain isolated. Existing generated methods and static services retain
+their signatures.
+
+### Preview and apply a complete project
+
+`client.projects.previewLocal` prepares the full repository and asks the server
+for its authoritative project plan. It returns a deeply immutable
+`ReviewedProjectPlan` containing source identity, target environment, workload
+changes, managed-service requirements, warnings, quota blockers and the opaque
+review token. This helper supports account-owned local projects on public and
+preview clients. The generated organization and source-ref methods remain
+available separately.
+
+```ts
+import { createClient, parseReviewedProjectPlan } from '@gregale/sdk-node';
+import { writeFile, readFile } from 'node:fs/promises';
+
+const client = createClient(process.env.FAAS_API!, { token: process.env.FAAS_TOKEN });
+const plan = await client.projects.previewLocal({
+  directory: './my-project', projectSlug: 'shop',
+  appSlugs: { api: 'shop-api', worker: 'shop-worker' },
+}, { timeoutMs: 120_000 });
+await writeFile('../shop.plan.json', JSON.stringify(plan), { mode: 0o600 });
+// Inspect plan.preview before explicitly applying it.
+const options = { statePath: '../shop.apply.json', timeoutMs: 1_200_000 };
+const result = await client.projects.applyPlan(plan, options);
+// Another process can load the reviewed intent without the original source.
+const restored = parseReviewedProjectPlan(JSON.parse(await readFile('../shop.plan.json', 'utf8')));
+const recovered = await client.projects.resumePlanApplication(restored, options);
+```
+
+Preview performs no resource reconciliation or build enqueue. `environment`,
+`only`, `noTriggers` and `appSlugs` bind the selection through the server's token.
+Apply submits that exact retained archive without another upload. The server
+rechecks ownership, permissions, quotas, configuration and environment approval.
+Cached source normally expires after one hour. `preview_expired` and `plan_stale`
+require another preview and a new journal; the SDK never refreshes a review or
+changes its selection automatically.
+
+`ProjectApplyOptions` requires a private journal path and a positive total
+`timeoutMs`. `initialSecrets` maps exact selected workload names to environment
+values; `approvalToken` forwards an existing protected-environment approval.
+These transient values remain in memory and never enter the plan, progress or
+journal. The journal records endpoint, target, plan fingerprint, attempt ID and
+phase, using atomic 0600 writes. Keep the journal outside the source tree when
+planning future revisions. `loadProjectApplicationState` reads it safely.
+
+The attempt is saved before POST and automatic HTTP retries are disabled for
+both preview and apply. After an uncertain apply, or a restart from `applying`,
+recovery reads `/v1/project-submissions/{attempt}` without another mutation. A
+missing receipt stays `acceptance_unknown`; even a crash between saving intent
+and sending the POST never causes a blind resubmit. Servers must support the
+optional `Deployment-Attempt-ID` header on cached apply; a response without the
+matching durable identity is treated as uncertain. Existing cached-apply callers
+without that header retain their behavior.
+
+Results expose `succeeded`, `partial`, `failed` or `blocked`, with immutable
+per-service outcomes and accepted deployment/build IDs. Image deployments may
+have no build ID. Missing selected results remain `unknown`; enqueue and
+post-acceptance failures stay visible. Receipts are sparse acceptance records;
+use `plan.preview` for the full review. Release observation uses the existing
+waiters and does not replace application-specific end-to-end checks.
+
+One deadline covers preparation, requests, callbacks, receipt polling and every
+service waiter. `signal` cancels it; `maxReceiptPolls` bounds receipt reads and
+`wait.maxPolls` bounds each service's timeline reads. `onProgress` reports the
+phase, attempt and service without configuration values. Each call snapshots
+client configuration, and concurrent writers to the same journal are rejected
+within a process; coordinate multiple processes externally.
+
+See [the API/worker/PostgreSQL example](../../examples/sdk-project-application/README.md)
+for both language drivers and process-restart recovery.
+
+### Inspect and deploy an existing project
+
+`inspectProject(directory, options?)` reads local configuration without running
+project code. It returns an immutable `ProjectPlan` with the selected context and
+source roots, app target, framework, function runtime/handler, Docker build
+summary, candidate workspaces/functions, setting origins and typed issues.
+Both the public and preview Node entry points export it.
+
+```ts
+import { createClient, inspectProject, parseProjectPlan } from '@gregale/sdk-node';
+import { writeFile } from 'node:fs/promises';
+
+const project = await inspectProject('./apps/api', { appSlug: 'api' });
+if (project.issues.some(issue => issue.severity === 'error')) {
+  throw new Error(JSON.stringify(project.issues));
+}
+// Save the reviewed intent outside the repository for process recovery.
+await writeFile('../project-plan.json', JSON.stringify(project));
+const client = createClient(process.env.FAAS_API!, { token: process.env.FAAS_TOKEN });
+const options = { statePath: '../deployment.json', timeoutMs: 120_000 };
+const result = await client.deployments.deployProject(project, options);
+// After a restart, deserialize the original plan and use the same journal.
+const restored = parseProjectPlan(JSON.parse(JSON.stringify(project)));
+const resumed = await client.deployments.resumeProjectDeployment(restored, options);
+```
+
+Discovery honors `gregale.yaml` before `gregale.yml`, the CLI's Docker > Node >
+Python > Go marker priority, function declarations and conventional handlers.
+It recognizes npm/pnpm, Turbo, Nx, Go and Cargo workspace declarations. A declared
+member retains repository build context and selects a relative `sourceRoot`.
+At a workspace root, choose `sourceRoot` explicitly (including `'.'`). For
+`functions[]`, choose `functionName` when several functions exist. Explicit
+`appSlug`, `runtime`, `handler` and `dockerfile` options override discovery;
+`contextRoot` supplies a boundary when Git discovery is unsuitable. No remote
+app is inferred from a directory name. Set `appSlug` or `project.app` to deploy.
+
+`issues` distinguish invalid declarations, path escapes, missing inputs,
+ambiguous choices, unsupported settings and deferred validation. Root resource
+sections produce warnings because source submission does not reconcile resources.
+Function-list resource settings and TOML deployment manifests require the CLI
+and block project deployment in this version. The Docker summary exposes argument
+names and secret IDs, never their values or secret references; the original
+manifest travels in the source archive for server validation.
+
+The plan fingerprints inspected configuration and directory membership. Project
+workflows validate it before and after packing, reject excluded build inputs,
+and bind its fingerprint to the durable journal. Store the plan, journal and
+archive outside the inspected project. Resume with the original plan: once an
+archive is prepared, it remains the deployment intent even if source files have
+changed or disappeared. A changed plan cannot reuse that journal. Existing
+`deploySource` callers keep their explicit behavior; advanced callers can pass
+`project` in their workflow options with matching resolved deployment metadata.
+Selected functions get transport-only manifests and, when needed, a Go module
+inside the archive; SDKs never rewrite the customer worktree.
+
+Inspection defaults to a 120-second deadline and at most 40,000 directory entries,
+64 levels, 1 MiB per input and bounded YAML expansion. `timeoutMs`, `signal` and
+`maxEntries` can reduce these budgets. Workspace traversal skips dot directories,
+`node_modules`, `vendor`, `dist`, `target`, `coverage` and Python caches. It does
+not install dependencies, run hooks, build, contact the API or validate every
+server resource schema. `validateProjectPlan` checks saved input identity;
+`projectDeployOptions` returns the resolved source-deployment metadata.
+
+### Resumable source deployment workflows
+
+`client.deployments.deploySource(input, options)` prepares a directory, uploads
+its archive, commits it and observes the existing app's release. One durable
+journal identifies one deployment intent. Calling again with the same journal
+resumes that intent; use a new state path for each intentionally new deployment.
+
+```ts
+import { createClient, type SourceDeploymentOptions } from '@gregale/sdk-node';
+import { mkdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+
+const client = createClient(process.env.GREGALE_API_URL!, {
+  token: process.env.GREGALE_TOKEN,
+});
+const artifacts = resolve('..', '.gregale-artifacts');
+await mkdir(artifacts, { recursive: true });
+const input = { directory: '.', appSlug: 'api', deployOptions: { source_root: 'apps/api' } };
+const options: SourceDeploymentOptions = {
+  statePath: join(artifacts, 'api-deploy.json'),
+  timeoutMs: 300_000,
+  preparation: { maxBytes: 100 * 1024 * 1024 },
+  wait: { maxPolls: 300 },
+  onProgress: event => console.log(event.phase, event.elapsedMs),
+};
+const result = await client.deployments.deploySource(input, options);
+console.log(result.outcome, result.deploymentId, result.timeline.summary);
+
+// After interruption, with the same app, metadata and preparation policy:
+const resumed = await client.deployments.resumeSourceDeployment({
+  appSlug: input.appSlug, deployOptions: input.deployOptions,
+}, options);
+```
+
+The state parent must already exist outside the source context. Archives are
+kept beside the journal for recovery. Before transfer, the journal records the
+archive hash and stable upload/commit identities. Once prepared, resume reuses
+that archive rather than repacking changed source. Once committing or accepted,
+recovery needs neither source nor archive; it reads the acceptance receipt and
+observes the same deployment ID. `resumeSourceDeployment` fails for a missing
+journal. `loadSourceDeploymentState(path)` returns its validated immutable state.
+
+Reuse the same endpoint, app, deployment option values and preparation selection
+policy. `sourceRoot` comes from `deployOptions.source_root`. Runtime budgets,
+wait/retry policies and progress callbacks can change on resume. Journals contain
+fingerprints and identifiers, without tokens, deployment option values or logs.
+They and generated archives have private permissions.
+
+Results have outcome `succeeded`, `blocked` or `failed`, plus the acceptance
+receipt, timeline and optional resource failure code. Approval waits and holds
+return `blocked` by default. `SourceDeploymentError` exposes `code`, `outcome`,
+`phase`, `statePath`, `state` and `cause`; timeouts use outcome `timed_out` and
+caller aborts use `cancelled`. An uncertain commit uses `acceptance_unknown` and
+preserves the journal. Resume only checks its receipt, including when a process
+stopped just before commit was sent. No fresh attempt is submitted automatically.
+
+The required timeout covers all phases and awaited callbacks. `signal` stops
+local work and observation; an accepted deployment continues on the server.
+Progress includes optional source, upload and release observations, with elapsed
+milliseconds from this invocation. Existing child limits and `maxRecoveries`
+apply. The workflow observes existing release policies; it does not approve
+releases, promote traffic, roll back or cancel remote deployments.
+
+Independent journals run concurrently. One process rejects concurrent use of the
+same canonical journal with `busy`; coordinate a single writer across processes.
+Existing source/upload/waiter methods remain available separately.
+
+### Prepare local source
+
+`inspectSource(directory)` returns an immutable selection plan with paths, sizes,
+normalized modes, SHA-256 hashes, inclusion reasons, ignore-rule locations and
+blocking issues. `prepareSource(directory, outputPath, options)` scans and streams
+a reproducible tar.gz to a private temporary file, verifies the source again,
+then atomically replaces the destination. Put the destination outside the source
+context; its parent directory must exist.
+
+```ts
+import { prepareSource, saveSourceUploadCheckpoint } from '@gregale/sdk-node';
+import { join, resolve } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+
+const controller = new AbortController();
+const artifacts = resolve('..', '.gregale-artifacts');
+await mkdir(artifacts, { recursive: true });
+const source = await prepareSource('.', join(artifacts, 'api-source.tar.gz'), {
+  sourceRoot: 'apps/api', // Archive the workspace context; select this app within it.
+  timeoutMs: 60_000,
+  maxBytes: 100 * 1024 * 1024,
+  maxArchiveBytes: 50 * 1024 * 1024,
+  signal: controller.signal,
+  onPlan: plan => console.log(plan.fileCount, plan.totalBytes, plan.issues),
+});
+const checkpoint = await client.uploads.uploadSource({
+  path: source.path, appSlug: 'api',
+  deployOptions: { source_root: source.plan.sourceRoot },
+}, {
+  timeoutMs: 120_000,
+  onCheckpoint: value => saveSourceUploadCheckpoint(join(artifacts, 'api-source-checkpoint.json'), value),
+});
+// commitSource remains the explicit next step after review of the prepared upload.
+```
+
+Selection follows the CLI worktree packer's default exclusions, Go vendoring,
+ordered `.gregaleignore` rules, and Dockerfile build-output/`.dockerignore` rules.
+Choose the context directory and `sourceRoot` explicitly. Dockerfile markers are
+detected at that application root; pass `dockerfile: true` for a `gregale.yaml`
+build section that selects a differently named Dockerfile. Archives use flat
+context-relative names, sorted UTF-8 paths, epoch timestamps, zero ownership and
+0644/0755 modes. PAX headers support Unicode and long names. Identical inputs
+produce identical bytes within the same SDK/runtime; compression versions may
+produce different gzip bytes across runtimes.
+
+The default `secretScan: 'strict'` rejects credential-shaped dotenv values using
+the CLI provider/entropy checks, including sandbox keys. Plans carry paths and
+reasons, never raw credentials. Move secrets to environment configuration or use
+`exclude: ['.env.local']`; `secretScan: 'off'` is an explicit override. This check
+has the CLI's dotenv scope; the server still validates uploaded source. Safe
+in-tree links are dereferenced; escaping/dangling/cyclic links and irregular files
+are blocking issues. Source changes fail with `source_changed`, preserving an
+existing archive. `SourcePreparationError.plan` contains issues when preparation
+fails with `invalid_source`.
+
+`maxEntries` counts files and directories (default/maximum 10,000); `maxBytes`
+defaults to the server's 2 GiB expanded-source safety cap. Set `maxArchiveBytes`
+to your intended upload budget. Inspection also caps visited entries at four
+times `maxEntries`, directory nesting at 64, ignore files at 1 MiB and dotenv
+lines at 64 KiB. File reads are 64 KiB. `timeoutMs` defaults to 120 seconds and
+covers scanning, packing and awaited callbacks. `onProgress` reports phase,
+relative path and bytes processed in that file. Filesystem helpers are available
+from both Node entry points; existing clients and static service calls keep their
+current behavior.
+
+### Resumable source archives and deployment acceptance
+
+Public and preview clients expose `client.uploads.uploadSource(input, options)`
+and `commitSource({ checkpoint }, options)`. Upload a prebuilt archive from a
+regular file, save portable JSON checkpoints, and recover deployment acceptance
+through the existing receipt API. Generated upload methods keep their signatures.
+
+```ts
+import {
+  createClient, loadSourceUploadCheckpoint, saveSourceUploadCheckpoint, type SourceUploadOptions,
+} from '@gregale/sdk-node';
+
+const client = createClient('https://api.example.com', { token: process.env.GREGALE_TOKEN });
+const journal = 'source-upload.json';
+let checkpoint = await loadSourceUploadCheckpoint(journal).catch(error => {
+  if (error.code === 'ENOENT') return undefined;
+  throw error;
+});
+const options: SourceUploadOptions = {
+  timeoutMs: 120_000,
+  onCheckpoint: value => saveSourceUploadCheckpoint(journal, value),
+  onProgress: value => console.log(value.stage, value.received_bytes, value.total_size),
+};
+if (!checkpoint || ['new', 'uploading'].includes(checkpoint.stage)) {
+  checkpoint = await client.uploads.uploadSource({
+    path: 'source.tar.gz', appSlug: 'api', checkpoint,
+  }, options);
+}
+const receipt = await client.uploads.commitSource({ checkpoint }, options);
+const timeline = await client.deployments.waitForDeployment(
+  { id: receipt.deployment_id }, { timeoutMs: 300_000 },
+);
+```
+
+`SourceUploadOptions.timeoutMs` is a required positive total budget, at most
+2147483647, including fingerprinting, reads, writes and awaited callbacks. Optional
+`signal` preserves the caller's abort reason. The source path, metadata, options,
+and client configuration are captured before filesystem awaits. The SDK checks
+1 MiB source grains against the initial fingerprint before sending them. Payloads
+are bounded by the server's advertised size and a 16 MiB SDK buffer bound.
+Redirects are refused. Late transports or callbacks cannot schedule later writes.
+
+`maxRecoveries` defaults to 3 (0–100). Writes disable automatic HTTP retries;
+lost chunk replies and offset conflicts trigger a session read before another
+write. Accepted offsets must fall within the durable in-flight range. GET requests
+retain `retry` and `onResponse`. `onProgress` receives frozen
+`{ stage, received_bytes, total_size }` metadata.
+
+`onCheckpoint` is required, awaited before mutations, and receives a frozen
+`SourceUploadCheckpoint`. Persist it durably and serialize one writer per journal.
+`saveSourceUploadCheckpoint` uses atomic replacement, private file permissions,
+and POSIX directory sync; local saves are queued so a late save cannot overwrite
+a newer one. `loadSourceUploadCheckpoint` waits for pending local saves. For
+another store, serialize the checkpoint and restore it through
+`parseSourceUploadCheckpoint`. The JSON schema is shared with Python and excludes
+credentials, source paths and deployment metadata values.
+
+Resume using the original file, API URL, app, and `deployOptions`, including
+whether options were supplied. Fingerprints must match; session authorization
+continues to be enforced by the API. Checkpoints record `new`, `uploading`, `ready`,
+`committing`, or `accepted`, together with stable request/attempt IDs. Expired or
+cancelled sessions stop without opening a fresh session automatically.
+
+Commit persists `committing` before its sole POST and reads the immutable
+acceptance receipt. A `committing` or `accepted` checkpoint performs receipt
+recovery only, including when the original process stopped before it could send
+the request. Missing receipts produce `SourceUploadError` with code
+`acceptance_unknown`; neither another commit nor a fresh attempt is sent.
+Recovery can return the original accepted deployment after failure or supersession
+and does not need the archive file. Preserve the journal after uncertain outcomes.
+
+`SourceUploadError` carries typed `code`, `checkpoint`, and original `cause`.
+It distinguishes changed sources, checkpoint/response validation, expired/closed
+sessions, failed persistence, exhausted recovery, request failures, incomplete
+transfers, and unknown acceptance. Total deadline failures use code `timeout` and
+name `TimeoutError`. Caller abort identity is preserved. Uploading and committing
+remain separate from release approval, promotion, and observation.
+
 ## Supported surface
 
 ### Resumable managed realtime preview

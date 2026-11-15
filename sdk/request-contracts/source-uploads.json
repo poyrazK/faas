@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "source_text": "abcdefghi",
+  "chunk_size": 4,
+  "metadata": {
+    "runtime": "python",
+    "handler": "café",
+    "pr_number": 2,
+    "rollback_on_5xx": false
+  },
+  "metadata_sha256": "1a8e784a23eaf41eada933245bea7afbcbd001722d0027a372dffe0943af7049",
+  "app_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+  "deployment_id": "4f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+  "cases": [
+    {
+      "name": "normal",
+      "scenario": "normal",
+      "outcome": null
+    },
+    {
+      "name": "lost start reply reuses session key",
+      "scenario": "lost_start",
+      "outcome": null
+    },
+    {
+      "name": "lost accepted chunk reply reconciles offset",
+      "scenario": "lost_chunk",
+      "outcome": null
+    },
+    {
+      "name": "lost chunk before write retries same bytes",
+      "scenario": "lost_before",
+      "outcome": null
+    },
+    {
+      "name": "offset conflict reconciles before retry",
+      "scenario": "conflict",
+      "outcome": null
+    },
+    {
+      "name": "partial accepted range resumes exact suffix",
+      "scenario": "partial",
+      "outcome": null
+    },
+    {
+      "name": "restart from durable checkpoint",
+      "scenario": "restart",
+      "outcome": null
+    },
+    {
+      "name": "changed source after restart",
+      "scenario": "changed_restart",
+      "outcome": "source_changed"
+    },
+    {
+      "name": "source mutation during operation",
+      "scenario": "changed_live",
+      "outcome": "source_changed"
+    },
+    {
+      "name": "expired sessions stop",
+      "scenario": "expired",
+      "outcome": "session_expired"
+    },
+    {
+      "name": "malformed offset acknowledgment stops",
+      "scenario": "bad_ack",
+      "outcome": "invalid_response"
+    },
+    {
+      "name": "server offset outside in flight range",
+      "scenario": "bad_offset",
+      "outcome": "invalid_response"
+    },
+    {
+      "name": "checkpoint persistence failure prevents writes",
+      "scenario": "save_fail",
+      "outcome": "checkpoint_failed"
+    },
+    {
+      "name": "lost commit reply recovers receipt",
+      "scenario": "lost_commit",
+      "outcome": null
+    },
+    {
+      "name": "unknown acceptance never resubmits",
+      "scenario": "unknown_commit",
+      "outcome": "acceptance_unknown"
+    },
+    {
+      "name": "pending acceptance never resubmits",
+      "scenario": "pending_commit",
+      "outcome": "acceptance_unknown"
+    },
+    {
+      "name": "commit deadline resumes through receipt",
+      "scenario": "commit_timeout",
+      "outcome": "timeout"
+    },
+    {
+      "name": "caller cancelled commit resumes through receipt",
+      "scenario": "commit_cancel",
+      "outcome": "caller_cancelled"
+    },
+    {
+      "name": "upload body deadline retains checkpoint",
+      "scenario": "patch_timeout",
+      "outcome": "timeout"
+    },
+    {
+      "name": "caller cancellation retains upload checkpoint",
+      "scenario": "patch_cancel",
+      "outcome": "caller_cancelled"
+    },
+    {
+      "name": "receipt identity mismatch stops",
+      "scenario": "bad_receipt",
+      "outcome": "invalid_response"
+    },
+    {
+      "name": "recovery cap stops mutation replay",
+      "scenario": "recovery_limit",
+      "outcome": "recovery_limit"
+    },
+    {
+      "name": "changed endpoint rejects checkpoint",
+      "scenario": "wrong_base",
+      "outcome": "invalid_checkpoint"
+    },
+    {
+      "name": "changed metadata rejects checkpoint",
+      "scenario": "wrong_metadata",
+      "outcome": "invalid_checkpoint"
+    }
+  ]
+}

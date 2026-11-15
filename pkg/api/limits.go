@@ -22,6 +22,19 @@ import (
 	"time"
 )
 
+// OpenAPI tool generation is offline and bounded independently of deployment
+// quotas. Generated adapters use the normal application egress and MCP limits.
+const (
+	ToolOpenAPIDocumentMaxBytes = 256 << 10
+	ToolOpenAPIOperationsMax    = 16
+	ToolOpenAPISchemaMaxDepth   = 16
+	ToolOpenAPISchemaMaxNodes   = 4096
+	ToolOpenAPIManifestMaxBytes = 64 << 10
+	ToolOpenAPIResponseMaxBytes = 32 << 10
+	ToolOpenAPIURLMaxBytes      = 8 << 10
+	ToolOpenAPIRequestTimeout   = 15 * time.Second
+)
+
 // Private tool publication journals retain bounded metadata, never source or
 // credentials. The deadline fences abandoned publishers; it never grants a retry.
 const (
@@ -14160,6 +14173,11 @@ const (
 	ObsServingProbePairsMax     = 1000
 	ObsServingProbeNodeMaxBytes = 128
 	ObsServingProbeURLMaxBytes  = 2048
+	// Two fixed notification channels per expected node; summaries cover all
+	// channels while the preview keeps CLI and deployment reports bounded.
+	ObsServingProbeNotificationNodeChannelsMax = 2
+	ObsServingProbeNotificationChannelsMax     = ObsServingProbeNotificationNodeChannelsMax * ObsServingProbePairsMax
+	ObsServingProbeNotificationItemsMax        = 32
 
 	// Post-deployment verification is a bounded read-only wait, not a rollout
 	// controller. Automatic timing follows probe age policy plus evaluation lag.
@@ -14169,6 +14187,32 @@ const (
 	ObsPostDeployPollMax       = time.Minute
 	ObsPostDeployHTTPTimeout   = 10 * time.Second
 	ObsPostDeployTokenMaxBytes = 4096
+	// Keep the latest check transitions; summaries survive history truncation.
+	ObsPostDeployTransitionsMax = 256
+	// Detailed fault history shares a report-wide count and serialized-byte
+	// budget; it never repeats every source payload for every transition.
+	ObsPostDeployProbeEvidencePerTransitionMax = 4
+	ObsPostDeployProbeEvidenceItemsMax         = 64
+	ObsPostDeployProbeEvidenceBytesMax         = 64 << 10
+	// Primary notification fault details have independent retention; they do
+	// not consume serving fault budgets or the advisory direct-channel history.
+	ObsPostDeployNotificationEvidencePerTransitionMax = 4
+	ObsPostDeployNotificationEvidenceItemsMax         = 16
+	ObsPostDeployNotificationEvidenceBytesMax         = 8 << 10
+	// Advisory direct-notification history has independent retention so it
+	// cannot evict health-check transitions or retained serving fault details.
+	ObsPostDeployNotificationEventsMax       = 3 * ObsServingProbeNotificationItemsMax
+	ObsPostDeployNotificationHistoryBytesMax = 48 << 10
+	// Stability waits and the latest reset each expose a bounded source preview.
+	// The byte budget includes conservatively indented serialized item arrays.
+	ObsPostDeployStabilityItemsMax = 4
+	ObsPostDeployStabilityBytesMax = 4 << 10
+	// Each qualification check retains one current or last-readable preview.
+	ObsPostDeployEvidenceItemsMax = 4
+	ObsPostDeployEvidenceBytesMax = 4 << 10
+	// Qualification changes share a separate report-wide history budget.
+	ObsPostDeployEvidenceEventsMax       = 16
+	ObsPostDeployEvidenceHistoryBytesMax = 16 << 10
 
 	// Rule diagnostics assess the full bounded Prometheus rule snapshot and
 	// expose only a bounded, unhealthy-first metadata preview.

@@ -6,6 +6,8 @@ new JSON columns default to empty objects. Existing CDC, version 1 serving and
 operability claims retain their protocol support. Explicit evolution and work
 configuration requires the corresponding newer protocol. The ADRs describe the
 later application changes; this prerequisite exposes no new API or CLI controls.
+Designs: [evolution](../../../adr/20261113205500-pipeline-serving-evolution.md) and
+[scheduled work](../../../adr/20261114083000-pipeline-scheduled-imports-quality-and-work-budgets.md).
 
 A fresh disposable PostgreSQL 16 database replayed every migration and produced
 the canonical 111,770-line schema and migration checksum. SQLC generation and

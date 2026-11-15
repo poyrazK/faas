@@ -19,9 +19,9 @@ import (
 const servingFixtureURL = "https://probe.example/private?token=private-token"
 
 type servingFixture struct {
-	rows    [4][]promql.VectorSample
-	fail    [4]bool
-	warning [4]bool
+	rows    [14][]promql.VectorSample
+	fail    [14]bool
+	warning [14]bool
 	block   bool
 }
 
