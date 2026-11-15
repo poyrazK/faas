@@ -916,6 +916,9 @@ func packDirToTarGzReported(srcDir, destPath string, capMB int, envOverride map[
 	}
 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].rel < entries[j].rel })
+	if len(entries)+len(buildOnlyFiles) > api.SourceArchiveMaxEntries {
+		entries = dropComposeUnusedDirs(srcDir, entries)
+	}
 	expandedCap := api.SourceArchiveMaxExpandedBytes
 	var totalUncompressed int64
 	existingEntries := make(map[string]bool, len(entries))

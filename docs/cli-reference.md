@@ -2804,10 +2804,11 @@ Change an app&#39;s settings
 
 Check serving health and readiness
 
-`gregale app health [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--cursor <CURSOR>] [--env <SLUG>] [--explain] [--errors] [<app>]`
+`gregale app health [--project <PROJECT>] [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--cursor <CURSOR>] [--env <SLUG>] [--explain] [--errors] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <PROJECT>` | check every app of this project instead of one |  |
 | `--check` | single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options |  |
 | `--wait` | wait for a fresh healthy default-scope assessment |  |
 | `--timeout <DURATION>` | maximum wait (default 2m; requires --wait) |  |
@@ -2938,10 +2939,11 @@ gregale app rename my-api my-api-v2
 
 Restart from a snapshot or fresh configuration
 
-`gregale app restart [status] [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
+`gregale app restart [status] [--project <PROJECT>] [--fresh] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <PROJECT>` | restart every app of this project instead of one |  |
 | `--fresh` | cold-boot replacements with current runtime configuration |  |
 | `--wait` | wait for processing; requires --fresh |  |
 | `--timeout <DURATION>` | client deadline (default 10m) |  |

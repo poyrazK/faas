@@ -1069,7 +1069,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STREAM_BRIDGE_GOGC` | vmmd | `default` |  |  | `` | optional integer: GOGC for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gogc in vmmd.toml) |
 | `FAAS_STREAM_BRIDGE_GOMAXPROCS` | vmmd | `default` |  |  | `` | optional integer: GOMAXPROCS for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gomaxprocs in vmmd.toml) |
 | `FAAS_STREAM_BRIDGE_PERSISTENT` | shared | `default` |  |  | `` |  |
-| `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
+| `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | v1 is ignored since bug hunt B23; roll back by installing the previous bridge binary, see docs/ops/h2c-rollback.md |
 | `FAAS_STRIPE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_SUPPORT_WEBHOOK_SECRET` | apid | `secrets-env` |  |  | `` | optional support webhook signing secret of at least 32 bytes delivered by /etc/faas/sealed.env; configure together with FAAS_SUPPORT_WEBHOOK_URL; unset keeps delivery disabled |
 | `FAAS_SUPPORT_WEBHOOK_URL` | apid | `default` |  |  | `` | optional HTTPS support webhook destination; configure together with FAAS_SUPPORT_WEBHOOK_SECRET; unset keeps delivery disabled |
