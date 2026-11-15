@@ -432,6 +432,7 @@ func buildCapacityReport(
 				RequestCountTotal:   in.GetRequestCountTotal(),
 				LastRequestAt:       in.GetLastRequestAt(),
 				NetTxBytes:          in.GetNetTxBytes(),
+				InternalTxBytes:     in.GetInternalTxBytes(),
 				NetRxBytes:          in.GetNetRxBytes(),
 				OpenConns:           in.GetOpenConns(),
 				DiskUsedBytes:       in.GetDiskUsedBytes(),
