@@ -1523,6 +1523,7 @@ export type { MCPReadinessDeliveryRouting } from './models/MCPReadinessDeliveryR
 export type { MCPReadinessDestinationDelivery } from './models/MCPReadinessDestinationDelivery.js';
 export type { MCPReadinessDestinationQueue } from './models/MCPReadinessDestinationQueue.js';
 export type { MCPReadinessEvidence } from './models/MCPReadinessEvidence.js';
+export type { MCPReadinessExpectation } from './models/MCPReadinessExpectation.js';
 export type { MCPReadinessFallbackPolicy } from './models/MCPReadinessFallbackPolicy.js';
 export type { MCPReadinessIncidentAttention } from './models/MCPReadinessIncidentAttention.js';
 export type { MCPReadinessIncidentEvent } from './models/MCPReadinessIncidentEvent.js';
@@ -3228,10 +3229,18 @@ export type { ToolOAuthConnectionIntent } from './models/ToolOAuthConnectionInte
 export type { ToolOAuthConnectionPage } from './models/ToolOAuthConnectionPage.js';
 export type { ToolOAuthConnectionRecord } from './models/ToolOAuthConnectionRecord.js';
 export type { ToolOAuthConnectionStatus } from './models/ToolOAuthConnectionStatus.js';
+export type { ToolPublicationAuth } from './models/ToolPublicationAuth.js';
 export type { ToolPublicationCheck } from './models/ToolPublicationCheck.js';
 export type { ToolPublicationIntent } from './models/ToolPublicationIntent.js';
 export type { ToolPublicationOutcome } from './models/ToolPublicationOutcome.js';
+export type { ToolPublicationReadiness } from './models/ToolPublicationReadiness.js';
+export type { ToolPublicationReadinessRole } from './models/ToolPublicationReadinessRole.js';
 export type { ToolPublicationRecord } from './models/ToolPublicationRecord.js';
+export type { ToolPublicationRoleResult } from './models/ToolPublicationRoleResult.js';
+export type { ToolPublicationVerification } from './models/ToolPublicationVerification.js';
+export type { ToolPublicationVerificationDecision } from './models/ToolPublicationVerificationDecision.js';
+export type { ToolPublicationVerificationOutcome } from './models/ToolPublicationVerificationOutcome.js';
+export type { ToolPublicationVerificationRequest } from './models/ToolPublicationVerificationRequest.js';
 export type { ToolRegistryPage } from './models/ToolRegistryPage.js';
 export type { ToolRegistryTool } from './models/ToolRegistryTool.js';
 export type { ToolRegistryVersion } from './models/ToolRegistryVersion.js';

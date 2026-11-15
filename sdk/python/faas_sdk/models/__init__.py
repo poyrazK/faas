@@ -1169,6 +1169,8 @@ from .managed_postgres_usage_response_hold import ManagedPostgresUsageResponseHo
 from .managed_service_probe_spec import ManagedServiceProbeSpec
 from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
 from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotState
+from .mcp_readiness_expectation import MCPReadinessExpectation
+from .mcp_readiness_expectation_evidence_ids import MCPReadinessExpectationEvidenceIds
 from .mcp_resource_policy import MCPResourcePolicy
 from .mcp_resource_policy_prompt_scopes_type_0 import MCPResourcePolicyPromptScopesType0
 from .mcp_resource_policy_resource_scopes_type_0 import MCPResourcePolicyResourceScopesType0
@@ -3865,6 +3867,8 @@ __all__ = (
     "ManagedServiceProbeSpec",
     "MCPPolicyConvergenceSnapshot",
     "MCPPolicyConvergenceSnapshotState",
+    "MCPReadinessExpectation",
+    "MCPReadinessExpectationEvidenceIds",
     "MCPResourcePolicy",
     "MCPResourcePolicyPromptScopesType0",
     "MCPResourcePolicyResourceScopesType0",

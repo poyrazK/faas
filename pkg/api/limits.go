@@ -49,6 +49,8 @@ const (
 	ToolRegistryQueryMaxBytes                  = 128
 	ToolPrivateInvocationWorkers               = 4
 	ToolPublicationVerificationTimeout         = 90 * time.Second
+	ToolPublicationReadinessMaxRoles           = 32
+	ToolPublicationReadinessRoleTimeout        = 30 * time.Second
 	ToolPublicationVerificationRequestMaxBytes = 256 << 10
 	ToolPublicationFixturesMaxBytes            = 64 << 10
 	ToolPrivateInvocationRequestMaxBytes       = 256 << 10 // bounded JSON escaping of 32-KiB canonical arguments

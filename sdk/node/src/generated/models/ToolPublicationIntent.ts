@@ -2,10 +2,22 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ToolPublicationAuth } from './ToolPublicationAuth.js';
+import type { ToolPublicationReadiness } from './ToolPublicationReadiness.js';
 /**
  * Reviewed publication metadata bounded to 64 KiB; never includes local paths or credentials.
  */
 export type ToolPublicationIntent = {
+  /**
+   * Private hosted candidates require separate owner-approved API-held test execution
+   */
+  platform_verification?: boolean;
+  auth?: ToolPublicationAuth;
+  readiness?: ToolPublicationReadiness;
+  /**
+   * Include legacy protocol qualification for platform verification
+   */
+  legacy?: boolean;
   /**
    * Reviewed canonical MCP path; new invocations require this field and never infer a missing endpoint
    */

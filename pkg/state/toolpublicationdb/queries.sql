@@ -3,6 +3,9 @@ INSERT INTO tool_publications (account_id, id, status, payload)
 VALUES ($1, $2, 'running', $3)
 ON CONFLICT (account_id, id) DO NOTHING;
 
+-- name: LockPublicationReadinessEvidence :many
+SELECT evidence FROM deployment_mcp_readiness_evidence WHERE deployment_id=$1 FOR SHARE;
+
 -- name: LockToolPublicationAccount :one
 SELECT id FROM accounts WHERE id = $1 FOR UPDATE;
 

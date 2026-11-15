@@ -550,6 +550,7 @@ export type { ManagedPostgresRestoreRange } from './models/ManagedPostgresRestor
 export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsageResponse.js';
 export type { ManagedServiceProbeSpec } from './models/ManagedServiceProbeSpec.js';
 export type { MCPPolicyConvergenceSnapshot } from './models/MCPPolicyConvergenceSnapshot.js';
+export type { MCPReadinessExpectation } from './models/MCPReadinessExpectation.js';
 export type { MCPResourcePolicy } from './models/MCPResourcePolicy.js';
 export type { MemberListResponse } from './models/MemberListResponse.js';
 export type { MFAConfirmRequest } from './models/MFAConfirmRequest.js';

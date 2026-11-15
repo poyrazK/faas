@@ -433,6 +433,30 @@ func (q *Queries) LockDelegatedToolGrant(ctx context.Context, db DBTX, arg LockD
 	return payload, err
 }
 
+const lockPublicationReadinessEvidence = `-- name: LockPublicationReadinessEvidence :many
+SELECT evidence FROM deployment_mcp_readiness_evidence WHERE deployment_id=$1 FOR SHARE
+`
+
+func (q *Queries) LockPublicationReadinessEvidence(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([][]byte, error) {
+	rows, err := db.Query(ctx, lockPublicationReadinessEvidence, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var evidence []byte
+		if err := rows.Scan(&evidence); err != nil {
+			return nil, err
+		}
+		items = append(items, evidence)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockToolGrantCredential = `-- name: LockToolGrantCredential :one
 SELECT ciphertext FROM app_secrets
 WHERE account_id=$1 AND app_id=$2 AND scope=$3 AND key=$4

@@ -3011,6 +3011,8 @@ from .mcp_readiness_destination_queue_failure_kind import MCPReadinessDestinatio
 from .mcp_readiness_destination_queue_provider import MCPReadinessDestinationQueueProvider
 from .mcp_readiness_destination_queue_state import MCPReadinessDestinationQueueState
 from .mcp_readiness_evidence import MCPReadinessEvidence
+from .mcp_readiness_expectation import MCPReadinessExpectation
+from .mcp_readiness_expectation_evidence_ids import MCPReadinessExpectationEvidenceIds
 from .mcp_readiness_fallback_policy import MCPReadinessFallbackPolicy
 from .mcp_readiness_fallback_policy_integration_key_masked import MCPReadinessFallbackPolicyIntegrationKeyMasked
 from .mcp_readiness_fallback_policy_provider import MCPReadinessFallbackPolicyProvider
@@ -6142,6 +6144,7 @@ from .tool_o_auth_authorization_response_state import ToolOAuthAuthorizationResp
 from .tool_o_auth_connection_status import ToolOAuthConnectionStatus
 from .tool_o_auth_connection_status_recovery_action import ToolOAuthConnectionStatusRecoveryAction
 from .tool_o_auth_connection_status_state import ToolOAuthConnectionStatusState
+from .tool_publication_auth import ToolPublicationAuth
 from .tool_publication_check import ToolPublicationCheck
 from .tool_publication_check_status import ToolPublicationCheckStatus
 from .tool_publication_intent import ToolPublicationIntent
@@ -6149,9 +6152,21 @@ from .tool_publication_intent_access_mode import ToolPublicationIntentAccessMode
 from .tool_publication_intent_tool_scopes import ToolPublicationIntentToolScopes
 from .tool_publication_outcome import ToolPublicationOutcome
 from .tool_publication_outcome_status import ToolPublicationOutcomeStatus
+from .tool_publication_readiness import ToolPublicationReadiness
+from .tool_publication_readiness_role import ToolPublicationReadinessRole
+from .tool_publication_readiness_role_catalog_format import ToolPublicationReadinessRoleCatalogFormat
+from .tool_publication_readiness_role_protocol_version import ToolPublicationReadinessRoleProtocolVersion
 from .tool_publication_record import ToolPublicationRecord
 from .tool_publication_record_evidence_origin import ToolPublicationRecordEvidenceOrigin
 from .tool_publication_record_status import ToolPublicationRecordStatus
+from .tool_publication_role_result import ToolPublicationRoleResult
+from .tool_publication_verification import ToolPublicationVerification
+from .tool_publication_verification_decision import ToolPublicationVerificationDecision
+from .tool_publication_verification_outcome import ToolPublicationVerificationOutcome
+from .tool_publication_verification_outcome_checks_item import ToolPublicationVerificationOutcomeChecksItem
+from .tool_publication_verification_outcome_checks_item_status import ToolPublicationVerificationOutcomeChecksItemStatus
+from .tool_publication_verification_request import ToolPublicationVerificationRequest
+from .tool_publication_verification_status import ToolPublicationVerificationStatus
 from .tool_registry_page import ToolRegistryPage
 from .tool_registry_tool import ToolRegistryTool
 from .tool_registry_tool_access_mode import ToolRegistryToolAccessMode
@@ -9506,6 +9521,8 @@ __all__ = (
     "MCPReadinessDestinationQueueProvider",
     "MCPReadinessDestinationQueueState",
     "MCPReadinessEvidence",
+    "MCPReadinessExpectation",
+    "MCPReadinessExpectationEvidenceIds",
     "MCPReadinessFallbackPolicy",
     "MCPReadinessFallbackPolicyIntegrationKeyMasked",
     "MCPReadinessFallbackPolicyProvider",
@@ -12427,6 +12444,7 @@ __all__ = (
     "ToolOAuthConnectionStatus",
     "ToolOAuthConnectionStatusRecoveryAction",
     "ToolOAuthConnectionStatusState",
+    "ToolPublicationAuth",
     "ToolPublicationCheck",
     "ToolPublicationCheckStatus",
     "ToolPublicationIntent",
@@ -12434,9 +12452,21 @@ __all__ = (
     "ToolPublicationIntentToolScopes",
     "ToolPublicationOutcome",
     "ToolPublicationOutcomeStatus",
+    "ToolPublicationReadiness",
+    "ToolPublicationReadinessRole",
+    "ToolPublicationReadinessRoleCatalogFormat",
+    "ToolPublicationReadinessRoleProtocolVersion",
     "ToolPublicationRecord",
     "ToolPublicationRecordEvidenceOrigin",
     "ToolPublicationRecordStatus",
+    "ToolPublicationRoleResult",
+    "ToolPublicationVerification",
+    "ToolPublicationVerificationDecision",
+    "ToolPublicationVerificationOutcome",
+    "ToolPublicationVerificationOutcomeChecksItem",
+    "ToolPublicationVerificationOutcomeChecksItemStatus",
+    "ToolPublicationVerificationRequest",
+    "ToolPublicationVerificationStatus",
     "ToolRegistryPage",
     "ToolRegistryTool",
     "ToolRegistryToolAccessMode",
