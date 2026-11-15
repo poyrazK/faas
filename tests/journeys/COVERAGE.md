@@ -77,6 +77,10 @@ and cancel live HTTP reads on SIGINT without publishing a partial destination.
 `TestListStreamingIsolatedCLI` extends row 156: early invocation rows, partial
 API failures with progress/correlation, and SIGINT cancelling the active read.
 
+`TestExportVerificationIsolatedCLI` extends row 156: saved build/invocation
+export receipts are verified offline by a built CLI; tampered files and malformed
+inputs fail without extra API requests or content leakage.
+
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 

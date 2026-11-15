@@ -7336,6 +7336,14 @@ var cliCommands = []cliCommand{
 		Short:   "Show the authenticated account",
 	},
 
+	{
+		Name: "export", DocSlug: "cli-config", Short: "Verify saved JSON Lines exports offline",
+		Subcommands: []cliSub{{Name: "verify", Short: "Check a file against its saved completion receipt", Positionals: []string{"<FILE>"},
+			Flags:    []cliFlag{{Name: "receipt", Value: "RECEIPT", Req: true, Short: "saved JSON completion receipt"}},
+			Examples: []string{"gregale export verify builds.jsonl --receipt builds.receipt.json", "gregale --json export verify invocations.jsonl --receipt invocations.receipt.json"},
+			Notes:    []string{"Runs offline without login. Compares SHA-256, exact bytes and JSON Lines record count; the receipt path is ignored.", "Exit 0 means all three checks matched; exit 1 means mismatch or invalid input. A valid comparison prints verified true or false; invalid input reports an error without a result.", "A receipt is an integrity reference, not a signature or a point-in-time API snapshot."}}},
+	},
+
 	// Tier A8 surface — the two new commands this PR lands.
 	{
 		Name:    "completion",

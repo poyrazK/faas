@@ -20,6 +20,8 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261115153114: Offline verification of CLI list exports](20261115153114-cli-offline-export-verification.md) — accepted; exact bytes, SHA-256 and record counts checked against saved receipts without API access.
+
 - [ADR-20261115105130: Opt-in streamed list output](20261115105130-cli-streamed-list-output.md)
 - [ADR-20261115121720: Atomic CLI list exports](20261115121720-cli-atomic-list-exports.md) — accepted; private JSON Lines staging, no-overwrite publication and completion integrity receipts.
 - [ADR-20261115090000: Operator account risk view](20261115090000-account-risk-view.md) — accepted; `gregalectl accounts risk` and `held-links` show an account's hold, sign-up record, held-account links, strikes and abuse events; PII only with `--include-pii`
