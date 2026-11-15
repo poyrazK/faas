@@ -1823,6 +1823,7 @@ var cliCommands = []cliCommand{
 				{Name: "unset", Short: "Remove labels", Positionals: []string{"<app>", "KEY..."}},
 			}},
 			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app health my-api --wait --timeout 2m"}, Flags: []cliFlag{
+				{Name: "project", Short: "check every app of this project instead of one", Value: "PROJECT"},
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},
 				{Name: "wait", Short: "wait for a fresh healthy default-scope assessment", Bool: true},
 				{Name: "timeout", Short: "maximum wait (default 2m; requires --wait)", Value: "DURATION"},
@@ -1870,6 +1871,7 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"gregale app costs my-api", "gregale app costs my-api --month 2026-10 --json"}},
 			{Name: "rename", Short: "Rename an app; the old hostname stops routing", Positionals: []string{"<new-slug>"}, Examples: []string{"gregale app rename my-api my-api-v2"}},
 			{Name: "restart", Common: true, Short: "Restart from a snapshot or fresh configuration", Flags: []cliFlag{
+				{Name: "project", Short: "restart every app of this project instead of one", Value: "PROJECT"},
 				{Name: "fresh", Short: "cold-boot replacements with current runtime configuration"},
 				{Name: "wait", Short: "wait for processing; requires --fresh"},
 				{Name: "timeout", Short: "client deadline (default 10m)", Value: "DURATION"},
