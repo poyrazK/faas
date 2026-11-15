@@ -1052,6 +1052,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STANDBY_WARMUP_SLUGS_PATH` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STATIC_EGRESS_IP_ENABLED` | apid, shared | `default` |  |  | `` | boot fallback for the static_egress_ip platform flag (ADR-1700), ignored once an operator writes platform_flag.static_egress_ip |
 | `FAAS_STATUSPAGE_PATH` | apid, shared | `unit` |  |  | `` |  |
+| `FAAS_STATUS_MIRROR_R2_ACCESS_KEY` | apid, shared | `secrets-env` |  |  | `` | ADR-20261115090000 off-platform status mirror: bucket-scoped R2 write credential delivered by /etc/faas/sealed.env; gregalectl status offline reads the same name on the operator machine with its own token |
+| `FAAS_STATUS_MIRROR_R2_BUCKET` | apid, shared | `default` |  |  | `` | ADR-20261115090000 status mirror bucket (public read only through its Cloudflare custom domain); unset with the other three keeps the mirror off |
+| `FAAS_STATUS_MIRROR_R2_ENDPOINT` | apid, shared | `default` |  |  | `` | ADR-20261115090000 R2 S3 HTTPS endpoint for the status mirror; all four FAAS_STATUS_MIRROR_R2_* must be set together |
+| `FAAS_STATUS_MIRROR_R2_SECRET_KEY` | apid, shared | `secrets-env` |  |  | `` | ADR-20261115090000 status mirror R2 secret delivered by /etc/faas/sealed.env; never in the repository |
 | `FAAS_STORAGE_BACKEND` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_DIR` | imaged, shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_MAX_BYTES` | shared | `envfile` |  |  | `` |  |

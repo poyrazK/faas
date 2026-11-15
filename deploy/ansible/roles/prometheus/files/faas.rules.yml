@@ -863,6 +863,23 @@ groups:
           description: "The five-minute public status evaluator has not persisted a complete capability bucket set for at least 15 minutes. Check apid logs, Prometheus reachability, and Postgres status_observation_buckets writes."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/StatusPageDegraded.md"
 
+      # ADR-20261115090000: the off-platform status page shows the platform
+      # copy as stale (and the outage banner if outside checks also fail)
+      # once pushes stop for three minutes. This catches a broken R2 token or
+      # bucket before an incident does. Silent when the mirror is unconfigured,
+      # because then the ok counter never increases either.
+      - alert: FaasStatusMirrorPushFailing
+        expr: increase(apid_status_mirror_publishes_total{outcome="error"}[10m]) > 0 and on(instance) increase(apid_status_mirror_publishes_total{outcome="ok"}[10m]) == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: public_status
+        annotations:
+          summary: "apid cannot push the off-platform status mirror"
+          description: "Every status mirror push from this apid failed for at least 15 minutes, so status.gregale.dev shows the platform report as stale. Check the FAAS_STATUS_MIRROR_R2_* credentials and the R2 bucket."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/StatusPageDegraded.md"
+
   - name: fleet_seal_domain
     interval: 30s
     rules:

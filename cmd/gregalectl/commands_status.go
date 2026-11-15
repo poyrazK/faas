@@ -13,8 +13,11 @@ import (
 )
 
 func cmdStatusDispatch(args []string) int {
+	if len(args) > 0 && args[0] == "offline" {
+		return cmdStatusOffline(args[1:])
+	}
 	if len(args) < 2 {
-		_, _ = fmt.Fprintln(osStderr, "usage: gregalectl status <incident|maintenance> <command> [flags]")
+		_, _ = fmt.Fprintln(osStderr, "usage: gregalectl status <incident|maintenance|offline> <command> [flags]")
 		return 2
 	}
 	kind, command := args[0], args[1]

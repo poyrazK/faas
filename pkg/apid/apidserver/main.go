@@ -98,6 +98,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/sourcespool"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/statusmirror"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
@@ -2127,6 +2128,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		srv.WithRouteProbes(routeprobe.Client{BaseURL: origin, AppsDomain: cfg.GetAppsDomain(deps.getenv), HTTP: &http.Client{Timeout: api.RouteHealthProbeRequestTimeout}})
 	}
 	go srv.runStatusEvaluator(ctx)
+	// ADR-20261115090000: copy /v1/status to off-platform storage so the
+	// public status page keeps working (and reports the outage) when Gregale
+	// is down. A bad mirror configuration must not stop the control plane:
+	// it is logged, and the page shows the copy as stale.
+	if mirror, err := statusmirror.Load(deps.getenv); err != nil {
+		log.Error("status: mirror disabled by invalid configuration", "err", err)
+	} else if mirror != nil {
+		publisher, _ := os.Hostname()
+		go srv.runStatusMirror(ctx, mirror, publisher, statusmirror.PublishInterval)
+	}
 	buildQueueMetrics := operatorobs.NewBuildQueueMetrics(srv.ops.Registry())
 	queueMetricsCtx, stopQueueMetrics := context.WithCancel(ctx)
 	defer stopQueueMetrics()

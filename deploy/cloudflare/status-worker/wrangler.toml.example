@@ -1,0 +1,37 @@
+# status.gregale.dev — off-platform status page (ADR-20261115090000).
+# Copy to wrangler.toml (not committed) and deploy with `npx wrangler deploy`.
+name = "gregale-status"
+main = "worker.mjs"
+compatibility_date = "2026-11-01"
+workers_dev = false
+
+routes = [{ pattern = "status.gregale.dev", custom_domain = true }]
+
+# The page is static assets. Requests for them never run worker.mjs and do
+# not count toward the free plan's 100k Worker requests/day. Unknown paths get
+# 404.html, also without running the script, so stray or hostile traffic
+# cannot use up the daily limit the cron probe needs.
+[assets]
+directory = "./public"
+not_found_handling = "404-page"
+
+# The probe writes v1/probe.json next to apid's v1/status.json.
+[[r2_buckets]]
+binding = "STATUS_BUCKET"
+bucket_name = "gregale-status"
+
+# One run per minute = 1,440 Worker requests/day. The free plan allows five
+# cron triggers per account in total.
+[triggers]
+crons = ["* * * * *"]
+
+# Outside checks. Each target: id ([a-z0-9_-]), name, https url, the public
+# components a failure affects, and expect "2xx" (default) or "any_below_500"
+# (for endpoints that answer 404 when healthy). Add a small always-on canary
+# app to cover app_execution and networking.
+[vars]
+PROBE_TARGETS = '''
+[
+  {"id": "api", "name": "API", "url": "https://api.gregale.dev/readyz", "components": ["api_console"]}
+]
+'''

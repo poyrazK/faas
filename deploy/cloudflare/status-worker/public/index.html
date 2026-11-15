@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Where the status mirror bucket is served (R2 custom domain). The page
+     reads status.json, probe.json and notices.json from here, never from
+     Gregale itself. ADR-20261115090000. -->
+<meta name="status-data-base" content="https://status-data.gregale.dev/v1/">
+<title>Gregale status</title>
+<meta name="description" content="Live status of the Gregale platform, hosted independently of Gregale.">
+<style>
+  :root {
+    --bg: #0e1014;
+    --fg: #e6e8eb;
+    --muted: #8b929c;
+    --green: #2ea043;
+    --yellow: #d4a017;
+    --red: #d04848;
+    --bar-bg: #1d2026;
+    --card: #161922;
+    --border: #2a2f3a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 48px auto; padding: 0 16px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .banner { border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-weight: 500; }
+  .banner.hidden { display: none; }
+  .banner.warn { background: rgba(212, 160, 23, .15); border: 1px solid var(--yellow); }
+  .banner.bad { background: rgba(208, 72, 72, .15); border: 1px solid var(--red); }
+  .row { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 18px 20px; margin-bottom: 14px; }
+  .label { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .label .name { font-weight: 600; }
+  .label .value { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .bar { height: 8px; background: var(--bar-bg); border-radius: 4px; margin-top: 10px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; width: 0; background: var(--green); transition: width 600ms ease; }
+  .bar.bad > span { background: var(--red); }
+  .pill { display: inline-block; color: #fff; font-weight: 600; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; margin-bottom: 16px; }
+  .pill.operational { background: var(--green); }
+  .pill.degraded, .pill.maintenance, .pill.partial_outage { background: var(--yellow); color: #111; }
+  .pill.major_outage { background: var(--red); }
+  .pill.unknown { background: var(--muted); color: #111; }
+  .section-title { margin: 24px 0 10px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  .components { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 10px; margin-bottom: 14px; }
+  .component { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+  .component-name { font-weight: 600; }
+  .component-status { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .component-status.operational { color: var(--green); }
+  .component-status.degraded, .component-status.maintenance, .component-status.partial_outage { color: var(--yellow); }
+  .component-status.major_outage { color: var(--red); }
+  .component-status.unknown { color: var(--muted); }
+  .component-meta { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .check { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-top: 1px solid var(--border); }
+  .check:first-child { border-top: 0; }
+  .check .ok { color: var(--green); }
+  .check .fail { color: var(--red); }
+  .incident { border-top: 1px solid var(--border); padding: 12px 0 0; margin-top: 12px; }
+  .incident:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+  .incident-title { display: flex; justify-content: space-between; gap: 12px; font-weight: 600; flex-wrap: wrap; }
+  .incident-meta { color: var(--muted); font-size: 12px; margin-top: 3px; }
+  .incident-summary { margin: 7px 0 0; overflow-wrap: anywhere; }
+  .empty { color: var(--muted); margin: 0; }
+  .foot { color: var(--muted); font-size: 12px; margin-top: 24px; text-align: right; }
+  a { color: var(--fg); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Gregale status</h1>
+  <div class="sub" id="sub">Loading…</div>
+  <div id="banner" class="banner hidden" role="alert"></div>
+  <div id="overall-pill" class="pill unknown" role="status" aria-live="polite">Status unknown</div>
+
+  <div class="section-title">Components</div>
+  <div id="components" class="components" aria-live="polite"></div>
+
+  <div class="section-title">Events</div>
+  <div class="row" id="events"></div>
+
+  <div class="section-title">Live indicators</div>
+  <div class="row" id="indicators"></div>
+
+  <div class="section-title">Outside checks</div>
+  <div class="row" id="checks"></div>
+
+  <div class="foot">Hosted independently of Gregale · refreshes every 30s</div>
+</div>
+
+<script type="module">
+import { deriveView, ageLabel, COMPONENTS } from './view.mjs';
+
+const DATA_BASE = document.querySelector('meta[name="status-data-base"]').content;
+const COMPONENT_NAMES = new Map(COMPONENTS.map((c) => [c.id, c.name]));
+const LABELS = { api_availability: 'API availability', wake_p95: 'Platform wake p95', build_success: 'Deployment success' };
+
+const el = (tag, className, text) => {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+};
+const titleCase = (value) => String(value || 'unknown').replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+const finite = (value) => (value == null || !Number.isFinite(Number(value)) ? null : Number(value));
+const formatTime = (value) => {
+  const date = value ? new Date(value) : null;
+  return !date || Number.isNaN(date.getTime()) ? 'unknown time' : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+};
+
+async function load(name) {
+  try {
+    const response = await fetch(DATA_BASE + name);
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+function renderOverall(view) {
+  const pill = document.getElementById('overall-pill');
+  pill.className = 'pill ' + view.overall;
+  pill.textContent = view.overall === 'operational' ? 'All systems operational'
+    : view.overall === 'unknown' ? 'Status unknown' : titleCase(view.overall);
+  const banner = document.getElementById('banner');
+  banner.className = 'banner ' + (view.banner ? view.banner.level : 'hidden');
+  banner.textContent = view.banner ? view.banner.text : '';
+  const now = Date.now();
+  const sub = view.publishedAt ? `Platform report ${ageLabel(now - Date.parse(view.publishedAt))} ago` : 'No platform report';
+  document.getElementById('sub').textContent = `${sub} · ${titleCase(view.dataStatus)} data`;
+}
+
+function renderComponents(view) {
+  const root = document.getElementById('components');
+  root.replaceChildren(...view.components.map((component) => {
+    const card = el('div', 'component');
+    const label = el('div', 'label');
+    label.append(el('span', 'component-name', component.name), el('span', 'component-status ' + component.status, titleCase(component.status)));
+    const uptime = finite(component.uptime_30d_pct);
+    const coverage = finite(component.coverage_30d_pct);
+    const meta = el('div', 'component-meta', (uptime == null ? '30-day uptime unavailable' : `30-day uptime ${uptime.toFixed(2)}%`) +
+      (coverage == null ? '' : ` · ${coverage.toFixed(1)}% telemetry coverage`));
+    card.append(label, meta);
+    return card;
+  }));
+}
+
+function renderEvents(view) {
+  const root = document.getElementById('events');
+  const groups = [['Active', view.events.active], ['Upcoming', view.events.upcoming], ['Resolved', view.events.resolved]];
+  const items = groups.flatMap(([group, events]) => events.map((event) => ({ group, event })));
+  if (items.length === 0) {
+    root.replaceChildren(el('p', 'empty', 'No active incidents, upcoming maintenance, or recent resolved incidents.'));
+    return;
+  }
+  root.replaceChildren(...items.map(({ group, event }) => {
+    const article = el('article', 'incident');
+    const heading = el('div', 'incident-title');
+    heading.append(el('span', null, event.title || titleCase(event.kind)), el('span', null, `${group} · ${titleCase(event.impact || event.state)}`));
+    const startsAt = event.starts_at || event.scheduled_start_at || event.updated_at;
+    const meta = el('div', 'incident-meta', `${(event.components || []).map((id) => COMPONENT_NAMES.get(id) || titleCase(id)).join(', ') || 'Platform'} · ${formatTime(startsAt)}` +
+      (event.resolved_at ? ` · resolved ${formatTime(event.resolved_at)}` : '') + (event.offline ? ' · posted while the platform was unreachable' : ''));
+    article.append(heading, meta);
+    const latest = Array.isArray(event.updates) && event.updates.length > 0 ? event.updates[event.updates.length - 1] : null;
+    if (latest?.message) article.append(el('p', 'incident-summary', latest.message));
+    return article;
+  }));
+}
+
+function renderIndicators(view) {
+  const root = document.getElementById('indicators');
+  if (view.indicators.length === 0) {
+    root.replaceChildren(el('p', 'empty', 'Live indicators are unavailable while platform telemetry is not reporting.'));
+    return;
+  }
+  root.replaceChildren(...view.indicators.map((indicator) => {
+    const wrap = el('div');
+    wrap.style.marginBottom = '12px';
+    const label = el('div', 'label');
+    const value = finite(indicator.value);
+    const available = indicator.sample_status === 'available' && value != null;
+    const shown = !available ? (indicator.sample_status === 'no_sample' ? 'No sample' : 'Unavailable')
+      : indicator.unit === 'ms' ? `${Math.round(value)} ms` : `${value.toFixed(2)}${indicator.unit || ''}`;
+    label.append(el('span', 'name', indicator.label || LABELS[indicator.id] || indicator.id), el('span', 'value', shown));
+    const bar = el('div', 'bar');
+    const fill = el('span');
+    const target = finite(indicator.target);
+    const lowerIsBetter = indicator.comparison === 'lte';
+    if (available) {
+      fill.style.width = (lowerIsBetter && target > 0 ? Math.max(0, Math.min(100, 100 - (value / (target * 2)) * 100)) : Math.max(0, Math.min(100, value))) + '%';
+      if (target != null && (lowerIsBetter ? value > target : value < target)) bar.classList.add('bad');
+    }
+    bar.append(fill);
+    wrap.append(label, bar);
+    return wrap;
+  }));
+}
+
+function renderChecks(view) {
+  const root = document.getElementById('checks');
+  if (!view.probeFresh) {
+    root.replaceChildren(el('p', 'empty', 'Outside checks have not reported recently.'));
+    return;
+  }
+  root.replaceChildren(...view.checks.map((check) => {
+    const row = el('div', 'check');
+    const result = check.ok ? `OK · ${check.latency_ms} ms` : `Failing (${check.error || 'error'})${check.failing_since ? ` since ${formatTime(check.failing_since)}` : ''}`;
+    row.append(el('span', null, check.name || check.id), el('span', check.ok ? 'ok' : 'fail', result));
+    return row;
+  }));
+}
+
+async function refresh() {
+  const [status, probe, notices] = await Promise.all([load('status.json'), load('probe.json'), load('notices.json')]);
+  const view = deriveView({ status, probe, notices, now: Date.now() });
+  renderOverall(view);
+  renderComponents(view);
+  renderEvents(view);
+  renderIndicators(view);
+  renderChecks(view);
+}
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

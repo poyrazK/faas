@@ -169,6 +169,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "incident", Short: "Create, update, resolve, or list incidents"},
 			{Name: "maintenance", Short: "Schedule, update, start, complete, cancel, or list maintenance"},
+			{Name: "offline", Short: "Post, update, resolve, or list incidents on the off-platform status page without apid (FAAS_STATUS_MIRROR_R2_*)"},
 		},
 	},
 	{

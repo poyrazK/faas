@@ -15,6 +15,8 @@ type statusMetrics struct {
 	evaluations       *prometheus.CounterVec
 	rollupLastSuccess prometheus.Gauge
 	mutations         *prometheus.CounterVec
+	mirrorPublishes   *prometheus.CounterVec
+	mirrorLastSuccess prometheus.Gauge
 }
 
 func newStatusMetrics(registry *prometheus.Registry, prefix string) *statusMetrics {
@@ -32,6 +34,17 @@ func newStatusMetrics(registry *prometheus.Registry, prefix string) *statusMetri
 			Name: prefix + "_status_incident_mutations_total",
 			Help: "Public status event mutations by bounded kind, action, and outcome.",
 		}, []string{"kind", "action", "outcome"}),
+		mirrorPublishes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_status_mirror_publishes_total",
+			Help: "Off-platform status mirror pushes by bounded outcome (ADR-20261115090000).",
+		}, []string{"outcome"}),
+		mirrorLastSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_status_mirror_last_success_timestamp_seconds",
+			Help: "Unix timestamp of the last successful off-platform status mirror push.",
+		}),
+	}
+	for _, outcome := range []string{"ok", "error"} {
+		m.mirrorPublishes.WithLabelValues(outcome)
 	}
 	for _, outcome := range []string{"fresh", "stale", "error"} {
 		m.evaluations.WithLabelValues(outcome)
@@ -67,7 +80,35 @@ func newStatusMetrics(registry *prometheus.Registry, prefix string) *statusMetri
 			panic(err)
 		}
 	}
+	if err := registry.Register(m.mirrorPublishes); err != nil {
+		var duplicate prometheus.AlreadyRegisteredError
+		if errors.As(err, &duplicate) {
+			m.mirrorPublishes = duplicate.ExistingCollector.(*prometheus.CounterVec)
+		} else {
+			panic(err)
+		}
+	}
+	if err := registry.Register(m.mirrorLastSuccess); err != nil {
+		var duplicate prometheus.AlreadyRegisteredError
+		if errors.As(err, &duplicate) {
+			m.mirrorLastSuccess = duplicate.ExistingCollector.(prometheus.Gauge)
+		} else {
+			panic(err)
+		}
+	}
 	return m
+}
+
+func (m *statusMetrics) observeMirrorPublish(err error, at time.Time) {
+	if m == nil {
+		return
+	}
+	if err != nil {
+		m.mirrorPublishes.WithLabelValues("error").Inc()
+		return
+	}
+	m.mirrorPublishes.WithLabelValues("ok").Inc()
+	m.mirrorLastSuccess.Set(float64(at.UTC().Unix()))
 }
 
 func (m *statusMetrics) observeEvaluation(outcome string) {
