@@ -121,6 +121,9 @@ const (
 	// disk-pressure and egress-abuse recycles (app lock plus a destroy) and
 	// CPU saturation captures (ADR 20261104143005).
 	workInstanceEnforcement workKind = "instance_enforcement"
+	// workReservationAudit releases ledger reservations whose instance a peer
+	// scheduler moved out of the resident states.
+	workReservationAudit workKind = "reservation_audit"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -134,7 +137,7 @@ var workKinds = []workKind{
 	workAppPark, workAppDelete,
 	workInstanceFailure, workJobsReaper, workCronFireNow,
 	workCronSweep, workRecentLoad, workOperatorIntents, workHeartbeat,
-	workInstanceEnforcement,
+	workInstanceEnforcement, workReservationAudit,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -270,6 +273,7 @@ var workSpecs = map[workKind]workSpec{
 	// it succeeds, so a dropped one is submitted again by the next 200 ms
 	// tick that still sees the condition.
 	workInstanceEnforcement: {slots: 4, overflow: overflowDrop},
+	workReservationAudit:    {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

@@ -3901,6 +3901,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if workflowErr != nil {
 			return printErr("Workflow manifest validation failed", workflowErr)
 		}
+		previewWorkflows = memberWorkflows(ctx, slug, previewWorkflows)
 		// Project deploys have a different preview contract from a
 		// single-app diff: the apply path is driven by ScanProject, so
 		// preview must use that same planner and render the complete
@@ -3920,6 +3921,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		source, changes := deployPreflightSource(prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath)
 		opts.Preview = newCLIPreview("remote comparison", slug, "", source, changes, "Compares current remote settings; build execution and readiness are not verified. State can change before deployment.")
 		deploymentPreviewTargetSources(opts.Preview, contextDir, *name != "", explicit["environment"])
+		opts.TargetLinked = sourceLinkedTo(contextDir, slug)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
 		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
 		opts.Canary = canarySpec
@@ -4112,6 +4114,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err != nil {
 			return printErr("Workflow manifest validation failed", err)
 		}
+		workflowDefs = memberWorkflows(ctx, slug, workflowDefs)
 		sidecarDefs, err = loadExtensionSidecarsManifestForDeploy(ctx, client, sourceDir)
 		if err != nil {
 			return printErr("Extension manifest validation failed", err)
@@ -4164,6 +4167,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			existingReq := createReq
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
+			}
+			if !*createOnly {
+				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
+					return code
+				}
 			}
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 		}

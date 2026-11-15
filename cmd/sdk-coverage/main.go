@@ -2552,7 +2552,9 @@ var methodRouteMap = map[string]string{
 	"POST /v1/admin/accounts/{id}/refunds": "RefundAccount",
 	// ADR-371 egress flow log lookup; the hyphenated path follows the
 	// operationId listEgressFlows.
-	"GET /v1/admin/egress-flows": "ListEgressFlows",
+	"GET /v1/admin/egress-flows":       "ListEgressFlows",
+	"GET /v1/admin/accounts/{id}/risk": "GetAccountRisk",
+	"GET /v1/admin/held-links":         "ListHeldLinks",
 	// ADR-361 account abuse hold. The literal hyphen in "abuse-hold" makes
 	// the auto-derived name an illegal Go identifier; the SDK follows the
 	// spec operationIds placeAccountAbuseHold / releaseAccountAbuseHold.

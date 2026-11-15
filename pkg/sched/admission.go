@@ -14,6 +14,7 @@ package sched
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -899,6 +900,25 @@ func (l *NodeLedger) Concurrency(appID string) int {
 
 // InstancesForApp returns the instances this ledger holds a reservation for
 // under appID, whatever their state (ADR 20261103131546).
+// AppsWithReservations returns the apps this ledger holds any reservation
+// for, sorted, for the reservation audit.
+func (l *NodeLedger) AppsWithReservations() []string {
+	l.mu.Lock()
+	seen := make(map[string]bool)
+	for _, r := range l.entries {
+		if r.appID != "" {
+			seen[r.appID] = true
+		}
+	}
+	l.mu.Unlock()
+	apps := make([]string, 0, len(seen))
+	for id := range seen {
+		apps = append(apps, id)
+	}
+	sort.Strings(apps)
+	return apps
+}
+
 func (l *NodeLedger) InstancesForApp(appID string) []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
