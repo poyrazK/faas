@@ -4287,7 +4287,13 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 		// An ordinary 5xx is retryable under the durable invocation contract.
 		// Runner-caught exceptions are marked InvocationFailed above and take
 		// the permanent branch instead.
-		err = appAnsweredError{err: fmt.Errorf("application or gateway returned retryable HTTP %d", statusCode)}
+		// Keep what the app said: without it a dead-lettered invocation's
+		// error_detail read only "retryable HTTP 500" (prod 2026-11-15).
+		msg := fmt.Sprintf("application or gateway returned retryable HTTP %d", statusCode)
+		if detail := safetext.Ellipsis(strings.TrimSpace(string(out.Result)), invocationFailureDetailMaxBytes); detail != "" {
+			msg += ": " + detail
+		}
+		err = appAnsweredError{err: errors.New(msg)}
 	}
 	return out, err
 }

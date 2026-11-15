@@ -15416,14 +15416,18 @@ func (s *PgStore) MarkCronFired(ctx context.Context, id string, at time.Time) er
 	return nil
 }
 
-// CountActiveCronInvocations counts pending/dispatching cron invocations for
+// CountActiveCronInvocations counts pending/dispatching cron invocations, and
+// timed-out runs the app may still be running (CronTimedOutRunHold), for
 // the overlap guard. The cron history index keeps this point lookup cheap.
 func (s *PgStore) CountActiveCronInvocations(ctx context.Context, cronID string) (int, error) {
 	var n int
 	if err := s.pool.QueryRow(ctx, `
 		select count(*) from invocations
 		 where cron_id = $1 and source = 'cron'
-		   and state in ('pending','dispatching')`, cronID).Scan(&n); err != nil {
+		   and (state in ('pending','dispatching')
+		        or (state = 'failed' and outcome = 'timeout' and completed_at is not null
+		            and now() < completed_at + least(completed_at - created_at, $2 * interval '1 second')))`,
+		cronID, int(CronTimedOutRunHold.Seconds())).Scan(&n); err != nil {
 		return 0, err
 	}
 	return n, nil

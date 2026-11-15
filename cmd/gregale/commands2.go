@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
 
@@ -4129,6 +4130,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if !*createOnly {
 		if err := preflightDeploySessionStorage(client); err != nil {
 			return printErr("Could not save deploy session", err)
+		}
+	}
+	// A datastore image is refused after the app exists, which left an
+	// empty app counting toward the app quota (prod 2026-11-15: --image
+	// redis). Refuse it here, before anything is created.
+	if *image != "" {
+		if hint, denied := statefuldenylist.Match(*image); denied {
+			return printErr("Stateless-only platform", fmt.Errorf("image %s runs a datastore, which loses its data when the app parks; %s. Nothing was created or deployed", *image, hint))
 		}
 	}
 	resolvedApp := api.AppResponse{}

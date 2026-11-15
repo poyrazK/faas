@@ -14332,7 +14332,7 @@ func (m *MemStore) CountActiveCronInvocations(_ context.Context, cronID string) 
 		if inv.CronID == nil || *inv.CronID != cronID || inv.Source != InvocationCron {
 			continue
 		}
-		if inv.State == InvocationPending || inv.State == InvocationDispatching {
+		if inv.State == InvocationPending || inv.State == InvocationDispatching || timedOutRunMayStillRun(inv, time.Now()) {
 			n++
 		}
 	}
