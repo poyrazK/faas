@@ -1,6 +1,7 @@
 package main_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -100,5 +101,65 @@ func TestCmdAccountHealth(t *testing.T) {
 	}
 	if calls != 3 {
 		t.Fatalf("API calls = %d, want 3", calls)
+	}
+}
+
+// adr: 20261115090000 — --check prints the report, then exits 1 when
+// anything needs attention and 0 when nothing does.
+func TestCmdAccountHealthCheck(t *testing.T) {
+	now := time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC)
+	health := api.AccountHealth{GeneratedAt: now, Attention: 1, RefusedRequests: api.AccountHealthRequests{WindowHours: 24},
+		Signals: []api.AccountHealthSignal{{Kind: api.AttentionKindJobsFailing, Subject: "nightly", Title: "Scheduled job nightly keeps failing", Detail: "x", Since: now}}}
+	stdout := withConsumersTestAPI(t, func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(health) })
+	var stderr bytes.Buffer
+	oldErr := *main.OsStderr
+	*main.OsStderr = &stderr
+	t.Cleanup(func() { *main.OsStderr = oldErr })
+
+	if code := main.CmdAccount([]string{"health", "--check"}); code != 1 {
+		t.Fatalf("--check with attention exit = %d, want 1", code)
+	}
+	if !strings.Contains(stdout.String(), "Scheduled job nightly keeps failing") || !strings.Contains(stderr.String(), "1 thing needs your attention") {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	health = api.AccountHealth{GeneratedAt: now, RefusedRequests: api.AccountHealthRequests{WindowHours: 24}}
+	if code := main.CmdAccount([]string{"health", "--check"}); code != 0 {
+		t.Fatalf("--check when healthy exit = %d, want 0", code)
+	}
+}
+
+// adr: 20261115090000 — a refusal the health checks explain points at them;
+// a revoked key points at the dashboard page, which a browser can open.
+func TestRefusalPointsAtAccountHealth(t *testing.T) {
+	for _, tc := range []struct {
+		code, want string
+	}{
+		{api.CodeAPIKeyRevoked, "/dashboard/account/health to see which requests were refused"},
+		{api.CodeBillingPastDue, "Run gregale account health get"},
+		{"plan_limit_apps", "Run gregale account health get"},
+		{api.CodeNotFound, ""},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			withConsumersTestAPI(t, func(w http.ResponseWriter, _ *http.Request) {
+				api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, tc.code, "Refused", "the request was refused"))
+			})
+			var stderr bytes.Buffer
+			oldErr := *main.OsStderr
+			*main.OsStderr = &stderr
+			t.Cleanup(func() { *main.OsStderr = oldErr })
+			if code := main.CmdAccount([]string{"health"}); code == 0 {
+				t.Fatal("a refused request exited 0")
+			}
+			got := stderr.String()
+			if tc.want == "" {
+				if strings.Contains(got, "Account health:") {
+					t.Fatalf("%s got an account health hint:\n%s", tc.code, got)
+				}
+				return
+			}
+			if !strings.Contains(got, "Account health: ") || !strings.Contains(got, tc.want) {
+				t.Fatalf("%s: stderr missing %q:\n%s", tc.code, tc.want, got)
+			}
+		})
 	}
 }

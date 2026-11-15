@@ -618,7 +618,9 @@ var cliCommands = []cliCommand{
 			{Name: "status", Short: "Show account status"},
 			{Name: "health", Short: "Show what may stop your account from working", Notes: []string{
 				"Lists restrictions, problems that keep recurring, failed deployments, custom-domain problems and refused API requests, like the dashboard's account health page.",
-			}, Examples: []string{"gregale account health get", "gregale account health get --json"}},
+			}, Flags: []cliFlag{
+				{Name: "check", Short: "exit 1 when anything needs attention", Bool: true},
+			}, Examples: []string{"gregale account health get", "gregale account health get --check", "gregale account health get --json"}},
 			{Name: "dpa", Short: "Print the Data Processing Agreement template", Notes: []string{"Placeholders are filled when the agreement is signed."}, Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "write the DPA template to a file", Value: "PATH"},
 			}},

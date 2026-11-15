@@ -68,6 +68,9 @@ func TestOpenForCustomerReadsOnlyTheAccountsOpenSignals(t *testing.T) {
 	if got, err := none.OpenForCustomer(t.Context(), uuid.NewString()); err != nil || got == nil || len(got) != 0 {
 		t.Fatalf("nil evaluator = %#v, %v", got, err)
 	}
+	if n, err := none.CountOpenForCustomer(t.Context(), uuid.NewString()); err != nil || n != 0 {
+		t.Fatalf("nil evaluator count = %d, %v", n, err)
+	}
 	e, pool := pgEvaluator(t)
 	ctx := t.Context()
 	f := fixture{t: t, pool: pool, now: time.Now().UTC().Truncate(time.Second)}
@@ -96,6 +99,10 @@ func TestOpenForCustomerReadsOnlyTheAccountsOpenSignals(t *testing.T) {
 	if len(got) != 2 || kinds[api.AttentionKindDeployFailing] != "shop" || kinds[api.AttentionKindLimitPressure] != "plan_limit_apps" {
 		t.Fatalf("customer signals = %+v; want deploy_failing and limit_pressure only", got)
 	}
+	// ADR-20261115090000: the banner count matches the list.
+	if n, err := e.CountOpenForCustomer(ctx, mine); err != nil || n != 2 {
+		t.Fatalf("count = %d, %v; want 2", n, err)
+	}
 
 	// Staff dismissing a signal hides it from the customer.
 	signals, err := e.List(ctx, Filter{AccountID: mine, Kind: api.AttentionKindDeployFailing})
@@ -108,5 +115,8 @@ func TestOpenForCustomerReadsOnlyTheAccountsOpenSignals(t *testing.T) {
 	got, err = e.OpenForCustomer(ctx, mine)
 	if err != nil || len(got) != 1 || got[0].Kind != api.AttentionKindLimitPressure {
 		t.Fatalf("after dismiss = %+v, %v", got, err)
+	}
+	if n, err := e.CountOpenForCustomer(ctx, mine); err != nil || n != 1 {
+		t.Fatalf("count after dismiss = %d, %v; want 1", n, err)
 	}
 }

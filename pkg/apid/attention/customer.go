@@ -101,6 +101,22 @@ func (e *Evaluator) OpenForCustomer(ctx context.Context, accountID string) ([]ap
 	return ForCustomer(signals), nil
 }
 
+// CountOpenForCustomer counts the signals OpenForCustomer would return,
+// with one indexed count, for the dashboard overview banner.
+func (e *Evaluator) CountOpenForCustomer(ctx context.Context, accountID string) (int, error) {
+	if e == nil {
+		return 0, nil
+	}
+	var n int
+	err := e.Pool.QueryRow(ctx, `SELECT count(*) FROM customer_attention_signals
+		WHERE account_id = $1::uuid AND state = $2 AND kind = ANY($3) AND subject <> ''`,
+		accountID, api.AttentionStateOpen, CustomerKinds()).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("attention: count customer signals: %w", err)
+	}
+	return n, nil
+}
+
 func appURL(slug string) string {
 	if !slugPattern.MatchString(slug) {
 		return "/dashboard/apps"

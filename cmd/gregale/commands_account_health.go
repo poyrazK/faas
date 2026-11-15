@@ -13,13 +13,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const accountHealthUsage = "usage: gregale account health get [--json]"
+const accountHealthUsage = "usage: gregale account health get [--check] [--json]"
 
 // cmdAccountHealth prints GET /v1/account/health: what may stop the account
 // from working, the same checks as /dashboard/account/health
-// (ADR-20261112210000, ADR-20261114090000).
+// (ADR-20261112210000, ADR-20261114190002). With --check it still prints
+// the report, then exits 1 when anything needs attention, so CI and agents
+// can gate on it (ADR-20261115090000).
 func cmdAccountHealth(args []string) int {
 	fs := newFlagSet("account health", flag.ContinueOnError)
+	check := fs.Bool("check", false, "exit 1 when anything needs attention")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -36,10 +39,23 @@ func cmdAccountHealth(args []string) int {
 		return printErr("Could not fetch account health", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(health))
+		if code := jsonOut(writeJSON(health)); code != 0 {
+			return code
+		}
+	} else {
+		renderAccountHealth(osStdout, health, dashboardBaseURL(client.BaseURL()))
 	}
-	renderAccountHealth(osStdout, health, dashboardBaseURL(client.BaseURL()))
+	if *check && health.Attention > 0 {
+		return printErr("Account health check failed", fmt.Errorf("%d %s your attention; see the report above", health.Attention, thingsNeed(health.Attention)))
+	}
 	return 0
+}
+
+func thingsNeed(n int) string {
+	if n == 1 {
+		return "thing needs"
+	}
+	return "things need"
 }
 
 // renderAccountHealth writes the human view in the dashboard page's order:

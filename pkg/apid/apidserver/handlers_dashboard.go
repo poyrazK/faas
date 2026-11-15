@@ -453,7 +453,7 @@ func (s *server) renderIndex(w http.ResponseWriter, r *http.Request, log *slog.L
 		DeveloperAppCount:  developerAppCount,
 		DeveloperAppsLimit: limits.DeveloperApps,
 		Plan:               string(acct.Plan),
-		Attention:          s.accountAttention(acct),
+		Attention:          s.accountAttention(r.Context(), log, acct),
 	}}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)

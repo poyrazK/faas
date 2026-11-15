@@ -130,13 +130,21 @@ func (s *server) renderAccountHealth(w http.ResponseWriter, r *http.Request, _ *
 	s.renderCustomDashboardPage(w, r, acct, "Account health", "account_health", s.accountHealthFor(r.Context(), r, acct))
 }
 
-// accountAttention is the cheap restriction count for the overview banner:
-// it reads only the account row and the platform release pause, never the
-// deployment, domain or error tables.
-func (s *server) accountAttention(acct state.Account) int {
+// accountAttention is the cheap count for the overview banner: restrictions
+// from the account row and the platform release pause, plus the open
+// customer-visible signals from one indexed count (ADR-20261115090000). It
+// never reads the deployment, domain or error tables. A signal count that
+// fails is logged and left out rather than hiding the banner.
+func (s *server) accountAttention(ctx context.Context, log *slog.Logger, acct state.Account) int {
 	diagnosis := api.ObsTenantDiagnosis{Restrictions: accountRestrictions(acct, api.ObsTenantBilling{})}
 	if s.platformReleasePaused() {
 		diagnosis.Restrictions = append(diagnosis.Restrictions, api.ObsTenantRestriction{Kind: api.RestrictionPlatformReleasePause})
 	}
-	return len(customerAccountHealth(diagnosis).Restrictions)
+	n := len(customerAccountHealth(diagnosis).Restrictions)
+	signals, err := s.attention.CountOpenForCustomer(ctx, acct.ID)
+	if err != nil {
+		log.Warn("dashboard overview: count attention signals", "account_id", acct.ID, "err", err)
+		return n
+	}
+	return n + signals
 }

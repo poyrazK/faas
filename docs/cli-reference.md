@@ -6814,10 +6814,17 @@ Placeholders are filled when the agreement is signed.
 
 Show what may stop your account from working
 
+`gregale account health [get] [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | exit 1 when anything needs attention |  |
+
 Examples:
 
 ```sh
 gregale account health get
+gregale account health get --check
 gregale account health get --json
 ```
 
@@ -6827,12 +6834,17 @@ Lists restrictions, problems that keep recurring, failed deployments, custom-dom
 
 Show what may stop your account from working
 
-`gregale account health get`
+`gregale account health get [--check]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--check` | exit 1 when anything needs attention |  |
 
 Examples:
 
 ```sh
 gregale account health get
+gregale account health get --check
 gregale account health get --json
 ```
 

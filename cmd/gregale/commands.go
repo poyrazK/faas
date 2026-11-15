@@ -846,6 +846,9 @@ func renderAPIError(w io.Writer, e *APIError) {
 	if len(p.RelevantLogs) > 0 {
 		RenderRelevantLogs(w, p.RelevantLogs)
 	}
+	if hint := accountHealthHint(p.Code, dashboardBaseURL(apiBase())); hint != "" {
+		_, _ = fmt.Fprintf(w, "  Account health: %s\n", hint)
+	}
 	if p.DocsURL != "" {
 		RenderDocsRow(w, p.DocsURL)
 	}
