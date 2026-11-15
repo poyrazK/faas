@@ -1025,3 +1025,7 @@ a quoted continuation command with the scope, filters, and page size, even
 when the current page is empty. `--all` follows empty pages with continuation
 and stops without partial output on API errors, repeated cursors, or the
 1,000-page guard. Pages reflect live data rather than a fixed snapshot.
+
+Verification file inputs must name regular files directly; final-component
+symlinks, including dangling links, are refused. Symlinked parent directories
+retain the existing customer-file policy.

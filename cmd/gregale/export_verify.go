@@ -141,14 +141,14 @@ func verifyExportIntegrity(r io.Reader, receipt exportIntegrityReceipt) (exportV
 }
 
 func openExportVerificationInput(path, label string) (*os.File, error) {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s: %w", label, err)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s must be a regular file", label)
 	}
-	file, err := os.Open(path)
+	file, err := openCustomerFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", label, err)
 	}
@@ -165,7 +165,7 @@ func verifyExportFiles(path, receiptPath string) (exportVerification, error) {
 	if err != nil {
 		return exportVerification{}, err
 	}
-	defer receiptFile.Close()
+	defer func() { _ = receiptFile.Close() }()
 	receipt, err := readExportIntegrityReceipt(receiptFile)
 	if err != nil {
 		return exportVerification{}, err
@@ -174,7 +174,7 @@ func verifyExportFiles(path, receiptPath string) (exportVerification, error) {
 	if err != nil {
 		return exportVerification{}, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	return verifyExportIntegrity(file, receipt)
 }
 

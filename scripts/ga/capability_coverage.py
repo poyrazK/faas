@@ -32,6 +32,8 @@ INVENTORY = os.path.join(ROOT, "docs", "ga-capability-inventory.md")
 RULES = [
     (r"(^|/|-)support([/-]|$)", "Native customer support"),
     (r"(^|/|-)customer-attention([/-]|$)", "Native customer support"),
+    # Offline export tools belong to the existing CLI capability (row 156).
+    (r"^export$", "`gregale` CLI"),
     # --- test fixtures and generated noise
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
     (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck|^mutate$", "TOOLING"),
