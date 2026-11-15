@@ -162,7 +162,10 @@ type MemStore struct {
 	ownerReleaseRequests map[string]AppOwnerReleaseRequest
 	// basicAuthVerifiers are app_basic_auth_verifiers by hex sealed digest
 	// (ADR-20261110210000 slice 3h); allocated on first use under mu.
-	basicAuthVerifiers          map[string]string
+	basicAuthVerifiers map[string]string
+	// platformAlertNotices mirror platform_alert_notices (ADR-20261115194000).
+	platformAlertNotices        []PlatformAlertNotice
+	platformAlertMeta           map[string]platformAlertNoticeMeta
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
@@ -14216,6 +14219,10 @@ func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule,
 	if enabled != nil {
 		c.Enabled = *enabled
 	}
+	if c.SuspendedReason == CronSuspendedFailing && (schedule != nil || path != nil || enabled != nil) {
+		// A customer edit resumes a cron paused for failing (ADR-20261115194000).
+		c.SuspendedReason = ""
+	}
 	if timezone != nil {
 		c.Timezone = *timezone
 		if c.Timezone == "" {
@@ -14334,7 +14341,7 @@ func (m *MemStore) CountActiveCronInvocations(_ context.Context, cronID string) 
 		if inv.CronID == nil || *inv.CronID != cronID || inv.Source != InvocationCron {
 			continue
 		}
-		if inv.State == InvocationPending || inv.State == InvocationDispatching {
+		if inv.State == InvocationPending || inv.State == InvocationDispatching || timedOutRunMayStillRun(inv, time.Now()) {
 			n++
 		}
 	}
@@ -14888,7 +14895,7 @@ func (m *MemStore) ReactivateCronsForApp(_ context.Context, appID string) (int, 
 func (m *MemStore) reactivateCronsForAppLocked(appID string) int {
 	updated := 0
 	for id, cron := range m.crons {
-		if cron.AppID != appID || cron.SuspendedReason != CronSuspendedNoLiveDeployment {
+		if cron.AppID != appID || (cron.SuspendedReason != CronSuspendedNoLiveDeployment && cron.SuspendedReason != CronSuspendedFailing) {
 			continue
 		}
 		reactivated := cron
