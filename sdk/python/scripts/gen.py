@@ -185,6 +185,7 @@ ROOT_WRAPPER_MODULES = (
     "_source_deployment.py",
     "_project_inspection.py",
     "_project_workflows.py",
+    "_project_verification.py",
     "_wrapper.py",
     "_rfc7807.py",
     "_sse.py",
@@ -565,7 +566,7 @@ def regen(overwrite: bool = True) -> None:
                         "--quiet",
                         str(sdk_root),
                         "--exclude",
-                        "_async_request.py,_pagination.py,_waiters.py,_source_upload.py,_source_preparation.py,_source_deployment.py,_project_inspection.py,_project_workflows.py,_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
+                        "_async_request.py,_pagination.py,_waiters.py,_source_upload.py,_source_preparation.py,_source_deployment.py,_project_inspection.py,_project_workflows.py,_project_verification.py,_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
                     ],
                     check=False,
                     capture_output=True,
@@ -942,6 +943,23 @@ from ._rfc7807 import (
     parse_problem,
     raise_for_problem,
 )
+from ._project_verification import (
+    VerificationOutcome as VerificationOutcome,
+    VerificationCode as VerificationCode,
+    VerificationWorkload as VerificationWorkload,
+    ProjectVerificationTarget as ProjectVerificationTarget,
+    VerificationCheckResult as VerificationCheckResult,
+    VerificationCheckContext as VerificationCheckContext,
+    VerificationCheck as VerificationCheck,
+    VerificationCheckEvidence as VerificationCheckEvidence,
+    VerificationHealth as VerificationHealth,
+    VerificationTimelineEvent as VerificationTimelineEvent,
+    VerificationTimeline as VerificationTimeline,
+    VerificationWorkloadReport as VerificationWorkloadReport,
+    ProjectVerificationReport as ProjectVerificationReport,
+    ProjectVerificationOptions as ProjectVerificationOptions,
+    project_verification_target as project_verification_target,
+)
 from ._project_workflows import (
     ProjectArchive as ProjectArchive,
     ReviewedProjectPlan as ReviewedProjectPlan,
@@ -1233,6 +1251,23 @@ elsewhere its calls answer 404 no such API route.
 """
 
 # ruff: noqa: F401
+from .._project_verification import (
+    VerificationOutcome as VerificationOutcome,
+    VerificationCode as VerificationCode,
+    VerificationWorkload as VerificationWorkload,
+    ProjectVerificationTarget as ProjectVerificationTarget,
+    VerificationCheckResult as VerificationCheckResult,
+    VerificationCheckContext as VerificationCheckContext,
+    VerificationCheck as VerificationCheck,
+    VerificationCheckEvidence as VerificationCheckEvidence,
+    VerificationHealth as VerificationHealth,
+    VerificationTimelineEvent as VerificationTimelineEvent,
+    VerificationTimeline as VerificationTimeline,
+    VerificationWorkloadReport as VerificationWorkloadReport,
+    ProjectVerificationReport as ProjectVerificationReport,
+    ProjectVerificationOptions as ProjectVerificationOptions,
+    project_verification_target as project_verification_target,
+)
 from .._project_workflows import (
     ProjectArchive as ProjectArchive,
     ReviewedProjectPlan as ReviewedProjectPlan,

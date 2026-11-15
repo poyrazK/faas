@@ -162,6 +162,7 @@ def _fixture_generator(tmp_path, monkeypatch):
     package.mkdir(parents=True)
     originals = {
         "faas_sdk/_wrapper.py": b"# existing custom wrapper\n",
+        "faas_sdk/_project_verification.py": b"# uncommitted exact-deployment verification\n",
         "faas_sdk/preview/_binding_runner.py": b"# uncommitted verification runner\n",
         "faas_sdk/preview/_binding_runner_diagnostics.py": b"# uncommitted automatic diagnostics\n",
         "faas_sdk/preview/_binding_creation.py": b"# uncommitted reviewed creation\n",
@@ -310,3 +311,25 @@ def test_regenerated_barrel_exports_binding_runner(tmp_path):
     barrel = tmp_path / "__init__.py"
     generator._rewrite_init_py(barrel)
     assert "_binding_runner" not in barrel.read_text()
+
+
+def test_regenerated_barrels_export_project_verification(tmp_path):
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "gen.py"
+    spec = importlib.util.spec_from_file_location("sdk_generator_verification_exports", script)
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    assert "_project_verification.py" in generator.ROOT_WRAPPER_MODULES
+    barrel = tmp_path / "__init__.py"
+    generator._rewrite_init_py(barrel)
+    for name in (
+        "ProjectVerificationTarget",
+        "ProjectVerificationReport",
+        "ProjectVerificationOptions",
+        "VerificationCode",
+        "VerificationCheck",
+        "project_verification_target",
+    ):
+        assert f"{name} as {name}" in barrel.read_text()
+        assert f"{name} as {name}" in generator._PREVIEW_INIT_PY_TEMPLATE

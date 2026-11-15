@@ -948,3 +948,49 @@ def __getattr__(name: str):
 
     return getattr(import_module("faas_sdk"), name)
 
+
+from .._project_verification import (
+    ProjectVerificationOptions as ProjectVerificationOptions,
+)
+from .._project_verification import (
+    ProjectVerificationReport as ProjectVerificationReport,
+)
+from .._project_verification import (
+    ProjectVerificationTarget as ProjectVerificationTarget,
+)
+from .._project_verification import (
+    VerificationCheck as VerificationCheck,
+)
+from .._project_verification import (
+    VerificationCheckContext as VerificationCheckContext,
+)
+from .._project_verification import (
+    VerificationCheckEvidence as VerificationCheckEvidence,
+)
+from .._project_verification import (
+    VerificationCheckResult as VerificationCheckResult,
+)
+from .._project_verification import (
+    VerificationCode as VerificationCode,
+)
+from .._project_verification import (
+    VerificationHealth as VerificationHealth,
+)
+from .._project_verification import (
+    VerificationOutcome as VerificationOutcome,
+)
+from .._project_verification import (
+    VerificationTimeline as VerificationTimeline,
+)
+from .._project_verification import (
+    VerificationTimelineEvent as VerificationTimelineEvent,
+)
+from .._project_verification import (
+    VerificationWorkload as VerificationWorkload,
+)
+from .._project_verification import (
+    VerificationWorkloadReport as VerificationWorkloadReport,
+)
+from .._project_verification import (
+    project_verification_target as project_verification_target,
+)

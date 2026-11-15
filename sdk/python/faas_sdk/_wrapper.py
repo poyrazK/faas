@@ -23,6 +23,12 @@ import httpx
 from ._async_request import AsyncRequestTransport, RequestOptions, ResponseObserver, run_request
 from ._pagination import AsyncPagination, PaginationOptions, PaginationPage, _builds, _deployments
 from ._project_inspection import ProjectPlan
+from ._project_verification import (
+    ProjectVerificationOptions,
+    ProjectVerificationReport,
+    ProjectVerificationTarget,
+    verify_project_application,
+)
 from ._project_workflows import (
     ProjectApplicationResult,
     ProjectApplyOptions,
@@ -237,6 +243,9 @@ class FaaSClient:
     def resume_project_deployment(self, project: ProjectPlan, *, options: SourceDeploymentOptions) -> Coroutine[Any, Any, SourceDeploymentResult]:
         """Resume the same inspected project; prepared source need not still exist."""
         return resume_project_deployment(self, project, options=options)
+
+    def verify_project_application(self, input: ProjectVerificationTarget | ProjectApplicationResult, *, options: ProjectVerificationOptions) -> Coroutine[Any, Any, ProjectVerificationReport]:
+        return verify_project_application(self, input, options=options)
 
     def preview_project(self, directory: str | PathLike[str], project_slug: str, *, options: ProjectPreviewOptions, environment: str | None = None, only: tuple[str, ...] = (), no_triggers: bool | None = None, app_slugs: dict[str, str] | None = None) -> Coroutine[Any, Any, ReviewedProjectPlan]:
         return preview_project(self, directory, project_slug, options=options, environment=environment, only=only, no_triggers=no_triggers, app_slugs=app_slugs)

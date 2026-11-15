@@ -506,6 +506,56 @@ and copied options at invocation, so concurrent waits and credential/endpoint
 rotation remain isolated. Existing generated methods and static services retain
 their signatures.
 
+## Verify exact project deployments
+
+After apply or recovery, verify release evidence and your application's behavior:
+
+```ts
+import { projectVerificationTarget, parseProjectVerificationTarget } from '@gregale/sdk-node';
+const target = await projectVerificationTarget(application);
+// Save JSON.stringify(target) privately; another process can parse the same IDs.
+const restored = parseProjectVerificationTarget(JSON.parse(savedTarget));
+const report = await client.projects.verifyApplication(restored, {
+  timeoutMs: 120_000, maxPolls: 20, pollDelayMs: 2_000, concurrency: 2,
+  checks: [{ name: 'api-smoke', workload: 'shop-api', async run(context) {
+    // Supply an application URL/auth independently. No SDK credentials are forwarded.
+    const response = await fetch(applicationURL, { signal: context.signal, redirect: 'error' });
+    const body = await response.json(); // Bound application response size in production.
+    return { outcome: body.ok ? 'verified' : 'failed', deployment_id: body.deployment_id };
+  }}],
+});
+```
+
+You can also pass the `ProjectApplicationResult` directly. The portable target
+requires an endpoint, project, environment and exact app/deployment identities;
+see the complete [API/worker/PostgreSQL example](../../examples/sdk-project-application).
+`verified` means the supplied checks and current platform evidence passed.
+`failed`, `blocked` and `inconclusive` retain per-service codes, request IDs,
+health timestamps, bounded release events and suggested next actions. Mixed or
+older serving releases, expired telemetry, absent permissions and missing IDs do
+not produce success. No automatic repair or rollout occurs.
+
+Checks are read-only, repeatable and required by default. Return the deployment ID
+actually observed; echoing the expected ID without observing it proves nothing.
+An unsupported worker needs an identity-aware smoke check. Set
+`requireSmokeChecks: false` explicitly for HTTP platform-health-only checks;
+workers still need functional evidence. Unknown/failed callbacks are inconclusive.
+
+A positive `timeoutMs` bounds reads, delays, checks and progress. `signal` cancels
+and rejects with its reason; a deadline returns a partial report with code
+`deadline`. Defaults: 3 polls per service, 1s delay, 2 concurrent services,
+256 reads, 256 KiB per response and telemetry age at most 120s (also server TTL).
+Limits are configurable within bounded ranges; retries are disabled for these
+reads. `onProgress` receives frozen per-service observations; callback errors use
+`progress_failed`. Synchronous callbacks must return promptly.
+
+Diagnostic text is omitted by default. To include failure reasons and persisted
+log excerpts, pass `redact: text => removeApplicationSecrets(text)`. This is your
+redaction policy: output is capped at 20 strings × 512 characters per service,
+inputs over 4096 characters are omitted; a throwing redactor omits that string.
+Reports are never saved automatically. Treat log contents as untrusted evidence.
+
+
 ### Preview and apply a complete project
 
 `client.projects.previewLocal` prepares the full repository and asks the server

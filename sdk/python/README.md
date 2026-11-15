@@ -303,6 +303,54 @@ Release success here describes that release's recorded state and positive
 traffic; application-specific health checks and a requirement for full traffic
 remain separate decisions.
 
+## Verify exact project deployments
+
+```python
+from faas_sdk import (
+    ProjectVerificationOptions, ProjectVerificationTarget,
+    VerificationCheck, VerificationCheckResult, project_verification_target,
+)
+
+target = project_verification_target(application)
+# Save target.to_dict() privately; resume without source or a repeated apply.
+restored = ProjectVerificationTarget.from_dict(saved_target)
+
+async def smoke(context):
+    # Use independent application URL/auth; SDK credentials are never supplied.
+    value = await read_bounded_application_response(context.remaining)
+    return VerificationCheckResult(
+        "verified" if value["ok"] else "failed", value["deployment_id"]
+    )
+
+report = await client.verify_project_application(restored, options=ProjectVerificationOptions(
+    timeout=120, max_polls=20, poll_delay=2, concurrency=2,
+    checks=(VerificationCheck("api-smoke", "shop-api", smoke),),
+))
+print(report.outcome, report.to_dict())
+```
+
+Also accepts `ProjectApplicationResult` directly. Outcomes are `verified`,
+`failed`, `blocked`, `inconclusive`, with immutable per-service codes, checks,
+health timestamps, release events, request IDs and next actions. Exact owned app,
+project, environment and deployment identities are validated before probes run.
+Expired telemetry, old/mixed serving releases, missing permissions and unknown
+identities cannot produce success. Checks must return IDs actually observed.
+Workers always need a functional check; `require_smoke_checks=False` explicitly
+allows HTTP platform-health-only verification. This verifies declared coverage.
+
+All durations are seconds. Asyncio task cancellation propagates; a total deadline
+returns partial evidence with code `deadline`. Defaults are 3 polls/service,
+1s delay, 2 concurrent services, 256 reads, 256 KiB/response and telemetry age at
+most 120s (also server TTL). Reads have no retries. Async checks and `on_progress`
+share the budget; sync callbacks must return promptly. No automatic repair occurs.
+
+Text is omitted unless `redact=remove_application_secrets` is supplied. You own
+that redaction policy; inputs over 4096 characters are omitted and output at
+20 strings × 512 characters/service. A failed redactor omits text. Reports are
+never saved automatically. See the complete [API/worker/PostgreSQL example](../../examples/sdk-project-application)
+for fresh worker-written evidence, failure injection and correction.
+
+
 ## Preview and apply a complete project
 
 `await client.preview_project(directory, project_slug, options=...)` prepares the

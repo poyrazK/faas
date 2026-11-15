@@ -237,6 +237,16 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     // @ts-expect-error durable application requires a journal
     client.projects.applyPlan(review,{timeoutMs:1000});
     void application;void applicationResume;
+    const verificationSDK=await import('@gregale/sdk-node');
+    const verificationTarget:import('@gregale/sdk-node').ProjectVerificationTarget=await verificationSDK.projectVerificationTarget(await application);
+    const verification:Promise<import('@gregale/sdk-node').ProjectVerificationReport>=client.projects.verifyApplication(verificationTarget,{timeoutMs:1000,checks:[{name:'http',workload:'shop-api',run:context=>({outcome:'verified',deployment_id:context.deployment_id!})}]});
+    const verificationPreview:Promise<import('@gregale/sdk-node/preview').ProjectVerificationReport>=preview.projects.verifyApplication(verificationTarget,{timeoutMs:1000});
+    // @ts-expect-error verification always needs a total budget
+    client.projects.verifyApplication(verificationTarget,{});
+    // @ts-expect-error reports are immutable
+    (await verification).workloads[0]!.outcome='verified';
+    void verificationPreview;
+
 
     // @ts-expect-error a durable state path is required
     client.deployments.deploySource({directory:'project',appSlug:'api'},{timeoutMs:1000});

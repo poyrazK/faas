@@ -189,7 +189,7 @@ async def check_preparation() -> None:
     assert_type(await inspect_source("project"),SourcePlan)
     assert_type(await prepare_source("project","archive.tgz",options=SourcePreparationOptions(source_root="apps/api")),PreparedSource)
 from faas_sdk import SourceDeploymentOptions,SourceDeploymentResult,SourceDeploymentError,SourceDeploymentState,SourceDeploymentPhase,SourceDeploymentProgress,ProjectPlan,ProjectInspectionOptions,inspect_project,validate_project_plan
-from faas_sdk import ProjectPreviewOptions,ProjectApplyOptions,ReviewedProjectPlan,ProjectApplicationResult,ProjectWorkloadOutcome,ProjectWorkflowError
+from faas_sdk import ProjectPreviewOptions,ProjectApplyOptions,ReviewedProjectPlan,ProjectApplicationResult,ProjectWorkloadOutcome,ProjectWorkflowError,ProjectVerificationOptions,ProjectVerificationTarget,ProjectVerificationReport,VerificationWorkloadReport,project_verification_target
 from faas_sdk.models.plan_response import PlanResponse
 from faas_sdk.api.projects import apply_cached_project_plan
 from faas_sdk.models.apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
@@ -201,6 +201,12 @@ async def check_project_application(client: FaaSClient, preview: PreviewClient) 
     result=await client.apply_project_plan(plan,options=options)
     assert_type(result,ProjectApplicationResult)
     assert_type(result.workloads,tuple[ProjectWorkloadOutcome,...])
+    target=project_verification_target(result)
+    assert_type(target,ProjectVerificationTarget)
+    verification=await client.verify_project_application(target,options=ProjectVerificationOptions(timeout=1))
+    assert_type(verification,ProjectVerificationReport)
+    assert_type(verification.workloads,tuple[VerificationWorkloadReport,...])
+    assert_type(await preview.verify_project_application(target,options=ProjectVerificationOptions(timeout=1)),ProjectVerificationReport)
     assert_type(await preview.resume_project_application(plan,options=options),ProjectApplicationResult)
     await apply_cached_project_plan.asyncio(client=client.inner,body=ApplyCachedProjectPlanRequest(plan_token="reviewed"),deployment_attempt_id="a"*32)
 async def check_project(client: FaaSClient, preview: PreviewClient) -> None:
