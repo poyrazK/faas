@@ -30,6 +30,14 @@ const (
 	// GregaleFlagContextHeader carries explicitly used decisions across managed
 	// service calls and durable work.
 	GregaleFlagContextHeader = "X-Faas-Flag-Context"
+	// GregaleClientCountryHeader and GregaleClientUAFamilyHeader carry the
+	// gateway-verified request attributes gregale.country and
+	// gregale.ua_family for attribute-targeted rules.
+	GregaleClientCountryHeader  = "X-Faas-Client-Country"
+	GregaleClientUAFamilyHeader = "X-Faas-Client-Ua-Family"
+	// GregaleFlagKillsHeader lists the flags killed in the request's
+	// environment, stamped by Gregale's gateway.
+	GregaleFlagKillsHeader = "X-Faas-Flag-Kills"
 
 	maxFlagEvidence          = 32
 	maxFlagEvidenceBytes     = 16 << 10
@@ -103,6 +111,7 @@ type runtimeFeatureFlag struct {
 	key      string
 	typ      string
 	enabled  bool
+	killed   bool
 	defaultV any
 	seed     string
 	rules    []runtimeFlagRule
@@ -116,6 +125,7 @@ type runtimeFlagRule struct {
 	subjects    map[string]struct{}
 	rollout     *int
 	rolloutUnit string
+	conditions  []flagCondition
 	value       any
 	valueSet    bool
 }
@@ -128,6 +138,10 @@ type runtimeFlagVariant struct {
 type flagRequestState struct {
 	owner    *GregaleFlags
 	customer string
+	// attributes are the gateway-verified gregale.* request attributes.
+	attributes map[string]string
+	// kills are the gateway-reported killed flags of this request.
+	kills    map[string]struct{}
 	bundle   *runtimeFlagsBundle
 	fresh    bool
 	evidence map[string]FlagEvidence
@@ -358,7 +372,7 @@ func (f *GregaleFlags) load(parent context.Context) error {
 	request.Header.Set("Authorization", "Bearer "+credentials.AccessToken)
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Cache-Control", "no-store")
-	request.Header.Set("X-Faas-Flags-Capabilities", "subject-targeting-v1")
+	request.Header.Set("X-Faas-Flags-Capabilities", "subject-targeting-v1, attribute-targeting-v1, kill-v1")
 	response, err := f.httpClient.Do(request)
 	if err != nil {
 		return fmt.Errorf("faas: fetch runtime Flags: %w", err)
@@ -431,6 +445,7 @@ type wireFlag struct {
 	Key      string          `json:"key"`
 	Type     json.RawMessage `json:"type"`
 	Enabled  *bool           `json:"enabled"`
+	Killed   *bool           `json:"killed"`
 	Default  json.RawMessage `json:"default"`
 	Seed     string          `json:"seed"`
 	Rules    []wireFlagRule  `json:"rules"`
@@ -444,6 +459,7 @@ type wireFlagRule struct {
 	Subjects    json.RawMessage `json:"subjects"`
 	Rollout     json.RawMessage `json:"rollout"`
 	RolloutUnit json.RawMessage `json:"rollout_unit"`
+	Attributes  json.RawMessage `json:"attributes"`
 	Value       json.RawMessage `json:"value"`
 }
 
@@ -498,7 +514,7 @@ func validateRuntimeBundle(raw []byte) (*runtimeFlagsBundle, error) {
 }
 
 func validateWireFlag(wire wireFlag, groups map[string]map[string]struct{}) (runtimeFeatureFlag, error) {
-	flag := runtimeFeatureFlag{key: wire.Key, enabled: wire.Enabled != nil && *wire.Enabled, seed: wire.Seed, rules: make([]runtimeFlagRule, 0, len(wire.Rules))}
+	flag := runtimeFeatureFlag{key: wire.Key, enabled: wire.Enabled != nil && *wire.Enabled, killed: wire.Killed != nil && *wire.Killed, seed: wire.Seed, rules: make([]runtimeFlagRule, 0, len(wire.Rules))}
 	if !validFlagKey(wire.Key) || wire.Enabled == nil || wire.Seed == "" || len(wire.Seed) > 128 || strings.ContainsRune(wire.Seed, 0) || wire.Rules == nil || len(wire.Rules) > 32 {
 		return runtimeFeatureFlag{}, errors.New("invalid Flags definition")
 	}
@@ -618,6 +634,13 @@ func validateWireFlagRule(wire wireFlagRule, flagType string, variants map[strin
 			return runtimeFlagRule{}, errors.New("invalid Flags rule rollout unit")
 		}
 	}
+	if len(wire.Attributes) != 0 {
+		conditions, err := decodeFlagConditions(wire.Attributes)
+		if err != nil {
+			return runtimeFlagRule{}, err
+		}
+		rule.conditions = conditions
+	}
 	if (len(rule.subjects) > 0 || rule.rolloutUnit == "subject") && len(rule.customers) == 0 && rule.group == "" {
 		return runtimeFlagRule{}, errors.New("subject targeting requires a customer or group constraint")
 	}
@@ -637,7 +660,7 @@ func validateWireFlagRule(wire wireFlagRule, flagType string, variants map[strin
 		}
 		rule.value, rule.valueSet = value, true
 	}
-	if len(rule.customers) == 0 && rule.group == "" && len(rule.subjects) == 0 && rule.rollout == nil {
+	if len(rule.customers) == 0 && rule.group == "" && len(rule.subjects) == 0 && len(rule.conditions) == 0 && rule.rollout == nil {
 		return runtimeFlagRule{}, errors.New("Flags rule has no targeting constraint")
 	}
 	return rule, nil
@@ -720,8 +743,16 @@ func evaluateRuntimeBoolean(bundle *runtimeFlagsBundle, key, customer string, fa
 }
 
 func evaluateRuntimeBooleanForSubject(bundle *runtimeFlagsBundle, key, customer, subject string, fallback bool) FlagDecision {
+	return evaluateRuntimeBooleanWithAttributes(bundle, key, customer, subject, nil, nil, fallback)
+}
+
+func evaluateRuntimeBooleanWithAttributes(bundle *runtimeFlagsBundle, key, customer, subject string, attributes map[string]string, kills []string, fallback bool) FlagDecision {
 	decision := FlagDecision{Flag: key, Value: fallback, ConfigVersion: bundleVersion(bundle), Reason: "flag_missing", Source: "fallback"}
 	flag, ok := bundle.flags[key]
+	if flagKilled(key, flag, ok, kills) {
+		decision.Reason = "killed"
+		return decision
+	}
 	if !ok {
 		return decision
 	}
@@ -752,6 +783,9 @@ func evaluateRuntimeBooleanForSubject(bundle *runtimeFlagsBundle, key, customer,
 			if _, matches := bundle.groups[rule.group][customer]; !matches {
 				continue
 			}
+		}
+		if len(rule.conditions) > 0 && !matchFlagConditions(rule.conditions, attributes) {
+			continue
 		}
 		subjectScoped := len(rule.subjects) > 0 || rule.rolloutUnit == "subject"
 		if subjectScoped && subject == "" {
@@ -787,8 +821,16 @@ func evaluateRuntimeVariant(bundle *runtimeFlagsBundle, key, customer, fallback 
 }
 
 func evaluateRuntimeVariantForSubject(bundle *runtimeFlagsBundle, key, customer, subject, fallback string) FlagDecision {
+	return evaluateRuntimeVariantWithAttributes(bundle, key, customer, subject, nil, nil, fallback)
+}
+
+func evaluateRuntimeVariantWithAttributes(bundle *runtimeFlagsBundle, key, customer, subject string, attributes map[string]string, kills []string, fallback string) FlagDecision {
 	decision := FlagDecision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: bundleVersion(bundle), Reason: "flag_missing", Source: "fallback"}
 	flag, ok := bundle.flags[key]
+	if flagKilled(key, flag, ok, kills) {
+		decision.Reason = "killed"
+		return decision
+	}
 	if !ok {
 		return decision
 	}
@@ -819,6 +861,9 @@ func evaluateRuntimeVariantForSubject(bundle *runtimeFlagsBundle, key, customer,
 			if _, matches := bundle.groups[rule.group][customer]; !matches {
 				continue
 			}
+		}
+		if len(rule.conditions) > 0 && !matchFlagConditions(rule.conditions, attributes) {
+			continue
 		}
 		subjectScoped := len(rule.subjects) > 0 || rule.rolloutUnit == "subject"
 		if subjectScoped && subject == "" {
@@ -858,6 +903,20 @@ func evaluateRuntimeVariantForSubject(bundle *runtimeFlagsBundle, key, customer,
 		decision.Reason = "subject_missing"
 	}
 	return decision
+}
+
+// flagKilled reports a kill from the bundle or the gateway header; a killed
+// flag serves the application's fallback (ADR 20261114150000 §3).
+func flagKilled(key string, flag runtimeFeatureFlag, found bool, kills []string) bool {
+	if found && flag.killed {
+		return true
+	}
+	for _, k := range kills {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 func chooseRuntimeVariant(variants []runtimeFlagVariant, bucket int) string {
@@ -912,6 +971,11 @@ func (f *GregaleFlags) Boolean(ctx context.Context, key string, fallback bool) (
 		}
 		return FlagDecision{Flag: key, Value: fallback, ConfigVersion: prior.ConfigVersion, Reason: "type_mismatch", Source: "fallback"}, nil
 	}
+	if state.killed(key) {
+		decision := FlagDecision{Flag: key, Value: fallback, ConfigVersion: bundleVersion(state.bundle), Reason: "killed", Source: "fallback"}
+		state.record(decision)
+		return cloneFlagDecision(decision), nil
+	}
 	propagated, inherited := state.inherit[key]
 	decision := propagated.FlagDecision
 	if inherited {
@@ -923,7 +987,7 @@ func (f *GregaleFlags) Boolean(ctx context.Context, key string, fallback bool) (
 			decision = FlagDecision{Flag: key, Value: fallback, ConfigVersion: bundleVersion(state.bundle), Reason: "type_mismatch", Source: "fallback"}
 		}
 	} else if state.fresh && state.bundle != nil {
-		decision = evaluateRuntimeBooleanForSubject(state.bundle, key, state.customer, subject, fallback)
+		decision = evaluateRuntimeBooleanWithAttributes(state.bundle, key, state.customer, subject, requestFlagAttributes(ctx, state), nil, fallback)
 	} else {
 		decision = FlagDecision{Flag: key, Value: fallback, ConfigVersion: bundleVersion(state.bundle), Reason: "configuration_stale", Source: "fallback"}
 	}
@@ -949,6 +1013,11 @@ func (f *GregaleFlags) Variant(ctx context.Context, key, fallback string) (FlagD
 		}
 		return FlagDecision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: prior.ConfigVersion, Reason: "type_mismatch", Source: "fallback"}, nil
 	}
+	if state.killed(key) {
+		decision := FlagDecision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: bundleVersion(state.bundle), Reason: "killed", Source: "fallback"}
+		state.record(decision)
+		return cloneFlagDecision(decision), nil
+	}
 	propagated, inherited := state.inherit[key]
 	decision := propagated.FlagDecision
 	if inherited {
@@ -960,12 +1029,24 @@ func (f *GregaleFlags) Variant(ctx context.Context, key, fallback string) (FlagD
 			decision = FlagDecision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: bundleVersion(state.bundle), Reason: "type_mismatch", Source: "fallback"}
 		}
 	} else if state.fresh && state.bundle != nil {
-		decision = evaluateRuntimeVariantForSubject(state.bundle, key, state.customer, subject, fallback)
+		decision = evaluateRuntimeVariantWithAttributes(state.bundle, key, state.customer, subject, requestFlagAttributes(ctx, state), nil, fallback)
 	} else {
 		decision = FlagDecision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: bundleVersion(state.bundle), Reason: "configuration_stale", Source: "fallback"}
 	}
 	state.record(decision)
 	return cloneFlagDecision(decision), nil
+}
+
+// killed reports a gateway kill, or a kill in the fresh bundle.
+func (r *flagRequestState) killed(key string) bool {
+	if _, ok := r.kills[key]; ok {
+		return true
+	}
+	if r.fresh && r.bundle != nil {
+		flag, ok := r.bundle.flags[key]
+		return ok && flag.killed
+	}
+	return false
 }
 
 func (r *flagRequestState) record(decision FlagDecision) {
@@ -1092,7 +1173,7 @@ func (f *GregaleFlags) PropagationHeader(ctx context.Context) string {
 
 func isFlagFallbackReason(reason string) bool {
 	switch reason {
-	case "flag_missing", "configuration_stale", "type_mismatch":
+	case "flag_missing", "configuration_stale", "type_mismatch", "killed":
 		return true
 	default:
 		return false

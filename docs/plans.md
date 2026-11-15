@@ -28,7 +28,7 @@ These are the same limits the API enforces: this page is generated from them. Pr
 
 ## Developer environments
 
-Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync renews. The default lease is 24h; `--ttl` or `dev.ttl` in `gregale.yaml` chooses another value from 1h up to the plan maximum.
+Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync, and a running watcher, renews. The default lease is 24h; `--ttl` or `dev.ttl` in `gregale.yaml` chooses another value from 1h up to the plan maximum. Developer apps have their own budget, separate from your deployed apps; a developer database (`gregale dev --postgres`) counts toward the plan's managed PostgreSQL database limit together with your other databases. Free developer environments have 256 MB and no authentication, so they use production-shaped builds instead of watch mode.
 
 | Plan | Developer apps | Maximum lease |
 |---|---:|---:|

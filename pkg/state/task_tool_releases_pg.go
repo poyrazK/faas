@@ -45,7 +45,7 @@ func taskToolReleaseFresh(ctx context.Context, tx pgx.Tx, account, key string, i
 			current.LatestDeploymentID = app.Review.LatestDeploymentID
 			current.ServingDeploymentIDs = app.Review.ServingDeploymentIDs
 		}
-		if checkReleaseReview(app.Review, current) != nil {
+		if matches := checkReleaseReview(app.Review, current) == nil; !matches {
 			return false, nil
 		}
 	}

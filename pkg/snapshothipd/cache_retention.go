@@ -53,6 +53,11 @@ func (d cacheRetentionDecision) tier(key string) int {
 			return storage.EvictNormal
 		}
 	}
+	if d.ret.LiveLayers[key] {
+		// Fan-out retires a replica whose layer is gone, so a live
+		// snapshot's layer is evicted with its capture, last.
+		return storage.EvictLast
+	}
 	if d.releaseUnused(key) {
 		return storage.EvictFirst
 	}

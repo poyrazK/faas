@@ -24,6 +24,7 @@ type Metrics interface {
 type PrometheusMetrics struct {
 	fanoutTotal   *prometheus.CounterVec
 	fanoutLatency *prometheus.HistogramVec
+	refetchTotal  *prometheus.CounterVec
 }
 
 // NewPrometheusMetrics registers the exact operator-facing metric name on an
@@ -55,6 +56,16 @@ func NewPrometheusMetrics(reg *prometheus.Registry, regions ...string) (*Prometh
 	if err := reg.Register(h); err != nil {
 		return nil, err
 	}
+	rf := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "snapshothipd_replica_refetch_total",
+		Help: "Live snapshot replicas the node cache evicted, by what revalidation did (ADR-20261115140000): refetched, no_room (the cache lacked the re-fetch margin; the replica is retired) or cooldown (re-fetched recently; retired).",
+	}, []string{"outcome"})
+	if err := reg.Register(rf); err != nil {
+		return nil, err
+	}
+	for _, outcome := range []string{RefetchRefetched, RefetchNoRoom, RefetchCooldown} {
+		rf.WithLabelValues(outcome)
+	}
 	if len(regions) == 0 {
 		regions = []string{""}
 	}
@@ -69,7 +80,7 @@ func NewPrometheusMetrics(reg *prometheus.Registry, regions ...string) (*Prometh
 		}
 		h.WithLabelValues(region)
 	}
-	return &PrometheusMetrics{fanoutTotal: c, fanoutLatency: h}, nil
+	return &PrometheusMetrics{fanoutTotal: c, fanoutLatency: h, refetchTotal: rf}, nil
 }
 
 // ObserveFanoutLatency records the durable queue-to-ready latency used by the
@@ -86,4 +97,19 @@ func (m *PrometheusMetrics) ObserveFanout(outcome, region string) {
 		return
 	}
 	m.fanoutTotal.WithLabelValues(outcome, region).Inc()
+}
+
+// Outcomes of snapshothipd_replica_refetch_total.
+const (
+	RefetchRefetched = "refetched"
+	RefetchNoRoom    = "no_room"
+	RefetchCooldown  = "cooldown"
+)
+
+// ObserveRefetch counts one decision about an evicted live replica.
+func (m *PrometheusMetrics) ObserveRefetch(outcome string) {
+	if m == nil || m.refetchTotal == nil {
+		return
+	}
+	m.refetchTotal.WithLabelValues(outcome).Inc()
 }

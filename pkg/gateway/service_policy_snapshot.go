@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -36,18 +37,16 @@ func (p *ServiceProxy) pinServicePolicy(w http.ResponseWriter, r *http.Request, 
 		return false
 	}
 	defer measureTrafficPhase(r.Context(), trafficPolicy)()
-	ctx, cancel := context.WithTimeout(r.Context(), api.TrafficServicePolicyReadTimeout)
-	var snapshot ServicePolicySnapshot
-	var err error
-	if binding != nil && binding.FrozenPolicy {
-		snapshot, err = p.frozenServicePolicy(ctx, caller, *binding)
-	} else {
-		snapshot, err = p.policy(ctx, caller, service, alias)
+	snapshot, err := p.readServicePolicy(r.Context(), caller, service, alias, binding)
+	if err != nil && errors.Is(err, context.DeadlineExceeded) && r.Context().Err() == nil {
+		// Only the read's own budget ran out while the call is still live:
+		// one bounded retry absorbs a brief database stall (a burst of
+		// restarts and captures) instead of failing the call outright.
+		snapshot, err = p.readServicePolicy(r.Context(), caller, service, alias, binding)
 	}
-	if err == nil {
-		err = ctx.Err()
+	if err != nil {
+		p.logServicePolicyRefusal(caller, service, err)
 	}
-	cancel()
 	if err == nil {
 		snapshot, err = freezeServicePolicy(snapshot, caller)
 	}
@@ -80,6 +79,36 @@ func (p *ServiceProxy) pinServicePolicy(w http.ResponseWriter, r *http.Request, 
 	requestCtx := context.WithValue(r.Context(), pinnedServicePolicyKey{}, pinned)
 	*r = *r.WithContext(context.WithValue(requestCtx, effectiveTrafficPolicyKey{}, revision))
 	return false
+}
+
+// readServicePolicy reads one policy snapshot within the per-read budget.
+func (p *ServiceProxy) readServicePolicy(parent context.Context, caller, service string, alias bool, binding *ServiceProxyEnvironmentBinding) (ServicePolicySnapshot, error) {
+	ctx, cancel := context.WithTimeout(parent, api.TrafficServicePolicyReadTimeout)
+	defer cancel()
+	var snapshot ServicePolicySnapshot
+	var err error
+	if binding != nil && binding.FrozenPolicy {
+		snapshot, err = p.frozenServicePolicy(ctx, caller, *binding)
+	} else {
+		snapshot, err = p.policy(ctx, caller, service, alias)
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	return snapshot, err
+}
+
+// logServicePolicyRefusal records why a service call got 503 "service policy
+// snapshot is unavailable". The cause was not logged at all, so a burst of
+// these after a restart could not be attributed (rate-limited per gateway).
+func (p *ServiceProxy) logServicePolicyRefusal(caller, service string, err error) {
+	if p.log == nil {
+		return
+	}
+	if ok, suppressed := p.policyRefusals.allow(time.Now()); ok {
+		p.log.Warn("gateway: service call refused, policy snapshot unavailable",
+			"caller_app_id", caller, "service", service, "err", err, "suppressed", suppressed)
+	}
 }
 
 // The exact graph was verified before policy pinning. Bind its immutable

@@ -6028,6 +6028,100 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listDatabaseSwitches
+      summary: List rollbacks that restore the database.
+      description: An app's database switches, newest first.
+      responses:
+        '200':
+          description: The app's switches.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitchList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+    post:
+      tags: [deployments]
+      operationId: createDatabaseSwitch
+      summary: Restore a database and move the app to the copy.
+      description: "Restores one of the app's managed PostgreSQL databases to point_in_time as a new database and moves the app's bindings in the scope to it, keeping the live release. The app stops serving from fencing until it resumes on the copy. Writes after point_in_time stay only in the source database, which keeps every write. Needs the postgres:manage scope and a verified email. Follow the returned switch with GET; cancel it before it starts switching."
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDatabaseSwitchRequest'}
+            example: {"database_id": "0123456789abcdef0123456789abcdef", "name": "orders-0900", "point_in_time": "2026-10-30T09:00:00Z"}
+      responses:
+        '202':
+          description: The switch was recorded and runs in the background.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Database switch UUID.
+        schema: {type: string, format: uuid}
+    get:
+      tags: [deployments]
+      operationId: getDatabaseSwitch
+      summary: Read a rollback that restores the database.
+      description: The switch's phase, restore point, databases, drain counts and outcome.
+      responses:
+        '200':
+          description: The switch.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: UUID of the database switch to cancel.
+        schema: {type: string, format: uuid}
+    post:
+      tags: [deployments]
+      operationId: cancelDatabaseSwitch
+      summary: Cancel a rollback that restores the database.
+      description: "Unwinds the switch; the app keeps its current release and database. Refused with database_switch_not_cancellable once the switch started switching the release and the bindings."
+      responses:
+        '202':
+          description: Cancellation recorded; the worker unwinds the switch.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/rollouts/recover:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -25465,7 +25559,7 @@ components:
         request_id: {type: string, format: uuid, description: "Optional reserved database identity for durable workflows. Identical retries recover the same resource independently of the HTTP response cache. A different reservation cannot adopt an existing name."}
         name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
         region: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
-        postgres_major: {type: integer, minimum: 12, maximum: 99, default: 16}
+        postgres_major: {type: integer, minimum: 12, maximum: 99, default: 17}
         service_class: {type: string, enum: [development, burstable, production], default: development}
         availability: {type: string, enum: [single_zone, high_availability], default: single_zone}
         scale_to_zero: {type: boolean, default: true}
@@ -27906,6 +28000,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -28261,7 +28357,7 @@ components:
           minProperties: 1
           maxProperties: 13
           propertyNames:
-            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, scaling_policy, retry_policy]
+            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, warmup, scaling_policy, retry_policy]
           additionalProperties: {}
           description: Observed values from the app read; null represents an unset optional policy. Must cover every mutated setting.
     UpdateAppRequest:
@@ -28336,6 +28432,9 @@ components:
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
           description: "Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it."
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
+          description: "Set the path a deployment's first init snapshot is primed with. Omit to preserve; an empty path clears it."
         pause:
           type: string
           enum: [between_requests, when_idle, never, ""]
@@ -29091,6 +29190,14 @@ components:
           maximum: 2000
           default: 500
           description: "Deadline for checkpoint response in milliseconds; 0 uses the 500 ms default."
+    WarmupHook:
+      description: "Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests (5 s at most) to it on the app's HTTP port; without it, the HTTP health check path is used. Priming never fails a deploy."
+      type: object
+      properties:
+        path:
+          type: string
+          description: "Absolute path on the app's HTTP port. Should exercise the request code a wake needs warm and be safe to call repeatedly."
+          example: "/internal/warmup"
     AppManifest:
       description: "App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag. The optional `env_secrets` field carries sealed-secret refs (\"secret:NAME\" strings) resolved by the host at wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."
       type: object
@@ -29171,6 +29278,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -40095,6 +40204,7 @@ components:
           type: array
           items: {type: string, format: uuid}
           description: "Deployments whose release commands the restore undoes; rolling back to them is refused afterwards."
+        keeps_release: {type: boolean, description: "True for a restore that moves the app to the copy without changing its code; the target deployment is the release that served when it was requested."}
         source_database_id: {type: string, format: uuid, description: "The database the app leaves. It keeps every write."}
         source_database_name: {type: string}
         target_database_id: {type: string, format: uuid, description: "The restored copy, once its restore has started."}
@@ -40114,6 +40224,16 @@ components:
         phase_started_at: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    CreateDatabaseSwitchRequest:
+      description: "Restore a managed database the app binds and move the app to the copy, keeping its code."
+      type: object
+      additionalProperties: false
+      required: [database_id, name, point_in_time]
+      properties:
+        database_id: {type: string, format: uuid, description: "The managed database the app's bindings point at."}
+        name: {type: string, minLength: 1, maxLength: 63, description: "Name of the restored copy; it becomes the app's database."}
+        point_in_time: {type: string, format: date-time, description: "A time inside the database's restore range. Writes after it stay only in the source database."}
+        scope: {type: string, description: "The environment whose bindings move; empty is the default scope."}
     DatabaseSwitchDrain:
       description: "A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot invalidated), still pending, or blocking the switch."
       type: object
@@ -40123,6 +40243,14 @@ components:
         parked: {type: integer, minimum: 0}
         pending: {type: integer, minimum: 0}
         blocked: {type: integer, minimum: 0}
+    DatabaseSwitchList:
+      description: "A page of an app's database switches, newest first."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/DatabaseSwitch'}
     ScheduledRelease:
       description: "A release built ahead of time that starts its rollout at release_at."
       type: object

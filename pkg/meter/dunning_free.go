@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -76,4 +77,46 @@ func quotaSuspended(ctx context.Context, store any, id string) (bool, error) {
 		return false, nil
 	}
 	return r.QuotaSuspended(ctx, id)
+}
+
+// deferToProvider reports whether the move to Free waits this tick because
+// the provider says the account has paid, or could not be asked. A
+// subscription in good standing (the account's own when it is listed, else
+// any) means a payment webhook was missed or not accepted; apid's billing
+// reconciliation restores the account from the same listing, so meterd
+// leaves it alone. A provider error fails the tick (FaasMeterdDunningFailing)
+// and retries next tick rather than moving a customer who may have paid.
+func (d *Dunning) deferToProvider(ctx context.Context, acct state.Account, fail func(state.Account, string, error)) bool {
+	if d.p.Subscriptions == nil || acct.ProviderCustomerID == "" {
+		return false
+	}
+	subs, err := d.p.Subscriptions.CustomerSubscriptions(ctx, acct.ProviderCustomerID)
+	if err != nil {
+		fail(acct, "provider subscriptions", err)
+		return true
+	}
+	if paidAtProvider(subs, acct.StripeSubscriptionItem) {
+		d.p.Log.Info("meter: dunning deferred: provider reports the subscription paid; reconciliation restores the account",
+			"account", acct.ID)
+		return true
+	}
+	return false
+}
+
+// paidAtProvider reports whether bound (the account's subscription), or any
+// subscription when bound is not listed, is in good standing.
+func paidAtProvider(subs []billing.Subscription, bound string) bool {
+	if bound != "" {
+		for _, sub := range subs {
+			if sub.ID == bound {
+				return sub.Status.InGoodStanding()
+			}
+		}
+	}
+	for _, sub := range subs {
+		if sub.Status.InGoodStanding() {
+			return true
+		}
+	}
+	return false
 }

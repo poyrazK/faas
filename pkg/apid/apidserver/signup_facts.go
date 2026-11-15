@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/disposableemail"
 	"github.com/onebox-faas/faas/pkg/geoip"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -103,8 +104,42 @@ func (s *server) recordSignupFacts(ctx context.Context, r *http.Request, account
 		return
 	}
 	facts := s.signupGeo.signupFacts(accountID, email, method, clientIPFromRequest(r), r.UserAgent(), timeNow())
-	if err := store.RecordAccountSignupFacts(context.WithoutCancel(ctx), facts); err != nil {
+	ctx = context.WithoutCancel(ctx)
+	if err := store.RecordAccountSignupFacts(ctx, facts); err != nil {
 		s.log.Warn("apid: signup facts not recorded", "account", accountID, "err", err)
 		s.signupMetrics.observeFactsFailed()
+		return
+	}
+	s.linkSignupToHeld(ctx, accountID, facts.EmailDomain)
+}
+
+// linkSignupToHeld flags a new account that resembles an abuse-held one
+// (ADR-20261114174600): same /24 or /48 as the held account's sign-up or a
+// sign-in within api.SignupFactsPersonalRetention, or the same private email
+// domain. Flag only: each link is audited as accounts.linked_to_held and
+// counted, and the new account is not held or refused.
+func (s *server) linkSignupToHeld(ctx context.Context, accountID, emailDomain string) {
+	store, ok := s.store.(state.AccountHeldLinkStore)
+	if !ok {
+		return
+	}
+	now := timeNow()
+	links, err := store.LinkAccountToHeld(ctx, accountID, disposableemail.Linkable(emailDomain), now.Add(-api.SignupFactsPersonalRetention), now)
+	if err != nil {
+		s.log.Warn("apid: held-account linking failed", "account", accountID, "err", err)
+		s.signupMetrics.observeHeldLink("error")
+		return
+	}
+	for _, l := range links {
+		detail := map[string]any{"held_account": l.HeldAccountID, "held_reason": l.HeldReason, "signal": l.Signal}
+		if l.HeldOrgID != "" {
+			detail["held_org"] = l.HeldOrgID
+		}
+		s.audit.Emit(ctx, "accounts.linked_to_held", &accountID, detail)
+		s.signupMetrics.observeHeldLink(l.Signal)
+	}
+	if len(links) > 0 {
+		s.log.Warn("apid: new account resembles an abuse-held account; flagged for review",
+			"account", accountID, "links", len(links), "first_held_account", links[0].HeldAccountID, "first_signal", links[0].Signal)
 	}
 }

@@ -59,6 +59,18 @@ export interface WorkflowContext {
    * or null on timeout. Each wait for a name consumes one event of that name.
    */
   waitForEvent<T = unknown>(name: string, options?: WaitForEventOptions): Promise<T | null>;
+  /**
+   * Calls a function this workflow may call (a sibling in its functions
+   * project, or an app under its `calls:`) and resolves with its output. The
+   * run parks while the function runs, with no VM held; the call keeps the
+   * callee's own retries. Rejects with WorkflowCallError when the call fails.
+   */
+  call<O = unknown>(fn: string, input?: unknown, options?: CallOptions): Promise<O>;
+}
+
+export interface CallOptions {
+  /** Operation name in the journal; defaults to the function's name. */
+  name?: string;
 }
 
 export interface WorkflowDefinition<I = unknown, O = unknown> {
@@ -73,9 +85,18 @@ export class NonRetryableError extends Error {
 
 /** Thrown into the workflow when a step has exhausted its attempts. */
 export class WorkflowStepError extends Error {
-  override readonly name = 'WorkflowStepError';
+  override readonly name: string = 'WorkflowStepError';
   constructor(readonly step: string, message: string, readonly attempts: number) {
     super(message);
+  }
+}
+
+/** Thrown into the workflow when a wf.call fails; code is function_call_failed. */
+export class WorkflowCallError extends WorkflowStepError {
+  override readonly name: string = 'WorkflowCallError';
+  readonly code = 'function_call_failed';
+  constructor(step: string, readonly fn: string, message: string) {
+    super(step, message, 1);
   }
 }
 
@@ -84,7 +105,7 @@ export function defineWorkflow<I = unknown, O = unknown>(name: string, run: Work
   return { name, run };
 }
 
-type Kind = 'step' | 'sleep' | 'event';
+type Kind = 'step' | 'sleep' | 'event' | 'call';
 
 export interface JournalEntry {
   seq: number;
@@ -120,6 +141,8 @@ export interface ReportedOperation {
   duration_ms?: number;
   event?: string;
   timeout_ms?: number;
+  function?: string;
+  input?: unknown;
 }
 
 export interface WorkflowInvocationResponse {
@@ -237,6 +260,19 @@ class Invocation implements WorkflowContext {
       this.report(op);
     }
     return suspended<T | null>();
+  }
+
+  call<O = unknown>(fn: string, input?: unknown, options?: CallOptions): Promise<O> {
+    if (!fn) throw new Error('wf.call needs a function name');
+    const { seq, name: opName, entry, conflict } = this.claim(options?.name ?? fn, 'call');
+    if (entry?.status === 'succeeded') return Promise.resolve((entry.output ?? null) as O);
+    if (entry?.status === 'failed') return Promise.reject(new WorkflowCallError(opName, fn, entry.error ?? `function ${fn} failed`));
+    if (!entry) {
+      const op: ReportedOperation = { seq, name: opName, kind: 'call', function: fn };
+      if (!conflict && input !== undefined) op.input = toJSONValue(input);
+      this.report(op);
+    }
+    return suspended<O>();
   }
 }
 
@@ -423,6 +459,11 @@ export interface LocalRunOptions {
   /** Stops a run that does not finish (default 1000). */
   maxInvocations?: number;
   runId?: string;
+  /**
+   * Stand-ins for the functions wf.call reaches, by name. A throw fails the
+   * call; a name with none fails it as not callable.
+   */
+  functions?: Record<string, (input: unknown) => unknown>;
 }
 
 export interface LocalRunResult<O = unknown> {
@@ -463,6 +504,17 @@ export async function runWorkflowLocally<I, O>(definition: WorkflowDefinition<I,
         journal[op.seq] = entry;
       } else if (op.kind === 'sleep') {
         journal[op.seq] = { seq: op.seq, name: op.name, kind: 'sleep', status: 'succeeded' };
+      } else if (op.kind === 'call') {
+        const fn = options.functions?.[op.function ?? ''];
+        if (!fn) {
+          journal[op.seq] = { seq: op.seq, name: op.name, kind: 'call', status: 'failed', error: `function "${op.function}" is not callable from this workflow` };
+        } else {
+          try {
+            journal[op.seq] = { seq: op.seq, name: op.name, kind: 'call', status: 'succeeded', output: toJSONValue(await fn(op.input ?? null)) ?? null };
+          } catch (error) {
+            journal[op.seq] = { seq: op.seq, name: op.name, kind: 'call', status: 'failed', error: errorMessage(error) };
+          }
+        }
       } else {
         const event = op.event ?? op.name;
         const index = consumed.get(event) ?? 0;
