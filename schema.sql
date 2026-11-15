@@ -4883,6 +4883,8 @@ CREATE TABLE public.snapshots (
     cpu_template text DEFAULT ''::text NOT NULL,
     cpu_model text DEFAULT ''::text NOT NULL,
     stale_at timestamp with time zone,
+    sealed_key bytea,
+    sealed_capture_id uuid,
     CONSTRAINT snapshots_recovery_generation_check CHECK ((recovery_generation >= 0)),
     CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
     CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
@@ -29138,6 +29140,42 @@ BEGIN
     END IF;
     RETURN NEW;
 END $$;
+
+
+--
+-- Name: snapshots_sealed_key_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.snapshots_sealed_key_guard() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    node_name text;
+    node uuid;
+    ran boolean;
+BEGIN
+    IF TG_OP = 'UPDATE' AND (NEW.sealed_key IS DISTINCT FROM OLD.sealed_key
+        OR NEW.sealed_capture_id IS DISTINCT FROM OLD.sealed_capture_id) THEN
+        RAISE EXCEPTION 'a snapshot''s sealed key is recorded with the row and never changes'
+            USING ERRCODE = '42501', DETAIL = format('login=%s snapshot=%s', session_user, OLD.id);
+    END IF;
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node_name USING session_user::text;
+    IF node_name IS NULL THEN
+        RETURN NEW;
+    END IF;
+    EXECUTE format('SELECT id FROM %I.compute_nodes WHERE name = $1', TG_TABLE_SCHEMA)
+        INTO node USING node_name;
+    EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.instances WHERE deployment_id = $1 AND node_id = $2)', TG_TABLE_SCHEMA)
+        INTO ran USING NEW.deployment_id, node;
+    IF NOT coalesce(ran, false) THEN
+        RAISE EXCEPTION 'a compute node login records snapshots only of deployments that ran on its node'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s deployment=%s', session_user, node_name, NEW.deployment_id);
+    END IF;
+    RETURN NEW;
+END;
+$_$;
 
 
 --
@@ -75496,6 +75534,14 @@ ALTER TABLE ONLY public.snapshots
 
 
 --
+-- Name: snapshots snapshots_sealed_key_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.snapshots
+    ADD CONSTRAINT snapshots_sealed_key_check CHECK ((((sealed_key IS NULL) AND (sealed_capture_id IS NULL)) OR ((sealed_key IS NOT NULL) AND (sealed_capture_id IS NOT NULL) AND ((octet_length(sealed_key) >= 1) AND (octet_length(sealed_key) <= 4096)) AND (storage_key ~~ (('%/captures/'::text || (sealed_capture_id)::text) || '/v2/mem'::text))))) NOT VALID;
+
+
+--
 -- Name: snapshots snapshots_stale_at_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87002,6 +87048,13 @@ COMMENT ON INDEX public.snapshots_live_idx IS 'Supports pkg/state/pgstore.go::La
 
 
 --
+-- Name: snapshots_sealed_capture_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX snapshots_sealed_capture_idx ON public.snapshots USING btree (sealed_capture_id) WHERE (sealed_capture_id IS NOT NULL);
+
+
+--
 -- Name: spend_cap_notice_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -95171,6 +95224,13 @@ CREATE TRIGGER snapshot_stale_after_terminal_deployment AFTER UPDATE OF status O
 --
 
 CREATE TRIGGER snapshot_stale_at_stamp BEFORE UPDATE OF stale ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.snapshot_stale_at_stamp();
+
+
+--
+-- Name: snapshots snapshots_sealed_key_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER snapshots_sealed_key_guard BEFORE INSERT OR UPDATE OF deployment_id, sealed_key, sealed_capture_id ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.snapshots_sealed_key_guard();
 
 
 --

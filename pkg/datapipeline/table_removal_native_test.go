@@ -249,11 +249,23 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 	if result := stopWrites(); result.err != nil || result.value < 1001 {
 		t.Fatal("updates failed during removal", result)
 	}
-	// Cancellation can lose the final COMMIT acknowledgement. Lock the source
-	// row so any in-flight writer transaction settles before capturing the exact
-	// committed value that the healthy mirror must eventually expose.
+	// Cancellation can lose the final COMMIT acknowledgement. Fence relation
+	// writers, not only the last row: production completion takes SHARE locks,
+	// which conflict with a writer's relation lock even after its row is visible.
+	// Keep this fixture-only compatible lock through the manual completion.
+	quiescent, err := source.Begin(ctx)
+	if err != nil {
+		t.Fatal("begin live-removal source fence", err)
+	}
+	defer func() { _ = quiescent.Rollback(ctx) }()
+	fenceCtx, cancelFence := context.WithTimeout(ctx, 5*time.Second)
+	_, err = quiescent.Exec(fenceCtx, `LOCK TABLE public.orders IN SHARE MODE`)
+	cancelFence()
+	if err != nil {
+		t.Fatal("fence live-removal source writers", err)
+	}
 	var committedTotal string
-	if err = source.QueryRow(ctx, `SELECT total::text FROM public.orders WHERE id=1 FOR UPDATE`).Scan(&committedTotal); err != nil {
+	if err = quiescent.QueryRow(ctx, `SELECT total::text FROM public.orders WHERE id=1 FOR UPDATE`).Scan(&committedTotal); err != nil {
 		t.Fatal("read committed live-removal source value", err)
 	}
 	refreshReady = true
@@ -261,6 +273,9 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 	ob := Observation{State: "blocked", Verification: old.Verification}
 	if err = engine.reconcileTableRemoval(ctx, old, source.Config().ConnString(), publisher, target, ownerForNativeTable(t, ctx, target), &ob, always); err != nil {
 		t.Fatal("complete live removal", err)
+	}
+	if err = quiescent.Rollback(ctx); err != nil {
+		t.Fatal("release live-removal source fence", err)
 	}
 	// Lose the final catalog acknowledgement after the mirror result commits.
 	restart()
