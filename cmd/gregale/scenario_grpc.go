@@ -103,19 +103,19 @@ func withTestGRPCDialTarget(ctx context.Context, proxyURL, appURL string) contex
 	return context.WithValue(ctx, testGRPCDialTargetKey{}, next)
 }
 
-func (s *testGRPCScenarioContext) protoFiles() (*protoregistry.Files, error) {
+func (s *testGRPCScenarioContext) protoFiles(ctx context.Context) (*protoregistry.Files, error) {
 	s.once.Do(func() {
 		if s.config == nil || len(s.config.Protos) == 0 {
 			return
 		}
-		s.files, s.err = compileTestGRPCProtos(s.manifestDir, s.config)
+		s.files, s.err = compileTestGRPCProtos(ctx, s.manifestDir, s.config)
 	})
 	return s.files, s.err
 }
 
 // compileTestGRPCProtos compiles the scenario's proto files. Without
 // import_paths each file's own directory is its import path.
-func compileTestGRPCProtos(manifestDir string, config *testGRPCConfig) (*protoregistry.Files, error) {
+func compileTestGRPCProtos(ctx context.Context, manifestDir string, config *testGRPCConfig) (*protoregistry.Files, error) {
 	importPaths := make([]string, 0, len(config.ImportPaths))
 	for _, dir := range config.ImportPaths {
 		importPaths = append(importPaths, filepath.Join(manifestDir, filepath.FromSlash(dir)))
@@ -143,7 +143,7 @@ func compileTestGRPCProtos(manifestDir string, config *testGRPCConfig) (*protore
 		names = append(names, name)
 	}
 	compiler := protocompile.Compiler{Resolver: protocompile.WithStandardImports(&protocompile.SourceResolver{ImportPaths: importPaths})}
-	compiled, err := compiler.Compile(context.Background(), names...)
+	compiled, err := compiler.Compile(ctx, names...)
 	if err != nil {
 		return nil, fmt.Errorf("compile protos: %w", err)
 	}
@@ -261,7 +261,7 @@ func validateTestGRPCStep(scenario testScenario, step testHTTPRequest, known map
 // validateTestGRPCDefinitions compiles a scenario's protos and checks each
 // gRPC step's method and message shape against them. Steps whose method the
 // protos do not define are left to server reflection unless it is off.
-func validateTestGRPCDefinitions(manifestDir string, scenario testScenario) error {
+func validateTestGRPCDefinitions(ctx context.Context, manifestDir string, scenario testScenario) error {
 	steps := testScenarioAllHTTPSteps(scenario)
 	hasGRPC := false
 	for _, step := range steps {
@@ -270,7 +270,7 @@ func validateTestGRPCDefinitions(manifestDir string, scenario testScenario) erro
 	if !hasGRPC || scenario.GRPC == nil || len(scenario.GRPC.Protos) == 0 || scenario.GRPC.reflectionMode() == "always" {
 		return nil
 	}
-	files, err := compileTestGRPCProtos(manifestDir, scenario.GRPC)
+	files, err := compileTestGRPCProtos(ctx, manifestDir, scenario.GRPC)
 	if err != nil {
 		return err
 	}
@@ -505,7 +505,7 @@ func dialTestGRPC(baseURL string) (*grpc.ClientConn, error) {
 func resolveTestGRPCMethod(ctx context.Context, scenario *testGRPCScenarioContext, conn *grpc.ClientConn, method string) (protoreflect.MethodDescriptor, error) {
 	mode := scenario.config.reflectionMode()
 	if mode != "always" {
-		files, err := scenario.protoFiles()
+		files, err := scenario.protoFiles(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -646,6 +646,7 @@ func probeTestGRPCReflection(ctx context.Context, conn *grpc.ClientConn, v1 test
 	return exchange, func() { closeV1(); closeFallback() }, nil
 }
 
+//nolint:staticcheck // SA1019: servers that predate reflection v1 offer only v1alpha.
 func openTestGRPCReflectionV1Alpha(ctx context.Context, conn *grpc.ClientConn) (testGRPCReflectionExchange, func(), error) {
 	stream, err := reflectionv1alpha.NewServerReflectionClient(conn).ServerReflectionInfo(ctx)
 	if err != nil {

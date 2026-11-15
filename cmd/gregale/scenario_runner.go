@@ -542,6 +542,9 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 		if err := validateTestReportInputs(testScenarioInputPaths(scenario, sourceDir), *reportPath, *junitPath, *htmlPath); err != nil {
 			return printErr("Invalid test report paths", err)
 		}
+		if err := validateTestGRPCDefinitions(context.Background(), sourceDir, scenario); err != nil {
+			return printErr("Invalid scenario manifest", fmt.Errorf("scenario %q: %w", name, err))
+		}
 		if !*load {
 			httpScenario := scenario
 			httpScenario.Load = nil
@@ -788,9 +791,6 @@ func decodeTestManifestDocument(data []byte, absolute string, fieldsForScenario 
 			return testManifest{}, "", fmt.Errorf("scenario %q steps: %w", name, err)
 		}
 		if err := validateTestGRPCLoad(scenario, false); err != nil {
-			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
-		}
-		if err := validateTestGRPCDefinitions(filepath.Dir(absolute), scenario); err != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		if scenario.Load != nil && scenario.Load.Relative != nil {

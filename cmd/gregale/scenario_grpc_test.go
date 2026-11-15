@@ -44,7 +44,7 @@ func startTestGRPCServer(t *testing.T, withReflection bool) (baseURL, manifestDi
 	if err := os.WriteFile(filepath.Join(manifestDir, "protos", "echo.proto"), []byte(testGRPCProto), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	files, err := compileTestGRPCProtos(manifestDir, &testGRPCConfig{Protos: []string{"protos/echo.proto"}})
+	files, err := compileTestGRPCProtos(context.Background(), manifestDir, &testGRPCConfig{Protos: []string{"protos/echo.proto"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,11 @@ scenarios:
 	if err := os.WriteFile(manifest, []byte(broken), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readTestManifest(manifest); err == nil || !strings.Contains(err.Error(), "the protos do not define testgrpc.v1.Echo/Nope") {
+	scenarios, dir2, err := readTestManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTestGRPCDefinitions(context.Background(), dir2, scenarios["echo-smoke"]); err == nil || !strings.Contains(err.Error(), "the protos do not define testgrpc.v1.Echo/Nope") {
 		t.Fatalf("undefined method err = %v", err)
 	}
 }
@@ -274,7 +278,7 @@ func TestValidateGRPCSteps(t *testing.T) {
 	if err := validateTestHTTPRequests(ok); err != nil {
 		t.Fatalf("valid step refused: %v", err)
 	}
-	if err := validateTestGRPCDefinitions(dir, ok); err != nil {
+	if err := validateTestGRPCDefinitions(context.Background(), dir, ok); err != nil {
 		t.Fatalf("valid definitions refused: %v", err)
 	}
 	for _, tc := range []struct {
@@ -296,7 +300,7 @@ func TestValidateGRPCSteps(t *testing.T) {
 			scenario.Requests = []testHTTPRequest{tc.step}
 			var err error
 			if tc.defs {
-				err = validateTestGRPCDefinitions(dir, scenario)
+				err = validateTestGRPCDefinitions(context.Background(), dir, scenario)
 			} else {
 				err = validateTestHTTPRequests(scenario)
 			}
