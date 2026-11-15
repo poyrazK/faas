@@ -1,5 +1,9 @@
 # Install the SDKs
 
+For private live progress on typed Jobs and file pipelines, see
+[live job views](sdk-live-jobs.md) and the
+[CSV application example](../examples/sdk-csv-jobs/README.md#browser-file-imports-preview).
+
 Gregale's application SDKs (code-first workflows, realtime, operations,
 feature flags) are not on npm or PyPI yet. Install them from Gregale's SDK
 repositories as shown below. Until this page says otherwise, a package on a

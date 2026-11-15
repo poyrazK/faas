@@ -17,6 +17,16 @@
 // Static services and FaaSClient retain their legacy shared state.
 
 export { createClient, type GregaleClient } from './isolated-client-preview.js';
+export * from './files.js';
+export * from './file-pipelines.js';
+export * from './live-jobs.js';
+export * from './live-job-realtime.js';
+export * from './live-job-bridge.js';
+export * from './job-pipelines.js';
+export * from './job-pipeline-client.js';
+export * from './job-pipeline-live.js';
+export type { ManagedFileBucket, FileHelpers } from './file-client.js';
+export { pathFileSource } from './file-client.js';
 export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
 export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
@@ -732,3 +742,13 @@ export { SourceDeploymentError, loadSourceDeploymentState, parseSourceDeployment
 export { inspectProject, parseProjectPlan, validateProjectPlan, projectDeployOptions, ProjectInspectionError, type ProjectPlan, type ProjectInspectionOptions, type ProjectShape, type ProjectFramework, type ProjectIssue, type ProjectIssueCode, type ProjectInput, type ProjectSetting, type ProjectCandidate, type ProjectGeneratedFile, type ProjectBuild } from './project-inspection.js';
 
 export { parseReviewedProjectPlan, parseProjectApplicationState, loadProjectApplicationState, ProjectWorkflowError, type ReviewedProjectPlan, type ProjectPreviewInput, type ProjectPreviewOptions, type ProjectApplyOptions, type ProjectWorkflowOptions, type ProjectWorkflowCode, type ProjectWorkflowPhase, type ProjectWorkflowProgress, type ProjectApplicationState, type ProjectApplicationResult, type ProjectWorkloadOutcome, type ProjectWorkflows } from './project-workflows.js';
+export { parseProjectVerificationTarget, projectVerificationTarget, type VerificationOutcome, type VerificationCode, type VerificationWorkload, type ProjectVerificationTarget, type VerificationCheckResult, type VerificationCheckContext, type VerificationCheck, type VerificationCheckEvidence, type VerificationHealth, type VerificationTimeline, type VerificationWorkloadReport, type ProjectVerificationReport, type ProjectVerificationOptions, type ProjectVerification } from './project-verification.js';
+export { JobContract, JobError, prepareJobInput, readJobInput, decodeJobOutput, runLocalJobBatch, runJobTask, localJobStore, type JobCode, type JobSchema, type JobContractSpec, type JobInput, type JobInputBinding, type JobStore, type JobContext, type JobHandler, type JobArtifact, type LocalJobOutcome } from './job-runtime.js';
+export { parseJobCheckpoint, type JobCheckpoint, type JobProgress, type JobRunOptions, type JobSubmitOptions, type JobItemOutcome, type TypedJobRun, type TypedJob, type TypedJobs } from './typed-jobs.js';
+
+export { PipelineGateError, pipelineGateIntent, parsePipelineGateRecord, pipelineGateSchema, postgresPipelineGateStore, nativePipelineGateTransport, createPipelineGateService, type PipelineGateOptions, type PipelineGateStore, type PipelineGateTransport } from './pipeline-gates.js';
+export type * from './pipeline-gate-types.js';
+
+export { PipelineChildren, nativePipelineChildrenTransport, pipelineChildrenLiveSnapshot, type PipelineChild, type PipelineChildrenTransport } from './pipeline-children.js';
+export * from './pipeline-children-state.js';
+export type * from './pipeline-children-types.js';
