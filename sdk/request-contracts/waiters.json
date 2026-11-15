@@ -1,0 +1,916 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "build queued through succeeded",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "queued",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "running",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "succeeded",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        }
+      ],
+      "calls": 3,
+      "polls": 3,
+      "progress": [
+        "queued",
+        "running",
+        "succeeded"
+      ]
+    },
+    {
+      "name": "release lifecycle through watch completion",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "building",
+            "summary": "building",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "scheduled",
+            "summary": "scheduled",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "awaiting_approval",
+            "summary": "awaiting_approval",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "held",
+            "summary": "held",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "rolling_out",
+            "summary": "rolling_out",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "watching",
+            "summary": "watching",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "released",
+            "summary": "released",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "stop_on_blocked": false,
+      "calls": 7,
+      "polls": 7,
+      "progress": [
+        "building",
+        "scheduled",
+        "awaiting_approval",
+        "held",
+        "rolling_out",
+        "watching",
+        "released"
+      ]
+    },
+    {
+      "name": "build failed",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "failed",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "failed",
+      "last": "failed",
+      "progress": [
+        "failed"
+      ]
+    },
+    {
+      "name": "build cancelled",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "cancelled",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "cancelled",
+      "last": "cancelled",
+      "progress": [
+        "cancelled"
+      ]
+    },
+    {
+      "name": "release failed",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "failed",
+            "summary": "failed",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "failed",
+      "last": "failed",
+      "progress": [
+        "failed"
+      ]
+    },
+    {
+      "name": "release cancelled",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "cancelled",
+            "summary": "cancelled",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "cancelled",
+      "last": "cancelled",
+      "progress": [
+        "cancelled"
+      ]
+    },
+    {
+      "name": "release rolled_back",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "rolled_back",
+            "summary": "rolled_back",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "rolled_back",
+      "last": "rolled_back",
+      "progress": [
+        "rolled_back"
+      ]
+    },
+    {
+      "name": "release superseded",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "superseded",
+            "summary": "superseded",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "superseded",
+      "last": "superseded",
+      "progress": [
+        "superseded"
+      ]
+    },
+    {
+      "name": "release awaiting_approval",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "awaiting_approval",
+            "summary": "awaiting_approval",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "blocked",
+      "last": "awaiting_approval",
+      "progress": [
+        "awaiting_approval"
+      ]
+    },
+    {
+      "name": "release held",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "held",
+            "summary": "held",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "blocked",
+      "last": "held",
+      "progress": [
+        "held"
+      ]
+    },
+    {
+      "name": "released without serving traffic",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "released",
+            "summary": "released",
+            "traffic_percent": 0,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "not_serving",
+      "last": "released",
+      "progress": [
+        "released"
+      ]
+    },
+    {
+      "name": "released with nonlive status",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "superseded",
+            "phase": "released",
+            "summary": "released",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "not_serving",
+      "last": "released",
+      "progress": [
+        "released"
+      ]
+    },
+    {
+      "name": "released with recorded watch regression",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "released",
+            "summary": "released",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": [
+              {
+                "at": "2026-11-14T13:20:00Z",
+                "kind": "watch_regressed",
+                "summary": "watch regressed"
+              }
+            ]
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "regressed",
+      "last": "released",
+      "progress": [
+        "released"
+      ]
+    },
+    {
+      "name": "unknown build state retains last valid result",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "running",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "future-state",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        }
+      ],
+      "calls": 2,
+      "polls": 2,
+      "outcome": "unexpected_state",
+      "last": "running",
+      "progress": [
+        "running"
+      ]
+    },
+    {
+      "name": "unknown release phase retains last valid result",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "building",
+            "summary": "building",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "future-phase",
+            "summary": "future-phase",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "calls": 2,
+      "polls": 2,
+      "outcome": "unexpected_state",
+      "last": "building",
+      "progress": [
+        "building"
+      ]
+    },
+    {
+      "name": "mismatched build ID",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "id": "other-resource",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "succeeded",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "invalid_response",
+      "last": null,
+      "progress": []
+    },
+    {
+      "name": "invalid release traffic",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "released",
+            "summary": "released",
+            "traffic_percent": 101,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "invalid_response",
+      "last": null,
+      "progress": []
+    },
+    {
+      "name": "missing build state",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1"
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "invalid_response",
+      "last": null,
+      "progress": []
+    },
+    {
+      "name": "poll cap includes first read",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "queued",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "running",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        }
+      ],
+      "max_polls": 2,
+      "calls": 2,
+      "polls": 2,
+      "outcome": "poll_limit",
+      "last": "running",
+      "progress": [
+        "queued",
+        "running"
+      ]
+    },
+    {
+      "name": "resume existing release by ID after hold",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "held",
+            "summary": "held",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "app": "api",
+            "status": "live",
+            "phase": "released",
+            "summary": "released",
+            "traffic_percent": 100,
+            "created_at": "2026-11-14T13:20:00Z",
+            "events": []
+          }
+        }
+      ],
+      "calls": 2,
+      "polls": 1,
+      "outcome": "blocked",
+      "last": "held",
+      "progress": [
+        "held",
+        "released"
+      ],
+      "resume": true
+    },
+    {
+      "name": "progress callback failure retains identity",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "queued",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        }
+      ],
+      "phase": "callback_error",
+      "calls": 1,
+      "polls": 1,
+      "outcome": "callback",
+      "progress": [
+        "queued"
+      ]
+    },
+    {
+      "name": "blocked progress obeys total deadline",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "running",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        }
+      ],
+      "phase": "progress",
+      "timeout_ms": 20,
+      "calls": 1,
+      "polls": 1,
+      "outcome": "timeout",
+      "last": "running",
+      "progress": [
+        "running"
+      ]
+    },
+    {
+      "name": "caller cancellation during progress",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "running",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        }
+      ],
+      "phase": "progress",
+      "calls": 1,
+      "polls": 1,
+      "outcome": "caller_cancelled",
+      "progress": [
+        "running"
+      ]
+    },
+    {
+      "name": "caller cancellation during headers",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [],
+      "phase": "headers",
+      "calls": 1,
+      "polls": 1,
+      "outcome": "caller_cancelled",
+      "progress": []
+    },
+    {
+      "name": "total deadline covers blocked headers",
+      "resource": "deployment",
+      "id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+      "responses": [],
+      "phase": "headers",
+      "timeout_ms": 20,
+      "calls": 1,
+      "polls": 1,
+      "outcome": "timeout",
+      "last": null,
+      "progress": []
+    },
+    {
+      "name": "total deadline closes blocked body",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [],
+      "phase": "body",
+      "timeout_ms": 20,
+      "calls": 1,
+      "polls": 1,
+      "outcome": "timeout",
+      "last": null,
+      "progress": [],
+      "closed": 1
+    },
+    {
+      "name": "network error retains identity",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [],
+      "phase": "network",
+      "calls": 1,
+      "polls": 1,
+      "outcome": "network",
+      "progress": []
+    },
+    {
+      "name": "retries count within one poll",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 503,
+          "body": {
+            "code": "capacity_unavailable"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "queued",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        },
+        {
+          "status": 200,
+          "body": {
+            "id": "build/1",
+            "deployment_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+            "kind": "tarball",
+            "source_bytes": 1,
+            "status": "succeeded",
+            "enqueued_at": "2026-11-14T13:20:00Z"
+          }
+        }
+      ],
+      "max_polls": 2,
+      "max_attempts": 2,
+      "calls": 3,
+      "polls": 2,
+      "progress": [
+        "queued",
+        "succeeded"
+      ],
+      "attempts": [
+        1,
+        2,
+        1
+      ]
+    },
+    {
+      "name": "Retry After respects whole waiter deadline",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 503,
+          "body": {
+            "code": "capacity_unavailable"
+          },
+          "retry_after": "60"
+        }
+      ],
+      "timeout_ms": 20,
+      "max_attempts": 2,
+      "calls": 1,
+      "polls": 1,
+      "outcome": "timeout",
+      "last": null,
+      "progress": []
+    },
+    {
+      "name": "HTTP 404 preserves Problem identity",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 404,
+          "body": {
+            "code": "not_found",
+            "status": 404,
+            "tx_id": "original-tx"
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "not_found",
+      "progress": []
+    },
+    {
+      "name": "HTTP 401 preserves Problem identity",
+      "resource": "build",
+      "id": "build/1",
+      "responses": [
+        {
+          "status": 401,
+          "body": {
+            "code": "unauthorized",
+            "status": 401,
+            "tx_id": "original-tx"
+          }
+        }
+      ],
+      "calls": 1,
+      "polls": 1,
+      "outcome": "unauthorized",
+      "progress": []
+    }
+  ]
+}

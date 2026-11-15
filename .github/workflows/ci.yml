@@ -2343,6 +2343,8 @@ jobs:
           node-version: '22.10.0'
           cache: 'npm'
           cache-dependency-path: sdk/node/package-lock.json
+      - name: SDK source selection agrees with CLI
+        run: go test sdk/request-contracts/cli-source-preparation_test.go sdk/request-contracts/project-inspection-cli_test.go
       - name: build fakeapid fixture
         working-directory: sdk/fakeapid
         run: go build -o bin/fakeapid .
@@ -2620,6 +2622,7 @@ jobs:
         run: |
           python -m pip install 'pip==26.2.2'
           python -m pip install 'ruamel.yaml==0.19.1' 'openapi-python-client==0.29.0' 'pytest==9.2.0' 'pytest-asyncio==1.4.1' 'httpx==0.28.1'
+          python -m pip install 'build==1.6.1' 'mypy==2.4.1' 'poetry-core>=2,<3'
           python -m pip install -e '.[auth]'
           python -m pip install -r ../../cmd/gregale/templates/rest-api-postgres-python/requirements.txt
           python -m pip install -r ../../cmd/gregale/templates/object-storage-python/requirements.txt

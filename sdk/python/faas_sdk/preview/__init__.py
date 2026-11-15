@@ -28,7 +28,6 @@ from .. import (
     ErrNotFound,
     ErrRateLimited,
     ErrUnauthorized,
-    FaaSClient,
     FaaSClientOptions,
     FaasError,
     FaasProblemError,
@@ -36,7 +35,12 @@ from .. import (
     GregaleReleaseTransport,
     IdempotencyKey,
     Problem,
+    RequestOptions,
+    RequestTimeoutError,
+    ResponseInfo,
+    ResponseObserver,
     RetryOptions,
+    RetryPolicy,
     SseEvent,
     VerifiedWebhook,
     WebhookVerificationError,
@@ -61,7 +65,220 @@ from .. import (
     with_gregale_request_context,
     with_idempotency_key,
 )
+from .. import (
+    AsyncPagination as AsyncPagination,
+)
+from .. import (
+    BuildWaitOptions as BuildWaitOptions,
+)
+from .. import (
+    DeploymentWaitOptions as DeploymentWaitOptions,
+)
+from .. import (
+    PaginationError as PaginationError,
+)
+from .. import (
+    PaginationOptions as PaginationOptions,
+)
+from .. import (
+    PaginationPage as PaginationPage,
+)
+from .. import (
+    SourceUploadCheckpoint as SourceUploadCheckpoint,
+)
+from .. import (
+    SourceUploadCode as SourceUploadCode,
+)
+from .. import (
+    SourceUploadError as SourceUploadError,
+)
+from .. import (
+    SourceUploadOptions as SourceUploadOptions,
+)
+from .. import (
+    SourceUploadProgress as SourceUploadProgress,
+)
+from .. import (
+    SourceUploadStage as SourceUploadStage,
+)
+from .. import (
+    SourceUploadTimeoutError as SourceUploadTimeoutError,
+)
+from .. import (
+    WaiterError as WaiterError,
+)
+from .. import (
+    WaiterFailureCode as WaiterFailureCode,
+)
+from .. import (
+    WaiterOptions as WaiterOptions,
+)
+from .. import (
+    WaiterProgress as WaiterProgress,
+)
+from .. import (
+    WaiterTimeoutError as WaiterTimeoutError,
+)
 from .. import __all__ as _PACKAGE_ALL
+from .. import (
+    load_source_upload_checkpoint as load_source_upload_checkpoint,
+)
+from .. import (
+    save_source_upload_checkpoint as save_source_upload_checkpoint,
+)
+from .._project_inspection import (
+    ProjectBuild as ProjectBuild,
+)
+from .._project_inspection import (
+    ProjectCandidate as ProjectCandidate,
+)
+from .._project_inspection import (
+    ProjectFramework as ProjectFramework,
+)
+from .._project_inspection import (
+    ProjectGeneratedFile as ProjectGeneratedFile,
+)
+from .._project_inspection import (
+    ProjectInput as ProjectInput,
+)
+from .._project_inspection import (
+    ProjectInspectionError as ProjectInspectionError,
+)
+from .._project_inspection import (
+    ProjectInspectionOptions as ProjectInspectionOptions,
+)
+from .._project_inspection import (
+    ProjectIssue as ProjectIssue,
+)
+from .._project_inspection import (
+    ProjectIssueCode as ProjectIssueCode,
+)
+from .._project_inspection import (
+    ProjectPlan as ProjectPlan,
+)
+from .._project_inspection import (
+    ProjectSetting as ProjectSetting,
+)
+from .._project_inspection import (
+    ProjectShape as ProjectShape,
+)
+from .._project_inspection import (
+    inspect_project as inspect_project,
+)
+from .._project_inspection import (
+    validate_project_plan as validate_project_plan,
+)
+from .._project_workflows import (
+    ProjectApplicationResult as ProjectApplicationResult,
+)
+from .._project_workflows import (
+    ProjectApplicationState as ProjectApplicationState,
+)
+from .._project_workflows import (
+    ProjectApplyOptions as ProjectApplyOptions,
+)
+from .._project_workflows import (
+    ProjectArchive as ProjectArchive,
+)
+from .._project_workflows import (
+    ProjectPreviewOptions as ProjectPreviewOptions,
+)
+from .._project_workflows import (
+    ProjectWorkflowCode as ProjectWorkflowCode,
+)
+from .._project_workflows import (
+    ProjectWorkflowError as ProjectWorkflowError,
+)
+from .._project_workflows import (
+    ProjectWorkflowOptions as ProjectWorkflowOptions,
+)
+from .._project_workflows import (
+    ProjectWorkflowPhase as ProjectWorkflowPhase,
+)
+from .._project_workflows import (
+    ProjectWorkflowProgress as ProjectWorkflowProgress,
+)
+from .._project_workflows import (
+    ProjectWorkloadOutcome as ProjectWorkloadOutcome,
+)
+from .._project_workflows import (
+    ProjectWorkloadStatus as ProjectWorkloadStatus,
+)
+from .._project_workflows import (
+    ReviewedProjectPlan as ReviewedProjectPlan,
+)
+from .._project_workflows import (
+    load_project_application_state as load_project_application_state,
+)
+from .._source_deployment import (
+    SourceDeploymentArchive as SourceDeploymentArchive,
+)
+from .._source_deployment import (
+    SourceDeploymentCancelledError as SourceDeploymentCancelledError,
+)
+from .._source_deployment import (
+    SourceDeploymentCode as SourceDeploymentCode,
+)
+from .._source_deployment import (
+    SourceDeploymentError as SourceDeploymentError,
+)
+from .._source_deployment import (
+    SourceDeploymentOptions as SourceDeploymentOptions,
+)
+from .._source_deployment import (
+    SourceDeploymentPhase as SourceDeploymentPhase,
+)
+from .._source_deployment import (
+    SourceDeploymentPreparationOptions as SourceDeploymentPreparationOptions,
+)
+from .._source_deployment import (
+    SourceDeploymentProgress as SourceDeploymentProgress,
+)
+from .._source_deployment import (
+    SourceDeploymentReleaseProgress as SourceDeploymentReleaseProgress,
+)
+from .._source_deployment import (
+    SourceDeploymentResult as SourceDeploymentResult,
+)
+from .._source_deployment import (
+    SourceDeploymentState as SourceDeploymentState,
+)
+from .._source_deployment import (
+    SourceDeploymentWaitOptions as SourceDeploymentWaitOptions,
+)
+from .._source_deployment import (
+    load_source_deployment_state as load_source_deployment_state,
+)
+from .._source_preparation import (
+    PreparedSource as PreparedSource,
+)
+from .._source_preparation import (
+    SourceEntry as SourceEntry,
+)
+from .._source_preparation import (
+    SourceIssue as SourceIssue,
+)
+from .._source_preparation import (
+    SourcePlan as SourcePlan,
+)
+from .._source_preparation import (
+    SourcePreparationCode as SourcePreparationCode,
+)
+from .._source_preparation import (
+    SourcePreparationError as SourcePreparationError,
+)
+from .._source_preparation import (
+    SourcePreparationOptions as SourcePreparationOptions,
+)
+from .._source_preparation import (
+    SourcePreparationProgress as SourcePreparationProgress,
+)
+from .._source_preparation import (
+    inspect_source as inspect_source,
+)
+from .._source_preparation import (
+    prepare_source as prepare_source,
+)
 from ._binding_creation import (
     BindingVerificationCreationError,
     acreate_binding_verification_from_review,
@@ -96,7 +313,7 @@ from ._event_deadline_policy import (
     EventDeadlineRatioOptions,
     EventDeadlineTarget,
 )
-from ._wrapper import FaaSClient
+from ._wrapper import FaaSClient as FaaSClient
 from .ai_gateway import (
     AI_CALL_HEADER,
     AI_SESSION_HEADER,

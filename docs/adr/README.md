@@ -7,6 +7,16 @@
 - [ADR-20261114143410: Structured recovery for CLI Job waits](20261114143410-cli-job-wait-recovery.md) — accepted; Problem diagnostics on stderr, compatible stdout receipts and exact-run, profile-preserving recovery.
 
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
+- [ADR-20261114181406: Resumable SDK source uploads and acceptance recovery](20261114181406-sdk-resumable-source-uploads.md) — accepted; bounded Node/Python archive streaming, durable portable checkpoints, offset reconciliation, and receipt-only recovery after uncertain deployment submission.
+
+- [ADR-20261114163130: Python build and deployment waiters with shared contracts](20261114163130-python-sdk-build-and-deployment-waiters.md) — accepted; typed outcomes and progress, total deadlines, cancellation, poll limits, resume by existing ID, and common Node/Python behavior tests.
+
+- [ADR-20261114013700: Lazy typed Python SDK pagination](20261114013700-python-sdk-lazy-pagination.md) — accepted; deployment/build page and item iterators, exact opaque cursors with datetime compatibility, traversal deadlines, cancellation, limits, and shared Node/Python contracts.
+
+- [ADR-20261114004557: Python SDK async request options and diagnostics](20261114004557-python-sdk-async-request-options.md) — accepted; typed per-operation policy, total async deadlines, cancellation and frozen response metadata, with shared Node/Python behavior contracts and existing caller compatibility.
+- [ADR-20261113210904: Node SDK build and deployment waiters](20261113210904-node-sdk-build-and-deployment-waiters.md) — accepted; bounded read-only observation with typed resource outcomes and progress, existing-ID resume, and shared transport cancellation ownership.
+- [ADR-20261113204237: Lazy typed Node SDK pagination](20261113204237-node-sdk-lazy-pagination.md) — accepted; lazy deployment/build page and item iterators with total deadlines, cancellation, exact work limits, cursor checks, and isolated client snapshots.
+- [ADR-20261113202200: Node SDK request options and response diagnostics](20261113202200-node-sdk-request-options-and-diagnostics.md) — accepted; per-call cancellation, total deadlines and retry overrides on isolated methods, with frozen response metadata and legacy compatibility.
 - [ADR-20261113180307: Bind execution workflows to independent Node clients](20261113180307-node-sdk-bound-execution-workflows.md) — accepted; preview helpers retain one client snapshot across submission, resumed event streams, and terminal receipt reads, with per-caller cancellation and legacy compatibility.
 - [ADR-20261113173610: Independent Node SDK clients](20261113173610-node-sdk-client-isolation.md) — accepted; per-client generated service namespaces and transports, immutable request configuration, and migration from shared FaaSClient/static services.
 - [ADR-20261113133500: Abuse strikes are stored, not counted in memory](20261113133500-persisted-abuse-strikes.md) — accepted; abuse recycles are rows in `account_abuse_strikes`, so the account abuse hold counts across schedds and restarts
@@ -2339,3 +2349,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261114182830: Node cache disk budget and reference-based retention](20261114182830-node-cache-budget-from-disk-and-retention.md) — accepted; filesystem-sized budget, unreferenced capture/base retention and live snapshots evicted last. Renumbered from the startup-window identifier collision.
 
 - [ADR-20261114190002: Customers see their own attention signals; sign-in refusals are recorded](20261114190002-customer-signal-hints-and-credential-refusals.md)
+- [ADR-20261114193000: Local source preparation in the Node and Python SDKs](20261114193000-sdk-local-source-preparation.md) — accepted; inspectable worktree plans, CLI selection contracts, reproducible streaming archives, filesystem checks, deadlines and cancellation.
+- [ADR-20261114201959: Resumable source deployment workflows in the SDKs](20261114201959-sdk-resumable-source-deployment-workflows.md) — accepted; local journals compose preparation, checkpointed uploads, receipt recovery and release observation with one deadline and typed outcomes.
+- [ADR-20261114220642: Typed project inspection in Node and Python](20261114220642-sdk-typed-project-inspection.md) — accepted; immutable discovery plans resolve manifest/workspace intent and bind configuration fingerprints to resumable deployments without rewriting source.
+- [ADR-20261114232023: Reviewed project workflows in Node and Python](20261114232023-sdk-reviewed-project-workflows.md) — accepted; server previews, exact-source cached apply, durable submission receipts and per-service outcomes compose complete local projects.
