@@ -23,8 +23,18 @@ class PlanRenamesTest(unittest.TestCase):
         })
 
     def test_main_ahead_of_the_clock_still_sorts_after(self):
-        got = plan_renames(["20261113000000100_a.sql"], ["20261116000000000_future.sql"], NOW)
-        self.assertEqual(got, {"20261113000000100_a.sql": "20261116000001100_a.sql"})
+        got = plan_renames(["20261113000000100_a.sql"], ["20261116000000000_future.sql"], NOW, jitter=lambda: 61)
+        self.assertEqual(got, {"20261113000000100_a.sql": "20261116000101100_a.sql"})
+
+    def test_main_ahead_of_the_clock_spreads_branches(self):
+        # Two branches landed while main is ahead of the clock must not get
+        # the same version (the +1 s rule gave both 20261116000001100).
+        seen = {plan_renames(["20261113000000100_a.sql"], ["20261116000000000_future.sql"], NOW)["20261113000000100_a.sql"]
+                for _ in range(20)}
+        self.assertGreater(len(seen), 1)
+        for name in seen:
+            self.assertGreater(name[:17], "20261116000000000")
+            self.assertLessEqual(name[:14], "20261116010000")
 
     def test_non_migration_names_are_ignored(self):
         self.assertEqual(plan_renames(["README.md"], ["20261114000000000_x.sql"], NOW), {})

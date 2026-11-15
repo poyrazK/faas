@@ -22,14 +22,16 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable
 
 DIGEST = "schema.sql.migrations.sha256"
 VERSION_RE = re.compile(r"^(\d{17})_(.+\.sql)$")
@@ -60,11 +62,17 @@ def versions(names: list[str]) -> list[tuple[str, str]]:
     return out
 
 
-def plan_renames(branch: list[str], main: list[str], now: datetime) -> dict[str, str]:
+def plan_renames(branch: list[str], main: list[str], now: datetime,
+                 jitter: Callable[[], int] = lambda: random.randint(1, 3600)) -> dict[str, str]:
     """Return old filename -> new filename for branch migrations that main's
     newest migration now precedes or ties. Order among the branch's own
     migrations is kept; new versions share a fresh timestamp and count up
-    from 100 in steps of 100 so later hand-inserts still fit."""
+    from 100 in steps of 100 so later hand-inserts still fit.
+
+    The stamp is the current UTC time. When main already holds a version
+    stamped later than the clock, the stamp is that version plus a random
+    1-3600 s, not plus 1 s: every branch landed in that window would
+    otherwise get the same version and collide once both merge."""
     mine = sorted(versions(branch))
     theirs = versions(main)
     if not mine or not theirs:
@@ -74,7 +82,8 @@ def plan_renames(branch: list[str], main: list[str], now: datetime) -> dict[str,
         return {}
     stamp = now.strftime("%Y%m%d%H%M%S")
     if stamp + "000" <= newest_main:
-        stamp = str(int(newest_main[:14]) + 1)
+        ahead = datetime.strptime(newest_main[:14], "%Y%m%d%H%M%S") + timedelta(seconds=jitter())
+        stamp = ahead.strftime("%Y%m%d%H%M%S")
     renames = {}
     for i, (version, rest) in enumerate(mine, start=1):
         renames[f"{version}_{rest}"] = f"{stamp}{i * 100:03d}_{rest}"
