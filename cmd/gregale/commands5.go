@@ -1024,7 +1024,7 @@ func cmdAppScale(slug string, args []string) int {
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := appClient.UpdateApp(context.Background(), slug, req)
 	if err != nil {
-		return printErr("Scale failed", err)
+		return printErr("Scale failed", explainPerInstanceConcurrencyRefusal(err, explicit["per-instance-concurrency"]))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
