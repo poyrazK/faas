@@ -11,6 +11,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelPendingMFADisable = `-- name: CancelPendingMFADisable :one
+WITH account AS MATERIALIZED (
+    SELECT id FROM accounts WHERE id=$1 FOR UPDATE
+), legacy AS (
+    UPDATE mfa_disable_requests r SET consumed_at=clock_timestamp()
+    FROM account a WHERE r.account_id=a.id AND r.consumed_at IS NULL
+    RETURNING 1
+), durable AS (
+    UPDATE mfa_disable_tokens t SET consumed_at=clock_timestamp()
+    FROM account a WHERE t.account_id=a.id AND t.consumed_at IS NULL AND t.expires_at>clock_timestamp()
+    RETURNING 1
+)
+SELECT ((SELECT count(*) FROM legacy) + (SELECT count(*) FROM durable))::bigint AS cancelled
+`
+
+// A successful second-factor sign-in, or the owner pressing Cancel, ends every
+// pending email-assisted disable (F14-1, ADR-20261115100000). Account lock
+// first, then requests and tokens, matching issuance.
+func (q *Queries) CancelPendingMFADisable(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, cancelPendingMFADisable, id)
+	var cancelled int64
+	err := row.Scan(&cancelled)
+	return cancelled, err
+}
+
 const clearMFA = `-- name: ClearMFA :execrows
 WITH legacy AS (
     UPDATE mfa_disable_requests SET consumed_at=clock_timestamp() WHERE account_id=$1 AND consumed_at IS NULL
@@ -98,6 +123,32 @@ func (q *Queries) MarkMFAEnrolled(ctx context.Context, db DBTX, id pgtype.UUID) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const pendingMFADisableRequestedAt = `-- name: PendingMFADisableRequestedAt :one
+SELECT min(pending.requested_at)::timestamptz AS requested_at FROM (
+    SELECT r.requested_at FROM mfa_disable_requests r
+    WHERE r.account_id=$1::uuid AND r.consumed_at IS NULL
+      AND r.requested_at > clock_timestamp() - make_interval(secs => $2::float8)
+    UNION ALL
+    SELECT t.requested_at FROM mfa_disable_tokens t
+    WHERE t.account_id=$1::uuid AND t.consumed_at IS NULL AND t.expires_at>clock_timestamp()
+) pending
+`
+
+type PendingMFADisableRequestedAtParams struct {
+	AccountID     pgtype.UUID
+	WindowSeconds float64
+}
+
+// The earliest still-usable pending email-assisted disable, for the account
+// page's banner. Legacy requests carry no expiry column; they stop working
+// window_seconds after they were requested.
+func (q *Queries) PendingMFADisableRequestedAt(ctx context.Context, db DBTX, arg PendingMFADisableRequestedAtParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, pendingMFADisableRequestedAt, arg.AccountID, arg.WindowSeconds)
+	var requested_at pgtype.Timestamptz
+	err := row.Scan(&requested_at)
+	return requested_at, err
 }
 
 const savePendingMFASecret = `-- name: SavePendingMFASecret :one
