@@ -57,6 +57,8 @@ const (
 	// rpcRegistryFetch is slice 3j.
 	rpcRegistryFetch         = "RegistryFetch"
 	rpcVerifyPostgresCutover = "VerifyPostgresCutover"
+	// rpcMintInternalServiceToken is slice 3k.
+	rpcMintInternalServiceToken = "MintInternalServiceToken"
 )
 
 var (
@@ -97,7 +99,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	}
 	// Pre-create the series alerts read, so increase() sees the first
 	// refusal instead of a series appearing at 1.
-	for _, rpc := range []string{rpcOpenAppSecrets, rpcGrantPeer, rpcOpenCaptureKey, rpcOpenSidecarEnv, rpcOpenLogDrainHeader, rpcOpenTriggerConfig, rpcOpenEdgeHeaderSecret, rpcRegistryFetch, rpcVerifyPostgresCutover} {
+	for _, rpc := range []string{rpcOpenAppSecrets, rpcGrantPeer, rpcOpenCaptureKey, rpcOpenSidecarEnv, rpcOpenLogDrainHeader, rpcOpenTriggerConfig, rpcOpenEdgeHeaderSecret, rpcRegistryFetch, rpcVerifyPostgresCutover, rpcMintInternalServiceToken} {
 		for _, reason := range []string{ReasonUnauthenticated, ReasonUnknownNode, ReasonNotAuthorized,
 			ReasonBudgetExhausted, ReasonUnreferenced, ReasonWrongAccount, ReasonOtherApp, ReasonEnvelope, ReasonOutOfScope} {
 			m.refusals.WithLabelValues(rpc, reason)

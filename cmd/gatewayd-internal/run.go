@@ -1870,6 +1870,8 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 			return router.toApp(ctx, app)
 		}).
 		WithDeploymentSmokeTargetLoader(newDeploymentSmokeTargetLoader(pgStore)).
+		// ADR 20261114150000 §3: stamp each deployment's killed flags.
+		WithFlagKillLoader(pgStore.FeatureFlagKillsForDeployment).
 		// ADR-733: a 5xx asks for a crash capture; the store applies opt-in,
 		// one-in-flight and cooldown. Off unless FAAS_CRASH_SNAPSHOTS=1.
 		WithCrashCaptureRequester(crashCaptureRequester(pgStore, os.Getenv("FAAS_CRASH_SNAPSHOTS"), crashCaptureRequests)).

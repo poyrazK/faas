@@ -2406,6 +2406,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFeatureFlags)))
 	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/flags", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateFeatureFlags))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/versions", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFeatureFlagVersions)))
+	// ADR 20261114150000 §4: owner, expiry, staleness and evaluation per flag.
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFeatureFlagLifecycle)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rollbackFeatureFlags))))
 	// ADR-20261104120000: enable the crons a full clone copied paused into a stage.
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/automation/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.resumeEnvironmentAutomation))))
@@ -4707,6 +4709,18 @@ func (s *server) handler() http.Handler {
 	// ADR-20261113123000: customers who are probably stuck.
 	mux.HandleFunc("GET /v1/admin/obs/attention",
 		s.authLimited(s.requireOperatorSessionRead(s.obsListAttention)))
+	// ADR-20261115175927: the operator console's signal actions and the
+	// customer's own health view.
+	mux.HandleFunc("GET /v1/admin/obs/attention/summary",
+		s.authLimited(s.requireOperatorSessionRead(s.obsAttentionSummary)))
+	mux.HandleFunc("GET /v1/admin/obs/attention/{id}/contact-draft",
+		s.authLimited(s.requireOperatorSessionRead(s.obsAttentionContactDraft)))
+	mux.Handle("POST /v1/admin/obs/attention/{id}/dismiss",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.requireSessionPrincipal(s.postObsAttentionDismiss)))))
+	mux.Handle("POST /v1/admin/obs/attention/{id}/contact",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.requireSessionPrincipal(s.postObsAttentionContact)))))
+	mux.HandleFunc("GET /v1/admin/obs/tenants/{id}/health",
+		s.authLimited(s.requireOperatorSessionRead(s.obsTenantHealth)))
 	mux.HandleFunc("GET /v1/admin/obs/capacity",
 		s.authLimited(s.requireOperatorRead(s.obsCapacity)))
 	mux.HandleFunc("GET /v1/admin/obs/tenants/{id}/360",

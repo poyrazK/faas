@@ -1,6 +1,6 @@
 // Package attention finds customers who are probably stuck and keeps one
 // signal per account, kind and subject for support (ADR-20261113123000,
-// round 2 ADR-20261113180000).
+// round 2 ADR-20261115175928).
 //
 // An evaluation runs the rules against data the platform already stores
 // (failed deployments, recorded API refusals, custom-domain status, runtime
@@ -380,7 +380,7 @@ func (e *Evaluator) List(ctx context.Context, f Filter) ([]api.ObsAttentionSigna
 	}
 	rows, err := e.Pool.Query(ctx, `SELECT `+signalColumns+`
 		FROM customer_attention_signals
-		WHERE state = ANY($1) AND ($2 = '' OR account_id::text = $2) AND ($3 = '' OR kind = $3)
+		WHERE state = ANY($1) AND ($2 = '' OR account_id = NULLIF($2, '')::uuid) AND ($3 = '' OR kind = $3)
 		ORDER BY last_seen_at DESC, id DESC LIMIT $4`, f.States, f.AccountID, f.Kind, f.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("attention: list: %w", err)

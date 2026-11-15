@@ -28649,6 +28649,41 @@ func (s *PgStore) PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.Cl
 	return api.CliAuthStatus(status), aid, nil
 }
 
+// RecordCliAuthRequester implements CliAuthRequesterStore. It runs right
+// after the mint, so the row is in its stored (keyed) form.
+func (s *PgStore) RecordCliAuthRequester(ctx context.Context, tokenHash []byte, ip string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update cli_auth_codes set requester_ip = $2
+		 where token_hash = $1 and status = 'pending' and account_id is null`,
+		storedCredential(credTagCLIAuthCode, tokenHash), ip)
+	if err != nil {
+		return fmt.Errorf("record cli auth requester: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CliAuthRequester implements CliAuthRequesterStore.
+func (s *PgStore) CliAuthRequester(ctx context.Context, tokenHash []byte) (CliAuthRequest, error) {
+	return firstCredential(ctx, credentialLookups(credTagCLIAuthCode, tokenHash), func(ctx context.Context, value []byte) (CliAuthRequest, error) {
+		var req CliAuthRequest
+		var ip *string
+		err := s.pool.QueryRow(ctx,
+			`select requester_ip, created_at from cli_auth_codes
+			 where token_hash = $1 and expires_at > now()`,
+			value).Scan(&ip, &req.CreatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return req, ErrNotFound
+		}
+		if ip != nil {
+			req.IP = *ip
+		}
+		return req, err
+	})
+}
+
 // ClaimCliAuthCode atomically transitions pending → consumed and binds
 // account_id in one statement. Two error shapes distinguish the
 // reasons a claim can fail (handler renders different banners):
@@ -28795,11 +28830,15 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 // IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore. A colliding
 // short code is refused rather than ignored: it would bind the device code
 // to someone else's pending row.
-func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash, verifierHash []byte, expiresAt time.Time) error {
+	var verifier []byte
+	if len(verifierHash) > 0 {
+		verifier = verifierHash
+	}
 	tag, err := s.pool.Exec(ctx,
-		`insert into cli_auth_codes (token_hash, device_hash, expires_at) values ($1, $2, $3)
+		`insert into cli_auth_codes (token_hash, device_hash, verifier_hash, expires_at) values ($1, $2, $3, $4)
 		 on conflict do nothing`,
-		storedCredential(credTagCLIAuthCode, tokenHash), storedCredential(credTagCLIDeviceCode, deviceHash), expiresAt)
+		storedCredential(credTagCLIAuthCode, tokenHash), storedCredential(credTagCLIDeviceCode, deviceHash), verifier, expiresAt)
 	if err != nil {
 		return err
 	}
@@ -28811,10 +28850,15 @@ func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceH
 
 // ConsumeCliAuthDeviceCode implements CliAuthDeviceCodeStore with
 // ConsumeCliAuthCode's contract, keyed by the device code's hash.
-func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error) {
+func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash, verifierHash []byte) (api.CliAuthStatus, string, error) {
 	lookups := credentialLookups(credTagCLIDeviceCode, deviceHash)
+	var verifier []byte
+	if len(verifierHash) > 0 {
+		verifier = verifierHash
+	}
 	accountID, err := firstCredential(ctx, lookups, func(ctx context.Context, value []byte) (string, error) {
 		var accountID string
+		// A row bound to a verifier needs it ($2 NULL never equals one).
 		err := s.pool.QueryRow(ctx,
 			`update cli_auth_codes
 			 set consumed_at = now()
@@ -28823,8 +28867,9 @@ func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byt
 			   and account_id is not null
 			   and consumed_at is null
 			   and expires_at > now()
+			   and (verifier_hash is null or verifier_hash = $2::bytea)
 			 returning account_id`,
-			value,
+			value, verifier,
 		).Scan(&accountID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound

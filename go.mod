@@ -23,6 +23,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kms v1.61.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.5
 	github.com/aws/smithy-go v1.28.6
+	github.com/bufbuild/protocompile v0.14.1
 	github.com/caddyserver/certmagic v0.25.6
 	github.com/cloudevents/sdk-go/v2 v2.16.2
 	github.com/corazawaf/coraza-coreruleset/v4 v4.25.0
@@ -403,7 +404,7 @@ require (
 	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20260811152304-ee035b5b010f // indirect
 	golang.org/x/mod v0.42.0
-	golang.org/x/tools v0.51.0 // indirect
+	golang.org/x/tools v0.51.0
 	google.golang.org/genproto/googleapis/api v0.0.0-20261005182115-fad411399dd8 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect

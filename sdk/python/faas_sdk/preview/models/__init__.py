@@ -1465,7 +1465,9 @@ from .dev_postgres_request import DevPostgresRequest
 from .dev_postgres_response import DevPostgresResponse
 from .dev_postgres_response_binding_state import DevPostgresResponseBindingState
 from .dev_postgres_response_state import DevPostgresResponseState
+from .dev_session_list_response import DevSessionListResponse
 from .dev_session_response import DevSessionResponse
+from .dev_session_summary import DevSessionSummary
 from .dev_sync_history_item import DevSyncHistoryItem
 from .dev_sync_history_item_status import DevSyncHistoryItemStatus
 from .dev_sync_history_response import DevSyncHistoryResponse
@@ -2235,6 +2237,8 @@ from .fire_cron_request_response import FireCronRequestResponse
 from .fire_cron_request_response_status import FireCronRequestResponseStatus
 from .fire_cron_response import FireCronResponse
 from .fire_cron_response_status import FireCronResponseStatus
+from .flag_condition import FlagCondition
+from .flag_condition_op import FlagConditionOp
 from .flag_decision import FlagDecision
 from .flag_decision_inherited_from import FlagDecisionInheritedFrom
 from .flag_decision_reason import FlagDecisionReason
@@ -2242,6 +2246,10 @@ from .flag_decision_source import FlagDecisionSource
 from .flag_decision_type import FlagDecisionType
 from .flag_evidence import FlagEvidence
 from .flag_evidence_page import FlagEvidencePage
+from .flag_lifecycle import FlagLifecycle
+from .flag_lifecycle_attention_item import FlagLifecycleAttentionItem
+from .flag_lifecycle_evidence import FlagLifecycleEvidence
+from .flag_lifecycle_report import FlagLifecycleReport
 from .flag_outcome import FlagOutcome
 from .flag_outcome_type import FlagOutcomeType
 from .flag_outcomes_response import FlagOutcomesResponse
@@ -2399,6 +2407,7 @@ from .inspect_durable_entity_quota_policy_response_200 import InspectDurableEnti
 from .inspect_durable_entity_registry_cleanup_response_200 import InspectDurableEntityRegistryCleanupResponse200
 from .inspect_durable_entity_tenant_quotas_response_200 import InspectDurableEntityTenantQuotasResponse200
 from .inspect_feature_flag_request import InspectFeatureFlagRequest
+from .inspect_feature_flag_request_attributes import InspectFeatureFlagRequestAttributes
 from .install_bind_request import InstallBindRequest
 from .install_bind_request_deploy_branches import InstallBindRequestDeployBranches
 from .install_bind_response import InstallBindResponse
@@ -8114,7 +8123,9 @@ __all__ = (
     "DevPostgresResponse",
     "DevPostgresResponseBindingState",
     "DevPostgresResponseState",
+    "DevSessionListResponse",
     "DevSessionResponse",
+    "DevSessionSummary",
     "DevSyncHistoryItem",
     "DevSyncHistoryItemStatus",
     "DevSyncHistoryResponse",
@@ -8846,6 +8857,8 @@ __all__ = (
     "FireCronRequestResponseStatus",
     "FireCronResponse",
     "FireCronResponseStatus",
+    "FlagCondition",
+    "FlagConditionOp",
     "FlagDecision",
     "FlagDecisionInheritedFrom",
     "FlagDecisionReason",
@@ -8853,6 +8866,10 @@ __all__ = (
     "FlagDecisionType",
     "FlagEvidence",
     "FlagEvidencePage",
+    "FlagLifecycle",
+    "FlagLifecycleAttentionItem",
+    "FlagLifecycleEvidence",
+    "FlagLifecycleReport",
     "FlagOutcome",
     "FlagOutcomesResponse",
     "FlagOutcomeType",
@@ -9006,6 +9023,7 @@ __all__ = (
     "InspectDurableEntityRegistryCleanupResponse200",
     "InspectDurableEntityTenantQuotasResponse200",
     "InspectFeatureFlagRequest",
+    "InspectFeatureFlagRequestAttributes",
     "InstallBindRequest",
     "InstallBindRequestDeployBranches",
     "InstallBindResponse",
