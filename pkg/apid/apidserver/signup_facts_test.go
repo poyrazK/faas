@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -84,5 +85,39 @@ func TestSignupFactsWithoutGeoDatabases(t *testing.T) {
 	got := signupFactsFor(t, store, "person@example.com")
 	if got.SignupIP != "203.0.113.20" || got.Country != "" || got.ASN != 0 || got.EmailDomain != "example.com" || got.DisposableEmail {
 		t.Fatalf("signup facts without GeoIP = %+v", got)
+	}
+}
+
+// adr: 20261114174600 — a sign-up from an abuse-held account's network is
+// flagged (linked), and the sign-up itself still succeeds.
+func TestSignupLinksToHeldAccount(t *testing.T) {
+	store, signup := signupFactsFixture(t, false)
+	if code := signup("abuser@acme-test.io", "198.51.100.40:4000"); code >= 300 {
+		t.Fatalf("first sign-up: %d", code)
+	}
+	held, err := store.AccountByEmail(context.Background(), "abuser@acme-test.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetAccountAbuseHold(context.Background(), held.ID, state.AccountAbuseHoldCPUSustained, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if code := signup("again@gmail.com", "198.51.100.41:4000"); code >= 300 {
+		t.Fatalf("sign-up from the held account's network was refused: %d; linking is flag only", code)
+	}
+	again, err := store.AccountByEmail(context.Background(), "again@gmail.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	links, err := store.AccountHeldLinks(context.Background(), again.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 || links[0].HeldAccountID != held.ID || links[0].Signal != state.HeldLinkSignalNetwork ||
+		links[0].HeldReason != state.AccountAbuseHoldCPUSustained {
+		t.Fatalf("links = %+v; want one signup_network link to the held account (gmail.com never links by domain)", links)
+	}
+	if again.AbuseHeld() {
+		t.Fatal("the linked account was held; linking must only flag")
 	}
 }
