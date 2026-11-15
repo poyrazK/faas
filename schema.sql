@@ -56929,7 +56929,7 @@ CREATE TABLE public.release_database_switches (
     CONSTRAINT release_database_switches_requested_by_check CHECK ((length(requested_by) <= 200)),
     CONSTRAINT release_database_switches_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text)),
     CONSTRAINT release_database_switches_target_name_check CHECK (((length(target_name) >= 1) AND (length(target_name) <= 63))),
-    CONSTRAINT release_database_switches_undone_deployment_ids_check CHECK (((cardinality(undone_deployment_ids) >= 1) AND (cardinality(undone_deployment_ids) <= 64)))
+    CONSTRAINT release_database_switches_undone_deployment_ids_v2_check CHECK (((cardinality(undone_deployment_ids) >= 0) AND (cardinality(undone_deployment_ids) <= 64)))
 );
 
 
