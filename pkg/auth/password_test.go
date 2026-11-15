@@ -146,9 +146,11 @@ func TestValidate(t *testing.T) {
 		{"empty", "", false},
 		{"one_short", "a", false},
 		{"one_below_floor", strings.Repeat("a", MinPasswordLen-1), false},
-		{"exactly_floor", strings.Repeat("a", MinPasswordLen), true},
-		{"above_floor", strings.Repeat("a", MinPasswordLen+1), true},
-		{"long", strings.Repeat("a", 128), true},
+		// Not one repeated character: that is refused as a pattern
+		// (ErrPasswordBreached, covered in breached_passwords_test.go).
+		{"exactly_floor", strings.Repeat("xk3!", 4)[:MinPasswordLen], true},
+		{"above_floor", strings.Repeat("xk3!", 4)[:MinPasswordLen+1], true},
+		{"long", strings.Repeat("xk3!", 32), true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
