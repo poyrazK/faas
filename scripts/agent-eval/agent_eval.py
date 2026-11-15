@@ -25,6 +25,7 @@ and projects that appear in the account during a run are attributed to it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -39,12 +40,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from management_proxy import ManagementProxy
+
 HERE = Path(__file__).resolve().parent
 TASKS = HERE / "tasks.json"
 AGENTS = ("claude", "codex", "gemini", "cursor")
 AGENT_BINARIES = {"claude": "claude", "codex": "codex", "gemini": "gemini", "cursor": "cursor-agent"}
-TOOLSETS = ("core", "release", "diagnose", "all", "none")
-SETUP_KINDS = ("deploy", "replace")
+TOOLSETS = ("core", "release", "diagnose", "provision", "operate", "all", "none")
+SETUP_KINDS = ("deploy", "replace", "cron")
 CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps")
 FEATURE_KINDS = ("command", "file", "state")
 FEATURE_STATES = ("project_created",)
@@ -115,6 +118,12 @@ def load_tasks(path: Path = TASKS) -> list[dict]:
                     raise EvalError(f"{tid}: feature {feature['id']} needs a valid pattern: {error}") from None
         if task.get("budget_usd", 0) <= 0 or task.get("timeout_s", 0) <= 0:
             raise EvalError(f"{tid}: budget_usd and timeout_s must be positive")
+        management = task.get("management")
+        if management is not None and (not isinstance(management, dict) or task.get("repo") or
+                set(management) - {"read_only", "lost_cron_reply", "mcp_only"} or
+                any(not isinstance(value, bool) for value in management.values()) or
+                management.get("read_only") and management.get("lost_cron_reply")):
+            raise EvalError(f"{tid}: invalid management evaluation settings")
     return tasks
 
 
@@ -146,11 +155,11 @@ def checkout(url: str, commit: str, project: Path) -> None:
             raise EvalError(f"checkout {url}@{commit[:12]}: git {args[0]}: {done.stderr[-300:]}")
 
 
-def task_prompt(task: dict, slug: str, toolset: str) -> str:
+def task_prompt(task: dict, slug: str, toolset: str, setup: dict | None = None) -> str:
     if task.get("repo"):
         # The person's own words; nothing about Gregale is added.
         return task["prompt"].format(repo_url=task["repo"]["url"])
-    return task["prompt"].format(app=slug) + " The gregale CLI is installed and logged in" + (
+    return task["prompt"].format(app=slug, **(setup or {})) + " The gregale CLI is installed and logged in" + (
         " and the Gregale MCP server is connected." if toolset != "none" else ".")
 
 
@@ -838,7 +847,10 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
     record = {"task": task["id"], "agent": agent, "toolset": toolset, "app": slug, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     created: dict = {"apps": [], "projects": []}
     before, evidence = None, ""
+    proxy, setup, unchanged = None, {}, None
     try:
+        if task.get("management") and not gregale.token:
+            raise EvalError("management fault/observation tasks require GREGALE_EVAL_TOKEN for a dedicated evaluation account")
         before = gregale.inventory()
         if task.get("repo"):
             checkout(task["repo"]["url"], task["repo"]["commit"], project)
@@ -853,8 +865,19 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
                 result = gregale.cli("deploy", "--path", str(project), "--name", slug, "--app", "--yes", cwd=project, timeout=1200)
                 if (result.returncode == 0) != (step.get("expect", "success") == "success"):
                     raise EvalError(f"setup deploy exit {result.returncode}: {result.stderr[-300:]}")
-        command, extra_env = agent_command(agent, task_prompt(task, slug, toolset), task, run_dir, project, gregale, toolset, options)
-        env = {**gregale.env(), **extra_env}
+            elif step["kind"] == "cron":
+                result = gregale.cli("crons", "add", "--app", slug, "--schedule", "0 3 * * *", "--path", "/")
+                if result.returncode != 0:
+                    raise EvalError("setup cron failed; the evaluation account needs a cron-enabled plan")
+                setup["cron_id"] = _json_output(result.stdout)["id"]
+        agent_access = gregale
+        if task.get("management"):
+            proxy = ManagementProxy(gregale.api, gregale.token, slug, task["management"].get("lost_cron_reply", False))
+            agent_access = Gregale(gregale.binary, proxy.start(), gregale.token)
+        command, extra_env = agent_command(agent, task_prompt(task, slug, toolset, setup), task, run_dir, project, agent_access, toolset, options)
+        env = {**agent_access.env(), **extra_env}
+        if task.get("management", {}).get("read_only"):
+            unchanged = project_fingerprints(project)
         # The agent's shell `gregale` must be the binary under test.
         (run_dir / "bin").mkdir()
         (run_dir / "bin" / "gregale").symlink_to(Path(gregale.binary).resolve())
@@ -891,6 +914,9 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         record.update({k: v for k, v in metrics.items() if k != "tool_inputs"})
         record["created"] = created
         record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"])
+        if proxy:
+            record["management"] = proxy.report()
+            record["checks"].extend(management_checks(task["management"], record["management"], metrics, project, unchanged, gregale, setup))
         record["success"] = all(check["ok"] for check in record["checks"])
         record.update(grade_features(task, metrics["commands"], project, created))
         record["anti_patterns"] = grade_anti_patterns(metrics["commands"])
@@ -902,6 +928,8 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
     except (EvalError, subprocess.TimeoutExpired, OSError, ValueError, urllib.error.URLError) as error:
         record.update(success=False, error=str(error))
     finally:
+        if proxy:
+            proxy.close()
         if not options.keep_apps:
             try:
                 if before is not None and not created.get("apps") and not created.get("projects"):
@@ -916,6 +944,34 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
             record["run_dir"] = str(run_dir)
     record["answer"] = (record.get("answer") or "")[:500]
     return record
+
+
+def project_fingerprints(project: Path) -> dict:
+    return {str(path.relative_to(project)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in project.rglob("*") if path.is_file() and not path.is_symlink()
+            and ".git" not in path.relative_to(project).parts}
+
+
+def management_checks(settings, report, metrics, project, unchanged, gregale, setup):
+    """Grade observed behavior, never the model's assertion that it succeeded."""
+    checks = []
+    if settings.get("mcp_only"):
+        used_mcp = any("gregale" in name for name in metrics.get("tool_calls", {}))
+        checks.append({"kind": "mcp_only", "ok": used_mcp and not metrics.get("commands"), "detail": "requires MCP calls and no shell commands"})
+    if settings.get("read_only"):
+        checks.append({"kind": "no_api_writes", "ok": report["mutation_requests"] == 0, "detail": f"{report['mutation_requests']} observed mutation requests"})
+        checks.append({"kind": "unchanged_files", "ok": unchanged == project_fingerprints(project), "detail": "compares file names and content hashes"})
+    if settings.get("lost_cron_reply"):
+        checks.append({"kind": "same_cron_attempt", "ok": report["lost_replies"] == 1 and report["cron_attempts"] == 1 and report["changed_input_retries"] == 0 and report.get("unexpected_mutations",0) == 0,
+                       "detail": "requires one lost committed reply and unchanged retries of one native attempt"})
+        deleted = False
+        if setup.get("cron_id"):
+            try:
+                gregale.get("/v1/crons/" + setup["cron_id"])
+            except urllib.error.HTTPError as error:
+                deleted = error.code == 404
+        checks.append({"kind": "cron_deleted", "ok": deleted, "detail": "independent native target lookup"})
+    return checks
 
 
 def summarize(records: list[dict]) -> str:

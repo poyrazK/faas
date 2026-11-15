@@ -47,16 +47,28 @@
     "id": "diagnose-failure",
     "title": "Name the root cause of a failed deploy without changing anything",
     "template": "hello-node",
+    "management": {"read_only": true, "mcp_only": true},
     "setup": [
       {"kind": "replace", "file": "handler.js", "old": "import express from \"express\";", "new": "import express from \"express\";\nimport { settings } from \"./settings.js\";"},
       {"kind": "deploy", "expect": "failure"}
     ],
-    "prompt": "The latest deployment of the app {app} on Gregale failed. Find the root cause using Gregale and explain it in one sentence. Do not change any files or deploy anything.",
+    "prompt": "The latest deployment of the app {app} on Gregale failed. Find the root cause using only the Gregale MCP tools and explain it in one sentence. Do not run shell commands, change any files, deploy anything or make configuration changes.",
     "checks": [
       {"kind": "answer", "pattern": "settings\\.js|ERR_MODULE_NOT_FOUND|Cannot find module"},
       {"kind": "file_contains", "file": "handler.js", "text": "./settings.js"}
     ],
     "budget_usd": 2.0,
+    "timeout_s": 600
+  },
+  {
+    "id": "delete-cron-lost-reply",
+    "title": "Recover a reviewed cron deletion after its first committed reply is lost",
+    "template": "hello-node",
+    "setup": [{"kind": "deploy"}, {"kind": "cron"}],
+    "management": {"lost_cron_reply": true, "mcp_only": true},
+    "prompt": "Delete cron {cron_id} from the app {app}, using only the Gregale MCP tools. Review the exact target and carry the deletion through to completion. Recover any interrupted operation using its original plan and inspect the result. Do not run shell commands, change files, deploy or create replacement crons.",
+    "checks": [{"kind": "http", "path": "/", "status": 200, "contains": "hello from gregale"}],
+    "budget_usd": 3.0,
     "timeout_s": 600
   },
   {
