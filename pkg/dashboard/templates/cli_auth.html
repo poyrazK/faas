@@ -119,7 +119,12 @@
       <p class="code-label">Authorization code</p>
       <div class="code">{{index .Data "Code"}}</div>
       {{else if index .Data "LoopbackPort"}}
-      <p class="fine">Only continue if you ran <code>gregale login</code> yourself, just now, on this computer.</p>
+      {{/* F10-3 (ADR-20261115160000): approving hands a 30-day sign-in to
+          whatever listens on this port, so a link naming another program's
+          port could leak it. The person checks the code and port first. */}}
+      <p class="code-label">Code shown in your terminal</p>
+      <div class="code">{{index .Data "Code"}}</div>
+      <p class="errorbox">Only continue if you ran <code>gregale login</code> yourself, just now, on this computer, and your terminal shows this code. Authorizing hands a 30-day sign-in to the program listening on port {{index .Data "LoopbackPort"}} of this computer.</p>
       {{else}}
       <p class="errorbox">Only continue if you ran <code>gregale login</code> yourself, just now, on a computer you control. Anyone who sent you this link gets access to your account if you approve it.</p>
       {{end}}
