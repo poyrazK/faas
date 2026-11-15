@@ -116,10 +116,12 @@ func run(args []string) (status int) {
 	}()
 	resetCapabilityView()
 	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
+	previousFlagHelpPath := invokedFlagHelpPath
 	defer func() {
 		jsonOutput = previousJSON
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
+		invokedFlagHelpPath = previousFlagHelpPath
 	}()
 	previousRetries := httpReadRetries
 	httpReadRetries = 0
@@ -235,6 +237,10 @@ func run(args []string) (status int) {
 	}
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
+	invokedFlagHelpPath = ""
+	if jsonOutput {
+		invokedFlagHelpPath = flagDiagnosticInvocationPath(typed)
+	}
 	previousHelpPrinted, previousHelpPath := flagHelpPrinted, helpRequestPath
 	flagHelpPrinted, helpRequestPath = false, ""
 	if jsonUsageHelp {
