@@ -99,6 +99,7 @@ func runLocalTest(parent context.Context, name string, scenario testScenario, ma
 
 func runLocalTestWithLoad(parent context.Context, name string, scenario testScenario, manifestDir, baseURL string, data testDataCase, load *testLoadConfig) (receipt testRunReceipt) {
 	receipt = testRunReceipt{Behavior: newTestBehaviorEvidence(scenario.Behavior), Scenario: name, Profile: "local", Engine: "local", Case: data.Name, Status: "failed", StartedAt: time.Now().UTC()}
+	parent = withTestGRPCScenario(parent, scenario.GRPC, manifestDir)
 	if load != nil {
 		receipt.Load = newTestLoadEvidence(load)
 	}
