@@ -41,8 +41,17 @@ func addPostgresUnsupported(ctx context.Context, client addPostgresCapabilities,
 // printAddPostgresMigrationHint tells a developer who just bound a runtime
 // credential how schema changes are applied: the runtime role has no DDL, and
 // serving instances never receive migration credentials.
-func printAddPostgresMigrationHint(w io.Writer, database, app, scope, access string) {
+func printAddPostgresMigrationHint(w io.Writer, database, app, appType, scope, access string) {
 	if access != "read_write" {
+		return
+	}
+	// A migration credential reaches release tasks only, and a function app
+	// cannot run one (no container image; the deploy refuses
+	// release.command), so the app-route advice would lead to a dead end.
+	if appType == "function" {
+		_, _ = fmt.Fprintf(w, "Schema changes need a migration binding run from a release task, which function apps cannot run.\n"+
+			"  Run migrations from an app (type: app) in the same project that declares release.command:\n"+
+			"  gregale postgres attach %s <app> --scope %s --access migration --env MIGRATION_DATABASE_URL\n", database, scope)
 		return
 	}
 	_, _ = fmt.Fprintf(w, "Schema changes need a migration binding run from a release task:\n  gregale postgres attach %s %s --scope %s --access migration --env MIGRATION_DATABASE_URL\n  then set release.command in gregale.yaml (for example: python migrate.py).\n", database, app, scope)
