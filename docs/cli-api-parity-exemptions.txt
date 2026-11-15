@@ -10,20 +10,11 @@
 #
 # Format: <Request>.<json_field> <reason>
 
-CreateDeploymentOverrides.liveness_probe no CLI flag or gregale.yaml key; API-only today
+CreateDeploymentOverrides.liveness_probe API-only on purpose (#7221): strict liveness checks cause restart loops; the default probe is tolerant
 CreateDeploymentOverrides.env_secrets gregale env set seals values on the app instead
 CreateDeploymentRequest.expected_review set by the dashboard's reviewed deploy
 CreateDeploymentRequest.native_rollout API-only today
 CreateDeploymentRequest.sidecars legacy list; gregale deploy sends companions
 CreateDeploymentRequest.full_rootfs_allow_auto API-only today
 CreateDeploymentRequest.full_rootfs_override API-only today
-UpdateAppRequest.request_rate_limit_rps API-only today
-UpdateAppRequest.request_rate_limit_burst API-only today
-UpdateAppRequest.favicon API-only today
-UpdateAppRequest.robots_txt API-only today
-UpdateAppRequest.session_affinity API-only today
-UpdateAppRequest.version_affinity_cookie API-only today
-UpdateAppRequest.version_affinity_managed_cookie API-only today
 UpdateAppRequest.declared_routes app route declarations; API-only today
-UpdateAppRequest.cors_default_enabled API-only today
-UpdateAppRequest.cors_default_origins API-only today

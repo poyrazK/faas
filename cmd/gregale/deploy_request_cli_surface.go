@@ -45,6 +45,6 @@ var deployOverridesCLISurfaces = map[string]updateAppCLISurface{
 	"main_depends_on": {Path: "gregale.yaml main_depends_on"},
 	"healthcheck":     {Path: "gregale deploy --healthcheck-path / --healthcheck-grpc", AppFlags: []string{"healthcheck-path", "healthcheck-grpc"}},
 	"readiness_probe": {Path: "gregale deploy --readiness-path / gregale.yaml hosting.readiness_probe", AppFlags: []string{"readiness-path"}},
-	"liveness_probe":  {KnownGap: "no CLI flag or gregale.yaml key; API-only today"},
+	"liveness_probe":  {KnownGap: "API-only on purpose (#7221): strict liveness checks cause restart loops"},
 	"scope":           {Path: "gregale deploy --env"},
 }
