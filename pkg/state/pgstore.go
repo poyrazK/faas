@@ -18207,9 +18207,19 @@ func (s *PgStore) CancelPendingInvocation(ctx context.Context, id string) (Invoc
 		return "", fmt.Errorf("state: pending invocation cancel begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	result, err := cancelPendingInvocationTx(ctx, tx, id)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("state: pending invocation cancel commit: %w", err)
+	}
+	return result, nil
+}
 
+func cancelPendingInvocationTx(ctx context.Context, tx pgx.Tx, id string) (InvocationState, error) {
 	var cancelledState string
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		update invocations
 		   set state = 'cancelled',
 		       quota_reserved = false,
@@ -18224,9 +18234,6 @@ func (s *PgStore) CancelPendingInvocation(ctx context.Context, id string) (Invoc
 		if err := operationTransitionTx(ctx, tx, invocation, false); err != nil {
 			return "", err
 		}
-		if err := tx.Commit(ctx); err != nil {
-			return "", fmt.Errorf("state: pending invocation cancel commit: %w", err)
-		}
 		return InvocationCancelled, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -18239,9 +18246,6 @@ func (s *PgStore) CancelPendingInvocation(ctx context.Context, id string) (Invoc
 			return "", ErrNotFound
 		}
 		return "", err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return "", fmt.Errorf("state: pending invocation state commit: %w", err)
 	}
 	return InvocationState(current), nil
 }

@@ -4880,6 +4880,8 @@ type AddTenantHostnameRequest struct {
 // deployment-attached command. Timezone and SkipIfRunning expose scheduling
 // controls; LastFiredAt is the most recent fire stamp written by schedd.
 type CronResponse struct {
+	// ReviewToken binds a reviewed mutation to execution-relevant state.
+	ReviewToken string `json:"review_token,omitempty"`
 	SchedulePolicy      *workpolicy.SchedulePolicy `json:"schedule_policy,omitempty"`
 	FailureRules        *workpolicy.FailureRules   `json:"failure_rules,omitempty"`
 	ID                  string                     `json:"id"`

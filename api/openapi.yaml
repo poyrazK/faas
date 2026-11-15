@@ -34081,6 +34081,94 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/cron-mutations:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [crons]
+      operationId: applyReviewedCronUpdate
+      summary: Atomically apply a reviewed default-scope cron update.
+      description: |
+        Requires deploy:write and current app configuration permission. Bind the exact
+        app and cron identities, review_token from GET /v1/crons/{id}, request_id,
+        private receipt_proof and a fixed expires_at at most 15 minutes in the future.
+        Only schedule, path, timezone and enabled are patchable here. Send delete=false.
+        Native locks check the reviewed execution state in the transaction that commits
+        the update and value-free receipt. Scheduler fire stamps do not stale a review.
+        Retry unchanged inputs with the same request_id; changed inputs conflict.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CronMutationRequest' }
+      responses:
+        '200':
+          description: Original completed mutation receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CronMutationReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Reviewed state, request identity or expiry conflicts. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/apps/{slug}/cron-deletions:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [crons]
+      operationId: advanceReviewedCronDeletion
+      summary: Accept or advance one bounded step of a reviewed cron deletion.
+      description: |
+        Requires deploy:write, current app configuration permission and applicable
+        agent delete approval. Send delete=true and no patch fields. The same complete
+        request binds approval for at most its 15-minute review window. First acceptance
+        records intent; subsequent identical requests cancel queued invocations, detach
+        history in bounded batches and finally delete the cron. Every transaction checks
+        the current owner, reviewed state and retained intent before making changes.
+        A changed cron or superseding reviewed mutation stops the old intent as conflict.
+        Follow accepted/partial receipts with the exact original request; completed is
+        terminal. Expiry ends write authority, including unfinished cleanup. Receipt
+        reads remain available; a new continuation requires a fresh explicit review.
+        Running work may finish. A missing cron does not prove this attempt deleted it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CronMutationRequest' }
+      responses:
+        '200':
+          description: Accepted, partial, completed or conflicting original intent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CronMutationReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Reviewed state, request identity or expiry conflicts. }
+        '428': { description: Human approval required by the agent delete policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/apps/{slug}/cron-mutations/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: request_id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: X-Gregale-Cron-Receipt-Proof, in: header, required: true, schema: { type: string, pattern: '^[a-f0-9]{64}$' } }
+    get:
+      tags: [crons]
+      operationId: getReviewedCronMutationReceipt
+      summary: Read a retained cron mutation receipt without resuming work.
+      description: Requires current app read permission and the original private proof. Available for 24 hours from acceptance, including after cron deletion or review expiry. Returns no cron configuration, proof or write authority.
+      responses:
+        '200':
+          description: Retained original mutation progress.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CronMutationReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/env/batch:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -112078,6 +112166,7 @@ components:
       type: object
       required: [id, app_id, kind, schedule, enabled, timezone, skip_if_running, created_at]
       properties:
+        review_token: { type: string, pattern: '^[a-f0-9]{64}$', description: Native execution-state fingerprint for a reviewed update or deletion; excludes scheduler fire stamps. }
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         kind: { type: string, enum: [http, command], description: "HTTP triggers the app path; command runs argv in a fresh VM using the live deployment selected at fire time." }
@@ -112225,6 +112314,39 @@ components:
         schedule_policy: { $ref: '#/components/schemas/SchedulePolicy' }
         failure_rules: { $ref: '#/components/schemas/FailureRules' }
 
+    CronMutationRequest:
+      type: object
+      required: [request_id, app_id, cron_id, expected_state, receipt_proof, expires_at]
+      properties:
+        request_id: { type: string, format: uuid }
+        app_id: { type: string }
+        cron_id: { type: string }
+        expected_state: { type: string, pattern: '^[a-f0-9]{64}$' }
+        receipt_proof: { type: string, pattern: '^[a-f0-9]{64}$', writeOnly: true }
+        expires_at: { type: string, format: date-time }
+        delete: { type: boolean, default: false }
+        schedule: { type: string }
+        path: { type: string }
+        timezone: { type: string }
+        enabled: { type: boolean }
+    CronMutationReceipt:
+      type: object
+      required: [schema_version, request_id, app_id, cron_id, delete, status, phase, cancelled, detached_invocations, detached_tasks, accepted_at, updated_at, expires_at, retained_until]
+      properties:
+        schema_version: { type: integer, enum: [1] }
+        request_id: { type: string, format: uuid }
+        app_id: { type: string }
+        cron_id: { type: string }
+        delete: { type: boolean }
+        status: { type: string, enum: [accepted, partial, completed, conflict] }
+        phase: { type: string, enum: [cancel_pending, detach_invocations, detach_tasks, delete, complete] }
+        cancelled: { type: integer, format: int64, minimum: 0 }
+        detached_invocations: { type: integer, format: int64, minimum: 0 }
+        detached_tasks: { type: integer, format: int64, minimum: 0 }
+        accepted_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        retained_until: { type: string, format: date-time }
     UpdateCronRequest:
       description: "Partial cron update. Schedule policies apply to HTTP and command Crons. HTTP Cron failure rules match outcome codes; command Cron rules may also match exit codes."
       type: object

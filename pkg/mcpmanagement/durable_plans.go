@@ -17,6 +17,7 @@ type storedPlan struct {
 	Provision          *nativeProvision      `json:",omitempty"`
 	OperationRequest   json.RawMessage       `json:",omitempty"`
 	ConfigReceiptProof string                `json:",omitempty"`
+	CronReceiptProof   string                `json:",omitempty"`
 	LocalReceipt       json.RawMessage       `json:",omitempty"`
 	RegressionResult   *api.DebugRegressionReview
 	BudgetResult       *api.EnvironmentRouteBudgets
@@ -114,10 +115,21 @@ func (m *management) restorePlans() error {
 			if !operationKinds[p.Operation.Kind] || p.Action != "operation_"+p.Operation.Kind || !json.Valid(record.OperationRequest) {
 				return errors.New("stored operation binding mismatch")
 			}
-			if p.Operation.CronHistorySafe && p.Operation.Kind != "cron_update" && p.Operation.Kind != "cron_delete" {
+			if p.Operation.CronHistorySafe && p.Operation.Kind != "cron_update" && p.Operation.Kind != "cron_delete" && !guardedCronOperation(&p) {
 				return errors.New("stored cron history binding mismatch")
 			}
 			p.Operation.Request = record.OperationRequest
+			if guardedCronOperation(&p) {
+				if !api.ValidEnvBatchReceiptProof(record.CronReceiptProof) || !api.ValidEnvBatchReceiptProof(p.Operation.ResourceHash) {
+					return errors.New("invalid stored cron mutation proof")
+				}
+				p.Operation.CronReceiptProof = record.CronReceiptProof
+				if p.Operation.CronReceipt != nil && !validCronReceipt(&p, *p.Operation.CronReceipt) {
+					return errors.New("invalid stored cron mutation receipt")
+				}
+			} else if record.CronReceiptProof != "" {
+				return errors.New("unexpected stored cron mutation proof")
+			}
 			if p.Operation.EnvIdentityPinned || p.Operation.RollbackGuarded {
 				if (p.Operation.Kind != "env" || !p.Operation.EnvIdentityPinned) && (p.Operation.Kind != "config_rollback_guarded" || !p.Operation.RollbackGuarded) || !api.ValidEnvBatchReceiptProof(record.ConfigReceiptProof) {
 					return errors.New("stored configuration receipt proof mismatch")
@@ -174,6 +186,7 @@ func (m *management) persistPlans() error {
 		if p.Operation != nil {
 			r := records[id]
 			r.OperationRequest = p.Operation.Request
+			r.CronReceiptProof = p.Operation.CronReceiptProof
 			if p.Operation.EnvIdentityPinned || p.Operation.RollbackGuarded {
 				r.ConfigReceiptProof = p.Operation.EnvReceiptProof
 			}
@@ -205,6 +218,7 @@ func (m *management) persistPlans() error {
 	}
 	defaults, named := m.serviceAbortOutcomeSnapshots()
 	return m.opts.planStore.updateMany(map[string]any{
+		cronOutcomeNamespace + m.opts.planNamespace:                 cronOutcomeSnapshot{Version: 1, Items: m.cronOutcomes},
 		environmentPromotionOutcomeNamespace + m.opts.planNamespace: environmentRollbackSnapshot{Version: 1, Items: m.environmentPromotionOutcomes},
 		environmentRollbackOutcomeNamespace + m.opts.planNamespace:  environmentRollbackSnapshot{Version: 1, Items: m.environmentRollbackOutcomes},
 		namedServiceAbortOutcomeNamespace + m.opts.planNamespace:    named,

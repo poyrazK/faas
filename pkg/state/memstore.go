@@ -728,8 +728,9 @@ type MemStore struct {
 	// reader. Stored separately from `domains` because the
 	// observation row is per-domain but the doctor's pass
 	// enumerates both custom_domains and tenant_hostnames.
-	doctorObs map[string]DomainDoctorObservation
-	crons     map[string]Cron
+	doctorObs     map[string]DomainDoctorObservation
+	crons         map[string]Cron
+	cronMutations map[string]cronMutationRecord
 	// prewarmIntents mirrors the durable scheduled-capacity queue. The
 	// process-wide mutex provides the same claim serialization as
 	// SELECT ... FOR UPDATE SKIP LOCKED in PgStore.
@@ -14194,6 +14195,10 @@ func (m *MemStore) UpdateCron(ctx context.Context, id string, schedule, path *st
 func (m *MemStore) UpdateCronWithOptions(_ context.Context, id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time, retryOptions ...CronOptions) (Cron, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.updateCronWithOptionsLocked(id, schedule, path, enabled, timezone, skipIfRunning, createdAt, retryOptions...)
+}
+
+func (m *MemStore) updateCronWithOptionsLocked(id string, schedule, path *string, enabled *bool, timezone *string, skipIfRunning *bool, createdAt *time.Time, retryOptions ...CronOptions) (Cron, error) {
 	c, ok := m.crons[id]
 	if !ok {
 		return Cron{}, ErrNotFound

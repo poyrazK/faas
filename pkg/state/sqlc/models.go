@@ -3447,6 +3447,16 @@ type CronFireNowRequest struct {
 	OperationID  pgtype.UUID
 }
 
+type CronMutationReceipt struct {
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	RequestID     pgtype.UUID
+	CronID        pgtype.UUID
+	Status        string
+	Record        []byte
+	RetainedUntil pgtype.Timestamptz
+}
+
 type CustomDomain struct {
 	Domain                        interface{}
 	AppID                         pgtype.UUID

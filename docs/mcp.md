@@ -3625,14 +3625,30 @@ are excluded; catalog state does not prove connectivity or runtime readiness.
 
 Use `gregale_plan_cron_change` to update or delete an exact cron, or
 `gregale_plan_domain_removal` to detach a domain. Apply with
-`gregale_apply_operation`; changed resource ownership/configuration refuses
-the old plan when the bridge observes the change before sending the write.
-The native cron mutation does not yet check that reviewed state atomically;
-concurrent edits can still race with an apply. After an interrupted cron update
-or deletion, inspect the exact cron and its native audit trail rather than
-repeating the write. A missing cron alone does not establish which actor
-deleted it. Native policies remain authoritative. The proposed native guard
-and resumable deletion design is tracked in
+`gregale_apply_operation`. Cron plans use native transactions that check the
+reviewed execution state, immutable app/cron identities and current owner.
+Scheduler fire stamps do not invalidate the review. New plans require a
+control plane with reviewed cron mutation support; old unguarded plans are
+refused rather than replayed through legacy routes. Named-environment cron
+mutations remain outside this default-scope catalog.
+
+An interrupted guarded mutation retains its original plan, attempt ID, private
+receipt proof and payload in the connection journal. Retry that same unexpired
+`plan_id`. Updates commit atomically with a value-free receipt. Deletion first
+accepts intent, then cancels queued invocations, detaches history in bounded
+batches and finally deletes the cron. Each call advances one step and each
+transaction rechecks the review. Follow `recovery` and its polling delay on
+`partial` results. A concurrent edit or superseding review stops the old intent;
+already running work can still finish.
+
+Expiry ends write authority, including unfinished cleanup. With a durable
+journal, `gregale_get_action_outcome` reads the original native receipt under
+current read consent for 24 hours from acceptance, including after plan expiry
+and cron deletion. It reports accepted, partial, completed or conflicting
+progress without resuming work. A missing receipt or cron never proves which
+actor deleted it. Review fresh state explicitly before creating a new intent.
+Deletion keeps native agent delete approval, bound to the exact request for
+the review's 15-minute window. Native policies remain authoritative. See
 [ADR-20261105161908](adr/20261105161908-reviewed-cron-mutation-recovery.md).
 
 For long provisioning, pass `async: true` to `gregale_apply_provision`. It

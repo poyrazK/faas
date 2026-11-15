@@ -113,6 +113,7 @@ type management struct {
 	scalingOutcomes              map[string]scalingOutcomeLookup
 	configOutcomes               map[string]configOutcomeLookup
 	configRollbacks              map[string]configRollbackLookup
+	cronOutcomes                 map[string]cronOutcomeLookup
 	toolPublications             map[string]*toolPublication
 }
 

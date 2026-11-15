@@ -18,6 +18,7 @@ type planListArgs struct {
 }
 
 type planReceipt struct {
+	Kind          string        `json:"kind,omitempty"`
 	SchemaVersion int           `json:"schema_version"`
 	PlanID        string        `json:"plan_id"`
 	App           string        `json:"app,omitempty"`
@@ -48,6 +49,9 @@ func (m *management) completedReceipt(ctx context.Context, p *releasePlan) (any,
 
 func receiptOf(p *releasePlan) planReceipt {
 	r := planReceipt{SchemaVersion: recoveryContractVersion, PlanID: p.ID, App: p.App, Action: p.Action, Scope: p.Scope, Status: "planned", ExpiresAt: p.ExpiresAt, Recovery: Recovery{Action: "inspect"}}
+	if guardedCronOperation(p) {
+		r.Kind = p.Operation.Kind
+	}
 	switch {
 	case p.Provision != nil && p.Provision.Native != nil && p.Provision.Native.CancelRequested && p.localReceipt == nil && p.Provision.Native.Phase != "cancelled":
 		r.Status = "cancellation_requested"
@@ -71,6 +75,11 @@ func receiptOf(p *releasePlan) planReceipt {
 	case p.configReceipt != nil:
 		r.Status = "partial"
 		r.Result = map[string]any{"configuration": p.configReceipt}
+	case guardedCronOperation(p) && p.Operation.CronReceipt != nil:
+		r.Status, r.Result = "partial", p.Operation.CronReceipt
+		if p.Operation.CronReceipt.Status == "conflict" {
+			r.Status = "refused"
+		}
 	case p.Provision != nil && p.Provision.Native != nil && p.attempted:
 		r.Status = "interrupted"
 		if p.Provision.Native.Phase == "cancelled" {

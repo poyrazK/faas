@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
 	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
 	"github.com/onebox-faas/faas/pkg/apid/creditdiscount"
+	"github.com/onebox-faas/faas/pkg/apid/cronmutation"
 	"github.com/onebox-faas/faas/pkg/apid/customererrors"
 	pipelineapi "github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
@@ -3406,6 +3407,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/crons", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployTargetReadSurface...)(s.listCrons))))
 	mux.HandleFunc("POST /v1/crons", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createCron)))))
 	mux.HandleFunc("PATCH /v1/crons/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateCron))))
+	mux.HandleFunc("POST /v1/apps/{slug}/cron-mutations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(cronmutation.Apply(s.cronMutationDeps(false))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/cron-deletions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(cronmutation.Apply(s.cronMutationDeps(true))))))
+	mux.HandleFunc("GET /v1/apps/{slug}/cron-mutations/{request_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(cronmutation.Receipt(s.cronMutationDeps(false))))))
 	mux.HandleFunc("PATCH /v1/crons/{id}/labels", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateCronLabels))))
 	mux.HandleFunc("DELETE /v1/crons/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteCron))))
 	// Single-cron read (issue #791 PR-E / ADR-090 closure). Backs

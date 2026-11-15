@@ -85,7 +85,7 @@ func plannerFor(p *releasePlan) string {
 			return "gregale_plan_env_change"
 		case "config_rollback", "config_rollback_guarded":
 			return "gregale_plan_config_rollback"
-		case "cron_update", "cron_delete":
+		case "cron_update", "cron_delete", "cron_update_guarded", "cron_delete_guarded":
 			return "gregale_plan_cron_change"
 		case "domain_delete":
 			return "gregale_plan_domain_removal"
@@ -323,7 +323,7 @@ func (m *management) receiptRecovery(p *releasePlan, status string) Recovery {
 		return m.recoveryTool(Recovery{Action: "inspect"}, "gregale_get_provision", map[string]any{"plan_id": p.ID})
 	case "interrupted", "outcome_unknown":
 		// Source-bearing temporary CLI plans cannot safely be replayed blindly.
-		if p.Operation != nil && p.Operation.Kind == "env" || p.Provision != nil && p.Provision.Native != nil || p.Action == "deploy" && p.Source == nil {
+		if guardedCronOperation(p) || p.Operation != nil && p.Operation.Kind == "env" || p.Provision != nil && p.Provision.Native != nil || p.Action == "deploy" && p.Source == nil {
 			return m.recoveryTool(Recovery{Action: "retry_same_plan"}, applyToolFor(p), args)
 		}
 		return Recovery{Action: "inspect"}
@@ -336,7 +336,11 @@ func (m *management) recoverableReceipt(p *releasePlan) planReceipt {
 	r := receiptOf(p)
 	verification, _ := m.planVerification(p)
 	r.Verification = &verification
-	r.Recovery = m.receiptRecovery(p, r.Status)
+	if guardedCronOperation(p) && p.Operation.CronReceipt != nil && r.Status != "completed" {
+		r.Recovery = cronReceiptRecovery(m, p)
+	} else {
+		r.Recovery = m.receiptRecovery(p, r.Status)
+	}
 	if r.Problem != nil {
 		problem := *r.Problem
 		problem.Recovery = r.Recovery

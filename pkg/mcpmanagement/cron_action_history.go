@@ -15,6 +15,13 @@ func cronActionPhase(p *releasePlan) (*actionCron, actionPhase) {
 		return nil, phase
 	}
 	cron := &actionCron{ID: p.Operation.ResourceID}
+	if guardedCronOperation(p) && p.attempted {
+		phase.State = "outcome_unknown"
+		if r := p.Operation.CronReceipt; r != nil && validCronReceipt(p, *r) && r.Status == "completed" {
+			phase = actionPhase{State: "accepted", Receipt: &actionReceipt{}}
+		}
+		return cron, phase
+	}
 	if !p.attempted {
 		return cron, phase
 	}

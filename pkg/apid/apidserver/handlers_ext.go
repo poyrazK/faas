@@ -7158,6 +7158,7 @@ func cronResponse(c state.Cron) api.CronResponse {
 		c.Timezone = defaultCronTimezone
 	}
 	resp := api.CronResponse{
+		ReviewToken:     state.CronReviewToken(c),
 		SchedulePolicy:  workpolicy.Clone(c.SchedulePolicy),
 		FailureRules:    workpolicy.Clone(c.FailureRules),
 		ID:              c.ID,

@@ -20,22 +20,24 @@ import (
 // Requests are private journal inputs, not agent-facing plan contents. The
 // encrypted storedPlan explicitly saves them; plans expose only affected keys.
 type operationPlan struct {
-	Changes           json.RawMessage         `json:"changes,omitempty"`
-	Kind              string                  `json:"kind"`
-	Request           json.RawMessage         `json:"-"`
-	Keys              []string                `json:"keys,omitempty"`
-	ResourceID        string                  `json:"resource_id,omitempty"`
-	ExpectedRevision  int64                   `json:"expected_revision,omitempty"`
-	ScalingBefore     *api.AppScalingSnapshot `json:"scaling_before,omitempty"`
-	EnvIdentityPinned bool                    `json:"env_identity_pinned,omitempty"`
-	RollbackGuarded   bool                    `json:"rollback_guarded,omitempty"`
-	CronHistorySafe   bool                    `json:"cron_history_safe,omitempty"`
-	EnvReceiptProof   string                  `json:"-"`
-	AppHash           string                  `json:"app_configuration_hash"`
-	ResourceHash      string                  `json:"resource_hash,omitempty"`
+	Changes           json.RawMessage          `json:"changes,omitempty"`
+	Kind              string                   `json:"kind"`
+	Request           json.RawMessage          `json:"-"`
+	Keys              []string                 `json:"keys,omitempty"`
+	ResourceID        string                   `json:"resource_id,omitempty"`
+	ExpectedRevision  int64                    `json:"expected_revision,omitempty"`
+	ScalingBefore     *api.AppScalingSnapshot  `json:"scaling_before,omitempty"`
+	EnvIdentityPinned bool                     `json:"env_identity_pinned,omitempty"`
+	RollbackGuarded   bool                     `json:"rollback_guarded,omitempty"`
+	CronHistorySafe   bool                     `json:"cron_history_safe,omitempty"`
+	CronReceiptProof  string                   `json:"-"`
+	CronReceipt       *api.CronMutationReceipt `json:"cron_receipt,omitempty"`
+	EnvReceiptProof   string                   `json:"-"`
+	AppHash           string                   `json:"app_configuration_hash"`
+	ResourceHash      string                   `json:"resource_hash,omitempty"`
 }
 
-var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true}
+var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "cron_update_guarded": true, "cron_delete_guarded": true, "domain_delete": true}
 
 type operationArgs struct {
 	App         string `json:"app" jsonschema:"Existing app slug"`
@@ -93,7 +95,7 @@ func registerOperations(s *mcp.Server, m *management) {
 		}
 	}
 	if m.opts.AllowWrites {
-		registerTool(s, m, "gregale_apply_operation", "Apply an unexpired restart, scaling, configuration or resource lifecycle plan. Follow the returned recovery guidance after errors; ambiguous cron updates and deletions cannot safely be replayed. Completed receipts are durable when the connection has a journal.", false, m.applyOperation)
+		registerTool(s, m, "gregale_apply_operation", "Apply an unexpired restart, scaling, configuration or resource lifecycle plan. Native guarded cron mutations reuse the original plan after a lost reply; deletion returns partial progress and a bounded next call until completed. Follow recovery guidance without replacing the plan. Completed receipts are durable when the connection has a journal.", false, m.applyOperation)
 	}
 }
 
@@ -316,8 +318,8 @@ func (m *management) applyOperation(ctx context.Context, a applyArgs) (any, erro
 		problem := p.failure.Problem
 		return nil, &api.APIError{Problem: api.Problem{Status: problem.Status, Code: problem.Code, Detail: problem.Message, Hint: problem.Hint}}
 	}
-	if p.attempted && (p.Operation.Kind == "cron_update" || p.Operation.Kind == "cron_delete") {
-		return nil, invalid("outcome_unknown", "this cron attempt has no durable native receipt; inspect the cron and its audit trail before taking further action")
+	if p.Operation.Kind == "cron_update" || p.Operation.Kind == "cron_delete" {
+		return nil, invalid("legacy_plan", "this cron plan has no native state guard; inspect its outcome before reviewing a new guarded plan")
 	}
 	if (p.Operation.Kind == "env" || p.Operation.Kind == "config_rollback" || p.Operation.Kind == "config_rollback_guarded") && !m.hasCapability(api.ScopeEnvWrite) {
 		return nil, invalid("capability_required", "configuration changes require env:write consent")
@@ -349,6 +351,16 @@ func (m *management) applyOperation(ctx context.Context, a applyArgs) (any, erro
 		return nil, m.operationFailure(p, err, wasAttempted)
 	}
 	p.failure = nil
+	if guardedCronOperation(p) {
+		receipt := result.(api.CronMutationReceipt)
+		p.Operation.CronReceipt = &receipt
+		if receipt.Status != "completed" {
+			if err := m.persistPlans(); err != nil {
+				return nil, err
+			}
+			return m.recoverableReceipt(p), nil
+		}
+	}
 	p.localReceipt = map[string]any{"plan_id": p.ID, "app": p.App, "scope": p.Scope, "kind": p.Operation.Kind, "result": result}
 	if err := m.persistPlans(); err != nil {
 		return nil, err
@@ -385,8 +397,10 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 			return nil, redactApprovalError(err, p.Operation.EnvReceiptProof)
 		}
 		return result, nil
-	case "cron_update", "cron_delete", "domain_delete":
+	case "domain_delete":
 		return m.applyResourceOperation(ctx, p)
+	case "cron_update_guarded", "cron_delete_guarded":
+		return m.applyReviewedCron(ctx, p)
 	}
 	return nil, invalid("invalid_plan", "unsupported operation kind")
 }

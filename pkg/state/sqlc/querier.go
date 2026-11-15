@@ -805,6 +805,7 @@ type Querier interface {
 	// Served by app_error_requests_drill_idx.
 	CountAppErrorRequestsForFingerprint(ctx context.Context, db DBTX, arg CountAppErrorRequestsForFingerprintParams) (int64, error)
 	CountCloneCheckpointPostgresCredentials(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	CountCronMutations(ctx context.Context, db DBTX, appID string) (int64, error)
 	CountCustomerOperationDefinitionNames(ctx context.Context, db DBTX, arg CountCustomerOperationDefinitionNamesParams) (int64, error)
 	CountCustomerOperationDeliveryRetries(ctx context.Context, db DBTX, operationID pgtype.UUID) (int64, error)
 	CountCustomerOperationStreams(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -1301,6 +1302,8 @@ type Querier interface {
 	DeploymentSnapshotBackoffActive(ctx context.Context, db DBTX, id pgtype.UUID) (DeploymentSnapshotBackoffActiveRow, error)
 	DetachCreditDiscount(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	DetachEnvironmentGitSource(ctx context.Context, db DBTX, arg DetachEnvironmentGitSourceParams) (int64, error)
+	DetachReviewedCronInvocations(ctx context.Context, db DBTX, arg DetachReviewedCronInvocationsParams) (int64, error)
+	DetachReviewedCronTasks(ctx context.Context, db DBTX, arg DetachReviewedCronTasksParams) (int64, error)
 	DetachedEnvironmentJobWasDeleted(ctx context.Context, db DBTX, jobID pgtype.UUID) (bool, error)
 	DevBridgeByID(ctx context.Context, db DBTX, arg DevBridgeByIDParams) (DevBridgeByIDRow, error)
 	DevBridgeWebhookReplayByID(ctx context.Context, db DBTX, arg DevBridgeWebhookReplayByIDParams) (DevBridgeWebhookReplay, error)
@@ -4535,6 +4538,7 @@ type Querier interface {
 	LockCronAccountForApp(ctx context.Context, db DBTX, appID string) (string, error)
 	LockCronAccountForCron(ctx context.Context, db DBTX, cronID string) (string, error)
 	LockCronActivationDeployments(ctx context.Context, db DBTX, appID string) error
+	LockCronMutationApp(ctx context.Context, db DBTX, arg LockCronMutationAppParams) (string, error)
 	LockCronParent(ctx context.Context, db DBTX, cronID string) (string, error)
 	LockCustomDomainQuotaAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
 	LockCustomDomainTLSAdmissionClaim(ctx context.Context, db DBTX, domain string) (LockCustomDomainTLSAdmissionClaimRow, error)
@@ -6003,6 +6007,7 @@ type Querier interface {
 	// request that old can no longer start a run, and its outcome lives on the
 	// run itself.
 	PruneCronFireNowRequests(ctx context.Context, db DBTX, arg PruneCronFireNowRequestsParams) (int64, error)
+	PruneCronMutations(ctx context.Context, db DBTX, arg PruneCronMutationsParams) error
 	// Cron history retention (api.CronHistoryRetention). Both deletes walk the
 	// live crons and probe each cron's own history index, so a sweep never scans
 	// the whole table. Rows of deleted crons are already gone: both tables
@@ -6358,6 +6363,11 @@ type Querier interface {
 	ReadConnectionBudgetSnapshot(ctx context.Context, db DBTX, arg ReadConnectionBudgetSnapshotParams) (ReadConnectionBudgetSnapshotRow, error)
 	ReadCronActivation(ctx context.Context, db DBTX, appID string) (ReadCronActivationRow, error)
 	ReadCronActivationDeployment(ctx context.Context, db DBTX, arg ReadCronActivationDeploymentParams) (ReadCronActivationDeploymentRow, error)
+	ReadCronMutationRecord(ctx context.Context, db DBTX, arg ReadCronMutationRecordParams) ([]byte, error)
+	// Keep this projection identical to CronReviewToken's state.Cron input. A
+	// scheduler last_fired_at stamp is deliberately absent. The row lock also
+	// fences FK inserts during the final reference check and delete.
+	ReadCronMutationSnapshot(ctx context.Context, db DBTX, arg ReadCronMutationSnapshotParams) ([]byte, error)
 	ReadCustomDomainCheckSchedule(ctx context.Context, db DBTX, arg ReadCustomDomainCheckScheduleParams) (ReadCustomDomainCheckScheduleRow, error)
 	ReadCustomDomainProbeAllowedHosts(ctx context.Context, db DBTX, arg ReadCustomDomainProbeAllowedHostsParams) ([]string, error)
 	ReadCustomDomainProbeClaim(ctx context.Context, db DBTX, arg ReadCustomDomainProbeClaimParams) (ReadCustomDomainProbeClaimRow, error)
@@ -7606,6 +7616,7 @@ type Querier interface {
 	// A unique violation (the old address now belongs to another account) rolls
 	// the statement back.
 	RevertLastAccountEmailChange(ctx context.Context, db DBTX, arg RevertLastAccountEmailChangeParams) (RevertLastAccountEmailChangeRow, error)
+	ReviewedCronReferencesRemain(ctx context.Context, db DBTX, cronID string) (pgtype.Bool, error)
 	RevokeAllMFATrustedBrowsers(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// Revokes every active row for accountID except the supplied sid
 	// (the calling session). Returns the revoked ids for audit.
@@ -8173,6 +8184,7 @@ type Querier interface {
 	SummarizeCustomerOperationWorkflowAttention(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowAttentionParams) ([]byte, error)
 	SummarizeCustomerOperationWorkflowOutcomes(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowOutcomesParams) ([]byte, error)
 	SummarizeCustomerOperationWorkflowPerformance(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowPerformanceParams) ([][]byte, error)
+	SupersedeCronMutations(ctx context.Context, db DBTX, arg SupersedeCronMutationsParams) error
 	SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg SupersedeEnvironmentGitOpsRunsParams) error
 	// A newer canary replaces one still rolling out in its scope
 	// (ADR-20261030102813, Hunt 14 H14-112). The older canary leaves traffic
@@ -8407,6 +8419,7 @@ type Querier interface {
 	UpdatePromotionFeatureFlagReceipt(ctx context.Context, db DBTX, arg UpdatePromotionFeatureFlagReceiptParams) (pgtype.UUID, error)
 	UpdatePromotionHealthResult(ctx context.Context, db DBTX, arg UpdatePromotionHealthResultParams) error
 	UpdateReadinessNotification(ctx context.Context, db DBTX, arg UpdateReadinessNotificationParams) (int64, error)
+	UpdateReviewedCron(ctx context.Context, db DBTX, arg UpdateReviewedCronParams) (int64, error)
 	UpdateRoutePolicyRuleAction(ctx context.Context, db DBTX, arg UpdateRoutePolicyRuleActionParams) (int64, error)
 	// ADR-127 PR-D: writer for spans_summary jsonb. The gatewayd-public
 	// OTLP/HTTP handler coalesces incoming batches for the same trace_id
@@ -8738,6 +8751,7 @@ type Querier interface {
 	WriteBuildDependencyGate(ctx context.Context, db DBTX, arg WriteBuildDependencyGateParams) error
 	WriteCanaryRouteGate(ctx context.Context, db DBTX, arg WriteCanaryRouteGateParams) error
 	WriteCronActivation(ctx context.Context, db DBTX, arg WriteCronActivationParams) error
+	WriteCronMutationRecord(ctx context.Context, db DBTX, arg WriteCronMutationRecordParams) error
 	WriteDeploymentCronState(ctx context.Context, db DBTX, arg WriteDeploymentCronStateParams) error
 	WriteDeploymentHostingFailureReceipt(ctx context.Context, db DBTX, arg WriteDeploymentHostingFailureReceiptParams) (int64, error)
 	WriteDeploymentHostingVerification(ctx context.Context, db DBTX, arg WriteDeploymentHostingVerificationParams) (int64, error)

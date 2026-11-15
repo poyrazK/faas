@@ -2,7 +2,6 @@ package mcpmanagement
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"time"
 
@@ -46,7 +45,7 @@ func registerResourceInventory(s *mcp.Server, m *management) {
 	register(s, m, "gregale_list_buckets", "Read one native page of bucket metadata in the selected app and scope. Requires apps:read; grants no object or credential access.", m.listBuckets)
 	register(s, m, "gregale_get_storage_bindings", "Read one native page of selected-scope bucket binding references and rotation state. Requires apps:read; no credential material.", m.getStorageBindings)
 	register(s, m, "gregale_list_databases", "Read one native page of database and binding metadata in the selected app and scope. Requires apps:read; grants no connections or lifecycle access.", m.listDatabases)
-	register(s, m, "gregale_plan_cron_change", "Review changing or deleting an exact cron owned by the selected app. Apply rechecks its configuration before the write, but the native write does not atomically guard that review. Inspect an ambiguous attempt rather than repeating it.", m.planCronChange)
+	register(s, m, "gregale_plan_cron_change", "Review changing or deleting an exact default-scope cron owned by the selected app. Native transactions guard the reviewed execution state and retain attempt receipts. Apply with gregale_apply_operation; retry only the original unexpired plan and follow partial deletion progress. Older control planes and unguarded legacy plans are refused.", m.planCronChange)
 	register(s, m, "gregale_plan_domain_removal", "Review detaching an exact custom domain from the selected app. Serving on that domain stops; DNS records at the provider remain. Apply with gregale_apply_operation.", m.planDomainRemoval)
 	if m.hasCapability(api.ScopeUsageRead) {
 		register(s, m, "gregale_get_costs", "Read costs attributed to the selected app for a UTC billing month. Native coverage and shared-cost limitations remain explicit.", m.getCosts)
@@ -187,12 +186,15 @@ func (m *management) planCronChange(ctx context.Context, a cronChangeArgs) (any,
 	if !a.Delete && a.Schedule == nil && a.Path == nil && a.Timezone == nil && a.Enabled == nil {
 		return nil, invalid("invalid_argument", "provide a cron change or delete=true")
 	}
+	if a.Delete && (a.Schedule != nil || a.Path != nil || a.Timezone != nil || a.Enabled != nil) {
+		return nil, invalid("invalid_argument", "delete=true cannot include cron patch fields")
+	}
 	if a.Path != nil && (!strings.HasPrefix(*a.Path, "/") || strings.ContainsAny(*a.Path, " \r\n")) {
 		return nil, invalid("invalid_argument", "cron path must begin with / and contain no whitespace")
 	}
-	kind := "cron_update"
+	kind := "cron_update_guarded"
 	if a.Delete {
-		kind = "cron_delete"
+		kind = "cron_delete_guarded"
 	}
 	req := api.UpdateCronRequest{Schedule: a.Schedule, Path: a.Path, Timezone: a.Timezone, Enabled: a.Enabled}
 	p, err := m.operationBase(ctx, operationArgs{App: a.App, Reason: a.Reason}, kind, req)
@@ -206,7 +208,18 @@ func (m *management) planCronChange(ctx context.Context, a cronChangeArgs) (any,
 	if cron.AppID != p.AppID || cron.ID != a.CronID {
 		return nil, invalid("app_access_denied", "cron does not belong to the selected app")
 	}
-	p.Operation.ResourceID, p.Operation.ResourceHash = a.CronID, cronFingerprint(cron)
+	if !api.ValidEnvBatchReceiptProof(cron.ReviewToken) {
+		return nil, invalid("unsupported_server", "the control plane does not support native reviewed cron mutations; upgrade before planning this change")
+	}
+	if cron.Environment != "" {
+		return nil, invalid("unsupported_scope", "cron lifecycle plans currently support the default environment only")
+	}
+	proof, err := newCronReceiptProof()
+	if err != nil {
+		return nil, err
+	}
+	p.Operation.CronReceiptProof = proof
+	p.Operation.ResourceID, p.Operation.ResourceHash = a.CronID, cron.ReviewToken
 	p.Operation.CronHistorySafe = true
 	p.Operation.Changes = p.Operation.Request
 	p.TrafficEffect = "Change the exact reviewed schedule. Deletion stops future scheduled requests; already running requests continue."
@@ -252,25 +265,5 @@ func (m *management) applyResourceOperation(ctx context.Context, p *releasePlan)
 		err = m.client.DeleteDomain(ctx, p.Operation.ResourceID)
 		return map[string]any{"deleted": err == nil}, err
 	}
-	c, err := m.client.GetCron(ctx, p.Operation.ResourceID)
-	if notFound(err) && p.Operation.Kind == "cron_delete" {
-		return nil, invalid("outcome_unknown", "the cron is absent; its absence does not prove this plan deleted it")
-	}
-	if err != nil {
-		return nil, err
-	}
-	if c.ID != p.Operation.ResourceID || c.AppID != p.AppID || cronFingerprint(c) != p.Operation.ResourceHash {
-		return nil, invalid("plan_stale", "cron changed since review; inspect its current configuration")
-	}
-	if p.Operation.Kind == "cron_delete" {
-		err = m.client.DeleteCron(ctx, c.ID)
-		return map[string]any{"deleted": err == nil}, err
-	}
-	var req api.UpdateCronRequest
-	if err := json.Unmarshal(p.Operation.Request, &req); err != nil {
-		return nil, err
-	}
-	return m.client.UpdateCron(ctx, c.ID, req)
+	return nil, invalid("legacy_plan", "unguarded cron mutations are unavailable; inspect before reviewing a new guarded plan")
 }
-
-func cronFingerprint(c api.CronResponse) string { c.LastFiredAt = ""; return resourceFingerprint(c) }
