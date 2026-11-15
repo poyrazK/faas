@@ -13,11 +13,13 @@
 // sentinels + idempotency + SSE). Customers `import { ... } from
 // '@gregale/sdk-node'` and never touch `src/generated/` directly.
 //
-// The generated services call `OpenAPI.BASE/TOKEN/HEADERS` from
-// `src/generated/core/OpenAPI.ts` — the `FaaSClient` constructor
-// sets these once at construction time. Mutating methods receive a
-// fresh `Idempotency-Key` per logical call, preserved across retries, via
-// the fetch wrapper stack installed on `globalThis.fetch` (see `client.ts`).
+// createClient binds the full service surface to private configuration.
+// Static services and FaaSClient retain their legacy shared state.
+
+export { createClient, type GregaleClient } from './isolated-client-preview.js';
+export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
+export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
+export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';
 
 // Generated surface.
 export {
@@ -101,6 +103,7 @@ export {
   type ExecutionEvent,
   type ExecutionEventData,
   type ExecutionEventType,
+  type ExecutionHelpers,
   type RunExecutionOptions,
   type WatchExecutionOptions,
 } from './executions.js';
@@ -717,3 +720,10 @@ export { EventAcknowledgmentIntentRecoveryWorkerMetrics, recoverEventAcknowledgm
   type EventAcknowledgmentIntentRecoveryWorkerMetricsSnapshot } from './event-acknowledgment-intent-worker-metrics.js';
 export { formatEventAcknowledgmentIntentRecoveryWorkerMetrics,
   type EventAcknowledgmentIntentRecoveryWorkerPrometheusOptions } from './event-acknowledgment-intent-worker-prometheus.js';
+
+export { SourceUploadError, parseSourceUploadCheckpoint, saveSourceUploadCheckpoint, loadSourceUploadCheckpoint, type SourceUploadCheckpoint, type SourceUploadOptions, type SourceUploadProgress, type SourceUploadStage, type SourceUploadCode, type SourceUploadInput, type SourceUploads } from './source-upload.js';
+export { inspectSource, prepareSource, SourcePreparationError, type SourcePreparationCode, type SourcePreparationOptions, type SourcePreparationProgress, type SourceIssue, type SourceEntry, type SourcePlan, type PreparedSource } from './source-preparation.js';
+export { SourceDeploymentError, loadSourceDeploymentState, parseSourceDeploymentState, type SourceDeploymentCode, type SourceDeploymentPhase, type SourceDeploymentArchive, type SourceDeploymentState, type SourceDeploymentProgress, type SourceDeploymentOptions, type SourceDeploymentPreparationOptions, type SourceDeploymentWaitOptions, type SourceDeploymentReleaseProgress, type SourceDeploymentInput, type SourceDeploymentResumeInput, type SourceDeploymentResult, type SourceDeployments } from './source-deployment.js';
+export { inspectProject, parseProjectPlan, validateProjectPlan, projectDeployOptions, ProjectInspectionError, type ProjectPlan, type ProjectInspectionOptions, type ProjectShape, type ProjectFramework, type ProjectIssue, type ProjectIssueCode, type ProjectInput, type ProjectSetting, type ProjectCandidate, type ProjectGeneratedFile, type ProjectBuild } from './project-inspection.js';
+
+export { parseReviewedProjectPlan, parseProjectApplicationState, loadProjectApplicationState, ProjectWorkflowError, type ReviewedProjectPlan, type ProjectPreviewInput, type ProjectPreviewOptions, type ProjectApplyOptions, type ProjectWorkflowOptions, type ProjectWorkflowCode, type ProjectWorkflowPhase, type ProjectWorkflowProgress, type ProjectApplicationState, type ProjectApplicationResult, type ProjectWorkloadOutcome, type ProjectWorkflows } from './project-workflows.js';

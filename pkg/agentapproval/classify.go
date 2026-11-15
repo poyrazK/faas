@@ -198,6 +198,11 @@ var budgetRoutes = map[string]bool{
 	"POST /v1/projects/{}/environments":             true,
 	"POST /v1/projects/{}/environment-clones":       true,
 	"POST /v1/projects/{}/environments/{}/branches": true,
+	// Source deploys apply gregale.yaml's deployment settings.
+	"POST /v1/apps/{}/deployments":                true,
+	"POST /v1/apps/{}/deployments/source-ref":     true,
+	"POST /v1/apps/{}/deployments/source-tarball": true,
+	"POST /v1/uploads/{}/commit":                  true,
 }
 
 // ChargesBudget reports whether a route's handler charges the agent's
@@ -212,9 +217,21 @@ func ChargesBudget(pattern string) bool {
 // (TestAgentBudgetPreviewWritesNothing). A route joins only with that
 // test.
 var previewRoutes = map[string]bool{
-	"PATCH /v1/apps/{}":        true,
-	"POST /v1/apps/{}/scaling": true,
-	"POST /v1/apps/{}/prewarm": true,
+	"PATCH /v1/apps/{}":                             true,
+	"POST /v1/apps/{}/scaling":                      true,
+	"POST /v1/apps/{}/prewarm":                      true,
+	"POST /v1/apps":                                 true,
+	"PATCH /v1/deployments/{}":                      true,
+	"POST /v1/postgres/databases":                   true,
+	"POST /v1/postgres/databases/{}/compute-policy": true,
+	"POST /v1/postgres/databases/{}/resize":         true,
+	"POST /v1/postgres/databases/{}/restore":        true,
+	"POST /v1/projects/{}/environments":             true,
+	"POST /v1/projects/{}/environment-clones":       true,
+	"POST /v1/projects/{}/environments/{}/branches": true,
+	// The handler fetches and checks the repository, then answers at
+	// the price of its gregale.yaml before preparing the rollout.
+	"POST /v1/apps/{}/deployments/source-ref": true,
 }
 
 // Previewable reports whether a route accepts the budget preview header.

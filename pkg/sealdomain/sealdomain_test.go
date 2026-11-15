@@ -81,8 +81,10 @@ func TestRegistry_DeliveryIsWiredToScheddAlone(t *testing.T) {
 	if !ok || !s.Wired {
 		t.Fatalf("delivery domain = %+v, %v; want wired", s, ok)
 	}
-	if len(s.Readers) != 1 || s.Readers[0] != "schedd" {
-		t.Fatalf("delivery readers = %v, want [schedd]", s.Readers)
+	// ADR-20261110210000 slice 3g: the control plane's secretd opens broker
+	// trigger credentials for compute schedds.
+	if len(s.Readers) != 2 || s.Readers[0] != "schedd" || s.Readers[1] != "secretd" {
+		t.Fatalf("delivery readers = %v, want [schedd secretd]", s.Readers)
 	}
 	if len(s.Roles) != 2 {
 		t.Fatalf("delivery roles = %v; schedd runs on both node roles", s.Roles)
@@ -196,8 +198,10 @@ func TestRegistry_EdgeIsWiredToGatewaydInternalAlone(t *testing.T) {
 	if !ok || !s.Wired {
 		t.Fatalf("edge domain = %+v, %v; want wired", s, ok)
 	}
-	if len(s.Readers) != 1 || s.Readers[0] != "gatewayd-internal" {
-		t.Fatalf("edge readers = %v, want [gatewayd-internal]", s.Readers)
+	// ADR-20261110210000 slice 3f: the control plane's secretd opens log
+	// drain headers for the owner node.
+	if len(s.Readers) != 2 || s.Readers[0] != "gatewayd-internal" || s.Readers[1] != "secretd" {
+		t.Fatalf("edge readers = %v, want [gatewayd-internal secretd]", s.Readers)
 	}
 	for _, d := range []string{"apid", "gatewayd-public"} {
 		if containsDomain(sealdomain.ReaderDomains(d), sealdomain.Edge) {
@@ -232,8 +236,8 @@ func TestRegistry_BuildIsWiredToImagedAndVmmd(t *testing.T) {
 	if !ok || !s.Wired {
 		t.Fatalf("build domain = %+v, %v; want wired", s, ok)
 	}
-	if len(s.Readers) != 2 || s.Readers[0] != "imaged" || s.Readers[1] != "vmmd" {
-		t.Fatalf("build readers = %v, want [imaged vmmd]", s.Readers)
+	if len(s.Readers) != 3 || s.Readers[0] != "imaged" || s.Readers[1] != "vmmd" || s.Readers[2] != "secretd" {
+		t.Fatalf("build readers = %v, want [imaged vmmd secretd]", s.Readers)
 	}
 	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Build) {
 		t.Fatalf("apid reads %v; it must only seal registry passwords", got)

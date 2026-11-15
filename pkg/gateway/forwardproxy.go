@@ -458,6 +458,8 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		AppProtocol:        protocol,
 		ContentLength:      max(r.ContentLength, 0),
 		ContentLengthKnown: r.ContentLength >= 0 && len(r.TransferEncoding) == 0,
+		// ADR-20261110210000 slice 3i: sealed rule headers vmmd adds.
+		EdgeSecretHeaders: edgeSecretHeadersFrom(r.Context()),
 	}
 	// The gRPC client handler propagates the current span to vmmd, but
 	// the guest request is a new HTTP carrier assembled from this init
@@ -909,6 +911,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		Instance:        r.Header.Get("x-faas-instance"),
 		Port:            port,
 		MaxRequestBytes: api.RawStreamMaxRequestBytes,
+		// ADR-20261110210000 slice 3i: sealed rule headers vmmd adds to
+		// the request head below.
+		EdgeSecretHeaders: edgeSecretHeadersFrom(r.Context()),
 	}
 	if err := stream.Send(&vmmdpb.ForwardRawRequest{
 		Frame: &vmmdpb.ForwardRawRequest_Init{Init: init},

@@ -1282,10 +1282,10 @@ from deployments where id = $1;
 
 -- name: ClearProjectPromotionDeployment :execrows
 UPDATE deployments d
-SET status = 'failed', error = 'environment promotion rollback', traffic_percent = 0,
+SET status = 'failed', error = sqlc.arg(message)::text, error_code = 'promotion_rolled_back', traffic_percent = 0,
     rollout_state = 'aborted', rollout_completed_at = NULL,
     rollout_aborted_at = coalesce(rollout_aborted_at, now()),
-    rollout_aborted_reason = 'environment promotion rollback',
+    rollout_aborted_reason = sqlc.arg(message)::text,
     stage_state = sqlc.arg(stage_state)
 WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid
   AND d.reason = sqlc.arg(reason)::text AND d.status = 'live' AND d.deleted_at IS NULL
@@ -1649,13 +1649,16 @@ limit sqlc.arg('limit')::int;
 -- name: UpsertEventSubscription :one
 -- (xmax = 0) distinguishes a declaration first installed by this deploy from
 -- an idempotent replay of the same manifest row.
-insert into event_subscriptions (account_id, app_id, source, type, filter)
-values ($1, $2, $3, $4, $5::jsonb)
-on conflict (app_id, source, type, filter) do update
+-- The identity is unique within one environment of the app
+-- (ADR-20261104120000); production is the empty scope.
+insert into event_subscriptions (account_id, app_id, source, type, filter, deployment_scope)
+values ($1, $2, $3, $4, $5::jsonb, sqlc.arg(deployment_scope)::text)
+on conflict (app_id, deployment_scope, source, type, filter) do update
 set enabled = true,
     updated_at = now()
 returning id, account_id, app_id, source, type, filter, enabled,
-          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, (xmax = 0) as inserted;
+          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds,
+          deployment_scope, environment_id, (xmax = 0) as inserted;
 
 -- name: DeleteEventSubscription :exec
 delete from event_subscriptions
@@ -1689,9 +1692,12 @@ WHERE i.deployment_id = sqlc.arg(deployment_id)::uuid AND i.status = 'prepared'
 FOR UPDATE OF i;
 
 -- name: ApplyEventSubscriptionIntent :many
--- Enable exactly the declared subscriptions of the app.
+-- Enable exactly the declared production subscriptions of the app; another
+-- environment's subscriptions are not production's to reconcile
+-- (ADR-20261104120000).
 UPDATE event_subscriptions SET enabled = (id = ANY(sqlc.arg(declared)::uuid[])), updated_at = now()
-WHERE app_id = sqlc.arg(app_id)::uuid AND enabled IS DISTINCT FROM (id = ANY(sqlc.arg(declared)::uuid[]))
+WHERE app_id = sqlc.arg(app_id)::uuid AND deployment_scope = ''
+  AND enabled IS DISTINCT FROM (id = ANY(sqlc.arg(declared)::uuid[]))
 RETURNING id::text AS id, enabled;
 
 -- name: SettleEventSubscriptionIntent :exec
@@ -6215,36 +6221,86 @@ ORDER BY CASE WHEN z.quiet THEN u.observed_at + (sqlc.arg(quiet_max_age_seconds)
 -- creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
 -- counts toward oldest_quiet_age_seconds instead, and an active bucket that
 -- was quiet on its observation counts from when it turned active.
+--
+-- ADR-20261111152144 §4: answered from object_inventory_schedule without
+-- reading every bucket. due_buckets is the count of the schedule's due index
+-- ranges, corrected for the buckets they can count wrongly (x: not ready,
+-- held, holding a claim token, or with an open listing): for each, minus
+-- whether a range counted it, plus whether the due rule holds. Each oldest
+-- age is the first bucket in index order that the rule does not exempt.
 WITH q AS (SELECT sqlc.arg(quiet)::boolean AND object_inventory_quiet_mode()='on' AS quiet_on),
+x AS (
+  SELECT id AS bucket_id FROM object_buckets WHERE state IN ('provisioning','deleting')
+  UNION SELECT bucket_id FROM object_bucket_versioning WHERE state<>'ready'
+  UNION SELECT bucket_id FROM object_storage_capacity_reconciliations WHERE state IN ('waiting','scanning')
+  UNION SELECT bucket_id FROM object_storage_bucket_usage WHERE token<>''
+  UNION SELECT bucket_id FROM object_storage_inventory_scans WHERE pages > 0 AND NOT complete
+),
 r AS (
-  SELECT b.created_at, u.observed_at, u.attempt_at, u.lease_until,
-    EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') AS versioning,
-    EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')) AS reconciling,
-    EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready') AS locking,
-    COALESCE(i.pages > 0 AND NOT i.complete AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz)
-      AND i.started_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second', false) AS listing,
-    COALESCE(i.pages > 0 AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND i.progress_at <= now()
-      AND i.progress_at >= now() - sqlc.arg(progress_window_seconds)::bigint * interval '1 second', false) AS progressing,
-    COALESCE(q.quiet_on AND u.observed_at IS NOT NULL AND u.inventory_scope='current'
-      AND COALESCE(a.mutated_at, '-infinity'::timestamptz) < u.observed_at - sqlc.arg(granularity_seconds)::bigint * interval '1 second', false) AS quiet,
-    CASE WHEN q.quiet_on AND u.inventory_scope='current' AND a.active_since > u.observed_at
-      AND a.active_since < u.observed_at + sqlc.arg(quiet_max_age_seconds)::bigint * interval '1 second'
-      THEN a.active_since ELSE COALESCE(u.observed_at, b.created_at) END AS anchor
-  FROM object_buckets b CROSS JOIN q
-  LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
-  LEFT JOIN object_storage_inventory_scans i ON i.bucket_id=b.id
-  LEFT JOIN object_bucket_activity a ON a.bucket_id=b.id
-  WHERE b.state='ready'
+  SELECT CASE WHEN q.quiet_on THEN
+      (SELECT count(*) FROM object_inventory_schedule s WHERE s.mutated_at >= s.quiet_after AND s.attempt_at < now() - interval '5 minutes')
+    + (SELECT count(*) FROM object_inventory_schedule s WHERE s.mutated_at < s.quiet_after AND s.observed_at <= now() - sqlc.arg(quiet_verify_seconds)::bigint * interval '1 second'
+        AND s.attempt_at < now() - interval '5 minutes')
+    ELSE (SELECT count(*) FROM object_inventory_schedule s WHERE s.attempt_at < now() - interval '5 minutes') END AS ranged
+  FROM q
+),
+c AS (
+  SELECT
+    count(*) FILTER (WHERE s.attempt_at < now() - interval '5 minutes'
+      AND (NOT q.quiet_on OR s.mutated_at >= s.quiet_after OR s.observed_at <= now() - sqlc.arg(quiet_verify_seconds)::bigint * interval '1 second')) AS ranged,
+    count(*) FILTER (WHERE b.state='ready'
+      AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready')
+      AND NOT EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=b.id AND rc.state IN ('waiting','scanning'))
+      AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes' OR l.listing)
+      AND (u.lease_until IS NULL OR u.lease_until < now())
+      AND NOT (z.quiet AND NOT l.listing AND u.observed_at > now() - sqlc.arg(quiet_verify_seconds)::bigint * interval '1 second')) AS due
+  FROM x CROSS JOIN q
+  JOIN object_buckets b ON b.id=x.bucket_id
+  LEFT JOIN object_inventory_schedule s ON s.bucket_id=x.bucket_id
+  LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=x.bucket_id
+  LEFT JOIN object_bucket_activity a ON a.bucket_id=x.bucket_id
+  CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=x.bucket_id AND i.pages > 0 AND NOT i.complete
+    AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND i.started_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second') AS listing) l
+  CROSS JOIN LATERAL (SELECT COALESCE(q.quiet_on AND u.observed_at IS NOT NULL AND u.inventory_scope='current'
+    AND COALESCE(a.mutated_at, '-infinity'::timestamptz) < u.observed_at - sqlc.arg(granularity_seconds)::bigint * interval '1 second', false) AS quiet) z
+),
+o AS (
+  SELECT
+    (SELECT min(b.created_at) FROM object_inventory_schedule s JOIN object_buckets b ON b.id=s.bucket_id AND b.state='ready'
+      WHERE s.mutated_at >= s.quiet_after AND s.observed_at = '-infinity'::timestamptz) AS never,
+    (SELECT s.observed_at FROM object_inventory_schedule s JOIN object_buckets b ON b.id=s.bucket_id AND b.state='ready'
+      WHERE s.mutated_at >= s.quiet_after AND s.observed_at > '-infinity'::timestamptz
+      AND NOT (q.quiet_on AND s.quiet_after > '-infinity'::timestamptz AND s.active_since > s.observed_at AND s.active_since < s.observed_at + sqlc.arg(quiet_max_age_seconds)::bigint * interval '1 second')
+      AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (s.observed_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
+        AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - sqlc.arg(progress_window_seconds)::bigint * interval '1 second')))
+      ORDER BY s.observed_at LIMIT 1) AS active_observed,
+    CASE WHEN NOT q.quiet_on THEN (SELECT s.observed_at FROM object_inventory_schedule s JOIN object_buckets b ON b.id=s.bucket_id AND b.state='ready'
+      WHERE s.mutated_at < s.quiet_after AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (s.observed_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
+        AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - sqlc.arg(progress_window_seconds)::bigint * interval '1 second')))
+      ORDER BY s.observed_at LIMIT 1) END AS quiet_observed,
+    CASE WHEN q.quiet_on THEN (SELECT s.active_since FROM object_inventory_schedule s JOIN object_buckets b ON b.id=s.bucket_id AND b.state='ready'
+      WHERE s.quiet_after > '-infinity'::timestamptz AND s.active_since > s.observed_at AND s.active_since < s.observed_at + sqlc.arg(quiet_max_age_seconds)::bigint * interval '1 second'
+      AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (s.observed_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
+        AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - sqlc.arg(progress_window_seconds)::bigint * interval '1 second')))
+      ORDER BY s.active_since LIMIT 1) END AS activated,
+    CASE WHEN q.quiet_on THEN (SELECT s.observed_at FROM object_inventory_schedule s JOIN object_buckets b ON b.id=s.bucket_id AND b.state='ready'
+      WHERE s.mutated_at < s.quiet_after
+      ORDER BY s.observed_at LIMIT 1) END AS quiet
+  FROM q
 )
-SELECT
-  (count(*) FILTER (WHERE NOT versioning AND NOT reconciling AND (attempt_at IS NULL OR attempt_at < now() - interval '5 minutes' OR listing)
-    AND (lease_until IS NULL OR lease_until < now())
-    AND NOT (quiet AND NOT listing AND observed_at > now() - sqlc.arg(quiet_verify_seconds)::bigint * interval '1 second')))::bigint AS due_buckets,
-  COALESCE(EXTRACT(EPOCH FROM now() - min(anchor) FILTER (WHERE NOT quiet AND NOT (observed_at IS NOT NULL AND (
-    versioning OR locking OR reconciling
-    OR (progressing AND observed_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second'))))), 0)::float8 AS oldest_age_seconds,
-  COALESCE(EXTRACT(EPOCH FROM now() - min(observed_at) FILTER (WHERE quiet)), 0)::float8 AS oldest_quiet_age_seconds
-FROM r;
+SELECT (r.ranged - c.ranged + c.due)::bigint AS due_buckets,
+  COALESCE(EXTRACT(EPOCH FROM now() - LEAST(o.never, o.active_observed, o.quiet_observed, o.activated)), 0)::float8 AS oldest_age_seconds,
+  COALESCE(EXTRACT(EPOCH FROM now() - o.quiet), 0)::float8 AS oldest_quiet_age_seconds
+FROM r, c, o;
 
 -- name: ObjectInventoryClaim :execrows
 INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
@@ -8805,9 +8861,12 @@ WHERE app_id=sqlc.arg(app_id)::uuid
 GROUP BY source
 ORDER BY source;
 
--- name: SumAccountQueueBacklogBytes :one
+-- name: SumAccountBacklogBytes :one
+-- ADR-20261022105723 (amended 2026-11-13): the account's pending queue,
+-- async and delayed-task payload bytes, one pool against
+-- MaxQueueBacklogBytesPerAccount.
 SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
-WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
+WHERE account_id=sqlc.arg(account_id)::uuid AND source IN ('queue','async_invoke','delayed_task');
 
 -- name: ExpirePendingQueueMessages :many
 -- ADR-20261022105723: a pending queue message past its plan's retention
@@ -8993,6 +9052,16 @@ FROM production_invocation_work p
 LEFT JOIN accounts a ON a.id = p.account_id
 LEFT JOIN orgs o ON o.id = p.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
 WHERE p.id = sqlc.arg(id)::uuid AND p.source = 'queue' AND p.state = 'dead_letter';
+
+-- name: ReadWebhookReplayAdmission :one
+-- A dead webhook delivery replayed from the dead letter re-enters its
+-- account's outbox under the caps an explicit delivery meets (event-driven
+-- hunt #16). The plan resolves as ReadQueueReplayAdmission's does.
+SELECT d.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM app_webhook_deliveries d
+LEFT JOIN accounts a ON a.id = d.account_id
+LEFT JOIN orgs o ON o.id = d.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE d.id = sqlc.arg(id)::uuid AND d.status = 'dead';
 
 -- name: RetryProductionQueueDeadLetter :one
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
@@ -9620,6 +9689,46 @@ WITH cur AS (
 SELECT EXISTS (SELECT 1 FROM cur) AS found,
        COALESCE((SELECT granted FROM upd), 0)::bigint AS granted,
        COALESCE((SELECT remaining FROM upd), (SELECT GREATEST(avail, 0) FROM cur), 0)::bigint AS remaining;
+
+-- name: ConsumeEventPublishTokens :one
+-- Event-driven hunt #16: the shared per-account event publish counter. Refill
+-- follows ConsumeTrafficRateTokens exactly, but the grant is all or nothing:
+-- a batch of n events takes n tokens or none.
+WITH cur AS (
+    SELECT LEAST(FLOOR(sqlc.arg(burst)::double precision)::bigint,
+               tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+                   * sqlc.arg(rps)::double precision)::bigint) AS avail,
+           tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * sqlc.arg(rps)::double precision)::bigint AS refilled,
+           FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * sqlc.arg(rps)::double precision) AS whole
+    FROM pg_ratelimit_counters
+    WHERE scope = 'event_publish' AND subject_id = sqlc.arg(subject_id)::uuid
+      AND plan = sqlc.arg(plan)::text
+    FOR UPDATE
+), upd AS (
+    UPDATE pg_ratelimit_counters c
+    SET tokens = cur.avail - sqlc.arg(n)::bigint,
+        last_refill = CASE
+            WHEN cur.refilled >= FLOOR(sqlc.arg(burst)::double precision)::bigint
+            THEN GREATEST(now(), c.last_refill)
+            ELSE c.last_refill + (cur.whole / sqlc.arg(rps)::double precision) * interval '1 second'
+        END
+    FROM cur
+    WHERE c.scope = 'event_publish' AND c.subject_id = sqlc.arg(subject_id)::uuid
+      AND c.plan = sqlc.arg(plan)::text AND cur.avail >= sqlc.arg(n)::bigint
+    RETURNING 1
+)
+SELECT EXISTS (SELECT 1 FROM cur) AS found, EXISTS (SELECT 1 FROM upd) AS granted;
+
+-- name: CreateEventPublishCounter :one
+-- The first publish creates the account's counter with its grant taken; the
+-- caller never asks for more than the burst.
+INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
+VALUES ('event_publish', sqlc.arg(subject_id)::uuid, sqlc.arg(plan)::text,
+    FLOOR(sqlc.arg(burst)::double precision)::bigint - sqlc.arg(n)::bigint, now())
+ON CONFLICT (scope, subject_id, plan) DO NOTHING
+RETURNING tokens;
 
 -- name: CreateTrafficRateBatchCounter :one
 INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
@@ -14389,7 +14498,49 @@ select
       where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
         and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending' and i.due_at <= now()
       order by i.due_at, i.created_at, i.id limit 1)
-  ) first)::timestamptz as oldest_pending_at;
+  ) first)::timestamptz as oldest_pending_at,
+  -- Ordered work (ADR-20261112193306): due messages waiting behind an older
+  -- message of their key cannot run, so queue_depth scaling leaves them out.
+  (select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state='pending' and i.due_at <= now() and i.work_policy_name is not null
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+       and exists (select 1 from invocations older
+         where older.app_id=i.app_id and older.work_policy_name=i.work_policy_name
+           and older.work_key_digest=i.work_key_digest
+           and ((older.work_sequence<i.work_sequence and older.state='pending') or older.state='dispatching'))
+     limit sqlc.arg(row_limit)::integer) waiting)::bigint as waiting_behind_key,
+  -- A blocked lane's head has failed at least once and holds later messages
+  -- of its key until it succeeds or dead-letters.
+  (select count(*) from (
+     select 1 from invocations h, b
+     where h.app_id=sqlc.arg(app_id)::uuid and h.queue_binding_id=b.id and h.account_id=b.account_id
+       and h.source='queue' and h.state in ('pending','dispatching') and h.attempts > 0
+       and h.work_policy_name is not null
+       and (b.deployment_scope='' or h.deployment_scope=b.deployment_scope)
+       and not exists (select 1 from invocations older
+         where older.app_id=h.app_id and older.work_policy_name=h.work_policy_name
+           and older.work_key_digest=h.work_key_digest and older.work_sequence<h.work_sequence
+           and older.state in ('pending','dispatching'))
+       and exists (select 1 from invocations later
+         where later.app_id=h.app_id and later.work_policy_name=h.work_policy_name
+           and later.work_key_digest=h.work_key_digest and later.work_sequence>h.work_sequence
+           and later.state='pending')
+     limit sqlc.arg(row_limit)::integer) blocked)::bigint as blocked_lanes,
+  (select min(h.created_at) from invocations h, b
+   where h.app_id=sqlc.arg(app_id)::uuid and h.queue_binding_id=b.id and h.account_id=b.account_id
+     and h.source='queue' and h.state in ('pending','dispatching') and h.attempts > 0
+     and h.work_policy_name is not null
+     and (b.deployment_scope='' or h.deployment_scope=b.deployment_scope)
+     and not exists (select 1 from invocations older
+       where older.app_id=h.app_id and older.work_policy_name=h.work_policy_name
+         and older.work_key_digest=h.work_key_digest and older.work_sequence<h.work_sequence
+         and older.state in ('pending','dispatching'))
+     and exists (select 1 from invocations later
+       where later.app_id=h.app_id and later.work_policy_name=h.work_policy_name
+         and later.work_key_digest=h.work_key_digest and later.work_sequence>h.work_sequence
+         and later.state='pending'))::timestamptz as oldest_blocked_at;
 
 -- name: QueueClaimActiveCount :one
 select count(*)::bigint from invocations i
@@ -14580,11 +14731,23 @@ WHERE r.id=sqlc.arg(id)::uuid
 FOR UPDATE OF r;
 
 -- name: ListDueExternalTriggerReplays :many
-SELECT r.* FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
-WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
- AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
- AND t.kind IN ('kafka','nats','redis_streams')
-ORDER BY r.next_fire_at,r.id LIMIT sqlc.arg(batch_limit)::integer;
+-- Two branches so each keeps its partial index: due replays
+-- (trigger_operator_replay_due_idx), and replays a dispatcher claimed and then
+-- lost, which return once the claim lapses (trigger_records_claim_expiry_idx):
+-- the broker already settled the original delivery and never hands it back.
+SELECT d.* FROM (
+  (SELECT r.* FROM trigger_records r
+    WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
+      AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
+    ORDER BY r.next_fire_at,r.id LIMIT sqlc.arg(batch_limit)::integer)
+  UNION ALL
+  (SELECT r.* FROM trigger_records r
+    WHERE r.trigger_id=sqlc.arg(trigger_id)::uuid AND r.operator_replay
+      AND r.state='claimed' AND r.claim_expires_at<=clock_timestamp()
+    ORDER BY r.claim_expires_at,r.id LIMIT sqlc.arg(batch_limit)::integer)
+) d
+WHERE EXISTS (SELECT 1 FROM triggers t WHERE t.id=d.trigger_id AND t.kind IN ('kafka','nats','redis_streams'))
+ORDER BY d.next_fire_at,d.id LIMIT sqlc.arg(batch_limit)::integer;
 
 -- name: QueueFinishDeliveryClaims :many
 with targets as (
@@ -14894,10 +15057,17 @@ ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED
 -- name: ObjectNotificationsCapture :execrows
 -- Notification recipients meet the same company reach as subscriptions
 -- (ADR-20261025211616): a rule cannot route a company bucket's events past it.
-UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot ||
- event_recipients_in_producer_reach(account_id, payload->>'producer', sqlc.arg(recipients)::jsonb)
-WHERE account_id=sqlc.arg(account_id)::uuid AND source='gregale.storage' AND event_id=sqlc.arg(event_id)::text
-AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification');
+-- enqueue_event_fanout keeps no row for a platform event without subscribers
+-- (ADR-614 amendment 2026-11-13), so the capture inserts it from the event
+-- envelope when it is missing and appends to it otherwise.
+INSERT INTO event_fanout_outbox AS o
+    (account_id, source, event_id, event_type, schema_version, event_data, payload, recipient_snapshot)
+SELECT sqlc.arg(account_id)::uuid, 'gregale.storage', sqlc.arg(event_id)::text,
+    e.p->>'type', e.p->>'schemaversion', e.p->'data', e.p,
+    event_recipients_in_producer_reach(sqlc.arg(account_id)::uuid, e.p->>'producer', sqlc.arg(recipients)::jsonb)
+FROM (SELECT sqlc.arg(payload)::jsonb AS p) e
+ON CONFLICT (account_id, source, event_id) DO UPDATE SET recipient_snapshot = o.recipient_snapshot || EXCLUDED.recipient_snapshot
+WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) r WHERE r ? 'object_notification');
 
 -- name: ObjectNotificationTargetApp :one
 SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted';
@@ -16410,6 +16580,15 @@ WHERE database_id=ANY(sqlc.arg(database_ids)::uuid[]) AND delete_at IS NULL
 SELECT provider_resource_id::text AS provider_resource_id FROM managed_postgres_databases
 WHERE (provider_resource_id=sqlc.arg(project)::text OR provider_resource_id LIKE sqlc.arg(project)::text || '/%')
     AND state NOT IN ('deleting','deleted') AND deleted_at IS NULL;
+
+-- name: ManagedPostgresAccountsInProject :many
+-- ADR-20261112160000 slice 2c: the accounts whose managed PostgreSQL
+-- databases, in any state, name a Neon project. neond counts a destructive
+-- call against each for the per-subject limit, and refuses quota writes and
+-- role deletes on a project no database names.
+SELECT DISTINCT account_id::text AS account_id FROM managed_postgres_databases
+WHERE provider_resource_id=sqlc.arg(project)::text OR provider_resource_id LIKE sqlc.arg(project)::text || '/%'
+ORDER BY 1;
 
 -- name: ListManagedPostgresPlanExcessRemindersDue :many
 -- ADR-20261110184700 amendment 2026-11-12: notices whose mailed deletion date
@@ -23369,6 +23548,7 @@ SELECT
  (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS invocation_work_environment_admissions,
  (SELECT count(*) FROM invocation_work_environment_domains p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS invocation_work_environment_domains,
  (SELECT count(*) FROM invocations p WHERE p.environment_id=sqlc.arg(environment_id)::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=sqlc.arg(environment)::text)) AS invocations,
+ (SELECT count(*) FROM project_environment_branches p WHERE p.environment_id=sqlc.arg(environment_id)::uuid OR p.parent_environment_id=sqlc.arg(environment_id)::uuid) AS project_environment_branches,
  (SELECT count(*) FROM project_environment_edge_policies p WHERE p.project_id=sqlc.arg(project_id)::uuid AND p.environment_slug=sqlc.arg(environment)::text) AS project_environment_edge_policies,
  (SELECT count(*) FROM project_environment_qualifications p WHERE p.project_id=sqlc.arg(project_id)::uuid AND p.environment_slug=sqlc.arg(environment)::text) AS project_environment_qualifications,
  (SELECT count(*) FROM project_environment_queue_runtime_sets p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS project_environment_queue_runtime_sets,
@@ -23447,6 +23627,7 @@ SELECT
  OR EXISTS(SELECT 1 FROM project_environment_clone_materializations p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text AND p.operation_id<>sqlc.arg(operation_id)::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_clone_configuration_ownership p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text AND p.operation_id<>sqlc.arg(operation_id)::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_workload_heads p WHERE p.environment_id::text=(sqlc.arg(environment_id)::uuid)::text)
+ OR EXISTS(SELECT 1 FROM project_environment_branches p WHERE p.parent_environment_id=sqlc.arg(environment_id)::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_config_versions p WHERE p.project_id=sqlc.arg(project_id)::uuid AND p.environment_slug=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM app_envs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
  OR EXISTS(SELECT 1 FROM app_secrets p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
@@ -23594,7 +23775,10 @@ SELECT (jsonb_build_object(
     'release_database_switches_from_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE from_deployment_id = sqlc.arg(deployment_id)::uuid),
     'release_database_switches_target_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE target_deployment_id = sqlc.arg(deployment_id)::uuid),
     -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
-    'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND phase <> 'retired')
+    'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = sqlc.arg(deployment_id)::uuid AND phase <> 'retired'),
+    -- Environment branches (ADR-20261031193635) record the deployments they created.
+    'project_environment_branch_deployments_deployment_id_fkey', (SELECT count(*) FROM project_environment_branch_deployments WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = sqlc.arg(deployment_id)::uuid)
 ))::jsonb AS borrowers;
 
 -- name: ReadCloneDeploymentCleanup :one
@@ -23625,7 +23809,7 @@ SELECT EXISTS(SELECT 1 FROM deployments d JOIN project_environment_clone_workloa
 
 -- name: ReadCloneDeploymentSoftBorrowers :one
 -- Original clone native journals remain retained evidence; other owners block cleanup.
-SELECT jsonb_build_object(
+SELECT (jsonb_build_object(
  'environment_workload_retirements.deployment_ids', (SELECT count(*) FROM environment_workload_retirements WHERE sqlc.arg(deployment_id)::uuid=ANY(deployment_ids)),
  'deployment_promotion_receipts.expected_serving_deployment_id', (SELECT count(*) FROM deployment_promotion_receipts WHERE expected_serving_deployment_id=sqlc.arg(deployment_id)::uuid::text),
  'deployment_runtime_upgrade_acceptances.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_acceptances WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
@@ -23676,7 +23860,13 @@ SELECT jsonb_build_object(
  'upload_commit_outcomes.deployment_id', (SELECT count(*) FROM upload_commit_outcomes WHERE deployment_id=sqlc.arg(deployment_id)::uuid::text),
  'upload_sessions.deployment_id', (SELECT count(*) FROM upload_sessions WHERE deployment_id=sqlc.arg(deployment_id)::uuid::text),
  'instance_application_standard_admissions.deployment_id', (SELECT count(*) FROM instance_application_standard_admissions WHERE deployment_id=sqlc.arg(deployment_id)::uuid)
-)::jsonb AS borrowers;
+) || jsonb_build_object(
+ -- Signed-artifact evidence (ADR-20261109170000) and environment-branch lineage
+ -- and capture objects (ADR-20261031193635) keep the id without a foreign key.
+ 'artifact_signatures.deployment_id', (SELECT count(*) FROM artifact_signatures WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'environment_branch_capture_objects.deployment_id', (SELECT count(*) FROM environment_branch_capture_objects WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'project_environment_branch_deployments.source_deployment_id', (SELECT count(*) FROM project_environment_branch_deployments WHERE source_deployment_id=sqlc.arg(deployment_id)::uuid)
+))::jsonb AS borrowers;
 
 -- name: CloneCheckpointCompensationHasWorkloadCleanup :one
 SELECT (EXISTS(SELECT 1 FROM project_environment_clone_configuration_cleanups c WHERE c.operation_id=sqlc.arg(operation_id)::uuid)
@@ -29130,6 +29320,17 @@ AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_i
   AND p.waived_from<w.waived_from AND p.waived_from>w.waived_from-interval '30 days'))
 GROUP BY u.database_id;
 
+-- name: ManagedPostgresRestoreSources :many
+-- Billing review 2026-11-13 (R6-1): every database of a subject that was made
+-- as a restore copy (a restore, branch or PR preview copy), with the database
+-- it was restored from, deleted rows included. A copy shares its root
+-- source's egress allowance: on Neon a copy is a branch of its source's
+-- project, and Neon's 500 GB transfer allowance is per project.
+SELECT d.id, d.restore_source_database_id
+FROM managed_postgres_databases d
+WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(subject_id)::uuid
+AND d.restore_source_database_id IS NOT NULL;
+
 -- name: ManagedPostgresFleetTotals :one
 -- ADR-20261028103115: the fleet database cap counts what reservation limits
 -- count; the spend breaker sums the month through the usage primary key, one
@@ -30303,6 +30504,29 @@ WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key;
 
+-- ADR-20261104120000: the project environment a published event belongs to.
+-- Production is the empty environment, so its row reports production = true.
+-- name: EventEnvironmentForAccount :one
+SELECT e.id::text AS id, e.slug
+FROM project_environments e
+WHERE e.account_id = sqlc.arg(account_id)::uuid AND e.id = sqlc.arg(environment_id)::uuid;
+
+-- name: EventEnvironmentForApp :one
+SELECT e.id::text AS id
+FROM apps a JOIN project_environments e ON e.project_id = a.project_id
+WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.id = sqlc.arg(app_id)::uuid
+  AND e.slug = sqlc.arg(slug)::text;
+
+-- The environment an in-guest publish belongs to: the publishing
+-- deployment's stage, or '' for production and project-less apps.
+-- name: DeploymentEventEnvironment :one
+SELECT COALESCE((SELECT e.id::text FROM project_environments e
+                 WHERE e.project_id = a.project_id AND e.slug = d.scope
+                   AND d.scope NOT IN ('default', 'production')), '')::text AS environment_id
+FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.id = sqlc.arg(app_id)::uuid
+  AND d.id = sqlc.arg(deployment_id)::uuid;
+
 -- name: InsertInvocationSend :exec
 -- ADR-20261112160000: the app that sent this invocation with send(), and the
 -- app its completion goes to, written with the invocation row.
@@ -30312,3 +30536,17 @@ VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(
 -- name: GetInvocationSend :one
 SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
 FROM invocation_sends WHERE invocation_id = sqlc.arg(invocation_id)::uuid;
+
+-- Plan-fit notices (billing review H17-4): the plan and over-plan app set a
+-- billing subject was last emailed about.
+-- name: GetPlanFitNotice :one
+SELECT plan, apps_digest FROM plan_fit_notices WHERE subject_id = $1;
+
+-- name: PutPlanFitNotice :exec
+INSERT INTO plan_fit_notices (subject_id, plan, apps_digest, noticed_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (subject_id) DO UPDATE
+   SET plan = EXCLUDED.plan, apps_digest = EXCLUDED.apps_digest, noticed_at = now();
+
+-- name: ClearPlanFitNotice :exec
+DELETE FROM plan_fit_notices WHERE subject_id = $1;

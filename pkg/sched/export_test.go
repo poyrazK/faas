@@ -581,7 +581,7 @@ func (r *Loop) GatewayHTTPClient() **http.Client          { return &r.gatewayHTT
 func (r *Loop) Pool() **pgxpool.Pool                      { return &r.pool }
 func (r *Loop) TriggerPollers() *map[string]triggerSource { return &r.triggerPollers }
 func (r *Loop) PollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
-	return r.pollerForTrigger(t)
+	return r.pollerForTrigger(context.Background(), t)
 }
 func (r *Loop) EvictTriggerPollers(enabled []sqlc.Trigger) { r.evictTriggerPollers(enabled) }
 func (r *Loop) BeatMain()                                  { r.beatMain() }
@@ -628,7 +628,20 @@ func (r *Loop) DispatchWorkflowRetention(p0 context.Context)                    
 func (r *Loop) RunWorkflowSchedulesTick(p0 context.Context) error {
 	return r.runWorkflowSchedulesTick(p0)
 }
-func (r *Loop) WaitPrimes()         { r.waitPrimes() }
+func (r *Loop) WaitPrimes() { r.waitPrimes() }
+
+// DrainSupersededDeployment runs one pass of the graceful superseded drain.
+func (r *Loop) DrainSupersededDeployment(ctx context.Context, deploymentID string, deadline time.Time) {
+	r.drainSupersededDeployment(ctx, deploymentID, deadline)
+}
+
+// SetSupersededDrainPoll replaces the busy-instance recheck interval and
+// returns the restore.
+func SetSupersededDrainPoll(d time.Duration) func() {
+	old := supersededDrainPoll
+	supersededDrainPoll = d
+	return func() { supersededDrainPoll = old }
+}
 func (r *Loop) WorkPool() *workPool { return r.workPool() }
 func (r *Loop) XHandleNotification(p0 context.Context, p1 db.Notification) {
 	r.handleNotification(p0, p1)
@@ -767,11 +780,15 @@ func (r *fakeVMM) Mu() *sync.Mutex                  { return &r.mu }
 func (r *fakeVMM) Restores() *int                   { return &r.restores }
 func (r *fakeVMM) SleepFor() *time.Duration         { return &r.sleepFor }
 func (r *fakeVMM) SnapErr() *error                  { return &r.snapErr }
-func (r *fakeVMM) Snapshots() *int                  { return &r.snapshots }
+
+// SetColdBootHook runs h at the start of every CreateColdBoot.
+func (r *fakeVMM) SetColdBootHook(h func()) { r.coldBootHook = h }
+func (r *fakeVMM) Snapshots() *int          { return &r.snapshots }
 func (r *fakeVMM) StatsHook() *func(context.Context, string) (*StatsSnapshot, error) {
 	return &r.statsHook
 }
 func (r *fakeVMM) WakeErr() *error           { return &r.wakeErr }
+func (r *fakeVMM) BaseScanGrace() *bool      { return &r.baseScanGrace }
 func (r *fakeVMM) WarmSnapshotHook() *func() { return &r.warmSnapshotHook }
 func (r *fakeVMM) WarmSnapshots() *int       { return &r.warmSnapshots }
 
@@ -1410,4 +1427,14 @@ func NodeBudgetRefusal(detail string, blockers ...api.WorkerAdmissionBlocker) er
 // failed its retries.
 func (r *Loop) FinishFailedPrime(ctx context.Context, appID, deploymentID string, err error) {
 	r.finishFailedPrime(ctx, appID, deploymentID, 1, err)
+}
+
+// XInitPrimePath exposes the init snapshot priming path choice
+// (ADR-20261114153000).
+var XInitPrimePath = initPrimePath
+
+// PollStoredTriggerReplays polls a stored-replay source over records with
+// trigger t, as dispatchOneTrigger does after the record-rate reservation.
+func PollStoredTriggerReplays(records []sqlc.TriggerRecord, t sqlc.Trigger) PollResult {
+	return (&storedTriggerReplaySource{records: records, kind: t.Kind}).Poll(context.Background(), t)
 }

@@ -3,6 +3,10 @@
 # so a stale single-box default cannot make a node-local schedd claim the
 # wrong topology.
 Environment=FAAS_SCHEDD_ROLE={{ faas_box_role }}
+{% if (faas_app_owner_authority | default('any')) != 'any' %}
+# ADR-20261110210000 §4: app owners are assigned by the control plane.
+Environment=FAAS_APP_OWNER_AUTHORITY={{ faas_app_owner_authority }}
+{% endif %}
 {% if (faas_schedd_frozen_tier | default(false) | string | lower) in ["true", "yes", "on", "1"] %}
 
 # Wake-path switches (manifest hot_path).

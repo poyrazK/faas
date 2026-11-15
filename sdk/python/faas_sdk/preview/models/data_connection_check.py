@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
 
+from ..models.data_connection_check_mode import DataConnectionCheckMode, check_data_connection_check_mode
 from ..models.data_connection_check_state import DataConnectionCheckState, check_data_connection_check_state
 from ..types import UNSET, Unset
 
@@ -35,6 +36,15 @@ class DataConnectionCheck:
     checks: list[DataConnectionIssue]
     tables: list[DataSourceTable]
     created_at: datetime.datetime
+    mode: DataConnectionCheckMode | Unset = UNSET
+    """Snapshot-specific compatibility evidence, without native replication requirements."""
+    source_provider_hint: str | Unset = UNSET
+    """Hostname-derived setup hint; never a qualification or admission grant."""
+    source_guidance_url: str | Unset = UNSET
+    requested_tables: list[str] | Unset = UNSET
+    """Exact discovery selection retained across queueing and worker completion."""
+    search: str | Unset = UNSET
+    """Literal discovery name filter."""
     capacity: DataPipelineCapacity | Unset = UNSET
     """New-allocation readiness at observation time. Admission atomically rechecks and reserves capacity;
     observations alone reserve nothing."""
@@ -67,6 +77,20 @@ class DataConnectionCheck:
 
         created_at = self.created_at.isoformat()
 
+        mode: str | Unset = UNSET
+        if not isinstance(self.mode, Unset):
+            mode = self.mode
+
+        source_provider_hint = self.source_provider_hint
+
+        source_guidance_url = self.source_guidance_url
+
+        requested_tables: list[str] | Unset = UNSET
+        if not isinstance(self.requested_tables, Unset):
+            requested_tables = self.requested_tables
+
+        search = self.search
+
         capacity: dict[str, Any] | Unset = UNSET
         if not isinstance(self.capacity, Unset):
             capacity = self.capacity.to_dict()
@@ -98,6 +122,16 @@ class DataConnectionCheck:
                 "created_at": created_at,
             }
         )
+        if mode is not UNSET:
+            field_dict["mode"] = mode
+        if source_provider_hint is not UNSET:
+            field_dict["source_provider_hint"] = source_provider_hint
+        if source_guidance_url is not UNSET:
+            field_dict["source_guidance_url"] = source_guidance_url
+        if requested_tables is not UNSET:
+            field_dict["requested_tables"] = requested_tables
+        if search is not UNSET:
+            field_dict["search"] = search
         if capacity is not UNSET:
             field_dict["capacity"] = capacity
         if database_id is not UNSET:
@@ -144,6 +178,21 @@ class DataConnectionCheck:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
+        _mode = d.pop("mode", UNSET)
+        mode: DataConnectionCheckMode | Unset
+        if isinstance(_mode, Unset):
+            mode = UNSET
+        else:
+            mode = check_data_connection_check_mode(_mode)
+
+        source_provider_hint = d.pop("source_provider_hint", UNSET)
+
+        source_guidance_url = d.pop("source_guidance_url", UNSET)
+
+        requested_tables = cast(list[str], d.pop("requested_tables", UNSET))
+
+        search = d.pop("search", UNSET)
+
         _capacity = d.pop("capacity", UNSET)
         capacity: DataPipelineCapacity | Unset
         if isinstance(_capacity, Unset):
@@ -182,6 +231,11 @@ class DataConnectionCheck:
             checks=checks,
             tables=tables,
             created_at=created_at,
+            mode=mode,
+            source_provider_hint=source_provider_hint,
+            source_guidance_url=source_guidance_url,
+            requested_tables=requested_tables,
+            search=search,
             capacity=capacity,
             database_id=database_id,
             observed_at=observed_at,

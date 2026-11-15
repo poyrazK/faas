@@ -980,8 +980,14 @@ func (e *Engine) budgetForWake(in bootInput) time.Duration {
 	if e.bootBudget != nil {
 		return e.bootBudget(in.initState)
 	}
+	// A cold boot, or a restore that may fall back to one, gets the app's
+	// startup window (ADR-20261114120000).
+	extension := primeStartupExtension(in.spec.StartupDeadlineS)
 	if in.haveSnap && in.snapKey != "" {
-		return ColdBootTimeout
+		return ColdBootTimeout + extension
+	}
+	if in.initState == state.StateColdBooting {
+		return e.budgetFor(in.initState) + extension
 	}
 	return e.budgetFor(in.initState)
 }
@@ -2359,6 +2365,12 @@ func (e *Engine) restartApp(ctx context.Context, appID, wakeID string, refreshRu
 			e.ledger.Release(fresh.ID)
 			e.transition(ctx, fresh.ID, fresh.AppID, state.StateStopped)
 		}
+	}
+	// A parked app wakes through the lifecycle claim, which also clears its
+	// recoverable deployment parks; any other status is set as before.
+	if _, err := compareAndSetAppStatus(ctx, e.store, appID, state.AppEvictedCold, state.AppActive); err != nil {
+		release()
+		return CoordOutcome{}, fmt.Errorf("sched: restart app: wake parked app %s: %w", appID, err)
 	}
 	active := state.AppActive
 	if _, err := e.store.UpdateApp(ctx, appID, state.UpdateAppParams{Status: &active}); err != nil {
@@ -5749,6 +5761,14 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 		// threshold is the operator's cue to add capacity.
 		return nil
 	}
+	return e.rebalancePressured(ctx, appID, e.ownerNodeID)
+}
+
+// rebalancePressured moves the parked app appID off fromNodeID, its owner,
+// to a peer with headroom. The owner's schedd calls it for itself; under
+// control-plane owner authority (ADR-20261110210000 §4) the control plane
+// calls it for a node's release request.
+func (e *Engine) rebalancePressured(ctx context.Context, appID, fromNodeID string) error {
 	if appID == "" {
 		// Cold-start sweep is delegated to the watcher; the
 		// engine's per-app method is the per-tick path.
@@ -5766,7 +5786,7 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 		e.observePressure("no_eligibility")
 		return nil
 	}
-	if app.NodeID != e.ownerNodeID {
+	if app.NodeID != fromNodeID {
 		e.observePressure("no_eligibility")
 		return nil
 	}
@@ -5999,7 +6019,9 @@ func (e *Engine) findPeerWithHeadroom(ctx context.Context, app state.App) (strin
 	neededMB := int64(app.RAMMB) + int64(api.PerVMOverheadMB)
 	usedByNode := e.nodeUsageForNodes(ctx, nodes)
 	for _, n := range nodes {
-		if n.ID == e.ownerNodeID {
+		// The app's current owner: this node on the owner's own path,
+		// the requesting node on the control plane's.
+		if n.ID == app.NodeID || n.ID == e.ownerNodeID {
 			continue
 		}
 		used := usedByNode[n.ID]
@@ -6037,7 +6059,7 @@ func (e *Engine) findPeerWithHeadroom(ctx context.Context, app state.App) (strin
 // (it does) or surface the error (it doesn't — the fallback
 // path is the canonical recovery).
 func (e *Engine) findOverflowPeerWithHeadroom(ctx context.Context, app state.App, targetUUID string) (string, error) {
-	if targetUUID == e.ownerNodeID {
+	if targetUUID == e.ownerNodeID || targetUUID == app.NodeID {
 		return "", nil
 	}
 	n, err := e.store.ComputeNodeByID(ctx, targetUUID)
@@ -7188,11 +7210,29 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	bootCtx, pcancel := context.WithTimeout(ctx, e.primeColdBootBudget(spec.StartupDeadlineS))
 	defer pcancel()
 	bootStartedAt := time.Now().UTC()
+	// The boot RPC runs without the app lock, as wake's does (its Phase 3):
+	// the admitted COLD_BOOTING row and ledger reservation already hold the
+	// prime's place, the per-deployment prime lock keeps a second prime out,
+	// and publication below is conditional on the row still being
+	// COLD_BOOTING. Holding the lock for the whole cold boot (up to the
+	// startup window) stalled every wake, scale-out and park of the app's
+	// serving release during each deploy (deploy-path review P12).
+	e.unlockApp(appID)
 	out, err := e.createRuntimeWithStandards(bootCtx, placement.NodeID, ins.ID, string(state.StateColdBooting), spec, nil, false)
+	e.lockApp(appID)
 	if err != nil {
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
 		return fmt.Errorf("sched: prime: cold boot: %w", err)
+	}
+	if out != nil && out.BaseScanGrace {
+		// vmmd keeps booting a base with a newly found fixable CRITICAL for
+		// apps already serving on it, but a new release must not start on
+		// it (deploy-path review P5).
+		e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
+		e.ledger.Release(ins.ID)
+		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_base_scan_grace")
+		return fmt.Errorf("sched: prime: %w", baseScanGracePrimeProblem(spec.BaseKey))
 	}
 	if out == nil || (upgradeTarget != nil && (out.Instance != ins.ID || out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT || out.RestoreFallbackReason != "")) {
 		e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
@@ -7257,6 +7297,15 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	err = e.snapshotAndParkPrime(ctx, ins)
 	primeCompleted = err == nil
 	return err
+}
+
+// baseScanGracePrimeProblem refuses a new deployment on a runtime base whose
+// scan found a fixable CRITICAL vulnerability. Releases already serving on
+// it keep waking for api.BaseScanCriticalBootGrace.
+func baseScanGracePrimeProblem(baseKey string) *api.Problem {
+	return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		"Fixable CRITICAL vulnerability in base ext4",
+		fmt.Sprintf("Gregale's base image %q has a fix-available CRITICAL vulnerability, so Gregale will not start new deployments on it until a patched base is published; releases already serving keep running. This is a platform problem, not your code", baseKey))
 }
 
 // cleanupInterruptedPrime releases only the instance created by the Prime
@@ -8845,6 +8894,12 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		return nil
 	}
 
+	if !allowReuse && !frozenFunction {
+		// ADR-20261114153000: the deployment's first init snapshot holds
+		// code paths that already ran once. Never fails the capture.
+		e.primeInitSnapshot(ctx, ins, dep, app)
+	}
+
 	storageKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierInit, uuid.NewString())
 	vmstateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: storageKey})
 	vmstate := filepath.Join(SnapDir(), strings.TrimPrefix(vmstateKey, "snap/"))
@@ -9490,7 +9545,7 @@ func sealedEnvDeliveryFromRowsWithIntent(rows []state.AppSecret, accountID, appI
 			missing = append(missing, fmt.Sprintf("%q (-> %q)", envKey, ref))
 			continue
 		}
-		entry := fcvm.SealedEnvEntry{Key: envKey, Ciphertext: row.Ciphertext}
+		entry := fcvm.SealedEnvEntry{Key: envKey, Ciphertext: row.Ciphertext, Scope: row.Scope}
 		if envKey != row.Key || intentSources[envKey] {
 			entry.SourceKey = row.Key
 		}

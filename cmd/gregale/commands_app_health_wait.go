@@ -47,6 +47,14 @@ func waitAppHealth(client *api.Client, slug, environment string, timeout, interv
 	ctx, cancel := context.WithTimeout(signalCtx, timeout)
 	defer cancel()
 	var last *api.AppHealthResponse
+	stopWait := func(title string, err error) int {
+		if jsonOutput && last != nil {
+			if code := renderAppHealth(slug, *last); code != 0 {
+				return code
+			}
+		}
+		return printAppHealthWaitError(title, err, slug, environment, timeout, interval)
+	}
 	previous := ""
 	if !jsonOutput {
 		_, _ = fmt.Fprintf(osStderr, "Waiting for a fresh healthy %s-scope assessment from recorded evidence; this does not wake or restart the app.\n", appHealthScope(environment))
@@ -61,7 +69,7 @@ func waitAppHealth(client *api.Client, slug, environment string, timeout, interv
 		progress := "Health assessment unavailable; retrying."
 		if err != nil {
 			if inspectWatchPermanentError(err) {
-				return printErr("Health wait failed", err)
+				return stopWait("Health wait failed", err)
 			}
 		} else {
 			last = &out
@@ -85,7 +93,7 @@ func waitAppHealth(client *api.Client, slug, environment string, timeout, interv
 		}
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		return printErr("Health wait canceled", ctx.Err())
+		return stopWait("Health wait canceled", ctx.Err())
 	}
 	if last != nil {
 		if code := renderAppHealth(slug, *last); code != 0 {
@@ -94,7 +102,7 @@ func waitAppHealth(client *api.Client, slug, environment string, timeout, interv
 	}
 	message := fmt.Sprintf("Health wait timed out without a fresh healthy %s-scope assessment; any assessment shown is the last observation and may be stale.", appHealthScope(environment))
 	if jsonOutput {
-		_ = writeJSONProblemWithExit(os.Stderr, api.Problem{Type: docsSiteURL + "/errors/invalid-request", Title: "Health wait timed out", Status: 408, Detail: message, DocsURL: cliDocsURL}, 124)
+		return renderAppHealthWaitProblem(api.Problem{Type: docsSiteURL + "/errors/invalid-request", Title: "Health wait timed out", Status: 408, Detail: message, DocsURL: cliDocsURL}, 124, slug, environment, timeout, interval)
 	} else {
 		_, _ = fmt.Fprintln(osStderr, message)
 	}

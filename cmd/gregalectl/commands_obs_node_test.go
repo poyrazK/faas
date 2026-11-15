@@ -16,6 +16,10 @@ const obsNodeTestID = "11111111-2222-4333-8444-555555555555"
 // obsNodeTestAPID serves the three reads `obs node` makes. A status in
 // failing makes that path answer with it instead.
 func obsNodeTestAPID(t *testing.T, failing map[string]int) *[]string {
+	return obsNodeTestAPIDWithNotifications(t, failing, nil)
+}
+
+func obsNodeTestAPIDWithNotifications(t *testing.T, failing map[string]int, notifications http.HandlerFunc) *[]string {
 	t.Helper()
 	at := time.Date(2026, 10, 25, 9, 0, 0, 0, time.UTC)
 	cpu, disk := 43.5, int64(18_200_000_000)
@@ -28,6 +32,13 @@ func obsNodeTestAPID(t *testing.T, failing map[string]int) *[]string {
 		}
 		var body any
 		switch r.URL.Path {
+		case "/v1/admin/obs/nodes/fsn-3/probe-notifications":
+			if notifications == nil {
+				w.WriteHeader(http.StatusNotFound)
+			} else {
+				notifications(w, r)
+			}
+			return
 		case "/v1/admin/obs/nodes/fsn-3/detail":
 			body = api.ObsNodeDetailResponse{
 				Node: api.ObsNodeRow{ID: obsNodeTestID, Name: "fsn-3", Active: true, VPCPUs: 8, MemMB: 65536, MaxConcurrency: 32,
@@ -70,7 +81,7 @@ func TestCmdObsNodePrintsTheSupportPage(t *testing.T) {
 	if code := cmdObsDispatch([]string{subObsNode, "fsn-3", "--heartbeats", "3"}); code != 0 {
 		t.Fatalf("code %d: %s", code, stderr)
 	}
-	if got := strings.Join(*paths, " "); got != "/v1/admin/obs/nodes/fsn-3/detail /v1/admin/obs/nodes/fsn-3/heartbeats?limit=3 /v1/admin/obs/nodes/wake-latency" {
+	if got := strings.Join(*paths, " "); got != "/v1/admin/obs/nodes/fsn-3/detail /v1/admin/obs/nodes/fsn-3/heartbeats?limit=3 /v1/admin/obs/nodes/wake-latency /v1/admin/obs/nodes/fsn-3/probe-notifications" {
 		t.Fatalf("requests: %s", got)
 	}
 	page := out.String()

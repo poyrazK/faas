@@ -1373,6 +1373,14 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			api.WriteProblem(w, api.ErrCapacity("could not seal public_auth credentials"))
 			return
 		}
+		// ADR-20261110210000 slice 3h: the edge checks the credential
+		// against a verifier keyed by this blob, never opening it. Written
+		// before the app row, so no edge ever sees a blob without one.
+		if err := s.putBasicAuthVerifier(r.Context(), sealed, req.PublicAuth.BasicUser, req.PublicAuth.BasicPass); err != nil {
+			s.log.Error("apid: basic auth verifier", "app_id", app.ID, "err", err)
+			api.WriteProblem(w, api.ErrCapacity("could not record public_auth credentials"))
+			return
+		}
 		publicAuthSealed = sealed
 	}
 	// ADR-118: parse the canonicalised CIDR list into []netip.Prefix
@@ -5130,21 +5138,7 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))
 		return
 	}
-	// IAM-5: expiry policy. Non-admin scopes get a 365-day
-	// expires_at (spec: "set-and-forget" CI rotation, plus a
-	// bounded exposure window for exfiltrated keys). Admin keys
-	// default to nil expiry (legacy admin semantics — never
-	// expire, must be explicitly revoked). The customer can
-	// rotate an admin key with grace=0 to opt into finite expiry.
-	var expiresAt *time.Time
-	if !slices.Contains(scopes, api.ScopeAdmin) {
-		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
-		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
-		if slices.Contains(scopes, api.ScopeAgent) {
-			t = time.Now().UTC().Add(api.AgentKeyLifetime)
-		}
-		expiresAt = &t
-	}
+	expiresAt := api.NewAPIKeyExpiry(scopes, time.Now())
 	// PR 6 (issue #190 / IAM-6) dual-write: the legacy /v1/keys
 	// POST persists the key against the caller's personal org
 	// so api_keys.org_id is populated (the 00127 NOT NULL flip).
@@ -5393,20 +5387,12 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// cache keeps the per-rotation handler off a hot PG path;
 	// admin updates invalidate the cache and propagate on the
 	// next rotation.
-	var graceWindow time.Duration
-	gw, err := s.resolveGraceWindow(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not resolve grace window"))
+	var req api.RotateKeyRequest
+	_ = decodeJSON(r, &req)
+	graceWindow, graceWindowDays, prob := s.rotationGraceWindow(r.Context(), acct.ID, req.GraceWindowDays)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
-	}
-	if gw == nil {
-		graceWindow = time.Duration(api.DefaultAPIKeyGraceWindowDays) * 24 * time.Hour
-	} else {
-		graceWindow = time.Duration(*gw) * 24 * time.Hour
-	}
-	var graceWindowDays int
-	if graceWindow > 0 {
-		graceWindowDays = int(graceWindow / (24 * time.Hour))
 	}
 
 	// Mint the new plaintext + hash BEFORE the rotation so the
@@ -5524,6 +5510,29 @@ func (s *server) rotateKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // in-process cache, falling back to the store on a miss. The
 // handler is the only caller; nil-safe when the cache is nil
 // (legacy tests that pre-date the cache field).
+// rotationGraceWindow is how long a rotated key keeps working: override when
+// the caller set one for this rotation (0 revokes the old key at once), else
+// the account's setting, else the plan default.
+func (s *server) rotationGraceWindow(ctx context.Context, accountID string, override *int) (time.Duration, int, *api.Problem) {
+	days := override
+	if days != nil && (*days < 0 || *days > api.APIKeyGraceWindowMaxDays) {
+		return 0, 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid grace window",
+			fmt.Sprintf("grace_window_days must be between 0 and %d; got %d", api.APIKeyGraceWindowMaxDays, *days))
+	}
+	if days == nil {
+		gw, err := s.resolveGraceWindow(ctx, accountID)
+		if err != nil {
+			return 0, 0, api.ErrCapacity("could not resolve grace window")
+		}
+		days = gw
+	}
+	n := api.DefaultAPIKeyGraceWindowDays
+	if days != nil {
+		n = *days
+	}
+	return time.Duration(n) * 24 * time.Hour, n, nil
+}
+
 func (s *server) resolveGraceWindow(ctx context.Context, accountID string) (*int, error) {
 	var days *int
 	var err error
@@ -6374,6 +6383,11 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// (provider redelivery) and rows in suspended/deleted_pending
 		// (no business flipping state backwards), both of which we
 		// swallow as no-ops.
+		if acct.MovedToFreeForNonpayment() {
+			// Already moved to Free for this unpaid balance (R9-1): the
+			// old subscription's retries must not restart the ladder.
+			return nil
+		}
 		if err := s.store.MarkDunningStep(ctx, acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				s.log.Debug("apid: payment_failed on already-advanced account",
@@ -6410,6 +6424,9 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// exactly once on the first delivery (EventPaymentFailed
 		// or this branch, whichever lands first). Emitting twice
 		// would double-mail customers.
+		if acct.MovedToFreeForNonpayment() {
+			return nil // already on Free for this unpaid balance (R9-1)
+		}
 		if err := s.store.MarkDunningStep(ctx, acct.ID, state.AccountActive, state.AccountPastDue); err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				s.log.Debug("apid: subscription_past_due on already-advanced account",
@@ -6423,6 +6440,12 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 	case billing.EventPaymentSucceeded:
 		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested() && !orgBillingSubject(acct))
 	case billing.EventSubscriptionUpdated:
+		if acct.MovedToFreeForNonpayment() && ev.SubscriptionID == acct.StripeSubscriptionItem {
+			// On Free for non-payment (R9-1): an update to the unpaid
+			// subscription does not re-bind its paid plan; its payment
+			// (EventPaymentSucceeded) restores the account.
+			return nil
+		}
 		if ev.SubscriptionID != "" {
 			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
 				return fmt.Errorf("store updated subscription id: %w", err)

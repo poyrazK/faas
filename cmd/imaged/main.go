@@ -713,7 +713,29 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	} else if len(legacyIdentities) == 0 {
 		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — registry credential unseal disabled (Free plan + anonymous-only deployments)")
 	}
-	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
+	// ADR-20261110210000 slice 3j-2: private images through secretd, so
+	// this node never opens an app's registry password.
+	registryProxy, closeRegistryProxy, err := registryProxyFromEnv(ctx, getenv, log)
+	if err != nil {
+		return err
+	}
+	defer closeRegistryProxy()
+	if registryProxy != nil {
+		h.WithRegistryProxy(registryProxy)
+	}
+	// ADR-20261110210000 slice 3g-3: a node whose build identity is retired
+	// holds nothing that opens a registry password, and reports no build
+	// domain, so FaasSealDomainIdentityMissing does not read it as a node
+	// that lost its identity.
+	buildRetired, err := buildRetiredFromEnv(getenv, registryProxy != nil)
+	if err != nil {
+		return err
+	}
+	if buildRetired {
+		log.Info("build identity retired on this node: private images pull through secretd")
+	} else {
+		sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
+	}
 	log.Info("build seal domain", "domain_identity", len(buildIdentities) > 0, "fleet_identity", len(legacyIdentities) > 0)
 
 	// F3: function runner wiring. cmd/imaged refuses to come up if either

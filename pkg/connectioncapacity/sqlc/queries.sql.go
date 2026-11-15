@@ -238,7 +238,7 @@ func (q *Queries) CapacityRead(ctx context.Context, db DBTX, resourceKey string)
 
 const capacityRecoverSourceHolds = `-- name: CapacityRecoverSourceHolds :exec
 INSERT INTO postgres_capacity_reservations(owner_kind,owner_id,endpoint,resource_key,placement,generation,connections,slots,senders,workers)
-SELECT 'pipeline',p.id,'source',s.resource_key,s.placement,s.generation,5,3,3,0
+SELECT 'pipeline',p.id,'source',s.resource_key,s.placement,s.generation,CASE WHEN p.work_config ? 'snapshot' THEN 2 ELSE 5 END,CASE WHEN p.work_config ? 'snapshot' THEN 0 ELSE 3 END,CASE WHEN p.work_config ? 'snapshot' THEN 0 ELSE 3 END,0
 FROM data_pipelines p JOIN postgres_capacity_sources s ON s.connection_id=p.source_connection_id AND s.account_id=p.account_id
 WHERE p.state<>'deleted' ON CONFLICT DO NOTHING
 `
@@ -250,7 +250,7 @@ func (q *Queries) CapacityRecoverSourceHolds(ctx context.Context, db DBTX) error
 
 const capacityRecoverTargetHolds = `-- name: CapacityRecoverTargetHolds :exec
 INSERT INTO postgres_capacity_reservations(owner_kind,owner_id,endpoint,resource_key,placement,generation,connections,slots,senders,workers)
-SELECT 'pipeline',p.id,'target',t.resource_key,t.placement,t.generation,5,0,0,3
+SELECT 'pipeline',p.id,'target',t.resource_key,t.placement,t.generation,CASE WHEN p.work_config ? 'snapshot' THEN 2 ELSE 5 END,0,0,CASE WHEN p.work_config ? 'snapshot' THEN 0 ELSE 3 END
 FROM data_pipelines p JOIN postgres_capacity_targets t ON t.database_id=p.database_id AND t.account_id=p.account_id
 WHERE p.state<>'deleted' ON CONFLICT DO NOTHING
 `

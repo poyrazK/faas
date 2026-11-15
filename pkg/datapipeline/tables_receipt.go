@@ -29,9 +29,9 @@ func createMirrorTable(ctx context.Context, p Pipeline, tx pgx.Tx, owner string,
 			declaration += " NOT NULL"
 		}
 		parts = append(parts, declaration)
-		if c.Key {
-			keys = append(keys, ident(c.Name))
-		}
+	}
+	for _, c := range primaryColumns(r) {
+		keys = append(keys, ident(c.Name))
 	}
 	parts = append(parts, "PRIMARY KEY ("+strings.Join(keys, ",")+")")
 	for _, sql := range []string{

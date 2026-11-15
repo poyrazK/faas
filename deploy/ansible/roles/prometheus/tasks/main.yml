@@ -249,6 +249,10 @@
     mode: "0644"
   notify: reload prometheus
 
+- name: prometheus — publish serving probe inventory independently of probe execution
+  ansible.builtin.include_role:
+    name: serving_probe_inventory
+
 # Issue #250 — drop the off-host Postgres backup alert rule file.
 # This role owns the drop so the rule lives next to the scrape
 # config that references it. The postgres_backup role does NOT drop

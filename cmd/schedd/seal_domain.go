@@ -1,7 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"filippo.io/age"
 
@@ -28,6 +31,44 @@ func loadControlSealDomain(getenv func(string) string) ([]*age.X25519Identity, e
 // previous twin once the role stages them; nil before.
 func loadDeliverySealDomain(getenv func(string) string) ([]*age.X25519Identity, error) {
 	return loadSealDomain(getenv, envSealDomainDeliveryIdentity, sealdomain.Delivery)
+}
+
+// envSealDomainDeliveryRetired marks a compute node whose delivery identity
+// is retired (ADR-20261110210000, retire compute identities).
+const envSealDomainDeliveryRetired = "FAAS_SEAL_DOMAIN_DELIVERY_RETIRED"
+
+// deliveryRetiredFromEnv reads FAAS_SEAL_DOMAIN_DELIVERY_RETIRED. A retired
+// schedd holds no identity that opens a delivery value: it asks secretd for
+// trigger credentials (FAAS_SCHEDD_DELIVERY_OPENER=secretd, which already
+// leaves webhooks, execution dispatch and the commit relay to the control
+// plane), loads no delivery identity, and has no fleet identity in
+// hostKeyDir (schedd's contract step), since apid also seals trigger
+// credentials to the fleet key. Anything left refuses the start.
+func deliveryRetiredFromEnv(getenv func(string) string, deliveryViaSecretd bool, hostKeyDir string) (bool, error) {
+	switch v := getenv(envSealDomainDeliveryRetired); v {
+	case "", "false":
+		return false, nil
+	case "true":
+	default:
+		return false, fmt.Errorf("schedd: %s=%q: want true or false", envSealDomainDeliveryRetired, v)
+	}
+	if !deliveryViaSecretd {
+		return false, fmt.Errorf("schedd: %s needs FAAS_SCHEDD_DELIVERY_OPENER=secretd: nothing else would open delivery values", envSealDomainDeliveryRetired)
+	}
+	if getenv(envSealDomainDeliveryIdentity) != "" {
+		return false, fmt.Errorf("schedd: %s but %s is set: remove the delivery identity (seal_domains role, faas_seal_domain_delivery_retired_on_compute) before starting", envSealDomainDeliveryRetired, envSealDomainDeliveryIdentity)
+	}
+	// Any fleet identity file refuses, readable or not: the names are the
+	// ones secretbox.LoadFleetAndHostKeys looks for.
+	for _, name := range []string{"fleet.age", "faas_fleet_age_identity", "fleet.age.previous", "faas_fleet_age_identity_previous"} {
+		path := filepath.Join(hostKeyDir, name)
+		if _, err := os.Lstat(path); err == nil {
+			return false, fmt.Errorf("schedd: %s needs schedd's contract step (faas_seal_domain_control_contracted and faas_seal_domain_delivery_contracted): %s also opens delivery values", envSealDomainDeliveryRetired, path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("schedd: %s: check for a fleet identity: %w", envSealDomainDeliveryRetired, err)
+		}
+	}
+	return true, nil
 }
 
 func loadSealDomain(getenv func(string) string, env string, domain sealdomain.Domain) ([]*age.X25519Identity, error) {

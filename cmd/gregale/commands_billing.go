@@ -7,11 +7,9 @@
 //   gregale billing status             read the active billing Provider's cached
 //                                      catalog (PR-P3)
 //   gregale billing status --watch N  re-poll the catalog every 5 s for N seconds (PR-P4)
-//   gregale billing price-catalog     list | sync | reset the Paddle catalog (PR-P3)
-//   gregale billing reconcile         run a single-account reconcile via the active
-//                                      billing Provider (PR-P3)
-//   gregale billing webhook-test      signed round-trip POST to a webhook URL (PR-P4,
-//                                      operator-only; mirrors the production signer)
+//
+// The operator catalog, reconcile and webhook-test verbs live in
+// `gregalectl billing`.
 //
 // This is the CLI companion to GET /dashboard/billing's provider-neutral
 // billing portal button. Same URL, same auth chain (Bearer via
@@ -77,14 +75,6 @@ func cmdBilling(args []string) int {
 		return cmdBillingRefreshInvoice(args[1:])
 	case "backfill-invoices":
 		return cmdBillingBackfillInvoices(args[1:])
-	case billingSubPriceCatalog:
-		return cmdBillingPriceCatalog(args[1:])
-	case billingSubReconcile:
-		return cmdBillingReconcile(args[1:])
-	case billingSubReconcilePaddleOverage:
-		return cmdBillingReconcilePaddleOverage(args[1:])
-	case billingSubWebhookTest:
-		return cmdBillingWebhookTest(args[1:])
 	case billingSubHelp, flagHelpShort, flagHelpLong:
 		printBillingUsage(osStdout)
 		return 0

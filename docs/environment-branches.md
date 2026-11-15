@@ -51,7 +51,8 @@ gregale environment branch shop pr-42 --reset         # make it again from its p
 ```
 
 - `--status` shows the branch's parent, branch point, expiry, data, the
-  database copies it owns, and each workload with its URL. A workload that
+  database copies and buckets it owns (each bucket with `as_of` or
+  `live_parent`), and each workload with its URL. A workload that
   has not been activated in the branch yet shows `starting`.
 - `--extend` moves the expiry to the given time from now, earlier or later.
   A branch lives at most 30 days after its creation, and a branch with
@@ -93,11 +94,28 @@ shows `data: failed` and the reason.
 
 ### Object storage
 
-Overlay reads show the parent's current objects, not the objects as they
-were when you branched: a parent write made after branching shows through
-until the branch writes or deletes that key. Copying an object that exists
-only in the parent (server-side copy) returns 404 in the branch. The
-object-storage commands list only the objects the branch wrote itself.
+A branch reads every key it has not written or deleted itself from the
+parent bucket. How it reads the parent depends on the parent bucket's
+versioning when the branch is made:
+
+- **Versioning on** (`as_of`): the branch sees each object as it was at the
+  branch point, like its database copies. An object written after branching
+  is missing in the branch, and one deleted before branching stays deleted.
+  If the version the branch reads is later removed by a lifecycle rule, the
+  object reads as missing; the branch never shows a newer one instead.
+- **Versioning off** (`live_parent`): the branch sees the parent's current
+  objects, so a parent write made after branching shows through until the
+  branch writes or deletes that key.
+
+`--status` shows which applies to each bucket. Turn versioning on for the
+parent bucket before branching to get point-in-time reads.
+
+A server-side copy (CopyObject or UploadPartCopy) inside the branch bucket
+whose source exists only in the parent copies from the parent, as the
+branch would read it. This works with the credential the branch's binding
+was given; a credential you make yourself on the branch bucket copies only
+the branch's own objects. The object-storage commands list only the
+objects the branch wrote itself.
 
 ## Outbound traffic
 
@@ -108,6 +126,39 @@ object-storage commands list only the objects the branch wrote itself.
 - `simulated`: contained, and the branch can seed rehearsals.
 
 Only a `live` branch can join private networks.
+
+## Pull request previews
+
+A project connected to GitHub can preview each pull request as a branch of
+production instead of as preview apps:
+
+```sh
+gregale github setup --preview-mode branch
+```
+
+- Opening a pull request makes branch `pr-<number>` of production. Each push
+  builds the pull request's head into it. The branch keeps its data across
+  pushes; `gregale environment branch <project> pr-<number> --reset` copies
+  production again, and the preview URL stays the same.
+- The branch runs with production's configuration and secrets. The pull
+  request's `gregale.yaml` changes its code, not the app settings.
+- Each push moves the branch's expiry to the preview TTL from now, up to the
+  branch's longest lifetime. Closing the pull request deletes the branch
+  24 hours later.
+- A push rebuilds only the workloads whose files changed; the others keep
+  serving their last build. A change to a shared file rebuilds them all.
+- Turning previews off, disconnecting the repository or uninstalling the
+  GitHub App deletes the project's pull request branches within a minute.
+  Branches you made yourself are not touched.
+- Previews count against the branch limit below. Past it, or when Gregale
+  cannot make the branch, the pull request gets an app preview and its check
+  run says why.
+- Pull requests from forks are never previewed: a branch holds production's
+  secrets.
+
+Branch previews are not yet available to every account. While they are not
+enabled, `--preview-mode branch` is refused with
+`409 environment_branch_unavailable`.
 
 ## Plans and limits
 

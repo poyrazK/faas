@@ -35,6 +35,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class OperationsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List completed workflows with explicit business outcomes.
    * Requires account read scope and MFA. Optional tenant selection remains within account ownership. Explicit app and environment are required. Only latest retained terminal snapshots with reported outcomes are included; each instance counts once. Reopened instances leave these totals. Earlier outcomes remain in retained workflow history. Terminal state alone does not imply an outcome. Totals cover all matching instances independently of group pagination; cursors are separate from the attention queue. Reports and retention may change during browsing.
@@ -79,7 +80,7 @@ export class OperationsService {
      */
     cursor?: string,
   }): CancelablePromise<OperationWorkflowOutcomesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-outcomes',
       path: {
@@ -244,7 +245,7 @@ export class OperationsService {
      */
     outcomeCode?: string,
   }): CancelablePromise<OperationWorkflowPerformanceInstancesResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-performance/instances',
       path: {
@@ -324,7 +325,7 @@ export class OperationsService {
      */
     baselineToken?: string,
   }): CancelablePromise<OperationWorkflowPerformanceSummary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-performance/summary',
       path: {
@@ -397,7 +398,7 @@ export class OperationsService {
      */
     cursor?: string,
   }): CancelablePromise<OperationWorkflowOutcomeSummary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-outcomes/summary',
       path: {
@@ -440,7 +441,7 @@ export class OperationsService {
     slug: string,
     requestBody: OperationWorkflowActionPreviewRequest,
   }): CancelablePromise<OperationWorkflowActionPreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflow-actions/preview',
       path: {
@@ -472,7 +473,7 @@ export class OperationsService {
     slug: string,
     requestBody: OperationWorkflowReadinessRequest,
   }): CancelablePromise<OperationWorkflowReadinessResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflow-readiness',
       path: {
@@ -522,7 +523,7 @@ export class OperationsService {
     slug: string,
     requestBody: OperationWorkflowReadinessComparisonRequest,
   }): CancelablePromise<OperationWorkflowReadinessComparisonResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflow-readiness/compare',
       path: {
@@ -623,7 +624,7 @@ export class OperationsService {
      */
     cursor?: string,
   }): CancelablePromise<OperationWorkflowAttentionResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-attention',
       path: {
@@ -711,7 +712,7 @@ export class OperationsService {
      */
     limit?: number,
   }): CancelablePromise<OperationWorkflowReadinessQueueResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-readiness/queue',
       path: {
@@ -828,7 +829,7 @@ export class OperationsService {
      */
     cursor?: string,
   }): CancelablePromise<OperationWorkflowAttentionSummary> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-attention/summary',
       path: {
@@ -882,7 +883,7 @@ export class OperationsService {
      */
     requestBody: OperationWorkflowReadinessSubscriptionRequest,
   }): CancelablePromise<OperationWorkflowReadinessSubscription> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflow-readiness/subscriptions',
       path: {
@@ -932,7 +933,7 @@ export class OperationsService {
      */
     tenantId?: string,
   }): CancelablePromise<OperationWorkflowReadinessSubscriptionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-readiness/subscriptions',
       path: {
@@ -988,7 +989,7 @@ export class OperationsService {
      */
     tenantId?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}',
       path: {
@@ -1055,7 +1056,7 @@ export class OperationsService {
      */
     limit?: number,
   }): CancelablePromise<OperationWorkflowReadinessInboxResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications',
       path: {
@@ -1119,7 +1120,7 @@ export class OperationsService {
      */
     tenantId?: string,
   }): CancelablePromise<OperationWorkflowReadinessNotificationCheck> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}',
       path: {
@@ -1184,7 +1185,7 @@ export class OperationsService {
      */
     tenantId?: string,
   }): CancelablePromise<OperationWorkflowReadinessNotification> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}',
       path: {
@@ -1305,7 +1306,7 @@ export class OperationsService {
      */
     sort?: 'due' | 'business_impact',
   }): CancelablePromise<OperationWorkflowReadinessFollowUpsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-readiness/follow-ups',
       path: {
@@ -1399,7 +1400,7 @@ export class OperationsService {
      */
     limit?: number,
   }): CancelablePromise<OperationWorkflowCoordinationTimeline> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-readiness/timeline',
       path: {
@@ -1486,7 +1487,7 @@ export class OperationsService {
      */
     limit?: number,
   }): CancelablePromise<OperationWorkflowCase> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/workflow-readiness/case',
       path: {
@@ -1565,7 +1566,7 @@ export class OperationsService {
     instanceId: string,
     requestBody: OperationWorkflowPlaybookProgressStartRequest,
   }): CancelablePromise<OperationWorkflowPlaybookProgress> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflow-readiness/playbook-progress',
       path: {
@@ -1650,7 +1651,7 @@ export class OperationsService {
     id: string,
     requestBody: OperationWorkflowPlaybookProgressUpdateRequest,
   }): CancelablePromise<OperationWorkflowPlaybookProgress> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/workflow-readiness/playbook-progress/{id}',
       path: {
@@ -1736,7 +1737,7 @@ export class OperationsService {
     id: string,
     requestBody: OperationWorkflowPlaybookEvidenceWatchRequest,
   }): CancelablePromise<OperationWorkflowPlaybookEvidenceWatch> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/evidence-watch',
       path: {
@@ -1822,7 +1823,7 @@ export class OperationsService {
     id: string,
     requestBody: OperationWorkflowPlaybookReviewRequest,
   }): CancelablePromise<OperationWorkflowPlaybookProgress> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/workflow-readiness/playbook-progress/{id}/reviews',
       path: {

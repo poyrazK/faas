@@ -1,6 +1,6 @@
 package api
 
-import "regexp"
+import "github.com/onebox-faas/faas/pkg/lazyregexp"
 
 // OutboundAISemanticCache answers a call from the response cache when its
 // last user turn means the same as a cached call's and everything else
@@ -25,7 +25,7 @@ type OutboundAISemanticCache struct {
 // embedding endpoints the semantic cache calls.
 var OutboundAISemanticCacheEmbeddingProviders = []string{OutboundAIProviderOpenAI, OutboundAIProviderGemini}
 
-var outboundAIEmbeddingModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`)
+var outboundAIEmbeddingModelPattern = lazyregexp.New(`^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`)
 
 // Threshold is the similarity a hit needs, in basis points.
 func (c OutboundAISemanticCache) Threshold() int {

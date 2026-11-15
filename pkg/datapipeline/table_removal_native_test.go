@@ -118,7 +118,7 @@ func assertNativeLiveTableRemoval(t *testing.T, ctx context.Context, store *Post
 	checkCustomer := func(readable bool) {
 		t.Helper()
 		status, body := oldAPI.requestTable("GET", "alice", "customers", "id=eq.1&select=id,name", "")
-		if status != 200 || (strings.TrimSpace(body) != "[]") != readable {
+		if readable && (status != 200 || strings.TrimSpace(body) == "[]") || !readable && (status != 503 || !strings.Contains(body, "mirror_unavailable")) {
 			t.Fatal("selected table gate changed incorrectly", readable, status, body)
 		}
 	}

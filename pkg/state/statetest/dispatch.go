@@ -47,6 +47,7 @@ var memDispatched = map[string]bool{
 	"RestoreAppWithActivity":                 true,
 	"AppTaskByID":                            true,
 	"LiveDeployment":                         true,
+	"GetObjectBucketVersioning":              true,
 	"RuntimeConfigReceiptRequired":           true,
 	"ResolveEnvironmentGitOpsServiceBinding": true,
 
@@ -419,6 +420,15 @@ func (s *Mem) MCPTaskPromotionHolds(ctx context.Context, ids []string) (map[stri
 		return o.MCPTaskPromotionHolds(ctx, ids)
 	}
 	return s.MemStore.MCPTaskPromotionHolds(ctx, ids)
+}
+
+func (s *Mem) GetObjectBucketVersioning(ctx context.Context, account, app, bucket string) (state.ObjectBucketVersioning, error) {
+	if o, ok := s.over.(interface {
+		GetObjectBucketVersioning(context.Context, string, string, string) (state.ObjectBucketVersioning, error)
+	}); ok {
+		return o.GetObjectBucketVersioning(ctx, account, app, bucket)
+	}
+	return s.MemStore.GetObjectBucketVersioning(ctx, account, app, bucket)
 }
 
 func (s *Mem) LiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {

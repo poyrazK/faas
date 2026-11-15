@@ -343,6 +343,9 @@ type Server struct {
 	// invokeHookBackoffOn is set (vmmd invoke_hook_backoff, default off).
 	invokeHooks         invokeHookBackoff
 	invokeHookBackoffOn bool
+	// edgeHeaderSecrets opens sealed edge-rule request headers
+	// (ADR-20261110210000 slice 3i); nil refuses forwards that name one.
+	edgeHeaderSecrets EdgeHeaderSecretOpener
 	// bridgeStreamHeadroom is vmmd's bridge_stream_headroom switch
 	// (ADR-20261026120000); every stream bridge manager takes it.
 	bridgeStreamHeadroom bool

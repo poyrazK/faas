@@ -188,8 +188,16 @@ func (c *memCacheOverageChecker) load(ctx context.Context, accountID string, now
 	if err != nil {
 		return c.readFailure(accountID, now, err)
 	}
+	// A complimentary account's $0 cap stops it past its allowance, not at
+	// once (ADR-20261111140000); only a $0 cap reads the difference.
+	complimentary := false
+	if capCents == 0 {
+		if complimentary, err = state.IsComplimentaryAccount(ctx, c.store, accountID); err != nil {
+			return c.readFailure(accountID, now, err)
+		}
+	}
 	status := OverageOK
-	if obsCents >= capCents {
+	if state.SpendCapReached(capCents, obsCents, complimentary) {
 		status = OverageReached
 	} else if holds, ok := c.store.(state.SpendCapHoldStore); ok {
 		// Compute alone is under the cap, but the cap also bounds live

@@ -2,14 +2,22 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { DataPipelineOperations } from './DataPipelineOperations.js';
+import type { DataPipelineServing } from './DataPipelineServing.js';
 /**
- * Selected public tables, dedicated destination and explicitly authorized JWT readers. A fresh passing connection check for the current source credential and all selected tables is required; otherwise returns data_connection_check_required.
+ * Selected public tables, dedicated destination and explicitly authorized JWT readers. Supply read_subjects for whole-table access, or serving.tenant_access with owner-managed memberships and no read_subjects. Explicit columns must cover every table and retain all primary-key and tenant columns. A fresh passing connection check for the current source credential and all selected tables is required; otherwise returns data_connection_check_required.
  */
 export type CreateDataPipelineRequest = {
+  operations?: DataPipelineOperations;
+  /**
+   * Initial checkpoint confirmation target for the new pipeline; use zero to disable it, or 15 to 86400 seconds.
+   */
+  freshness_target_seconds?: number;
+  serving?: DataPipelineServing;
   name: string;
   source_connection_id: string;
   database_id: string;
   tables: Array<string>;
-  read_subjects: Array<string>;
+  read_subjects?: Array<string>;
 };
 

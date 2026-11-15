@@ -25,6 +25,39 @@ to see the effective value and its source without exposing credentials;
 `config list`, `config get` and `context` drop any `user:password@` part of a
 `FAAS_API` URL before printing it.
 
+### Read request retries
+
+```bash
+gregale --http-retries 3 billing usage summary
+gregale --http-retries=2 app list
+```
+
+Put the prefix before the command. `N` is the number of **additional** attempts
+(0–5): `3` permits at most four attempts for an eligible read. The default is zero;
+the last prefix wins. No setting or environment variable persists the choice.
+Invalid counts fail before contacting the API.
+
+The initial route set covers JSON app listing, detail, status and usage;
+app deployment listing, latest deployment and deployment summary; deployment
+detail and stages; and `billing usage summary`. Other paths, streams, uploads
+and mutations retain their existing policies. Individual commands can perform
+several requests; eligibility and the retry budget apply to each request.
+
+Eligible reads retry selected connection interruptions and per-attempt timeouts,
+generic transient 502/503/504 responses with known error codes, and recognized
+429 rate limits with `Retry-After`. Authentication, authorization, validation,
+quota, TLS verification, invalid JSON and unknown problem codes fail normally.
+Backoff uses jitter (250 ms base, 5 s cap). A valid `Retry-After` in seconds or
+HTTP-date format sets a minimum wait. If it requires more than 30 seconds, is
+malformed, or appears more than once, the original error is returned rather
+than retrying early. A 429 without `Retry-After` is also returned immediately.
+
+Cancellation stops backoff and further attempts. Each attempt uses its HTTP
+client deadline; retries do not create a separate overall command deadline.
+Successful stdout is unchanged. Add `--debug-http` to see `attempt`,
+`max_attempts` and `retry_delay_ms` on the usual metadata records; zero delays
+are omitted and arbitrary response content is never copied into diagnostics.
+
 ### Plain-HTTP API addresses
 
 Every request carries your API key, and `gregale login` receives a new one in
@@ -46,7 +79,71 @@ With the opt-in, each command prints one warning on stderr. Anyone on the
 network path can read and reuse the key, so prefer TLS even on private
 networks.
 
+## HTTP request timeout
+
+Select a timeout for this invocation by placing a positive duration before
+its command:
+
+```bash
+gregale --http-timeout 90s billing usage summary
+gregale --http-timeout=2m deploy
+```
+
+Durations use Go syntax, such as `500ms`, `90s` or `2m`. Empty, zero, negative
+and invalid durations fail before contacting the API. The last prefix wins.
+There is no environment variable or saved setting; later invocations use
+their usual defaults (30 seconds for ordinary JSON calls, with existing
+operation-specific and upload budgets).
+
+An explicit value bounds each API request, including reading its response
+body and uploading source. It replaces operation-specific defaults, including
+rollback and hosting finalization budgets. Existing retries can still make
+more than one request; the flag does not set an overall retry, polling or
+command deadline. Caller context deadlines, dial and TLS limits can finish
+sooner. Private operator and external OIDC clients retain their own policies.
+
+For streaming logs, the value bounds the wait for response headers. Once
+connected, the body can remain open beyond that duration until the stream
+ends or you cancel it. Server-side app execution limits and command-local
+`--timeout` options retain their documented meaning. This flag does not add
+retries, persist configuration or change successful stdout.
+
 ## Command output and forwarded arguments
+
+Use the explicit `help` command with JSON mode to discover the installed CLI:
+
+```sh
+gregale --json help
+gregale --json help invocation run
+gregale --json help invoke
+```
+
+Each request writes one JSON object to stdout with `schema_version: 1`.
+`command` is the canonical command path; `requested_command` preserves the
+requested topic, and `aliases` lists known compatibility paths. Root help lists
+all visible commands. A topic includes its immediate `subcommands`, positional
+argument markers, examples, notes, docs URL, and every visible local flag.
+Flags describe accepted spellings, whether they take a value, required and
+repeatable markers, and any documented closed choices. Collections are arrays,
+including when empty. Global prefix options retain their existing placement;
+the topic's `flags` describe its local options.
+
+JSON help uses the same command manifest and canonical names as completion and
+the reference. It describes documented argument contracts, without inferring
+types, defaults, output schemas or validation rules from prose. `--all` is
+accepted and has no additional effect because JSON already includes every local
+option. `gregale --json help --operator` additionally lists operator and
+compatibility roots; an explicitly named operator topic remains inspectable.
+
+Discovery reads the selected connection's cached capabilities, falling back to
+GA/beta tier visibility when none are cached. It never refreshes capabilities
+or calls the API, and works without login or a valid saved connection. Preview
+and unreleased options retain their existing visibility rules. The cache can
+be stale; discovery is guidance, and the server still decides authorization.
+
+Unknown topics or help options exit `1`, leave stdout empty, and write one
+Problem JSON object to stderr. Human help and command-local `--help` keep their
+formatted usage output, including when `FAAS_JSON=1` is set.
 
 `gregale deploy --help` and `gregale app --help` show common options and examples.
 Add `--all` to see every option grouped by purpose:
@@ -78,12 +175,250 @@ as `--help` and `--json`:
 gregale --json app demo exec --detach -- python --help
 ```
 
-`gregale invocations wait <id> --json` writes the invocation status to stdout
+`gregale invocation wait <id> --json` writes the invocation status to stdout
 and API errors as a single Problem JSON object to stderr. A wait timeout exits
 with `124`, writes the last known status to stdout when available, and writes
 an `invocation_wait_timeout` Problem to stderr. Ctrl-C exits with `130`.
 Stopping the CLI wait leaves the invocation running; inspect it later with
-`gregale invocations get <id>`.
+`gregale invocation get <id>`.
+
+Use one command family to submit and inspect a call:
+
+```sh
+gregale invocation run api --payload @request.json
+gregale invocation list
+gregale invocation get INVOCATION_ID
+gregale invocation wait INVOCATION_ID --timeout 2m
+```
+
+`invoke APP` and the earlier plural `invocations` spelling remain compatibility
+aliases. Help, completion and agent examples use `invocation`.
+
+To submit asynchronously and wait in one command:
+
+```sh
+gregale invocation run api --wait --timeout 2m --payload @request.json
+```
+
+`--wait` selects async submission automatically; `--timeout` and `--interval`
+require `--wait`. An explicit `--async=false` conflicts with `--wait` and is
+rejected before submission. Use `--async` alone to queue and return immediately.
+The default timeout is `0` (wait until completion or Ctrl-C), and the default
+polling interval is `1s`. The timeout starts after acceptance and only limits
+local polling. The command submits once, then reads that accepted invocation.
+Completed exits `0`; failed, cancelled or dead-lettered exits `1`. JSON mode
+prints one final invocation record to stdout. On timeout it prints the latest
+known status when available, and an error to stderr. A timeout (`124`), Ctrl-C
+(`130`) or polling error preserves the accepted ID and a resume command in the
+diagnostic. Use that `invocation wait` command to resume; submitting again
+creates new work.
+
+In JSON mode, timeout, Ctrl-C and polling failures from both run-and-wait and
+standalone wait include a `recovery` object when there is a valid invocation ID.
+They keep the existing Problem fields, category and exit code:
+
+```json
+{
+  "code": "invocation_wait_timeout",
+  "exit_code": 124,
+  "recovery": {
+    "invocation_id": "INVOCATION_ID",
+    "inspect_command": "gregale --profile staging invocation get INVOCATION_ID",
+    "resume_command": "gregale --profile staging invocation wait INVOCATION_ID"
+  }
+}
+```
+
+These read-only commands use POSIX shell quoting, retain the selected profile
+and redact credentials. They use the current credentials and endpoint on the
+next CLI invocation; keep the same connection overrides when resuming. Follow
+the Problem's remediation for authentication or polling errors before resuming.
+For standalone wait, the ID identifies the requested target; recovery does not
+prove that it exists or is still running. No recovery ID is invented for a
+missing or invalid submission receipt. Agents should read these fields instead
+of parsing the human hint. The CLI never executes the recovery command itself.
+
+## Job wait recovery
+
+`gregale --json job wait nightly RUN_ID` and `gregale --json job run nightly
+--tasks 1 --wait` keep their existing stdout receipts. When local waiting times
+out, is interrupted, or fails while polling, they additionally write one
+Problem JSON object to stderr. Its `recovery` object identifies the exact run:
+
+```json
+{
+  "code": "job_wait_timeout",
+  "exit_code": 124,
+  "recovery": {
+    "job": "nightly",
+    "run_id": "11111111-1111-4111-8111-111111111111",
+    "inspect_command": "gregale --profile staging job status nightly 11111111-1111-4111-8111-111111111111",
+    "resume_command": "gregale --profile staging job wait nightly 11111111-1111-4111-8111-111111111111 --timeout 10m0s --poll-interval 2s"
+  }
+}
+```
+
+Timeout exits `124` with code `job_wait_timeout`; Ctrl-C exits `130` with code
+`job_wait_interrupted`. Polling errors retain exit `1`; use the Problem's `code`
+and `status` to distinguish API refusals, transport failures and invalid
+responses. Server remediation and valid request IDs are preserved. Error text,
+recovery commands and correlation metadata apply the existing credential
+redaction rules. A per-request HTTP timeout is a polling failure rather than
+the overall Job wait deadline.
+
+The stdout receipt retains `run` when a snapshot is known, `exit_code`,
+`resume_command` and optional `error`. Accepted waits retain the acceptance
+snapshot when no polling snapshot is available. An unsuccessful terminal run
+retains its existing receipt and exit `1` without an added wait-error Problem;
+the run's recorded status describes that outcome.
+
+Recovery preserves the selected profile and timeout/interval settings and
+always names the selected UUID, including after `latest` was used. Resume with
+the same endpoint and credential overrides. The commands inspect or wait; they
+never submit, retry or cancel Job work. Stopping the CLI leaves durable work
+unchanged. Recovery identifies a requested/accepted target and does not prove
+its current state. Missing or invalid acceptance identity does not invent a
+recovery ID. Condition waits and artifact-collection receipts retain their
+documented formats.
+
+## Job image-readiness recovery
+
+`gregale --json job get nightly --wait-ready` and `gregale --json job run nightly
+--tasks 1 --wait-ready` emit one Problem on stderr if image preparation cannot
+be followed. The existing stdout receipt and exit codes remain: overall timeout
+is `124`, interruption is `130`, and polling or preparation failure is `1`.
+An individual HTTP-request timeout remains a polling failure. Problem codes
+`job_image_wait_timeout`, `job_image_wait_interrupted`,
+`job_image_preparation_failed` and `job_image_changed` describe local outcomes;
+API failures retain their server code, status, remediation and valid request ID.
+Before a standalone readiness wait starts, its initial read keeps the normal
+API exit classification (`2` for authentication and `3` for platform failures)
+and emits no stdout receipt when that read fails.
+
+The Problem's `recovery` includes `job`, `phase: "image_wait"`, `submitted:
+false` and `inspect_command`. A verified selection also carries `job_id`,
+`image_ref` and, when known, `image_resolved_digest`. A pending verified image
+includes a `resume_command` using `job get --wait-ready`, the selected profile
+and the original timing options. A failed or changed image has inspection
+guidance without an automatic resume command. An unverified initial response
+does not invent an image identity or a resume command. The stdout pre-submission
+receipt retains its existing `phase` and `submitted: false` fields.
+
+Recovery only reads readiness, including when the interrupted command was
+`job run --wait-ready`. It never submits the deferred run. Resuming performs a
+fresh readiness check of the named Job; verify its current image against the
+recorded selection first, and retain the same endpoint and credential overrides.
+Within one wait, a changed Job identity, image reference or selected digest stops
+polling, retains the last verified snapshot, and prevents submission. Recovery
+does not promise that the image is still selected between CLI invocations.
+Credential redaction applies to diagnostic text, recovery metadata and commands.
+
+## Workflow wait recovery
+
+`gregale --json workflow wait RUN_ID` and `workflow run/resume/retry --wait`
+emit structured Problems on stderr when waiting stops with an error. The
+existing Workflow run object stays on stdout when an accepted or verified
+snapshot is available; no new stdout wrapper is introduced. Standalone waits
+also keep their last verified snapshot if a later permanent API read fails.
+If no snapshot was obtained, stdout remains empty.
+
+The Problem's optional `recovery` contains `run_id`, `inspect_command` and
+`resume_command`. For example, a wait using the staging profile, a 10-minute
+deadline and a 30-second polling interval supplies these commands:
+
+```sh
+gregale --profile staging workflow status 11111111-1111-4111-8111-111111111111
+gregale --profile staging workflow wait 11111111-1111-4111-8111-111111111111 --timeout 10m0s --poll-interval 30s
+```
+
+Continuing a wait uses `workflow wait`, including after an original `workflow
+resume --wait` or `workflow retry --wait`. The commands only read status; they
+never repeat the original mutation or forward its input or idempotency key.
+They retain the selected profile, local timeout and polling interval, and use
+the exact resolved UUID even after selecting `latest`. Retain the same endpoint
+and credential overrides. An unverified acceptance does not invent a recovery
+ID; a caller-supplied target does not itself prove acceptance or current state.
+
+Overall deadline expiry exits `124` with `workflow_wait_timeout`; Ctrl-C exits
+`130` with `workflow_wait_interrupted` and leaves execution unchanged. Permanent
+API errors preserve their server code, status, remediation, valid request ID
+and existing exit classification. Transient HTTP 408/429, server, transport
+and malformed-response errors retain the existing polling behavior. A local
+deadline or interruption carries no invented correlation from an earlier
+transient failure. Successful and unsuccessful terminal outcomes keep their
+existing exit behavior, including exit `1` for failed/cancelled/dead or unknown
+terminal state. Diagnostic text and recovery metadata redact credentials.
+
+## App health wait recovery
+
+`gregale --json app health APP --wait` includes a `recovery` object in timeout,
+interruption and permanent API-error Problems on stderr. It contains `app`,
+optional `environment`, `inspect_command` and `resume_command`. For example:
+
+```sh
+gregale --profile staging app health --app my-api --env production
+gregale --profile staging app health --app my-api --env production --wait --timeout 5m0s --poll-interval 30s
+```
+
+The commands retain the resolved app, selected profile, environment, timeout
+and polling interval. When no environment was selected, recovery keeps the
+default-scope read without adding an environment flag. A resumed wait starts
+a new local budget of the same duration. Retain endpoint and credential
+overrides separately; recovery commands redact credentials and contain no
+tokens. These commands only read recorded health; they do not wake, restart,
+redeploy or probe the app, and do not establish that its health is known.
+
+The existing health assessment stays on stdout when an observation is
+available, including after Ctrl-C or a later permanent read failure. Its scope
+and evidence timestamps are unchanged and can be stale or unhealthy. No
+observation means empty stdout. Freshness and scope checks still determine
+success; retaining a snapshot does not make the wait successful. Timeout exits
+`124`, interruption exits `130`, and permanent API errors retain their existing
+Problems, exit mapping and valid request IDs. Local stops do not reuse a
+request ID from an earlier transient failure. Human output is unchanged.
+
+## Request IDs on API errors
+
+When an API failure includes one valid `X-Faas-Request-Id`, normal text errors
+print `Request ID: <id>`. With `--json`, the error object includes optional
+`request_id` alongside its existing code, category and exit code. Include the
+ID when reporting the failure so its server logs can be found; `--debug-http`
+is not required.
+
+Only the header supplies this metadata, including for JSON, HTML and plain-text
+API error responses. Accepted IDs are 32 hex characters or hyphenated UUIDs;
+malformed, duplicate or credential-matching values are omitted. An exhausted
+retry reports the final failed attempt's ID. If that response has no valid ID,
+the CLI does not reuse one from an earlier attempt. Local errors and failures
+before any API response carry no invented ID. Successful stdout is unchanged.
+
+## Retrying async invocation submissions
+
+Supply a stable key when a script may need to retry an uncertain submission:
+
+```sh
+gregale invocation run billing --async --idempotency-key invoice-4821 --payload @invoice.json
+```
+
+`--idempotency-key` requires `--async` or `--wait`; the synchronous endpoint has no receipt
+cache. Surrounding whitespace is trimmed; an explicitly empty key, a key over
+255 bytes, or a key with internal spaces or ASCII controls fails before payload
+reading or network access. Without the flag, each command keeps its fresh
+SDK-generated key. The selected key is sent as request metadata, outside the
+invocation payload.
+
+After a lost response, rerun the same command with the original key and unchanged
+payload, method, path and other invocation options, using the same API, profile
+and credentials. The server's existing receipt window is **24 hours**. A completed
+receipt replays the original invocation ID; concurrent use returns `409`, and a
+request fingerprint mismatch returns `422 idempotency_key_reused`. These server
+responses are preserved. The CLI adds no submission retry loop.
+
+Use a new key for new work. Replay follows the existing server receipt policy;
+it does not extend past retention or survive every receipt-store failure.
+Some legacy receipts and requests beyond the server's 1 MiB fingerprint cap lack
+request comparison, so keep retry input unchanged even when a mismatch is not
+rejected. See ADR-20261022204036 for the full receipt policy.
 
 ## HTTP diagnostics
 
@@ -280,6 +615,15 @@ shape across releases:
 Decide success from the exit code, not from whether stdout is empty: an empty
 JSON Lines list exits 0 with no output, and a failure writes its Problem to
 stderr. To read a JSON Lines list as one array, use `jq -s .`.
+
+JSON input flags such as `invoke --payload`, `send --data` and trigger
+`--config` report a location when their input is malformed. For example,
+`request.json:12:9: --payload must be valid JSON` identifies the selected file;
+`stdin` and `inline` identify those input forms. Lines and columns start at 1,
+columns count Unicode characters, and a tab counts as one character. LF and
+CRLF files are supported. Truncated JSON points at the end of the input.
+The same location appears in JSON error details. Diagnostics omit payload
+contents, and valid input keeps its original bytes and numeric precision.
 
 Shared command errors use these exit codes. JSON error objects on stderr
 include `category` and `exit_code` alongside the server's unchanged `code`:

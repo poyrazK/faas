@@ -282,6 +282,14 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	if !ok {
 		return status.Errorf(codes.NotFound, "instance %q not live", reqInit.GetInstance())
 	}
+	// ADR-20261110210000 slice 3i: sealed edge-rule request headers open
+	// here, on the instance's node, after every hook above saw the request.
+	added, err := s.openEdgeSecretHeaders(ctx, reqInit.GetInstance(), reqInit.GetEdgeSecretHeaders())
+	if err != nil {
+		return err
+	}
+	reqInit.Headers = withEdgeSecretHeaders(reqInit.GetHeaders(), added)
+	reqInit.EdgeSecretHeaders = nil
 
 	// Inner-leg bridge selection (issue #686 / ADR-028 draft).
 	//   v1 (default): shell-bridge script, hard-coded HTTP/1.1.
@@ -808,6 +816,15 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	netnsName, ok := s.vmm.NetnsFor(reqInit.GetInstance())
 	if !ok {
 		return status.Errorf(codes.NotFound, "instance %q not live", reqInit.GetInstance())
+	}
+	// ADR-20261110210000 slice 3i: sealed edge-rule request headers go into
+	// the request head, the first frame the bridge pump receives.
+	added, err := s.openEdgeSecretHeaders(ctx, reqInit.GetInstance(), reqInit.GetEdgeSecretHeaders())
+	if err != nil {
+		return err
+	}
+	if len(added) > 0 {
+		stream = &edgeSecretHeadStream{BidiStreamingServer: stream, add: added}
 	}
 	instancePID, ok := s.vmm.InstancePID(reqInit.GetInstance())
 	if !ok || instancePID <= 0 {

@@ -44,8 +44,8 @@ type Server struct {
 
 // NewServer builds the server. base is Neon's API base
 // (https://console.neon.tech/api/v2); client must not follow redirects.
-func NewServer(base *url.URL, client *http.Client, adminKey string, live LiveResources, destructivePerHour int, reg prometheus.Registerer, log *slog.Logger) (*Server, error) {
-	if base == nil || client == nil || adminKey == "" || live == nil || destructivePerHour < 1 || log == nil {
+func NewServer(base *url.URL, client *http.Client, adminKey string, live LiveResources, limits Limits, reg prometheus.Registerer, log *slog.Logger) (*Server, error) {
+	if base == nil || client == nil || adminKey == "" || live == nil || limits.PerHour < 1 || limits.PerSubjectPerHour < 1 || log == nil {
 		return nil, errors.New("neond: invalid server configuration")
 	}
 	s := &Server{base: base, client: client, adminKey: adminKey, log: log,
@@ -61,7 +61,7 @@ func NewServer(base *url.URL, client *http.Client, adminKey string, live LiveRes
 			Name: "neond_projects_without_key",
 			Help: "Neon projects of the organization without a project key after the last key sweep; their calls use the admin key (ADR-20261112160000 decision 3).",
 		})}
-	s.policy = NewPolicy(live, s.readBranchDefault, destructivePerHour, nil)
+	s.policy = NewPolicy(live, s.readBranchDefault, limits, nil)
 	if reg != nil {
 		for _, c := range []prometheus.Collector{s.requests, s.keyOps, s.withoutKey} {
 			if err := reg.Register(c); err != nil {
@@ -91,7 +91,7 @@ func (s *Server) Forward(ctx context.Context, req *neondpb.ForwardRequest) (*neo
 			return nil, status.Error(codes.PermissionDenied, "neond: refused by policy")
 		case errors.Is(err, ErrRateLimited):
 			s.requests.WithLabelValues(route.Name, tier, "rate_limited").Inc()
-			s.log.Error("neond: destructive call rate limit reached", attrs...)
+			s.log.Error("neond: destructive call rate limit reached", append(attrs, "reason", err.Error())...)
 			return nil, status.Error(codes.ResourceExhausted, "neond: destructive call rate limit reached")
 		default:
 			s.requests.WithLabelValues(route.Name, tier, "error").Inc()

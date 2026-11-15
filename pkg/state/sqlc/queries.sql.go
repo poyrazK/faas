@@ -2200,7 +2200,8 @@ func (q *Queries) ApplyDeploymentRuntimeUpgradeCutover(ctx context.Context, db D
 
 const applyEventSubscriptionIntent = `-- name: ApplyEventSubscriptionIntent :many
 UPDATE event_subscriptions SET enabled = (id = ANY($1::uuid[])), updated_at = now()
-WHERE app_id = $2::uuid AND enabled IS DISTINCT FROM (id = ANY($1::uuid[]))
+WHERE app_id = $2::uuid AND deployment_scope = ''
+  AND enabled IS DISTINCT FROM (id = ANY($1::uuid[]))
 RETURNING id::text AS id, enabled
 `
 
@@ -2214,7 +2215,9 @@ type ApplyEventSubscriptionIntentRow struct {
 	Enabled bool
 }
 
-// Enable exactly the declared subscriptions of the app.
+// Enable exactly the declared production subscriptions of the app; another
+// environment's subscriptions are not production's to reconcile
+// (ADR-20261104120000).
 func (q *Queries) ApplyEventSubscriptionIntent(ctx context.Context, db DBTX, arg ApplyEventSubscriptionIntentParams) ([]ApplyEventSubscriptionIntentRow, error) {
 	rows, err := db.Query(ctx, applyEventSubscriptionIntent, arg.Declared, arg.AppID)
 	if err != nil {
@@ -8619,21 +8622,31 @@ func (q *Queries) ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
+const clearPlanFitNotice = `-- name: ClearPlanFitNotice :exec
+DELETE FROM plan_fit_notices WHERE subject_id = $1
+`
+
+func (q *Queries) ClearPlanFitNotice(ctx context.Context, db DBTX, subjectID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearPlanFitNotice, subjectID)
+	return err
+}
+
 const clearProjectPromotionDeployment = `-- name: ClearProjectPromotionDeployment :execrows
 UPDATE deployments d
-SET status = 'failed', error = 'environment promotion rollback', traffic_percent = 0,
+SET status = 'failed', error = $1::text, error_code = 'promotion_rolled_back', traffic_percent = 0,
     rollout_state = 'aborted', rollout_completed_at = NULL,
     rollout_aborted_at = coalesce(rollout_aborted_at, now()),
-    rollout_aborted_reason = 'environment promotion rollback',
-    stage_state = $1
-WHERE d.id = $2::uuid AND d.app_id = $3::uuid
-  AND d.reason = $4::text AND d.status = 'live' AND d.deleted_at IS NULL
+    rollout_aborted_reason = $1::text,
+    stage_state = $2
+WHERE d.id = $3::uuid AND d.app_id = $4::uuid
+  AND d.reason = $5::text AND d.status = 'live' AND d.deleted_at IS NULL
   AND d.traffic_percent IN (0, 100)
   AND NOT EXISTS (SELECT 1 FROM deployments other
     WHERE other.app_id = d.app_id AND other.scope = d.scope AND other.id <> d.id AND other.status = 'live')
 `
 
 type ClearProjectPromotionDeploymentParams struct {
+	Message      string
 	StageState   []byte
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
@@ -8642,6 +8655,7 @@ type ClearProjectPromotionDeploymentParams struct {
 
 func (q *Queries) ClearProjectPromotionDeployment(ctx context.Context, db DBTX, arg ClearProjectPromotionDeploymentParams) (int64, error) {
 	result, err := db.Exec(ctx, clearProjectPromotionDeployment,
+		arg.Message,
 		arg.StageState,
 		arg.DeploymentID,
 		arg.AppID,
@@ -9041,6 +9055,7 @@ SELECT
  OR EXISTS(SELECT 1 FROM project_environment_clone_materializations p WHERE p.environment_id::text=($3::uuid)::text AND p.operation_id<>$5::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_clone_configuration_ownership p WHERE p.environment_id::text=($3::uuid)::text AND p.operation_id<>$5::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_workload_heads p WHERE p.environment_id::text=($3::uuid)::text)
+ OR EXISTS(SELECT 1 FROM project_environment_branches p WHERE p.parent_environment_id=$3::uuid)
  OR EXISTS(SELECT 1 FROM project_environment_config_versions p WHERE p.project_id=$2::uuid AND p.environment_slug=$1::text)
  OR EXISTS(SELECT 1 FROM app_envs p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
  OR EXISTS(SELECT 1 FROM app_secrets p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=$1::text)
@@ -10911,6 +10926,64 @@ func (q *Queries) ConsumeCustomerOperationWorkflowGuest(ctx context.Context, db 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const consumeEventPublishTokens = `-- name: ConsumeEventPublishTokens :one
+WITH cur AS (
+    SELECT LEAST(FLOOR($1::double precision)::bigint,
+               tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+                   * $2::double precision)::bigint) AS avail,
+           tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * $2::double precision)::bigint AS refilled,
+           FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * $2::double precision) AS whole
+    FROM pg_ratelimit_counters
+    WHERE scope = 'event_publish' AND subject_id = $3::uuid
+      AND plan = $4::text
+    FOR UPDATE
+), upd AS (
+    UPDATE pg_ratelimit_counters c
+    SET tokens = cur.avail - $5::bigint,
+        last_refill = CASE
+            WHEN cur.refilled >= FLOOR($1::double precision)::bigint
+            THEN GREATEST(now(), c.last_refill)
+            ELSE c.last_refill + (cur.whole / $2::double precision) * interval '1 second'
+        END
+    FROM cur
+    WHERE c.scope = 'event_publish' AND c.subject_id = $3::uuid
+      AND c.plan = $4::text AND cur.avail >= $5::bigint
+    RETURNING 1
+)
+SELECT EXISTS (SELECT 1 FROM cur) AS found, EXISTS (SELECT 1 FROM upd) AS granted
+`
+
+type ConsumeEventPublishTokensParams struct {
+	Burst     float64
+	Rps       float64
+	SubjectID pgtype.UUID
+	Plan      string
+	N         int64
+}
+
+type ConsumeEventPublishTokensRow struct {
+	Found   bool
+	Granted bool
+}
+
+// Event-driven hunt #16: the shared per-account event publish counter. Refill
+// follows ConsumeTrafficRateTokens exactly, but the grant is all or nothing:
+// a batch of n events takes n tokens or none.
+func (q *Queries) ConsumeEventPublishTokens(ctx context.Context, db DBTX, arg ConsumeEventPublishTokensParams) (ConsumeEventPublishTokensRow, error) {
+	row := db.QueryRow(ctx, consumeEventPublishTokens,
+		arg.Burst,
+		arg.Rps,
+		arg.SubjectID,
+		arg.Plan,
+		arg.N,
+	)
+	var i ConsumeEventPublishTokensRow
+	err := row.Scan(&i.Found, &i.Granted)
+	return i, err
 }
 
 const consumeTrafficRateToken = `-- name: ConsumeTrafficRateToken :one
@@ -13088,6 +13161,35 @@ func (q *Queries) CreateEnvironmentWorkloadQualification(ctx context.Context, db
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const createEventPublishCounter = `-- name: CreateEventPublishCounter :one
+INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
+VALUES ('event_publish', $1::uuid, $2::text,
+    FLOOR($3::double precision)::bigint - $4::bigint, now())
+ON CONFLICT (scope, subject_id, plan) DO NOTHING
+RETURNING tokens
+`
+
+type CreateEventPublishCounterParams struct {
+	SubjectID pgtype.UUID
+	Plan      string
+	Burst     float64
+	N         int64
+}
+
+// The first publish creates the account's counter with its grant taken; the
+// caller never asks for more than the burst.
+func (q *Queries) CreateEventPublishCounter(ctx context.Context, db DBTX, arg CreateEventPublishCounterParams) (int64, error) {
+	row := db.QueryRow(ctx, createEventPublishCounter,
+		arg.SubjectID,
+		arg.Plan,
+		arg.Burst,
+		arg.N,
+	)
+	var tokens int64
+	err := row.Scan(&tokens)
+	return tokens, err
 }
 
 const createInstance = `-- name: CreateInstance :one
@@ -16553,6 +16655,30 @@ func (q *Queries) DeploymentClearSnapshotBackoff(ctx context.Context, db DBTX, i
 	return err
 }
 
+const deploymentEventEnvironment = `-- name: DeploymentEventEnvironment :one
+SELECT COALESCE((SELECT e.id::text FROM project_environments e
+                 WHERE e.project_id = a.project_id AND e.slug = d.scope
+                   AND d.scope NOT IN ('default', 'production')), '')::text AS environment_id
+FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE a.account_id = $1::uuid AND a.id = $2::uuid
+  AND d.id = $3::uuid
+`
+
+type DeploymentEventEnvironmentParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+// The environment an in-guest publish belongs to: the publishing
+// deployment's stage, or ” for production and project-less apps.
+func (q *Queries) DeploymentEventEnvironment(ctx context.Context, db DBTX, arg DeploymentEventEnvironmentParams) (string, error) {
+	row := db.QueryRow(ctx, deploymentEventEnvironment, arg.AccountID, arg.AppID, arg.DeploymentID)
+	var environment_id string
+	err := row.Scan(&environment_id)
+	return environment_id, err
+}
+
 const deploymentReadinessConfigs = `-- name: DeploymentReadinessConfigs :many
 SELECT CAST(id AS text) AS deployment_id, CAST(app_id AS text) AS app_id,
        override_readiness_probe,
@@ -20005,6 +20131,51 @@ func (q *Queries) EventConsumerProcessingHealth(ctx context.Context, db DBTX, ar
 		&i.AcknowledgmentLatencyMaxSeconds,
 	)
 	return i, err
+}
+
+const eventEnvironmentForAccount = `-- name: EventEnvironmentForAccount :one
+SELECT e.id::text AS id, e.slug
+FROM project_environments e
+WHERE e.account_id = $1::uuid AND e.id = $2::uuid
+`
+
+type EventEnvironmentForAccountParams struct {
+	AccountID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+}
+
+type EventEnvironmentForAccountRow struct {
+	ID   string
+	Slug string
+}
+
+// ADR-20261104120000: the project environment a published event belongs to.
+// Production is the empty environment, so its row reports production = true.
+func (q *Queries) EventEnvironmentForAccount(ctx context.Context, db DBTX, arg EventEnvironmentForAccountParams) (EventEnvironmentForAccountRow, error) {
+	row := db.QueryRow(ctx, eventEnvironmentForAccount, arg.AccountID, arg.EnvironmentID)
+	var i EventEnvironmentForAccountRow
+	err := row.Scan(&i.ID, &i.Slug)
+	return i, err
+}
+
+const eventEnvironmentForApp = `-- name: EventEnvironmentForApp :one
+SELECT e.id::text AS id
+FROM apps a JOIN project_environments e ON e.project_id = a.project_id
+WHERE a.account_id = $1::uuid AND a.id = $2::uuid
+  AND e.slug = $3::text
+`
+
+type EventEnvironmentForAppParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) EventEnvironmentForApp(ctx context.Context, db DBTX, arg EventEnvironmentForAppParams) (string, error) {
+	row := db.QueryRow(ctx, eventEnvironmentForApp, arg.AccountID, arg.AppID, arg.Slug)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const eventRoutingSubscriptionEnabled = `-- name: EventRoutingSubscriptionEnabled :one
@@ -29622,6 +29793,24 @@ func (q *Queries) GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, a
 		&i.CreateRequestFingerprint,
 		&i.DeploymentID,
 	)
+	return i, err
+}
+
+const getPlanFitNotice = `-- name: GetPlanFitNotice :one
+SELECT plan, apps_digest FROM plan_fit_notices WHERE subject_id = $1
+`
+
+type GetPlanFitNoticeRow struct {
+	Plan       string
+	AppsDigest string
+}
+
+// Plan-fit notices (billing review H17-4): the plan and over-plan app set a
+// billing subject was last emailed about.
+func (q *Queries) GetPlanFitNotice(ctx context.Context, db DBTX, subjectID pgtype.UUID) (GetPlanFitNoticeRow, error) {
+	row := db.QueryRow(ctx, getPlanFitNotice, subjectID)
+	var i GetPlanFitNoticeRow
+	err := row.Scan(&i.Plan, &i.AppsDigest)
 	return i, err
 }
 
@@ -49743,11 +49932,19 @@ func (q *Queries) ListDueExclusiveWork(ctx context.Context, db DBTX, rowLimit in
 }
 
 const listDueExternalTriggerReplays = `-- name: ListDueExternalTriggerReplays :many
-SELECT r.id, r.trigger_id, r.item_identifier, r.payload, r.headers, r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at, r.last_error, r.last_dispatched_at, r.deadline_at, r.retry_policy, r.result_retention_until, r.claim_generation, r.claim_expires_at, r.work_policy_name, r.work_key_digest, r.work_sequence, r.work_policy_revision, r.work_fairness_digest, r.work_fairness_limit, r.work_expires_at, r.operator_replay FROM trigger_records r JOIN triggers t ON t.id=r.trigger_id
-WHERE r.trigger_id=$1::uuid AND r.operator_replay
- AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
- AND t.kind IN ('kafka','nats','redis_streams')
-ORDER BY r.next_fire_at,r.id LIMIT $2::integer
+SELECT d.id, d.trigger_id, d.item_identifier, d.payload, d.headers, d.metadata, d.state, d.attempts, d.next_fire_at, d.received_at, d.last_error, d.last_dispatched_at, d.deadline_at, d.retry_policy, d.result_retention_until, d.claim_generation, d.claim_expires_at, d.work_policy_name, d.work_key_digest, d.work_sequence, d.work_policy_revision, d.work_fairness_digest, d.work_fairness_limit, d.work_expires_at, d.operator_replay FROM (
+  (SELECT r.id, r.trigger_id, r.item_identifier, r.payload, r.headers, r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at, r.last_error, r.last_dispatched_at, r.deadline_at, r.retry_policy, r.result_retention_until, r.claim_generation, r.claim_expires_at, r.work_policy_name, r.work_key_digest, r.work_sequence, r.work_policy_revision, r.work_fairness_digest, r.work_fairness_limit, r.work_expires_at, r.operator_replay FROM trigger_records r
+    WHERE r.trigger_id=$1::uuid AND r.operator_replay
+      AND r.state IN ('pending','retry') AND r.next_fire_at<=clock_timestamp()
+    ORDER BY r.next_fire_at,r.id LIMIT $2::integer)
+  UNION ALL
+  (SELECT r.id, r.trigger_id, r.item_identifier, r.payload, r.headers, r.metadata, r.state, r.attempts, r.next_fire_at, r.received_at, r.last_error, r.last_dispatched_at, r.deadline_at, r.retry_policy, r.result_retention_until, r.claim_generation, r.claim_expires_at, r.work_policy_name, r.work_key_digest, r.work_sequence, r.work_policy_revision, r.work_fairness_digest, r.work_fairness_limit, r.work_expires_at, r.operator_replay FROM trigger_records r
+    WHERE r.trigger_id=$1::uuid AND r.operator_replay
+      AND r.state='claimed' AND r.claim_expires_at<=clock_timestamp()
+    ORDER BY r.claim_expires_at,r.id LIMIT $2::integer)
+) d
+WHERE EXISTS (SELECT 1 FROM triggers t WHERE t.id=d.trigger_id AND t.kind IN ('kafka','nats','redis_streams'))
+ORDER BY d.next_fire_at,d.id LIMIT $2::integer
 `
 
 type ListDueExternalTriggerReplaysParams struct {
@@ -49755,6 +49952,10 @@ type ListDueExternalTriggerReplaysParams struct {
 	BatchLimit int32
 }
 
+// Two branches so each keeps its partial index: due replays
+// (trigger_operator_replay_due_idx), and replays a dispatcher claimed and then
+// lost, which return once the claim lapses (trigger_records_claim_expiry_idx):
+// the broker already settled the original delivery and never hands it back.
 func (q *Queries) ListDueExternalTriggerReplays(ctx context.Context, db DBTX, arg ListDueExternalTriggerReplaysParams) ([]TriggerRecord, error) {
 	rows, err := db.Query(ctx, listDueExternalTriggerReplays, arg.TriggerID, arg.BatchLimit)
 	if err != nil {
@@ -50611,7 +50812,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 }
 
 const listEnabledEventSubscriptionsForAccount = `-- name: ListEnabledEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1 and s.enabled and a.status <> 'deleted'
@@ -50640,6 +50841,8 @@ func (q *Queries) ListEnabledEventSubscriptionsForAccount(ctx context.Context, d
 			&i.RoutingRetryPolicy,
 			&i.SchemaVersions,
 			&i.AcknowledgmentLeaseSeconds,
+			&i.DeploymentScope,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -51251,7 +51454,7 @@ func (q *Queries) ListEnvironmentWorkloadQualificationsForDispatch(ctx context.C
 
 const listEventSubscriptionsForApp = `-- name: ListEventSubscriptionsForApp :many
 
-select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds
+select id, account_id, app_id, source, type, filter, enabled, created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, deployment_scope, environment_id
 from event_subscriptions
 where app_id = $1
 order by created_at asc, id asc
@@ -51282,6 +51485,8 @@ func (q *Queries) ListEventSubscriptionsForApp(ctx context.Context, db DBTX, app
 			&i.RoutingRetryPolicy,
 			&i.SchemaVersions,
 			&i.AcknowledgmentLeaseSeconds,
+			&i.DeploymentScope,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -53898,7 +54103,7 @@ func (q *Queries) ListManagedPostgresUsageResources(ctx context.Context, db DBTX
 }
 
 const listMatchingEventSubscriptionsForAccount = `-- name: ListMatchingEventSubscriptionsForAccount :many
-select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds
+select s.id, s.account_id, s.app_id, s.source, s.type, s.filter, s.enabled, s.created_at, s.updated_at, s.routing_retry_policy, s.schema_versions, s.acknowledgment_lease_seconds, s.deployment_scope, s.environment_id
 from event_subscriptions s
 join apps a on a.id = s.app_id
 where s.account_id = $1::uuid
@@ -53972,6 +54177,8 @@ func (q *Queries) ListMatchingEventSubscriptionsForAccount(ctx context.Context, 
 			&i.RoutingRetryPolicy,
 			&i.SchemaVersions,
 			&i.AcknowledgmentLeaseSeconds,
+			&i.DeploymentScope,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -65796,6 +66003,36 @@ func (q *Queries) ManagedPostgresAccountDeletionIncluded(ctx context.Context, db
 	return included, err
 }
 
+const managedPostgresAccountsInProject = `-- name: ManagedPostgresAccountsInProject :many
+SELECT DISTINCT account_id::text AS account_id FROM managed_postgres_databases
+WHERE provider_resource_id=$1::text OR provider_resource_id LIKE $1::text || '/%'
+ORDER BY 1
+`
+
+// ADR-20261112160000 slice 2c: the accounts whose managed PostgreSQL
+// databases, in any state, name a Neon project. neond counts a destructive
+// call against each for the per-subject limit, and refuses quota writes and
+// role deletes on a project no database names.
+func (q *Queries) ManagedPostgresAccountsInProject(ctx context.Context, db DBTX, project string) ([]string, error) {
+	rows, err := db.Query(ctx, managedPostgresAccountsInProject, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var account_id string
+		if err := rows.Scan(&account_id); err != nil {
+			return nil, err
+		}
+		items = append(items, account_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const managedPostgresAdmissionFenced = `-- name: ManagedPostgresAdmissionFenced :one
 SELECT (managed_postgres_admission_cutover_id IS NOT NULL)::boolean AS fenced FROM apps WHERE id=$1::text::uuid
 `
@@ -66060,6 +66297,43 @@ func (q *Queries) ManagedPostgresRestoreSlotHeld(ctx context.Context, db DBTX, a
 	var held bool
 	err := row.Scan(&held)
 	return held, err
+}
+
+const managedPostgresRestoreSources = `-- name: ManagedPostgresRestoreSources :many
+SELECT d.id, d.restore_source_database_id
+FROM managed_postgres_databases d
+WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid
+AND d.restore_source_database_id IS NOT NULL
+`
+
+type ManagedPostgresRestoreSourcesRow struct {
+	ID                      pgtype.UUID
+	RestoreSourceDatabaseID pgtype.UUID
+}
+
+// Billing review 2026-11-13 (R6-1): every database of a subject that was made
+// as a restore copy (a restore, branch or PR preview copy), with the database
+// it was restored from, deleted rows included. A copy shares its root
+// source's egress allowance: on Neon a copy is a branch of its source's
+// project, and Neon's 500 GB transfer allowance is per project.
+func (q *Queries) ManagedPostgresRestoreSources(ctx context.Context, db DBTX, subjectID pgtype.UUID) ([]ManagedPostgresRestoreSourcesRow, error) {
+	rows, err := db.Query(ctx, managedPostgresRestoreSources, subjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresRestoreSourcesRow{}
+	for rows.Next() {
+		var i ManagedPostgresRestoreSourcesRow
+		if err := rows.Scan(&i.ID, &i.RestoreSourceDatabaseID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const managedPostgresRotationRuntime = `-- name: ManagedPostgresRotationRuntime :one
@@ -70973,45 +71247,88 @@ func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectI
 }
 
 const objectInventoryBacklog = `-- name: ObjectInventoryBacklog :one
-WITH q AS (SELECT $3::boolean AND object_inventory_quiet_mode()='on' AS quiet_on),
+WITH q AS (SELECT $1::boolean AND object_inventory_quiet_mode()='on' AS quiet_on),
+x AS (
+  SELECT id AS bucket_id FROM object_buckets WHERE state IN ('provisioning','deleting')
+  UNION SELECT bucket_id FROM object_bucket_versioning WHERE state<>'ready'
+  UNION SELECT bucket_id FROM object_storage_capacity_reconciliations WHERE state IN ('waiting','scanning')
+  UNION SELECT bucket_id FROM object_storage_bucket_usage WHERE token<>''
+  UNION SELECT bucket_id FROM object_storage_inventory_scans WHERE pages > 0 AND NOT complete
+),
 r AS (
-  SELECT b.created_at, u.observed_at, u.attempt_at, u.lease_until,
-    EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') AS versioning,
-    EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')) AS reconciling,
-    EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready') AS locking,
-    COALESCE(i.pages > 0 AND NOT i.complete AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz)
-      AND i.started_at > now() - $2::bigint * interval '1 second', false) AS listing,
-    COALESCE(i.pages > 0 AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND i.progress_at <= now()
-      AND i.progress_at >= now() - $4::bigint * interval '1 second', false) AS progressing,
-    COALESCE(q.quiet_on AND u.observed_at IS NOT NULL AND u.inventory_scope='current'
-      AND COALESCE(a.mutated_at, '-infinity'::timestamptz) < u.observed_at - $5::bigint * interval '1 second', false) AS quiet,
-    CASE WHEN q.quiet_on AND u.inventory_scope='current' AND a.active_since > u.observed_at
-      AND a.active_since < u.observed_at + $6::bigint * interval '1 second'
-      THEN a.active_since ELSE COALESCE(u.observed_at, b.created_at) END AS anchor
-  FROM object_buckets b CROSS JOIN q
-  LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
-  LEFT JOIN object_storage_inventory_scans i ON i.bucket_id=b.id
-  LEFT JOIN object_bucket_activity a ON a.bucket_id=b.id
-  WHERE b.state='ready'
+  SELECT CASE WHEN q.quiet_on THEN
+      (SELECT count(*) FROM object_inventory_schedule s WHERE s.mutated_at >= s.quiet_after AND s.attempt_at < now() - interval '5 minutes')
+    + (SELECT count(*) FROM object_inventory_schedule s WHERE s.mutated_at < s.quiet_after AND s.observed_at <= now() - $2::bigint * interval '1 second'
+        AND s.attempt_at < now() - interval '5 minutes')
+    ELSE (SELECT count(*) FROM object_inventory_schedule s WHERE s.attempt_at < now() - interval '5 minutes') END AS ranged
+  FROM q
+),
+c AS (
+  SELECT
+    count(*) FILTER (WHERE s.attempt_at < now() - interval '5 minutes'
+      AND (NOT q.quiet_on OR s.mutated_at >= s.quiet_after OR s.observed_at <= now() - $2::bigint * interval '1 second')) AS ranged,
+    count(*) FILTER (WHERE b.state='ready'
+      AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready')
+      AND NOT EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=b.id AND rc.state IN ('waiting','scanning'))
+      AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes' OR l.listing)
+      AND (u.lease_until IS NULL OR u.lease_until < now())
+      AND NOT (z.quiet AND NOT l.listing AND u.observed_at > now() - $2::bigint * interval '1 second')) AS due
+  FROM x CROSS JOIN q
+  JOIN object_buckets b ON b.id=x.bucket_id
+  LEFT JOIN object_inventory_schedule s ON s.bucket_id=x.bucket_id
+  LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=x.bucket_id
+  LEFT JOIN object_bucket_activity a ON a.bucket_id=x.bucket_id
+  CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=x.bucket_id AND i.pages > 0 AND NOT i.complete
+    AND i.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND i.started_at > now() - $3::bigint * interval '1 second') AS listing) l
+  CROSS JOIN LATERAL (SELECT COALESCE(q.quiet_on AND u.observed_at IS NOT NULL AND u.inventory_scope='current'
+    AND COALESCE(a.mutated_at, '-infinity'::timestamptz) < u.observed_at - $4::bigint * interval '1 second', false) AS quiet) z
+),
+o AS (
+  SELECT
+    (SELECT min(b.created_at) FROM object_inventory_schedule s JOIN object_buckets b ON b.id=s.bucket_id AND b.state='ready'
+      WHERE s.mutated_at >= s.quiet_after AND s.observed_at = '-infinity'::timestamptz) AS never,
+    (SELECT s.observed_at FROM object_inventory_schedule s JOIN object_buckets b ON b.id=s.bucket_id AND b.state='ready'
+      WHERE s.mutated_at >= s.quiet_after AND s.observed_at > '-infinity'::timestamptz
+      AND NOT (q.quiet_on AND s.quiet_after > '-infinity'::timestamptz AND s.active_since > s.observed_at AND s.active_since < s.observed_at + $5::bigint * interval '1 second')
+      AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
+        AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
+      ORDER BY s.observed_at LIMIT 1) AS active_observed,
+    CASE WHEN NOT q.quiet_on THEN (SELECT s.observed_at FROM object_inventory_schedule s JOIN object_buckets b ON b.id=s.bucket_id AND b.state='ready'
+      WHERE s.mutated_at < s.quiet_after AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
+        AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
+      ORDER BY s.observed_at LIMIT 1) END AS quiet_observed,
+    CASE WHEN q.quiet_on THEN (SELECT s.active_since FROM object_inventory_schedule s JOIN object_buckets b ON b.id=s.bucket_id AND b.state='ready'
+      WHERE s.quiet_after > '-infinity'::timestamptz AND s.active_since > s.observed_at AND s.active_since < s.observed_at + $5::bigint * interval '1 second'
+      AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
+      OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
+        AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
+      ORDER BY s.active_since LIMIT 1) END AS activated,
+    CASE WHEN q.quiet_on THEN (SELECT s.observed_at FROM object_inventory_schedule s JOIN object_buckets b ON b.id=s.bucket_id AND b.state='ready'
+      WHERE s.mutated_at < s.quiet_after
+      ORDER BY s.observed_at LIMIT 1) END AS quiet
+  FROM q
 )
-SELECT
-  (count(*) FILTER (WHERE NOT versioning AND NOT reconciling AND (attempt_at IS NULL OR attempt_at < now() - interval '5 minutes' OR listing)
-    AND (lease_until IS NULL OR lease_until < now())
-    AND NOT (quiet AND NOT listing AND observed_at > now() - $1::bigint * interval '1 second')))::bigint AS due_buckets,
-  COALESCE(EXTRACT(EPOCH FROM now() - min(anchor) FILTER (WHERE NOT quiet AND NOT (observed_at IS NOT NULL AND (
-    versioning OR locking OR reconciling
-    OR (progressing AND observed_at > now() - $2::bigint * interval '1 second'))))), 0)::float8 AS oldest_age_seconds,
-  COALESCE(EXTRACT(EPOCH FROM now() - min(observed_at) FILTER (WHERE quiet)), 0)::float8 AS oldest_quiet_age_seconds
-FROM r
+SELECT (r.ranged - c.ranged + c.due)::bigint AS due_buckets,
+  COALESCE(EXTRACT(EPOCH FROM now() - LEAST(o.never, o.active_observed, o.quiet_observed, o.activated)), 0)::float8 AS oldest_age_seconds,
+  COALESCE(EXTRACT(EPOCH FROM now() - o.quiet), 0)::float8 AS oldest_quiet_age_seconds
+FROM r, c, o
 `
 
 type ObjectInventoryBacklogParams struct {
+	Quiet                 bool
 	QuietVerifySeconds    int64
 	ScanMaxAgeSeconds     int64
-	Quiet                 bool
-	ProgressWindowSeconds int64
 	GranularitySeconds    int64
 	QuietMaxAgeSeconds    int64
+	ProgressWindowSeconds int64
 }
 
 type ObjectInventoryBacklogRow struct {
@@ -71030,14 +71347,21 @@ type ObjectInventoryBacklogRow struct {
 // creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
 // counts toward oldest_quiet_age_seconds instead, and an active bucket that
 // was quiet on its observation counts from when it turned active.
+//
+// ADR-20261111152144 §4: answered from object_inventory_schedule without
+// reading every bucket. due_buckets is the count of the schedule's due index
+// ranges, corrected for the buckets they can count wrongly (x: not ready,
+// held, holding a claim token, or with an open listing): for each, minus
+// whether a range counted it, plus whether the due rule holds. Each oldest
+// age is the first bucket in index order that the rule does not exempt.
 func (q *Queries) ObjectInventoryBacklog(ctx context.Context, db DBTX, arg ObjectInventoryBacklogParams) (ObjectInventoryBacklogRow, error) {
 	row := db.QueryRow(ctx, objectInventoryBacklog,
+		arg.Quiet,
 		arg.QuietVerifySeconds,
 		arg.ScanMaxAgeSeconds,
-		arg.Quiet,
-		arg.ProgressWindowSeconds,
 		arg.GranularitySeconds,
 		arg.QuietMaxAgeSeconds,
+		arg.ProgressWindowSeconds,
 	)
 	var i ObjectInventoryBacklogRow
 	err := row.Scan(&i.DueBuckets, &i.OldestAgeSeconds, &i.OldestQuietAgeSeconds)
@@ -73639,22 +73963,35 @@ func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, ar
 }
 
 const objectNotificationsCapture = `-- name: ObjectNotificationsCapture :execrows
-UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot ||
- event_recipients_in_producer_reach(account_id, payload->>'producer', $1::jsonb)
-WHERE account_id=$2::uuid AND source='gregale.storage' AND event_id=$3::text
-AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification')
+INSERT INTO event_fanout_outbox AS o
+    (account_id, source, event_id, event_type, schema_version, event_data, payload, recipient_snapshot)
+SELECT $1::uuid, 'gregale.storage', $2::text,
+    e.p->>'type', e.p->>'schemaversion', e.p->'data', e.p,
+    event_recipients_in_producer_reach($1::uuid, e.p->>'producer', $3::jsonb)
+FROM (SELECT $4::jsonb AS p) e
+ON CONFLICT (account_id, source, event_id) DO UPDATE SET recipient_snapshot = o.recipient_snapshot || EXCLUDED.recipient_snapshot
+WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) r WHERE r ? 'object_notification')
 `
 
 type ObjectNotificationsCaptureParams struct {
-	Recipients []byte
 	AccountID  pgtype.UUID
 	EventID    string
+	Recipients []byte
+	Payload    []byte
 }
 
 // Notification recipients meet the same company reach as subscriptions
 // (ADR-20261025211616): a rule cannot route a company bucket's events past it.
+// enqueue_event_fanout keeps no row for a platform event without subscribers
+// (ADR-614 amendment 2026-11-13), so the capture inserts it from the event
+// envelope when it is missing and appends to it otherwise.
 func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg ObjectNotificationsCaptureParams) (int64, error) {
-	result, err := db.Exec(ctx, objectNotificationsCapture, arg.Recipients, arg.AccountID, arg.EventID)
+	result, err := db.Exec(ctx, objectNotificationsCapture,
+		arg.AccountID,
+		arg.EventID,
+		arg.Recipients,
+		arg.Payload,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -81067,6 +81404,24 @@ func (q *Queries) PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg Put
 	return i, err
 }
 
+const putPlanFitNotice = `-- name: PutPlanFitNotice :exec
+INSERT INTO plan_fit_notices (subject_id, plan, apps_digest, noticed_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (subject_id) DO UPDATE
+   SET plan = EXCLUDED.plan, apps_digest = EXCLUDED.apps_digest, noticed_at = now()
+`
+
+type PutPlanFitNoticeParams struct {
+	SubjectID  pgtype.UUID
+	Plan       string
+	AppsDigest string
+}
+
+func (q *Queries) PutPlanFitNotice(ctx context.Context, db DBTX, arg PutPlanFitNoticeParams) error {
+	_, err := db.Exec(ctx, putPlanFitNotice, arg.SubjectID, arg.Plan, arg.AppsDigest)
+	return err
+}
+
 const putRuntimeSecretSignature = `-- name: PutRuntimeSecretSignature :exec
 INSERT INTO runtime_secret_signatures (ciphertext_sha256, signature)
 VALUES ($1::bytea, $2::bytea)
@@ -81333,7 +81688,49 @@ select
       where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
         and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending' and i.due_at <= now()
       order by i.due_at, i.created_at, i.id limit 1)
-  ) first)::timestamptz as oldest_pending_at
+  ) first)::timestamptz as oldest_pending_at,
+  -- Ordered work (ADR-20261112193306): due messages waiting behind an older
+  -- message of their key cannot run, so queue_depth scaling leaves them out.
+  (select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state='pending' and i.due_at <= now() and i.work_policy_name is not null
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+       and exists (select 1 from invocations older
+         where older.app_id=i.app_id and older.work_policy_name=i.work_policy_name
+           and older.work_key_digest=i.work_key_digest
+           and ((older.work_sequence<i.work_sequence and older.state='pending') or older.state='dispatching'))
+     limit $2::integer) waiting)::bigint as waiting_behind_key,
+  -- A blocked lane's head has failed at least once and holds later messages
+  -- of its key until it succeeds or dead-letters.
+  (select count(*) from (
+     select 1 from invocations h, b
+     where h.app_id=$1::uuid and h.queue_binding_id=b.id and h.account_id=b.account_id
+       and h.source='queue' and h.state in ('pending','dispatching') and h.attempts > 0
+       and h.work_policy_name is not null
+       and (b.deployment_scope='' or h.deployment_scope=b.deployment_scope)
+       and not exists (select 1 from invocations older
+         where older.app_id=h.app_id and older.work_policy_name=h.work_policy_name
+           and older.work_key_digest=h.work_key_digest and older.work_sequence<h.work_sequence
+           and older.state in ('pending','dispatching'))
+       and exists (select 1 from invocations later
+         where later.app_id=h.app_id and later.work_policy_name=h.work_policy_name
+           and later.work_key_digest=h.work_key_digest and later.work_sequence>h.work_sequence
+           and later.state='pending')
+     limit $2::integer) blocked)::bigint as blocked_lanes,
+  (select min(h.created_at) from invocations h, b
+   where h.app_id=$1::uuid and h.queue_binding_id=b.id and h.account_id=b.account_id
+     and h.source='queue' and h.state in ('pending','dispatching') and h.attempts > 0
+     and h.work_policy_name is not null
+     and (b.deployment_scope='' or h.deployment_scope=b.deployment_scope)
+     and not exists (select 1 from invocations older
+       where older.app_id=h.app_id and older.work_policy_name=h.work_policy_name
+         and older.work_key_digest=h.work_key_digest and older.work_sequence<h.work_sequence
+         and older.state in ('pending','dispatching'))
+     and exists (select 1 from invocations later
+       where later.app_id=h.app_id and later.work_policy_name=h.work_policy_name
+         and later.work_key_digest=h.work_key_digest and later.work_sequence>h.work_sequence
+         and later.state='pending'))::timestamptz as oldest_blocked_at
 `
 
 type QueueBindingTelemetryParams struct {
@@ -81343,10 +81740,13 @@ type QueueBindingTelemetryParams struct {
 }
 
 type QueueBindingTelemetryRow struct {
-	Depth           int64
-	InFlight        int64
-	DeadLetter      int64
-	OldestPendingAt pgtype.Timestamptz
+	Depth            int64
+	InFlight         int64
+	DeadLetter       int64
+	OldestPendingAt  pgtype.Timestamptz
+	WaitingBehindKey int64
+	BlockedLanes     int64
+	OldestBlockedAt  pgtype.Timestamptz
 }
 
 // QueueStateForBinding's figures for gauges and alerts without a
@@ -81361,6 +81761,9 @@ func (q *Queries) QueueBindingTelemetry(ctx context.Context, db DBTX, arg QueueB
 		&i.InFlight,
 		&i.DeadLetter,
 		&i.OldestPendingAt,
+		&i.WaitingBehindKey,
+		&i.BlockedLanes,
+		&i.OldestBlockedAt,
 	)
 	return i, err
 }
@@ -84652,7 +85055,10 @@ SELECT (jsonb_build_object(
     'release_database_switches_from_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE from_deployment_id = $1::uuid),
     'release_database_switches_target_deployment_id_fkey', (SELECT count(*) FROM release_database_switches WHERE target_deployment_id = $1::uuid),
     -- Preview command runtimes (financial previews) hold a deployment while preparing or active.
-    'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = $1::uuid AND phase <> 'retired')
+    'financial_preview_command_runtimes_deployment_id_fkey', (SELECT count(*) FROM financial_preview_command_runtimes WHERE deployment_id = $1::uuid AND phase <> 'retired'),
+    -- Environment branches (ADR-20261031193635) record the deployments they created.
+    'project_environment_branch_deployments_deployment_id_fkey', (SELECT count(*) FROM project_environment_branch_deployments WHERE deployment_id = $1::uuid),
+    'environment_branch_captures_deployment_id_fkey', (SELECT count(*) FROM environment_branch_captures WHERE deployment_id = $1::uuid)
 ))::jsonb AS borrowers
 `
 
@@ -84683,7 +85089,7 @@ func (q *Queries) ReadCloneDeploymentCleanup(ctx context.Context, db DBTX, opera
 }
 
 const readCloneDeploymentSoftBorrowers = `-- name: ReadCloneDeploymentSoftBorrowers :one
-SELECT jsonb_build_object(
+SELECT (jsonb_build_object(
  'environment_workload_retirements.deployment_ids', (SELECT count(*) FROM environment_workload_retirements WHERE $1::uuid=ANY(deployment_ids)),
  'deployment_promotion_receipts.expected_serving_deployment_id', (SELECT count(*) FROM deployment_promotion_receipts WHERE expected_serving_deployment_id=$1::uuid::text),
  'deployment_runtime_upgrade_acceptances.deployment_id', (SELECT count(*) FROM deployment_runtime_upgrade_acceptances WHERE deployment_id::text=$1::uuid::text),
@@ -84734,7 +85140,13 @@ SELECT jsonb_build_object(
  'upload_commit_outcomes.deployment_id', (SELECT count(*) FROM upload_commit_outcomes WHERE deployment_id=$1::uuid::text),
  'upload_sessions.deployment_id', (SELECT count(*) FROM upload_sessions WHERE deployment_id=$1::uuid::text),
  'instance_application_standard_admissions.deployment_id', (SELECT count(*) FROM instance_application_standard_admissions WHERE deployment_id=$1::uuid)
-)::jsonb AS borrowers
+) || jsonb_build_object(
+ -- Signed-artifact evidence (ADR-20261109170000) and environment-branch lineage
+ -- and capture objects (ADR-20261031193635) keep the id without a foreign key.
+ 'artifact_signatures.deployment_id', (SELECT count(*) FROM artifact_signatures WHERE deployment_id=$1::uuid),
+ 'environment_branch_capture_objects.deployment_id', (SELECT count(*) FROM environment_branch_capture_objects WHERE deployment_id=$1::uuid),
+ 'project_environment_branch_deployments.source_deployment_id', (SELECT count(*) FROM project_environment_branch_deployments WHERE source_deployment_id=$1::uuid)
+))::jsonb AS borrowers
 `
 
 type ReadCloneDeploymentSoftBorrowersParams struct {
@@ -84792,6 +85204,7 @@ SELECT
  (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_admissions,
  (SELECT count(*) FROM invocation_work_environment_domains p WHERE p.environment_id=$1::uuid) AS invocation_work_environment_domains,
  (SELECT count(*) FROM invocations p WHERE p.environment_id=$1::uuid OR (p.app_id IN (SELECT id FROM scoped_apps) AND p.deployment_scope=$3::text)) AS invocations,
+ (SELECT count(*) FROM project_environment_branches p WHERE p.environment_id=$1::uuid OR p.parent_environment_id=$1::uuid) AS project_environment_branches,
  (SELECT count(*) FROM project_environment_edge_policies p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_environment_edge_policies,
  (SELECT count(*) FROM project_environment_qualifications p WHERE p.project_id=$2::uuid AND p.environment_slug=$3::text) AS project_environment_qualifications,
  (SELECT count(*) FROM project_environment_queue_runtime_sets p WHERE p.environment_id=$1::uuid) AS project_environment_queue_runtime_sets,
@@ -84829,6 +85242,7 @@ type ReadCloneEnvironmentMetadataBorrowersRow struct {
 	InvocationWorkEnvironmentAdmissions  int64
 	InvocationWorkEnvironmentDomains     int64
 	Invocations                          int64
+	ProjectEnvironmentBranches           int64
 	ProjectEnvironmentEdgePolicies       int64
 	ProjectEnvironmentQualifications     int64
 	ProjectEnvironmentQueueRuntimeSets   int64
@@ -84869,6 +85283,7 @@ func (q *Queries) ReadCloneEnvironmentMetadataBorrowers(ctx context.Context, db 
 		&i.InvocationWorkEnvironmentAdmissions,
 		&i.InvocationWorkEnvironmentDomains,
 		&i.Invocations,
+		&i.ProjectEnvironmentBranches,
 		&i.ProjectEnvironmentEdgePolicies,
 		&i.ProjectEnvironmentQualifications,
 		&i.ProjectEnvironmentQueueRuntimeSets,
@@ -95640,6 +96055,29 @@ func (q *Queries) ReadValidRouteLifecycleApprovals(ctx context.Context, db DBTX,
 		return nil, err
 	}
 	return items, nil
+}
+
+const readWebhookReplayAdmission = `-- name: ReadWebhookReplayAdmission :one
+SELECT d.account_id, coalesce(a.plan, o.plan, '')::text AS plan
+FROM app_webhook_deliveries d
+LEFT JOIN accounts a ON a.id = d.account_id
+LEFT JOIN orgs o ON o.id = d.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+WHERE d.id = $1::uuid AND d.status = 'dead'
+`
+
+type ReadWebhookReplayAdmissionRow struct {
+	AccountID pgtype.UUID
+	Plan      string
+}
+
+// A dead webhook delivery replayed from the dead letter re-enters its
+// account's outbox under the caps an explicit delivery meets (event-driven
+// hunt #16). The plan resolves as ReadQueueReplayAdmission's does.
+func (q *Queries) ReadWebhookReplayAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (ReadWebhookReplayAdmissionRow, error) {
+	row := db.QueryRow(ctx, readWebhookReplayAdmission, id)
+	var i ReadWebhookReplayAdmissionRow
+	err := row.Scan(&i.AccountID, &i.Plan)
+	return i, err
 }
 
 const readWildcardCustomDomain = `-- name: ReadWildcardCustomDomain :one
@@ -110097,6 +110535,21 @@ func (q *Queries) StoredWorkflowManifest(ctx context.Context, db DBTX, appID pgt
 	return i, err
 }
 
+const sumAccountBacklogBytes = `-- name: SumAccountBacklogBytes :one
+SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
+WHERE account_id=$1::uuid AND source IN ('queue','async_invoke','delayed_task')
+`
+
+// ADR-20261022105723 (amended 2026-11-13): the account's pending queue,
+// async and delayed-task payload bytes, one pool against
+// MaxQueueBacklogBytesPerAccount.
+func (q *Queries) SumAccountBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, sumAccountBacklogBytes, accountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const sumAccountCreditRefundReversal = `-- name: SumAccountCreditRefundReversal :one
 SELECT coalesce(sum(delta_cents), 0)::bigint AS reversed_cents
 FROM credit_ledger
@@ -110114,18 +110567,6 @@ func (q *Queries) SumAccountCreditRefundReversal(ctx context.Context, db DBTX, a
 	var reversed_cents int64
 	err := row.Scan(&reversed_cents)
 	return reversed_cents, err
-}
-
-const sumAccountQueueBacklogBytes = `-- name: SumAccountQueueBacklogBytes :one
-SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
-WHERE account_id=$1::uuid AND source='queue'
-`
-
-func (q *Queries) SumAccountQueueBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
-	row := db.QueryRow(ctx, sumAccountQueueBacklogBytes, accountID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
 }
 
 const sumInvocationBacklogPending = `-- name: SumInvocationBacklogPending :one
@@ -113852,21 +114293,23 @@ func (q *Queries) UpsertEnvironmentWorkloadServingRoute(ctx context.Context, db 
 }
 
 const upsertEventSubscription = `-- name: UpsertEventSubscription :one
-insert into event_subscriptions (account_id, app_id, source, type, filter)
-values ($1, $2, $3, $4, $5::jsonb)
-on conflict (app_id, source, type, filter) do update
+insert into event_subscriptions (account_id, app_id, source, type, filter, deployment_scope)
+values ($1, $2, $3, $4, $5::jsonb, $6::text)
+on conflict (app_id, deployment_scope, source, type, filter) do update
 set enabled = true,
     updated_at = now()
 returning id, account_id, app_id, source, type, filter, enabled,
-          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, (xmax = 0) as inserted
+          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds,
+          deployment_scope, environment_id, (xmax = 0) as inserted
 `
 
 type UpsertEventSubscriptionParams struct {
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
-	Source    string
-	Type      string
-	Column5   []byte
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Source          string
+	Type            string
+	Column5         []byte
+	DeploymentScope string
 }
 
 type UpsertEventSubscriptionRow struct {
@@ -113882,11 +114325,15 @@ type UpsertEventSubscriptionRow struct {
 	RoutingRetryPolicy         []byte
 	SchemaVersions             []string
 	AcknowledgmentLeaseSeconds int32
+	DeploymentScope            string
+	EnvironmentID              pgtype.UUID
 	Inserted                   bool
 }
 
 // (xmax = 0) distinguishes a declaration first installed by this deploy from
 // an idempotent replay of the same manifest row.
+// The identity is unique within one environment of the app
+// (ADR-20261104120000); production is the empty scope.
 func (q *Queries) UpsertEventSubscription(ctx context.Context, db DBTX, arg UpsertEventSubscriptionParams) (UpsertEventSubscriptionRow, error) {
 	row := db.QueryRow(ctx, upsertEventSubscription,
 		arg.AccountID,
@@ -113894,6 +114341,7 @@ func (q *Queries) UpsertEventSubscription(ctx context.Context, db DBTX, arg Upse
 		arg.Source,
 		arg.Type,
 		arg.Column5,
+		arg.DeploymentScope,
 	)
 	var i UpsertEventSubscriptionRow
 	err := row.Scan(
@@ -113909,6 +114357,8 @@ func (q *Queries) UpsertEventSubscription(ctx context.Context, db DBTX, arg Upse
 		&i.RoutingRetryPolicy,
 		&i.SchemaVersions,
 		&i.AcknowledgmentLeaseSeconds,
+		&i.DeploymentScope,
+		&i.EnvironmentID,
 		&i.Inserted,
 	)
 	return i, err

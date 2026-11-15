@@ -328,6 +328,9 @@ type bringUpTimings struct {
 	// after_restore failure. RestoreFallbackNodeLocal tells schedd to keep the
 	// snapshot; other restore diagnostics stay operator-only.
 	restoreFallbackReason string
+	// baseScanGrace: the base scan gate admitted a fixable CRITICAL inside
+	// api.BaseScanCriticalBootGrace.
+	baseScanGrace bool
 	// prepare is filled by Wake from wakePhases just before bringUp so the
 	// RestoreSpec can carry the pre-restore phases onto the timeline
 	// (ADR-192). bringUp adds the ADR-510 backing check to it.
@@ -553,6 +556,9 @@ type Instance struct {
 	// only) when the failure was this node's. Empty for other failures,
 	// planned cold boots, and successful restores.
 	RestoreFallbackReason string
+	// BaseScanGrace reports that the base scan gate admitted this boot only
+	// inside api.BaseScanCriticalBootGrace (a fixable CRITICAL on its base).
+	BaseScanGrace bool
 	// AppID is the apps.id UUID the instance was woken for.
 	// UpdateEgressAllowlist (PR-B, ADR-031+033) uses it to walk
 	// the live map keyed by app instead of by instance, so a
@@ -1206,6 +1212,9 @@ type Manager struct {
 	// base images with (ADR-20261026091500): the build seal domain, then
 	// the fleet and host identities. nil leaves builders anonymous.
 	registryIdentities []*age.X25519Identity
+	// buildRegistryMirror, when set, serves builders their private
+	// registries through secretd instead (ADR-20261110210000 slice 3j-3).
+	buildRegistryMirror BuildRegistryMirror
 	// requireSecretBinding refuses runtime envelopes that carry no account
 	// binding (ADR-20261023173624, contract step). Off until every stored
 	// envelope is bound.
@@ -1214,6 +1223,13 @@ type Manager struct {
 	// envelopes before any is opened (ADR 20261028161502, amendment 1).
 	// nil checks nothing.
 	runtimeSignatures *sealsig.RuntimeChecker
+	// runtimeOpener, when set, opens app-secret entries in place of
+	// hostIdentities: the control plane's secretd (ADR-20261110210000 §3).
+	// nil opens them on this node.
+	runtimeOpener RuntimeSecretOpener
+	// captureRecipient, when set, is what crash-capture keys are sealed to
+	// in place of the first host identity's recipient (slice 3e).
+	captureRecipient *age.X25519Recipient
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
@@ -1719,6 +1735,23 @@ func (m *Manager) SetHostIdentities(ids []*age.X25519Identity) {
 // production wires it before serving traffic.
 func (m *Manager) RequireSecretBinding(required bool) {
 	m.requireSecretBinding = required
+}
+
+// RuntimeSecretOpener opens an app's selected app-secret entries somewhere
+// other than this node (ADR-20261110210000 §3: the control plane's secretd).
+// It returns one value per entry, keyed by entry.Key, and refuses any entry
+// whose envelope is not bound to the app's account or does not hold exactly
+// its selected source key.
+type RuntimeSecretOpener interface {
+	OpenAppSecrets(ctx context.Context, appID string, entries []SealedEnvEntry) (map[string]string, error)
+}
+
+// SetRuntimeSecretOpener routes every app-secret open (wake env, sidecar app
+// secrets, live secret reload) through o instead of this node's runtime
+// identities. Writer signatures are still checked here first. nil restores
+// local opening. NOT safe to call concurrently with Wake.
+func (m *Manager) SetRuntimeSecretOpener(o RuntimeSecretOpener) {
+	m.runtimeOpener = o
 }
 
 // WithRuntimeSecretSignatures makes every path that opens runtime secrets
@@ -3653,15 +3686,26 @@ func jsonMarshalEnvelope(e secretbox.Envelope) ([]byte, error) {
 func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
 	var merged secretbox.Envelope
 	if len(req.SealedEnvEntries) > 0 {
-		merged, err = m.openSealedEnvEntries(ctx, req.SealedEnvEntries, req.AccountID)
+		merged, err = m.openSealedEnvEntries(ctx, req.AppID, req.SealedEnvEntries, req.AccountID)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 	// ADR-20261026091500: a builder's Docker config rides in its
 	// secrets.env, written after the build's own secrets.
+	// ADR-20261110210000 slice 3j-3: with a build registry mirror the
+	// builder gets only the mirror plan, and no password is opened here.
 	if req.ExportDir != "" {
-		if config, ok := m.buildRegistryAuth(req.BuildRegistryCredentials); ok {
+		if plan := m.buildMirrorPlan(req); len(plan) > 0 {
+			config, err := buildMirrorConfig(plan)
+			if err != nil {
+				return nil, nil, err
+			}
+			if merged == nil {
+				merged = secretbox.Envelope{}
+			}
+			merged[api.BuildRegistryMirrorsKey] = config
+		} else if config, ok := m.buildRegistryAuth(req.BuildRegistryCredentials); ok {
 			if merged == nil {
 				merged = secretbox.Envelope{}
 			}
@@ -3691,9 +3735,16 @@ func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secret
 // openSealedEnvEntries opens a workload's selected ciphertext for accountID,
 // the account the workload runs for. An envelope bound to another account
 // (ADR-20261023173624) is refused before any of its values are used.
-func (m *Manager) openSealedEnvEntries(ctx context.Context, entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
+func (m *Manager) openSealedEnvEntries(ctx context.Context, appID string, entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
 	if len(entries) == 0 {
 		return nil, nil
+	}
+	if m.runtimeOpener != nil {
+		values, err := m.openRemote(ctx, appID, entries)
+		if err != nil {
+			return nil, fmt.Errorf("open sealed env: %w", err)
+		}
+		return secretbox.Envelope(values), nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
@@ -3727,10 +3778,18 @@ func (m *Manager) openSealedEnvEntries(ctx context.Context, entries []SealedEnvE
 // requires each envelope to contain exactly its selected source key. Plaintext
 // remains in caller memory only; callers must not log or persist it outside
 // the guest's runtime projection. accountID is the account the workload runs
-// for; an envelope bound to another account is refused.
-func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, entries []SealedEnvEntry, accountID string) (map[string]string, error) {
+// for; an envelope bound to another account is refused. appID names the app
+// the entries belong to, which a remote opener authorizes the node for.
+func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, appID string, entries []SealedEnvEntry, accountID string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return map[string]string{}, nil
+	}
+	if m.runtimeOpener != nil {
+		secrets, err := m.openRemote(ctx, appID, entries)
+		if err != nil {
+			return nil, fmt.Errorf("open runtime secrets: %w", err)
+		}
+		return secrets, nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
@@ -3754,6 +3813,33 @@ func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, entries []SealedEnvE
 		secrets[entry.Key] = value
 	}
 	return secrets, nil
+}
+
+// openRemote checks the writer signatures here, then has the remote opener
+// open the entries. Every entry must come back exactly once, under its key:
+// a partial answer is refused rather than run with a missing secret.
+func (m *Manager) openRemote(ctx context.Context, appID string, entries []SealedEnvEntry) (map[string]string, error) {
+	if appID == "" {
+		return nil, errors.New("remote secret open needs the app id")
+	}
+	if err := m.checkRuntimeSignatures(ctx, entries); err != nil {
+		return nil, err
+	}
+	values, err := m.runtimeOpener.OpenAppSecrets(ctx, appID, entries)
+	if err != nil {
+		return nil, err
+	}
+	if got := len(values); got != len(entries) {
+		clear(values)
+		return nil, fmt.Errorf("remote opener returned %d values for %d entries", got, len(entries))
+	}
+	for _, entry := range entries {
+		if _, ok := values[entry.Key]; !ok {
+			clear(values)
+			return nil, fmt.Errorf("remote opener returned no value for %s", logsanitize.Field(entry.Key))
+		}
+	}
+	return values, nil
 }
 
 // openBoundEntry opens one entry and enforces its account binding. With
@@ -3787,6 +3873,38 @@ func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string
 // by apid and keeps plaintext only in the wake request until the concrete VMM
 // writes it to that sidecar's workload-specific env file in the instance's
 // writable main upper. It never modifies the shared sidecar image.
+// SidecarEnvOpener opens one sidecar's direct env by reference
+// (ADR-20261110210000 slice 3d): the remote opener reads the sealed values
+// from the deployment itself. A RuntimeSecretOpener that also implements it
+// opens sidecar env too.
+type SidecarEnvOpener interface {
+	OpenSidecarEnv(ctx context.Context, appID, deploymentID, sidecarName string) (map[string]string, error)
+}
+
+// openSidecarEnvRemote asks the remote opener for a sidecar's direct env and
+// requires exactly the keys schedd delivered: a deployment that changed
+// between them fails the wake instead of running with other values.
+func (m *Manager) openSidecarEnvRemote(ctx context.Context, remote SidecarEnvOpener, req *WakeRequest, sidecar string, entries []SealedEnvEntry) (map[string]string, error) {
+	if req.AppID == "" || req.DeploymentID == "" || sidecar == "" {
+		return nil, errors.New("open sidecar env: remote open needs the app, deployment and sidecar")
+	}
+	values, err := remote.OpenSidecarEnv(ctx, req.AppID, req.DeploymentID, sidecar)
+	if err != nil {
+		return nil, fmt.Errorf("open sidecar env: %w", err)
+	}
+	if got := len(values); got != len(entries) {
+		clear(values)
+		return nil, fmt.Errorf("open sidecar env: remote opener returned %d values for %d entries", got, len(entries))
+	}
+	for _, entry := range entries {
+		if _, ok := values[entry.Key]; !ok {
+			clear(values)
+			return nil, fmt.Errorf("open sidecar env: remote opener returned no value for %s", logsanitize.Field(entry.Key))
+		}
+	}
+	return values, nil
+}
+
 func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
@@ -3805,10 +3923,23 @@ func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) 
 		if len(entries) == 0 && len(secretEntries) == 0 {
 			continue
 		}
-		if len(m.hostIdentities) == 0 {
+		// With a runtime opener that opens sidecar env by reference, both the
+		// direct env and the app secrets come from it; otherwise this node
+		// opens them with its runtime identity.
+		remote, byReference := m.runtimeOpener.(SidecarEnvOpener)
+		byReference = byReference && m.runtimeOpener != nil
+		if len(m.hostIdentities) == 0 && ((len(entries) > 0 && !byReference) || m.runtimeOpener == nil) {
 			return ErrNoHostKey
 		}
 		merged := make(map[string]string)
+		if len(entries) > 0 && byReference {
+			values, err := m.openSidecarEnvRemote(ctx, remote, req, req.Sidecars[i].Name, entries)
+			if err != nil {
+				return err
+			}
+			merged = values
+			entries = nil
+		}
 		for _, entry := range entries {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(m.hostIdentities, entry.Ciphertext)
 			if err != nil {
@@ -3822,7 +3953,7 @@ func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) 
 			}
 			merged[entry.Key] = string(plaintext)
 		}
-		secrets, err := m.UnsealRuntimeSecrets(ctx, secretEntries, req.AccountID)
+		secrets, err := m.UnsealRuntimeSecrets(ctx, req.AppID, secretEntries, req.AccountID)
 		if err != nil {
 			return fmt.Errorf("open sidecar app secrets: %w", err)
 		}
@@ -3994,6 +4125,11 @@ type WakeRequest struct {
 	// them into the builder's secrets.env as a Docker config. Ignored for
 	// every VM that is not a builder.
 	BuildRegistryCredentials []BuildRegistryCredential
+	// BuildID is the build a builder VM runs (ADR-20261110210000 slice
+	// 3j-3). With a build registry mirror set (SetBuildRegistryMirror), the
+	// builder pulls BuildRegistryCredentials' registries through the mirror
+	// by this id and is given no password. Empty from an older builderd.
+	BuildID string
 	// BuildKitSeedDrive is a builder VM's writable drive2: builderd's copy of
 	// the node's BuildKit seed, beside drive1 (ADR-20261030122204). Empty for
 	// a two-drive builder and for every VM that is not a builder.
@@ -4306,6 +4442,11 @@ type SealedEnvEntry struct {
 	// SourceKey binds an alias to the single source in its sealed envelope.
 	// Empty retains the legacy envelope merge contract.
 	SourceKey string
+	// Scope is the app_secrets scope of the row this value comes from
+	// (ADR-20261110210000 slice 3d-4). Set, a remote opener opens the app's
+	// own row (app, Scope, SourceKey) by reference and ignores Ciphertext.
+	// Empty for values that are not the app's app_secrets rows.
+	Scope string
 }
 
 // APIEnvEntry is one (key, value) plaintext pair as stored in app_envs
@@ -5006,6 +5147,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		lease.restoreIdentity = newRestoreIdentityExpectation()
 	}
 	lease.IsBuilder = req.ExportDir != ""
+	lease.buildMirrors = m.leaseBuildMirrors(req)
 	m.stampCgroupParent(&lease)
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
@@ -5657,6 +5799,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		Characterization:       report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
+		BaseScanGrace: timings.baseScanGrace,
 	}
 	if err = m.stampNativeInstanceGeneration(inst); err != nil {
 		return nil, fmt.Errorf("wake %s: original launch identity: %w", req.Instance, err)
@@ -5878,9 +6021,10 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	// error — the wake-error channel expects it). No-op when storage
 	// is nil (unit tests that don't wire WithStorage continue to pass).
 	scanCheckStartedAt := time.Now()
-	scanErr := m.bringUpScanCheck(ctx, req.BaseKey)
+	scanGrace, scanErr := m.bringUpScanCheck(ctx, req.BaseKey)
 	if timings != nil {
 		timings.scanCheckMs = time.Since(scanCheckStartedAt).Milliseconds()
+		timings.baseScanGrace = scanGrace
 	}
 	if scanErr != nil {
 		return WakeColdBoot, scanErr
@@ -5889,7 +6033,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	// hand the caller a fresh instance that is not the capture.
 	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0
 	if sealed {
-		if err := m.openSealedSnapshot(req.Snapshot); err != nil {
+		if err := m.openSealedSnapshot(ctx, req.AppID, req.Snapshot); err != nil {
 			return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
 		}
 	}
@@ -6146,6 +6290,10 @@ type baseScanSidecar struct {
 	Image                string         `json:"image"`
 	Findings             map[string]int `json:"findings"`
 	FixAvailableFindings map[string]int `json:"fix_available_findings"`
+	// FixableCriticalSince is when a scan of this base generation first
+	// found a fixable CRITICAL; it starts api.BaseScanCriticalBootGrace.
+	// Absent (older imaged) means no grace.
+	FixableCriticalSince *time.Time `json:"fixable_critical_since,omitempty"`
 }
 
 func (m *Manager) readBaseScan(ctx context.Context, scanKey string) (baseScanSidecar, error) {
@@ -6269,9 +6417,9 @@ func (m *Manager) beginProcessAttempt(lease Lease) Lease {
 	return lease
 }
 
-func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
+func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) (grace bool, err error) {
 	if m.storage == nil {
-		return nil
+		return false, nil
 	}
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
 	if err := m.ensureBaseGeneration(ctx, baseKey, scanKey); err != nil {
@@ -6279,7 +6427,7 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 		if m.log != nil {
 			m.log.Warn("fcvm: runtime base could not adopt its configured generation", "base", baseKey, "err", err)
 		}
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return false, api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"runtime base generation unavailable",
 			fmt.Sprintf("runtime base %q could not adopt its configured generation", baseKey))
 	}
@@ -6297,7 +6445,15 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	}
 	if gateErr != nil {
 		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, reason)
-		return gateErr
+		return false, gateErr
+	}
+	if reason == baseScanGraceReason {
+		m.imageScanMetrics.ObserveBaseScanGraceAdmit(baseKey)
+		if m.log != nil {
+			m.log.Warn("fcvm: booting a base with a fixable CRITICAL vulnerability inside its grace window",
+				"base", baseKey, "critical_since", scan.FixableCriticalSince)
+		}
+		grace = true
 	}
 	// Forward per-severity finding counts to the vmmd Prometheus
 	// counter. The image label is the OCI ref imaged wrote into
@@ -6306,11 +6462,15 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	for sev, n := range scan.Findings {
 		m.metricsImageScan(scan.Image, sev, n)
 	}
-	return nil
+	return grace, nil
 }
 
 // baseScanVerdict applies the boot gate to one read of a base's scan sidecar.
 // A refusal also returns its wire.BaseScanRefusalReasons reason.
+// baseScanGraceReason is baseScanVerdict's reason for a fixable CRITICAL
+// admitted inside api.BaseScanCriticalBootGrace.
+const baseScanGraceReason = "critical_grace"
+
 func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar, readErr error) (string, error) {
 	if readErr != nil {
 		return "sidecar_missing", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
@@ -6346,6 +6506,12 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 		return "scan_failed", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"Base image scan unavailable",
 			fmt.Sprintf("Gregale could not finish the vulnerability scan of its base image %q, so Gregale will not start instances on it until the scan completes; this is a platform problem, not your code", baseKey))
+	}
+	if now := time.Now(); n > 0 && scan.FixableCriticalSince != nil && !scan.FixableCriticalSince.After(now) && now.Before(scan.FixableCriticalSince.Add(api.BaseScanCriticalBootGrace)) {
+		// Keep serving apps on the base while a patched one is published
+		// (deploy-path review P5). schedd refuses a new deployment's prime
+		// that comes back with this grace flag.
+		return baseScanGraceReason, nil
 	}
 	if n > 0 {
 		// The deploy and wake errors carry this detail to the customer, who
@@ -7516,7 +7682,10 @@ func (m *Manager) applyAppCPULimit(ctx context.Context, inst *Instance, cpuMilli
 // the process watcher to report a Firecracker exit. A VM that died fails the
 // step's vsock dial before the watcher has reaped it.
 var (
-	wakeStepExitGrace = time.Second
+	// Three seconds: a guest stopping right after readiness took longer than
+	// one to be reaped, so its refused vsock dial read as an internal CPU
+	// policy fault (deploy-path review P4, production h34b-comp 2026-11-12).
+	wakeStepExitGrace = 3 * time.Second
 	wakeStepExitPoll  = 20 * time.Millisecond
 )
 

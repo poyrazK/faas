@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.account_health_domain import AccountHealthDomain
     from ..models.account_health_requests import AccountHealthRequests
     from ..models.account_health_restriction import AccountHealthRestriction
+    from ..models.account_health_signal import AccountHealthSignal
 
 
 T = TypeVar("T", bound="AccountHealth")
@@ -21,15 +22,15 @@ T = TypeVar("T", bound="AccountHealth")
 
 @_attrs_define
 class AccountHealth:
-    """What may stop the calling account from working: restrictions with the next step, failed deployments, custom-domain
-    problems and refused API requests.
+    """What may stop the calling account from working: restrictions with the next step, problems that keep recurring,
+    failed deployments, custom-domain problems and refused API requests.
 
     """
 
     generated_at: datetime.datetime
     """When the checks ran."""
     attention: int
-    """Number of restrictions, failed deployments and domain issues; zero means nothing needs action."""
+    """Number of restrictions, signals, failed deployments and domain issues; zero means nothing needs action."""
     restrictions: list[AccountHealthRestriction]
     """Restrictions currently applied to the account, one per kind."""
     failed_deployments: list[AccountHealthDeployment]
@@ -38,6 +39,9 @@ class AccountHealth:
     """Custom domains that are unverified or whose certificate is not serving."""
     refused_requests: AccountHealthRequests
     """API requests Gregale refused for the account in the recent window."""
+    signals: list[AccountHealthSignal] | Unset = UNSET
+    """Problems that keep recurring on the account, such as repeated failed deployments or out-of-memory stops,
+    with the next step. Absent from older servers."""
     unavailable: list[str] | Unset = UNSET
     """Checks that could not be loaded; their lists are empty and mean unknown, not none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -64,6 +68,13 @@ class AccountHealth:
 
         refused_requests = self.refused_requests.to_dict()
 
+        signals: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.signals, Unset):
+            signals = []
+            for signals_item_data in self.signals:
+                signals_item = signals_item_data.to_dict()
+                signals.append(signals_item)
+
         unavailable: list[str] | Unset = UNSET
         if not isinstance(self.unavailable, Unset):
             unavailable = self.unavailable
@@ -80,6 +91,8 @@ class AccountHealth:
                 "refused_requests": refused_requests,
             }
         )
+        if signals is not UNSET:
+            field_dict["signals"] = signals
         if unavailable is not UNSET:
             field_dict["unavailable"] = unavailable
 
@@ -91,6 +104,7 @@ class AccountHealth:
         from ..models.account_health_domain import AccountHealthDomain
         from ..models.account_health_requests import AccountHealthRequests
         from ..models.account_health_restriction import AccountHealthRestriction
+        from ..models.account_health_signal import AccountHealthSignal
 
         d = dict(src_dict)
         generated_at = datetime.datetime.fromisoformat(d.pop("generated_at"))
@@ -120,6 +134,15 @@ class AccountHealth:
 
         refused_requests = AccountHealthRequests.from_dict(d.pop("refused_requests"))
 
+        _signals = d.pop("signals", UNSET)
+        signals: list[AccountHealthSignal] | Unset = UNSET
+        if _signals is not UNSET:
+            signals = []
+            for signals_item_data in _signals:
+                signals_item = AccountHealthSignal.from_dict(signals_item_data)
+
+                signals.append(signals_item)
+
         unavailable = cast(list[str], d.pop("unavailable", UNSET))
 
         account_health = cls(
@@ -129,6 +152,7 @@ class AccountHealth:
             failed_deployments=failed_deployments,
             domain_issues=domain_issues,
             refused_requests=refused_requests,
+            signals=signals,
             unavailable=unavailable,
         )
 

@@ -39,6 +39,10 @@
       "lane": "control-plane",
       "services": [{"name": "signd", "optional": true}]
     },
+    "secretd": {
+      "lane": "control-plane",
+      "services": [{"name": "secretd", "optional": true}]
+    },
     "neond": {
       "lane": "control-plane",
       "services": [{"name": "neond", "optional": true}]
@@ -134,6 +138,7 @@
       "deploy/ansible/roles/agentd_service/files/faas-agentd.service",
       "deploy/ansible/roles/edgednsd_service/files/faas-edgednsd.service",
       "deploy/ansible/roles/signd_service/files/faas-signd.service",
+      "deploy/ansible/roles/secretd_service/files/faas-secretd.service",
       "deploy/ansible/roles/neond_service/files/faas-neond.service"
     ]
   },
@@ -161,6 +166,7 @@
       "deploy/ansible/cp_state_restore.yml",
       "deploy/ansible/database_node.yml",
       "deploy/ansible/fleet_runner.yml",
+      "deploy/ansible/kernel_patch_reboot.yml",
       "deploy/ansible/metal-h2c-acceptance.yml",
       "deploy/ansible/native-acceptance-host.yml",
       "deploy/ansible/node_join_control_plane.yml",

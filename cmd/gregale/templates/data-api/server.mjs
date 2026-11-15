@@ -14,6 +14,7 @@ import { sharedBudgetConfig, createSharedBudget } from './shared-budget.mjs'
 import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
 import { checkSQLDeadlineConnection } from './sql-deadline.mjs'
+import { configurePipelineReadGate } from './pipeline-read-gate.mjs'
 import { streamResponse } from './response-limit.mjs'
 import { createRateLimiter, admitRateLimit, admitServerKeyRate } from './rate-limit.mjs'
 import { createUserConcurrency, admitUserConcurrency, createServerKeyConcurrency, admitServerKeyConcurrency } from './user-concurrency.mjs'
@@ -291,6 +292,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         if (serverKeySlot) claims.gregale_server_key = serverKeySlot
         // A caller cannot extend or enable the internal SQL retry deadline.
         delete claims.gregale_sql_deadline
+        delete claims.gregale_pipeline_request
+        if (config.pipelineReadGate) claims.gregale_pipeline_request = { version: 1, previous_hook: config.pipelinePreviousHook }
         if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: sqlDeadlineExpiry(deadline.expiresAt), coordinated_refresh: config.coordinatedRefresh === true }
         // Never accept reserved coordination claims from an application JWT.
         if (config.coordinatedRefresh) {
@@ -464,6 +467,7 @@ export async function main(env = process.env) {
   // Inspection connects first, with the full query budget, so a suspended
   // database is awake before the configuration checks run.
   const snapshot = await startupStage('inspection', 'data_api_configuration_invalid', () => inspect(config.connection, config.schemas))
+  if (config.readOnly) await startupStage('pipeline', 'data_api_configuration_invalid', () => configurePipelineReadGate(config))
   config.snapshot = snapshot
   config.functions = snapshot.functions
   if (config.publicRead) await bootCheck(() => checkPublicRelations(config.connection, config.publicRead), 'data_api_public_read_unsafe', 'Unsafe public read configuration')

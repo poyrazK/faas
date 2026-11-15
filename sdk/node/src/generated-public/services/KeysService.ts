@@ -20,6 +20,7 @@ import type { CreateKeyRequest } from '../models/CreateKeyRequest.js';
 import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js';
 import type { GraceWindowResponse } from '../models/GraceWindowResponse.js';
 import type { ListOrgAPIKeysResponse } from '../models/ListOrgAPIKeysResponse.js';
+import type { RotateKeyRequest } from '../models/RotateKeyRequest.js';
 import type { RotateKeyResponse } from '../models/RotateKeyResponse.js';
 import type { RotateOrgAPIKeyRequest } from '../models/RotateOrgAPIKeyRequest.js';
 import type { RotateOrgAPIKeyResponse } from '../models/RotateOrgAPIKeyResponse.js';
@@ -28,13 +29,14 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class KeysService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List API keys (no plaintext).
    * @returns APIKeyResponse API key metadata on the account. Plaintext is never returned.
    * @throws ApiError
    */
   public static listKeys(): CancelablePromise<Array<APIKeyResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/keys',
       errors: {
@@ -63,7 +65,7 @@ export class KeysService {
      */
     requestBody: CreateKeyRequest,
   }): CancelablePromise<APIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/keys',
       body: requestBody,
@@ -91,7 +93,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/keys/{id}',
       path: {
@@ -120,7 +122,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static listAgentConnections(): CancelablePromise<AgentConnectionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-connections',
       errors: {
@@ -145,7 +147,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static listAgentApprovals(): CancelablePromise<AgentApprovalsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-approvals',
       errors: {
@@ -168,7 +170,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static getAgentApprovalChannels(): CancelablePromise<AgentApprovalChannelsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-approvals/channels',
       errors: {
@@ -196,7 +198,7 @@ export class KeysService {
   }: {
     requestBody: AgentApprovalChannelsRequest,
   }): CancelablePromise<AgentApprovalChannelsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/agent-approvals/channels',
       body: requestBody,
@@ -230,7 +232,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<AgentApprovalResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-approvals/{id}',
       path: {
@@ -258,7 +260,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static revokeAllAgentConnections(): CancelablePromise<AgentConnectionsRevokeAllResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/agent-connections/revoke_all',
       errors: {
@@ -286,7 +288,7 @@ export class KeysService {
   }: {
     requestBody: AgentClientRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/agent-connections/self',
       body: requestBody,
@@ -313,7 +315,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static disconnectAgent(): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/agent-connections/self',
       errors: {
@@ -349,7 +351,7 @@ export class KeysService {
      */
     limit?: number,
   }): CancelablePromise<AgentActivityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-connections/self/activity',
       query: {
@@ -378,7 +380,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static agentConnectionSelfBudget(): CancelablePromise<AgentBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-connections/self/budget',
       errors: {
@@ -411,7 +413,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<AgentBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-connections/{id}/budget',
       path: {
@@ -449,7 +451,7 @@ export class KeysService {
     id: string,
     requestBody: AgentBudgetRequest,
   }): CancelablePromise<AgentBudgetResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/agent-connections/{id}/budget',
       path: {
@@ -483,7 +485,7 @@ export class KeysService {
   }: {
     requestBody: AgentUndoRequest,
   }): CancelablePromise<AgentUndoPlan> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/agent-connections/self/undo/plan',
       body: requestBody,
@@ -517,7 +519,7 @@ export class KeysService {
   }: {
     requestBody: AgentUndoRequest,
   }): CancelablePromise<AgentUndoResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/agent-connections/self/undo',
       body: requestBody,
@@ -558,7 +560,7 @@ export class KeysService {
     id: string,
     requestBody: AgentUndoRequest,
   }): CancelablePromise<AgentUndoPlan> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/agent-connections/{id}/undo/plan',
       path: {
@@ -601,7 +603,7 @@ export class KeysService {
     id: string,
     requestBody: AgentUndoRequest,
   }): CancelablePromise<AgentUndoResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/agent-connections/{id}/undo',
       path: {
@@ -652,7 +654,7 @@ export class KeysService {
      */
     limit?: number,
   }): CancelablePromise<AgentActivityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/agent-connections/{id}/activity',
       path: {
@@ -692,7 +694,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/agent-connections/{id}',
       path: {
@@ -723,7 +725,9 @@ export class KeysService {
    * default). Status flips to 'grace' for the window, then to
    * 'revoked' at the deadline. Setting
    * `accounts.key_grace_window_days = 0` makes rotation atomic
-   * (old key revoked immediately).
+   * (old key revoked immediately). The optional body's
+   * `grace_window_days` overrides the window for this rotation
+   * only; send `0` to revoke a leaked key at once.
    *
    * Returns the new plaintext exactly once — the old plaintext
    * is not re-issued (we only store the SHA-256 hash). The
@@ -739,18 +743,22 @@ export class KeysService {
    */
   public static rotateKey({
     id,
+    requestBody,
   }: {
     /**
      * 32-hex-char opaque ID (NOT canonical UUID).
      */
     id: string,
+    requestBody?: RotateKeyRequest,
   }): CancelablePromise<RotateKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/keys/{id}/rotate',
       path: {
         'id': id,
       },
+      body: requestBody,
+      mediaType: 'application/json',
       errors: {
         401: `code: unauthorized`,
         404: `No such key, or the key is already revoked.`,
@@ -779,7 +787,7 @@ export class KeysService {
      */
     slug: string,
   }): CancelablePromise<AgentConnectionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/agent-connections',
       path: {
@@ -813,7 +821,7 @@ export class KeysService {
      */
     slug: string,
   }): CancelablePromise<AgentConnectionsRevokeAllResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/agent-connections/revoke_all',
       path: {
@@ -853,7 +861,7 @@ export class KeysService {
     id: string,
     requestBody: AgentUndoRequest,
   }): CancelablePromise<AgentUndoPlan> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/agent-connections/{id}/undo/plan',
       path: {
@@ -899,7 +907,7 @@ export class KeysService {
     id: string,
     requestBody: AgentUndoRequest,
   }): CancelablePromise<AgentUndoResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/agent-connections/{id}/undo',
       path: {
@@ -955,7 +963,7 @@ export class KeysService {
      */
     limit?: number,
   }): CancelablePromise<AgentActivityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/agent-connections/{id}/activity',
       path: {
@@ -1001,7 +1009,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/agent-connections/{id}',
       path: {
@@ -1038,7 +1046,7 @@ export class KeysService {
      */
     slug: string,
   }): CancelablePromise<ListOrgAPIKeysResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/keys',
       path: {
@@ -1076,7 +1084,7 @@ export class KeysService {
     slug: string,
     requestBody: CreateOrgAPIKeyRequest,
   }): CancelablePromise<APIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/keys',
       path: {
@@ -1115,7 +1123,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<APIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{slug}/keys/{id}',
       path: {
@@ -1156,7 +1164,7 @@ export class KeysService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{slug}/keys/{id}',
       path: {
@@ -1201,7 +1209,7 @@ export class KeysService {
     id: string,
     requestBody?: RotateOrgAPIKeyRequest,
   }): CancelablePromise<RotateOrgAPIKeyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{slug}/keys/{id}/rotate',
       path: {
@@ -1233,7 +1241,7 @@ export class KeysService {
    * @throws ApiError
    */
   public static getGraceWindow(): CancelablePromise<GraceWindowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/keys/grace_window_days',
       errors: {
@@ -1263,7 +1271,7 @@ export class KeysService {
   }: {
     requestBody: SetGraceWindowRequest,
   }): CancelablePromise<GraceWindowResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/account/keys/grace_window_days',
       body: requestBody,

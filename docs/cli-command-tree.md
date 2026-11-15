@@ -36,7 +36,7 @@ The earlier names keep working. Scripts, CI workflows and agents that call
   The earlier spellings (`--scope`, `--deployment`, `--after`, `--from`, …)
   keep working.
 - **A few daily verbs stay at the top level:** `init`, `dev`, `deploy`,
-  `logs`, `status`, `open`, `rollback`, `run`, `invoke`, `add`, `link`,
+  `logs`, `status`, `open`, `rollback`, `run`, `add`, `link`,
   `login`, `start` and `menu`.
 
 Run `gregale help --all` to see every noun by family, and `gregale <noun>` to
@@ -107,6 +107,7 @@ touch them. The tables below map each earlier name.
 | `gregale invitations` | `gregale org` |
 | `gregale invocations` | `gregale invocation` |
 | `gregale invoices` | `gregale billing invoices` |
+| `gregale invoke` | `gregale invocation run` |
 | `gregale issues` | `gregale debug issue` |
 | `gregale jobs` | `gregale job` |
 | `gregale keys` | `gregale key` |
@@ -161,6 +162,7 @@ touch them. The tables below map each earlier name.
 | `gregale account billing-run schedule-set` | `gregale account billing-run schedule set` |
 | `gregale account billing-run schedule` | `gregale account billing-run schedule get` |
 | `gregale account dpa` | `gregale account dpa get` |
+| `gregale account health` | `gregale account health get` |
 | `gregale account slo` | `gregale alert slo list --account` |
 | `gregale ai app-limit` | `gregale ai app-limit get` |
 | `gregale ai app-limit` | `gregale ai app-limit set` |
@@ -421,6 +423,7 @@ touch them. The tables below map each earlier name.
 | `gregale mcp complete` | `gregale mcp client complete` |
 | `gregale mcp config` | `gregale mcp server export` |
 | `gregale mcp connections` | `gregale mcp connection` |
+| `gregale mcp invocation-run` | `gregale mcp server invocation run` |
 | `gregale mcp monitor provider-check` | `gregale mcp server monitor check` |
 | `gregale mcp prompt-get` | `gregale mcp client render` |
 | `gregale mcp prompts` | `gregale mcp client prompts` |
@@ -459,6 +462,18 @@ touch them. The tables below map each earlier name.
 | `gregale orgs standards operation abort` | `gregale org standards operation cancel` |
 | `gregale orgs standards reviews preview` | `gregale org standards reviews approve --dry-run` |
 | `gregale orgs transfer-ownership` | `gregale org owner set` |
+| `gregale pipeline access` | `gregale pipeline access approve` |
+| `gregale pipeline access` | `gregale pipeline access check` |
+| `gregale pipeline access` | `gregale pipeline access review` |
+| `gregale pipeline connection guide` | `gregale pipeline connection explain` |
+| `gregale pipeline connection guide` | `gregale pipeline connection guide get` |
+| `gregale pipeline evolve` | `gregale pipeline evolution review` |
+| `gregale pipeline freshness` | `gregale pipeline freshness get` |
+| `gregale pipeline freshness` | `gregale pipeline freshness set` |
+| `gregale pipeline indexes` | `gregale pipeline index approve` |
+| `gregale pipeline indexes` | `gregale pipeline index check` |
+| `gregale pipeline indexes` | `gregale pipeline index review` |
+| `gregale pipeline operations` | `gregale pipeline work update` |
 | `gregale platform-tenants activation` | `gregale api tenant activation get` |
 | `gregale platform-tenants activation` | `gregale api tenant activation wait` |
 | `gregale platform-tenants billing-policy-delete` | `gregale api tenant billing-policy delete` |

@@ -52,6 +52,18 @@ func TestRuntimeConnectionReportsRemainWorkloadOnly(t *testing.T) {
 	}
 }
 
+func TestNodeProbeNotificationsRemainOperatorOnly(t *testing.T) {
+	const operatorPath = "/v1/admin/obs/nodes/{name}/probe-notifications"
+	const accountPath = "/v1/account/health"
+	spec := map[string]map[string]any{operatorPath: {"get": true}, accountPath: {"get": true}}
+	if report := analyze(spec, map[string]bool{}); len(report.missing) != 1 || !strings.Contains(report.missing[0], accountPath) {
+		t.Fatalf("operator-only evidence must not weaken account SDK coverage: %v", report.missing)
+	}
+	if report := analyze(spec, map[string]bool{"GetAccountHealth": true}); !report.ok() {
+		t.Fatalf("operator evidence should not require a tenant SDK method: %v", report.missing)
+	}
+}
+
 func TestRecoveryRoutesHaveTypedClientCoverage(t *testing.T) {
 	root, err := findRepoRoot()
 	if err != nil {
@@ -121,6 +133,43 @@ func TestGitOpsRecoveryRoutesRequireTheirTypedClients(t *testing.T) {
 			methods[tc.method] = true
 			if len(report.missing) != 1 || !strings.Contains(report.missing[0], tc.route+" →") {
 				t.Fatalf("missing client implementation escaped the coverage gate: %v", report.missing)
+			}
+		})
+	}
+}
+
+// Tool publication and credential routes keep actual typed clients mandatory.
+func TestToolAuthorityRoutesRequireTypedClients(t *testing.T) {
+	root, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := loadSpec(filepath.Join(root, specRelPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	methods, err := loadClientMethods(filepath.Join(root, sdkRelPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report := analyze(spec, methods); !report.ok() {
+		t.Fatalf("client coverage: %v", report.missing)
+	}
+	for _, tc := range []struct{ method, route string }{
+		{"BeginToolPublication", "PUT /v1/tool-publications/{id}"},
+		{"ExecutePrivateToolInvocation", "POST /v1/delegated-tool-invocations/{id}/execute"},
+		{"AuthorizeToolOAuthConnection", "POST /v1/tool-oauth-connections/{id}/authorization"},
+		{"RevokeToolOAuthConnection", "DELETE /v1/tool-oauth-connections/{id}"},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			if !methods[tc.method] {
+				t.Fatal("typed authority client is missing")
+			}
+			delete(methods, tc.method)
+			report := analyze(spec, methods)
+			methods[tc.method] = true
+			if len(report.missing) != 1 || !strings.Contains(report.missing[0], tc.route+" →") {
+				t.Fatalf("missing authority client escaped coverage: %v", report.missing)
 			}
 		})
 	}

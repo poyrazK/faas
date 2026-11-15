@@ -481,6 +481,9 @@ func printErr(title string, err error) int {
 		// The parse failure that carried --help already answered it.
 		return 1
 	}
+	// ADR-20261112223000 §5: after the error, point a coding agent at the
+	// guide. Stderr only; nothing for people or JSON.
+	defer printAgentHint(osStderr)
 	if errors.Is(err, context.Canceled) {
 		var recovery *deployRecoveryError
 		if !errors.As(err, &recovery) {
@@ -783,6 +786,9 @@ func renderAPIError(w io.Writer, e *APIError) {
 	// rest of cmd/gregale — see output.go::writeStatus).
 	if p.Detail != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
+	}
+	if id := problemRequestID(p); id != "" {
+		_, _ = fmt.Fprintf(w, "  Request ID: %s\n", id)
 	}
 	if p.BindingsCheck != nil {
 		for _, blocker := range p.BindingsCheck.Blockers {

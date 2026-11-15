@@ -724,7 +724,6 @@ var CmdAccountStatus = cmdAccountStatus
 var CmdAdd = cmdAdd
 var CmdAddBucket = cmdAddBucket
 var CmdAddPostgres = cmdAddPostgres
-var CmdAdmin = cmdAdmin
 var CmdAppCopy = cmdAppCopy
 var CmdAlertActions = cmdAlertActions
 var CmdAlertAdd = cmdAlertAdd
@@ -781,7 +780,6 @@ var CmdBillingExport = cmdBillingExport
 var CmdBillingFinancial = cmdBillingFinancial
 var CmdBillingPaymentMethod = cmdBillingPaymentMethod
 var CmdBillingPortal = cmdBillingPortal
-var CmdBillingReconcilePaddleOverage = cmdBillingReconcilePaddleOverage
 var CmdBillingRefreshInvoice = cmdBillingRefreshInvoice
 var CmdBillingRetry = cmdBillingRetry
 var CmdBillingStatus = cmdBillingStatus
@@ -859,6 +857,8 @@ var DataAPIDrainEvery = dataAPIDrainEvery
 var CheckDataAPIReportSettings = checkDataAPIReportSettings
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
+var CmdDataAPIIntegrate = cmdDataAPIIntegrate
+var DataAPIIntegrationSteps = dataAPIIntegrationSteps
 var CmdDataAPIRefresh = cmdDataAPIRefresh
 var CmdDataAPITransaction = cmdDataAPITransaction
 var CmdDataAPIVerify = cmdDataAPIVerify
@@ -931,7 +931,6 @@ var CmdEventsSubscriptions = cmdEventsSubscriptions
 var CmdEventsWorkflowBackfill = cmdEventsWorkflowBackfill
 var CmdEventsWorkflowReplayPreview = cmdEventsWorkflowReplayPreview
 var CmdFlags = cmdFlags
-var CmdGithubWebhookSecret = cmdGithubWebhookSecret
 var CmdInit = cmdInit
 var CmdInspect = cmdInspect
 var CmdInvitations = cmdInvitations
@@ -959,6 +958,7 @@ var CmdMCPAccess = cmdMCPAccess
 var CmdMCPCatalogMonitor = cmdMCPCatalogMonitor
 var CmdMCPDeploy = cmdMCPDeploy
 var CmdMCPInit = cmdMCPInit
+var CmdMCPImportOpenAPI = cmdMCPImportOpenAPI
 var CmdMCPReadiness = cmdMCPReadiness
 var CmdMCPReadinessAttention = cmdMCPReadinessAttention
 var CmdMCPReadinessFallback = cmdMCPReadinessFallback
@@ -1025,15 +1025,12 @@ var CmdPostgresBindingsRotate = cmdPostgresBindingsRotate
 var CmdPostgresCreate = cmdPostgresCreate
 var CmdPostgresCutover = cmdPostgresCutover
 var CmdPostgresDelete = cmdPostgresDelete
-var CmdPostgresDiagnostics = cmdPostgresDiagnostics
 var CmdPostgresGet = cmdPostgresGet
 var CmdPostgresList = cmdPostgresList
 var CmdPostgresUndelete = cmdPostgresUndelete
-var CmdPostgresReconcile = cmdPostgresReconcile
 var CmdPostgresResize = cmdPostgresResize
 var CmdPostgresUsage = cmdPostgresUsage
 var CmdPostgresOverage = cmdPostgresOverage
-var CmdPostgresUsageImport = cmdPostgresUsageImport
 var CmdPreview = cmdPreview
 var CmdPreviewCustomers = cmdPreviewCustomers
 var CmdPreviewDestroy = cmdPreviewDestroy
@@ -1248,6 +1245,8 @@ var DefaultProjectSlug = defaultProjectSlug
 var DeployContextDirectory = deployContextDirectory
 var DeployDeveloperSource = deployDeveloperSource
 var DeployIdempotencyKey = deployIdempotencyKey
+
+var MissingRequiredSecretNames = missingRequiredSecretNames
 var DeployManifestObjectStorageBindings = deployManifestObjectStorageBindings
 var DeployManifestPostgresBindings = deployManifestPostgresBindings
 var DeployManifestQueueBindings = deployManifestQueueBindings
@@ -1365,6 +1364,15 @@ var FindProjectContext = findProjectContext
 var FindSecretStatus = findSecretStatus
 var FinishMCPDeploy = finishMCPDeploy
 var FinishMCPDeployWithSmoke = finishMCPDeployWithSmoke
+
+func CheckMCPPublicationBaselineForTest(ctx context.Context, c *Client, slug, candidate, appID string, serving *string) error {
+	return checkMCPPublicationBaseline(ctx, c, slug, candidate, &mcpCatalogPinReceipt{expectedAppID: appID, expectedServing: serving})
+}
+
+func ValidateMCPReviewedToolCatalogForTest(cfg mcphosting.Config, report mcphosting.Report) error {
+	return validateMCPReviewedToolCatalog(cfg, report)
+}
+
 var RunMCPVerificationJobs = runMCPVerificationJobs
 var FinishPreviewRequestComparison = finishPreviewRequestComparison
 var FinishPreviewSecurityComparison = finishPreviewSecurityComparison
@@ -1390,7 +1398,6 @@ var GeneratedTestCIVMRunCommand = generatedTestCIVMRunCommand
 var GitArchiveHEAD = gitArchiveHEAD
 var GithubSetupCheckWaitFor = githubSetupCheckWaitFor
 var GithubTarballURL = githubTarballURL
-var GithubWebhookSecretSet = githubWebhookSecretSet
 var GroupDigits = groupDigits
 var HostingLocalConfig = hostingLocalConfig
 var HostingLocalRead = hostingLocalRead
@@ -1536,6 +1543,8 @@ var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
 var RetainedLineLevelMatches = retainedLineLevelMatches
 var ParseAIPriceSpec = parseAIPriceSpec
+
+var FormatPriceTiers = formatPriceTiers
 var ParseAIRouteTargets = parseAIRouteTargets
 var ParseStoredWorkflowLiveBaseline = parseStoredWorkflowLiveBaseline
 var ParseStoredWorkflowLiveGate = parseStoredWorkflowLiveGate
@@ -1906,6 +1915,10 @@ var RunLocalTest = runLocalTest
 var RunLocalTestWithLoad = runLocalTestWithLoad
 var RunLogs = runLogs
 var RunMCPBrowserConnection = runMCPBrowserConnection
+
+var RunToolBrowserConnectionForTest = runToolBrowserConnection
+var ToolAuthorizationCallbackForTest = toolAuthorizationCallback
+var RunToolConnectionBrowserCommandForTest = runMCPToolConnectionBrowser
 var RunMCPCatalogMonitor = runMCPCatalogMonitor
 var RunMCPNativeRelease = runMCPNativeRelease
 var RunMCPNativeRetirement = runMCPNativeRetirement
@@ -2148,6 +2161,7 @@ var WarnRootOnlyProtectiveRule = warnRootOnlyProtectiveRule
 var WarnSingleHostProtectiveRule = warnSingleHostProtectiveRule
 var WarnTemplatedEdgeRulePaths = warnTemplatedEdgeRulePaths
 var WatchDevPatch = watchDevPatch
+var FinishDeferredDevSync = finishDeferredDevSync
 var WithBindingProgress = withBindingProgress
 var WithBindingVerificationBudget = withBindingVerificationBudget
 var WithBindingVerificationSlot = withBindingVerificationSlot
@@ -2392,10 +2406,11 @@ func (r *mcpReleaseAuthorization) InsufficientToken() *string { return &r.insuff
 func (r *mcpReleaseRole) Token() *string { return &r.token }
 
 // Members of mcpServeOptions
-func (r *mcpServeOptions) AllowWrites() *bool   { return &r.allowWrites }
-func (r *mcpServeOptions) Onboarding() *string  { return &r.onboarding }
-func (r *mcpServeOptions) Redirects() *[]string { return &r.redirects }
-func (r *mcpServeOptions) StateFile() *string   { return &r.stateFile }
+func (r *mcpServeOptions) AllowToolInvocation() *bool { return &r.allowToolInvocation }
+func (r *mcpServeOptions) AllowWrites() *bool         { return &r.allowWrites }
+func (r *mcpServeOptions) Onboarding() *string        { return &r.onboarding }
+func (r *mcpServeOptions) Redirects() *[]string       { return &r.redirects }
+func (r *mcpServeOptions) StateFile() *string         { return &r.stateFile }
 
 // Members of mcpTasksStatusResult
 func (r *mcpTasksStatusResult) Diagnose() { r.diagnose() }
@@ -2870,3 +2885,20 @@ var DoctorRuntimeOOMFromSummary = doctorRuntimeOOMFromSummary
 var DoctorRuntimeOOMForApp = doctorRuntimeOOMForApp
 var ReplaceDoctorCheck = replaceDoctorCheck
 var DoctorCheckRuntimeOOM = doctorCheckRuntimeOOM
+
+// Readiness probe flag (2026-11-13).
+var ResolveDeployReadiness = resolveDeployReadiness
+var DeployProbeOverrides = deployProbeOverrides
+
+// UpdateAppCLISurface is one reviewed CLI surface of an API field.
+type UpdateAppCLISurface = updateAppCLISurface
+
+// DeployRequestCLISurfaces returns the deploy request's CLI surfaces.
+func DeployRequestCLISurfaces() map[string]UpdateAppCLISurface { return deployRequestCLISurfaces }
+
+// DeployOverridesCLISurfaces returns the deploy overrides' CLI surfaces.
+func DeployOverridesCLISurfaces() map[string]UpdateAppCLISurface { return deployOverridesCLISurfaces }
+
+func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, id string, in api.ToolPublicationVerificationRequest) (api.ToolPublicationVerification, error) {
+	return waitPrivatePublicationVerification(ctx, c, id, in)
+}
