@@ -164,7 +164,7 @@ func TestQueueMessageDue(t *testing.T) {
 		{`{"app_id":"a","source":"async_invoke"}`, false},
 		{`{"app_id":"b","source":"queue"}`, false},
 		{`not json`, false},
-		// adr: 20261113180000 — a payload naming a queue wakes only its waiters.
+		// adr: 20261115183906 — a payload naming a queue wakes only its waiters.
 		{`{"app_id":"a","source":"queue","queue_name":"jobs"}`, true},
 		{`{"app_id":"a","source":"queue","queue_name":"other"}`, false},
 		{`{"app_id":"a","source":"queue","queue_name":""}`, false},
@@ -211,7 +211,7 @@ func TestNackPersistsSafeErrorText(t *testing.T) {
 	}
 }
 
-// adr: 20261113180000 — a worker token addresses its app by the slug it had
+// adr: 20261115183906 — a worker token addresses its app by the slug it had
 // before a rename, but never by a slug another app holds now (R8-1).
 func TestWorkloadPathNamesAppAcrossRename(t *testing.T) {
 	f := newLeaseFixture(t)
@@ -233,7 +233,7 @@ func TestWorkloadPathNamesAppAcrossRename(t *testing.T) {
 	}
 }
 
-// adr: 20261113180000 — a lease over the waiter cap that finds nothing holds
+// adr: 20261115183906 — a lease over the waiter cap that finds nothing holds
 // the request for its wait instead of answering at once, which made SDK
 // consumers poll again immediately and spin lease transactions (R5-1).
 func TestLeaseOverWaiterCapHoldsEmptyAnswer(t *testing.T) {
