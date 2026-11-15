@@ -452,12 +452,100 @@ class CliLoginTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             g.get("/v1/billing")
 
-    def test_cli_login_keeps_the_callers_profile_and_never_deletes(self):
+    def test_cli_login_keeps_the_callers_profile(self):
         with mock.patch.dict(os.environ, {"FAAS_PROFILE": "default", "CLAUDECODE": "1"}):
             env = ev.CliGregale("/bin/gregale").env()
         self.assertEqual(env.get("FAAS_PROFILE"), "default")
         self.assertNotIn("CLAUDECODE", env)
         self.assertNotIn("FAAS_TOKEN", env)
+
+    def test_cli_login_deletes_only_what_the_run_created(self):
+        g = ev.CliGregale("/bin/gregale")
+        before = {"apps": {"retail-ui", "eval-x-old"}, "projects": {"shop"}}
+        after = {"apps": {"retail-ui", "eval-x-old", "voting-redis", "eval-x-1"}, "projects": {"shop", "voting"}}
+        touched = {"apps": ["retail-ui", "voting-redis"], "projects": ["voting"]}
+        with mock.patch.object(g, "inventory", return_value=after):
+            self.assertEqual(ev.deletable(g, before, touched, "eval-x-1"),
+                             ({"apps": ["eval-x-1", "voting-redis"], "projects": ["voting"]}, "eval-x-1"))
+            # A slug that existed before the run (or never got created) is not deleted.
+            self.assertEqual(ev.deletable(g, before, touched, "eval-x-old")[1], None)
+        # Without an inventory from before the run nothing is provably the run's.
+        self.assertEqual(ev.deletable(g, None, touched, "eval-x-1"), ({"apps": [], "projects": []}, None))
+        # A dedicated eval account deletes everything the run touched.
+        plain = ev.Gregale("/bin/gregale", "https://api.example", "tok")
+        self.assertEqual(ev.deletable(plain, before, touched, "eval-x-1"), (touched, "eval-x-1"))
+
+    def test_cli_login_no_longer_implies_keep_apps(self):
+        parsed = []
+
+        def run_one(task, agent, toolset, gregale, options):
+            parsed.append(options.keep_apps)
+            return {"task": task["id"], "agent": agent, "toolset": toolset}
+
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(ev, "run_one", side_effect=run_one), \
+                mock.patch.object(ev, "agent_ready", return_value=""), \
+                mock.patch.object(ev.shutil, "which", return_value="/bin/x"), \
+                mock.patch("sys.stderr"), mock.patch("sys.stdout"):
+            out = str(Path(d) / "r.jsonl")
+            first = ev.load_tasks()[0]["id"]
+            ev.main(["run", "--cli-login", "--toolsets", "core", "--tasks", first, "--out", out])
+            ev.main(["run", "--cli-login", "--keep-apps", "--toolsets", "core", "--tasks", first, "--out", out])
+        self.assertEqual(parsed, [False, True])
+
+
+class FollowUpTests(unittest.TestCase):
+    task = {"follow_up": "Yes, go ahead with what you recommend.", "checks": []}
+
+    def decide(self, checks, completed=True, timed_out=False, task=None):
+        with mock.patch.object(ev, "run_checks", return_value=checks) as run_checks:
+            answer = ev.needs_follow_up(task or self.task, {"completed": completed, "answer": "Shall I?"}, {"timed_out": timed_out, "started_at": "t"},
+                                        "eval-a", Path("."), None, {"apps": ["eval-a"]})
+        return answer, run_checks
+
+    def test_follows_up_while_checks_fail_even_if_an_app_exists(self):
+        answer, run_checks = self.decide([{"ok": True}, {"ok": False}])
+        self.assertTrue(answer)
+        self.assertEqual(run_checks.call_args.kwargs["http_deadline_s"], ev.FOLLOW_UP_HTTP_DEADLINE_S)
+
+    def test_no_follow_up_when_done_stopped_or_unconfigured(self):
+        self.assertFalse(self.decide([{"ok": True}])[0])
+        self.assertFalse(self.decide([{"ok": False}], completed=False)[0])
+        self.assertFalse(self.decide([{"ok": False}], timed_out=True)[0])
+        self.assertFalse(self.decide([{"ok": False}], task={"checks": []})[0])
+
+
+class OutsideWriteTests(unittest.TestCase):
+    def test_claude_file_writes_are_recorded(self):
+        lines = [json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Write", "input": {"file_path": "/home/u/.npmrc", "content": "x"}},
+            {"type": "tool_use", "name": "Edit", "input": {"file_path": "src/app.js"}},
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "/etc/hosts"}}]}})]
+        metrics = ev.parse_claude(lines)
+        self.assertEqual(metrics["written_paths"], ["/home/u/.npmrc", "src/app.js"])
+        merged = ev.merge_metrics(metrics, ev.parse_claude(lines))
+        self.assertEqual(len(merged["written_paths"]), 4)
+
+    def test_writes_outside_the_run_directory(self):
+        with tempfile.TemporaryDirectory() as d:
+            run_dir = Path(d) / "run"
+            project = run_dir / "project"
+            project.mkdir(parents=True)
+            outside = ev.writes_outside(["src/app.js", str(run_dir / "notes.md"), str(Path(d) / "elsewhere.txt"), "../../escape.txt"],
+                                        run_dir, project)
+            self.assertEqual(outside, sorted([str((Path(d) / "elsewhere.txt").resolve()), str((Path(d) / "escape.txt").resolve())]))
+
+    def test_home_writes_skip_old_files_ignored_paths_and_the_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d)
+            for rel in (".npmrc", ".config/tool/settings.json", ".claude/settings.json", "Library/x", ".config/gregale/token",
+                        "runs/run/project/app.js", "deep/a/b/c.txt", "old.txt"):
+                (home / rel).parent.mkdir(parents=True, exist_ok=True)
+                (home / rel).write_text("x")
+            os.utime(home / "old.txt", (1, 1))
+            since = (home / "old.txt").stat().st_mtime + 1
+            found = ev.home_writes(home, since, home / "runs" / "run", max_depth=3)
+        self.assertEqual(found, [".config/tool/settings.json", ".npmrc"])
 
 
 class GradeTests(unittest.TestCase):

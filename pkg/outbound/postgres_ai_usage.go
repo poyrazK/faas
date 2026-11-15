@@ -190,6 +190,7 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 		lease:    leaseID != uuid.Nil,
 		content:  record.Log != nil && record.Log.Content != nil,
 		route:    record.Route != nil,
+		prompt:   record.Prompt != nil,
 		// ADR 20261022153155: an app instance's call counts toward its
 		// deployment; a cache hit settles elsewhere and never reaches here.
 		deployment: appCaller(record.Caller) && validUUID(record.Caller) && validUUID(record.InstanceID) && !record.Cached,
@@ -219,6 +220,9 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 	if plan.route {
 		queueAIRouteAttempt(batch, record)
 	}
+	if plan.prompt {
+		queueAIPromptAttempt(batch, record)
+	}
 	if plan.deployment {
 		queueAIDeploymentMinute(batch, record)
 	}
@@ -232,7 +236,7 @@ func settleAIUsageRows(ctx context.Context, tx pgx.Tx, integrationID, leaseID uu
 
 // aiSettlementPlan names the statements one settlement sends.
 type aiSettlementPlan struct {
-	endUser, tags, trace, counters, binding, lease, content, evaluation, route, deployment bool
+	endUser, tags, trace, counters, binding, lease, content, evaluation, route, prompt, deployment bool
 }
 
 // queueAIDeploymentMinute adds an app instance's call to its deployment's
@@ -298,6 +302,31 @@ func queueAIRouteAttempt(batch *pgx.Batch, record AIUsageRecord) {
 		    ttfb_ms_total = stats.ttfb_ms_total + EXCLUDED.ttfb_ms_total,
 		    cost_millicents = stats.cost_millicents + EXCLUDED.cost_millicents`,
 		uuid.MustParse(attempt.RouteID), attempt.Position, errorCount, ttfbCalls, ttfbMS, record.CostMillicents)
+}
+
+// queueAIPromptAttempt adds a prompt call attempt to its version's row for
+// the current UTC minute (ADR 20261114180740). The table has no foreign
+// key, so a settlement never fails because the prompt was deleted.
+func queueAIPromptAttempt(batch *pgx.Batch, record AIUsageRecord) {
+	attempt := record.Prompt
+	var errorCount, ttfbCalls, ttfbMS int64
+	if attempt.Error {
+		errorCount = 1
+	}
+	if attempt.TTFBMS != nil {
+		ttfbCalls, ttfbMS = 1, *attempt.TTFBMS
+	}
+	batch.Queue(`
+		INSERT INTO outbound_ai_prompt_version_minutes AS stats
+		    (prompt_id, version, minute, calls, errors, ttfb_calls, ttfb_ms_total, cost_millicents)
+		VALUES ($1, $2, date_trunc('minute', now()), 1, $3, $4, $5, $6)
+		ON CONFLICT (prompt_id, version, minute) DO UPDATE SET
+		    calls = stats.calls + 1,
+		    errors = stats.errors + EXCLUDED.errors,
+		    ttfb_calls = stats.ttfb_calls + EXCLUDED.ttfb_calls,
+		    ttfb_ms_total = stats.ttfb_ms_total + EXCLUDED.ttfb_ms_total,
+		    cost_millicents = stats.cost_millicents + EXCLUDED.cost_millicents`,
+		uuid.MustParse(attempt.PromptID), attempt.Version, errorCount, ttfbCalls, ttfbMS, max(record.CostMillicents, 0))
 }
 
 // queueAIUsageCounters adds the call to the admission and binding counters.
@@ -426,6 +455,11 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 		}
 	}
 	if plan.route {
+		if _, err := results.Exec(); err != nil {
+			return nil, err
+		}
+	}
+	if plan.prompt {
 		if _, err := results.Exec(); err != nil {
 			return nil, err
 		}
@@ -618,25 +652,31 @@ func nullableAppID(appID string) *uuid.UUID {
 }
 
 func queueAIRequestLog(batch *pgx.Batch, integrationID uuid.UUID, record AIUsageRecord) {
-	var routeID *uuid.UUID
+	var routeID, promptID *uuid.UUID
 	if record.Log.RouteID != "" {
 		parsed := uuid.MustParse(record.Log.RouteID)
 		routeID = &parsed
+	}
+	var promptVersion *int
+	if record.Log.PromptID != "" {
+		parsed := uuid.MustParse(record.Log.PromptID)
+		promptID, promptVersion = &parsed, &record.Log.PromptVersion
 	}
 	usage := record.Usage
 	batch.Queue(`
 		INSERT INTO outbound_ai_request_log
 		    (integration_id, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens,
 		     cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, tags,
-		     trace_id, tool_calls, id, quality_flags)
+		     trace_id, tool_calls, id, quality_flags, prompt_id, prompt_version)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NULLIF($15, ''), $16, NULLIF($17, ''), $18,
-		        COALESCE($19::uuid, gen_random_uuid()), $20)
+		        COALESCE($19::uuid, gen_random_uuid()), $20, $21, $22)
 		ON CONFLICT (id) DO NOTHING
 		RETURNING id`,
 		integrationID, record.Caller, routeID, usage.Model, record.Log.Status, string(record.Outcome), usage.InputTokens,
 		usage.CachedInputTokens, usage.CacheWriteTokens, usage.OutputTokens, record.CostMillicents,
 		record.Log.DurationMS, record.Log.TTFBMS, record.Log.Attempts, record.EndUser, nilIfEmpty(record.Tags),
-		record.TraceID, nilIfEmpty(record.ToolCalls), nullableAppID(record.CallID), nilIfEmpty(record.QualityFlags))
+		record.TraceID, nilIfEmpty(record.ToolCalls), nullableAppID(record.CallID), nilIfEmpty(record.QualityFlags),
+		promptID, promptVersion)
 }
 
 // queueAIOnlineEvaluation marks a sampled call pending for the online
@@ -729,6 +769,10 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		{`DELETE FROM outbound_ai_settlements WHERE settled_at < now() - make_interval(mins => $1::int)`, api.OutboundAISettlementKeyRetentionMinutes},
 		// ADR-1340: canary rows and export lines.
 		{`DELETE FROM outbound_ai_route_target_minutes WHERE minute < now() - make_interval(hours => $1::int)`, api.OutboundAIRouteStatsRetentionHours},
+		// ADR 20261114180740: prompt version rows outlive the stats window
+		// and the longest canary window; evaluations follow route ones.
+		{`DELETE FROM outbound_ai_prompt_version_minutes WHERE minute < now() - make_interval(hours => $1::int)`, api.OutboundAIRouteStatsRetentionHours},
+		{`DELETE FROM outbound_ai_prompt_evaluations WHERE created_at < now() - make_interval(days => $1::int)`, api.OutboundAIEvaluationRetentionDays},
 		{`DELETE FROM outbound_ai_log_exports WHERE created_at < now() - make_interval(hours => $1::int)`, api.OutboundAILogExportRetentionHours},
 		// ADR 20261022153155: AI calls by deployment.
 		{`DELETE FROM outbound_ai_deployment_minutes WHERE minute < now() - make_interval(days => $1::int)`,

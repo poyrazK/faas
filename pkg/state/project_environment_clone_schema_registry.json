@@ -14563,6 +14563,8 @@
       "model",
       "outcome",
       "output_tokens",
+      "prompt_id",
+      "prompt_version",
       "quality_flags",
       "route_id",
       "status",
@@ -14638,6 +14640,130 @@
       "owner": "account",
       "strategy": "shared"
     }
+  },
+  {
+    "table": "outbound_ai_prompts",
+    "columns": [
+      "account_id",
+      "created_at",
+      "description",
+      "id",
+      "latest_version",
+      "live_version",
+      "name",
+      "previous_live_version",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "outbound_ai_prompt_versions",
+    "columns": [
+      "created_at",
+      "defaults",
+      "integration_id",
+      "messages",
+      "model",
+      "note",
+      "params",
+      "prompt_id",
+      "route_id",
+      "version"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "outbound_ai_prompt_canaries",
+    "columns": [
+      "decided_at",
+      "max_error_rate_increase",
+      "max_latency_increase_percent",
+      "min_calls",
+      "percent",
+      "prompt_id",
+      "reason",
+      "started_at",
+      "state",
+      "version",
+      "window_minutes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_prompt_version_minutes",
+    "columns": [
+      "calls",
+      "cost_millicents",
+      "errors",
+      "minute",
+      "prompt_id",
+      "ttfb_calls",
+      "ttfb_ms_total",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_prompt_evaluations",
+    "columns": [
+      "account_id",
+      "baseline_cost_millicents",
+      "baseline_ttfb_calls",
+      "baseline_ttfb_ms_total",
+      "baseline_version",
+      "canary",
+      "canary_started",
+      "candidate_cost_millicents",
+      "candidate_errors",
+      "candidate_ttfb_calls",
+      "candidate_ttfb_ms_total",
+      "candidate_version",
+      "case_count",
+      "cases",
+      "created_at",
+      "error_code",
+      "finished_at",
+      "id",
+      "judge_errors",
+      "judge_integration_id",
+      "judge_model",
+      "losses",
+      "max_loss_rate",
+      "prompt_id",
+      "started_at",
+      "state",
+      "ties",
+      "verdict",
+      "wins"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_prompt_evaluation_items",
+    "columns": [
+      "baseline_cost_millicents",
+      "baseline_output_text",
+      "baseline_status",
+      "baseline_ttfb_ms",
+      "candidate_cost_millicents",
+      "candidate_output_text",
+      "candidate_status",
+      "candidate_ttfb_ms",
+      "case_index",
+      "evaluation_id",
+      "verdict"
+    ],
+    "kind": "operational"
   },
   {
     "table": "outbound_ai_settlements",

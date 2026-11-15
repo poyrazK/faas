@@ -45,6 +45,8 @@ type Metrics struct {
 	aiRouteCalls           *prometheus.CounterVec
 	aiCanaryCalls          *prometheus.CounterVec
 	aiCanaryRollbacks      *prometheus.CounterVec
+	aiPromptCalls          *prometheus.CounterVec
+	aiPromptRollbacks      *prometheus.CounterVec
 	aiModeration           *prometheus.CounterVec
 	aiSemanticCache        *prometheus.CounterVec
 	aiLogExports           *prometheus.CounterVec
@@ -195,6 +197,14 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_route_canary_rollbacks_total",
 			Help: "Model canaries outboundd rolled back, by reason (error_rate or latency) (ADR-1340).",
 		}, []string{"reason"}),
+		aiPromptCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_prompt_calls_total",
+			Help: "Managed prompt calls by how their version was picked (live, canary or pinned) (ADR 20261114180740).",
+		}, []string{"pick"}),
+		aiPromptRollbacks: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_prompt_canary_rollbacks_total",
+			Help: "Prompt canaries outboundd rolled back, by reason (error_rate or latency) (ADR 20261114180740).",
+		}, []string{"reason"}),
 		aiResponseCacheSaved: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_response_cache_saved_millicents_total",
 			Help: "Provider cost the response cache avoided, priced from cached responses' usage, by integration (ADR-1440).",
@@ -256,6 +266,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	// starts at zero lets increase() see a process's first event.
 	for _, reason := range []string{api.OutboundAIRouteCanaryReasonErrorRate, api.OutboundAIRouteCanaryReasonLatency} {
 		m.aiCanaryRollbacks.WithLabelValues(reason)
+		m.aiPromptRollbacks.WithLabelValues(reason)
 	}
 	for _, outcome := range []AIUsageOutcome{AIUsageOutcomeKnown, AIUsageOutcomeUnknown, AIUsageOutcomeError} {
 		m.aiBatches.WithLabelValues(string(outcome))
@@ -295,6 +306,8 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiRouteCalls,
 		m.aiCanaryCalls,
 		m.aiCanaryRollbacks,
+		m.aiPromptCalls,
+		m.aiPromptRollbacks,
 		m.aiModeration,
 		m.aiSemanticCache,
 		m.aiLogExports,
@@ -552,6 +565,23 @@ func (m *Metrics) AddAIRealtimeActive(delta float64) {
 		return
 	}
 	m.aiRealtimeActive.Add(delta)
+}
+
+// ObserveAIPromptCall counts one managed prompt call by how its version
+// was picked (ADR 20261114180740).
+func (m *Metrics) ObserveAIPromptCall(pick string) {
+	if m == nil || m.aiPromptCalls == nil {
+		return
+	}
+	m.aiPromptCalls.WithLabelValues(pick).Inc()
+}
+
+// ObserveAIPromptCanaryRollback counts one prompt canary rollback.
+func (m *Metrics) ObserveAIPromptCanaryRollback(reason string) {
+	if m == nil || m.aiPromptRollbacks == nil {
+		return
+	}
+	m.aiPromptRollbacks.WithLabelValues(reason).Inc()
 }
 
 func (m *Metrics) ObserveAIRouteCanaryRollback(reason string) {

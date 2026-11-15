@@ -71,7 +71,10 @@ type Handler struct {
 	workflowClient     *http.Client
 	CredentialResolver ManagedCredentialResolver
 	// Routes resolves AI fallback routes (ADR-990); nil disables /r/.
-	Routes               RouteResolver
+	Routes RouteResolver
+	// Prompts resolves managed prompts (ADR 20261114180740); nil disables
+	// /p/.
+	Prompts              PromptResolver
 	managedAuthorization map[string]string
 	responseCache        *outboundResponseCache
 	// semanticIndex is the semantic cache's index (ADR 20261112194947).
@@ -228,6 +231,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.EscapedPath(), RoutePrefix) {
 		h.serveRoute(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.EscapedPath(), api.OutboundAIPromptPrefix) {
+		h.servePrompt(w, r)
 		return
 	}
 	// Split before unescaping so an encoded slash remains part of a provider
@@ -515,6 +522,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		LeaseTTL:                       integration.RequestTimeout,
 		PolicyRevision:                 integration.PolicyRevision,
 		AgentRun:                       isAgentRun,
+		GatewayOwn:                     (isInternal || isReplay) && appID == "",
 	}
 	decision, err := h.Backend.Admit(r.Context(), spec)
 	if err != nil {
@@ -857,6 +865,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			endUser: aiEndUser, tags: aiTags, traceID: aiTrace, leaseID: decision.LeaseID, callID: aiCallID,
 			instanceID: callerInstance,
 			route:      routeAttemptFromContext(r.Context()),
+			prompt:     promptCallFromContext(r.Context()),
 			moderation: moderation,
 			response:   check, cacheHit: cacheHit,
 		}
