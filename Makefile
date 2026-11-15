@@ -585,7 +585,7 @@ test-mutation-billing: ## Mutation testing of pkg/billing against its own tests 
 
 .PHONY: test-mutation-ledger
 test-mutation-ledger: ## Mutation testing of the schedd admission ledger (pkg/sched/admission*.go) against its tests + tests/property
-	$(MUTATE) -pkg ./pkg/sched -files 'admission*.go' -tests 'admission*_test.go,*ledger*_test.go' -also ./tests/property
+	$(MUTATE) -pkg ./pkg/sched -files 'admission*.go' -tests 'admission*_test.go,*ledger*_test.go,flexible_reserve_test.go,stage_capacity_test.go,vcpu_combined_test.go,frozen_test.go,cpu_admission_test.go,state_machine_edges_test.go' -also ./tests/property
 
 .PHONY: coverage
 coverage: ## Aggregate coverage/cover-shard*.out and print a sorted table per package.

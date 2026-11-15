@@ -21,7 +21,7 @@ executed lines / all mutants.
 | Make target | Mutated code | Tests run per mutant |
 | --- | --- | --- |
 | `make test-mutation-billing` | `pkg/billing/*.go` | all of `pkg/billing` |
-| `make test-mutation-ledger` | `pkg/sched/admission*.go` (the schedd admission ledger, §6.2 invariants 1–2) | Test funcs in `pkg/sched/admission*_test.go` and `*ledger*_test.go`, then all of `tests/property` |
+| `make test-mutation-ledger` | `pkg/sched/admission*.go` (the schedd admission ledger, §6.2 invariants 1–2) | Test funcs in the ledger's test files (`admission*_test.go`, `*ledger*_test.go`, `flexible_reserve_test.go`, `stage_capacity_test.go`, `vcpu_combined_test.go`, `frozen_test.go`, `cpu_admission_test.go`, `state_machine_edges_test.go`; ~140 tests, ~3 s), then all of `tests/property` |
 
 The ledger target does not run the whole `pkg/sched` suite (about two
 minutes) per mutant; it runs the tests that own the ledger plus the property
