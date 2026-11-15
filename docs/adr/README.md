@@ -20,6 +20,8 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261115135218: Discoverable CLI list flag dependencies](20261115135218-cli-list-flag-dependencies.md) — accepted; shared dependency registry, offline help and typed local advice with preserved validation contracts.
+
 - [ADR-20261115133053: Offline output contracts in CLI JSON help](20261115133053-cli-json-help-output-contracts.md) — accepted; explicit list formats, selectors, empty behavior, publication and error contracts without API discovery.
 
 - [ADR-20261115105130: Opt-in streamed list output](20261115105130-cli-streamed-list-output.md)

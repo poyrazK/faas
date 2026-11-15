@@ -7,11 +7,12 @@ import (
 	"syscall"
 )
 
-func validateListStream(stream, all bool) bool {
-	if !stream || (jsonOutput && all) {
+func validateListStream(stream, all bool, command string) bool {
+	violation := listFlagRuleViolation(listStreamRequiresAllJSON, listFlagRuleState{Stream: stream, All: all, JSON: jsonOutput}, command)
+	if violation == nil {
 		return true
 	}
-	PrintUsage(osStderr, "--stream requires --json and --all", "cli")
+	printListFlagRuleUsage(violation)
 	return false
 }
 

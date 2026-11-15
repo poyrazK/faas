@@ -157,6 +157,36 @@ Unknown topics or help options exit `1`, leave stdout empty, and write one
 Problem JSON object to stderr. Human help and command-local `--help` keep their
 formatted usage output, including when `FAAS_JSON=1` is set.
 
+### Discovering flag dependencies
+
+The JSON help for `build list` and `invocation list` also includes optional
+`flag_rules`, drawn from the same explicit registry as their existing validators.
+Each rule has a stable `id`, `kind: "requires"`, `when` conditions and required
+conditions. All `when` conditions must match; all `requires` conditions must
+hold. Conditions use registered option names, a `test` and a Boolean `value`:
+
+- `present` tests whether `--output` was supplied, including `--output=`.
+- `enabled` tests the parsed Boolean value of `--all` or `--stream`; explicit
+  `false` and repeated flags retain their normal parsing rules.
+- `effective` on `json` tests the selected output mode, including environment
+  or saved preferences, rather than requiring the literal `--json` spelling.
+
+An output flag requires enabled `--all`. Enabled stdout streaming requires
+both `--all` and effective JSON mode, conditional on output being absent.
+`--stream=false` adds no requirement. File output accepts redundant `--stream`
+with a human receipt. These rules do not replace other validation of paths,
+limits, arguments or flag values. Unregistered commands omit `flag_rules`;
+filtered options and rules requiring unavailable options remain undiscoverable.
+
+When one of these existing checks fails in JSON mode, the single stderr Problem
+adds `cli.kind: "invalid_flag_combination"`, its registered `rule`, the unmet
+`missing` conditions and validated offline `help_argv`. No supplied path, raw
+arguments or credential is retained in that metadata. The original detail,
+code, category and exit remain: stdout-stream usage has code
+`validation_failed`, output-without-all has code `invalid_request`, and both
+exit 1. The checks still run at their existing points before authentication
+and API reads. Human messages and valid invocation behavior are unchanged.
+
 ### Discovering list output formats
 
 `gregale --json help build list` and `gregale --json help invocation list`
