@@ -2397,4 +2397,3 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-20261115072125: Read-only agent review of MCP Task releases](20261115072125-agent-task-release-review.md) — accepted; offline local stack review reuses native release parsing and fingerprints, reports credential-free roles and limits, and preserves the separate owner-operated release flow.
 - [ADR-20261115100336: A restore keeps gunicorn's workers](20261115100336-restore-keeps-gunicorn-workers.md) — accepted; the Python restore preload stops gunicorn's master from killing workers after the restore clock jump (amends ADR-680, ADR-20261109120000)
-
