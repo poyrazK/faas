@@ -123,20 +123,29 @@ func (s *Store) RecordOpen(ctx context.Context, nodeID, appID, via string, entri
 	return nil
 }
 
-// CaptureKey implements secretd.Store: a live sealed capture's app and key.
+// CaptureKey implements secretd.Store: a live sealed crash capture's app and
+// key, or a sealed park or warm snapshot's (ADR-20261110210000 slice 3d-3).
+// Both are keyed by a random capture id, so the two never collide.
 func (s *Store) CaptureKey(ctx context.Context, captureID string) (string, []byte, error) {
 	id, err := pgUUID(captureID)
 	if err != nil {
 		return "", nil, secretd.ErrUnknownCapture
 	}
 	row, err := s.q.CrashCaptureSealedKey(ctx, s.db, id)
+	if err == nil {
+		return uuid.UUID(row.AppID.Bytes).String(), row.SealedKey, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", nil, fmt.Errorf("secretpg: capture key: %w", err)
+	}
+	snap, err := s.q.SnapshotSealedKey(ctx, s.db, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil, secretd.ErrUnknownCapture
 	}
 	if err != nil {
-		return "", nil, fmt.Errorf("secretpg: capture key: %w", err)
+		return "", nil, fmt.Errorf("secretpg: snapshot capture key: %w", err)
 	}
-	return uuid.UUID(row.AppID.Bytes).String(), row.SealedKey, nil
+	return uuid.UUID(snap.AppID.Bytes).String(), snap.SealedKey, nil
 }
 
 // SidecarEnv implements secretd.Store: the deployment must be appID's.

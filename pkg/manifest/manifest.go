@@ -203,6 +203,11 @@ type Manifest struct {
 	// each host's archive credential envelope untouched.
 	LogArchive LogArchive `yaml:"log_archive,omitempty"`
 
+	// ServingProbes turns on the compute nodes' serving probe and the
+	// control plane's expected-probe inventory (serving_probes.go). Absent
+	// leaves the fleet unconfigured.
+	ServingProbes *ServingProbes `yaml:"serving_probes,omitempty"`
+
 	// ArtifactSigner turns on the control plane's artifact signer
 	// (ADR-20261109170000). Absent keeps sign.key on the compute nodes.
 	ArtifactSigner ArtifactSigner `yaml:"artifact_signer,omitempty"`
@@ -1558,6 +1563,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.ObjectStorage.validate()...)
 	errs = append(errs, m.ObjectStorage.validateOnCompute(m.PublicEdge, m.Fleet.Hosts)...)
 	errs = append(errs, m.LogArchive.validate()...)
+	errs = append(errs, m.ServingProbes.validate()...)
 	errs = append(errs, m.ArtifactSigner.validate()...)
 	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {

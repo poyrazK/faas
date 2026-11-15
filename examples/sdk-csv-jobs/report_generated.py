@@ -1,0 +1,9 @@
+# Generated from a Gregale job contract.
+# ruff: noqa: F401
+import json
+from typing import Literal, NotRequired, TypeAlias, TypedDict
+from faas_sdk.job_runtime import JobContract
+Input = TypedDict("Input", {"import_id": str, "owner_id": str, "rejections": list[str]})
+Output_scope = TypedDict("Output_scope", {"base_url": str, "app_slug": str, "bucket": str})
+Output = TypedDict("Output", {"version": Literal[1], "scope": Output_scope, "owner_id": str, "key": str, "version_id": NotRequired[str], "size_bytes": int, "sha256": str})
+contract: JobContract[Input, Output] = JobContract(json.loads("{\"version\":1,\"name\":\"csv-report\",\"input\":{\"type\":\"object\",\"properties\":{\"import_id\":{\"type\":\"string\",\"minLength\":36,\"maxLength\":36},\"owner_id\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64},\"rejections\":{\"type\":\"array\",\"maxItems\":1000,\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":128}}},\"required\":[\"import_id\",\"owner_id\",\"rejections\"],\"additionalProperties\":false},\"output\":{\"type\":\"object\",\"properties\":{\"version\":{\"type\":\"integer\",\"enum\":[1]},\"scope\":{\"type\":\"object\",\"properties\":{\"base_url\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":1024},\"app_slug\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":63},\"bucket\":{\"type\":\"string\",\"minLength\":36,\"maxLength\":36}},\"required\":[\"base_url\",\"app_slug\",\"bucket\"],\"additionalProperties\":false},\"owner_id\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64},\"key\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":1024},\"version_id\":{\"type\":\"string\",\"minLength\":36,\"maxLength\":36},\"size_bytes\":{\"type\":\"integer\",\"minimum\":0},\"sha256\":{\"type\":\"string\",\"minLength\":64,\"maxLength\":64}},\"required\":[\"version\",\"scope\",\"owner_id\",\"key\",\"size_bytes\",\"sha256\"],\"additionalProperties\":false}}"))

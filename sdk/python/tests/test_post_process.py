@@ -162,7 +162,16 @@ def _fixture_generator(tmp_path, monkeypatch):
     package.mkdir(parents=True)
     originals = {
         "faas_sdk/_wrapper.py": b"# existing custom wrapper\n",
+        "faas_sdk/job_runtime.py": b"# uncommitted typed worker runtime\n",
+        "faas_sdk/_typed_jobs.py": b"# uncommitted typed job handles\n",
+        "faas_sdk/job_types.py": b"# uncommitted job type generator\n",
+        "faas_sdk/_project_verification.py": b"# uncommitted exact-deployment verification\n",
         "faas_sdk/preview/_binding_runner.py": b"# uncommitted verification runner\n",
+        "faas_sdk/preview/files.py": b"# uncommitted preview file workflows\n",
+        "faas_sdk/preview/pipeline_children.py": b"# uncommitted child runtime\n",
+        "faas_sdk/preview/pipeline_children_state.py": b"# uncommitted child receipts\n",
+        "faas_sdk/preview/pipeline_gates.py": b"# uncommitted approval/input gates\n",
+        "faas_sdk/preview/file_pipelines.py": b"# uncommitted typed file pipelines\n",
         "faas_sdk/preview/_binding_runner_diagnostics.py": b"# uncommitted automatic diagnostics\n",
         "faas_sdk/preview/_binding_creation.py": b"# uncommitted reviewed creation\n",
         "faas_sdk/preview/_binding_qualification.py": b"# uncommitted qualification waiting\n",
@@ -310,3 +319,70 @@ def test_regenerated_barrel_exports_binding_runner(tmp_path):
     barrel = tmp_path / "__init__.py"
     generator._rewrite_init_py(barrel)
     assert "_binding_runner" not in barrel.read_text()
+
+
+def test_regenerated_barrels_export_project_verification(tmp_path):
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "gen.py"
+    spec = importlib.util.spec_from_file_location("sdk_generator_verification_exports", script)
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    assert "_project_verification.py" in generator.ROOT_WRAPPER_MODULES
+    barrel = tmp_path / "__init__.py"
+    generator._rewrite_init_py(barrel)
+    for name in (
+        "ProjectVerificationTarget",
+        "ProjectVerificationReport",
+        "ProjectVerificationOptions",
+        "VerificationCode",
+        "VerificationCheck",
+        "project_verification_target",
+    ):
+        assert f"{name} as {name}" in barrel.read_text()
+        assert f"{name} as {name}" in generator._PREVIEW_INIT_PY_TEMPLATE
+
+
+def test_regenerated_barrels_export_typed_jobs(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for name in ("job_runtime.py", "_typed_jobs.py", "job_types.py"):
+        assert name in generator.ROOT_WRAPPER_MODULES
+    for name in ("JobContract", "TypedJob", "TypedJobRun", "JobCheckpoint", "run_job_task"):
+        assert f"{name} as {name}" in generator._INIT_PY_TEMPLATE
+        assert f"{name} as {name}" in generator._PREVIEW_INIT_PY_TEMPLATE
+
+
+def test_regenerated_preview_barrel_exports_files(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    assert "files.py" in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("FileBucket", "FileCheckpoint", "FileOptions", "PathFileSource"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+
+
+def test_regenerated_preview_barrel_exports_file_pipelines(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    assert "file_pipelines.py" in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("FilePipeline", "FilePipelineReceipt", "NativeFileVerifier", "PostgresFilePipelineStore"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_barrel_preserves_live_jobs(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    assert "live_jobs.py" in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("LiveJob", "LiveJobSnapshot", "LiveJobSink", "realtime_live_job_source"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")
+
+
+def test_regenerated_preview_barrel_preserves_job_pipelines(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for module in ("pipeline_state.py", "job_pipelines.py", "job_pipeline_client.py", "pipeline_gates.py", "pipeline_children.py", "pipeline_children_state.py"):
+        assert module in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("JobPipelineClient", "JobPipeline", "PipelineScope", "PipelineJobReceipt", "job_pipeline_live_snapshot", "PipelineGateService", "PipelineGateOptions", "PipelineChildren", "PipelineChildOptions"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE
+    compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")

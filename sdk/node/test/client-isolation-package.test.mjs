@@ -45,6 +45,16 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(prepared.plan.fileCount,1); assert.ok(prepared.size>0); assert.match(prepared.sha256,/^[a-f0-9]{64}$/);
     assert.equal((await sourceSdk.inspectSource('source-project')).fileCount,1);
     const previewSdk = await import('@gregale/sdk-node/preview'); assert.equal(previewSdk.prepareSource,sourceSdk.prepareSource);
+    const fileBrowser = await import('@gregale/sdk-node/preview/browser');
+    const publicBrowser = await import('@gregale/sdk-node/browser');
+    assert.equal(typeof fileBrowser.createFileBucket,'function'); assert.equal(publicBrowser.createFileBucket,undefined);
+    assert.equal(sourceSdk.FileError,undefined); assert.equal(typeof previewSdk.pathFileSource,'function');
+    assert.equal(sourceSdk.createFilePipeline,undefined);assert.equal(typeof previewSdk.createFilePipeline,'function');assert.equal(fileBrowser.createFilePipeline,undefined);
+    assert.equal(sourceSdk.createLiveJob,undefined);assert.equal(publicBrowser.createLiveJob,undefined);
+    assert.equal(typeof previewSdk.createLiveJobBridge,'function');assert.equal(fileBrowser.createLiveJobBridge,undefined);
+    assert.equal(fileBrowser.createLiveJob,previewSdk.createLiveJob);assert.equal(typeof fileBrowser.realtimeLiveJobSource,'function');
+    assert.equal(typeof previewSdk.defineJobPipeline,'function');assert.equal(typeof previewSdk.createJobPipelineClient,'function');assert.equal(typeof previewSdk.jobPipelineLiveSnapshot,'function');
+    assert.equal(sourceSdk.defineJobPipeline,undefined);assert.equal(fileBrowser.defineJobPipeline,undefined);
     const sourceOptions = {timeoutMs:10000,onCheckpoint:value => sourceSdk.saveSourceUploadCheckpoint('source-state.json',value)};
     const staged = await sourceClient.uploads.uploadSource({path:'source.tar.gz',appSlug:'api'},sourceOptions);
     assert.equal(staged.stage,'ready');
@@ -167,11 +177,22 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     } finally { legacy.uninstall(); globalThis.fetch = original; Object.assign(OpenAPI, config); }
   `);
   await exec(process.execPath, ['app.mjs'], { cwd: app });
+  const schema={version:1,name:'typed-job',input:{type:'string',minLength:1},output:{type:'integer',minimum:0}};
+  await writeFile(join(app,'job-contract.json'),JSON.stringify(schema));
+  await exec(process.execPath,[join(app,'node_modules/.bin/gregale-job-types'),join(app,'job-contract.json'),'typescript',join(app,'typed-job.ts')],{cwd:app});
   await writeFile(join(app, 'app.ts'), `
     import { createClient, type GregaleClient, type AppResponse, type CancelablePromise, type RequestOptions, type ResponseInfo, type ResponseObserver, type PaginationOptions, type DeploymentPagination, type DeploymentResponse, type DeploymentListResponse, type BuildResponse, type BuildListResponse, PaginationError, FaaSClient, AppsService, DeploymentsService } from '@gregale/sdk-node';
     import { createClient as createPreviewClient, type GregaleClient as PreviewClient, type ExecutionResponse, type ExecutionEvent, type ExecutionHelpers, type RequestOptions as PreviewOptions } from '@gregale/sdk-node/preview';
     import { type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters, type ReleaseTimeline, type WaiterSnapshot, type WaiterProgress, WaiterError } from '@gregale/sdk-node';
+    import {contract as jobContract} from './typed-job.js';
     const client: GregaleClient = createClient('https://api.test');
+    const typedJob=client.jobs.defineJob(jobContract);
+    const typedSubmission:Promise<import('@gregale/sdk-node').TypedJobRun<number>>=typedJob.submit([{id:'one',value:'input'}],{timeoutMs:1000,idempotencyKey:'one'});
+    for(const item of await(await typedSubmission).results({timeoutMs:1000})){if(item.outcome==='succeeded'){const value:number=item.result;void value;}}
+    // @ts-expect-error generated input types reject wrong payloads
+    typedJob.submit([{id:'one',value:123}],{timeoutMs:1000,idempotencyKey:'one'});
+    // @ts-expect-error durable submissions require an explicit idempotency key
+    typedJob.submit([{id:'one',value:'input'}],{timeoutMs:1000});
     const request: CancelablePromise<AppResponse> = client.apps.getApp({ slug: 'typed' });
     request.cancel();
     const observer: ResponseObserver = (info: ResponseInfo) => { const id: string | null = info.requestId; void id; };
@@ -237,6 +258,16 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     // @ts-expect-error durable application requires a journal
     client.projects.applyPlan(review,{timeoutMs:1000});
     void application;void applicationResume;
+    const verificationSDK=await import('@gregale/sdk-node');
+    const verificationTarget:import('@gregale/sdk-node').ProjectVerificationTarget=await verificationSDK.projectVerificationTarget(await application);
+    const verification:Promise<import('@gregale/sdk-node').ProjectVerificationReport>=client.projects.verifyApplication(verificationTarget,{timeoutMs:1000,checks:[{name:'http',workload:'shop-api',run:context=>({outcome:'verified',deployment_id:context.deployment_id!})}]});
+    const verificationPreview:Promise<import('@gregale/sdk-node/preview').ProjectVerificationReport>=preview.projects.verifyApplication(verificationTarget,{timeoutMs:1000});
+    // @ts-expect-error verification always needs a total budget
+    client.projects.verifyApplication(verificationTarget,{});
+    // @ts-expect-error reports are immutable
+    (await verification).workloads[0]!.outcome='verified';
+    void verificationPreview;
+
 
     // @ts-expect-error a durable state path is required
     client.deployments.deploySource({directory:'project',appSlug:'api'},{timeoutMs:1000});
@@ -270,6 +301,70 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     waiters.waitForBuild({ id: 'build' }, {});
     // @ts-expect-error legacy static services keep their original surface
     DeploymentsService.waitForBuild({ id: 'build' }, buildOptions);
+    const fileBucket: import('@gregale/sdk-node/preview').ManagedFileBucket = preview.storage.files({appSlug:'app',bucket:'bucket'});
+    const fileSource: import('@gregale/sdk-node/preview/browser').FileSource = {size:1,async read(){return new Uint8Array([1]);}};
+    const fileUpload:Promise<import('@gregale/sdk-node/preview').FileUploadResult> = fileBucket.upload('key',fileSource,{timeoutMs:1000,onCheckpoint:c=>{
+      // @ts-expect-error checkpoint part digests are readonly
+      c.part_digests.push('changed');
+    }});
+    void fileUpload;
+    declare const filePipeline: import('@gregale/sdk-node/preview').FilePipeline<unknown,unknown>;
+    const triggered:Promise<import('@gregale/sdk-node/preview').FilePipelineOutcome> = filePipeline.handle({body:new Uint8Array(),invocationId:'id'},{timeoutMs:1000});
+    const reconciled:Promise<import('@gregale/sdk-node/preview').FilePipelineOutcome> = filePipeline.reconcile('identity','run',{timeoutMs:1000});
+    void triggered;void reconciled;
+    declare const live: import('@gregale/sdk-node/preview/browser').LiveJob;
+    const updates: AsyncIterableIterator<import('@gregale/sdk-node/preview').LiveJobSnapshot> = live.updates();
+    type Hook = typeof import('@gregale/sdk-node/preview/react').useLiveJob;
+    const view: import('@gregale/sdk-node/preview').LiveJobView = live.getView();
+    void updates;void view;
+    declare const pipelineStore: import('@gregale/sdk-node/preview').PipelineJobStore;
+    declare const pipelineScope: import('@gregale/sdk-node/preview').PipelineScope;
+    declare const childStore: import('@gregale/sdk-node/preview').PipelineChildrenStore;
+    const {PipelineChildren}=await import('@gregale/sdk-node/preview');
+    const childDefinition={contract:jobContract};
+    const coordinator=new PipelineChildren({scope:pipelineScope,parentContract:jobContract,children:[childDefinition],store:childStore,token:'backend'});
+    type BatchView=import('@gregale/sdk-node/preview/browser').PipelineBatchResult<number>;
+    const {defineJobPipeline,createJobPipelineClient}=await import('@gregale/sdk-node/preview');
+    declare const gateStore: import('@gregale/sdk-node/preview').PipelineGateStore;
+    type GateView = import('@gregale/sdk-node/preview/browser').PipelineGateView<string,number>;
+    const jobPipeline=defineJobPipeline(jobContract,{scope:pipelineScope,store:pipelineStore,gateStore,children:coordinator,jobs:{work:{contract:jobContract,job:client.jobs.defineJob(jobContract)}}},async(input,wf)=>{
+      const single = await wf.child('child',childDefinition,input,{timeoutMs:60000});
+      const childOutput:number|undefined=single.output;void childOutput;
+      const batch:import('@gregale/sdk-node/preview').PipelineBatchResult<number>=await wf.children('children',childDefinition,[{id:'one',value:input}],{timeoutMs:60000,concurrency:2});void batch;
+      // @ts-expect-error child input retains the generated string type
+      await wf.child('bad-child',childDefinition,42,{timeoutMs:60000});
+      const approval = await wf.approval('review',jobContract,input,{timeoutMs:60000,requiredRoles:['reviewer']});
+      if(approval.state==='approved'){ const typed:number=approval.payload;void typed; }
+      // @ts-expect-error review must match its generated contract
+      await wf.approval('bad',jobContract,42,{timeoutMs:60000,requiredRoles:['reviewer']});
+      const reply:Promise<import('@gregale/sdk-node/preview').PipelineGateOutcome<number>>=wf.waitForInput('input',jobContract,input,{timeoutMs:60000,requiredRoles:['reviewer']});void reply;
+      const result=await wf.job('work',[{id:'one',value:input}]);
+      const number:number=result.results[0]!.result;
+      // @ts-expect-error registered stages remain checked
+      await wf.job('unknown',[{id:'one',value:input}]);
+      // @ts-expect-error step input is generated as string
+      await wf.job('work',[{id:'one',value:42}]);
+      return number;
+    });
+    const pipelineClient=createJobPipelineClient({baseURL:'https://api.test',token:'backend',scope:pipelineScope,ownerId:'alice',contract:jobContract});
+    const pipelineRun=await pipelineClient.start('input',{timeoutMs:1000,idempotencyKey:'one'});
+    const pipelineOutput:Promise<number>=pipelineRun.result({timeoutMs:1000});void pipelineOutput;void jobPipeline;
+    // @ts-expect-error composition remains preview-only
+    type PublicChildren=import('@gregale/sdk-node').PipelineChildren;
+    // @ts-expect-error approval services remain preview-only
+    type PublicGate=import('@gregale/sdk-node').PipelineGateStore;
+    // @ts-expect-error job pipelines remain preview-only
+    type PublicJobPipeline=import('@gregale/sdk-node').JobPipeline;
+    // @ts-expect-error live jobs remain preview-only
+    type PublicLiveJob = import('@gregale/sdk-node').LiveJob;
+    // @ts-expect-error pipeline execution requires a total budget
+    filePipeline.handle({body:new Uint8Array(),invocationId:'id'},{});
+    // @ts-expect-error file pipelines remain preview-only
+    type PublicPipeline = import('@gregale/sdk-node').FilePipeline;
+    // @ts-expect-error files remain preview only
+    client.storage.files({appSlug:'app',bucket:'bucket'});
+    // @ts-expect-error a total transfer budget is required
+    fileBucket.upload('key',fileSource,{});
     const helpers: ExecutionHelpers = preview;
     const execution: Promise<ExecutionResponse> = helpers.runExecution({ runtime: 'node22', source: 'console.log(1)' });
     const events: AsyncGenerator<ExecutionEvent, void, void> = helpers.watchExecution('run', { after: 1 });

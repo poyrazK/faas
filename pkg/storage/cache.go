@@ -105,6 +105,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -219,10 +220,13 @@ const cacheTouchQueueSize = 256
 // parent backend (typically OCIRegistryStorageBackend or a
 // PrefixRouter) and the cache root directory.
 type LocalCacheBackend struct {
-	parent       StorageBackend
-	root         string
-	maxBytes     int64
-	mu           sync.Mutex
+	parent   StorageBackend
+	root     string
+	maxBytes int64
+	mu       sync.Mutex
+	// driveDeltas makes Put upload snapshot drives as deltas against their
+	// layer (drive_delta_cache.go).
+	driveDeltas  atomic.Bool
 	touchQueue   chan string
 	touchPending sync.Map // cache path -> struct{}
 	chtimes      func(string, time.Time, time.Time) error
@@ -489,6 +493,9 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 	parentKey := c.parentKey(key)
 	tmp, tmpErr := c.spoolFile(dir)
 	if tmpErr != nil {
+		if source, ok := r.(DriveDeltaSource); ok {
+			r = source.File
+		}
 		if err := c.parent.Put(ctx, parentKey, r); err != nil {
 			return fmt.Errorf("storage: cache: put %q: parent: %w", key, err)
 		}
@@ -537,7 +544,7 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		return fmt.Errorf("storage: cache: put %q: rewind spool: %w", key, err)
 	}
-	if err := c.parent.Put(ctx, parentKey, tmp); err != nil {
+	if err := c.putParent(ctx, key, parentKey, tmp, r); err != nil {
 		return fmt.Errorf("storage: cache: put %q: parent: %w", key, err)
 	}
 
@@ -654,8 +661,17 @@ func (c *LocalCacheBackend) fetch(ctx context.Context, key, parentKey string, re
 		return nil, fmt.Errorf("storage: cache: get %q: parent: %w", key, err)
 	}
 	defer func() { _ = rc.Close() }()
+	var src io.Reader = rc
+	if isSnapshotDriveKey(key) {
+		drive, cleanup, derr := c.fetchedDrive(ctx, key, rc)
+		if derr != nil {
+			return nil, fmt.Errorf("storage: cache: get %q: %w", key, derr)
+		}
+		defer cleanup()
+		src = drive
+	}
 	// A refresh promises an installed entry when it returns, so it never defers.
-	cached, err := c.materializeCache(ctx, key, rc, !refresh && deferredCacheDurability(ctx))
+	cached, err := c.materializeCache(ctx, key, src, !refresh && deferredCacheDurability(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("storage: cache: get %q: parent read: %w", key, err)
 	}
@@ -970,9 +986,14 @@ func (c *LocalCacheBackend) materializeCache(ctx context.Context, key string, sr
 		}
 	}()
 
-	n, err := copyArtifactContext(ctx, tmp, src, key)
-	if err != nil {
-		return nil, err
+	// A drive rebuilt from a delta arrives as a clone of its layer; keep
+	// sharing the layer's blocks (ADR-633).
+	n, cloned := cloneSpool(tmp, src, key)
+	if !cloned {
+		n, err = copyArtifactContext(ctx, tmp, src, key)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if deferDurability && n <= c.maxBytes {
 		f, err := os.Open(tmpPath) //nolint:forbidigo // tmpPath was created by os.CreateTemp in this cache directory.
