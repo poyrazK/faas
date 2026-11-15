@@ -2693,6 +2693,33 @@ const (
 	FlagsMaxOwnerBytes = 128
 )
 
+// Flag experiment bounds (ADR 20261115163113). The monthly conversion event
+// quota is per plan: Limits.FlagEventsPerMonth.
+const (
+	// FlagExperimentsMaxRunning bounds running experiments per environment.
+	FlagExperimentsMaxRunning = 20
+	// FlagExperimentsMaxPerEnvironment bounds experiments of any status.
+	FlagExperimentsMaxPerEnvironment = 200
+	// FlagEventNamesMaxPerEnvironment bounds distinct conversion event names.
+	FlagEventNamesMaxPerEnvironment = 100
+	// FlagEventsMaxBatch bounds events in one runtime ingest call.
+	FlagEventsMaxBatch = 100
+	// FlagExperimentMinUnitsPerArm and FlagExperimentMinConversionsPerArm
+	// gate results: below them an arm reports insufficient_data.
+	FlagExperimentMinUnitsPerArm       = 100
+	FlagExperimentMinConversionsPerArm = 10
+	// FlagExperimentMixingLift is the default mSPRT mixing standard deviation
+	// (absolute conversion-rate lift), fixed when an experiment is created.
+	FlagExperimentMixingLift = 0.02
+	// FlagExperimentAlpha is the significance level of results.
+	FlagExperimentAlpha = 0.05
+	// FlagExperimentSRMAlpha flags a sample ratio mismatch.
+	FlagExperimentSRMAlpha = 0.001
+	// FlagExperimentMaxUnitsPerPass bounds new units one reconciler pass adds
+	// to one experiment.
+	FlagExperimentMaxUnitsPerPass = 50000
+)
+
 // Progressive rollout controls are structural bounds, not plan allowances.
 const (
 	FlagsMaxProgressiveStages                = 8
@@ -6359,6 +6386,12 @@ type Limits struct {
 	// whose max(received_at) is older than this bound. Free=0
 	// (off), Hobby=3, Pro=7, Scale=14.
 	DebugTelemetryRetentionDays int
+	// FlagEventsPerMonth is the monthly quota of flag conversion events
+	// (ADR 20261115163113 §4): Free 0 (request telemetry is off), Hobby
+	// 100,000, Pro 1,000,000, Scale 10,000,000. Events over quota are dropped
+	// and counted, never billed. Provisional until the financial model
+	// carries it.
+	FlagEventsPerMonth int64
 	// DebugTelemetryRequestsPerMinute (ADR-127) is the per-account
 	// rate cap on the IncrementRequestTelemetry ingest RPC. The
 	// recorder publisher reads this at startup; per-record
@@ -6960,6 +6993,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryEnabled:           false,
 		Profiling:                       ProfilingLimits{},
 		DebugTelemetryRetentionDays:     0,
+		FlagEventsPerMonth:              0,
 		DebugTelemetryRequestsPerMinute: 0,
 		APIRequestsPerMinute:            600,
 		DebugGuestLogExportsPerMinute:   0,
@@ -7408,6 +7442,7 @@ var planLimits = map[Plan]Limits{
 		// (spec §4.7).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     3,
+		FlagEventsPerMonth:              100_000,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60, CaptureStorageBytes: 256 << 20},
 		DebugTelemetryRequestsPerMinute: 1000,
 		APIRequestsPerMinute:            1200,
@@ -7824,6 +7859,7 @@ var planLimits = map[Plan]Limits{
 		// for the Pro plan.
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     7,
+		FlagEventsPerMonth:              1_000_000,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180, CaptureStorageBytes: 1 << 30},
 		DebugTelemetryRequestsPerMinute: 10000,
 		APIRequestsPerMinute:            3000,
@@ -8269,6 +8305,7 @@ var planLimits = map[Plan]Limits{
 		// would blow up Prometheus cardinality).
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     14,
+		FlagEventsPerMonth:              10_000_000,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600, CaptureStorageBytes: 4 << 30},
 		DebugTelemetryRequestsPerMinute: 50000,
 		APIRequestsPerMinute:            6000,
@@ -12369,6 +12406,16 @@ func (p Plan) DebugTelemetryRetentionDays() int {
 		return 0
 	}
 	return l.DebugTelemetryRetentionDays
+}
+
+// FlagEventsPerMonth returns the plan's monthly flag conversion event quota
+// (ADR 20261115163113 §4); 0 on unknown plans.
+func (p Plan) FlagEventsPerMonth() int64 {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.FlagEventsPerMonth
 }
 
 // DebugTelemetryFairSharePressure is the fraction of an account's telemetry
