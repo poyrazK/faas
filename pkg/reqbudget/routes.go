@@ -114,7 +114,14 @@ var longWaitRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/v1/apps/*/queues/*/leases"},
 	{http.MethodPost, "/v1/orgs/*/apps/*/queues/*/leases"},
 	{http.MethodGet, "/v1/apps/*/policy/status"},
+	// A project scan uploads the whole repository tarball before it looks
+	// the project up; a 714-file repo spent the 5 s default on the upload and
+	// every `deploy --project` got 503 (prod 2026-11-15).
+	{http.MethodPost, "/v1/projects/scan"},
 	{http.MethodPost, "/v1/projects/scan/source-ref"},
+	{http.MethodPost, "/v1/orgs/*/projects/scan"},
+	{http.MethodPost, "/v1/orgs/*/projects/scan/source-ref"},
+	{http.MethodPost, "/v1/orgs/*/projects/*/scan"},
 	{http.MethodPost, "/v1/apps/*/deployments/dev-source"},
 
 	{http.MethodPost, "/v1/notification-channels/*/test"},
