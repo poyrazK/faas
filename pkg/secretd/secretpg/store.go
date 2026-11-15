@@ -287,6 +287,27 @@ func (s *Store) JobMaterializationLease(ctx context.Context, jobID string) (stri
 	return row.Owner, row.Until.Time, nil
 }
 
+// BuildRunner implements secretd.Store.
+func (s *Store) BuildRunner(ctx context.Context, buildID string) (secretd.BuildRun, error) {
+	build, err := pgUUID(buildID)
+	if err != nil {
+		return secretd.BuildRun{}, secretd.ErrUnknownBuild
+	}
+	row, err := s.q.BuildRunner(ctx, s.db, build)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return secretd.BuildRun{}, secretd.ErrUnknownBuild
+	}
+	if err != nil {
+		return secretd.BuildRun{}, fmt.Errorf("secretpg: build runner: %w", err)
+	}
+	return secretd.BuildRun{
+		AppID:     uuid.UUID(row.AppID.Bytes).String(),
+		Running:   row.Status == "running",
+		StartedAt: row.StartedAt.Time,
+		Node:      row.BuilderNodeName,
+	}, nil
+}
+
 // RecordJobOpen implements secretd.Store.
 func (s *Store) RecordJobOpen(ctx context.Context, nodeID, jobID, via string) error {
 	job, err := pgUUID(jobID)

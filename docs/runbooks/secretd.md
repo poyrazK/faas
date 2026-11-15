@@ -187,8 +187,28 @@ plane: watch its network and `faas_secretd_opens_total{rpc="RegistryFetch"}`.
    rising means a node pulled for an app it neither owns, holds a grant for,
    nor prepares an image of: find the path in imaged's journal before
    turning on more nodes. Then the rest of compute.
-3. **Builder VMs** come with slice 3j-3. Job images pull through secretd
-   with the same switch (3j-2b).
+3. **Builder VMs (slice 3j-3), one node first:** set
+   `faas_vmmd_build_registry_mirror: true` on one compute node (needs
+   `faas_secretd_target`) and converge it; vmmd logs `builder VMs pull private
+   registries through secretd`. A Dockerfile build on that node whose app has
+   a registry credential now gets no Docker config: guest-init forwards
+   `127.0.0.1:15000+i` to vmmd on vsock, BuildKit lists those as the
+   registries' mirrors, and vmmd pulls each request through secretd by build
+   id. secretd admits only the node that claimed the running build
+   (`builds.builder_node_name`, recorded at the claim; with per-node database
+   logins the claim records it and no other node can change it). Run a build
+   `FROM` a private base image and check it succeeds and
+   `faas_secretd_opens_total{rpc="RegistryFetch"}` rises; a
+   `not_authorized` refusal for a build means the claim recorded no node
+   (builderd logs `record the build's node`). Then the rest of compute. Once
+   every node runs it, no compute daemon opens a registry password, and the
+   build identity can leave compute (`docs/runbooks/secretd.md`, "Take the
+   edge and delivery identities off compute", extended to build). Job images
+   pull through secretd with imaged's switch (3j-2b).
+
+   Known limit: secretd finds a credential by the registry URL's exact host,
+   so a Docker Hub credential stored as `docker.io` is not used for
+   `registry-1.docker.io` pulls (as for imaged's pulls, 3j-2).
 
 ## Take the edge and delivery identities off compute
 
