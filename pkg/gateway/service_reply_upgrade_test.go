@@ -52,8 +52,12 @@ func TestRawUpgradeRecordsServiceReplyBytesOnlyForServiceCalls(t *testing.T) {
 			}
 			reader := bufio.NewReader(conn)
 			response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet})
-			if err != nil || response.StatusCode != http.StatusSwitchingProtocols {
-				t.Fatalf("upgrade response = %v, %v", response, err)
+			if err != nil {
+				t.Fatalf("upgrade response: %v", err)
+			}
+			defer func() { _ = response.Body.Close() }()
+			if response.StatusCode != http.StatusSwitchingProtocols {
+				t.Fatalf("upgrade status = %d, want 101", response.StatusCode)
 			}
 			if _, err := io.ReadFull(reader, make([]byte, len(payload))); err != nil {
 				t.Fatalf("upgraded bytes did not round trip: %v", err)
