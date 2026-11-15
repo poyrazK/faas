@@ -16,7 +16,7 @@ export type AppHealthCheck = {
   /**
    * Stable diagnostic reason, when available.
    */
-  reason?: 'collection_gap' | 'capacity_below_target' | 'request_plan_restricted' | 'request_scope_unavailable' | 'request_evidence_unavailable' | 'request_coverage_incomplete' | 'request_evidence_stale' | 'request_evidence_invalid' | 'requests_unexercised' | 'request_volume_insufficient' | 'request_error_rate_severe' | 'request_error_rate_elevated' | 'request_errors_below_threshold' | 'requests_observed' | 'memory_pressure';
+  reason?: 'collection_gap' | 'capacity_below_target' | 'request_plan_restricted' | 'request_scope_unavailable' | 'request_evidence_unavailable' | 'request_coverage_incomplete' | 'request_evidence_stale' | 'request_evidence_invalid' | 'requests_unexercised' | 'request_volume_insufficient' | 'request_all_failed' | 'request_error_rate_severe' | 'request_error_rate_elevated' | 'request_errors_below_threshold' | 'requests_observed' | 'memory_pressure';
   action?: 'deployments' | 'configuration' | 'logs' | 'metrics' | 'errors';
   deployment_id?: string;
   /**
