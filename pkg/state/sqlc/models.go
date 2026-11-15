@@ -158,6 +158,15 @@ type AccountEmailChange struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type AccountHeldLink struct {
+	AccountID     pgtype.UUID
+	HeldAccountID pgtype.UUID
+	HeldOrgID     pgtype.UUID
+	HeldReason    string
+	Signal        string
+	DetectedAt    pgtype.Timestamptz
+}
+
 type AccountMailThrottle struct {
 	AccountID       pgtype.UUID
 	Kind            string

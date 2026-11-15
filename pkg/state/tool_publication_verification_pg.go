@@ -33,13 +33,20 @@ func (s *PgStore) ChangeToolPublicationVerification(ctx context.Context, account
 	if v == nil {
 		v = in.Review
 	}
-	if action == "approve" || action == "begin" || action == "dispatch" || action == "renew" || action == "renew_dispatch" || action == "review" && p.Verification == nil {
+	if publicationAuthorityAction(action, in) {
 		if !validVerificationTarget(v) {
 			return out, ErrInvalidArgument
 		}
 		_, err = q.LockToolPublicationCandidate(ctx, tx, toolpublicationdb.LockToolPublicationCandidateParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(v.AppID), DeploymentID: mustPgUUID(v.DeploymentID), KeyID: mustPgUUID(v.KeyID), SourceSha256: pgtype.Text{String: v.DeploymentSourceSHA256, Valid: true}, AppSlug: p.Intent.App, ExpectedServing: p.Intent.ExpectedServingDeploymentID})
 		if err != nil {
 			return out, mapErr(err)
+		}
+	}
+	var readiness *MCPReadinessSubject
+	if publicationAuthorityAction(action, in) {
+		readiness, err = publicationReadinessTx(ctx, tx, p, v)
+		if err != nil {
+			return out, err
 		}
 	}
 	ref := ""
@@ -91,6 +98,29 @@ func (s *PgStore) ChangeToolPublicationVerification(ctx context.Context, account
 	out, err = changeToolVerification(&p, key, action, in, secret, connection)
 	if err != nil {
 		return out, err
+	}
+	out.ReadinessSubject = readiness
+	if action == "readiness_record" {
+		if readiness == nil || in.ReadinessSubject == nil || in.ReadinessEvidence == nil || in.ReadinessSubject.AccountID != account || in.ReadinessSubject.DeploymentID != v.DeploymentID || in.ReadinessEvidence.Role != in.Role || !validateReadinessEvidence(*in.ReadinessSubject, *in.ReadinessEvidence) {
+			return out, ErrInvalidArgument
+		}
+		saved, err := recordMCPReadinessTx(ctx, tx, *in.ReadinessSubject, *in.ReadinessEvidence)
+		if err != nil {
+			return out, err
+		}
+		out.ReadinessEvidence = &saved
+		return out, tx.Commit(ctx)
+	}
+	if action == "readiness_assert" || action == "finish" && in.Outcome != nil && in.Outcome.OK {
+		if p.Intent.Readiness != nil {
+			evidence, e := publicationReadinessEvidenceTx(ctx, tx, v.DeploymentID)
+			if e != nil {
+				return out, e
+			}
+			if !publicationReadinessPassed(p, readiness, evidence, in.Outcome) {
+				return out, ErrConflict
+			}
+		}
 	}
 	if action == "renew" && connection != nil {
 		claim, claimErr := claimToolOAuth(*connection, time.Now().UTC())

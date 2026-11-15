@@ -4,6 +4,7 @@ CREATE TABLE apps (id uuid PRIMARY KEY, account_id uuid NOT NULL, project_id uui
 CREATE TABLE orgs (id uuid PRIMARY KEY, personal_org boolean NOT NULL, personal_owner_account_id uuid);
 CREATE TABLE api_key_project_limits (key_id uuid PRIMARY KEY, project_ids uuid[] NOT NULL);
 CREATE TABLE deployments (id uuid PRIMARY KEY, app_id uuid NOT NULL, source_sha256 text, scope text, status text NOT NULL, traffic_percent integer NOT NULL);
+CREATE TABLE deployment_mcp_readiness_evidence (deployment_id uuid NOT NULL, role text NOT NULL, evidence jsonb NOT NULL);
 CREATE TABLE tool_publications (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     id text NOT NULL,

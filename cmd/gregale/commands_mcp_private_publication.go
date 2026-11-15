@@ -22,6 +22,7 @@ func cmdMCPToolPublication(args []string) int {
 	verb := args[0]
 	fs := newFlagSet("mcp-tool-publication-"+verb, flag.ContinueOnError)
 	var id, digest, ref, connection string
+	var readiness bool
 	fs.StringVar(&id, "id", "", "exact publication identity")
 	if verb == "approve" || verb == "revoke" {
 		fs.StringVar(&digest, "request-sha256", "", "reviewed candidate verification request digest")
@@ -29,6 +30,7 @@ func cmdMCPToolPublication(args []string) int {
 	if verb == "approve" {
 		fs.StringVar(&ref, "credential-secret-ref", "", "owner-selected secret:MCP_* test token; never a token value")
 		fs.StringVar(&connection, "credential-connection-id", "", "owner-approved execution OAuth connection UUID; exclusive with secret reference")
+		fs.BoolVar(&readiness, "approve-readiness-roles", false, "approve this candidate's use of the reviewed policy's separate readiness credentials")
 	}
 	if fs.Parse(args[1:]) != nil {
 		return 1
@@ -47,7 +49,7 @@ func cmdMCPToolPublication(args []string) int {
 		}
 		return jsonOut(writeJSON(out))
 	}
-	out, err := c.DecideToolPublicationVerification(context.Background(), id, api.ToolPublicationVerificationDecision{RequestSHA256: digest, CredentialSecretRef: ref, CredentialConnectionID: connection, Revoke: verb == "revoke"})
+	out, err := c.DecideToolPublicationVerification(context.Background(), id, api.ToolPublicationVerificationDecision{RequestSHA256: digest, CredentialSecretRef: ref, CredentialConnectionID: connection, Revoke: verb == "revoke", ApproveReadiness: readiness})
 	if err != nil {
 		return printErr("MCP publication decision", err)
 	}
@@ -146,8 +148,12 @@ func finishPrivateMCPDeploy(ctx context.Context, c *Client, o mcpDeployOptions, 
 	if err != nil {
 		return printErr("MCP readiness policy", err)
 	}
-	if policy.Enabled {
-		return printErr("MCP private publication", errors.New("hosted private publication does not yet support configured readiness roles"))
+	publication, err := c.GetToolPublication(ctx, o.publicationID)
+	if err != nil {
+		return printErr("MCP publication review", err)
+	}
+	if !toolpublication.ReadinessMatches(publication.Intent.Readiness, policy) {
+		return printErr("MCP readiness policy", errors.New("readiness policy changed since publication review"))
 	}
 	raw, err := privatePublicationFixtures(o.smokeFixtures)
 	if err != nil {
@@ -176,9 +182,21 @@ func finishPrivateMCPDeploy(ctx context.Context, c *Client, o mcpDeployOptions, 
 	for _, check := range v.Outcome.Checks {
 		smoke.Checks = append(smoke.Checks, mcphosting.Check{Name: check.Name, Status: check.Status})
 	}
-	_, err = c.PatchDeploymentTrafficIfServingWithMCPAccess(ctx, id, 100, serving, nil)
+	if publication.Intent.Readiness != nil {
+		expected := toolpublication.ReadinessExpectation(v)
+		expected.PolicyRevision = publication.Intent.Readiness.PolicyRevision
+		if expected.Validate() != nil || !toolpublication.ReadinessResultsMatch(publication.Intent.Readiness, v.Outcome.Readiness) {
+			return printErr("MCP readiness evidence", errors.New("required role observations are incomplete"))
+		}
+		_, err = c.PatchDeploymentTrafficIfServingWithMCPReadiness(ctx, id, 100, serving, expected)
+	} else {
+		_, err = c.PatchDeploymentTrafficIfServingWithMCPAccess(ctx, id, 100, serving, nil)
+	}
 	receipt := map[string]any{"app": o.slug, "deployment_id": id, "endpoint": endpoint, "auth_mode": "external-oauth", "verification": report, "smoke_tests": smoke, "promoted": err == nil,
 		"catalog_integrity": map[string]any{"deployment_id": id, "pin": pin, "health": health}, "protocol_integrity": map[string]any{"qualification": map[string]any{"qualified": true}}, "platform_verification": v.RequestSHA256}
+	if publication.Intent.Readiness != nil {
+		receipt["readiness"] = v.Outcome.Readiness
+	}
 	if err != nil {
 		receipt["promotion_error"] = "guarded promotion failed; inspect the candidate and serving release"
 	}

@@ -78,7 +78,7 @@ func (m *ManagedPublicationFixture) Approve(t *testing.T) api.ToolPublicationVer
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err = p.Owner.DecideToolPublicationVerification(t.Context(), p.Publication.ID, api.ToolPublicationVerificationDecision{RequestSHA256: v.RequestSHA256, CredentialConnectionID: m.Connection.ID})
+	v, err = p.Owner.DecideToolPublicationVerification(t.Context(), p.Publication.ID, api.ToolPublicationVerificationDecision{RequestSHA256: v.RequestSHA256, CredentialConnectionID: m.Connection.ID, ApproveReadiness: p.Publication.Intent.Readiness != nil})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5683,7 +5683,8 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_lifecycle_test.go::TestAppAfterRestoreLifecycleRoundTrip",
       "settings": [
         "app.after_restore",
-        "app.before_checkpoint"
+        "app.before_checkpoint",
+        "app.warmup"
       ]
     },
     {

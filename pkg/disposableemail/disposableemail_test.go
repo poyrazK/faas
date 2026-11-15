@@ -39,6 +39,20 @@ func TestEmailDomain(t *testing.T) {
 	}
 }
 
+func TestLinkable(t *testing.T) {
+	for domain, want := range map[string]bool{
+		"acme-corp.io":   true,
+		"GMAIL.com":      false,
+		"proton.me":      false,
+		"mailinator.com": false,
+		"":               false,
+	} {
+		if got := disposableemail.Linkable(domain); got != want {
+			t.Errorf("Linkable(%q) = %v, want %v", domain, got, want)
+		}
+	}
+}
+
 // The embedded list is a copy of the auth template's; a refresh must update both.
 func TestListMatchesAuthTemplate(t *testing.T) {
 	ours, err := os.ReadFile("domains.txt")

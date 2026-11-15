@@ -996,7 +996,7 @@ remain excluded.
 Upload a Node, Go or Python project whose `gregale-mcp.json` declares
 `external-oauth`, issuer, JWKS URL, canonical app resource, scopes and an explicit
 tool policy. Plan it with `access_mode: "external-oauth"` and reviewed fixtures.
-The plan returns the OAuth contract and `owner_approval_required: true`. No token,
+The plan returns the OAuth contract, the current enabled readiness policy's role expectations, and `owner_approval_required: true`. No token,
 environment variable or credential reference is accepted from the agent.
 
 Apply stages a normal zero-traffic candidate and pins its catalog. Before any
@@ -1084,11 +1084,57 @@ and restarts only read retained evidence. A closed parent cannot start remaining
 tests. Failed or uncertain fixtures can have external effects: inspect the native
 record and candidate before submitting another publication.
 
+### Required readiness roles for private publication
+
+An existing app can require several role-specific catalogs, such as a reader that
+sees one tool and a writer that sees two. Configure the default environment's
+readiness policy and its credential sources through the existing owner controls.
+The publication plan pins the enabled policy revision, endpoint, evidence maximum
+age and every role's protocol and catalog hash. It excludes monitors, secret
+references and OAuth connection metadata.
+
+The candidate verification review also binds the deployment's readiness artifact,
+including configuration and credential authority. After inspecting both the
+publication and the owner readiness policy, approve the candidate with the extra
+acknowledgement:
+
+```bash
+gregale mcp readiness policy get --app <APP>
+gregale mcp server tool-publication get --id <PUBLICATION_ID>
+gregale mcp server tool-publication approve \
+  --id <PUBLICATION_ID> --request-sha256 <REVIEWED_REQUEST_SHA256> \
+  --credential-secret-ref secret:MCP_PUBLICATION_TEST \
+  --approve-readiness-roles
+```
+
+The acknowledgement also works with `--credential-connection-id`. It authorizes
+only this candidate's use of the already configured readiness sources. Approval
+runs no probe or provider request. Changed policy or credential authority requires
+a new review and approval.
+
+The API probes each required role using that role's configured ordinary app
+secret, connected monitoring OAuth grant, or anonymous access when no credential
+source is configured. These are read-only protocol and catalog probes; readiness
+credentials never run behavioral fixtures. The separately approved publication
+credential runs those fixtures once. Managed readiness OAuth uses the existing
+durable observer lease and renewal journal, preserving rotated tokens and refusing
+to replay uncertain exchanges. Normal token refresh preserves the approval;
+changed grant authority invalidates it.
+
+Each role has a 30-second probe bound within the existing 90-second verification
+window. A failed role stops before behavioral fixtures. After fixtures, the API
+rechecks fresh observations and returns only role names, evidence IDs and pass
+results. At promotion, `expected_mcp_readiness` atomically requires the exact
+policy, artifact and observations from that receipt. Expired or replaced evidence,
+policy changes and credential changes block promotion, including when an emergency
+readiness override exists. Repeated apply or verification only reads the retained
+attempt; it never reruns fixtures to refresh evidence.
+
 This preview supports ordinary sealed test tokens and owner-approved managed
 execution OAuth connections within the existing four-worker pool and publication
-retention bounds. Durable Tasks and configured platform readiness roles remain separate work;
-private hosted publication refuses configured readiness roles. Live staging
-acceptance remains skipped.
+retention bounds. Readiness roles use the default environment; durable Tasks retain
+their separate release workflow. Live staging acceptance remains skipped. See
+[ADR 20261114203121](adr/20261114203121-publication-readiness-roles.md).
 
 ## Private tool registry
 

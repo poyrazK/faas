@@ -11,7 +11,8 @@ func VerificationDigest(in api.ToolPublicationVerification, intent api.ToolPubli
 	data, _ := json.Marshal(struct {
 		Publication, Key, App, Deployment, Source, Catalog string
 		Intent                                             api.ToolPublicationIntent
-	}{in.PublicationID, in.KeyID, in.AppID, in.DeploymentID, in.DeploymentSourceSHA256, in.CatalogSHA256, intent})
+		ReadinessArtifact                                  string `json:",omitempty"`
+	}{in.PublicationID, in.KeyID, in.AppID, in.DeploymentID, in.DeploymentSourceSHA256, in.CatalogSHA256, intent, in.ReadinessArtifactSHA256})
 	return Digest(data)
 }
 
@@ -29,6 +30,9 @@ func VerifiedOutcome(record api.ToolPublicationRecord, out api.ToolPublicationOu
 	}
 	v := record.Verification
 	if v == nil || v.Status != "completed" || v.Outcome == nil || !v.Outcome.OK || !v.Outcome.ProtocolVerified || v.DeploymentID != out.DeploymentID || v.CatalogSHA256 != out.CatalogSHA256 || Digest(v.Outcome.Catalog) != Digest(out.Catalog) {
+		return false
+	}
+	if !ReadinessResultsMatch(record.Intent.Readiness, v.Outcome.Readiness) {
 		return false
 	}
 	a, _ := json.Marshal(v.Outcome.Checks)

@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
+	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
 // These bound connection-local review/work, not platform compute quotas.
@@ -160,6 +161,16 @@ func (m *management) planToolProject(ctx context.Context, a planToolDeployArgs) 
 		auth := project.config.Auth
 		p.Intent.PlatformVerification, p.Intent.Legacy = true, project.config.Legacy
 		p.Intent.Auth = &api.ToolPublicationAuth{Issuer: auth.Issuer, JWKSURL: auth.JWKSURL, Resource: auth.Resource, Scopes: append([]string{}, auth.Scopes...)}
+		if p.AppID != "" {
+			policy, err := m.client.GetMCPReadinessPolicy(ctx, p.App)
+			if err != nil {
+				return nil, err
+			}
+			p.Intent.Readiness = toolpublication.ReadinessReview(policy)
+			if !toolpublication.ValidReadinessReview(p.Intent) {
+				return nil, invalid("unsupported_readiness_policy", "readiness roles must use the project's reviewed MCP endpoint")
+			}
+		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -189,6 +200,9 @@ func (m *management) planToolProject(ctx context.Context, a planToolDeployArgs) 
 	out["traffic_effect"] = "Stage source and a catalog-pinned revision at zero traffic. Promote only after protocol and behavioral checks, with the reviewed app/serving identities guarded. Fixtures may perform their declared external side effects."
 	if a.platformVerification {
 		out["auth"], out["owner_approval_required"] = p.Intent.Auth, true
+		if p.Intent.Readiness != nil {
+			out["readiness"] = p.Intent.Readiness
+		}
 	}
 	return out, nil
 }
