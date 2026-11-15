@@ -377,6 +377,14 @@ func loadPackRules(srcDir string, dockerfile bool) packRules {
 			rules.patterns = parseDockerignore(data)
 		}
 	}
+	rules.patterns = append(rules.patterns, composeServiceDockerignorePatterns(func(rel string) ([]byte, bool) {
+		info, err := os.Lstat(filepath.Join(srcDir, filepath.FromSlash(rel)))
+		if err != nil || !info.Mode().IsRegular() || info.Size() > maxGitignoreBytes {
+			return nil, false
+		}
+		data, err := os.ReadFile(filepath.Join(srcDir, filepath.FromSlash(rel)))
+		return data, err == nil
+	})...)
 	rules.patterns = append(rules.patterns, loadGregaleignore(srcDir)...)
 	return rules
 }
