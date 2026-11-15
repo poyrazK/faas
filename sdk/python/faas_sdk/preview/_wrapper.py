@@ -9,10 +9,11 @@ accounts it is released to.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Iterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 from uuid import UUID
 
 from .._wrapper import FaaSClient as _BaseFaaSClient
+from .files import FileBucket
 
 if TYPE_CHECKING:
     from .executions import ExecutionEvent, ExecutionID
@@ -29,6 +30,18 @@ if TYPE_CHECKING:
 
 class FaaSClient(_BaseFaaSClient):
     """`faas_sdk.FaaSClient` plus the preview disposable Runs helpers."""
+
+    def __enter__(self) -> Self:
+        super().__enter__()
+        return self
+
+    async def __aenter__(self) -> Self:
+        await super().__aenter__()
+        return self
+
+    def files(self, *, app_slug: str, bucket: str) -> FileBucket:
+        """Managed application files; requires storage preview access and grants."""
+        return FileBucket(self, app_slug=app_slug, bucket=bucket)
 
     def watch_execution(
         self,

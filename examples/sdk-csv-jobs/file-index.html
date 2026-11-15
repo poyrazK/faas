@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CSV file imports</title>
+<style>body{font:17px system-ui;max-width:44rem;margin:4rem auto;padding:0 1rem;color:#18212b}label{display:block;margin:1rem 0}input{display:block;margin-top:.5rem}input[type=password]{width:100%;max-width:30rem}button{padding:.6rem .8rem;margin:.25rem}#status{white-space:pre-wrap;background:#f1f5f8;padding:1rem}</style>
+<h1>Import a CSV file</h1><p>Upload a <code>row,email</code> CSV, follow the import, and download rejected rows. Uploads can resume after a reload.</p>
+<form><label>Application access token<input id="token" type="password" autocomplete="off" required></label><label>CSV file (up to 1 MiB)<input id="file" type="file" accept=".csv,text/csv" required></label><button id="start" type="submit">Upload and import</button></form>
+<button id="resume" type="button">Resume saved import</button><button id="pause" type="button">Pause locally</button><button id="discard" type="button">Discard upload</button><button id="report" type="button" disabled>Download rejected rows</button>
+<p id="status" role="status" aria-live="polite">Choose a file to begin.</p><script type="module" src="/file-browser.mjs"></script></html>

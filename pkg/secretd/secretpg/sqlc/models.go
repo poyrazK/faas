@@ -147,6 +147,15 @@ type SecretVerificationAudit struct {
 	VerifiedAt   pgtype.Timestamptz
 }
 
+type Snapshot struct {
+	ID              pgtype.UUID
+	DeploymentID    pgtype.UUID
+	CreatedAt       pgtype.Timestamptz
+	DeletePending   bool
+	SealedKey       []byte
+	SealedCaptureID pgtype.UUID
+}
+
 type Trigger struct {
 	ID     pgtype.UUID
 	AppID  pgtype.UUID
