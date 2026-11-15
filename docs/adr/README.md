@@ -4,6 +4,7 @@
 # Architecture Decision Records
 
 - [ADR-20261114141449: Offline OpenAPI tool generation](20261114141449-openapi-tool-generation.md) — accepted; explicit public API operation selection, offline Node adapter source, completed behavioral assertions before existing publication and exact grants
+- [ADR-20261114132157: Structured CLI help](20261114132157-cli-json-help.md) — accepted; versioned JSON discovery through existing help, canonical paths, local argument metadata and offline capability visibility.
 
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
 - [ADR-20261113180307: Bind execution workflows to independent Node clients](20261113180307-node-sdk-bound-execution-workflows.md) — accepted; preview helpers retain one client snapshot across submission, resumed event streams, and terminal receipt reads, with per-caller cancellation and legacy compatibility.
