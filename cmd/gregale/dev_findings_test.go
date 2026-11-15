@@ -131,7 +131,11 @@ func TestDevAuthProxyAddsCredentialAndGuardsBrowserOrigins(t *testing.T) {
 	proxy := httptest.NewServer(handler)
 	defer proxy.Close()
 
-	call := func(method, path, host, origin string) *http.Response {
+	type proxyResult struct {
+		StatusCode int
+		Header     http.Header
+	}
+	call := func(method, path, host, origin string) proxyResult {
 		t.Helper()
 		r, _ := http.NewRequest(method, proxy.URL+path, nil)
 		r.Host = host
@@ -144,7 +148,7 @@ func TestDevAuthProxyAddsCredentialAndGuardsBrowserOrigins(t *testing.T) {
 			t.Fatal(err)
 		}
 		_ = resp.Body.Close()
-		return resp
+		return proxyResult{StatusCode: resp.StatusCode, Header: resp.Header}
 	}
 
 	if resp := call(http.MethodGet, "/", "localhost:8788", "http://localhost:8788"); resp.StatusCode != http.StatusOK {

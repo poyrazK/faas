@@ -202,7 +202,7 @@ func runDevPostgresSeed(ctx context.Context, ops devSeedOps, slug string, postgr
 		case <-waitCtx.Done():
 			// Never leave a seed running that this CLI no longer tracks: the
 			// retry after the next live sync would run beside it.
-			cancelDevSeedTask(ops, slug, task.ID)
+			cancelDevSeedTask(ctx, ops, slug, task.ID)
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return task, ctx.Err()
 			}
@@ -263,11 +263,12 @@ func (r *devSeedRunner) finish(outcome devSeedOutcome) devSeedOutcome {
 
 // cancelDevSeedTask stops a seed task best effort, outside the caller's
 // (already finished) context.
-func cancelDevSeedTask(ops devSeedOps, slug, taskID string) {
+func cancelDevSeedTask(ctx context.Context, ops devSeedOps, slug, taskID string) {
 	if ops.cancelTask == nil || taskID == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// The cancel must still be sent after ctx itself is cancelled.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	_, _ = ops.cancelTask(ctx, slug, taskID)
 }

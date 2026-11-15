@@ -74,7 +74,7 @@ func startDevAuthProxy(ctx context.Context, target, token string, port int) (*de
 	go func() { _ = srv.Serve(ln) }()
 	go func() {
 		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
