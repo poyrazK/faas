@@ -168,6 +168,51 @@ from .._project_inspection import (
 from .._project_inspection import (
     validate_project_plan as validate_project_plan,
 )
+from .._project_verification import (
+    ProjectVerificationOptions as ProjectVerificationOptions,
+)
+from .._project_verification import (
+    ProjectVerificationReport as ProjectVerificationReport,
+)
+from .._project_verification import (
+    ProjectVerificationTarget as ProjectVerificationTarget,
+)
+from .._project_verification import (
+    VerificationCheck as VerificationCheck,
+)
+from .._project_verification import (
+    VerificationCheckContext as VerificationCheckContext,
+)
+from .._project_verification import (
+    VerificationCheckEvidence as VerificationCheckEvidence,
+)
+from .._project_verification import (
+    VerificationCheckResult as VerificationCheckResult,
+)
+from .._project_verification import (
+    VerificationCode as VerificationCode,
+)
+from .._project_verification import (
+    VerificationHealth as VerificationHealth,
+)
+from .._project_verification import (
+    VerificationOutcome as VerificationOutcome,
+)
+from .._project_verification import (
+    VerificationTimeline as VerificationTimeline,
+)
+from .._project_verification import (
+    VerificationTimelineEvent as VerificationTimelineEvent,
+)
+from .._project_verification import (
+    VerificationWorkload as VerificationWorkload,
+)
+from .._project_verification import (
+    VerificationWorkloadReport as VerificationWorkloadReport,
+)
+from .._project_verification import (
+    project_verification_target as project_verification_target,
+)
 from .._project_workflows import (
     ProjectApplicationResult as ProjectApplicationResult,
 )
@@ -278,6 +323,72 @@ from .._source_preparation import (
 )
 from .._source_preparation import (
     prepare_source as prepare_source,
+)
+from .._typed_jobs import (
+    JobCheckpoint as JobCheckpoint,
+)
+from .._typed_jobs import (
+    JobCheckpointInput as JobCheckpointInput,
+)
+from .._typed_jobs import (
+    JobItemOutcome as JobItemOutcome,
+)
+from .._typed_jobs import (
+    JobProgress as JobProgress,
+)
+from .._typed_jobs import (
+    JobRunOptions as JobRunOptions,
+)
+from .._typed_jobs import (
+    JobSubmitOptions as JobSubmitOptions,
+)
+from .._typed_jobs import (
+    TypedJob as TypedJob,
+)
+from .._typed_jobs import (
+    TypedJobRun as TypedJobRun,
+)
+from ..job_runtime import (
+    JobCode as JobCode,
+)
+from ..job_runtime import (
+    JobContext as JobContext,
+)
+from ..job_runtime import (
+    JobContract as JobContract,
+)
+from ..job_runtime import (
+    JobError as JobError,
+)
+from ..job_runtime import (
+    JobInput as JobInput,
+)
+from ..job_runtime import (
+    JobInputBinding as JobInputBinding,
+)
+from ..job_runtime import (
+    JobStore as JobStore,
+)
+from ..job_runtime import (
+    LocalJobOutcome as LocalJobOutcome,
+)
+from ..job_runtime import (
+    LocalJobStore as LocalJobStore,
+)
+from ..job_runtime import (
+    decode_job_output as decode_job_output,
+)
+from ..job_runtime import (
+    prepare_job_input as prepare_job_input,
+)
+from ..job_runtime import (
+    read_job_input as read_job_input,
+)
+from ..job_runtime import (
+    run_job_task as run_job_task,
+)
+from ..job_runtime import (
+    run_local_job_batch as run_local_job_batch,
 )
 from ._binding_creation import (
     BindingVerificationCreationError,
@@ -512,6 +623,43 @@ from .event_deadline_watch import (
     awatch_event_subscription_deadlines,
 )
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
+from .file_pipelines import (
+    FILE_PIPELINE_SCHEMA,
+    FileCreatedEvent,
+    FileDelivery,
+    FilePipeline,
+    FilePipelineError,
+    FilePipelineInput,
+    FilePipelineIntent,
+    FilePipelineOptions,
+    FilePipelineOutcome,
+    FilePipelineOwner,
+    FilePipelineReceipt,
+    FilePipelineScope,
+    FilePipelineStore,
+    NativeFileVerifier,
+    PostgresFilePipelineStore,
+    file_event_invocation_id,
+    file_pipeline_identity,
+    parse_file_created_event,
+)
+from .files import (
+    BytesFileSource,
+    FileBucket,
+    FileCheckpoint,
+    FileCode,
+    FileError,
+    FileMetadata,
+    FileObject,
+    FileOptions,
+    FilePage,
+    FilePart,
+    FileProgress,
+    FileSource,
+    FileUploadResult,
+    PathFileSource,
+    file_source_digest,
+)
 from .flags import (
     GREGALE_CLIENT_COUNTRY_HEADER,
     GREGALE_CLIENT_UA_FAMILY_HEADER,
@@ -534,6 +682,33 @@ from .flags import (
     validate_bundle,
 )
 from .issues import IssueReporter
+from .job_pipeline_client import (
+    JobPipelineClient,
+    PipelineCheckpoint,
+    PipelineInspection,
+    PipelineStepInspection,
+    TypedPipelineRun,
+    job_pipeline_live_snapshot,
+)
+from .job_pipelines import (
+    JobPipeline,
+    JobPipelineContext,
+    JobPipelineOptions,
+    PipelineItem,
+    PipelineJob,
+    PipelineJobResult,
+)
+from .live_jobs import (
+    LiveJob,
+    LiveJobError,
+    LiveJobFailure,
+    LiveJobSink,
+    LiveJobSnapshot,
+    LiveJobSource,
+    LiveJobStatus,
+    LiveJobWaiting,
+    realtime_live_job_source,
+)
 from .operations import (
     CustomerOperationRequest,
     OperationCommitUnknownError,
@@ -554,6 +729,52 @@ from .operations import (
     with_operation_transaction,
 )
 from .operations_runtime import GregaleOperations, OperationExecutionContext, OperationHTTPError
+from .pipeline_children import (
+    NativePipelineChildrenTransport,
+    PipelineBatchResult,
+    PipelineChild,
+    PipelineChildOptions,
+    PipelineChildren,
+    PipelineChildrenTransport,
+    PipelineChildView,
+    pipeline_children_live_snapshot,
+)
+from .pipeline_children_state import (
+    PIPELINE_CHILDREN_SCHEMA,
+    PipelineChildrenError,
+    PipelineChildrenReceipt,
+    PipelineChildrenStore,
+    PostgresPipelineChildrenStore,
+    pipeline_children_identity,
+    pipeline_children_intent,
+)
+from .pipeline_gates import (
+    PIPELINE_GATE_SCHEMA,
+    NativePipelineGateTransport,
+    PipelineGateActor,
+    PipelineGateError,
+    PipelineGateOptions,
+    PipelineGateOutcome,
+    PipelineGateRecord,
+    PipelineGateService,
+    PipelineGateStore,
+    PipelineGateTransport,
+    PipelineGateView,
+    PostgresPipelineGateStore,
+    pipeline_gate_intent,
+)
+from .pipeline_state import (
+    PIPELINE_JOB_SCHEMA,
+    PipelineError,
+    PipelineFailure,
+    PipelineJobReceipt,
+    PipelineJobStore,
+    PipelineScope,
+    PostgresPipelineJobStore,
+    pipeline_failure,
+    pipeline_job_identity,
+    read_pipeline_artifact,
+)
 from .realtime_activity import RealtimeActivity, RealtimeActivityTracker
 from .realtime_backpressure import RealtimeBackpressureMonitor, RealtimeBackpressureStatus, RealtimeProcessingStatus
 from .realtime_catch_up import RealtimeCatchUpStatus, RealtimeCatchUpTracker, RealtimeCatchUpWaitError
@@ -643,6 +864,12 @@ from .realtime_workers import (
 )
 
 __all__ = (
+    'PipelineChildren', 'PipelineChild', 'PipelineChildOptions', 'PipelineChildView', 'PipelineBatchResult', 'PipelineChildrenTransport', 'NativePipelineChildrenTransport', 'pipeline_children_live_snapshot', 'PIPELINE_CHILDREN_SCHEMA', 'PipelineChildrenError', 'PipelineChildrenReceipt', 'PipelineChildrenStore', 'PostgresPipelineChildrenStore', 'pipeline_children_identity', 'pipeline_children_intent',
+    'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',
+    'PipelineFailure', 'pipeline_failure', 'job_pipeline_live_snapshot', 'PIPELINE_JOB_SCHEMA', 'PipelineError', 'PipelineJobReceipt', 'PipelineJobStore', 'PipelineScope', 'PostgresPipelineJobStore', 'pipeline_job_identity', 'read_pipeline_artifact', 'JobPipeline', 'JobPipelineContext', 'JobPipelineOptions', 'PipelineItem', 'PipelineJob', 'PipelineJobResult', 'JobPipelineClient', 'PipelineCheckpoint', 'PipelineInspection', 'PipelineStepInspection', 'TypedPipelineRun',
+    'LiveJob', 'LiveJobError', 'LiveJobFailure', 'LiveJobSink', 'LiveJobSnapshot', 'LiveJobSource', 'LiveJobStatus', 'realtime_live_job_source',
+    "BytesFileSource", "FileBucket", "FileCheckpoint", "FileCode", "FileError", "FileMetadata", "FileObject", "FileOptions", "FilePage", "FilePart", "FileProgress", "FileSource", "FileUploadResult", "PathFileSource", "file_source_digest",
+    'FILE_PIPELINE_SCHEMA', 'FileCreatedEvent', 'FileDelivery', 'FilePipeline', 'FilePipelineError', 'FilePipelineInput', 'FilePipelineIntent', 'FilePipelineOptions', 'FilePipelineOutcome', 'FilePipelineOwner', 'FilePipelineReceipt', 'FilePipelineScope', 'FilePipelineStore', 'NativeFileVerifier', 'PostgresFilePipelineStore', 'file_event_invocation_id', 'file_pipeline_identity', 'parse_file_created_event',
     *_PACKAGE_ALL,
     "AI_CALL_HEADER",
     "AI_PROMPT_VERSION_HEADER",
@@ -965,4 +1192,3 @@ def __getattr__(name: str):
     from importlib import import_module
 
     return getattr(import_module("faas_sdk"), name)
-

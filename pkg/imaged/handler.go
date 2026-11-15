@@ -2052,6 +2052,11 @@ type snapshotWrittenPayload struct {
 	WarmMinMs       *int   `json:"warm_min_ms,omitempty"`
 	RequestCount    *int64 `json:"request_count,omitempty"`
 	ReadyToParkMs   *int64 `json:"framework_ready_to_park_ms,omitempty"`
+	// SealedKey and SealedCaptureID describe a snapshot vmmd sealed at the
+	// source (ADR-20261110210000 slice 3d-3): its capture key, sealed to the
+	// capture recipient, and the capture id it is bound to. Both or neither.
+	SealedKey       []byte `json:"sealed_key,omitempty"`
+	SealedCaptureID string `json:"sealed_capture_id,omitempty"`
 }
 
 // deploymentReadyPayload is the non-snapshot sibling of
@@ -3904,6 +3909,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			DiskBytes:                       snapshot.VMStateBytes,
 			StoredBytes:                     snapshot.StoredBytes,
 			ApplicationStandardCaptureToken: snapshot.ApplicationStandardCaptureToken,
+			// ADR-20261110210000 slice 3d-3: a snapshot sealed at the source.
+			SealedKey:       snapshot.SealedKey,
+			SealedCaptureID: snapshot.SealedCaptureID,
 			// Tier (issue #470 / PR #470-FU-B). Empty payload falls
 			// back to "init" (the DB column default and the legacy
 			// pre-#470 behaviour); warm-tier rows are only ever

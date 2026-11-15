@@ -303,6 +303,130 @@ Release success here describes that release's recorded state and positive
 traffic; application-specific health checks and a requirement for full traffic
 remain separate decisions.
 
+## Typed background jobs and batches
+
+Create a version-1 JSON contract naming an existing Jobs template and its input
+and output schemas; generate typed Python or TypeScript clients:
+
+```sh
+python -m faas_sdk.job_types job.json python job_generated.py
+```
+
+```python
+from faas_sdk import FaaSClient, JobInput, JobCheckpoint, JobSubmitOptions, JobRunOptions
+from job_generated import contract
+
+job = client.define_job(contract)
+run = await job.submit([JobInput("import-42:row-1", input)], options=JobSubmitOptions(
+    timeout=30, idempotency_key="import-42", parallelism=2, retry_max=0,
+))
+saved = run.checkpoint.to_dict()  # persist privately before following
+resumed = job.resume(JobCheckpoint.from_dict(saved))
+# If only the run ID was saved, reconstruct from authenticated task metadata:
+attached = await job.resume_by_id(run.checkpoint.run_id, options=JobRunOptions(timeout=30))
+progress = await resumed.wait(options=JobRunOptions(timeout=120, on_progress=print))
+for item in await resumed.results(options=JobRunOptions(timeout=30)):
+    if item.result is not None:
+        use_typed_result(item.result)
+replay = await resumed.retry_failed(
+    options=JobRunOptions(timeout=30), idempotency_key="import-42-replay",
+)
+```
+
+Checkpoints work in either language and retain account/job/run IDs, input digests,
+contract fingerprint and replay lineage. They contain no payloads or credentials.
+Each read is authenticated and checked against those exact identities. A target
+is a selection document, not an authorization capability.
+
+Submissions require an explicit stable key and send one mutation. After
+`acceptance_unknown` or interruption during submission, inspect/recover using the
+same logical input and key within the server's 24-hour window; never substitute a
+fresh key automatically. Failed-only replay is explicit and uses the server's
+atomic selection and image guard. Native execution is at least once.
+
+`wait` reports native aggregate progress. `results` returns per-input outcomes and
+validated typed outputs; missing/corrupt/schema-invalid output is `invalid_result`.
+Managed obj results use native verification plus independent signed GETs, bounded
+bytes, no inherited SDK credentials/cookies/redirects, and a second checksum check.
+External s3/gs artifacts require a caller-owned `JobStore` adapter.
+
+Durations are seconds. Positive `timeout` budgets include reads, stores, delays and
+progress callbacks. Asyncio cancellation stops local observation; use
+`await run.cancel(options=JobRunOptions(timeout=10))` explicitly for remote work.
+Defaults: 100 polls, 1s delay, 256 API requests, 100 pages, 1000 items, and 1 MiB per
+response/result envelope. SDK budgets do not override server plan/admission limits.
+
+`run_local_job_batch(contract, inputs, handler, timeout=..., concurrency=...,
+max_attempts=...)` exercises the same validation locally. `run_job_task` consumes
+native task identity, validates/stores the output and writes the existing manifest.
+Exit unsuccessfully on error; native successful process exit publishes success.
+Handlers get stable `context.input_id`, `context.attempt` and
+`context.check_cancelled()`. Store callbacks own their credentials and async I/O.
+Synchronous handlers must return promptly. Use input IDs for idempotent effects;
+cancellation cannot undo committed application writes. `LocalJobStore` uses
+private files with synthetic s3 references for local testing only.
+
+Schemas support closed objects, arrays/items, strings, finite numbers, safe
+integers, booleans, null, primitive enums and length/item/numeric bounds. Unsupported
+keywords are refused. Large inputs use immutable credential-free object references
+with size/digest validation; small inputs travel in the native opaque input ref.
+See the [CSV import example](../../examples/sdk-csv-jobs/README.md) for local setup,
+generated types, progress, rejection downloads, cross-language resume and replay.
+
+
+Small typed inputs are encoded in the native job history’s `input_ref`. For data
+that should stay in an application-owned store, model an object reference in the
+input schema and fetch it in the handler. Checkpoint files retain only digests
+and identities. Numeric enum values are restricted to safe integers.
+
+## Verify exact project deployments
+
+```python
+from faas_sdk import (
+    ProjectVerificationOptions, ProjectVerificationTarget,
+    VerificationCheck, VerificationCheckResult, project_verification_target,
+)
+
+target = project_verification_target(application)
+# Save target.to_dict() privately; resume without source or a repeated apply.
+restored = ProjectVerificationTarget.from_dict(saved_target)
+
+async def smoke(context):
+    # Use independent application URL/auth; SDK credentials are never supplied.
+    value = await read_bounded_application_response(context.remaining)
+    return VerificationCheckResult(
+        "verified" if value["ok"] else "failed", value["deployment_id"]
+    )
+
+report = await client.verify_project_application(restored, options=ProjectVerificationOptions(
+    timeout=120, max_polls=20, poll_delay=2, concurrency=2,
+    checks=(VerificationCheck("api-smoke", "shop-api", smoke),),
+))
+print(report.outcome, report.to_dict())
+```
+
+Also accepts `ProjectApplicationResult` directly. Outcomes are `verified`,
+`failed`, `blocked`, `inconclusive`, with immutable per-service codes, checks,
+health timestamps, release events, request IDs and next actions. Exact owned app,
+project, environment and deployment identities are validated before probes run.
+Expired telemetry, old/mixed serving releases, missing permissions and unknown
+identities cannot produce success. Checks must return IDs actually observed.
+Workers always need a functional check; `require_smoke_checks=False` explicitly
+allows HTTP platform-health-only verification. This verifies declared coverage.
+
+All durations are seconds. Asyncio task cancellation propagates; a total deadline
+returns partial evidence with code `deadline`. Defaults are 3 polls/service,
+1s delay, 2 concurrent services, 256 reads, 256 KiB/response and telemetry age at
+most 120s (also server TTL). Reads have no retries. Async checks and `on_progress`
+share the budget; sync callbacks must return promptly. No automatic repair occurs.
+
+Text is omitted unless `redact=remove_application_secrets` is supplied. You own
+that redaction policy; inputs over 4096 characters are omitted and output at
+20 strings × 512 characters/service. A failed redactor omits text. Reports are
+never saved automatically. See the complete [API/worker/PostgreSQL example](../../examples/sdk-project-application)
+for fresh worker-written evidence, failure injection and correction.
+
+
 ## Preview and apply a complete project
 
 `await client.preview_project(directory, project_slug, options=...)` prepares the
@@ -3586,3 +3710,153 @@ resolve exact original retries across SDKs, preserving native int64 generations
 and microsecond fences. Known rejection errors expose their `.receipt`; uncertain
 COMMIT requires retrying the saved command on a fresh connection. See
 [budget adoption, guards and cancellation](../../docs/event-acknowledgment-budget-adoption.md#python-selection-adoption-and-replay).
+
+## Application files (preview)
+
+The async preview file client uploads customer files, streams downloads, exposes
+metadata/list/delete, and provides a managed storage adapter for typed jobs:
+
+```python
+from faas_sdk.preview import FaaSClient, FileCheckpoint, FileOptions, PathFileSource
+
+client = FaaSClient(base_url=api_url, token=storage_token)
+files = client.files(app_slug="imports", bucket=bucket_id)
+source = PathFileSource("rows.csv")
+options = FileOptions(timeout=120, on_checkpoint=save_durably, on_progress=show_progress)
+try:
+    uploaded = await files.upload("imports/new-unique-id/input.csv", source,
+                                  options=options, content_type="text/csv")
+    # After restart, re-open the source and load checkpoint.to_dict() JSON:
+    await files.resume(FileCheckpoint.from_dict(saved_json), source, options=options)
+    store = await files.job_store(options=FileOptions(timeout=30), prefix="job-results/")
+    job = client.define_job(contract, store=store)
+finally:
+    await client.aclose()
+```
+
+The API requires storage preview access and bucket grants. Every operation needs
+a positive total timeout, including body reads and callbacks. Cancel its asyncio
+task to stop locally; use `abort(checkpoint, options=...)` to discard remote parts.
+One writer owns each session/checkpoint; keep source bytes stable and use a fresh
+key for each logical upload. Checkpoints are portable with Node and contain no
+credentials or signed URLs. Resume compares source digests and confirmed parts.
+
+`put(..., on_receipt=save_receipt)` supports empty files and
+`if_none_match="*"`. `confirm(receipt, key, size, options=...)` inspects the same
+attempt after a lost response. A completed receipt does not prove the current
+value of a mutable key. The managed JobStore uses create-only content-addressed
+objects, verifies SHA-256 bytes and restricts references to its configured prefix.
+
+`download_to(key, sink, options=...)` streams; `download` buffers within
+`max_bytes`. Sinks can receive partial bytes before failure. Defaults are 100 MiB,
+10,000 parts and 60 polls, with a maximum supported part size of 64 MiB. ETags
+are opaque. See the [browser CSV import example](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+for app-owned authorization, restart recovery and downloadable rejection reports.
+
+## File-triggered typed jobs (preview)
+
+`faas_sdk.preview` exports `FilePipeline`, `FilePipelineScope`,
+`FilePipelineOptions`, `NativeFileVerifier` and `PostgresFilePipelineStore`:
+
+```python
+from faas_sdk.preview import (
+    FileDelivery, FilePipeline, FilePipelineOptions, NativeFileVerifier,
+    PostgresFilePipelineStore,
+)
+pipeline = FilePipeline(
+    name="csv-files-v1", revision="1", scope=scope,
+    prefix="imports/", suffix="/input.csv", contract=contract, job=job,
+    files=files, job_store=job_store, store=PostgresFilePipelineStore(query),
+    verify=NativeFileVerifier(scope, lookup_invocation),
+    authorize=find_owned_upload, map_inputs=map_validated_csv,
+)
+result = await pipeline.handle(FileDelivery(body, invocation_id),
+                               options=FilePipelineOptions(timeout=60))
+if result.outcome == "unresolved" and result.receipt is not None:
+    save_recovery_identity(result.receipt.intent.identity)
+# Once an operator has identified the accepted run:
+await pipeline.reconcile(saved_identity, inspected_run_id,
+                         options=FilePipelineOptions(timeout=30))
+```
+
+See [file_pipeline.py](../../examples/sdk-csv-jobs/file_pipeline.py) for complete
+authenticated API lookup, owner mapping, CSV validation and psycopg integration.
+Callbacks receive a `check_cancelled()` callable; call it between your own work.
+Cancel the asyncio task to stop. One positive total timeout covers all stages,
+including callbacks, response bodies and receipt persistence.
+
+Install `FILE_PIPELINE_SCHEMA` separately with your migration runner. `query`
+must execute one acknowledged AUTOCOMMIT statement and return mapping rows,
+outside ambient transactions. Configure driver timeouts. `authorize` returns
+`FilePipelineOwner` from a durable application record or None; a mutable file
+needs its trusted SHA-256 or fixed-block `source_digest`. Immutable versions
+never fall back to the current object. Input mapping buffers within `max_bytes`
+(default 16 MiB), with at most `max_items` (default 1,000). Use the SAME stable,
+content-addressed `job_store` as the job for stored inputs. Mapping must be pure.
+
+Native verification checks account/app/bucket, payload and retained original
+invocation identity; public event headers are insufficient. HTTP adapters need a
+trusted gateway/authenticated boundary. Pruned proof fails closed. Duplicates
+share one durable intent. An uncertain intent/run/checkpoint acknowledgment never
+causes an automatic repost, including beyond the API idempotency window. Explicit
+run-ID reconciliation matches the exact saved manifest and scope without source
+bytes. Retain receipts while events/replays can arrive; deleting permits another
+submission. Job side effects remain at least once.
+
+The [CSV application](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+shows native trigger setup, separate input/output filters, browser-free job
+submission, two-user isolation, restart recovery and shared Node/Python receipts.
+
+## Live job and file-pipeline views (preview)
+
+`faas_sdk.preview.LiveJob` exposes typed `LiveJobSnapshot` updates through an
+owned async iterator. `realtime_live_job_source` reuses the native realtime
+recovery coordinator and `RealtimeWebSocketClient` (install `gregale-sdk[realtime]`).
+Application-authorized exact-channel tickets are renewed on reconnect. Shared
+Node/Python snapshot validation and authenticated refreshes keep worker messages,
+duplicates, reordered messages and history gaps from declaring completion.
+
+Supply an async authenticated snapshot loader that verifies native Jobs status
+and results. Set `timeout` in seconds, optionally bound `max_snapshots`, cancel
+the consuming task to stop locally, and use `contextlib.aclosing` when leaving
+iteration early. Remote Jobs continue independently. Create a fresh iterator
+for the current application session. Existing Jobs/file callers keep their APIs.
+See [the contract and Node/Python examples](../../docs/sdk-live-jobs.md) and
+[the CSV dashboard](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview).
+
+## Durable typed job pipelines (preview)
+
+`faas_sdk.preview.JobPipeline`, `PipelineJob` and `JobPipelineContext` compose
+native typed Jobs with the existing workflow journal and durable sleeps.
+`JobPipelineClient` exposes typed start, attach-by-ID, inspect, result and cancel.
+`PostgresPipelineJobStore` retains durable submission intent and accepted
+checkpoints; uncertain acceptance never automatically submits another Job.
+Node/Python share receipts and journal results. `read_pipeline_artifact` checks
+owned file handoffs, and `job_pipeline_live_snapshot` supports private live views.
+
+Durations are seconds. Close `JobPipelineClient` with `async with`; cancel the
+consuming task to stop local requests. Native orchestration cancellation leaves
+accepted Jobs running. Attach-by-ID does not continue failed native code
+workflows. See [usage and recovery](../../docs/sdk-job-pipelines.md) and the
+[CSV pipeline](../../examples/sdk-csv-jobs/README.md#durable-three-stage-pipeline-preview).
+
+## Approval gates and external input (preview)
+
+Durable typed pipelines can pause for a generated review/reply contract using
+`approval` or `waitForInput` (Python: `wait_for_input`). The application-owned
+PostgreSQL ledger binds exact reviewed inputs, checks current user roles,
+expires decisions using database time, and recovers uncertain native event
+delivery. Existing pipelines remain unchanged until a gate store is configured.
+See [usage, authentication and recovery](../../docs/sdk-pipeline-gates.md) and
+the [reviewed CSV import](../../examples/sdk-csv-jobs/README.md#reviewed-import-preview).
+
+## Typed child pipelines and batches (preview)
+
+Invoke a registered pipeline with `wf.child`, or run ordered inputs through
+`wf.children` with a shared concurrency cap. `PipelineChildren` verifies native
+parent/child provenance, retains uncertain starts for explicit reconciliation,
+and applies captured failure, deadline and parent-stop policies. Recovery uses
+an application-owned PostgreSQL ledger and never automatically repeats unknown
+starts. Existing pipelines opt in through a coordinator; their APIs stay intact.
+See [usage and recovery](../../docs/sdk-pipeline-composition.md) and the
+[reviewed batch CSV example](../../examples/sdk-csv-jobs/README.md#batch-imports-preview).

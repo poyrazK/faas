@@ -1,3 +1,14 @@
+- [ADR-20261115153000: Application file workflows in the SDKs](20261115153000-sdk-application-files.md) — accepted; SDK preview
+- [ADR-20261115210000: Typed file-triggered jobs](20261115210000-sdk-file-triggered-jobs.md) — accepted; SDK preview
+- [ADR-20261115223000: Typed live views of Jobs and file pipelines](20261115223000-sdk-live-job-views.md) — accepted; SDK preview
+- [ADR-20261116010000: Typed durable job pipelines](20261116010000-sdk-durable-job-pipelines.md) — accepted; SDK preview
+- [ADR-20261115162700: Typed pipeline approval and input gates](20261115162700-sdk-pipeline-gates.md) — accepted; SDK preview
+- [ADR-20261115172526: Typed child pipeline composition](20261115172526-sdk-pipeline-composition.md) — accepted; SDK preview
+
+- [ADR-20261115170000: Typed background jobs in application SDKs](20261115170000-sdk-typed-background-jobs.md) — accepted; portable schemas and generated types, local/native runners, resumable handles and verified per-input results
+
+- [ADR-20261115192838: SDK project verification with explicit deployment evidence](20261115192838-sdk-project-verification.md) — accepted; typed Node/Python verification, identity-aware smoke checks, bounded read-only diagnostics and portable resume targets
+
 - [ADR-20261114150000: Flags usability: short commands, attribute targeting, gateway kill switch, lifecycle](20261114150000-flags-usability.md) — accepted; read-modify-write CLI verbs (`flags create/set/on/off/percent/rule/rm/kill/stale`), rule `attributes` on gateway-verified `gregale.country`/`gregale.ua_family` and app-supplied `app.*` (SDK capability `attribute-targeting-v1`), `killed` flags served as the app fallback and stamped by the gateway in `X-Faas-Flag-Kills`, flag `owner`/`expires_at` with a lifecycle report and hourly `flags.lifecycle_attention` audit events (amends ADR-377)
 - [ADR-20261114120000: Per-plan startup window on every cold boot](20261114120000-per-plan-startup-window.md) — accepted; amends ADR-138 (2026-10-22): `startup_deadline_s` may reach the plan window (Free/Hobby 30 s, Pro 60 s, Scale 120 s; defaults unchanged) and every cold boot, not only the deploy prime, gets it in its RPC budget and watchdog reprieve; `wake_max_queue_wait_seconds` may reach 120 s (deploy-path review P1)
 
@@ -26,6 +37,8 @@
 - [ADR-20261115175928: Customer attention contact and outcomes](20261115175928-customer-attention-contact-and-outcomes.md) — accepted; distinct identifier for customer attention, preserving historical migration citations.
 - [ADR-20261115175927: Operator console signal actions](20261115175927-operator-console-signal-actions.md) — accepted; JSON routes for signal actions, customer health and the support inbox.
 - [ADR-20261115133053: Offline output contracts in CLI JSON help](20261115133053-cli-json-help-output-contracts.md) — accepted; explicit list formats, selectors, empty behavior, publication and error contracts without API discovery.
+
+- [ADR-20261115153114: Offline verification of CLI list exports](20261115153114-cli-offline-export-verification.md) — accepted; exact bytes, SHA-256 and record counts checked against saved receipts without API access.
 
 - [ADR-20261115110124: gRPC steps in `gregale test` scenarios](20261115110124-test-grpc-steps.md) — accepted; a request or check may carry a `grpc:` call (definitions from `.proto` files compiled with protocompile and/or server reflection; unary and all streaming shapes; status, protobuf-JSON pointers, message count, header and trailer metadata); `local` dials plaintext HTTP/2, `real-vm` the deployed app over TLS; load mode stays HTTP-only
 - [ADR-20261115105130: Opt-in streamed list output](20261115105130-cli-streamed-list-output.md)
