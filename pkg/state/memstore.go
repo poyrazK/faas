@@ -160,10 +160,10 @@ type MemStore struct {
 	ownerReleaseRequests map[string]AppOwnerReleaseRequest
 	// basicAuthVerifiers are app_basic_auth_verifiers by hex sealed digest
 	// (ADR-20261110210000 slice 3h); allocated on first use under mu.
-	basicAuthVerifiers          map[string]string
+	basicAuthVerifiers map[string]string
 	// platformAlertNotices mirror platform_alert_notices (ADR-20261115194000).
-	platformAlertNotices []PlatformAlertNotice
-	platformAlertMeta    map[string]platformAlertNoticeMeta
+	platformAlertNotices        []PlatformAlertNotice
+	platformAlertMeta           map[string]platformAlertNoticeMeta
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
