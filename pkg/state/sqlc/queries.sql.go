@@ -8622,6 +8622,15 @@ func (q *Queries) ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
+const clearPlanFitNotice = `-- name: ClearPlanFitNotice :exec
+DELETE FROM plan_fit_notices WHERE subject_id = $1
+`
+
+func (q *Queries) ClearPlanFitNotice(ctx context.Context, db DBTX, subjectID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearPlanFitNotice, subjectID)
+	return err
+}
+
 const clearProjectPromotionDeployment = `-- name: ClearProjectPromotionDeployment :execrows
 UPDATE deployments d
 SET status = 'failed', error = $1::text, error_code = 'promotion_rolled_back', traffic_percent = 0,
@@ -29665,6 +29674,24 @@ func (q *Queries) GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, a
 		&i.CreateRequestFingerprint,
 		&i.DeploymentID,
 	)
+	return i, err
+}
+
+const getPlanFitNotice = `-- name: GetPlanFitNotice :one
+SELECT plan, apps_digest FROM plan_fit_notices WHERE subject_id = $1
+`
+
+type GetPlanFitNoticeRow struct {
+	Plan       string
+	AppsDigest string
+}
+
+// Plan-fit notices (billing review H17-4): the plan and over-plan app set a
+// billing subject was last emailed about.
+func (q *Queries) GetPlanFitNotice(ctx context.Context, db DBTX, subjectID pgtype.UUID) (GetPlanFitNoticeRow, error) {
+	row := db.QueryRow(ctx, getPlanFitNotice, subjectID)
+	var i GetPlanFitNoticeRow
+	err := row.Scan(&i.Plan, &i.AppsDigest)
 	return i, err
 }
 
@@ -81245,6 +81272,24 @@ func (q *Queries) PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg Put
 	return i, err
 }
 
+const putPlanFitNotice = `-- name: PutPlanFitNotice :exec
+INSERT INTO plan_fit_notices (subject_id, plan, apps_digest, noticed_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (subject_id) DO UPDATE
+   SET plan = EXCLUDED.plan, apps_digest = EXCLUDED.apps_digest, noticed_at = now()
+`
+
+type PutPlanFitNoticeParams struct {
+	SubjectID  pgtype.UUID
+	Plan       string
+	AppsDigest string
+}
+
+func (q *Queries) PutPlanFitNotice(ctx context.Context, db DBTX, arg PutPlanFitNoticeParams) error {
+	_, err := db.Exec(ctx, putPlanFitNotice, arg.SubjectID, arg.Plan, arg.AppsDigest)
+	return err
+}
+
 const putRuntimeSecretSignature = `-- name: PutRuntimeSecretSignature :exec
 INSERT INTO runtime_secret_signatures (ciphertext_sha256, signature)
 VALUES ($1::bytea, $2::bytea)
@@ -110250,6 +110295,21 @@ func (q *Queries) StoredWorkflowManifest(ctx context.Context, db DBTX, appID pgt
 	return i, err
 }
 
+const sumAccountBacklogBytes = `-- name: SumAccountBacklogBytes :one
+SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
+WHERE account_id=$1::uuid AND source IN ('queue','async_invoke','delayed_task')
+`
+
+// ADR-20261022105723 (amended 2026-11-13): the account's pending queue,
+// async and delayed-task payload bytes, one pool against
+// MaxQueueBacklogBytesPerAccount.
+func (q *Queries) SumAccountBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, sumAccountBacklogBytes, accountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const sumAccountCreditRefundReversal = `-- name: SumAccountCreditRefundReversal :one
 SELECT coalesce(sum(delta_cents), 0)::bigint AS reversed_cents
 FROM credit_ledger
@@ -110267,18 +110327,6 @@ func (q *Queries) SumAccountCreditRefundReversal(ctx context.Context, db DBTX, a
 	var reversed_cents int64
 	err := row.Scan(&reversed_cents)
 	return reversed_cents, err
-}
-
-const sumAccountQueueBacklogBytes = `-- name: SumAccountQueueBacklogBytes :one
-SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
-WHERE account_id=$1::uuid AND source='queue'
-`
-
-func (q *Queries) SumAccountQueueBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
-	row := db.QueryRow(ctx, sumAccountQueueBacklogBytes, accountID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
 }
 
 const sumInvocationBacklogPending = `-- name: SumInvocationBacklogPending :one
