@@ -58811,6 +58811,68 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  # ADR-20261115090000: abuse review for operators. Customer data, so an
+  # operator session with MFA; email, sign-up address and user agent need
+  # ?include_pii=1, which writes a pii.accessed audit row.
+  /v1/admin/accounts/{id}/risk:
+    get:
+      tags: [admin]
+      operationId: getAccountRisk
+      summary: An account's abuse risk (operator-only).
+      description: |
+        The account's abuse hold, sign-up record (country, network owner,
+        email domain, disposable flag), links to and from abuse-held
+        accounts, abuse strikes inside the hold window, and abuse events
+        (holds, CPU signals, abuse scans, abuse recycles) of the last 30
+        days, newest first.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: "UUID of the account to review." }
+        - { name: include_pii, in: query, required: false, schema: { type: boolean }, description: "Include email, sign-up address and user agent (audited)." }
+      responses:
+        '200':
+          description: The account's abuse risk.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountRiskResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: admin_required — reading an account''s abuse risk needs an operator session with MFA.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: 'code: not_found — no account with that id.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/admin/held-links:
+    get:
+      tags: [admin]
+      operationId: listHeldLinks
+      summary: New accounts linked to abuse-held accounts (operator-only).
+      description: |
+        Links detected in the last `since` (ADR-20261114174600), newest
+        first, with the new account's sign-up country and email domain.
+        Defaults to the last 24 hours and 200 rows.
+      parameters:
+        - { name: since, in: query, required: false, schema: { type: string }, description: "Window as a duration, e.g. 24h; at most 720h." }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 1000 }, description: "Maximum held-account links returned; defaults to 200." }
+      responses:
+        '200':
+          description: Recent held-account links.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HeldLinksResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: admin_required — the held-link review needs an operator session with MFA.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   # ─── Operator Polar refunds (issue #279) ───────────────────────────────
   # Money-moving route. MFA is enforced for session principals, while the
   # admin scope + FAAS_ADMIN_EMAILS allowlist protect operator API keys.
@@ -87993,7 +88055,7 @@ components:
       properties:
         source_id: { type: string, format: uuid }
         queue_name: { type: string }
-        database: { type: string, description: The managed database name, when managed. }
+        database: { type: string, description: "The managed database name, when managed." }
         managed: { type: boolean }
         poll_interval_seconds: { type: integer }
         feeds:
@@ -92633,6 +92695,101 @@ components:
         flows:
           type: array
           items: { $ref: '#/components/schemas/EgressFlowLogEntry' }
+        truncated: { type: boolean }
+
+    AccountRiskLink:
+      description: "A new account linked to an abuse-held account (ADR-20261114174600)."
+      type: object
+      required: [account_id, held_account_id, held_reason, signal, detected_at]
+      properties:
+        account_id: { type: string }
+        held_account_id: { type: string }
+        held_org_id: { type: string }
+        held_reason: { type: string }
+        signal: { type: string, enum: [signup_network, email_domain] }
+        detected_at: { type: string, format: date-time }
+
+    AccountRiskSignup:
+      description: "The account's sign-up record (ADR-20261113160000). signup_ip and user_agent only with include_pii, and only for 90 days."
+      type: object
+      required: [method, email_domain, disposable_email, created_at]
+      properties:
+        method: { type: string }
+        signup_ip: { type: string }
+        user_agent: { type: string }
+        country: { type: string }
+        asn: { type: integer, format: int64, minimum: 0 }
+        asn_org: { type: string }
+        email_domain: { type: string }
+        disposable_email: { type: boolean }
+        created_at: { type: string, format: date-time }
+        reduced_at: { type: string, format: date-time }
+
+    AccountRiskStrike:
+      description: "An abuse recycle inside the hold window."
+      type: object
+      required: [reason, struck_at]
+      properties:
+        reason: { type: string }
+        app_id: { type: string }
+        struck_at: { type: string, format: date-time }
+
+    AccountRiskEvent:
+      description: "An abuse event about the account, one of its apps, deployments or instances."
+      type: object
+      required: [at, kind, actor, subject]
+      properties:
+        at: { type: string, format: date-time }
+        kind: { type: string }
+        actor: { type: string }
+        subject: { type: string }
+        data: { type: object, additionalProperties: true }
+
+    AccountRiskResponse:
+      description: "An account's abuse risk (ADR-20261115090000). email only with include_pii."
+      type: object
+      required: [account_id, status, plan, created_at, links_to_held, linked_accounts, strikes, abuse_events]
+      properties:
+        account_id: { type: string }
+        email: { type: string }
+        status: { type: string }
+        plan: { type: string }
+        created_at: { type: string, format: date-time }
+        abuse_hold_at: { type: string, format: date-time }
+        abuse_hold_reason: { type: string }
+        signup: { $ref: '#/components/schemas/AccountRiskSignup' }
+        links_to_held:
+          type: array
+          items: { $ref: '#/components/schemas/AccountRiskLink' }
+        linked_accounts:
+          type: array
+          items: { $ref: '#/components/schemas/AccountRiskLink' }
+        strikes:
+          type: array
+          items: { $ref: '#/components/schemas/AccountRiskStrike' }
+        abuse_events:
+          type: array
+          items: { $ref: '#/components/schemas/AccountRiskEvent' }
+
+    HeldLinkReview:
+      description: "A held-account link with the new account's sign-up country and email domain."
+      allOf:
+        - $ref: '#/components/schemas/AccountRiskLink'
+        - type: object
+          required: [disposable_email]
+          properties:
+            country: { type: string }
+            email_domain: { type: string }
+            disposable_email: { type: boolean }
+
+    HeldLinksResponse:
+      description: "Recent held-account links, newest first. truncated means the page limit was reached."
+      type: object
+      required: [links, truncated]
+      properties:
+        links:
+          type: array
+          items: { $ref: '#/components/schemas/HeldLinkReview' }
         truncated: { type: boolean }
 
     AccountLimits:

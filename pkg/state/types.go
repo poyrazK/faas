@@ -699,6 +699,46 @@ type AccountHeldLinkStore interface {
 	AccountHeldLinks(ctx context.Context, accountID string) ([]AccountHeldLink, error)
 }
 
+// AccountAbuseStrike is one stored abuse recycle (ADR-20261113133500).
+type AccountAbuseStrike struct {
+	Reason   string
+	AppID    string
+	StruckAt time.Time
+}
+
+// AccountAbuseEvent is an abuse-related event about an account, its apps,
+// deployments or instances (ADR-20261115090000).
+type AccountAbuseEvent struct {
+	At      time.Time
+	Actor   string
+	Kind    string
+	Subject string
+	Data    json.RawMessage
+}
+
+// RecentHeldLink is a held-account link with the new account's sign-up
+// country and email domain, for the daily review list.
+type RecentHeldLink struct {
+	AccountHeldLink
+	Country         string
+	EmailDomain     string
+	DisposableEmail bool
+}
+
+// AccountRiskStore serves the operator account risk view
+// (ADR-20261115090000). Both PgStore and MemStore implement it.
+type AccountRiskStore interface {
+	// AccountAbuseStrikes lists the owner's strikes after since, newest first.
+	AccountAbuseStrikes(ctx context.Context, accountID string, since time.Time) ([]AccountAbuseStrike, error)
+	// HeldLinksToAccount lists the accounts linked to heldAccountID.
+	HeldLinksToAccount(ctx context.Context, heldAccountID string) ([]AccountHeldLink, error)
+	// RecentHeldLinks lists links detected from since on, newest first.
+	RecentHeldLinks(ctx context.Context, since time.Time, limit int) ([]RecentHeldLink, error)
+	// AccountAbuseEvents lists events of the given kinds about the account,
+	// its apps, deployments and instances from since on, newest first.
+	AccountAbuseEvents(ctx context.Context, accountID string, kinds []string, since time.Time, limit int) ([]AccountAbuseEvent, error)
+}
+
 // AccountAbuseStrikeStore records abuse recycles against a resource owner
 // (account or organization) for the account abuse hold escalation
 // (ADR-20261113133500). The count is shared by every schedd and survives

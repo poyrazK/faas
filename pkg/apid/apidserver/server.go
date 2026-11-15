@@ -4656,6 +4656,13 @@ func (s *server) handler() http.Handler {
 	// read of the egress flow log.
 	mux.HandleFunc("GET /v1/admin/egress-flows",
 		s.authLimited(s.requireOperatorSessionRead(s.listEgressFlows)))
+	// ADR-20261115090000: an account's abuse risk (hold, sign-up record,
+	// links to held accounts, strikes, abuse events) and the recent
+	// held-account links for review. Customer data: operator session only.
+	mux.HandleFunc("GET /v1/admin/accounts/{id}/risk",
+		s.authLimited(s.requireOperatorSessionRead(s.getAccountRisk)))
+	mux.HandleFunc("GET /v1/admin/held-links",
+		s.authLimited(s.requireOperatorSessionRead(s.listHeldLinks)))
 	mux.HandleFunc("GET /v1/admin/obs/overview",
 		s.authLimited(s.requireOperatorSessionRead(s.obsOverview)))
 	mux.HandleFunc("GET /v1/admin/managed-postgres/usage/{account_id}",
