@@ -323,7 +323,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	finalLag := newUsageFinalLagGauge(l.ops.Registry())
 	// One result slot per possible worker, including monitoring and delivery;
 	// a cancelled Run must not strand workers trying to report their exit.
-	errc := make(chan error, 12)
+	errc := make(chan error, 13)
 	go func() {
 		errc <- l.runTicksImmediately(ctx, l.cfg.SampleInterval, func(c context.Context) error {
 			// PR-A (ADR-060, issue #515): capture the
@@ -382,6 +382,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			errc <- l.runTicks(ctx, l.cfg.DunningInterval,
 				func(c context.Context) error { return l.dunning.RunOnce(c) },
 				"dunning")
+		}()
+		// Billing review H17-4: tell subjects which apps their plan parks.
+		// Runs with dunning, on the same interval.
+		go func() {
+			errc <- l.runTicks(ctx, l.cfg.DunningInterval, l.RunPlanFitNoticesOnce, "plan_fit_notices")
 		}()
 	}
 	if l.residency != nil {

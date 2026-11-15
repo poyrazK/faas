@@ -609,6 +609,7 @@ type Querier interface {
 	ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error)
 	// Account flow queries (ADR 20261107103000).
 	ClearPendingAccountEmailChanges(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	ClearPlanFitNotice(ctx context.Context, db DBTX, subjectID pgtype.UUID) error
 	ClearProjectPromotionDeployment(ctx context.Context, db DBTX, arg ClearProjectPromotionDeploymentParams) (int64, error)
 	ClearServiceRolloutPredecessorPin(ctx context.Context, db DBTX, deploymentID pgtype.UUID) error
 	// Records that the spool file has been removed. Terminal status is
@@ -2452,6 +2453,9 @@ type Querier interface {
 	GetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg GetOutboundBindingProbePolicyParams) (GetOutboundBindingProbePolicyRow, error)
 	// ADR-652: no row/advisory locks or state transitions in diagnostic snapshots.
 	GetOwnedWorkflowDiagnosticsRun(ctx context.Context, db DBTX, arg GetOwnedWorkflowDiagnosticsRunParams) (WorkflowRun, error)
+	// Plan-fit notices (billing review H17-4): the plan and over-plan app set a
+	// billing subject was last emailed about.
+	GetPlanFitNotice(ctx context.Context, db DBTX, subjectID pgtype.UUID) (GetPlanFitNoticeRow, error)
 	GetPrivateNetworkTransportIdentity(ctx context.Context, db DBTX, arg GetPrivateNetworkTransportIdentityParams) (int32, error)
 	GetProjectMigration(ctx context.Context, db DBTX, arg GetProjectMigrationParams) (GetProjectMigrationRow, error)
 	GetPublishedApplicationStandardInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (GetPublishedApplicationStandardInstanceRow, error)
@@ -6109,6 +6113,7 @@ type Querier interface {
 	PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg PutGitLabOAuthConnectionParams) (GitlabOauthConnection, error)
 	PutMCPCatalogMonitor(ctx context.Context, db DBTX, arg PutMCPCatalogMonitorParams) (int64, error)
 	PutMCPOAuthRetirement(ctx context.Context, db DBTX, arg PutMCPOAuthRetirementParams) (int64, error)
+	PutPlanFitNotice(ctx context.Context, db DBTX, arg PutPlanFitNoticeParams) error
 	// ADR 20261028161502 amendment 1: a runtime secret envelope's writer
 	// signature, by its SHA-256. A signature is deterministic for one envelope and
 	// key, so writing it again replaces only a row that held something else.
@@ -8130,8 +8135,11 @@ type Querier interface {
 	StoredWorkflowLiveRunState(ctx context.Context, db DBTX, id pgtype.UUID) (StoredWorkflowLiveRunStateRow, error)
 	StoredWorkflowLiveStep(ctx context.Context, db DBTX, arg StoredWorkflowLiveStepParams) ([]StoredWorkflowLiveStepRow, error)
 	StoredWorkflowManifest(ctx context.Context, db DBTX, appID pgtype.UUID) (StoredWorkflowManifestRow, error)
+	// ADR-20261022105723 (amended 2026-11-13): the account's pending queue,
+	// async and delayed-task payload bytes, one pool against
+	// MaxQueueBacklogBytesPerAccount.
+	SumAccountBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
-	SumAccountQueueBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	// ADR-20261022105723: every pending and dispatching row of the app and
 	// source, production or not, so the sum bounds the production backlog from
 	// above.
