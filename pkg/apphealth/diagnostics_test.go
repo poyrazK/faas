@@ -83,7 +83,9 @@ func TestRequestHealthSeverity(t *testing.T) {
 		status, reason   string
 	}{
 		{"isolated high-volume error", 10000, 1, Healthy, "request_errors_below_threshold"},
-		{"low-volume errors", 10, 10, Unknown, "request_volume_insufficient"},
+		{"low-volume errors", 10, 6, Unknown, "request_volume_insufficient"},
+		{"low-volume all failed", 10, 10, Unhealthy, "request_all_failed"},
+		{"few requests all failed", 4, 4, Unknown, "request_volume_insufficient"},
 		{"minimum error count", 100, 4, Healthy, "request_errors_below_threshold"},
 		{"warning boundary", 100, 5, Degraded, "request_error_rate_elevated"},
 		{"severe boundary", 100, 25, Unhealthy, "request_error_rate_severe"},

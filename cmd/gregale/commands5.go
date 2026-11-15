@@ -759,6 +759,9 @@ func cmdAppScale(slug string, args []string) int {
 	planOutput := fs.String("out", "", "write a reusable reviewed plan to a new JSON file (requires --plan)")
 	applyPlan := fs.String("apply", "", "apply a saved scale plan JSON file")
 	confirmPlan := fs.Bool("confirm", false, "confirm applying the saved plan (requires --apply)")
+	// app scale applies without a prompt; --yes is accepted so scripts that
+	// pass it to every mutating command do not fail (prod 2026-11-15).
+	_ = fs.Bool("yes", false, "accepted for scripts; app scale applies without a prompt")
 	environment := fs.String("environment", "", "edit this project environment's workload settings")
 	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")

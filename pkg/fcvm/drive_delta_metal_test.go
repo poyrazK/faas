@@ -2,7 +2,7 @@
 
 package fcvm
 
-// adr: 20261115120000 — a parked guest's private drive is uploaded as a delta
+// adr: 20261115213230 — a parked guest's private drive is uploaded as a delta
 // against its app layer, and a node without the drive restores from it.
 
 import (

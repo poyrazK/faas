@@ -34,6 +34,10 @@
 
 - [ADR-20261115163305: Offline comparison of CLI export inventories](20261115163305-cli-offline-export-diff.md) — accepted; deterministic keyed JSON comparisons, exact decimal values and opt-in CI failures without API reads.
 
+- [ADR-20261115213230: Snapshot drives stored as deltas](20261115213230-snapshot-drive-deltas.md) — accepted; distinct identifier preserving the snapshot-drive decision and its scoped citations.
+
+- [ADR-20261115145412: Best-effort progress for CLI list exports](20261115145412-cli-list-export-progress.md) — accepted; throttled private-file counters, explicit publication/stopping events and preserved receipts/errors.
+
 - [ADR-20261115141842: Overall read budgets for CLI lists](20261115141842-cli-overall-list-timeout.md) — accepted; optional shared deadlines, preserved retries/progress and atomic publication boundaries.
 
 - [ADR-20261115135218: Discoverable CLI list flag dependencies](20261115135218-cli-list-flag-dependencies.md) — accepted; shared dependency registry, offline help and typed local advice with preserved validation contracts.
@@ -2416,3 +2420,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-20261115072125: Read-only agent review of MCP Task releases](20261115072125-agent-task-release-review.md) — accepted; offline local stack review reuses native release parsing and fingerprints, reports credential-free roles and limits, and preserves the separate owner-operated release flow.
 - [ADR-20261115100336: A restore keeps gunicorn's workers](20261115100336-restore-keeps-gunicorn-workers.md) — accepted; the Python restore preload stops gunicorn's master from killing workers after the restore clock jump (amends ADR-680, ADR-20261109120000)
+- [ADR-20261115194000: Platform alerts for outages and failing crons](20261115194000-platform-alerts.md) — accepted; schedd pauses an HTTP cron after 10 failed runs over 24 h and meterd emails accounts about it and about apps at ≥90% 5xx, unless they have their own error-rate rule

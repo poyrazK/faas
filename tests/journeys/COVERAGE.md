@@ -70,6 +70,10 @@ recovery; local preparation checks do not establish deployed acceptance.
 | 159 | Public OpenAPI spec and capabilities endpoint | `TestPublicSurface/openapi_spec`, `TestAccountAndKeys/capabilities` | — |
 | 161 | Docs site and trust pages | `TestDocsPages` (every route not marked `unpublished` in `docs/customer-pages.json`), `TestPublicSurface/security_txt` | pages of preview and internal capabilities, which are deliberately unpublished |
 
+`TestListExportProgressIsolatedCLI` extends row 156: live stderr events while
+output is private, publication/receipt agreement, API correlation, deadline and
+signal stopping events, and absence of user inputs in progress metadata.
+
 `TestListOverallTimeoutIsolatedCLI` extends row 156: a shared budget cancels
 blocked list bodies, preserves partial-stream diagnostics, leaves exports
 unpublished, and keeps signal cancellation at exit 130 with a timeout selected.
