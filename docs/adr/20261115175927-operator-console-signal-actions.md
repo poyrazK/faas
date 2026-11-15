@@ -1,8 +1,8 @@
-# ADR-20261115120000: Operator console routes for signal actions, the customer's view and the support inbox
+# ADR-20261115175927: Operator console routes for signal actions, the customer's view and the support inbox
 
 Status: Accepted
 
-Extends ADR-20261111130000, ADR-20261112170000, ADR-20261113180000 and ADR-20261114190002.
+Extends ADR-20261111130000, ADR-20261112170000, ADR-20261115175928 and ADR-20261114190002.
 
 ## Context
 

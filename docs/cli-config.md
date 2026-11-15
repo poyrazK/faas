@@ -141,7 +141,8 @@ as human root help and never include credentials or supplied option values.
 
 JSON help uses the same command manifest and canonical names as completion and
 the reference. It describes documented argument contracts, without inferring
-types, defaults, output schemas or validation rules from prose. `--all` is
+types, defaults or validation rules from prose. Output contracts, where
+registered, are explicit metadata described below. `--all` is
 accepted and has no additional effect because JSON already includes every local
 option. `gregale --json help --operator` additionally lists operator and
 compatibility roots; an explicitly named operator topic remains inspectable.
@@ -155,6 +156,48 @@ be stale; discovery is guidance, and the server still decides authorization.
 Unknown topics or help options exit `1`, leave stdout empty, and write one
 Problem JSON object to stderr. Human help and command-local `--help` keep their
 formatted usage output, including when `FAAS_JSON=1` is set.
+
+### Discovering list output formats
+
+`gregale --json help build list` and `gregale --json help invocation list`
+include an optional `output` object in the existing version-1 help document.
+It describes valid invocations with effective JSON mode enabled, including
+`FAAS_JSON=1` or a saved JSON preference. Other commands omit the object until
+an explicit output contract is registered; absence does not imply a format.
+No API request, saved option value or row data is needed for discovery.
+
+Each `modes` entry has a `when` map of effective Boolean options. `false` is
+meaningful; a missing key is unconstrained. `output` means the flag was supplied,
+not its path or truthiness. These conditions describe valid invocations, so an
+empty output path or an invalid option combination still fails validation.
+Modes requiring an unavailable option are omitted with that option.
+
+| Mode | Conditions | JSON-mode stdout | Empty inventory |
+| --- | --- | --- | --- |
+| `page` | `all=false`, `stream=false`, no output flag | Object: build `items` or `invocations`, with `next_cursor` | Empty row array in the object |
+| `all` | `all=true`, `stream=false`, no output flag | Build array; invocation object with `invocations` | Empty array, or object containing it |
+| `stream` | `all=true`, `stream=true`, no output flag | Ordered JSON Lines records, emitted per page | Zero bytes |
+| `file` | `all=true`, output flag supplied; stream unconstrained | JSON completion receipt after file publication | Receipt for an empty JSON Lines file |
+
+`stdout` reports encoding, shape, row/cursor field names, empty behavior and
+emission timing. File mode also describes the JSON Lines artifact, atomic
+no-overwrite publication and receipt fields. The optional receipt `path` is
+omitted when unsafe to expose. This contract describes containers and receipts,
+not the schema of individual API rows or a point-in-time inventory snapshot.
+
+`errors` identifies the stderr Problem fields and existing HTTP-status exit
+mapping. Request IDs are optional. Buffered reads leave stdout empty on a read
+failure; streamed reads can leave complete earlier records plus optional
+`pagination` progress in the Problem. Every mode can leave torn stdout on a
+stdout-write failure. File errors before publication leave no final artifact
+and no stdout rows; a receipt-write error retains the completed file. The
+metadata preserves the existing transport/local classifications and exit 130
+for signal cancellation owned by stream/file mode. Native OS signal exits,
+including SIGPIPE, remain possible and may produce no Problem.
+
+This is additive help metadata. Human help, local `--help`, flag parsing,
+list runtime behavior, man pages and Markdown references keep their existing
+contracts.
 
 `gregale deploy --help` and `gregale app --help` show common options and examples.
 Add `--all` to see every option grouped by purpose:

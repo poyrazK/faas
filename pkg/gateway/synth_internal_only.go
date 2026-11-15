@@ -146,6 +146,19 @@ func (s *SynthServer) applyIngressInternalSvc(w http.ResponseWriter, r *http.Req
 			"present a valid Gregale-internal JWT (aud='gregale.internal')"))
 		return true
 	}
+	if internalSvcTokenForOtherApp(tok, appID) {
+		if s.synthAuditEmit != nil {
+			s.synthAuditEmit(r.Context(), "instances.public_auth_internal_invalid", nil, map[string]any{
+				"app_id": appID, "from": from, "reason": "app_mismatch", "svc_name": svcName,
+			})
+		}
+		if s.metrics != nil {
+			s.metrics.ObserveInternalAuthMatch("blocked")
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"internal token is for another app", "an internal-service token opens only the app it was minted for"))
+		return true
+	}
 	if s.metrics != nil {
 		s.metrics.ObserveInternalAuthMatch("matched")
 	}
