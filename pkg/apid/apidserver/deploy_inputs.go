@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 	"github.com/onebox-faas/faas/pkg/statelessshape"
 	"github.com/onebox-faas/faas/pkg/tarball"
 )
@@ -1065,9 +1066,10 @@ const dockerfileMaxBytes = 256 * 1024
 // The checks are intentionally narrow: VOLUME on its own line, and
 // mkfs/mount -t ext4|xfs inside any RUN. We do NOT try to be clever
 // about RUN continuations or here-docs — adversarial users can `RUN
-// echo VOLUME > /tmp/x` to bypass. The deny-list at the base-image
-// level (pkg/imaged/base.go) catches the postgres/redis/mysql case
-// which is the actually common one.
+// echo VOLUME > /tmp/x` to bypass. The postgres/redis/mysql case, the
+// common one, is the final stage's base image: pkg/imaged's denylist only
+// sees `--image` deploys, so a one-line `FROM redis` Dockerfile is checked
+// here against the same pkg/statefuldenylist set (2026-11-15 agent eval).
 func scanDockerfileForStatefulShape(b []byte) string {
 	scanner := bufio.NewScanner(bytes.NewReader(b))
 	// Allow long lines (some RUN directives run thousands of chars).
@@ -1092,12 +1094,12 @@ func scanDockerfileForStatefulShape(b []byte) string {
 		}
 		upper := strings.ToUpper(line)
 		if strings.HasPrefix(upper, "VOLUME") {
-			// VOLUME ["/data"] or VOLUME /data /var — extract the args.
-			args := strings.Fields(line)
-			if len(args) > 1 {
-				return "VOLUME " + strings.Join(args[1:], " ")
+			// VOLUME ["/data"] or VOLUME /data /var. Scratch paths such as
+			// /tmp keep nothing worth losing, so only the others refuse.
+			if stateful := statelessshape.StatefulVolume(line); len(stateful) > 0 {
+				return "VOLUME " + strings.Join(stateful, " ")
 			}
-			return "VOLUME"
+			continue
 		}
 		if strings.HasPrefix(upper, "RUN") {
 			inRun = strings.HasSuffix(scanner.Text(), `\`)
@@ -1106,6 +1108,9 @@ func scanDockerfileForStatefulShape(b []byte) string {
 				return "mkfs/mount of a block device inside RUN"
 			}
 		}
+	}
+	if base, hint, denied := statefuldenylist.MatchDockerfile(b); denied {
+		return fmt.Sprintf("FROM %s runs a datastore, which loses its data when the app parks; %s", base, hint)
 	}
 	return ""
 }

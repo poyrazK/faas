@@ -32,19 +32,25 @@ func (q *Queries) AppSecretCiphertext(ctx context.Context, db DBTX, arg AppSecre
 
 const buildRunner = `-- name: BuildRunner :one
 SELECT d.app_id, b.status, coalesce(b.started_at, '-infinity'::timestamptz)::timestamptz AS started_at,
-       coalesce(b.builder_node_name, '')::text AS builder_node_name
+       coalesce(b.builder_node_name, '')::text AS builder_node_name,
+       (d.build_registry_scope IS NOT NULL)::boolean AS scope_recorded,
+       coalesce(d.build_registry_scope, '{}'::text[])::text[] AS build_registry_scope
   FROM builds b JOIN deployments d ON d.id = b.deployment_id
  WHERE b.id = $1::uuid
 `
 
 type BuildRunnerRow struct {
-	AppID           pgtype.UUID
-	Status          string
-	StartedAt       pgtype.Timestamptz
-	BuilderNodeName string
+	AppID              pgtype.UUID
+	Status             string
+	StartedAt          pgtype.Timestamptz
+	BuilderNodeName    string
+	ScopeRecorded      bool
+	BuildRegistryScope []string
 }
 
-// The build's app, status, start and claiming node (slice 3j-3).
+// The build's app, status, start and claiming node (slice 3j-3), and the
+// registry repositories its deployment may pull (slice 3j-4; not recorded
+// when NULL).
 func (q *Queries) BuildRunner(ctx context.Context, db DBTX, id pgtype.UUID) (BuildRunnerRow, error) {
 	row := db.QueryRow(ctx, buildRunner, id)
 	var i BuildRunnerRow
@@ -53,6 +59,8 @@ func (q *Queries) BuildRunner(ctx context.Context, db DBTX, id pgtype.UUID) (Bui
 		&i.Status,
 		&i.StartedAt,
 		&i.BuilderNodeName,
+		&i.ScopeRecorded,
+		&i.BuildRegistryScope,
 	)
 	return i, err
 }

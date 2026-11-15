@@ -16714,7 +16714,7 @@ WITH locked AS MATERIALIZED (
 UPDATE managed_postgres_databases d SET lease_token=sqlc.arg(lease_token)::text,
     lease_until=clock_timestamp()+sqlc.arg(lease_milliseconds)::bigint*interval '1 millisecond'
 FROM locked l WHERE d.id=l.id
-    AND l.state=sqlc.arg(state)::text AND l.state IN ('ready','failed')
+    AND l.state=sqlc.arg(state)::text AND l.state IN ('ready','failed','updating')
     AND l.desired_generation=sqlc.arg(generation)::bigint
     AND l.backend_id=sqlc.arg(backend_id)::text AND l.backend_fingerprint=sqlc.arg(backend_fingerprint)::text
     AND l.provider_resource_id=sqlc.arg(provider_resource_id)::text
@@ -16729,7 +16729,7 @@ WITH locked AS MATERIALIZED (
 )
 UPDATE managed_postgres_databases d SET lease_token=NULL,lease_until=NULL
 FROM locked l WHERE d.id=l.id AND l.lease_token=sqlc.arg(lease_token)::text
-    AND l.state IN ('ready','failed') AND l.lease_until>clock_timestamp();
+    AND l.state IN ('ready','failed','updating') AND l.lease_until>clock_timestamp();
 
 -- name: ReleaseManagedPostgresLifecycleLease :execrows
 UPDATE managed_postgres_databases SET state=sqlc.arg(next_state)::text,last_error_code=NULLIF(sqlc.arg(error_code)::text,''),
@@ -30529,13 +30529,42 @@ WHERE a.account_id = sqlc.arg(account_id)::uuid AND a.id = sqlc.arg(app_id)::uui
 
 -- name: InsertInvocationSend :exec
 -- ADR-20261112160000: the app that sent this invocation with send(), and the
--- app its completion goes to, written with the invocation row.
-INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id)
-VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(on_complete_app_id)::uuid);
+-- app its completion goes to, written with the invocation row. A workflow
+-- call (ADR-20261113120824) names its run and operation instead.
+INSERT INTO invocation_sends (invocation_id, sender_app_id, on_complete_app_id, workflow_run_id, workflow_op)
+VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(on_complete_app_id)::uuid,
+ sqlc.narg(workflow_run_id)::uuid, sqlc.narg(workflow_op)::text);
 
 -- name: GetInvocationSend :one
-SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
+SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id,
+ coalesce(workflow_run_id::text, '')::text AS workflow_run_id, coalesce(workflow_op, '')::text AS workflow_op
 FROM invocation_sends WHERE invocation_id = sqlc.arg(invocation_id)::uuid;
+
+-- name: LockWorkflowRunForCallSettle :one
+-- ADR-20261113120824 §2: a call settles under the run lock, taken before the
+-- operation row, the order the engine takes them in.
+SELECT status FROM workflow_runs WHERE id = sqlc.arg(run_id)::uuid FOR UPDATE;
+
+-- name: SettleWorkflowCallOp :execrows
+UPDATE workflow_steps
+SET status = sqlc.arg(status)::text, output = sqlc.narg(output)::jsonb, error = sqlc.narg(error)::text,
+    finished_at = now()
+WHERE run_id = sqlc.arg(run_id)::uuid AND step_name = sqlc.arg(step_name)::text
+  AND status IN ('pending', 'awaiting_event')
+  AND input -> 'gregale_code_op' ->> 'invocation_id' = sqlc.arg(invocation_id)::text;
+
+-- name: InsertWorkflowRunStart :exec
+-- ADR-20261113120824 §3: the app that started a run with start().
+INSERT INTO workflow_run_starts (run_id, starter_app_id)
+VALUES (sqlc.arg(run_id)::uuid, sqlc.arg(starter_app_id)::uuid)
+ON CONFLICT (run_id) DO NOTHING;
+
+-- name: GetWorkflowRunStarter :one
+SELECT starter_app_id::text FROM workflow_run_starts WHERE run_id = sqlc.arg(run_id)::uuid;
+
+-- name: WakeWorkflowRunForCall :exec
+UPDATE workflow_runs SET status = 'pending', scheduled_for = now(), updated_at = now()
+WHERE id = sqlc.arg(run_id)::uuid AND status = 'awaiting_event';
 
 -- Plan-fit notices (billing review H17-4): the plan and over-plan app set a
 -- billing subject was last emailed about.

@@ -55,7 +55,11 @@ operation still enforces its own authorization and admission checks.
   everywhere. Sign-in, changing your password or email, and turning off
   two-factor authentication all count and all pause. A password reset lifts
   the pause on your network and the overall one.
-- **Password:** `gregale account password update` opens the form. A reset
+- **Password:** `gregale account password update` opens the form. A new
+  password needs at least 12 characters and is refused when it is a common
+  breached password (checked against a list built into Gregale, without
+  sending the password anywhere), one repeated character or a plain
+  sequence such as `123456789012`. A reset
   (**Forgot password**) signs out every browser and revokes the keys that
   sign-ins created. API keys you created by hand keep working; the reset
   emails you a list of them and the account page shows it, so you can revoke
@@ -96,7 +100,9 @@ operation still enforces its own authorization and admission checks.
 - **Approving a CLI or agent (MCP) sign-in** in the browser needs a verified
   email, and a sign-in from the last 15 minutes (with two-factor
   authentication on, a code from the last 15 minutes). An older browser
-  signs in again and comes back to the same code.
+  signs in again and comes back to the same code. With the one-click
+  `gregale login`, the page shows the login's code and the port it hands
+  the sign-in to: approve only when your terminal shows the same.
 - **Two-factor changes:** turning two-factor authentication on signs out
   every other browser and revokes CLI and agent sign-in keys; hand-made API
   keys keep working. Turning it off with your password also needs a code

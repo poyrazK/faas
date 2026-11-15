@@ -21,6 +21,10 @@ type NodeCacheRetention struct {
 	Captures map[string]CaptureUse
 	// RuntimeReleases maps a runtime release base key to the release.
 	RuntimeReleases map[string]RuntimeReleaseRetention
+	// LiveLayers holds the app and sidecar layer keys of deployments with a
+	// non-stale snapshot. Snapshot fan-out keeps a replica only while its
+	// layers are cached too, so they are evicted with the live captures.
+	LiveLayers map[string]bool
 }
 
 // CaptureUse is why a capture is kept, weakest first.
@@ -89,9 +93,16 @@ func (s *PgStore) NodeCacheRetention(ctx context.Context) (NodeCacheRetention, e
 	if err != nil {
 		return NodeCacheRetention{}, fmt.Errorf("state: list runtime release retention: %w", err)
 	}
-	out := NodeCacheRetention{Captures: map[string]CaptureUse{}, RuntimeReleases: map[string]RuntimeReleaseRetention{}}
+	layers, err := q.ListLiveSnapshotLayerKeys(ctx, s.pool)
+	if err != nil {
+		return NodeCacheRetention{}, fmt.Errorf("state: list live snapshot layers: %w", err)
+	}
+	out := NodeCacheRetention{Captures: map[string]CaptureUse{}, RuntimeReleases: map[string]RuntimeReleaseRetention{}, LiveLayers: map[string]bool{}}
 	for _, k := range keys {
 		out.addCapture(k.Key, captureUse(k.Use))
+	}
+	for _, k := range layers {
+		out.LiveLayers[k] = true
 	}
 	for _, r := range releases {
 		key := RuntimeRelease{ID: r.ID, Runtime: r.Runtime, Architecture: r.Architecture}.BaseKey()
@@ -105,13 +116,28 @@ func (s *PgStore) NodeCacheRetention(ctx context.Context) (NodeCacheRetention, e
 func (m *MemStore) NodeCacheRetention(_ context.Context) (NodeCacheRetention, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	out := NodeCacheRetention{Captures: map[string]CaptureUse{}, RuntimeReleases: map[string]RuntimeReleaseRetention{}}
+	out := NodeCacheRetention{Captures: map[string]CaptureUse{}, RuntimeReleases: map[string]RuntimeReleaseRetention{}, LiveLayers: map[string]bool{}}
 	for _, s := range m.snapshots {
 		use := CaptureLive
 		if s.Stale {
 			use = CaptureStale
 		}
 		out.addCapture(s.StorageKey, use)
+		if s.Stale {
+			continue
+		}
+		if d, ok := m.deployments[s.DeploymentID]; ok {
+			key := d.RootfsKey
+			if key == "" {
+				key = "layers/" + d.ID + ".ext4"
+			}
+			out.LiveLayers[key] = true
+		}
+		for _, l := range m.deploymentSidecarLayers {
+			if l.DeploymentID == s.DeploymentID && l.StorageKey != "" {
+				out.LiveLayers[l.StorageKey] = true
+			}
+		}
 	}
 	bound := map[string]bool{}
 	for _, id := range m.runtimeArtifactBindings {

@@ -484,6 +484,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		h2cEnabled,
 	).WithTrustedIngressCIDRs(trustedIngressCIDRs).WithTrafficRevocations(trafficRevocations).
 		WithTrafficSecurityPeers(trafficSecurityPeers)
+	proxy.AllowForwardedHTTP = envBoolOr("FAAS_GATEWAY_ALLOW_PLAIN_HTTP", false)
 	// A dynamic dialer selects a different compute node per request. Do not
 	// let the transport pool an idle connection under the single logical
 	// gatewayd URL, otherwise a drained node could keep receiving traffic.

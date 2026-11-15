@@ -1105,6 +1105,9 @@ func cmdAppDispatch(args []string) int {
 	if args[0] == subWait && hasSelectorFlag(args[1:]) {
 		return cmdAppWaitSelected(args[1:])
 	}
+	if isAppProjectCommand(args) {
+		return cmdAppProject(args)
+	}
 	slug := args[0]
 	if code, ok := cmdAppConditions(slug, args[1:]); ok {
 		return code

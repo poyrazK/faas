@@ -26,7 +26,7 @@ reaper delete a replayed message the moment it settled again.
    it due later, notified every lease waiter and receive of the app. Rows due
    later are found by the drain's and trigger loop's one-second tick and the
    waiters' recheck. The payload names the queue, and a lease waiter wakes
-   only for its own queue (R5-10). Migration 20261115092135481.
+   only for its own queue (R5-10). Migration 20261115162412100.
 
 **Retention while held**
 
@@ -83,7 +83,7 @@ reaper delete a replayed message the moment it settled again.
     expiry moves to now, and the lease reaper redelivers or dead-letters it.
     The attempt stays spent, since the worker may have died of the message.
     Parked and frozen instances keep theirs: a restore resumes the handler.
-    Migration 20261115092137070.
+    Migration 20261115162412200.
 15. A worker token may address its app by a slug the app had before a
     rename, unless another app holds that slug now (R8-1). Pull consumers
     configured with the old slug kept failing until redeployed.
@@ -118,7 +118,7 @@ reaper delete a replayed message the moment it settled again.
 
 ## Consequences
 
-Three migrations, all expand-only. 20261115092138570 redefines
+Three migrations, all expand-only. 20261115162412300 redefines
 `guard_queue_binding_retirement` unqualified: 20261112193138262 replaced only
 `public.`'s copy, so a schema holding its own objects (each Postgres test
 schema) still refused every revive, and the revive tests could not pass on

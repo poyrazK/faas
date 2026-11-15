@@ -1891,6 +1891,7 @@ CREATE TABLE public.deployments (
     promoted_at timestamp with time zone,
     rollback_release_review jsonb DEFAULT '{}'::jsonb NOT NULL,
     before_checkpoint_hook boolean,
+    build_registry_scope text[],
     CONSTRAINT deployments_canary_preset_chk CHECK (((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text])) OR (canary_preset = 'adaptive'::text))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -7898,6 +7899,23 @@ $$;
 
 
 --
+-- Name: deployment_build_registry_scope_valid(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_build_registry_scope_valid(scope text[]) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+    SELECT scope IS NULL OR (
+        cardinality(scope) <= 64
+        AND array_position(scope, NULL) IS NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM unnest(scope) AS e
+            WHERE length(e) > 255 OR e !~ '^[a-z0-9.-]+(:[0-9]{1,5})?/[a-z0-9._/-]+$'))
+$_$;
+
+
+--
 -- Name: deployment_openapi_docs_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8059,6 +8077,37 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: deployments_build_registry_scope_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployments_build_registry_scope_guard() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    node text;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.build_registry_scope IS DISTINCT FROM OLD.build_registry_scope THEN
+            RAISE EXCEPTION 'a deployment''s build registry scope is recorded when it is created and never changes'
+                USING ERRCODE = '42501', DETAIL = format('login=%s deployment=%s', session_user, OLD.id);
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF NEW.build_registry_scope IS NULL THEN
+        RETURN NEW;
+    END IF;
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node USING session_user::text;
+    IF node IS NOT NULL THEN
+        NEW.build_registry_scope := NULL;
+    END IF;
+    RETURN NEW;
+END;
+$_$;
 
 
 --
@@ -44274,7 +44323,10 @@ CREATE TABLE public.invocation_sends (
     sender_app_id uuid NOT NULL,
     on_complete_app_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT invocation_sends_created_at_check CHECK (isfinite(created_at))
+    workflow_run_id uuid,
+    workflow_op text,
+    CONSTRAINT invocation_sends_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT invocation_sends_workflow_call_check CHECK ((((workflow_run_id IS NULL) = (workflow_op IS NULL)) AND ((workflow_op IS NULL) OR ((length(workflow_op) >= 1) AND (length(workflow_op) <= 160)))))
 );
 
 
@@ -51307,6 +51359,87 @@ CREATE TABLE public.outbound_ai_price_lists (
 
 
 --
+-- Name: outbound_ai_prompt_canaries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_prompt_canaries (
+    prompt_id uuid NOT NULL,
+    version integer NOT NULL,
+    percent smallint NOT NULL,
+    max_error_rate_increase smallint NOT NULL,
+    max_latency_increase_percent integer,
+    min_calls integer NOT NULL,
+    window_minutes smallint NOT NULL,
+    state text DEFAULT 'active'::text NOT NULL,
+    reason text,
+    started_at timestamp with time zone DEFAULT now() NOT NULL,
+    decided_at timestamp with time zone,
+    CONSTRAINT outbound_ai_prompt_canaries_config_chk CHECK (((version >= 1) AND ((percent >= 1) AND (percent <= 50)) AND ((max_error_rate_increase >= 0) AND (max_error_rate_increase <= 100)) AND ((max_latency_increase_percent IS NULL) OR ((max_latency_increase_percent >= 1) AND (max_latency_increase_percent <= 1000))) AND ((min_calls >= 10) AND (min_calls <= 100000)) AND ((window_minutes >= 5) AND (window_minutes <= 1440)))),
+    CONSTRAINT outbound_ai_prompt_canaries_state_chk CHECK ((((state = 'active'::text) AND (reason IS NULL) AND (decided_at IS NULL)) OR ((state = 'rolled_back'::text) AND (reason = ANY (ARRAY['error_rate'::text, 'latency'::text])) AND (decided_at IS NOT NULL))))
+);
+
+
+--
+-- Name: outbound_ai_prompt_evaluation_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_prompt_evaluation_items (
+    evaluation_id uuid NOT NULL,
+    case_index smallint NOT NULL,
+    verdict text NOT NULL,
+    baseline_status smallint,
+    candidate_status smallint,
+    baseline_cost_millicents bigint DEFAULT 0 NOT NULL,
+    candidate_cost_millicents bigint DEFAULT 0 NOT NULL,
+    baseline_ttfb_ms integer,
+    candidate_ttfb_ms integer,
+    baseline_output_text text DEFAULT ''::text NOT NULL,
+    candidate_output_text text DEFAULT ''::text NOT NULL,
+    CONSTRAINT outbound_ai_prompt_evaluation_items_chk CHECK ((((case_index >= 0) AND (case_index <= 49)) AND (verdict = ANY (ARRAY['win'::text, 'tie'::text, 'loss'::text, 'candidate_error'::text, 'judge_error'::text])) AND ((baseline_status IS NULL) OR ((baseline_status >= 100) AND (baseline_status <= 599))) AND ((candidate_status IS NULL) OR ((candidate_status >= 100) AND (candidate_status <= 599))) AND (baseline_cost_millicents >= 0) AND (candidate_cost_millicents >= 0) AND ((baseline_ttfb_ms IS NULL) OR (baseline_ttfb_ms >= 0)) AND ((candidate_ttfb_ms IS NULL) OR (candidate_ttfb_ms >= 0)) AND (octet_length(baseline_output_text) <= 4096) AND (octet_length(candidate_output_text) <= 4096)))
+);
+
+
+--
+-- Name: outbound_ai_prompt_evaluations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_prompt_evaluations (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    prompt_id uuid NOT NULL,
+    baseline_version integer NOT NULL,
+    candidate_version integer NOT NULL,
+    cases jsonb NOT NULL,
+    judge_integration_id uuid NOT NULL,
+    judge_model text NOT NULL,
+    max_loss_rate smallint NOT NULL,
+    canary jsonb,
+    state text DEFAULT 'pending'::text NOT NULL,
+    verdict text,
+    error_code text,
+    case_count integer NOT NULL,
+    wins integer DEFAULT 0 NOT NULL,
+    ties integer DEFAULT 0 NOT NULL,
+    losses integer DEFAULT 0 NOT NULL,
+    candidate_errors integer DEFAULT 0 NOT NULL,
+    judge_errors integer DEFAULT 0 NOT NULL,
+    baseline_cost_millicents bigint DEFAULT 0 NOT NULL,
+    candidate_cost_millicents bigint DEFAULT 0 NOT NULL,
+    baseline_ttfb_ms_total bigint DEFAULT 0 NOT NULL,
+    baseline_ttfb_calls integer DEFAULT 0 NOT NULL,
+    candidate_ttfb_ms_total bigint DEFAULT 0 NOT NULL,
+    candidate_ttfb_calls integer DEFAULT 0 NOT NULL,
+    canary_started boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    CONSTRAINT outbound_ai_prompt_evaluations_config_chk CHECK (((baseline_version >= 1) AND (candidate_version >= 1) AND (baseline_version <> candidate_version) AND (jsonb_typeof(cases) = 'array'::text) AND (jsonb_array_length(cases) = case_count) AND ((case_count >= 1) AND (case_count <= 50)) AND (octet_length((cases)::text) <= 1048576) AND ((max_loss_rate >= 0) AND (max_loss_rate <= 100)) AND ((length(judge_model) >= 1) AND (length(judge_model) <= 128)) AND (judge_model ~ '^[ -~]+$'::text) AND ((canary IS NULL) OR ((jsonb_typeof(canary) = 'object'::text) AND (octet_length((canary)::text) <= 1024))))),
+    CONSTRAINT outbound_ai_prompt_evaluations_counts_chk CHECK (((wins >= 0) AND (ties >= 0) AND (losses >= 0) AND (candidate_errors >= 0) AND (judge_errors >= 0) AND (((((wins + ties) + losses) + candidate_errors) + judge_errors) <= case_count) AND (baseline_cost_millicents >= 0) AND (candidate_cost_millicents >= 0) AND (baseline_ttfb_ms_total >= 0) AND (baseline_ttfb_calls >= 0) AND (candidate_ttfb_ms_total >= 0) AND (candidate_ttfb_calls >= 0))),
+    CONSTRAINT outbound_ai_prompt_evaluations_state_chk CHECK (((state = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text, 'failed'::text])) AND ((verdict IS NULL) OR (verdict = ANY (ARRAY['pass'::text, 'fail'::text]))) AND ((state = 'done'::text) = (verdict IS NOT NULL)) AND ((state = 'failed'::text) = (error_code IS NOT NULL)) AND ((state = 'pending'::text) = (started_at IS NULL)) AND ((error_code IS NULL) OR (((length(error_code) >= 1) AND (length(error_code) <= 64)) AND (error_code ~ '^[a-z0-9_]+$'::text)))))
+);
+
+
+--
 -- Name: outbound_ai_prompt_prefixes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -51317,6 +51450,60 @@ CREATE TABLE public.outbound_ai_prompt_prefixes (
     previous_seen_at timestamp with time zone,
     CONSTRAINT outbound_ai_prompt_prefixes_hash_chk CHECK ((octet_length(prefix_hash) = 32)),
     CONSTRAINT outbound_ai_prompt_prefixes_seen_chk CHECK (((previous_seen_at IS NULL) OR (previous_seen_at <= seen_at)))
+);
+
+
+--
+-- Name: outbound_ai_prompt_version_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_prompt_version_minutes (
+    prompt_id uuid NOT NULL,
+    version integer NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    calls bigint DEFAULT 0 NOT NULL,
+    errors bigint DEFAULT 0 NOT NULL,
+    ttfb_calls bigint DEFAULT 0 NOT NULL,
+    ttfb_ms_total bigint DEFAULT 0 NOT NULL,
+    cost_millicents bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT outbound_ai_prompt_version_minutes_chk CHECK (((version >= 1) AND (calls >= 0) AND ((errors >= 0) AND (errors <= calls)) AND ((ttfb_calls >= 0) AND (ttfb_calls <= calls)) AND (ttfb_ms_total >= 0) AND (cost_millicents >= 0)))
+);
+
+
+--
+-- Name: outbound_ai_prompt_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_prompt_versions (
+    prompt_id uuid NOT NULL,
+    version integer NOT NULL,
+    messages jsonb NOT NULL,
+    defaults jsonb DEFAULT '{}'::jsonb NOT NULL,
+    params jsonb DEFAULT '{}'::jsonb NOT NULL,
+    route_id uuid,
+    integration_id uuid,
+    model text,
+    note text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_ai_prompt_versions_chk CHECK (((version >= 1) AND (jsonb_typeof(messages) = 'array'::text) AND ((jsonb_array_length(messages) >= 1) AND (jsonb_array_length(messages) <= 32)) AND (jsonb_typeof(defaults) = 'object'::text) AND (jsonb_typeof(params) = 'object'::text) AND (((octet_length((messages)::text) + octet_length((defaults)::text)) + octet_length((params)::text)) <= 196608) AND ((route_id IS NULL) <> (integration_id IS NULL)) AND ((integration_id IS NULL) OR (model IS NOT NULL)) AND ((model IS NULL) OR (((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text))) AND (octet_length(note) <= 280)))
+);
+
+
+--
+-- Name: outbound_ai_prompts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.outbound_ai_prompts (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    live_version integer,
+    previous_live_version integer,
+    latest_version integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT outbound_ai_prompts_chk CHECK (((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text) AND (octet_length(description) <= 280) AND ((latest_version >= 0) AND (latest_version <= 2147483647)) AND ((live_version IS NULL) OR ((live_version >= 1) AND (live_version <= latest_version))) AND ((previous_live_version IS NULL) OR ((previous_live_version >= 1) AND (previous_live_version <= latest_version)))))
 );
 
 
@@ -51449,10 +51636,13 @@ CREATE TABLE public.outbound_ai_request_log (
     evaluation_state text,
     evaluation_claimed_at timestamp with time zone,
     evaluation_score smallint,
+    prompt_id uuid,
+    prompt_version integer,
     CONSTRAINT outbound_ai_request_log_caller_chk CHECK (((length(caller) >= 1) AND (length(caller) <= 64))),
     CONSTRAINT outbound_ai_request_log_end_user_chk CHECK (((end_user IS NULL) OR (end_user ~ '^[A-Za-z0-9._:@+=/|-]{1,64}$'::text))),
     CONSTRAINT outbound_ai_request_log_model_chk CHECK ((((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text))),
     CONSTRAINT outbound_ai_request_log_outcome_chk CHECK ((outcome = ANY (ARRAY['known'::text, 'unknown'::text, 'error'::text]))),
+    CONSTRAINT outbound_ai_request_log_prompt_chk CHECK ((((prompt_id IS NULL) = (prompt_version IS NULL)) AND ((prompt_version IS NULL) OR (prompt_version >= 1)))),
     CONSTRAINT outbound_ai_request_log_quality_chk CHECK ((((quality_flags IS NULL) OR ((cardinality(quality_flags) <= 5) AND (quality_flags <@ ARRAY['truncated'::text, 'refused'::text, 'empty'::text, 'invalid_json'::text, 'tool_error'::text]))) AND ((feedback IS NULL) OR (feedback = ANY (ARRAY['good'::text, 'bad'::text]))) AND ((feedback_label IS NULL) OR ((feedback IS NOT NULL) AND (feedback_label ~ '^[a-z][a-z0-9_.-]{0,31}$'::text))) AND ((feedback IS NULL) = (feedback_at IS NULL)) AND ((evaluation_state IS NULL) OR (evaluation_state = ANY (ARRAY['pending'::text, 'running'::text, 'done'::text, 'error'::text]))) AND ((evaluation_state = 'running'::text) = (evaluation_claimed_at IS NOT NULL)) AND ((evaluation_score IS NULL) OR ((evaluation_state = 'done'::text) AND ((evaluation_score >= 1) AND (evaluation_score <= 5)))))),
     CONSTRAINT outbound_ai_request_log_status_chk CHECK (((status >= 100) AND (status <= 599))),
     CONSTRAINT outbound_ai_request_log_tags_chk CHECK (((tags IS NULL) OR (array_to_string(tags, ','::text) ~ '^[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}(,[a-z][a-z0-9_.-]{0,31}=[A-Za-z0-9._:@+/-]{1,64}){0,4}$'::text))),
@@ -61838,6 +62028,18 @@ CREATE TABLE public.workflow_run_resumes (
 
 
 --
+-- Name: workflow_run_starts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_run_starts (
+    run_id uuid NOT NULL,
+    starter_app_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT workflow_run_starts_created_at_check CHECK (isfinite(created_at))
+);
+
+
+--
 -- Name: workflow_schedule_cursors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -65982,6 +66184,14 @@ ALTER TABLE ONLY public.deployment_sidecar_secret_reload_signals
 
 ALTER TABLE ONLY public.deployment_submission_receipts
     ADD CONSTRAINT deployment_submission_receipts_pkey PRIMARY KEY (app_id, attempt_id);
+
+
+--
+-- Name: deployments deployments_build_registry_scope_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.deployments
+    ADD CONSTRAINT deployments_build_registry_scope_check CHECK (public.deployment_build_registry_scope_valid(build_registry_scope)) NOT VALID;
 
 
 --
@@ -71281,11 +71491,67 @@ ALTER TABLE ONLY public.outbound_ai_price_lists
 
 
 --
+-- Name: outbound_ai_prompt_canaries outbound_ai_prompt_canaries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_canaries
+    ADD CONSTRAINT outbound_ai_prompt_canaries_pkey PRIMARY KEY (prompt_id);
+
+
+--
+-- Name: outbound_ai_prompt_evaluation_items outbound_ai_prompt_evaluation_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_evaluation_items
+    ADD CONSTRAINT outbound_ai_prompt_evaluation_items_pkey PRIMARY KEY (evaluation_id, case_index);
+
+
+--
+-- Name: outbound_ai_prompt_evaluations outbound_ai_prompt_evaluations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_evaluations
+    ADD CONSTRAINT outbound_ai_prompt_evaluations_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: outbound_ai_prompt_prefixes outbound_ai_prompt_prefixes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.outbound_ai_prompt_prefixes
     ADD CONSTRAINT outbound_ai_prompt_prefixes_pkey PRIMARY KEY (integration_id, prefix_hash);
+
+
+--
+-- Name: outbound_ai_prompt_version_minutes outbound_ai_prompt_version_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_version_minutes
+    ADD CONSTRAINT outbound_ai_prompt_version_minutes_pkey PRIMARY KEY (prompt_id, version, minute);
+
+
+--
+-- Name: outbound_ai_prompt_versions outbound_ai_prompt_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_versions
+    ADD CONSTRAINT outbound_ai_prompt_versions_pkey PRIMARY KEY (prompt_id, version);
+
+
+--
+-- Name: outbound_ai_prompts outbound_ai_prompts_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompts
+    ADD CONSTRAINT outbound_ai_prompts_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: outbound_ai_prompts outbound_ai_prompts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompts
+    ADD CONSTRAINT outbound_ai_prompts_pkey PRIMARY KEY (id);
 
 
 --
@@ -76014,6 +76280,14 @@ ALTER TABLE ONLY public.workflow_recovery_review_notifications
 
 ALTER TABLE ONLY public.workflow_run_resumes
     ADD CONSTRAINT workflow_run_resumes_pkey PRIMARY KEY (run_id, resume_number);
+
+
+--
+-- Name: workflow_run_starts workflow_run_starts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_starts
+    ADD CONSTRAINT workflow_run_starts_pkey PRIMARY KEY (run_id);
 
 
 --
@@ -83919,10 +84193,31 @@ CREATE INDEX outbound_ai_price_lists_current_idx ON public.outbound_ai_price_lis
 
 
 --
+-- Name: outbound_ai_prompt_evaluations_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_prompt_evaluations_pending_idx ON public.outbound_ai_prompt_evaluations USING btree (created_at) WHERE (state = ANY (ARRAY['pending'::text, 'running'::text]));
+
+
+--
+-- Name: outbound_ai_prompt_evaluations_prompt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_prompt_evaluations_prompt_idx ON public.outbound_ai_prompt_evaluations USING btree (prompt_id, created_at DESC);
+
+
+--
 -- Name: outbound_ai_prompt_prefixes_seen_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX outbound_ai_prompt_prefixes_seen_at_idx ON public.outbound_ai_prompt_prefixes USING btree (seen_at);
+
+
+--
+-- Name: outbound_ai_prompt_version_minutes_prune_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_prompt_version_minutes_prune_idx ON public.outbound_ai_prompt_version_minutes USING btree (minute);
 
 
 --
@@ -83979,6 +84274,13 @@ CREATE INDEX outbound_ai_request_content_prune_idx ON public.outbound_ai_request
 --
 
 CREATE INDEX outbound_ai_request_log_evaluation_pending_idx ON public.outbound_ai_request_log USING btree (created_at) WHERE (evaluation_state = ANY (ARRAY['pending'::text, 'running'::text]));
+
+
+--
+-- Name: outbound_ai_request_log_prompt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX outbound_ai_request_log_prompt_idx ON public.outbound_ai_request_log USING btree (prompt_id, prompt_version, created_at) WHERE (prompt_id IS NOT NULL);
 
 
 --
@@ -87332,6 +87634,13 @@ CREATE INDEX workflow_recovery_review_notifications_pending ON public.workflow_r
 
 
 --
+-- Name: workflow_run_starts_starter_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX workflow_run_starts_starter_idx ON public.workflow_run_starts USING btree (starter_app_id, created_at);
+
+
+--
 -- Name: workflow_runs_app_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -90405,6 +90714,13 @@ CREATE TRIGGER deployment_serving_ended_at BEFORE UPDATE OF status, traffic_perc
 --
 
 CREATE TRIGGER deployment_sidecar_layers_cap_trg BEFORE INSERT OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.deployment_sidecar_layers_cap_check();
+
+
+--
+-- Name: deployments deployments_build_registry_scope_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_build_registry_scope_guard BEFORE INSERT OR UPDATE OF build_registry_scope ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.deployments_build_registry_scope_guard();
 
 
 --
@@ -105965,11 +106281,59 @@ ALTER TABLE ONLY public.outbound_ai_price_lists
 
 
 --
+-- Name: outbound_ai_prompt_canaries outbound_ai_prompt_canaries_prompt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_canaries
+    ADD CONSTRAINT outbound_ai_prompt_canaries_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.outbound_ai_prompts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_prompt_evaluation_items outbound_ai_prompt_evaluation_items_evaluation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_evaluation_items
+    ADD CONSTRAINT outbound_ai_prompt_evaluation_items_evaluation_id_fkey FOREIGN KEY (evaluation_id) REFERENCES public.outbound_ai_prompt_evaluations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_prompt_evaluations outbound_ai_prompt_evaluations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_evaluations
+    ADD CONSTRAINT outbound_ai_prompt_evaluations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_prompt_evaluations outbound_ai_prompt_evaluations_prompt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_evaluations
+    ADD CONSTRAINT outbound_ai_prompt_evaluations_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.outbound_ai_prompts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: outbound_ai_prompt_prefixes outbound_ai_prompt_prefixes_integration_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.outbound_ai_prompt_prefixes
     ADD CONSTRAINT outbound_ai_prompt_prefixes_integration_id_fkey FOREIGN KEY (integration_id) REFERENCES public.outbound_integrations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_prompt_versions outbound_ai_prompt_versions_prompt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompt_versions
+    ADD CONSTRAINT outbound_ai_prompt_versions_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.outbound_ai_prompts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: outbound_ai_prompts outbound_ai_prompts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.outbound_ai_prompts
+    ADD CONSTRAINT outbound_ai_prompts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -111890,6 +112254,22 @@ ALTER TABLE ONLY public.workflow_run_resumes
 
 ALTER TABLE ONLY public.workflow_run_resumes
     ADD CONSTRAINT workflow_run_resumes_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_run_starts workflow_run_starts_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_starts
+    ADD CONSTRAINT workflow_run_starts_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_run_starts workflow_run_starts_starter_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_run_starts
+    ADD CONSTRAINT workflow_run_starts_starter_app_id_fkey FOREIGN KEY (starter_app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

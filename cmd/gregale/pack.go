@@ -117,6 +117,14 @@ var defaultExcludeDirs = map[string]bool{
 	"target":   true, // Maven / Cargo / Scala
 	".venv":    true, // Python virtualenv
 	".cache":   true, // pip / pytest / generic
+	// Framework build output and tool caches the builder regenerates.
+	".nuxt":         true, // Nuxt
+	".output":       true, // Nuxt / Nitro build output
+	".svelte-kit":   true, // SvelteKit
+	".turbo":        true, // Turborepo cache
+	".pytest_cache": true,
+	".mypy_cache":   true,
+	".ruff_cache":   true,
 }
 
 // defaultExcludeFiles are basenames dropped anywhere in the tree (OS/VCS
@@ -313,7 +321,7 @@ func shouldExclude(relSlashPath string, isDir bool, patterns []gregaleignorePatt
 // output. A Dockerfile build commonly COPYs them (`COPY target/*.jar`,
 // `COPY dist/ ...`), so they ship by default when the source builds with a
 // Dockerfile (ADR-20261026152731).
-var buildOutputDirs = map[string]bool{"dist": true, ".next": true, "coverage": true, "target": true, ".cache": true}
+var buildOutputDirs = map[string]bool{"dist": true, ".next": true, "coverage": true, "target": true, ".cache": true, ".nuxt": true, ".output": true, ".svelte-kit": true}
 
 // packRules is the complete file-selection policy for one packed root.
 type packRules struct {
@@ -325,7 +333,11 @@ type packRules struct {
 	// goVendor reports whether a vendor/ directory at rel holds Go module
 	// vendoring (vendor/modules.txt), which is source, not an install.
 	goVendor func(rel string) bool
-	report   *deploySourceFilesReport
+	// pythonVenv reports whether the directory at rel is a Python virtual
+	// environment (it holds pyvenv.cfg), whatever it is called: venv/, env/
+	// and .venv/ are installs the builder recreates, never source.
+	pythonVenv func(rel string) bool
+	report     *deploySourceFilesReport
 }
 
 // exclude applies, in order: .git (always excluded, cannot be re-included);
@@ -370,6 +382,9 @@ func dockerfileSource(dir string) bool {
 func loadPackRules(srcDir string, dockerfile bool) packRules {
 	rules := packRules{dockerfile: dockerfile, goVendor: func(rel string) bool {
 		info, err := os.Lstat(filepath.Join(srcDir, filepath.FromSlash(rel), "modules.txt"))
+		return err == nil && info.Mode().IsRegular()
+	}, pythonVenv: func(rel string) bool {
+		info, err := os.Lstat(filepath.Join(srcDir, filepath.FromSlash(rel), "pyvenv.cfg"))
 		return err == nil && info.Mode().IsRegular()
 	}}
 	if dockerfile {
@@ -901,6 +916,9 @@ func packDirToTarGzReported(srcDir, destPath string, capMB int, envOverride map[
 	}
 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].rel < entries[j].rel })
+	if len(entries)+len(buildOnlyFiles) > api.SourceArchiveMaxEntries {
+		entries = dropComposeUnusedDirs(srcDir, entries)
+	}
 	expandedCap := api.SourceArchiveMaxExpandedBytes
 	var totalUncompressed int64
 	existingEntries := make(map[string]bool, len(entries))
