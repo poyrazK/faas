@@ -67,7 +67,7 @@ func cloneQueueSettings(definitions ProjectEnvironmentCloneQueueDefinitions) []P
 		definition := binding.ProjectEnvironmentQueueDefinition
 		// A stage environment has no pull consumer: leases serve production
 		// only. A production pull binding cloned enabled accepted stage sends
-		// nothing could take, so it arrives disabled (ADR-20261113180000, R5-7).
+		// nothing could take, so it arrives disabled (ADR-20261115183906, R5-7).
 		if definition.Mode == "pull" {
 			definition.Enabled = false
 		}

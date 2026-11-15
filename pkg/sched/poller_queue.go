@@ -184,7 +184,7 @@ func (q *queuePoller) pollNamedQueue(ctx context.Context, t sqlc.Trigger) PollRe
 	// (ADR-1180); the claims must outlast it or they would be requeued
 	// while the handler still ran.
 	// The lease is the gateway's bound on the batch plus a margin to record
-	// it (ADR-20261113180000, R5-11). A flat ten-minute floor outlived every
+	// it (ADR-20261115183906, R5-11). A flat ten-minute floor outlived every
 	// ordinary batch by minutes, and when a schedd died mid-dispatch a
 	// binding at its concurrency stalled for the whole of it.
 	leaseSeconds := int((api.TriggerBatchTimeout + api.AsyncInvocationLeaseMargin) / time.Second)
