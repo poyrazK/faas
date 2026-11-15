@@ -532,6 +532,9 @@ type MemStore struct {
 	outboundAIRequestContent      map[string]OutboundAIRequestContent
 	outboundAIReplays             map[string]OutboundAIReplay
 	outboundAIEvaluations         map[string]OutboundAIEvaluation
+	outboundAIPrompts             map[string]OutboundAIPrompt
+	outboundAIPromptVersions      map[string][]OutboundAIPromptVersion
+	outboundAIPromptEvaluations   map[string]OutboundAIPromptEvaluation
 	outboundAIUserUsage           map[string][]OutboundAIUserUsageItem
 	outboundAITagUsage            map[string][]OutboundAITagUsageItem
 	outboundAITagLimits           map[string][]api.OutboundAITagLimit

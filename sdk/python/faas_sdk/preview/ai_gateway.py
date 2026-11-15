@@ -6,7 +6,8 @@ routes through the outbound relay. These helpers build that base URL; the
 call to one of the app's own users and keep a conversation on one pooled
 provider key; the ``X-Gregale-AI-Tags`` and ``X-Gregale-AI-Trace`` headers
 that tag a call and group an agent task's calls; and feedback on a call by
-its ``X-Gregale-AI-Call`` ID (ADR 20261027132936).
+its ``X-Gregale-AI-Call`` ID (ADR 20261027132936). ``ai_prompt`` calls a
+managed prompt by name (ADR 20261114180740).
 """
 
 from __future__ import annotations
@@ -19,7 +20,9 @@ import os
 import re
 import urllib.error
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
 from urllib.parse import quote
 
 AI_USER_HEADER = "X-Gregale-AI-User"
@@ -27,12 +30,14 @@ AI_SESSION_HEADER = "X-Gregale-AI-Session"
 AI_TAGS_HEADER = "X-Gregale-AI-Tags"
 AI_TRACE_HEADER = "X-Gregale-AI-Trace"
 AI_CALL_HEADER = "X-Gregale-AI-Call"
+AI_PROMPT_VERSION_HEADER = "X-Gregale-AI-Prompt-Version"
 
 _AI_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:@+=/|-]{1,64}$")
 _AI_TAG_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
 _AI_TAG_VALUE_PATTERN = re.compile(r"^[A-Za-z0-9._:@+/-]{1,64}$")
 _AI_FEEDBACK_LABEL_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{0,31}$")
 _AI_TAGS_MAX = 5
+_AI_PROMPT_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 class AIGatewayError(ValueError):
@@ -157,8 +162,97 @@ def opaque_ai_user_id(raw: str, secret: str | bytes | None = None) -> str:
     return "u_" + base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
 
 
+@dataclass(frozen=True)
+class AIPromptResult:
+    """The answer of a managed prompt call."""
+
+    completion: dict[str, Any]
+    """The OpenAI chat completions response."""
+    text: str
+    """The first choice's message text, or ``""`` when it has none."""
+    version: int
+    """The version that served the call."""
+    call_id: str | None
+    """The call's ID, which ``ai_gateway_feedback`` names."""
+
+
+class AIPrompt:
+    """A managed prompt the app calls by name at ``$GREGALE_OUTBOUND_URL/p/{name}``."""
+
+    def __init__(self, name: str) -> None:
+        if not _AI_PROMPT_NAME_PATTERN.fullmatch(name):
+            raise AIGatewayError("a prompt name is a DNS label: lowercase letters, digits and -")
+        self.name = name
+
+    def run(
+        self,
+        variables: Mapping[str, str] | None = None,
+        *,
+        messages: Sequence[Mapping[str, Any]] | None = None,
+        version: int | None = None,
+        user: str | None = None,
+        session: str | None = None,
+        tags: Mapping[str, str] | None = None,
+        trace: str | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float = 120.0,
+    ) -> AIPromptResult:
+        """Render the prompt with ``variables`` and return the model's answer.
+
+        ``messages`` are OpenAI chat messages appended after the template's,
+        such as the conversation so far; ``version`` pins a version instead
+        of the live one.
+        """
+        if version is not None and (isinstance(version, bool) or not isinstance(version, int) or version < 1):
+            raise AIGatewayError("version must be a positive integer")
+        base = (os.environ if env is None else env).get("GREGALE_OUTBOUND_URL", "")
+        if not base:
+            raise AIGatewayError("GREGALE_OUTBOUND_URL is not set; the relay is only available inside Gregale apps")
+        body: dict[str, Any] = {}
+        if variables:
+            body["variables"] = dict(variables)
+        if messages:
+            body["messages"] = [dict(message) for message in messages]
+        if version is not None:
+            body["version"] = version
+        headers = {"Content-Type": "application/json"}
+        headers.update(ai_gateway_headers(user=user, session=session, tags=tags, trace=trace))
+        request = urllib.request.Request(
+            f"{base.rstrip('/')}/p/{self.name}", data=json.dumps(body).encode(), headers=headers, method="POST"
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - the app's own loopback relay
+                completion = json.loads(response.read())
+                served = response.headers.get(AI_PROMPT_VERSION_HEADER) or "0"
+                call_id = response.headers.get(AI_CALL_HEADER)
+        except urllib.error.HTTPError as error:
+            code = ""
+            try:
+                problem = json.loads(error.read())
+                if isinstance(problem, dict) and isinstance(problem.get("code"), str):
+                    code = f" ({problem['code']})"
+            except ValueError:
+                pass
+            raise AIGatewayError(f"prompt call was refused with status {error.code}{code}") from None
+        text = ""
+        choices = completion.get("choices") if isinstance(completion, dict) else None
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            content = (choices[0].get("message") or {}).get("content")
+            text = content if isinstance(content, str) else ""
+        return AIPromptResult(completion=completion, text=text, version=int(served), call_id=call_id)
+
+
+def ai_prompt(name: str) -> AIPrompt:
+    """A managed prompt by name, such as ``ai_prompt("support-reply").run({"question": q})``."""
+    return AIPrompt(name)
+
+
 __all__ = (
     "AI_CALL_HEADER",
+    "AI_PROMPT_VERSION_HEADER",
+    "AIPrompt",
+    "AIPromptResult",
+    "ai_prompt",
     "AI_SESSION_HEADER",
     "AI_TAGS_HEADER",
     "AI_TRACE_HEADER",

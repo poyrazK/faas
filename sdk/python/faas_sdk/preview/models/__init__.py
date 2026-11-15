@@ -978,6 +978,8 @@ from .create_org_object_bucket_body import CreateOrgObjectBucketBody
 from .create_org_request import CreateOrgRequest
 from .create_outbound_ai_access_token_request import CreateOutboundAIAccessTokenRequest
 from .create_outbound_ai_evaluation_request import CreateOutboundAIEvaluationRequest
+from .create_outbound_ai_prompt_evaluation_request import CreateOutboundAIPromptEvaluationRequest
+from .create_outbound_ai_prompt_evaluation_request_cases_item import CreateOutboundAIPromptEvaluationRequestCasesItem
 from .create_outbound_ai_replay_request import CreateOutboundAIReplayRequest
 from .create_outbound_ai_route_request import CreateOutboundAIRouteRequest
 from .create_outbound_ai_route_request_format import CreateOutboundAIRouteRequestFormat
@@ -4244,6 +4246,30 @@ from .outbound_ai_online_evaluation import OutboundAIOnlineEvaluation
 from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
+from .outbound_ai_prompt import OutboundAIPrompt
+from .outbound_ai_prompt_canary import OutboundAIPromptCanary
+from .outbound_ai_prompt_canary_reason_type_0 import OutboundAIPromptCanaryReasonType0
+from .outbound_ai_prompt_canary_state import OutboundAIPromptCanaryState
+from .outbound_ai_prompt_evaluation import OutboundAIPromptEvaluation
+from .outbound_ai_prompt_evaluation_item import OutboundAIPromptEvaluationItem
+from .outbound_ai_prompt_evaluation_item_verdict import OutboundAIPromptEvaluationItemVerdict
+from .outbound_ai_prompt_evaluation_list import OutboundAIPromptEvaluationList
+from .outbound_ai_prompt_evaluation_state import OutboundAIPromptEvaluationState
+from .outbound_ai_prompt_evaluation_verdict_type_1 import OutboundAIPromptEvaluationVerdictType1
+from .outbound_ai_prompt_evaluation_verdict_type_2_type_1 import OutboundAIPromptEvaluationVerdictType2Type1
+from .outbound_ai_prompt_evaluation_verdict_type_3_type_1 import OutboundAIPromptEvaluationVerdictType3Type1
+from .outbound_ai_prompt_list import OutboundAIPromptList
+from .outbound_ai_prompt_message import OutboundAIPromptMessage
+from .outbound_ai_prompt_message_role import OutboundAIPromptMessageRole
+from .outbound_ai_prompt_params import OutboundAIPromptParams
+from .outbound_ai_prompt_params_response_format import OutboundAIPromptParamsResponseFormat
+from .outbound_ai_prompt_stats import OutboundAIPromptStats
+from .outbound_ai_prompt_target import OutboundAIPromptTarget
+from .outbound_ai_prompt_version import OutboundAIPromptVersion
+from .outbound_ai_prompt_version_defaults import OutboundAIPromptVersionDefaults
+from .outbound_ai_prompt_version_list import OutboundAIPromptVersionList
+from .outbound_ai_prompt_version_stats import OutboundAIPromptVersionStats
+from .outbound_ai_prompt_version_summary import OutboundAIPromptVersionSummary
 from .outbound_ai_quality_alert import OutboundAIQualityAlert
 from .outbound_ai_quality_alert_list import OutboundAIQualityAlertList
 from .outbound_ai_quality_alert_metric import OutboundAIQualityAlertMetric
@@ -4500,6 +4526,9 @@ from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_otlp_metrics_json_body import PostOTLPMetricsJsonBody
 from .post_otlp_metrics_response_200 import PostOTLPMetricsResponse200
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .postgres_change_feed import PostgresChangeFeed
+from .postgres_change_feed_operations_item import PostgresChangeFeedOperationsItem
+from .postgres_changes_response import PostgresChangesResponse
 from .pre_auth_enforcement_suggestion import PreAuthEnforcementSuggestion
 from .pre_auth_enforcement_suggestion_status import PreAuthEnforcementSuggestionStatus
 from .pre_auth_failed_response_limit import PreAuthFailedResponseLimit
@@ -4963,6 +4992,9 @@ from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeCha
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .publish_stored_workflow_request import PublishStoredWorkflowRequest
+from .push_outbound_ai_prompt_version_request import PushOutboundAIPromptVersionRequest
+from .push_outbound_ai_prompt_version_request_defaults import PushOutboundAIPromptVersionRequestDefaults
+from .push_outbound_ai_prompt_version_response import PushOutboundAIPromptVersionResponse
 from .put_api_consumer_billing_policy_request import PutAPIConsumerBillingPolicyRequest
 from .put_api_consumer_spend_cap_request import PutAPIConsumerSpendCapRequest
 from .put_api_consumer_trial_request import PutAPIConsumerTrialRequest
@@ -4991,6 +5023,8 @@ from .put_outbound_ai_feedback_request_rating import PutOutboundAIFeedbackReques
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
+from .put_outbound_ai_prompt_canary_request import PutOutboundAIPromptCanaryRequest
+from .put_outbound_ai_prompt_live_request import PutOutboundAIPromptLiveRequest
 from .put_outbound_ai_route_canary_request import PutOutboundAIRouteCanaryRequest
 from .put_outbound_ai_route_targets_request import PutOutboundAIRouteTargetsRequest
 from .put_outbound_ai_route_targets_request_strategy import PutOutboundAIRouteTargetsRequestStrategy
@@ -5002,6 +5036,8 @@ from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
+from .put_postgres_changes_connection_body import PutPostgresChangesConnectionBody
+from .put_postgres_changes_request import PutPostgresChangesRequest
 from .put_webhook_workflow_binding_request import PutWebhookWorkflowBindingRequest
 from .put_webhook_workflow_binding_request_filter import PutWebhookWorkflowBindingRequestFilter
 from .queue_binding_canary import QueueBindingCanary
@@ -7596,6 +7632,8 @@ __all__ = (
     "CreateOrgRequest",
     "CreateOutboundAIAccessTokenRequest",
     "CreateOutboundAIEvaluationRequest",
+    "CreateOutboundAIPromptEvaluationRequest",
+    "CreateOutboundAIPromptEvaluationRequestCasesItem",
     "CreateOutboundAIReplayRequest",
     "CreateOutboundAIRouteRequest",
     "CreateOutboundAIRouteRequestFormat",
@@ -10629,6 +10667,30 @@ __all__ = (
     "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
+    "OutboundAIPrompt",
+    "OutboundAIPromptCanary",
+    "OutboundAIPromptCanaryReasonType0",
+    "OutboundAIPromptCanaryState",
+    "OutboundAIPromptEvaluation",
+    "OutboundAIPromptEvaluationItem",
+    "OutboundAIPromptEvaluationItemVerdict",
+    "OutboundAIPromptEvaluationList",
+    "OutboundAIPromptEvaluationState",
+    "OutboundAIPromptEvaluationVerdictType1",
+    "OutboundAIPromptEvaluationVerdictType2Type1",
+    "OutboundAIPromptEvaluationVerdictType3Type1",
+    "OutboundAIPromptList",
+    "OutboundAIPromptMessage",
+    "OutboundAIPromptMessageRole",
+    "OutboundAIPromptParams",
+    "OutboundAIPromptParamsResponseFormat",
+    "OutboundAIPromptStats",
+    "OutboundAIPromptTarget",
+    "OutboundAIPromptVersion",
+    "OutboundAIPromptVersionDefaults",
+    "OutboundAIPromptVersionList",
+    "OutboundAIPromptVersionStats",
+    "OutboundAIPromptVersionSummary",
     "OutboundAIQualityAlert",
     "OutboundAIQualityAlertList",
     "OutboundAIQualityAlertMetric",
@@ -10864,6 +10926,9 @@ __all__ = (
     "PostForceColdBootAppConfirm",
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
+    "PostgresChangeFeed",
+    "PostgresChangeFeedOperationsItem",
+    "PostgresChangesResponse",
     "PostOTLPMetricsJsonBody",
     "PostOTLPMetricsResponse200",
     "PostSweepStuckBuildsConfirm",
@@ -11296,6 +11361,9 @@ __all__ = (
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
     "PublishStoredWorkflowRequest",
+    "PushOutboundAIPromptVersionRequest",
+    "PushOutboundAIPromptVersionRequestDefaults",
+    "PushOutboundAIPromptVersionResponse",
     "PutAPIConsumerBillingPolicyRequest",
     "PutAPIConsumerSpendCapRequest",
     "PutAPIConsumerTrialRequest",
@@ -11324,6 +11392,8 @@ __all__ = (
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",
+    "PutOutboundAIPromptCanaryRequest",
+    "PutOutboundAIPromptLiveRequest",
     "PutOutboundAIRouteCanaryRequest",
     "PutOutboundAIRouteTargetsRequest",
     "PutOutboundAIRouteTargetsRequestStrategy",
@@ -11335,6 +11405,8 @@ __all__ = (
     "PutOutboundDailyRequestBudgetRequest",
     "PutOutboundRequestPolicyRequest",
     "PutOutboundRunsBindingRequest",
+    "PutPostgresChangesConnectionBody",
+    "PutPostgresChangesRequest",
     "PutWebhookWorkflowBindingRequest",
     "PutWebhookWorkflowBindingRequestFilter",
     "QueueBindingCanary",
