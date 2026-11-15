@@ -53,6 +53,9 @@ type SyntheticCheckResponse struct {
 	IntervalSeconds int    `json:"interval_seconds"`
 	Enabled         bool   `json:"enabled"`
 	CreatedAt       string `json:"created_at"`
+	// Warning explains why the check cannot pass as configured, e.g. the
+	// app's platform auth refuses the probe, which sends no credential.
+	Warning string `json:"warning,omitempty"`
 	// Results is present on GET /v1/apps/{slug}/synthetics/{id} only.
 	Results *SyntheticCheckResults `json:"results,omitempty"`
 }
