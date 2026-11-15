@@ -96,7 +96,7 @@ func (s *PgStore) AcquireTaskToolExecutionEffect(ctx context.Context, account, k
 		return nil, err
 	}
 	release := func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = tx.Rollback(cleanup)
 		s.taskToolExecutionSlots.Release(1)

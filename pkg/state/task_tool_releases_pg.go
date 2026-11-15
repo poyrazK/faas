@@ -68,13 +68,15 @@ func (s *PgStore) PrepareTaskToolReleaseIntent(ctx context.Context, account, key
 	}
 	body, err := q.GetTaskToolReleaseIntent(ctx, tx, toolpublicationdb.GetTaskToolReleaseIntentParams{AccountID: mustPgUUID(account), ID: id})
 	if err == nil {
-		if err := json.Unmarshal(body, &record); err != nil {
-			return record, err
+		// Do not decode through the provisional intent's caller-owned maps or slices.
+		var retained api.TaskToolReleaseIntentRecord
+		if err := json.Unmarshal(body, &retained); err != nil {
+			return retained, err
 		}
-		if record.RequesterKeyID != key || !reflect.DeepEqual(record.Intent, intent) {
-			return record, ErrConflict
+		if retained.RequesterKeyID != key || !reflect.DeepEqual(retained.Intent, intent) {
+			return retained, ErrConflict
 		}
-		return tasktoolrelease.View(record, time.Now()), nil
+		return tasktoolrelease.View(retained, time.Now()), nil
 	}
 	if !errors.Is(mapErr(err), ErrNotFound) {
 		return record, mapErr(err)
