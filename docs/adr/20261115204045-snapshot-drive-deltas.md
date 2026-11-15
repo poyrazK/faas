@@ -1,4 +1,4 @@
-# ADR-20261115120000 · Snapshot drives stored as deltas against their app layer
+# ADR-20261115204045 · Snapshot drives stored as deltas against their app layer
 
 - **Status:** accepted
 - **Date:** 2026-11-15

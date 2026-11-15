@@ -1,6 +1,6 @@
 package storage
 
-// Node cache side of snapshot drive deltas (ADR-20261115120000): the cache
+// Node cache side of snapshot drive deltas (ADR-20261115204045): the cache
 // uploads a delta in place of the drive and rebuilds the drive when it
 // fetches one, so every reader of the cache sees whole drives.
 
