@@ -1290,6 +1290,10 @@ func TestAuditEvents_AppDeletedEmitsEvent(t *testing.T) {
 	if data["slug"] != app.Slug {
 		t.Errorf("Data.slug = %v, want %s", data["slug"], app.Slug)
 	}
+	// prod 2026-11-15: the row named only "apid", not the key that deleted it.
+	if !strings.HasPrefix(found.Actor, "api:") || data["actor_key_id"] == nil || data["actor_via"] != "api" {
+		t.Errorf("actor = %q, data = %+v; want the API key that deleted the app", found.Actor, data)
+	}
 }
 
 // TestAuditEvents_AppRollbackRequestedEmitsEvent (issue #291) drives
