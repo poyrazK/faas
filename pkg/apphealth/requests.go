@@ -54,6 +54,11 @@ func assessRequests(out *api.AppHealthResponse, e Evidence) {
 	switch {
 	case m.RequestCount == 0:
 		requestCheck(out, NotApplicable, "requests_unexercised", "No requests were observed for the current serving releases in the last 5 minutes; request success has not been exercised.", "")
+	case m.ServerErrors >= api.AppHealthMinServerErrors && m.ServerErrors == m.RequestCount:
+		// Every request failed. Too few requests to grade an error rate is
+		// no reason to call that unknown (prod 2026-11-15: 15 of 15 requests
+		// returned 5xx and app health said "unknown").
+		requestCheck(out, Fail, "request_all_failed", detail+" Every request failed.", "errors")
 	case m.ServerErrors > 0 && m.RequestCount < api.AppHealthMinRequests:
 		requestCheck(out, Unknown, "request_volume_insufficient", detail+" There are too few requests to classify error severity.", "errors")
 	case m.ServerErrors >= api.AppHealthMinServerErrors && m.ErrorRatePct >= api.AppHealthUnhealthyErrorRatePct:

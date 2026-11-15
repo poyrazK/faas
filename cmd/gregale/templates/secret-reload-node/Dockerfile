@@ -6,7 +6,7 @@ RUN npm ci --omit=dev --ignore-scripts
 
 COPY handler.js database.js ./
 COPY runtime ./runtime
-ENV PORT=8080
+ENV PORT=8080 NODE_ENV=production
 EXPOSE 8080
 LABEL com.gregale.secret-reload-signal="SIGHUP" \
       com.gregale.secret-reload-readiness="required"

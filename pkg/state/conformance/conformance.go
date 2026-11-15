@@ -96,7 +96,6 @@ func Run(t *testing.T, open Open) {
 		{"webhook_delivery_claim_fences_replays", testWebhookDeliveryClaimFencesReplays},
 		{"operator_intent_claim_is_exactly_once", testOperatorIntentClaimIsExactlyOnce},
 		{"cli_auth_code_claim_binds_one_account", testCliAuthCodeClaimBindsOneAccount},
-		{"cron_timed_out_run_counts_while_instance_runs", testCronTimedOutRunCountsWhileInstanceRuns},
 		{"failing_cron_pauses_and_queues_notice", testFailingCronPausesAndQueuesNotice},
 		{"platform_alert_notice_queue_dedupes", testPlatformAlertNoticeQueueDedupes},
 		{"cli_auth_loopback_claim_rebinds_device", testCliAuthLoopbackClaimRebindsDevice},

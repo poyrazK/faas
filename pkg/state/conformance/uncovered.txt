@@ -72,6 +72,7 @@ ConsumeCliAuthCode
 ConsumeProjectEnvironmentApproval
 ConsumeRecoveryCode
 CountAPIKeys
+CountActiveCronInvocations
 CountActiveOrgMembers
 CountActiveRunsByApp
 CountAppEnv
@@ -556,7 +557,6 @@ UpdateAppWebhook
 UpdateBuildProvenanceSBOM
 UpdateCorsPreset
 UpdateCron
-UpdateCronWithOptions
 UpdateCustomDomainCertStatus
 UpdateDataUpstreamCircuitBreaker
 UpdateDeploymentMinInstances

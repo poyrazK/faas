@@ -14339,26 +14339,11 @@ func (m *MemStore) CountActiveCronInvocations(_ context.Context, cronID string) 
 		if inv.CronID == nil || *inv.CronID != cronID || inv.Source != InvocationCron {
 			continue
 		}
-		if inv.State == InvocationPending || inv.State == InvocationDispatching || m.timedOutCronRunMayRunLocked(inv) {
+		if inv.State == InvocationPending || inv.State == InvocationDispatching || timedOutRunMayStillRun(inv, time.Now()) {
 			n++
 		}
 	}
 	return n, nil
-}
-
-// timedOutCronRunMayRunLocked mirrors PgStore.CountActiveCronInvocations: a
-// run that timed out counts while its instance still runs, for at most
-// api.CronTimedOutRunHold.
-func (m *MemStore) timedOutCronRunMayRunLocked(inv Invocation) bool {
-	if inv.Outcome == nil || *inv.Outcome != OutcomeTimeout || inv.CompletedAt == nil || inv.ReceivedAt == nil ||
-		time.Since(*inv.CompletedAt) >= api.CronTimedOutRunHold {
-		return false
-	}
-	if inv.InstanceID == "" {
-		return true
-	}
-	ins, ok := m.instances[inv.InstanceID]
-	return ok && (ins.State == string(StateRunning) || ins.State == string(StateDraining))
 }
 
 // Fire-now request queue (ADR-090 PR-C). In-memory mirrors the

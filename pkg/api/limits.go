@@ -212,6 +212,12 @@ const (
 	// signal.
 	AttentionJobFailures = 3
 	AttentionJobWindow   = 7 * 24 * time.Hour
+	// The last AttentionCronFailures finished runs of one enabled HTTP cron,
+	// all failed or timed out, the newest within AttentionCronWindow, open a
+	// crons_failing signal (prod 2026-11-15: a cron 404'd every 15 minutes
+	// for days and nothing told the customer).
+	AttentionCronFailures = 5
+	AttentionCronWindow   = 24 * time.Hour
 	// A payment failure within AttentionPaymentWindow with no recovery
 	// since opens a payment_failing signal.
 	AttentionPaymentWindow = 14 * 24 * time.Hour
@@ -2116,15 +2122,6 @@ const (
 	CronCatchUpRecordedMax = 20
 	CronCatchUpScanMax     = 1 << 21
 )
-
-// CronTimedOutRunHold is how long an HTTP cron run that timed out still
-// counts as running for skip_if_running and overlap=skip. The gateway stops
-// waiting at the request timeout but the app's handler goes on, so the next
-// occurrence used to start beside it (prod CLI e2e 2026-11-15 #13). The run
-// counts while the instance that served it is still running or draining,
-// for at most this long: the largest request_timeout_s ceiling (Scale,
-// RequestBudgetMaxMs).
-const CronTimedOutRunHold = 15 * time.Minute
 
 // Platform alerts (ADR-20261115194000). An HTTP cron whose newest
 // CronFailurePauseRuns finished runs all failed, the oldest of them at least

@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -159,13 +158,17 @@ func (s *PgStore) CreateScheduledCronInvocationOccurrence(ctx context.Context, c
 			}
 		} else if policy.Overlap == "skip" {
 			var timedOut string
+			// A timed-out run the app may still be running (CronTimedOutRunHold),
+			// the same rule as CountActiveCronInvocations.
 			err := tx.QueryRow(ctx, `
-				select coalesce(inv.occurrence_id::text, '') from invocations inv
-				 where inv.cron_id = $1::uuid and inv.source = 'cron' and `+timedOutCronRunPredicate+`
-				 order by inv.completed_at desc limit 1`, cronID, api.CronTimedOutRunHold).Scan(&timedOut)
+				select coalesce(occurrence_id::text, '') from invocations
+				 where cron_id = $1::uuid and source = 'cron'
+				   and state = 'failed' and outcome = 'timeout' and completed_at is not null
+				   and now() < completed_at + least(completed_at - created_at, $2 * interval '1 second')
+				 order by completed_at desc limit 1`, cronID, int(CronTimedOutRunHold.Seconds())).Scan(&timedOut)
 			switch {
 			case err == nil:
-				status, reason, blocker = "skipped_overlap", timedOutCronRunReason, timedOut
+				status, reason, blocker = "skipped_overlap", "an earlier run of this cron timed out and may still be running", timedOut
 			case !errors.Is(err, pgx.ErrNoRows):
 				return Invocation{}, ScheduleOccurrence{}, false, fmt.Errorf("state: find timed-out HTTP cron run: %w", err)
 			}
