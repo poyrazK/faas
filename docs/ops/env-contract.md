@@ -72,6 +72,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_REQUEST_WRITE_TIMEOUT` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_ROLE` | apid, shared | `dropin` |  |  | `` |  |
 | `FAAS_APID_RUNTIME_SIGNING_KEY_FILE` | apid | `dropin` |  |  | `` | runtime secret writer signing key (ADR 20261028161502 amendment 1): an Ed25519 PKCS#8 key apid signs every runtime secret it seals with, storing the signature in runtime_secret_signatures; delivered as a credential by the seal_domains role to faas-apid and faas-apid-clone-worker; unset seals unsigned |
+| `FAAS_APID_SECRETD_TARGET` | apid | `dropin` |  |  | `` | TLS address of secretd for live leased PostgreSQL cutover verification; no plaintext credentials return to apid |
+| `FAAS_APID_SECRETD_TLS_CA_PATH` | apid | `dropin` |  |  | `` | CA for the secretd PostgreSQL verifier connection |
+| `FAAS_APID_SECRETD_TLS_CERT_PATH` | apid | `dropin` |  |  | `` | Dedicated apid-postgres-verifier.faas client certificate |
+| `FAAS_APID_SECRETD_TLS_KEY_PATH` | apid | `dropin` |  |  | `` | Dedicated PostgreSQL verifier client key via systemd LoadCredential |
 | `FAAS_API_CONTRACT_DIFF_ENABLED` | shared | `dropin` |  |  | `` | public-beta control-plane and compute-only drop-ins enable the OpenAPI contract-diff gate; unset remains off for local/dev installs |
 | `FAAS_API_DISCOVERY_ENABLED` | gatewayd-internal | `default` |  |  | `` | opt-in durable API route inventory; off by default pending operator path-privacy review (ADR-270) |
 | `FAAS_API_HOSTING_SMOKE_REQUIRED` | imaged | `dropin` |  |  | `` | public-beta compute-only drop-in enables fail-closed post-readiness API hosting smoke verification |
@@ -1005,6 +1009,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SECRETD_EDGE_IDENTITY` | secretd | `dropin` |  |  | `` | ADR-20261110210000 slice 3f: the edge seal domain's identity, through LoadCredential=faas_seal_domain_edge from /etc/faas/secrets/domains/edge.age (faas_seal_domain_edge_previous beside it during a rotation), staged on the control plane only with SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true; set, secretd opens log drain headers (OpenLogDrainHeader); unset refuses them |
 | `FAAS_SECRETD_LISTEN` | secretd | `dropin` |  |  | `` | ADR-20261110210000 §3: tcp://<control plane private address>:<port>; secretd_service renders it from faas_secretd_listen |
 | `FAAS_SECRETD_METRICS_ADDR` | secretd | `dropin` |  |  | `` | ADR-20261110210000: loopback host:port serving /metrics (faas_secretd_opens_total, faas_secretd_refusals_total); secretd_service renders it from faas_secretd_metrics_listen (127.0.0.1:9114) and the prometheus role scrapes it; unset serves no metrics |
+| `FAAS_SECRETD_POSTGRES_HMAC_KEY` | secretd | `dropin` |  |  | `` | Control-plane fingerprint key via LoadCredential; validates staged SQL credential fingerprints inside secretd |
 | `FAAS_SECRETD_REQUIRE_REFERENCES` | secretd | `dropin` |  | false | `` | ADR-20261110210000 slice 3d-4 contract step: true refuses app-secret entries that carry ciphertext instead of naming the app's own app_secrets row (scope, key); secretd_service renders it from faas_secretd_require_references once every schedd and vmmd sends references |
 | `FAAS_SECRETD_ROLE` | secretd | `dropin` |  |  | `` | ADR-20261110210000 §3: the box role secretd checks it runs on (control-plane or single-box) |
 | `FAAS_SECRETD_RUNTIME_IDENTITY` | secretd | `dropin` |  |  | `` | ADR-20261110210000 §3: the runtime seal domain's identity, through LoadCredential=faas_seal_domain_runtime from /etc/faas/secrets/domains/runtime.age, with faas_seal_domain_runtime_previous beside it during a rotation; staged on the control plane only with SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true |

@@ -20,6 +20,40 @@ compute nodes can stop holding the runtime seal domain's identity.
    `journalctl -u faas-secretd` shows `secretd: serving` with
    `identities=1` (2 during a rotation).
 
+## Staged PostgreSQL credential verification
+
+Managed PostgreSQL cutover and restore rollback verify staged credentials
+through `VerifyPostgresCutover`. The dedicated `apid-postgres-verifier.faas`
+client can request a read-only SQL probe for a live leased cutover; it cannot
+open application secrets or receive a connection string. secretd checks the
+stored target, envelope digest, account binding and fingerprint, then records
+`secret_verification_audit` before opening the envelope.
+
+Roll out in this order:
+
+1. Apply migration `20261114190000002_secret_verification_audit.sql` and the
+   runtime-role grants before activating the new verifier.
+2. Deploy secretd and converge `secretd_service`. It issues both the server
+   leaf and `/etc/faas/tls/secretd-verifier/apid.{crt,key}`, and loads the
+   control plane's `/etc/faas/secrets/host.hmac.key` with
+   `FAAS_SECRETD_POSTGRES_HMAC_KEY`. This must be the same fingerprint key
+   used by the local apid; do not route these probes to a different host
+   with a different fingerprint key.
+3. Deploy apid with the role's `51-faas-postgres-verifier.conf` drop-in. It
+   sets `FAAS_APID_SECRETD_TARGET` and its three `FAAS_APID_SECRETD_TLS_*_PATH`
+   variables. apid retains local verification for historical fleet-encrypted
+   envelopes and delegates runtime-domain envelopes to secretd.
+4. Verify a temporary cutover and restore rollback. Successful probes add
+   `secret_verification_audit` rows and increment
+   `faas_secretd_opens_total{rpc="VerifyPostgresCutover",via="verification"}`.
+   Refusals increment `faas_secretd_refusals_total` for that RPC. Missing TLS,
+   key, audit access or an expired lease fails verification before promotion.
+
+Keep the audit migration when rolling binaries back. Removing the apid
+drop-in restores the historical fleet-only verification path; runtime-domain
+cutovers require the new verifier. This change does not stage the private
+runtime identity in apid.
+
 ## Turn it on for a compute node (slice 3c-1)
 
 Prerequisite: `faas_seal_domain_runtime_binding_required: true` on compute

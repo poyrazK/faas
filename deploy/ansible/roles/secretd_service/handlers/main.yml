@@ -1,4 +1,20 @@
 ---
+- name: secretd_service — reload apid verifier configuration
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: restart faas-apid postgres verifier
+
+- name: secretd_service — inspect apid verifier service state
+  ansible.builtin.service_facts:
+  listen: restart faas-apid postgres verifier
+
+- name: secretd_service — restart the running apid verifier
+  ansible.builtin.systemd_service:
+    name: faas-apid.service
+    state: restarted
+  when: ansible_facts.services.get('faas-apid.service', {}).get('state', '') == 'running'
+  listen: restart faas-apid postgres verifier
+
 - name: secretd_service — daemon-reload
   ansible.builtin.systemd_service:
     daemon_reload: true

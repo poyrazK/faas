@@ -90,3 +90,20 @@ VALUES (sqlc.arg(node_id)::uuid, sqlc.arg(job_id)::uuid, sqlc.arg(via)::text, 1)
 -- A trigger of the named app only (ADR-20261110210000 slice 3g).
 SELECT kind, config FROM triggers
  WHERE id = sqlc.arg(id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
+
+-- name: PostgresCutoverVerification :one
+SELECT c.account_id, c.app_id, m.environment_key, m.access, d.postgres_major,
+       m.provider_identity_id, m.credential_ref, m.ciphertext, m.kid, m.value_hash
+FROM managed_postgres_cutovers c
+JOIN managed_postgres_cutover_credentials m ON m.cutover_id=c.id
+JOIN managed_postgres_databases d ON d.id=c.target_database_id AND d.account_id=c.account_id
+WHERE c.id=sqlc.arg(cutover_id)::uuid AND c.account_id=sqlc.arg(account_id)::uuid
+  AND m.id=sqlc.arg(credential_id)::uuid AND m.state='sealed'
+  AND c.state='verifying' AND c.lease_token=sqlc.arg(lease_token)::text AND c.lease_until>clock_timestamp()
+  AND d.state='ready' AND d.backend_id=c.target_backend_id
+  AND d.backend_fingerprint=c.target_backend_fingerprint
+  AND d.provider_resource_id=c.target_resource_id AND d.desired_generation=c.target_generation;
+
+-- name: RecordPostgresVerification :exec
+INSERT INTO secret_verification_audit(account_id,app_id,cutover_id,credential_id)
+VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(cutover_id)::uuid,sqlc.arg(credential_id)::uuid);

@@ -385,6 +385,28 @@ source connections). Each moves as follows:
   and row security lets it write only its own `compute_nodes` and capacity
   rows.
 
+#### Staged PostgreSQL verification (2026-11-14)
+
+Cutover and restore rollback (ADR-465) must verify runtime-domain credentials
+without giving apid the private runtime identity. `VerifyPostgresCutover`
+therefore accepts only the dedicated control-plane
+`apid-postgres-verifier.faas` mTLS leaf and returns an empty success response.
+That leaf authorizes no ordinary secret-opening RPC.
+
+The request identifies an existing cutover member, live lease and exact sealed
+envelope digest. secretd reads the stored credential itself, checks that the
+cutover is still verifying and its target database identity and generation are
+current, records `secret_verification_audit` before opening, validates the
+account binding and fingerprint, and performs a bounded read-only TLS SQL
+probe. The fingerprint key is loaded on the same control-plane host as apid;
+neither it nor the connection string crosses this RPC. Unknown callers, changed
+envelopes or targets, expired leases and failed audit writes fail closed.
+
+Existing fleet-encrypted members retain their local verifier during rollout.
+A failure opening a matching local envelope never escalates to the remote
+opener. Deploy the audit migration before activating secretd and its apid
+client configuration; the procedure is in `docs/runbooks/secretd.md`.
+
 ### 4. Placement grants are issued by the control plane
 
 A rooted node can write `instances`, so secretd cannot authorize from it.
