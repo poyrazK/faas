@@ -3994,6 +3994,9 @@ type DataPipeline struct {
 	ServingConfig          []byte
 	FreshnessTargetSeconds int64
 	IndexChange            []byte
+	EvolutionChange        []byte
+	WorkConfig             []byte
+	WorkStatus             []byte
 }
 
 type DataPipelineAlert struct {
