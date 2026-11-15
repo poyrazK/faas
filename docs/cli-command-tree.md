@@ -386,6 +386,14 @@ touch them. The tables below map each earlier name.
 | `gregale events subscriptions` | `gregale event subscription list` |
 | `gregale events workflow-backfill` | `gregale event backfill create --workflow-name <WORKFLOW-NAME>` |
 | `gregale events workflow-replay-preview` | `gregale event backfill create --workflow-name <WORKFLOW-NAME> --dry-run` |
+| `gregale flags kill` | `gregale flag kill set` |
+| `gregale flags off` | `gregale flag disable` |
+| `gregale flags on` | `gregale flag enable` |
+| `gregale flags percent` | `gregale flag rollout set` |
+| `gregale flags rule-add` | `gregale flag rule create` |
+| `gregale flags rule-rm` | `gregale flag rule delete` |
+| `gregale flags stale` | `gregale flag stale list` |
+| `gregale flags unkill` | `gregale flag kill unset` |
 | `gregale github bind` | `gregale github link` |
 | `gregale incidents note` | `gregale alert incident update --note <NOTE>` |
 | `gregale invitations accept` | `gregale org invitation accept` |
