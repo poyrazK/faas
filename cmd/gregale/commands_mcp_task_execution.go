@@ -52,7 +52,7 @@ func mcpTaskExecutionDir(account, id string) (string, error) {
 	}
 	info, err := os.Lstat(dir)
 	if err != nil || !info.IsDir() || info.Mode().Perm()&0077 != 0 {
-		return "", errors.New("Task execution directory must be private")
+		return "", errors.New("task execution directory must be private")
 	}
 	return dir, nil
 }
@@ -60,7 +60,7 @@ func mcpTaskExecutionDir(account, id string) (string, error) {
 func readMCPTaskPrivate(path string, out any) error {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > api.TaskToolReleaseIntentMaxBytes {
-		return errors.New("Task execution requires a bounded private regular file")
+		return errors.New("task execution requires a bounded private regular file")
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -96,7 +96,7 @@ func writeMCPTaskPrivate(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(path))
+	dir, err := openCustomerDirectoryForSync(filepath.Dir(path))
 	if err != nil {
 		return err
 	}
@@ -409,10 +409,10 @@ func applyMCPTaskExecution(ctx context.Context, c *Client, record api.TaskToolRe
 	// From this point all uncertain outcomes remain claimed. Never auto-retry.
 	complete := false
 	settled := true
-	defer func() { exitMCPTaskExecutor(c, record, p, token, settled) }()
+	defer func() { exitMCPTaskExecutor(ctx, c, record, p, token, settled) }()
 	defer func() {
 		if !complete {
-			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			_, _ = c.CheckTaskToolReleaseIntent(cleanup, record.ID, api.TaskToolReleaseIntentCheck{ReleaseFingerprint: record.Intent.ReleaseFingerprint, Execution: &api.TaskToolReleaseExecutionRequest{Action: "reconcile", OperationID: p.OperationID, BindingsSHA256: p.digest(), ClaimToken: token}})
 		}
@@ -437,7 +437,7 @@ func applyMCPTaskExecution(ctx context.Context, c *Client, record api.TaskToolRe
 	}
 	s.TaskIntentID, s.TaskOperationID = record.ID, p.OperationID
 	s.ReleaseID = tasktoolrelease.ExecutionReleaseID(record)
-	if err = saveMCPNativeState(state, &s); err != nil {
+	if err = saveMCPNativeStateContext(ctx, state, &s); err != nil {
 		return printErr("Task execution", err)
 	}
 	if err = guardMCPTaskExecution(ctx, c, record, p, dir); err != nil {
@@ -447,7 +447,7 @@ func applyMCPTaskExecution(ctx context.Context, c *Client, record api.TaskToolRe
 	s.quiet = true
 	settled = false
 	s.executorSettled = &settled
-	if code := runMCPNativeRelease(plan, s, state, p.Plan); code != 0 {
+	if code := runMCPNativeReleaseContext(ctx, plan, s, state, p.Plan); code != 0 {
 		return printErr("Task execution", errors.New("release stopped; inspect the durable operation and reconcile its native journal"))
 	}
 	s, err = loadMCPNativeState(state, fingerprint)

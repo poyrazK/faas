@@ -68,6 +68,21 @@ python3 scripts/agent-eval/agent_eval.py summarize agent-eval-results.jsonl
   `--max-budget-usd`) and a timeout.
 - Results append to `agent-eval-results.jsonl`, one line per run.
   `--keep-dirs` keeps transcripts; `--keep-apps` keeps apps for inspection.
+- `--cli-login` runs with your own logged-in CLI instead of
+  `GREGALE_EVAL_TOKEN`. Your account is shared with your other sessions, so an
+  app or project counts as the run's only if the agent named it: in a command,
+  a tool call, or a config file of the project (Compose service names,
+  `gregale.yaml`). Others that appear during the run are listed as
+  `not_attributed` and left alone. Cleanup deletes only the run's apps and
+  projects that did not exist before the run, never one it redeployed.
+- A task's `follow_up` is sent once (Claude only, by resuming the session) when
+  the agent finished its turn but the task's checks don't pass yet, for
+  example because it stopped to ask before deploying.
+- `wrote_outside_run` lists files the agent's file tools wrote outside its run
+  directory and adds that anti-pattern. `home_writes` lists files under your
+  home directory, two levels down, that changed during the run (agent config
+  and shell history are skipped). Other processes can show up there, so it's a
+  report for you to check, not a grade.
 
 ## Agents
 

@@ -37,8 +37,6 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -179,22 +177,7 @@ func loadClusterInternalSvcKey(
 // sides agree on the wire shape; the gatewayd-internal verifier
 // loader parses the same shape at boot.
 func parseClusterPubPEM(data []byte) (ed25519.PublicKey, error) {
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, errors.New("cluster key public_key_pem is not PEM-encoded")
-	}
-	if block.Type != "PUBLIC KEY" {
-		return nil, fmt.Errorf("cluster key public_key_pem has unexpected PEM block type %q", block.Type)
-	}
-	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("parse PKIX public key: %w", err)
-	}
-	pub, ok := parsed.(ed25519.PublicKey)
-	if !ok {
-		return nil, errors.New("cluster key public_key_pem is not an Ed25519 public key")
-	}
-	return pub, nil
+	return internalsvc.ParseClusterPublicKeyPEM(data)
 }
 
 // unsealClusterKey is the small age-decrypt wrapper that mirrors
@@ -204,24 +187,7 @@ func parseClusterPubPEM(data []byte) (ed25519.PublicKey, error) {
 // is exposed by pkg/secretbox but the wrapper keeps the failure
 // path here rather than leaking age types up through the loader.
 func unsealClusterKey(sealed []byte, identities []*age.X25519Identity) ([]byte, error) {
-	if len(sealed) == 0 {
-		return nil, errors.New("empty sealed blob")
-	}
-	if len(identities) == 0 {
-		return nil, errors.New("no identities available")
-	}
-	// secretbox.OpenBytesMulti returns (namespace, plaintext, err);
-	// the cluster-key envelope is unsealed with the default
-	// namespace "cluster_svc" (mirrors internalSvcKeySealedNamespace
-	// on the minter side). The namespace is informational — there
-	// is no cross-namespace replay concern because the row's
-	// sealed_blob is itself single-typed (one namespace per row).
-	namespace, plaintext, err := secretbox.OpenBytesMulti(identities, sealed)
-	if err != nil {
-		return nil, fmt.Errorf("age decrypt: %w", err)
-	}
-	_ = namespace // reserved for a future namespace-aware log line
-	return plaintext, nil
+	return internalsvc.UnsealClusterKey(sealed, identities)
 }
 
 // parseClusterPrivPEM is the unsealed-bytes → ed25519.PrivateKey
@@ -230,22 +196,7 @@ func unsealClusterKey(sealed []byte, identities []*age.X25519Identity) ([]byte, 
 // validated key shape regardless of where the bytes came from
 // (per-host disk vs cluster blob).
 func parseClusterPrivPEM(data []byte) (ed25519.PrivateKey, error) {
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, errors.New("cluster key payload is not PEM-encoded")
-	}
-	if block.Type != "PRIVATE KEY" {
-		return nil, fmt.Errorf("cluster key payload has unexpected PEM block type %q", block.Type)
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("parse PKCS#8: %w", err)
-	}
-	priv, ok := parsed.(ed25519.PrivateKey)
-	if !ok {
-		return nil, errors.New("cluster key payload is not an Ed25519 key")
-	}
-	return priv, nil
+	return internalsvc.ParseClusterPrivateKeyPEM(data)
 }
 
 // Compile-time check: the cluster-key helper does not depend on

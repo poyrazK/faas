@@ -76,9 +76,13 @@ SELECT coalesce(image_materialization_lease_owner, '')::text AS owner,
   FROM jobs WHERE id = sqlc.arg(id)::uuid;
 
 -- name: BuildRunner :one
--- The build's app, status, start and claiming node (slice 3j-3).
+-- The build's app, status, start and claiming node (slice 3j-3), and the
+-- registry repositories its deployment may pull (slice 3j-4; not recorded
+-- when NULL).
 SELECT d.app_id, b.status, coalesce(b.started_at, '-infinity'::timestamptz)::timestamptz AS started_at,
-       coalesce(b.builder_node_name, '')::text AS builder_node_name
+       coalesce(b.builder_node_name, '')::text AS builder_node_name,
+       (d.build_registry_scope IS NOT NULL)::boolean AS scope_recorded,
+       coalesce(d.build_registry_scope, '{}'::text[])::text[] AS build_registry_scope
   FROM builds b JOIN deployments d ON d.id = b.deployment_id
  WHERE b.id = sqlc.arg(id)::uuid;
 

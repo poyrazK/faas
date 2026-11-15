@@ -1,0 +1,12 @@
+# Managed by Ansible. ADR-20261110120000 (amended 2026-11-15): this unit
+# listens on every address, and only the host firewall keeps it off the
+# public interface. Refuse to start until that firewall is loaded: the
+# `inet faas` input chain with its default drop, which the nftables role
+# writes at boot and vmmd re-applies at its start. If nftables.service failed
+# at boot, the unit starts once vmmd has re-applied the ruleset.
+# The same file is in gatewayd_internal_service and compute_only_service;
+# pkg/daemonunitspec keeps the copies identical.
+{% if faas_require_host_firewall_on | bool %}
+[{{ faas_unit_section }}]
+ExecStartPre=+/bin/sh -c 'nft list chain inet faas input 2>/dev/null | grep -q "policy drop" || { echo "refusing to start: host firewall not loaded (inet faas input chain with policy drop)" >&2; exit 1; }'
+{% endif %}

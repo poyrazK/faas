@@ -16,7 +16,10 @@ faas_apid_credential_writes: plain
 faas_apid_credential_plain_lookup: true
 # ADR-740 developer live source patches. Must match vmmd_service's value:
 # apid publishes patches and vmmd serves them to developer environments.
-faas_dev_patch_delivery_enabled: false
+# On by default (owner decision 2026-11-15): without it every `gregale dev`
+# save waits for a full developer build. Running environments pick patches
+# up after their next developer build boots a fresh instance.
+faas_dev_patch_delivery_enabled: true
 # ADR-1161 `gregale run --image` (POST /v1/image-runs). Enable only once the
 # image-run migration and the imaged that writes image-config columns are
 # deployed.

@@ -30,6 +30,7 @@ make test-metal     # integration tests tagged //go:build metal — needs KVM + 
 make leakcheck      # asserts zero leaked netns/TAPs/jail uids/cgroups after tests
 make lint           # golangci-lint + custom checks (see Conventions)
 make lint-changed   # golangci-lint only the packages your diff touches + teststorecheck; use before a PR
+make migrations-land # branch adds migrations and main moved: merge main, re-version, regen schema.sql + sqlc
 make native-m9-acceptance # guarded two-node failure-safe acceptance on native x86_64
 ```
 

@@ -38,6 +38,8 @@ class SyntheticCheckResponse:
     created_at: datetime.datetime
     expected_status: int | Unset = UNSET
     """Exact expected status; absent means any 2xx."""
+    warning: str | Unset = UNSET
+    """Why the check cannot pass as configured, e.g. the app's platform auth refuses the credential-less probe."""
     results: SyntheticCheckResults | Unset = UNSET
     """Recent outcomes of one synthetic check, returned by GET /v1/apps/{slug}/synthetics/{id}."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -63,6 +65,8 @@ class SyntheticCheckResponse:
 
         expected_status = self.expected_status
 
+        warning = self.warning
+
         results: dict[str, Any] | Unset = UNSET
         if not isinstance(self.results, Unset):
             results = self.results.to_dict()
@@ -84,6 +88,8 @@ class SyntheticCheckResponse:
         )
         if expected_status is not UNSET:
             field_dict["expected_status"] = expected_status
+        if warning is not UNSET:
+            field_dict["warning"] = warning
         if results is not UNSET:
             field_dict["results"] = results
 
@@ -114,6 +120,8 @@ class SyntheticCheckResponse:
 
         expected_status = d.pop("expected_status", UNSET)
 
+        warning = d.pop("warning", UNSET)
+
         _results = d.pop("results", UNSET)
         results: SyntheticCheckResults | Unset
         if isinstance(_results, Unset):
@@ -132,6 +140,7 @@ class SyntheticCheckResponse:
             enabled=enabled,
             created_at=created_at,
             expected_status=expected_status,
+            warning=warning,
             results=results,
         )
 

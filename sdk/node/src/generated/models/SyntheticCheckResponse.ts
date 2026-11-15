@@ -23,6 +23,10 @@ export type SyntheticCheckResponse = {
   interval_seconds: 300 | 900 | 3600;
   enabled: boolean;
   created_at: string;
+  /**
+   * Why the check cannot pass as configured, e.g. the app's platform auth refuses the credential-less probe.
+   */
+  warning?: string;
   results?: SyntheticCheckResults;
 };
 

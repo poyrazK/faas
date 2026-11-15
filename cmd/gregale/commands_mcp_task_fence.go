@@ -54,11 +54,11 @@ func withMCPTaskFence(c *api.Client) *api.Client {
 
 // Called only after the synchronous adapter has returned and its children have
 // exited normally. An interrupted gate cannot attest that external SQL settled.
-func exitMCPTaskExecutor(c *Client, record api.TaskToolReleaseIntentRecord, p mcpTaskExecutionProfile, token string, settled bool) {
+func exitMCPTaskExecutor(ctx context.Context, c *Client, record api.TaskToolReleaseIntentRecord, p mcpTaskExecutionProfile, token string, settled bool) {
 	if !settled {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	_, _ = c.CheckTaskToolReleaseIntent(ctx, record.ID, api.TaskToolReleaseIntentCheck{ReleaseFingerprint: record.Intent.ReleaseFingerprint,
 		Execution: &api.TaskToolReleaseExecutionRequest{Action: "executor_exited", OperationID: p.OperationID, BindingsSHA256: p.digest(), ClaimToken: token}})
