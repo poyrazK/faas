@@ -28,28 +28,32 @@ type InternalEgressObserver interface {
 }
 
 // internalEgressStep is the checkpoint arithmetic both stores share: the new
-// bytes since prev, the bytes to subtract from a row holding rowNetTx, and the
-// carry left for the next reading.
-func internalEgressStep(prev int64, prevValid bool, pending, cumulative, rowNetTx int64) (subtract, nextPending int64) {
+// bytes since prev plus the service reply bytes the gateway queued since the
+// last call (fresh), the bytes to subtract from a row holding rowNetTx, and
+// the carry left for the next reading.
+func internalEgressStep(prev int64, prevValid bool, pending, fresh, cumulative, rowNetTx int64) (subtract, nextPending int64) {
 	delta := cumulative
 	if prevValid && cumulative >= prev {
 		delta = cumulative - prev
 	}
-	want := delta
-	if pending > math.MaxInt64-want {
-		want = math.MaxInt64
-	} else {
-		want += pending
-	}
+	arrived := saturatingAdd(delta, max(fresh, 0))
+	want := saturatingAdd(arrived, pending)
 	subtract = min(want, max(rowNetTx, 0))
-	// A carry larger than one reading would mean the internal counter ran
-	// ahead of the veth counter for longer than one poll; drop the excess
-	// rather than let it erase later public egress.
-	return subtract, min(want-subtract, delta)
+	// A carry larger than what arrived since the last call would mean the
+	// internal counts ran ahead of the veth counter for longer than one
+	// poll; drop the excess rather than let it erase later public egress.
+	return subtract, min(want-subtract, arrived)
+}
+
+func saturatingAdd(a, b int64) int64 {
+	if b > math.MaxInt64-a {
+		return math.MaxInt64
+	}
+	return a + b
 }
 
 const (
-	internalEgressCheckpointLock = `select internal_tx_bytes, internal_tx_valid, internal_tx_pending
+	internalEgressCheckpointLock = `select internal_tx_bytes, internal_tx_valid, internal_tx_pending, service_reply_pending
 	   from meter_network_checkpoints
 	  where instance_id = $1
 	  for update`
@@ -64,8 +68,17 @@ const (
 	    set internal_tx_bytes = $2,
 	        internal_tx_valid = true,
 	        internal_tx_pending = $3,
+	        service_reply_pending = 0,
 	        updated_at = now()
 	  where instance_id = $1`
+	// serviceReplyQueue adds a gateway frame's service reply bytes to the
+	// next subtraction, only once the node reports internal egress.
+	serviceReplyQueue = `update meter_network_checkpoints
+	    set service_reply_pending = case
+	          when service_reply_pending > 9223372036854775807 - $2 then 9223372036854775807
+	          else service_reply_pending + $2 end,
+	        updated_at = now()
+	  where instance_id = $1 and internal_tx_valid`
 )
 
 // SubtractInternalEgress implements InternalEgressObserver.
@@ -80,9 +93,9 @@ func (s *PgStore) SubtractInternalEgress(ctx context.Context, appID, instanceID 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var prev, pending int64
+	var prev, pending, fresh int64
 	var prevValid bool
-	err = tx.QueryRow(ctx, internalEgressCheckpointLock, instanceID).Scan(&prev, &prevValid, &pending)
+	err = tx.QueryRow(ctx, internalEgressCheckpointLock, instanceID).Scan(&prev, &prevValid, &pending, &fresh)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
@@ -97,7 +110,7 @@ func (s *PgStore) SubtractInternalEgress(ctx context.Context, appID, instanceID 
 	if err != nil {
 		return 0, fmt.Errorf("state: subtract internal egress: lock usage row: %w", err)
 	}
-	subtract, nextPending := internalEgressStep(prev, prevValid, pending, internalCumulative, rowNetTx)
+	subtract, nextPending := internalEgressStep(prev, prevValid, pending, fresh, internalCumulative, rowNetTx)
 	if subtract > 0 {
 		if _, err := tx.Exec(ctx, internalEgressUsageUpdate, subtract, instanceID, key, appID); err != nil {
 			return 0, fmt.Errorf("state: subtract internal egress: update usage row: %w", err)
@@ -135,7 +148,7 @@ func (m *MemStore) SubtractInternalEgress(_ context.Context, appID, instanceID s
 		return 0, fmt.Errorf("state: subtract internal egress: usage row missing for instance %s at %s", instanceID, key.Format(time.RFC3339))
 	}
 	subtract, nextPending := internalEgressStep(checkpoint.internalTx, checkpoint.internalTxValid,
-		checkpoint.internalTxPending, internalCumulative, m.usage[usageIndex].NetTxBytes)
+		checkpoint.internalTxPending, 0, internalCumulative, m.usage[usageIndex].NetTxBytes)
 	checkpoint.internalTx = internalCumulative
 	checkpoint.internalTxValid = true
 	checkpoint.internalTxPending = nextPending

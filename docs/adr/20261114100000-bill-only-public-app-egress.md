@@ -119,3 +119,23 @@ own interface and was never in the veth counter.
   Once on, `net_tx_bytes` holds billed egress, and the raw veth total of a
   minute is no longer stored; the checkpoint keeps each instance's cumulative
   internal bytes for audit.
+
+## Amendment 2026-11-15: slice 3 as built
+
+- The service proxy in `gatewayd-internal` counts the body bytes each called
+  instance writes back on an HTTP service call and records them in the egress
+  sink as that instance's `service_reply_bytes`. A stale target's answer
+  comes from the bridge, not the guest, and is not counted.
+- `BytesFrame.service_reply_bytes` (field 8) carries them to meterd. With
+  `[meter] internal_egress_unbilled` on, meterd persists them with the frame's
+  idempotency row and adds them to `meter_network_checkpoints.service_reply_pending`,
+  only for an instance whose node already reports internal egress (elsewhere
+  they stay billed). The next subtraction takes them with the internal
+  counter's delta; the carry is still at most what arrived since the last
+  subtraction.
+- The count is HTTP body bytes, so the callee's response headers and TCP/IP
+  overhead stay billed: slightly more than public egress, never less.
+- Not covered: replies on upgraded (WebSocket) service calls, whose bytes
+  bypass the response writer, and private TCP services (`service_tcp_listen`),
+  whose copy path uses kernel splice that a counting wrapper would lose. Both
+  stay billed.

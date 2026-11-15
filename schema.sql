@@ -48788,6 +48788,7 @@ CREATE TABLE public.meter_network_checkpoints (
     internal_tx_bytes bigint DEFAULT 0 NOT NULL,
     internal_tx_valid boolean DEFAULT false NOT NULL,
     internal_tx_pending bigint DEFAULT 0 NOT NULL,
+    service_reply_pending bigint DEFAULT 0 NOT NULL,
     CONSTRAINT meter_network_checkpoints_net_rx_bytes_check CHECK ((net_rx_bytes >= 0)),
     CONSTRAINT meter_network_checkpoints_net_tx_bytes_check CHECK ((net_tx_bytes >= 0))
 );
@@ -70383,6 +70384,14 @@ ALTER TABLE public.meter_network_checkpoints
 
 ALTER TABLE ONLY public.meter_network_checkpoints
     ADD CONSTRAINT meter_network_checkpoints_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: meter_network_checkpoints meter_network_checkpoints_service_reply_pending_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_service_reply_pending_check CHECK ((service_reply_pending >= 0)) NOT VALID;
 
 
 --

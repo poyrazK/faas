@@ -12570,6 +12570,7 @@
       "net_tx_bytes",
       "net_tx_valid",
       "observed_at",
+      "service_reply_pending",
       "updated_at"
     ],
     "kind": "operational"
