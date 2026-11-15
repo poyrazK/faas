@@ -1,6 +1,6 @@
 package sched
 
-// The snapshot refresher's clean recapture queue (ADR-20261115100000). A park
+// The snapshot refresher's clean recapture queue (ADR-20261115113000). A park
 // that found no init snapshot on its node queues its app and node here; Run
 // drains the queue through the refresher's own boot path, so a recapture is
 // admitted, booted, primed, captured and parked exactly as a release refresh

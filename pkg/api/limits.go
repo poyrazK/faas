@@ -4091,7 +4091,7 @@ const (
 	SnapshotRefreshMaxRuntime = 10 * time.Minute
 )
 
-// Clean init snapshot recapture (ADR-20261115100000). schedd's
+// Clean init snapshot recapture (ADR-20261115113000). schedd's
 // `snapshot_clean_recapture` runtime config is on (a park that finds no init
 // snapshot on its node destroys the used instance and queues a clean boot,
 // prime and capture on that node) or off (that park captures the used

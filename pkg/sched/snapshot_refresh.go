@@ -80,7 +80,7 @@ type SnapshotRefresher struct {
 	// was for.
 	passed map[string]string
 
-	// Clean init snapshot recapture (ADR-20261115100000): requests queued by
+	// Clean init snapshot recapture (ADR-20261115113000): requests queued by
 	// parks, keyed by app and node, and a wake-up for Run.
 	cleanMode  string
 	recaptures map[string]*cleanRecaptureRequest
@@ -100,7 +100,9 @@ func NewSnapshotRefresher(e *Engine, reg prometheus.Registerer, log *slog.Logger
 		cleanMode: api.DefaultSnapshotCleanRecapture, recaptures: map[string]*cleanRecaptureRequest{},
 		recaptureC: make(chan struct{}, 1),
 	}
-	e.cleanRecapture = r
+	if e != nil {
+		e.cleanRecapture = r
+	}
 	return r
 }
 
@@ -424,7 +426,7 @@ func newSnapshotRefreshMetrics(reg prometheus.Registerer) *snapshotRefreshMetric
 		}, []string{"outcome"}),
 		recaptures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "schedd_init_snapshot_clean_recapture_total",
-			Help: "Clean init snapshot recaptures (ADR-20261115100000): queued when a park found no init snapshot on its node and destroyed the used instance instead of capturing it; refreshed, deferred (no headroom or a live instance), failed (retried with backoff) or dropped (no longer needed or possible).",
+			Help: "Clean init snapshot recaptures (ADR-20261115113000): queued when a park found no init snapshot on its node and destroyed the used instance instead of capturing it; refreshed, deferred (no headroom or a live instance), failed (retried with backoff) or dropped (no longer needed or possible).",
 		}, []string{"outcome"}),
 		pend: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "schedd_snapshot_refresh_pending",

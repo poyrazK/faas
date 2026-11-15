@@ -65,7 +65,7 @@ const (
 	KeySnapshotRefresh            = "snapshot_refresh"
 	KeySnapshotRefreshWindowHours = "snapshot_refresh_window_hours"
 	// KeySnapshotCleanRecapture is schedd's clean init snapshot recapture:
-	// on or off (ADR-20261115100000). The default is in pkg/api/limits.go.
+	// on or off (ADR-20261115113000). The default is in pkg/api/limits.go.
 	KeySnapshotCleanRecapture = "snapshot_clean_recapture"
 	// KeyObjectInventoryQuiet is object_inventory_quiet: off, shadow or on
 	// (ADR-20261110151628 §2). apid validates and applies it; Postgres reads

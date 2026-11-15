@@ -1,6 +1,6 @@
 package sched
 
-// Clean init snapshot recapture (ADR-20261115100000). A deployment's init
+// Clean init snapshot recapture (ADR-20261115113000). A deployment's init
 // snapshot is captured right after readiness (and priming) by the deploy
 // prime and by the release refresher. When a wake had to cold-boot because no
 // usable init snapshot was on its node (a cache eviction, a node that never

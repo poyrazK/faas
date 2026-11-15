@@ -149,7 +149,7 @@ func (r *SnapshotRefresher) admitRefresh(ctx context.Context, nodeID string, t r
 	// stale one is retired once the refresh is admitted, as a wake whose
 	// restore fell back retires it. A refresh that is deferred keeps it, so
 	// the next pass finds it again.
-	// A clean recapture (ADR-20261115100000) has no row to retire.
+	// A clean recapture (ADR-20261115113000) has no row to retire.
 	if t.snap.ID == "" {
 		return ins, placement, ""
 	}
