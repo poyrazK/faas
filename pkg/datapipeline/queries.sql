@@ -41,6 +41,8 @@ SELECT * FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid A
 
 -- name: PipelineControl :one
 UPDATE data_pipelines SET
+ evolution_change=CASE WHEN sqlc.arg(generation_delta)::bigint>0 AND evolution_change->>'state'='approved'
+ THEN jsonb_set(evolution_change,'{state}','"superseded"') ELSE evolution_change END,
  verification_progress=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '{}'::jsonb
  WHEN sqlc.arg(start_verification)::boolean THEN sqlc.arg(queued_verification)::jsonb ELSE verification_progress END,
  schema_change=CASE WHEN sqlc.arg(generation_delta)::bigint>0 THEN '{}'::jsonb ELSE schema_change END,
@@ -53,11 +55,12 @@ UPDATE data_pipelines SET
  verified_at=CASE WHEN sqlc.arg(start_verification) OR sqlc.arg(generation_delta)::bigint>0 THEN NULL ELSE verified_at END,
  retry_at=clock_timestamp()
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision) AND state<>'deleted'
+ AND coalesce(reader_change->>'ID','')=sqlc.arg(reader_change_id)::text
  AND (coalesce(reader_change->>'State','')<>'approved' OR sqlc.arg(generation_delta)::bigint=0)
 RETURNING *;
 
 -- name: PipelineWorkerProtocol :exec
-SELECT set_config('gregale.pipeline_worker_protocol','pipeline-operability-v1',true);
+SELECT set_config('gregale.pipeline_worker_protocol','pipeline-evolution-v1',true);
 
 -- name: PipelineClaim :one
 WITH candidate AS (
@@ -69,9 +72,11 @@ WITH candidate AS (
 
 -- name: PipelineFinish :execrows
 UPDATE data_pipelines SET
+ evolution_change=CASE WHEN sqlc.arg(evolution_applied)::boolean AND evolution_change->>'state'='approved'
+ THEN jsonb_set(evolution_change,'{state}','"applied"') ELSE evolution_change END,
  serving_config=CASE WHEN reader_change->>'State'='approved' AND reader_change->>'Tenant'='true'
  AND sqlc.narg(reader_change)::jsonb->>'State'='applied' AND reader_change->>'ID'=sqlc.narg(reader_change)::jsonb->>'ID'
- THEN jsonb_set(serving_config,'{tenant_access,memberships}',sqlc.narg(reader_change)::jsonb->'AfterMemberships') ELSE serving_config END,
+ THEN jsonb_set(jsonb_set(serving_config,'{tenant_access,memberships}',sqlc.narg(reader_change)::jsonb->'AfterMemberships'),'{tenant_access,valid_until}',to_jsonb(coalesce(sqlc.narg(reader_change)::jsonb->>'AfterValidUntil',''))) ELSE serving_config END,
  read_subjects=CASE WHEN reader_change->>'State'='approved' AND sqlc.narg(reader_change)::jsonb->>'State'='applied' AND reader_change->>'ID'=sqlc.narg(reader_change)::jsonb->>'ID' THEN reader_change->'After' ELSE read_subjects END,
  reader_change=CASE WHEN reader_change->>'State'='approved' AND sqlc.narg(reader_change)::jsonb->>'State'='applied' AND reader_change->>'ID'=sqlc.narg(reader_change)::jsonb->>'ID' THEN sqlc.narg(reader_change)::jsonb ELSE reader_change END,
  verification_progress=coalesce(sqlc.narg(verification_progress)::jsonb,verification_progress),schema_change=coalesce(sqlc.narg(schema_change)::jsonb,schema_change),observed_revision=revision,initialized=initialized OR sqlc.arg(initialized),state=sqlc.arg(state),reason=sqlc.arg(reason),tables_ready=sqlc.arg(tables_ready),
@@ -247,6 +252,7 @@ SELECT id FROM data_pipelines WHERE account_id=sqlc.arg(account_id)::text::uuid 
  AND desired_state='running' AND
  ((schema_approval=sqlc.arg(change_id) AND schema_change->>'ID'=sqlc.arg(change_id)
  AND coalesce(schema_change->'Cancellation'->>'State','') NOT IN ('requested','pending','approved'))
+ OR (evolution_change->>'id'=sqlc.arg(change_id) AND evolution_change->>'state'='approved')
  OR (schema_approval=schema_change->>'ID' AND schema_change->'Cancellation'->>'ID'=sqlc.arg(change_id)
  AND schema_change->'Cancellation'->>'State'='approved')) FOR UPDATE;
 
@@ -405,7 +411,7 @@ WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uui
  (tables=sqlc.arg(reader_change)::jsonb->'Tables' AND read_subjects=sqlc.arg(reader_change)::jsonb->'Before' AND generation=(sqlc.arg(reader_change)::jsonb->>'Generation')::bigint));
 
 -- name: PipelineFinishReaders :execrows
-UPDATE data_pipelines SET serving_config=CASE WHEN reader_change->>'Tenant'='true' THEN jsonb_set(serving_config,'{tenant_access,memberships}',reader_change->'AfterMemberships') ELSE serving_config END,read_subjects=reader_change->'After',reader_change=jsonb_set(reader_change,'{State}','"applied"'),
+UPDATE data_pipelines SET serving_config=CASE WHEN reader_change->>'Tenant'='true' THEN jsonb_set(jsonb_set(serving_config,'{tenant_access,memberships}',reader_change->'AfterMemberships'),'{tenant_access,valid_until}',to_jsonb(coalesce(reader_change->>'AfterValidUntil',''))) ELSE serving_config END,read_subjects=reader_change->'After',reader_change=jsonb_set(reader_change,'{State}','"applied"'),
  lease_token='',lease_until=NULL,retry_at=clock_timestamp()
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
  AND lease_token=sqlc.arg(lease_token) AND lease_until>clock_timestamp()
@@ -426,7 +432,7 @@ RETURNING *;
 
 -- name: PipelineAlertLock :one
 SELECT a.* FROM data_pipeline_alerts a JOIN data_pipelines p ON p.id=a.pipeline_id AND p.account_id=a.account_id
-WHERE (p.freshness_target_seconds=0 OR current_setting('gregale.pipeline_worker_protocol',true)='pipeline-operability-v1') AND a.enabled AND a.check_at<=sqlc.arg(now_at) AND a.account_id=ANY(sqlc.arg(accounts)::uuid[])
+WHERE (p.freshness_target_seconds=0 OR current_setting('gregale.pipeline_worker_protocol',true) IN ('pipeline-operability-v1','pipeline-evolution-v1')) AND a.enabled AND a.check_at<=sqlc.arg(now_at) AND a.account_id=ANY(sqlc.arg(accounts)::uuid[])
 ORDER BY a.check_at,a.pipeline_id FOR UPDATE OF a SKIP LOCKED LIMIT 1;
 
 -- name: PipelineAlertObserve :exec
@@ -485,3 +491,27 @@ UPDATE data_pipelines SET index_change=sqlc.arg(index_change)::jsonb,lease_token
 WHERE account_id=sqlc.arg(account_id)::text::uuid AND id=sqlc.arg(id)::text::uuid AND revision=sqlc.arg(revision)
  AND lease_token=sqlc.arg(lease_token) AND lease_until>clock_timestamp()
  AND index_change->>'RequestID'=sqlc.arg(request_id)::text AND index_change->>'state' IN ('requested','approved');
+
+-- name: PipelineEvolutionSave :execrows
+UPDATE data_pipelines SET evolution_change=sqlc.arg(evolution)::jsonb,serving_config=sqlc.arg(serving)::jsonb,
+ reader_change=coalesce(sqlc.narg(reader_change)::jsonb,reader_change),
+ schema_change=CASE WHEN sqlc.arg(approve)::boolean AND sqlc.arg(evolution)::jsonb->>'kind'='projection' THEN sqlc.arg(plan)::jsonb ELSE schema_change END,
+ schema_approval=CASE WHEN sqlc.arg(approve)::boolean AND sqlc.arg(evolution)::jsonb->>'kind'='projection' THEN '' ELSE schema_approval END,
+ index_change=CASE WHEN sqlc.arg(approve)::boolean AND sqlc.arg(evolution)::jsonb->>'kind'='projection' THEN '{}' ELSE index_change END,
+ revision=revision+1,retry_at=clock_timestamp()
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND revision=sqlc.arg(revision)
+ AND initialized AND desired_state='running' AND NOT verify_requested
+ AND coalesce(schema_change->>'State','complete') IN ('complete','withdrawn')
+ AND coalesce(reader_change->>'State','')<>'approved'
+ AND ((state='live' AND coalesce(evolution_change->>'state','')<>'approved')
+ OR (state='blocked' AND reason='auth_membership_unconfirmed' AND sqlc.arg(evolution)::jsonb->>'kind'='auth_organizations')
+ OR (state='blocked' AND reason='relationship_contract_unavailable' AND sqlc.arg(evolution)::jsonb->>'kind'='relationships')
+ OR (sqlc.arg(retry)::boolean AND state='blocked' AND reason='relationship_api_refresh_failed'
+ AND evolution_change->>'state' IN ('approved','applied','superseded') AND evolution_change->>'id'=sqlc.arg(evolution)::jsonb->>'id'));
+
+-- name: PipelineStageAuthReaders :execrows
+UPDATE data_pipelines SET reader_change=sqlc.arg(change)::jsonb
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND revision=sqlc.arg(revision)
+ AND lease_token=sqlc.arg(lease_token) AND lease_until>clock_timestamp()
+ AND coalesce(reader_change->>'State','') NOT IN ('approved','preview') AND desired_state<>'deleted'
+ AND serving_config->'auth_organizations'=sqlc.arg(binding)::jsonb;

@@ -126,6 +126,14 @@ func (s *server) pipelineIndexes(w http.ResponseWriter, r *http.Request, a state
 	s.dataPipelines.Indexes(w, r, a.ID)
 }
 
+func (s *server) pipelineEvolve(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.Evolve(w, r, a.ID)
+}
+
+func (s *server) pipelineApproveSchema(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.ApproveSchema(w, r, a.ID)
+}
+
 func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 	if _, err := daemonenv.Load("apid"); err != nil {
 		return err
@@ -176,12 +184,12 @@ func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 	}
 	store := datapipeline.NewPostgresStore(pool)
 	capacity := &datapipeline.CapacityObserver{Store: connectioncapacity.NewStore(pool), Qualifications: cfg.DataPipelines.Capacity, Target: service.PipelineCapacityTarget}
-	worker := &datapipeline.Worker{SetupTick: srv.dataPipelines.Service.SetupTick, Store: store, Identities: identities, Allowed: srv.dataPipelines.Service.Allowed, Engine: &datapipeline.Engine{IndexStorageLimit: func(ctx context.Context, p datapipeline.Pipeline) (int64, error) {
+	worker := &datapipeline.Worker{AuthMemberships: srv.dataPipelines.Service.AuthMemberships, AuthCanGrant: srv.dataPipelines.Service.Available, SetupTick: srv.dataPipelines.Service.SetupTick, Store: store, Identities: identities, Allowed: srv.dataPipelines.Service.Allowed, Engine: &datapipeline.Engine{IndexStorageLimit: func(ctx context.Context, p datapipeline.Pipeline) (int64, error) {
 		if !srv.dataPipelines.Service.Available(ctx, p.AccountID) {
 			return 0, datapipeline.ErrUnavailable
 		}
 		db, err := service.Get(ctx, p.AccountID, p.DatabaseID)
 		return db.Spec.StorageLimitBytes, err
-	}, RefreshSchema: store.RefreshSchema, RefreshReadGate: store.RefreshReadGate, Policy: policy, Target: service.WithPipelineSQL, Capacity: capacity, Admit: store.AdmitCapacity}}
+	}, RefreshRelationships: store.RefreshRelationships, RefreshSchema: store.RefreshSchema, RefreshReadGate: store.RefreshReadGate, Policy: policy, Target: service.WithPipelineSQL, Capacity: capacity, Admit: store.AdmitCapacity}}
 	return worker.Run(ctx)
 }

@@ -35,6 +35,7 @@ type DataConnectionCheck struct {
 }
 
 type DataPipeline struct {
+	EvolutionChange        []byte
 	FreshnessTargetSeconds int64
 	IndexChange            []byte
 	ID                     pgtype.UUID

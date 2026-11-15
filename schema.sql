@@ -32224,7 +32224,7 @@ CREATE TABLE public.api_keys (
     runs_principal_id uuid DEFAULT gen_random_uuid() NOT NULL,
     display_prefix text,
     CONSTRAINT api_keys_display_prefix_chk CHECK (((display_prefix IS NULL) OR (display_prefix ~ '^fp_[a-z]+_[0-9a-f]{8}$'::text))),
-    CONSTRAINT api_keys_scopes_vocab_v3_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'secrets:request'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'metrics:write'::text, 'delayed_tasks:read'::text, 'delayed_tasks:write'::text, 'events:publish'::text, 'queues:send'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text, 'postgres:manage'::text, 'postgres:read'::text, 'github:manage'::text, 'project_environments:read'::text, 'project_environments:qualify'::text, 'runs:read'::text, 'runs:write'::text, 'agent'::text]) AND (cardinality(scopes) > 0))),
+    CONSTRAINT api_keys_scopes_vocab_v4_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'secrets:request'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'metrics:write'::text, 'delayed_tasks:read'::text, 'delayed_tasks:write'::text, 'events:publish'::text, 'queues:send'::text, 'queues:consume'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text, 'postgres:manage'::text, 'postgres:read'::text, 'github:manage'::text, 'project_environments:read'::text, 'project_environments:qualify'::text, 'runs:read'::text, 'runs:write'::text, 'agent'::text]) AND (cardinality(scopes) > 0))),
     CONSTRAINT api_keys_status_check CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
 );
 
@@ -59660,6 +59660,34 @@ ALTER TABLE public.secret_open_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDE
 
 
 --
+-- Name: secret_verification_audit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.secret_verification_audit (
+    id bigint NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    cutover_id uuid NOT NULL,
+    credential_id uuid NOT NULL,
+    verified_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: secret_verification_audit_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.secret_verification_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.secret_verification_audit_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: service_caller_key_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -74913,6 +74941,14 @@ ALTER TABLE ONLY public.secret_open_audit
 
 
 --
+-- Name: secret_verification_audit secret_verification_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.secret_verification_audit
+    ADD CONSTRAINT secret_verification_audit_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: service_caller_key_history service_caller_key_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86325,6 +86361,13 @@ CREATE INDEX secret_open_audit_job_idx ON public.secret_open_audit USING btree (
 --
 
 CREATE INDEX secret_open_audit_node_idx ON public.secret_open_audit USING btree (node_id, opened_at);
+
+
+--
+-- Name: secret_verification_audit_cutover_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX secret_verification_audit_cutover_idx ON public.secret_verification_audit USING btree (cutover_id, verified_at);
 
 
 --

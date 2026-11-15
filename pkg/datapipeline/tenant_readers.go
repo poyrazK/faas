@@ -31,7 +31,7 @@ func (s *Service) TenantReaders(ctx context.Context, account, id string, revisio
 		return err
 	}
 	access := tenantAccess(p)
-	if p.Revision != revision || access == nil || p.ServingInvalid {
+	if p.Revision != revision || access == nil || p.ServingInvalid || p.Serving.AuthOrganizations != nil {
 		return ErrConflict
 	}
 	if s.CanCreate != nil && !s.CanCreate(ctx, account) && action != "discard" {
@@ -63,7 +63,7 @@ func (s *PostgresStore) TenantReaders(ctx context.Context, account, id string, r
 	if err != nil {
 		return err
 	}
-	if p.Revision != revision || tenantAccess(p) == nil || p.ServingInvalid {
+	if p.Revision != revision || tenantAccess(p) == nil || p.ServingInvalid || p.Serving.AuthOrganizations != nil {
 		return ErrConflict
 	}
 	c := p.ReaderChange
