@@ -4,6 +4,7 @@
 # Architecture Decision Records
 
 - [ADR-20261114132157: Structured CLI help](20261114132157-cli-json-help.md) — accepted; versioned JSON discovery through existing help, canonical paths, local argument metadata and offline capability visibility.
+- [ADR-20261114143410: Structured recovery for CLI Job waits](20261114143410-cli-job-wait-recovery.md) — accepted; Problem diagnostics on stderr, compatible stdout receipts and exact-run, profile-preserving recovery.
 
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
 - [ADR-20261113180307: Bind execution workflows to independent Node clients](20261113180307-node-sdk-bound-execution-workflows.md) — accepted; preview helpers retain one client snapshot across submission, resumed event streams, and terminal receipt reads, with per-caller cancellation and legacy compatibility.
