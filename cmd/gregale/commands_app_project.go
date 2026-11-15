@@ -61,7 +61,7 @@ func cmdAppProject(args []string) int {
 		return printErr("Conflicting targets", fmt.Errorf("name one app or --project %s, not both", project))
 	}
 	if jsonOutput {
-		return printErr("Unsupported output", errors.New("--json with --project is not supported; run the command per app, listing them with `gregale project info "+project+" --json`"))
+		return printErr("Unsupported output", errors.New("--json with --project is not supported; run the command per app, listing them with `gregale project get "+project+" --json`"))
 	}
 	client, err := authedClient()
 	if err != nil {
