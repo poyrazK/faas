@@ -521,6 +521,15 @@ Native/provider deployment qualification remains separate.
 
 ## Managed PostgreSQL GA — 2026-10-31 (not released)
 
+**2026-11-15 update ([ADR-20261031091607 amendment 1](adr/20261031091607-managed-postgres-ga.md)):**
+`database-rollbacks` is GA and now includes `gregale postgres restore --switch`,
+which restores a database to a chosen point and moves an app to the copy
+without changing its code ([ADR-20261023181931 amendment 3](adr/20261023181931-rollbacks-that-restore-the-database.md)).
+The customer guide states the recovery objectives. Worker, API and CLI tests
+pass on the in-memory store; the switch has not yet run against a real Neon
+restore, so the recovery times are stated, not measured. The always-on
+add-on is out of the public-release gate.
+
 [ADR-20261031091607](adr/20261031091607-managed-postgres-ga.md) moves
 `managed-postgres`, `postgres-bindings` and `postgres-restore` to `ga` and
 resize and organization databases to `beta`. Rollbacks that restore the

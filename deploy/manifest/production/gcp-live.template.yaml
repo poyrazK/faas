@@ -238,6 +238,9 @@ hot_path:
   request_telemetry_minute_collapse: true
   local_vmmd_data_socket: true
   edge_keepalive_per_node: true
+  # ADR-20261110081523: the edge reaches its own node's gatewayd-internal in
+  # binary HTTP. On by hand on fsn-2/fsn-3 since 2026-11-15 with no fallbacks.
+  edge_binary_hop: true
   frozen_tier: true
   frozen_fast_path: true
   owner_cache: true

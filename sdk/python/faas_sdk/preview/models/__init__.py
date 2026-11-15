@@ -897,6 +897,7 @@ from .create_data_api_contract_task_request import CreateDataAPIContractTaskRequ
 from .create_data_api_contract_task_request_kind import CreateDataAPIContractTaskRequestKind
 from .create_data_connection_request import CreateDataConnectionRequest
 from .create_data_pipeline_request import CreateDataPipelineRequest
+from .create_database_switch_request import CreateDatabaseSwitchRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
 from .create_deploy_token_request_scopes_item import CreateDeployTokenRequestScopesItem
 from .create_deployment_files_body import CreateDeploymentFilesBody
@@ -7563,6 +7564,7 @@ __all__ = (
     "CreateCustomDomainRequest",
     "CreateDataAPIContractTaskRequest",
     "CreateDataAPIContractTaskRequestKind",
+    "CreateDatabaseSwitchRequest",
     "CreateDataConnectionRequest",
     "CreateDataPipelineRequest",
     "CreateDeploymentFilesBody",

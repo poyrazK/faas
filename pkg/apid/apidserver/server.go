@@ -3335,6 +3335,8 @@ func (s *server) handler() http.Handler {
 	// ADR-20261023181931: rollbacks that restore the database.
 	mux.HandleFunc("GET /v1/apps/{slug}/database-switches", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listDatabaseSwitches)))
 	mux.HandleFunc("GET /v1/apps/{slug}/database-switches/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getDatabaseSwitch)))
+	// Amendment 3: a restore that switches the app and keeps its code.
+	mux.HandleFunc("POST /v1/apps/{slug}/database-switches", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createDatabaseSwitch)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/database-switches/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelDatabaseSwitch))))
 	// SAFE-RELEASES-R (issue #976 / ADR-122): the operator
 	// manual-rollout-recovery escape hatch. The CLI subcommand
@@ -4705,6 +4707,18 @@ func (s *server) handler() http.Handler {
 	// ADR-20261113123000: customers who are probably stuck.
 	mux.HandleFunc("GET /v1/admin/obs/attention",
 		s.authLimited(s.requireOperatorSessionRead(s.obsListAttention)))
+	// ADR-20261115120000: the operator console's signal actions and the
+	// customer's own health view.
+	mux.HandleFunc("GET /v1/admin/obs/attention/summary",
+		s.authLimited(s.requireOperatorSessionRead(s.obsAttentionSummary)))
+	mux.HandleFunc("GET /v1/admin/obs/attention/{id}/contact-draft",
+		s.authLimited(s.requireOperatorSessionRead(s.obsAttentionContactDraft)))
+	mux.Handle("POST /v1/admin/obs/attention/{id}/dismiss",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.requireSessionPrincipal(s.postObsAttentionDismiss)))))
+	mux.Handle("POST /v1/admin/obs/attention/{id}/contact",
+		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.requireSessionPrincipal(s.postObsAttentionContact)))))
+	mux.HandleFunc("GET /v1/admin/obs/tenants/{id}/health",
+		s.authLimited(s.requireOperatorSessionRead(s.obsTenantHealth)))
 	mux.HandleFunc("GET /v1/admin/obs/capacity",
 		s.authLimited(s.requireOperatorRead(s.obsCapacity)))
 	mux.HandleFunc("GET /v1/admin/obs/tenants/{id}/360",

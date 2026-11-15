@@ -476,6 +476,7 @@ export type { CreateCustomDomainRequest } from './CreateCustomDomainRequest.js';
 export type { CreateDataAPIContractTaskRequest } from './CreateDataAPIContractTaskRequest.js';
 export type { CreateDataConnectionRequest } from './CreateDataConnectionRequest.js';
 export type { CreateDataPipelineRequest } from './CreateDataPipelineRequest.js';
+export type { CreateDatabaseSwitchRequest } from './CreateDatabaseSwitchRequest.js';
 export type { CreateDeployTokenRequest } from './CreateDeployTokenRequest.js';
 export type { CreateDeploymentOverrides } from './CreateDeploymentOverrides.js';
 export type { CreateDeploymentRequest } from './CreateDeploymentRequest.js';

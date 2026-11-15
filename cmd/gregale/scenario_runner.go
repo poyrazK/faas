@@ -62,6 +62,7 @@ type testScenario struct {
 	Services         map[string]testService    `yaml:"services"`
 	Trigger          []string                  `yaml:"trigger"`
 	Command          []string                  `yaml:"command"`
+	GRPC             *testGRPCConfig           `yaml:"grpc,omitempty" json:"grpc,omitempty"`
 	Requests         []testHTTPRequest         `yaml:"requests"`
 	Checks           []testHTTPRequest         `yaml:"checks"`
 	Steps            []testScenarioStep        `yaml:"steps,omitempty"`
@@ -541,12 +542,17 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 		if err := validateTestReportInputs(testScenarioInputPaths(scenario, sourceDir), *reportPath, *junitPath, *htmlPath); err != nil {
 			return printErr("Invalid test report paths", err)
 		}
+		if err := validateTestGRPCDefinitions(context.Background(), sourceDir, scenario); err != nil {
+			return printErr("Invalid scenario manifest", fmt.Errorf("scenario %q: %w", name, err))
+		}
 		if !*load {
 			httpScenario := scenario
 			httpScenario.Load = nil
 			if err := validateTestHTTPRequestsWithData(httpScenario, dataFields); err != nil {
 				return printErr("Invalid scenario execution", fmt.Errorf("scenario %q: %w", name, err))
 			}
+		} else if err := validateTestGRPCLoad(scenario, true); err != nil {
+			return printErr("Invalid scenario execution", fmt.Errorf("scenario %q: %w", name, err))
 		}
 		if err := validateTestScenarioExecution(scenario, *engine, profiles...); err != nil {
 			return printErr("Invalid scenario execution", err)
@@ -783,6 +789,9 @@ func decodeTestManifestDocument(data []byte, absolute string, fieldsForScenario 
 		}
 		if err := validateTestScenarioSteps(scenario, fields); err != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q steps: %w", name, err)
+		}
+		if err := validateTestGRPCLoad(scenario, false); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		if scenario.Load != nil && scenario.Load.Relative != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q: load.relative is only valid on a staged step", name)
@@ -1114,6 +1123,7 @@ func runSimulatedTest(parent context.Context, name string, scenario testScenario
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	ctx = withTestGRPCScenario(ctx, scenario.GRPC, manifestDir)
 	source := scenario.Source
 	if source == "" {
 		source = "."
@@ -1188,6 +1198,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	ctx = withTestGRPCScenario(ctx, scenario.GRPC, manifestDir)
 	source := scenario.Source
 	if source == "" {
 		source = "."
@@ -1621,6 +1632,8 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	proxy, recorder := newTestProxy(target)
 	defer proxy.Close()
+	// gRPC steps dial the app itself: the evidence proxy speaks HTTP/1.
+	ctx = withTestGRPCDialTarget(ctx, proxy.URL, target.String())
 	env := append(testCommandBaseEnv(),
 		"GREGALE_TEST_URL="+proxy.URL,
 		"GREGALE_TEST_APP_SLUG="+session.App.Slug,
