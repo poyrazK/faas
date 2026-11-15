@@ -237,8 +237,8 @@ export { createIssueReporter, type IssueContext, type IssueReporterOptions, type
 export { buildIssueSourceMapManifest, loadIssueSourceMapManifest, type IssueSourceMapManifestOptions } from './issue-source-map-manifest.js';
 export { createIssueContext, type IssueBreadcrumbEntry, type IssueContextSnapshot } from './issue-context.js';
 
-export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, flagSubjectBucket, flagSubjectVariantBucket, validFlagSubjectID, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER, GREGALE_FLAG_PROPAGATION_HEADER } from './flags.js';
-export type { FlagsBundle, FlagRule, VariantFlagRule, ProgressiveRollout, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, FlagDecisionOrigin, GregaleFlagsOptions } from './flags.js';
+export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, flagSubjectBucket, flagSubjectVariantBucket, validFlagSubjectID, validFlagAttributeValue, matchFlagConditions, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER, GREGALE_FLAG_PROPAGATION_HEADER, GREGALE_CLIENT_COUNTRY_HEADER, GREGALE_CLIENT_UA_FAMILY_HEADER, GREGALE_FLAG_KILLS_HEADER, parseFlagKills } from './flags.js';
+export type { FlagsBundle, FlagRule, VariantFlagRule, FlagCondition, FlagAttributes, ProgressiveRollout, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, FlagDecisionOrigin, GregaleFlagsOptions } from './flags.js';
 
 export { FlagsService } from './generated/services/FlagsService.js';
 

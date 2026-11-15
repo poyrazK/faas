@@ -13557,6 +13557,20 @@ $$;
 
 
 --
+-- Name: feature_flag_versions_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.feature_flag_versions_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('feature_flags_changed', NEW.environment_id::text);
+    RETURN NULL;
+END
+$$;
+
+
+--
 -- Name: fence_deployment_cron_intent(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -29417,6 +29431,47 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: storage_object_deletions_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.storage_object_deletions_scope() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    node text;
+BEGIN
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node USING session_user::text;
+    IF node IS NULL THEN
+        IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+        IF TG_OP = 'INSERT' AND NEW.requested_by = '' THEN
+            NEW.requested_by := session_user::text;
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'a compute node login cannot remove object deletion requests'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s', session_user, node);
+    END IF;
+    IF TG_OP = 'UPDATE' AND NEW.storage_key IS DISTINCT FROM OLD.storage_key THEN
+        RAISE EXCEPTION 'a compute node login cannot rename an object deletion request'
+            USING ERRCODE = '42501', DETAIL = format('login=%s node=%s', session_user, node);
+    END IF;
+    -- Whatever the node sent, its row is a fresh request.
+    NEW.requested_by := node;
+    NEW.requested_at := clock_timestamp();
+    NEW.next_attempt_at := clock_timestamp() + interval '10 minutes';
+    NEW.state := 'requested';
+    NEW.attempts := 0;
+    NEW.last_error := '';
+    NEW.decided_at := NULL;
+    RETURN NEW;
+END;
+$_$;
 
 
 --
@@ -56981,7 +57036,7 @@ CREATE TABLE public.release_database_switches (
     CONSTRAINT release_database_switches_requested_by_check CHECK ((length(requested_by) <= 200)),
     CONSTRAINT release_database_switches_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text)),
     CONSTRAINT release_database_switches_target_name_check CHECK (((length(target_name) >= 1) AND (length(target_name) <= 63))),
-    CONSTRAINT release_database_switches_undone_deployment_ids_check CHECK (((cardinality(undone_deployment_ids) >= 1) AND (cardinality(undone_deployment_ids) <= 64)))
+    CONSTRAINT release_database_switches_undone_deployment_ids_v2_check CHECK (((cardinality(undone_deployment_ids) >= 0) AND (cardinality(undone_deployment_ids) <= 64)))
 );
 
 
@@ -60267,6 +60322,33 @@ CREATE TABLE public.status_observation_buckets (
     CONSTRAINT status_observation_buckets_component_chk CHECK ((component = ANY (ARRAY['api_console'::text, 'deployments'::text, 'app_execution'::text, 'networking'::text, 'observability'::text]))),
     CONSTRAINT status_observation_buckets_five_minute_chk CHECK ((mod((EXTRACT(epoch FROM bucket_at))::bigint, (300)::bigint) = 0)),
     CONSTRAINT status_observation_buckets_status_chk CHECK ((status = ANY (ARRAY['operational'::text, 'maintenance'::text, 'degraded'::text, 'partial_outage'::text, 'major_outage'::text, 'unknown'::text])))
+);
+
+
+--
+-- Name: storage_object_deletions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.storage_object_deletions (
+    storage_key text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    requested_by text DEFAULT ''::text NOT NULL,
+    requested_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    state text DEFAULT 'requested'::text NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT (clock_timestamp() + '00:10:00'::interval) NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    decided_at timestamp with time zone,
+    CONSTRAINT storage_object_deletions_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT storage_object_deletions_check CHECK (((state = 'requested'::text) = (decided_at IS NULL))),
+    CONSTRAINT storage_object_deletions_decided_at_check CHECK (((decided_at IS NULL) OR isfinite(decided_at))),
+    CONSTRAINT storage_object_deletions_last_error_check CHECK ((length(last_error) <= 1000)),
+    CONSTRAINT storage_object_deletions_next_attempt_at_check CHECK (isfinite(next_attempt_at)),
+    CONSTRAINT storage_object_deletions_reason_check CHECK ((length(reason) <= 200)),
+    CONSTRAINT storage_object_deletions_requested_at_check CHECK (isfinite(requested_at)),
+    CONSTRAINT storage_object_deletions_requested_by_check CHECK ((length(requested_by) <= 253)),
+    CONSTRAINT storage_object_deletions_state_check CHECK ((state = ANY (ARRAY['requested'::text, 'deleted'::text, 'refused'::text]))),
+    CONSTRAINT storage_object_deletions_storage_key_check CHECK ((((length(storage_key) >= 1) AND (length(storage_key) <= 1024)) AND (storage_key !~ '(^/|\.\.|//)'::text)))
 );
 
 
@@ -75471,6 +75553,14 @@ ALTER TABLE ONLY public.status_observation_buckets
 
 
 --
+-- Name: storage_object_deletions storage_object_deletions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.storage_object_deletions
+    ADD CONSTRAINT storage_object_deletions_pkey PRIMARY KEY (storage_key);
+
+
+--
 -- Name: stored_workflow_failure_guards stored_workflow_failure_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86913,6 +87003,13 @@ CREATE INDEX status_observation_buckets_day_idx ON public.status_observation_buc
 
 
 --
+-- Name: storage_object_deletions_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_object_deletions_due_idx ON public.storage_object_deletions USING btree (next_attempt_at) WHERE (state = 'requested'::text);
+
+
+--
 -- Name: stored_workflow_failure_finished_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -91501,6 +91598,13 @@ CREATE TRIGGER executions_status_transition BEFORE UPDATE ON public.executions F
 
 
 --
+-- Name: feature_flag_versions feature_flag_versions_notify; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER feature_flag_versions_notify AFTER INSERT ON public.feature_flag_versions FOR EACH ROW EXECUTE FUNCTION public.feature_flag_versions_notify();
+
+
+--
 -- Name: financial_budget_revisions financial_budget_revision_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -95075,6 +95179,13 @@ CREATE TRIGGER status_incidents_legacy_resolution_fields BEFORE UPDATE OF resolv
 --
 
 CREATE TRIGGER status_incidents_legacy_resolution_update AFTER UPDATE OF resolved_at ON public.status_incidents FOR EACH ROW EXECUTE FUNCTION public.append_legacy_status_incident_resolution();
+
+
+--
+-- Name: storage_object_deletions storage_object_deletions_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER storage_object_deletions_scope BEFORE INSERT OR DELETE OR UPDATE ON public.storage_object_deletions FOR EACH ROW EXECUTE FUNCTION public.storage_object_deletions_scope();
 
 
 --

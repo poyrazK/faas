@@ -37,6 +37,24 @@ type inspectFeatureFlagRequest struct {
 	Version         int64  `json:"version,omitempty"`
 	Fallback        bool   `json:"fallback"`
 	FallbackVariant string `json:"fallback_variant,omitempty"`
+	// Attributes simulates request attributes (gregale.* and app.*) for
+	// attribute-targeted rules (ADR 20261114150000 §2).
+	Attributes map[string]string `json:"attributes,omitempty"`
+}
+
+// validInspectAttributes bounds simulated attributes like the SDKs bound
+// real ones: known names, valid values, at most the app attribute limit
+// plus the two gateway attributes.
+func validInspectAttributes(attrs map[string]string) bool {
+	if len(attrs) > api.FlagsMaxAppAttributes+2 {
+		return false
+	}
+	for name, value := range attrs {
+		if !flags.ValidAttributeName(name) || !flags.ValidAttributeValue(value) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *server) featureFlagScope(w http.ResponseWriter, r *http.Request, acct state.Account) (state.FeatureFlagScope, state.FeatureFlagStore, bool) {
@@ -211,7 +229,7 @@ func (s *server) inspectFeatureFlag(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	var req inspectFeatureFlagRequest
-	if err := decodeJSON(r, &req); err != nil || req.Version < 0 || !flags.ValidKey(r.PathValue("key")) || req.FallbackVariant != "" && !flags.ValidKey(req.FallbackVariant) || req.SubjectID != "" && (!flags.ValidSubjectID(req.SubjectID) || req.CustomerID == "") {
+	if err := decodeJSON(r, &req); err != nil || req.Version < 0 || !flags.ValidKey(r.PathValue("key")) || req.FallbackVariant != "" && !flags.ValidKey(req.FallbackVariant) || req.SubjectID != "" && (!flags.ValidSubjectID(req.SubjectID) || req.CustomerID == "") || !validInspectAttributes(req.Attributes) {
 		api.WriteProblem(w, api.ErrValidation("invalid decision context"))
 		return
 	}
@@ -242,17 +260,18 @@ func (s *server) inspectFeatureFlag(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	key := r.PathValue("key")
+	evalCtx := flags.EvaluationContext{Customer: req.CustomerID, Subject: req.SubjectID, Attributes: req.Attributes}
 	for _, definition := range v.Flags {
 		if definition.Key == key && definition.Type == "variant" {
-			writeJSON(w, http.StatusOK, flags.EvaluateVariantForSubject(v.Bundle, key, req.CustomerID, req.SubjectID, req.FallbackVariant))
+			writeJSON(w, http.StatusOK, flags.EvaluateVariantWithContext(v.Bundle, key, evalCtx, req.FallbackVariant))
 			return
 		}
 	}
 	if req.FallbackVariant != "" {
-		writeJSON(w, http.StatusOK, flags.EvaluateVariantForSubject(v.Bundle, key, req.CustomerID, req.SubjectID, req.FallbackVariant))
+		writeJSON(w, http.StatusOK, flags.EvaluateVariantWithContext(v.Bundle, key, evalCtx, req.FallbackVariant))
 		return
 	}
-	writeJSON(w, http.StatusOK, flags.EvaluateForSubject(v.Bundle, key, req.CustomerID, req.SubjectID, req.Fallback))
+	writeJSON(w, http.StatusOK, flags.EvaluateWithContext(v.Bundle, key, evalCtx, req.Fallback))
 }
 func (s *server) runtimeFeatureFlagScope(r *http.Request) (state.FeatureFlagScope, error) {
 	raw := r.Header.Get("Authorization")
@@ -316,28 +335,62 @@ func (s *server) runtimeFeatureFlags(w http.ResponseWriter, r *http.Request) {
 		writeFeatureFlagError(w, err)
 		return
 	}
-	if featureFlagConfigRequiresSubjectTargeting(v.Config) && !supportsFlagCapability(r.Header.Get(api.FlagSDKCapabilitiesHeader), api.FlagSDKSubjectTargetingCapability) {
-		api.WriteProblem(w, api.NewProblem(http.StatusUpgradeRequired, "flags_sdk_capability_required", "Runtime SDK update required", "this configuration uses subject targeting; update the runtime SDK to a version that supports subject-targeting-v1"))
-		return
+	capabilities := r.Header.Get(api.FlagSDKCapabilitiesHeader)
+	for _, required := range featureFlagRequiredCapabilities(v.Config) {
+		if !supportsFlagCapability(capabilities, required.capability) {
+			api.WriteProblem(w, api.NewProblem(http.StatusUpgradeRequired, "flags_sdk_capability_required", "Runtime SDK update required",
+				fmt.Sprintf("this configuration uses %s; update the runtime SDK to a version that supports %s", required.feature, required.capability)))
+			return
+		}
 	}
 	// Refresh responses never become shared caches of customer targeting lists.
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("ETag", fmt.Sprintf(`"flags-%s-%d"`, scope.EnvironmentID, v.Version))
-	writeJSON(w, http.StatusOK, v.Bundle)
+	writeJSON(w, http.StatusOK, runtimeBundleForSDK(v.Bundle, capabilities))
 }
 
-func featureFlagConfigRequiresSubjectTargeting(config flags.Config) bool {
+// runtimeBundleForSDK leaves killed flags out of the bundle for an SDK
+// without kill-v1: it would ignore "killed" and serve the configured default,
+// while a missing flag makes it serve the application fallback, which is
+// what a kill means (ADR 20261114150000 §3).
+func runtimeBundleForSDK(b flags.Bundle, capabilities string) flags.Bundle {
+	if supportsFlagCapability(capabilities, api.FlagSDKKillCapability) || len(flags.KilledKeys(b.Config)) == 0 {
+		return b
+	}
+	out := b
+	out.Flags = make([]flags.Flag, 0, len(b.Flags))
+	for _, f := range b.Flags {
+		if !f.Killed {
+			out.Flags = append(out.Flags, f)
+		}
+	}
+	return out
+}
+
+type featureFlagCapability struct{ feature, capability string }
+
+// featureFlagRequiredCapabilities lists the SDK capabilities an enabled
+// flag's rules depend on. An SDK without one would evaluate the rule without
+// its constraint, so the runtime endpoint refuses it with 426 instead.
+func featureFlagRequiredCapabilities(config flags.Config) []featureFlagCapability {
+	subjects, attributes := false, false
 	for _, definition := range config.Flags {
 		if !definition.Enabled {
 			continue
 		}
 		for _, rule := range definition.Rules {
-			if len(rule.Subjects) > 0 || rule.RolloutUnit == "subject" {
-				return true
-			}
+			subjects = subjects || len(rule.Subjects) > 0 || rule.RolloutUnit == "subject"
+			attributes = attributes || len(rule.Attributes) > 0
 		}
 	}
-	return false
+	var out []featureFlagCapability
+	if subjects {
+		out = append(out, featureFlagCapability{"subject targeting", api.FlagSDKSubjectTargetingCapability})
+	}
+	if attributes {
+		out = append(out, featureFlagCapability{"attribute targeting", api.FlagSDKAttributeTargetingCapability})
+	}
+	return out
 }
 
 func supportsFlagCapability(header, capability string) bool {

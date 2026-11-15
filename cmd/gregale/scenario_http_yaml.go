@@ -16,7 +16,7 @@ import (
 // and large integer literals to float64. Keep small integers in their existing
 // Go representation, and retain other numbers as exact JSON decimal literals.
 func (r *testHTTPRequest) UnmarshalYAML(node *yaml.Node) error {
-	fields, err := testHTTPYAMLFields(node, "name", "as", "method", "path", "headers", "json", "expect", "capture")
+	fields, err := testHTTPYAMLFields(node, "name", "as", "method", "path", "headers", "json", "expect", "capture", "grpc")
 	if err != nil {
 		return err
 	}
@@ -32,7 +32,7 @@ func (r *testHTTPRequest) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (e *testHTTPExpect) UnmarshalYAML(node *yaml.Node) error {
-	fields, err := testHTTPYAMLFields(node, "status", "content_type", "json")
+	fields, err := testHTTPYAMLFields(node, "status", "content_type", "json", "code", "message", "message_count", "headers", "trailers")
 	if err != nil {
 		return err
 	}
@@ -48,6 +48,40 @@ func (e *testHTTPExpect) UnmarshalYAML(node *yaml.Node) error {
 		e.JSON = value.(map[string]any)
 	}
 	return nil
+}
+
+// UnmarshalYAML keeps a gRPC step's request messages exact, as an HTTP step's
+// JSON body is, and refuses unknown fields.
+func (c *testGRPCCall) UnmarshalYAML(node *yaml.Node) error {
+	fields, err := testHTTPYAMLFields(node, "method", "message", "messages", "metadata", "timeout")
+	if err != nil {
+		return err
+	}
+	type plain testGRPCCall
+	if err := node.Decode((*plain)(c)); err != nil {
+		return err
+	}
+	if field, ok := fields["message"]; ok && c.Message != nil {
+		if c.Message, err = decodeTestHTTPJSONYAML(&field, c.Message); err != nil {
+			return err
+		}
+	}
+	if field, ok := fields["messages"]; ok && c.Messages != nil {
+		value, err := decodeTestHTTPJSONYAML(&field, []any(c.Messages))
+		if err != nil {
+			return err
+		}
+		c.Messages = value.([]any)
+	}
+	return nil
+}
+
+func (c *testGRPCConfig) UnmarshalYAML(node *yaml.Node) error {
+	if _, err := testHTTPYAMLFields(node, "protos", "import_paths", "reflection"); err != nil {
+		return err
+	}
+	type plain testGRPCConfig
+	return node.Decode((*plain)(c))
 }
 
 // Node.Decode does not inherit the outer decoder's KnownFields setting. Check

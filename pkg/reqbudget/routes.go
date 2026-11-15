@@ -114,7 +114,13 @@ var longWaitRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/v1/apps/*/queues/*/leases"},
 	{http.MethodPost, "/v1/orgs/*/apps/*/queues/*/leases"},
 	{http.MethodGet, "/v1/apps/*/policy/status"},
+	// The tarball scan (`gregale deploy --project --dry-run`) was missing:
+	// a 7-service repository answered 503 "Briefly at capacity" at 6.9 s on
+	// every attempt for 12 minutes (2026-11-15 agent eval).
+	{http.MethodPost, "/v1/projects/scan"},
 	{http.MethodPost, "/v1/projects/scan/source-ref"},
+	{http.MethodPost, "/v1/orgs/*/projects/scan"},
+	{http.MethodPost, "/v1/orgs/*/projects/scan/source-ref"},
 	{http.MethodPost, "/v1/apps/*/deployments/dev-source"},
 
 	{http.MethodPost, "/v1/notification-channels/*/test"},

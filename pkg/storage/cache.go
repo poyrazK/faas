@@ -1242,6 +1242,13 @@ func (c *LocalCacheBackend) enforceBudgetLocked(protect string) error {
 	// ADR-633: count blocks shared between entries (a snapshot drive and
 	// its app layer) once.
 	footprint := newCacheFootprint(entries)
+	// Low disk evicts only the shortfall measured here. The filesystem's own
+	// free count lags the removals (XFS frees unlinked blocks in the
+	// background, and reflink-shared blocks not at all), so evicting until
+	// statfs agrees overshot: one 1 GiB build preflight evicted ~25 GB,
+	// live snapshots included (2026-11-13, ADR-20261115140000).
+	shortfall := c.diskShortfallLocked()
+	start := footprint.total()
 	current := ""
 	for i, e := range entries {
 		group := cacheEvictionGroup(e.key)
@@ -1250,7 +1257,7 @@ func (c *LocalCacheBackend) enforceBudgetLocked(protect string) error {
 			// Budget is checked between groups only: a capture that
 			// started going goes whole.
 			withinBudget := footprint.total() <= c.maxBytes
-			if withinBudget && !c.diskLowLocked() {
+			if withinBudget && (shortfall <= 0 || start-footprint.total() >= shortfall || !c.diskLowLocked()) {
 				break
 			}
 			current = group
@@ -1275,6 +1282,19 @@ func (c *LocalCacheBackend) enforceBudgetLocked(protect string) error {
 		}
 	}
 	return nil
+}
+
+// diskShortfallLocked is how many bytes the cache filesystem lacks to reach
+// minFreeBytes now; zero when it has enough or cannot say. Caller holds c.mu.
+func (c *LocalCacheBackend) diskShortfallLocked() int64 {
+	if c.minFreeBytes <= 0 {
+		return 0
+	}
+	free, total, err := c.diskSpace(c.root)
+	if err != nil || total <= 0 || free >= c.minFreeBytes {
+		return 0
+	}
+	return c.minFreeBytes - free
 }
 
 // evictionGroup is the eviction state of one capture (or one plain entry).

@@ -20292,6 +20292,21 @@
     "kind": "operational"
   },
   {
+    "table": "storage_object_deletions",
+    "columns": [
+      "attempts",
+      "decided_at",
+      "last_error",
+      "next_attempt_at",
+      "reason",
+      "requested_at",
+      "requested_by",
+      "state",
+      "storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "stored_workflows",
     "columns": [
       "app_id",

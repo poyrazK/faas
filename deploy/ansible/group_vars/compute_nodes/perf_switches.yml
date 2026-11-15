@@ -1,0 +1,25 @@
+# Request- and deploy-path switches, per cell. node_join.yml renders each
+# into a zz-faas-*.conf drop-in on every run. All are off in the daemons'
+# code; production-us turned them on after the 2026-11-15 trial (both compute
+# nodes, 09:42-14:09Z, measured against the three days before):
+#
+# schedd_async_wake_finalize (ADR-20261105090246): a booted wake answers after
+# its RUNNING publication and records its workload class and secret delivery
+# afterwards. post_rpc_finalize_ms left the wake path (was p90 50-60 ms, p99
+# up to 768 ms; now 0) and post_rpc_publish_ms p50 fell 32-56 -> 13-20 ms. The
+# records are still written (71 secret.delivery_succeeded, 32
+# app.characterized in the window).
+#
+# imaged_app_layer_reuse (ADR-20261112170911): a source deployment whose app
+# layer inputs match an earlier layer of the same account republishes it
+# instead of converting and scanning again. 37 of 106 preparations hit; a hit
+# took 10-13 s p50 against 37-54 s for a converted layer plus scan.
+#
+# builderd_shared_platform_blobs (ADR-20261031103801): dependency caches share
+# one copy of each platform image layer. On fsn-2 since 2026-11-01, on fsn-3
+# since the trial; no build errors attributed to it.
+#
+# false renders 0, so turning one off takes effect at the next daemon start.
+schedd_async_wake_finalize: true
+imaged_app_layer_reuse: true
+builderd_shared_platform_blobs: true

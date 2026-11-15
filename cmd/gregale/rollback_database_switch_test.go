@@ -70,7 +70,7 @@ func (s *switchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func runSwitchCLI(t *testing.T, s *switchServer, args ...string) (int, string, string) {
+func runSwitchCLI(t *testing.T, s http.Handler, args ...string) (int, string, string) {
 	t.Helper()
 	srv := httptest.NewServer(s)
 	t.Cleanup(srv.Close)
