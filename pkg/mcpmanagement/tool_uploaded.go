@@ -25,8 +25,8 @@ func (m *management) planUploadedToolDeploy(ctx context.Context, a planUploadedT
 	if err := m.toolBuildingAccess(); err != nil {
 		return nil, err
 	}
-	if !m.remote() || a.AccessMode != "open" || !a.AllowToolExecution || !api.ValidAppSlug(a.App) || (a.UploadID == "") == (len(a.Files) == 0) {
-		return nil, invalid("invalid_argument", "hosted publication requires open access, explicit fixture consent, a valid app and either upload_id or files")
+	if !m.remote() || a.AccessMode != "open" && a.AccessMode != "external-oauth" || !a.AllowToolExecution || !api.ValidAppSlug(a.App) || (a.UploadID == "") == (len(a.Files) == 0) {
+		return nil, invalid("invalid_argument", "hosted publication requires explicit access mode and fixture consent, a valid app and either upload_id or files")
 	}
 	if err := validateReason(a.App, a.Reason); err != nil {
 		return nil, err
@@ -56,7 +56,7 @@ func (m *management) planHostedToolProject(ctx context.Context, dir string, a pl
 		m.opts.uploads.removeDir(dir)
 		return nil, err
 	}
-	out, err := m.planToolProject(ctx, planToolDeployArgs{Path: dir, App: a.App, Reason: a.Reason, Fixtures: a.Fixtures, AccessMode: a.AccessMode, AllowToolExecution: a.AllowToolExecution})
+	out, err := m.planToolProject(ctx, planToolDeployArgs{Path: dir, App: a.App, Reason: a.Reason, Fixtures: a.Fixtures, AccessMode: a.AccessMode, AllowToolExecution: a.AllowToolExecution, platformVerification: a.AccessMode == "external-oauth"})
 	if err != nil {
 		m.opts.uploads.removeDir(dir)
 		return nil, err

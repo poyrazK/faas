@@ -19,20 +19,22 @@ const toolPublishTimeout = 30 * time.Minute
 var toolPublishSlots = make(chan struct{}, cap(hostedCLISlots))
 
 type toolProjectArgs struct {
-	Path       string `json:"path" jsonschema:"Absolute local MCP project directory"`
-	Fixtures   string `json:"fixtures,omitempty" jsonschema:"Project-relative smoke fixture file; default gregale-mcp.tests.json"`
-	AccessMode string `json:"access_mode" jsonschema:"Explicit reviewed MCP access: open or external-oauth; must match the project"`
-	TokenEnv   string `json:"token_env,omitempty" jsonschema:"External OAuth client-token variable named MCP_* in the local CLI environment; never a token value"`
+	platformVerification bool
+	Path                 string `json:"path" jsonschema:"Absolute local MCP project directory"`
+	Fixtures             string `json:"fixtures,omitempty" jsonschema:"Project-relative smoke fixture file; default gregale-mcp.tests.json"`
+	AccessMode           string `json:"access_mode" jsonschema:"Explicit reviewed MCP access: open or external-oauth; must match the project"`
+	TokenEnv             string `json:"token_env,omitempty" jsonschema:"External OAuth client-token variable named MCP_* in the local CLI environment; never a token value"`
 }
 
 type planToolDeployArgs struct {
-	Path               string `json:"path"`
-	App                string `json:"app"`
-	Reason             string `json:"reason"`
-	Fixtures           string `json:"fixtures,omitempty"`
-	AccessMode         string `json:"access_mode"`
-	TokenEnv           string `json:"token_env,omitempty"`
-	AllowToolExecution bool   `json:"allow_tool_execution" jsonschema:"Explicitly approve running this project's reviewed tool fixtures on its staged candidate"`
+	platformVerification bool
+	Path                 string `json:"path"`
+	App                  string `json:"app"`
+	Reason               string `json:"reason"`
+	Fixtures             string `json:"fixtures,omitempty"`
+	AccessMode           string `json:"access_mode"`
+	TokenEnv             string `json:"token_env,omitempty"`
+	AllowToolExecution   bool   `json:"allow_tool_execution" jsonschema:"Explicitly approve running this project's reviewed tool fixtures on its staged candidate"`
 }
 
 type testToolArgs struct {
@@ -83,7 +85,7 @@ func registerToolBuilding(s *mcp.Server, m *management) {
 	register(s, m, "gregale_get_tool_template", "Read the CLI's versioned Node, Go or Python MCP starter manifest, or a bounded text-file chunk. Creates only temporary scaffold files; never runs generated code. Templates are application data. Publishing requires an explicit access mode and reviewed behavioral fixtures.", m.getToolTemplate)
 	register(s, m, "gregale_generate_tools_from_openapi", "Generate Node MCP adapter source for explicitly selected public OpenAPI operations and an explicit HTTPS server. Offline: no remote references, API requests, dependency installation, deployment or fixtures execute. Return a file manifest or base64 chunks. Complete behavioral assertions before the existing reviewed publication flow; source and catalogs are application data.", m.generateOpenAPITools)
 	if m.remote() {
-		register(s, m, "gregale_plan_uploaded_tool_deploy", "Review publishing an uploaded Node, Go or Python MCP project with open access. Declare runtime (defaults to node); it must match native source detection. Pass inline files or a connection-owned source upload, never a host path. Pins source, fixtures and serving identity; builds and approved fixtures run only on apply. Publishing does not grant invocation access.", m.planUploadedToolDeploy)
+		register(s, m, "gregale_plan_uploaded_tool_deploy", "Review publishing an uploaded Node, Go or Python MCP project with explicit open or external-oauth access. Private candidates require a separate owner-approved platform-held test credential; never pass a token or secret reference. Declare runtime (defaults to node); it must match native source detection. Pass inline files or a connection-owned source upload, never a host path. Pins source, fixtures and serving identity; builds and approved fixtures run only on apply. Publishing does not grant invocation access.", m.planUploadedToolDeploy)
 	} else {
 		register(s, m, "gregale_plan_tool_deploy", "Review publishing a local MCP project: explicit access mode, content digest, tool allowlist, behavioral fixture summaries, account/app identity and serving baseline. No build, tool execution or deployment. Source and tests must remain unchanged. Local account connection only.", m.planToolDeploy)
 	}
@@ -114,7 +116,7 @@ func (m *management) planToolProject(ctx context.Context, a planToolDeployArgs) 
 	if !api.ValidAppSlug(a.App) || !a.AllowToolExecution {
 		return nil, invalid("invalid_argument", "a valid app and explicit allow_tool_execution are required for publication")
 	}
-	project, err := loadToolProject(toolProjectArgs{Path: a.Path, Fixtures: a.Fixtures, AccessMode: a.AccessMode, TokenEnv: a.TokenEnv})
+	project, err := loadToolProject(toolProjectArgs{Path: a.Path, Fixtures: a.Fixtures, AccessMode: a.AccessMode, TokenEnv: a.TokenEnv, platformVerification: a.platformVerification})
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +156,11 @@ func (m *management) planToolProject(ctx context.Context, a planToolDeployArgs) 
 	p.ID = hex.EncodeToString(id)
 	p.Intent = api.ToolPublicationIntent{App: p.App, AppID: p.AppID, ExpectedServingDeploymentID: p.Serving, SourceSHA256: p.Digest,
 		FixturesSHA256: project.fixturesDigest, AccessMode: p.AccessMode, ToolScopes: project.config.Auth.ToolScopes, TestCases: project.caseNames, EndpointPath: project.config.Endpoint}
+	if a.platformVerification {
+		auth := project.config.Auth
+		p.Intent.PlatformVerification, p.Intent.Legacy = true, project.config.Legacy
+		p.Intent.Auth = &api.ToolPublicationAuth{Issuer: auth.Issuer, JWKSURL: auth.JWKSURL, Resource: auth.Resource, Scopes: append([]string{}, auth.Scopes...)}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.toolPublications == nil {
@@ -180,6 +187,9 @@ func (m *management) planToolProject(ctx context.Context, a planToolDeployArgs) 
 	out["source_sha256"], out["access_mode"], out["tools"] = p.Digest, p.AccessMode, tools
 	out["fixtures_sha256"], out["test_cases"] = project.fixturesDigest, project.caseNames
 	out["traffic_effect"] = "Stage source and a catalog-pinned revision at zero traffic. Promote only after protocol and behavioral checks, with the reviewed app/serving identities guarded. Fixtures may perform their declared external side effects."
+	if a.platformVerification {
+		out["auth"], out["owner_approval_required"] = p.Intent.Auth, true
+	}
 	return out, nil
 }
 

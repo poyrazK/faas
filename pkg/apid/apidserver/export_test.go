@@ -17,6 +17,7 @@ import (
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"io"
 	"log/slog"
 	"net"
@@ -2574,6 +2575,19 @@ var FinancialBudgetProblem = financialBudgetProblem
 
 // AppOOMRecommendation is the operational-summary OOM recommendation (2026-11-13).
 var AppOOMRecommendation = appOOMRecommendation
+
+func (s *server) PrivatePublicationReplicaClientForTest(ctx context.Context, target api.ToolInvocationTarget, instance, host, token, version string) (*mcphosting.Client, error) {
+	app, err := s.store.AppByID(ctx, target.AppID)
+	if err != nil {
+		return nil, err
+	}
+	probe, err := mcphosting.NewClient("https://"+host+target.EndpointPath, token, version)
+	if err != nil {
+		return nil, err
+	}
+	probe.HTTP = &http.Client{Timeout: 10 * time.Second, Transport: privatePublicationReplicaTransport{server: s, app: app, target: target, instance: instance, host: host, version: version}}
+	return probe, nil
+}
 
 // SetSignupGeoForTest replaces the sign-up country and network-owner lookups
 // (ADR-20261113160000); nil lookups leave the facts empty.

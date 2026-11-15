@@ -633,11 +633,13 @@ var methodRouteMap = map[string]string{
 	"POST /v1/tool-invocations/{id}/{action}":            "DispatchToolInvocation",
 	"POST /v1/tool-oauth-connections/{id}/authorization": "AuthorizeToolOAuthConnection",
 	"POST /v1/tool-publications/{id}/outcome":            "FinishToolPublication",
+	"POST /v1/tool-publications/{id}/verification":       "VerifyToolPublication",
 	"PUT /v1/delegated-tool-invocations/{id}":            "BeginDelegatedToolInvocation",
 	"PUT /v1/tool-grants/{id}":                           "PutToolGrant",
 	"PUT /v1/tool-invocations/{id}":                      "BeginToolInvocation",
 	"PUT /v1/tool-oauth-connections/{id}":                "PutToolOAuthConnection",
 	"PUT /v1/tool-publications/{id}":                     "BeginToolPublication",
+	"PUT /v1/tool-publications/{id}/verification":        "DecideToolPublicationVerification",
 
 	// Customer support uses typed personal and organization methods.
 	"GET /v1/support/tickets":                                   "ListSupportTickets",

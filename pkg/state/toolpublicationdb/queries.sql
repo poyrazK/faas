@@ -91,6 +91,24 @@ AND managed_postgres_binding_id IS NULL AND managed_object_storage_credential_id
 AND COALESCE(managed_credential_ref,'')=''
 FOR SHARE;
 
+-- name: LockToolPublicationCandidate :one
+SELECT d.id FROM deployments d
+JOIN apps a ON a.id=d.app_id
+JOIN accounts c ON c.id=a.account_id
+JOIN api_keys k ON k.account_id=a.account_id
+WHERE a.account_id=sqlc.arg(account_id) AND a.id=sqlc.arg(app_id) AND a.slug=sqlc.arg(app_slug)
+AND d.id=sqlc.arg(deployment_id) AND d.source_sha256=sqlc.arg(source_sha256)
+AND d.status='live' AND d.traffic_percent=0 AND COALESCE(d.scope,'default') IN ('','default')
+AND c.status='active' AND k.id=sqlc.arg(key_id) AND k.status IN ('active','grace')
+AND (k.expires_at IS NULL OR k.expires_at>now())
+AND (k.scopes @> ARRAY['deploy:write']::text[] OR k.scopes @> ARRAY['admin']::text[])
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id))
+AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id))
+AND (sqlc.arg(expected_serving)::text='' OR EXISTS(SELECT 1 FROM deployments b WHERE b.app_id=a.id AND b.id::text=sqlc.arg(expected_serving) AND b.status='live' AND b.traffic_percent=100 AND COALESCE(b.scope,'default') IN ('','default')))
+AND NOT EXISTS(SELECT 1 FROM deployments b WHERE b.app_id=a.id AND b.status='live' AND b.traffic_percent>0 AND COALESCE(b.scope,'default') IN ('','default') AND (b.id::text<>sqlc.arg(expected_serving) OR b.traffic_percent<>100))
+FOR SHARE OF d,a,k,c;
+
 -- name: InsertToolOAuthConnection :exec
 INSERT INTO tool_oauth_connections(account_id,id,app_id,payload,state) VALUES($1,$2,$3,$4,$5);
 
