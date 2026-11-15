@@ -32,15 +32,21 @@ try {
     if (member.rows[0]?.member) throw new Error('owner membership');
     const privileges = await pools[index].query(`SELECT c.relname,
       has_table_privilege(current_user,c.oid,'SELECT') AS can_read,
+      has_table_privilege(current_user,c.oid,'INSERT') AND has_table_privilege(current_user,c.oid,'UPDATE') AND
+      has_table_privilege(current_user,c.oid,'DELETE') AS can_dml,
       has_table_privilege(current_user,c.oid,'INSERT') OR has_table_privilege(current_user,c.oid,'UPDATE') OR
       has_table_privilege(current_user,c.oid,'DELETE') OR has_table_privilege(current_user,c.oid,'TRUNCATE') OR
-      has_table_privilege(current_user,c.oid,'TRIGGER') AS can_write,
+      has_table_privilege(current_user,c.oid,'TRIGGER') OR has_any_column_privilege(current_user,c.oid,'INSERT') OR
+      has_any_column_privilege(current_user,c.oid,'UPDATE') AS can_write,
+      has_table_privilege(current_user,c.oid,'TRUNCATE') OR has_table_privilege(current_user,c.oid,'TRIGGER') OR
+      has_any_column_privilege(current_user,c.oid,'REFERENCES') AS can_administer,
       c.relowner::regrole::text AS owner FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-      WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') AND c.relname LIKE 'gregale_mcp_task%'`);
-    if (!privileges.rows.length || privileges.rows.some(row => row.owner !== m.role || (index === 2 && row.can_write))) throw new Error('table privileges');
+      WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') AND c.relname ~ '^gregale_mcp_task'`);
+    if (!privileges.rows.length || privileges.rows.some(row => row.owner !== m.role || row.can_administer || (index === 2 && row.can_write))) throw new Error('table privileges');
     const reads = index === 2 ? ['gregale_mcp_tasks','gregale_mcp_task_owners','gregale_mcp_task_workers','gregale_mcp_task_worker_handlers','gregale_mcp_task_schema','gregale_mcp_task_admission_namespaces'] : ['gregale_mcp_tasks','gregale_mcp_task_owners','gregale_mcp_task_fairness','gregale_mcp_task_workers','gregale_mcp_task_worker_handlers','gregale_mcp_task_schema','gregale_mcp_task_crypto_keys','gregale_mcp_task_admission','gregale_mcp_task_admission_namespaces'];
     if (reads.some(name => !privileges.rows.some(row => row.relname === name && row.can_read))) throw new Error('read privileges');
-    if (index === 0 && ['gregale_mcp_tasks','gregale_mcp_task_owners','gregale_mcp_task_fairness','gregale_mcp_task_workers','gregale_mcp_task_worker_handlers'].some(name => !privileges.rows.some(row => row.relname === name && row.can_write))) throw new Error('runtime privileges');
+    const writes = ['gregale_mcp_tasks','gregale_mcp_task_owners','gregale_mcp_task_fairness','gregale_mcp_task_workers','gregale_mcp_task_worker_handlers'];
+    if (index === 0 && (writes.some(name => !privileges.rows.some(row => row.relname === name && row.can_dml)) || privileges.rows.some(row => !writes.includes(row.relname) && row.can_write))) throw new Error('runtime privileges');
     void fact;
   }
   process.stdout.write('{"verified":true}');

@@ -37,7 +37,8 @@ CREATE TABLE task_exec.gregale_mcp_task_schema(id int);
 CREATE TABLE task_exec.gregale_mcp_task_crypto_keys(id int);
 CREATE TABLE task_exec.gregale_mcp_task_admission(id int);
 CREATE TABLE task_exec.gregale_mcp_task_admission_namespaces(id int);
-GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA task_exec TO task_runtime;
+GRANT SELECT ON ALL TABLES IN SCHEMA task_exec TO task_runtime;
+GRANT INSERT,UPDATE,DELETE ON task_exec.gregale_mcp_tasks,task_exec.gregale_mcp_task_owners,task_exec.gregale_mcp_task_fairness,task_exec.gregale_mcp_task_workers,task_exec.gregale_mcp_task_worker_handlers TO task_runtime;
 GRANT SELECT ON ALL TABLES IN SCHEMA task_exec TO task_observer;
 SQL
 printf '%s\n' '{"type":"module","dependencies":{"pg":"8.16.3"}}' >"$task_ram/worker/package.json"
@@ -59,6 +60,15 @@ check 0 'three separate least-privilege roles'
 docker exec "$task_fixture" psql -U faas -d faas -c 'GRANT INSERT ON task_exec.gregale_mcp_tasks TO task_observer' >>"$task_result"
 check 1 'observer write privilege rejected'
 docker exec "$task_fixture" psql -U faas -d faas -c 'REVOKE INSERT ON task_exec.gregale_mcp_tasks FROM task_observer' >>"$task_result"
+docker exec "$task_fixture" psql -U faas -d faas -c 'GRANT UPDATE(id) ON task_exec.gregale_mcp_tasks TO task_observer' >>"$task_result"
+check 1 'observer column write privilege rejected'
+docker exec "$task_fixture" psql -U faas -d faas -c 'REVOKE UPDATE(id) ON task_exec.gregale_mcp_tasks FROM task_observer' >>"$task_result"
+docker exec "$task_fixture" psql -U faas -d faas -c 'GRANT TRUNCATE ON task_exec.gregale_mcp_tasks TO task_runtime' >>"$task_result"
+check 1 'runtime table administration rejected'
+docker exec "$task_fixture" psql -U faas -d faas -c 'REVOKE TRUNCATE ON task_exec.gregale_mcp_tasks FROM task_runtime' >>"$task_result"
+docker exec "$task_fixture" psql -U faas -d faas -c 'REVOKE UPDATE ON task_exec.gregale_mcp_task_workers FROM task_runtime' >>"$task_result"
+check 1 'incomplete runtime DML rejected'
+docker exec "$task_fixture" psql -U faas -d faas -c 'GRANT UPDATE ON task_exec.gregale_mcp_task_workers TO task_runtime' >>"$task_result"
 MCP_TASK_MIGRATION_DATABASE_URL="$TASK_RUNTIME_URL" check 1 'runtime/migration role alias rejected'
 docker exec "$task_fixture" psql -U faas -d faas -c 'ALTER ROLE task_runtime SUPERUSER' >>"$task_result"
 check 1 'runtime superuser rejected'
