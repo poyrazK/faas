@@ -3,6 +3,7 @@ package apidserver_test
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -53,12 +54,10 @@ func TestOperatorConsoleAttentionActions(t *testing.T) {
 		}
 		return id
 	}
-	expect := func(rec interface {
-		Result() *http.Response
-	}, body string, status int) {
+	expect := func(rec *httptest.ResponseRecorder, body string, status int) {
 		t.Helper()
-		if code := rec.Result().StatusCode; code != status {
-			t.Fatalf("status %d want %d: %s", code, status, body)
+		if rec.Code != status {
+			t.Fatalf("status %d want %d: %s", rec.Code, status, body)
 		}
 	}
 	key := func(k string) map[string]string { return map[string]string{"Idempotency-Key": k} }
