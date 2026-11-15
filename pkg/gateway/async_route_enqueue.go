@@ -15,6 +15,8 @@ var asyncRouteInvocationNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("greg
 var asyncRouteEnvironmentInvocationNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale.dev/async-route-environment-invocation/v1"))
 var asyncRouteEnvironmentTenantInvocationNamespace = uuid.NewSHA1(uuid.NameSpaceURL, []byte("gregale.dev/async-route-environment-tenant-invocation/v1"))
 
+var ErrAsyncRouteIdempotencyConflict = errors.New("async idempotency key belongs to another request")
+
 type AsyncRouteInvocationStore interface {
 	AppByID(context.Context, string) (state.App, error)
 	EnqueueInvocation(context.Context, state.Invocation) (state.Invocation, error)
@@ -93,6 +95,9 @@ func EnqueueAsyncRoute(ctx context.Context, store AsyncRouteInvocationStore, req
 	}
 	if asyncRouteScopeKey(existingVersion.Scope) != asyncRouteScopeKey(version.Scope) {
 		return AsyncRouteAccepted{}, state.ErrConflict
+	}
+	if !sameAsyncRouteIntent(existing, prepared) {
+		return AsyncRouteAccepted{}, errors.Join(state.ErrConflict, ErrAsyncRouteIdempotencyConflict)
 	}
 	return AsyncRouteAccepted{ID: existing.ID, ReleaseID: existingVersion.ReleaseID, DeploymentID: existingVersion.DeploymentID}, nil
 }

@@ -111,7 +111,7 @@ func (s *PostgresStore) RequestCheck(ctx context.Context, account, id string, re
 		if decodeErr != nil {
 			return ConnectionCheck{}, decodeErr
 		}
-		if !slices.Equal(check.RequestedTables, selection.RequestedTables) || check.Search != selection.Search {
+		if !slices.Equal(check.RequestedTables, selection.RequestedTables) || check.Search != selection.Search || check.Mode != selection.Mode {
 			// A saved setup retry can narrow an earlier discovery request. Keep
 			// its failed-check cooldown even when that selection changes.
 			age := time.Since(old.CreatedAt.Time)
@@ -144,6 +144,10 @@ func discoverySelection(options []api.RequestDataConnectionCheck) (api.DataConne
 	if len(r.Tables) > api.DataPipelineTablesMax || len(r.Search) > api.DataPipelineIdentifierMaxBytes || strings.Trim(r.Search, "abcdefghijklmnopqrstuvwxyz0123456789_") != "" || (len(r.Tables) > 0 && r.Search != "") {
 		return selection, ErrInvalid
 	}
+	if r.Mode != "" && r.Mode != "snapshot" {
+		return selection, ErrInvalid
+	}
+	selection.Mode = r.Mode
 	selection.Search = r.Search
 	selection.RequestedTables = slices.Clone(r.Tables)
 	slices.Sort(selection.RequestedTables)
@@ -171,8 +175,19 @@ func (s *PostgresStore) enqueueCheck(ctx context.Context, tx pgx.Tx, account, id
 }
 
 func (s *PostgresStore) ClaimCheck(ctx context.Context, token string) (ConnectionCheck, error) {
-	r, err := s.q.PipelineCheckClaim(ctx, s.pool, token)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		return ConnectionCheck{}, storeError(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err = s.q.PipelineWorkerProtocol(ctx, tx); err != nil {
+		return ConnectionCheck{}, storeError(err)
+	}
+	r, err := s.q.PipelineCheckClaim(ctx, tx, token)
+	if err != nil {
+		return ConnectionCheck{}, storeError(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return ConnectionCheck{}, storeError(err)
 	}
 	return describeCheck(checkRecord(r))
@@ -182,7 +197,7 @@ func (s *PostgresStore) FinishCheck(ctx context.Context, c ConnectionCheck, resu
 	if result.State != "passed" && result.State != "blocked" {
 		return ErrInvalid
 	}
-	payload := api.DataConnectionCheck{RequestedTables: c.RequestedTables, Search: c.Search, Checks: result.Checks, Tables: result.Tables, Truncated: result.Truncated, Capacity: result.Capacity}
+	payload := api.DataConnectionCheck{Mode: c.Mode, RequestedTables: c.RequestedTables, Search: c.Search, Checks: result.Checks, Tables: result.Tables, Truncated: result.Truncated, Capacity: result.Capacity}
 	blob, err := json.Marshal(payload)
 	if err != nil || len(blob) > api.DataPipelineCheckMaxBytes {
 		return ErrInvalid

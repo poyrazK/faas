@@ -1126,6 +1126,7 @@ check-compute-edges: ## ADR-1343 §5: probe every compute node's app edge and tu
 .PHONY: systemd-hardening-check
 systemd-hardening-check: ## Static release gate for production systemd isolation directives
 	bash scripts/ci/check_systemd_hardening.sh $(CURDIR)
+	bash scripts/ci/check_systemd_hardening_test.sh
 
 .PHONY: canary-artifact-retention-test
 canary-artifact-retention-test: ## Test bounded validation-artifact inventory, safety proofs, and cleanup

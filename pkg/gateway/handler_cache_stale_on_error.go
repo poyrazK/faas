@@ -115,7 +115,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 	}
 	key := snap.CacheKey
 	outcome, entry := h.responseCache.Get(key)
-	if outcome != "stale_if_error_eligible" {
+	if outcome != "stale_if_error_eligible" || entry == nil || responseForbidsSharedCaching(http.Header(entry.header)) {
 		return false, ""
 	}
 	for k, vs := range entry.header {
@@ -339,7 +339,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	}
 	key := snap.CacheKey
 	outcome, entry := h.responseCache.Get(key)
-	if outcome != "stale_if_error_eligible" {
+	if outcome != "stale_if_error_eligible" || entry == nil || responseForbidsSharedCaching(http.Header(entry.header)) {
 		return false, ""
 	}
 	// Stale-eligible → serve. The replay is structurally
