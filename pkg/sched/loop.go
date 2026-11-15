@@ -5125,6 +5125,9 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 		// Already fired in the current window.
 		return
 	}
+	if len(c.Command) == 0 && l.pauseFailingCron(ctx, c) {
+		return
+	}
 	if len(c.Command) > 0 || c.SchedulePolicy != nil {
 		due, skipped := cronDueOccurrences(sched, scheduledFor, now, api.CronCatchUpRecordedMax)
 		if skipped > 0 {

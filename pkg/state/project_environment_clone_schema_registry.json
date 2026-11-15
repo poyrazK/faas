@@ -21938,5 +21938,24 @@
       "status"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "platform_alert_notices",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "created_at",
+      "detail",
+      "finished_at",
+      "id",
+      "kind",
+      "last_error",
+      "lease_expires_at",
+      "next_attempt_at",
+      "status",
+      "subject_id"
+    ],
+    "kind": "operational"
   }
 ]

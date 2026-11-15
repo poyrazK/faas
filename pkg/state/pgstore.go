@@ -11200,7 +11200,7 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	if _, err := tx.Exec(ctx, `
 		update crons
 		   set suspended_reason = ''
-		 where app_id = $1 and suspended_reason = 'no_live_deployment'`, appID); err != nil {
+		 where app_id = $1 and suspended_reason in ('no_live_deployment', 'failing')`, appID); err != nil {
 		return fmt.Errorf("state: reactivate deployment crons: %w", err)
 	}
 	if dep.Status == DeployLive || (dep.CanaryTotalSteps <= 0 && IsServiceRollout(dep)) {
@@ -15341,7 +15341,12 @@ func (s *PgStore) UpdateCronWithOptions(ctx context.Context, id string, schedule
 		   retry_max = coalesce($8, retry_max),
 		   retry_backoff_seconds = coalesce($9, retry_backoff_seconds),
 		   schedule_policy = case when $12::boolean then null else coalesce($10::jsonb, schedule_policy) end,
-		   failure_rules = case when $13::boolean then null else coalesce($11::jsonb, failure_rules) end
+		   failure_rules = case when $13::boolean then null else coalesce($11::jsonb, failure_rules) end,
+		   -- A customer edit of a cron paused for failing resumes it
+		   -- (ADR-20261115194000).
+		   suspended_reason = case when suspended_reason = 'failing'
+		       and ($2::text is not null or $3::text is not null or $4::boolean is not null)
+		       then '' else suspended_reason end
 		 where id = $1
 		 returning id, app_id, schedule, path, enabled, suspended_reason, timezone, skip_if_running, last_fired_at, created_at, command, command_shell, command_timeout_seconds, command_max_output_bytes, retry_max, retry_backoff_seconds, schedule_policy, failure_rules, schedule_revision, schedule_anchor_at, deployment_scope, clone_paused`,
 		id, schedule, path, enabled, timezone, skipIfRunning, createdAtArg, retryMaxArg, retryBackoffArg, schedulePolicyArg, failureRulesArg, clearPolicy, clearRules)
@@ -15508,7 +15513,7 @@ func (s *PgStore) ReactivateCronsForApp(ctx context.Context, appID string) (int,
 	tag, err := s.pool.Exec(ctx, `
 		update crons
 		   set suspended_reason = ''
-		 where app_id = $1 and suspended_reason = 'no_live_deployment'`, appID)
+		 where app_id = $1 and suspended_reason in ('no_live_deployment', 'failing')`, appID)
 	if err != nil {
 		return 0, fmt.Errorf("state: reactivate crons for app: %w", err)
 	}
