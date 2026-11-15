@@ -4,6 +4,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -44,6 +45,174 @@ def healthy():
         observed("first_byte_budget_seconds"): "2" + STEPS,
         observed("success", url=URL): "1" + STEPS,
     }
+
+
+NOTIFICATION_FIELDS = ("enabled", "attempted", "last_attempt_success", "last_attempt_failure_code",
+                       "last_attempt_timestamp_seconds", "last_success_timestamp_seconds")
+
+
+def notification(name, channel="webhook", **labels):
+    return metric("faas_serving_probe_notification_" + name, job="node-compute", node="fsn-2",
+                  instance=labels.pop("instance", "fsn-2:9100"), channel=channel, **labels)
+
+
+def notification_failure():
+    series = healthy()
+    for field, value in zip(NOTIFICATION_FIELDS, (1, 1, 0, 4, 300, 120)):
+        series[notification(field)] = str(value) + STEPS
+    series[notification("enabled", "heartbeat")] = "0" + STEPS
+    series[notification("attempted", "heartbeat")] = "0" + STEPS
+    return series
+
+
+def notification_cases():
+    """Expected state/code pairs, independent of the shipped expressions."""
+    base = notification_failure()
+    yield "confirmed failure", base, {"webhook": 3, "heartbeat": 0}, 4
+    skipped = dict(base, **{notification("attempted"): "0" + STEPS})
+    yield "a skip preserves the last completed failure", skipped, {"webhook": 3, "heartbeat": 0}, 4
+    equal_clocks = dict(base, **{notification("last_success_timestamp_seconds"): "300" + STEPS})
+    yield "equal clocks retain the reported last failure", equal_clocks, {"webhook": 3, "heartbeat": 0}, 4
+    heartbeat_failure = {k.replace('channel="webhook"', 'channel="temporary"')
+                         .replace('channel="heartbeat"', 'channel="webhook"')
+                         .replace('channel="temporary"', 'channel="heartbeat"'): v for k, v in base.items()}
+    yield "a disabled webhook cannot hide a failed heartbeat", heartbeat_failure, {"webhook": 0, "heartbeat": 3}, 4
+    both_failed = dict(base)
+    for field, value in zip(NOTIFICATION_FIELDS, (1, 0, 0, 4, 300, 120)):
+        both_failed[notification(field, "heartbeat")] = str(value) + STEPS
+    yield "each failed channel has its own alert", both_failed, {"webhook": 3, "heartbeat": 3}, 4
+
+    for code in (1, 2, 3, 5, 8):
+        series = dict(base, **{notification("last_attempt_failure_code"): str(code) + STEPS})
+        yield f"accepted failure code {code}", series, {"webhook": 3, "heartbeat": 0}, code
+
+    for mode in ("success", "quiet success", "disabled", "never attempted", "unknown history"):
+        series = dict(base)
+        if mode in ("success", "quiet success"):
+            series[notification("last_attempt_success")] = "1" + STEPS
+            series[notification("last_attempt_failure_code")] = "0" + STEPS
+            series[notification("last_success_timestamp_seconds")] = "300" + STEPS
+            series[notification("attempted")] = ("0" if mode == "quiet success" else "1") + STEPS
+            state = 2
+        else:
+            for name in NOTIFICATION_FIELDS[2:]:
+                series.pop(notification(name))
+            series[notification("attempted")] = "0" + STEPS
+            state = 1
+            if mode == "disabled":
+                series[notification("enabled")] = "0" + STEPS
+                state = 0
+            elif mode == "unknown history":
+                series[notification("attempted")] = "1" + STEPS
+        yield mode, series, {"webhook": state, "heartbeat": 0}, None
+
+    for field in NOTIFICATION_FIELDS:
+        for defect in ("missing", "duplicate", "wrong target", "old scrape"):
+            series = dict(base)
+            key = notification(field)
+            if defect == "missing":
+                series.pop(key)
+            elif defect == "duplicate":
+                series[notification(field, copy="duplicate")] = series[key]
+            elif defect == "wrong target":
+                series[notification(field, instance="other:9100")] = series.pop(key)
+            else:
+                series[key] = series[key].removesuffix(STEPS) + "x27"
+            still_known = field == "last_success_timestamp_seconds" and defect == "missing"
+            yield f"{field}: {defect}", series, {"webhook": 3 if still_known else 1, "heartbeat": 0}, 4 if still_known else None
+
+    for field, value in (("enabled", "0.5"), ("attempted", "2"), ("last_attempt_success", "0.5"),
+                         ("last_attempt_failure_code", "0"), ("last_attempt_failure_code", "4.5"),
+                         ("last_attempt_failure_code", "6"), ("last_attempt_failure_code", "7"),
+                         ("last_attempt_failure_code", "9"), ("last_attempt_failure_code", "NaN"),
+                         ("last_attempt_timestamp_seconds", "0"), ("last_attempt_timestamp_seconds", "Inf"),
+                         ("last_attempt_timestamp_seconds", "1831"), ("last_success_timestamp_seconds", "0"),
+                         ("last_success_timestamp_seconds", "NaN"), ("last_success_timestamp_seconds", "301")):
+        values = " ".join([value] * 61) if value in ("NaN", "Inf") else value + STEPS
+        series = dict(base, **{notification(field): values})
+        yield f"invalid {field}: {value}", series, {"webhook": 1, "heartbeat": 0}, None
+
+    for value, state in (("1830", 3), ("1831", 1)):
+        series = dict(base, **{notification("last_attempt_timestamp_seconds"): value + STEPS})
+        yield f"completion skew boundary {value}", series, {"webhook": state, "heartbeat": 0}, 4 if state == 3 else None
+
+    for mode in ("missing success clock", "success without matching clock", "success with failure code"):
+        series = dict(base, **{notification("last_attempt_success"): "1" + STEPS})
+        series[notification("last_attempt_failure_code")] = ("4" if mode == "success with failure code" else "0") + STEPS
+        if mode == "missing success clock":
+            series.pop(notification("last_success_timestamp_seconds"))
+        yield mode, series, {"webhook": 1, "heartbeat": 0}, None
+
+    for mode in ("disabled but attempted", "disabled with history"):
+        series = dict(base, **{notification("enabled"): "0" + STEPS, notification("attempted"): "0" + STEPS})
+        if mode == "disabled but attempted":
+            for field in NOTIFICATION_FIELDS[2:]:
+                series.pop(notification(field))
+            series[notification("attempted")] = "1" + STEPS
+        yield mode, series, {"webhook": 1, "heartbeat": 0}, None
+
+    for mode in ("frozen run", "future run", "old run scrape", "old up scrape", "down scrape", "duplicate target",
+                 "duplicate up labels", "duplicate run", "wrong run target", "wrong node identity",
+                 "invalid policy", "duplicate policy", "old policy scrape", "run clock newer than its own scrape"):
+        series = dict(base)
+        if mode == "frozen run":
+            series[observed("last_run_timestamp_seconds")] = "0" + STEPS
+        elif mode == "future run":
+            series[observed("last_run_timestamp_seconds")] = "3600+60x60"
+        elif mode == "old run scrape":
+            series[observed("last_run_timestamp_seconds")] = "0+60x27"
+        elif mode == "old up scrape":
+            series[observed("up")] = "1x27"
+        elif mode == "down scrape":
+            series[observed("up")] = "0" + STEPS
+        elif mode == "duplicate target":
+            series[observed("up", instance="other:9100")] = "1" + STEPS
+        elif mode == "duplicate up labels":
+            series[observed("up")[:-1] + ',copy="duplicate"}'] = "1" + STEPS
+        elif mode == "duplicate run":
+            series[observed("last_run_timestamp_seconds")[:-1] + ',copy="duplicate"}'] = "0+60x60"
+        elif mode == "wrong run target":
+            series[observed("last_run_timestamp_seconds", instance="other:9100")] = series.pop(observed("last_run_timestamp_seconds"))
+        elif mode == "wrong node identity":
+            series[observed("up")[:-1] + ',node_id="different-node"}'] = series.pop(observed("up"))
+        elif mode == "invalid policy":
+            series[intent("expected_max_age_seconds", probe_node="fsn-2")] = " ".join(["Inf"] * 61)
+        elif mode == "duplicate policy":
+            series[intent("expected_max_age_seconds", probe_node="fsn-2", copy="duplicate")] = "900" + STEPS
+        elif mode == "run clock newer than its own scrape":
+            series = {k: v.removesuffix(STEPS) + "x28" if k.startswith("faas_serving_probe_notification_") else v
+                      for k, v in series.items()}
+            series[observed("up")] = "1x28"
+            series[observed("last_run_timestamp_seconds")] = "1800x28"
+        else:
+            series[intent("expected_max_age_seconds", probe_node="fsn-2")] = "900x27"
+        yield mode, series, {"webhook": 1, "heartbeat": 1}, None
+
+    no_metadata = {k: v for k, v in base.items() if not k.startswith("faas_serving_probe_notification_")}
+    yield "older producer has unknown notification health", no_metadata, {"webhook": 1, "heartbeat": 1}, None
+
+    hidden_labels = {k[:-1] + ',provider="private-provider-token",url="https://private.example/token"}'
+                     if k.startswith("faas_serving_probe_notification_") else k: v for k, v in base.items()}
+    yield "unreviewed labels never reach normalized output", hidden_labels, {"webhook": 3, "heartbeat": 0}, 4
+
+    rotated = dict(base)
+    for name in NOTIFICATION_FIELDS[2:]:
+        rotated[notification(name)] = rotated[notification(name)].removesuffix(STEPS) + "x20 stale"
+    rotated[notification("attempted")] = "0" + STEPS
+    yield "credential rotation removes completed history", rotated, {"webhook": 1, "heartbeat": 0}, None
+    disabled_after_failure = dict(rotated)
+    disabled_after_failure[notification("enabled")] = "1x20 0x39"
+    disabled_after_failure[notification("attempted")] = "1x20 0x39"
+    yield "disabling removes an existing warning without confirming recovery", disabled_after_failure, {"webhook": 0, "heartbeat": 0}, None
+
+    wrong_channel = {k.replace('channel="webhook"', 'channel="unreviewed"'): v for k, v in base.items()}
+    yield "unsupported channel cannot qualify a webhook", wrong_channel, {"webhook": 1, "heartbeat": 0}, None
+
+    no_intent = {k: v for k, v in base.items() if 'job="node"' not in k}
+    yield "unavailable intent cannot qualify a delivery alert", no_intent, {}, None
+
+    no_validation = {k: v for k, v in base.items() if not k.startswith(("faas_serving_probe_content_check_enabled", "faas_serving_probe_first_byte_budget_seconds"))}
+    yield "notification evidence is independent of serving validation", no_validation, {"webhook": 3, "heartbeat": 0}, 4
 
 
 def cases():
@@ -135,8 +304,17 @@ def cases():
 
 @unittest.skipUnless(PROMTOOL, "promtool is required for real coverage evaluation")
 class ServingProbeCoverageTest(unittest.TestCase):
-    def invoke(self, data):
+    def invoke(self, data, serving_only=False):
         with tempfile.TemporaryDirectory() as directory:
+            if serving_only:
+                # Evaluate the exact production group without unrelated alert
+                # families; all its dependencies are defined earlier in it.
+                source = (ROOT / "deploy/ansible/roles/prometheus/files/faas.rules.yml").read_text()
+                group = re.search(r"(?ms)^  - name: faas_serving_probe_coverage\n.*?(?=^  - name:|\Z)", source)
+                self.assertIsNotNone(group)
+                rules = Path(directory) / "serving.rules.yml"
+                rules.write_text("groups:\n" + group[0])
+                data = dict(data, rule_files=[str(rules)])
             path = Path(directory) / "coverage.test.yml"
             path.write_text(json.dumps(data))
             result = subprocess.run([PROMTOOL, "test", "rules", str(path)], capture_output=True, text=True)
@@ -189,6 +367,133 @@ class ServingProbeCoverageTest(unittest.TestCase):
             "input_series": [{"series": labels, "values": str(value)} for labels, value in inputs],
             "promql_expr_test": checks,
         }]})
+
+    def test_diagnostics_belong_to_one_current_discovered_result(self):
+        values = {"failure_code": 0, "first_failure_code": 5, "attempts": 2, "http_status": 200}
+        tests = []
+        for mode in ("recovered retry", "old probe", "wrong target", "duplicate", "stale field", "frozen run"):
+            series = healthy()
+            wanted = dict(values)
+            if mode != "old probe":
+                for name, value in values.items():
+                    series[observed(name, url=URL)] = str(value) + STEPS
+            else:
+                wanted = {}
+            if mode == "wrong target":
+                series[observed("attempts", url=URL, instance="other:9100")] = series.pop(observed("attempts", url=URL))
+                wanted.pop("attempts")
+            elif mode == "duplicate":
+                duplicate = observed("attempts", url=URL)[:-1] + ',copy="duplicate"}'
+                series[duplicate] = "2" + STEPS
+                wanted.pop("attempts")
+            elif mode == "stale field":
+                series[observed("first_failure_code", url=URL)] = "5x27"
+                wanted.pop("first_failure_code")
+            elif mode == "frozen run":
+                series[observed("last_run_timestamp_seconds")] = "0" + STEPS
+                wanted = {}
+            tests.append({
+                "name": "diagnostics: " + mode, "interval": "1m",
+                "input_series": [{"series": key, "values": value} for key, value in series.items()],
+                "promql_expr_test": [{
+                    "expr": "{__name__=~\"faas_serving_probe:(failure_code|first_failure_code|attempts|http_status)\"}",
+                    "eval_time": "30m",
+                    "exp_samples": [{"labels": metric("faas_serving_probe:" + name, probe_node="fsn-2", url=URL), "value": value}
+                                    for name, value in wanted.items()],
+                }],
+            })
+        self.invoke({"rule_files": [str(ROOT / "deploy/ansible/roles/prometheus/files/faas.rules.yml")],
+                     "evaluation_interval": "1m", "tests": tests})
+
+    def test_notification_state_and_alert_reject_unusable_evidence(self):
+        tests = []
+        for name, series, states, code in notification_cases():
+            expected_alerts = [{
+                "labels": metric("", alertname="FaasServingProbeNotificationFailed",
+                                 probe_node="fsn-2", channel=channel, severity="warn", component="node",
+                                 family="serving_probe_notifications", public_status="internal"), "value": 1}
+                for channel, state in states.items() if state == 3]
+            expected_codes = [{"labels": metric("faas_serving_probe_notification:last_attempt_failure_code",
+                                               probe_node="fsn-2", channel=channel), "value": code if state == 3 else 0}
+                              for channel, state in states.items() if state in (2, 3)]
+            tests.append({
+                "name": "notification: " + name, "interval": "1m",
+                "input_series": [{"series": key, "values": value} for key, value in series.items()],
+                "promql_expr_test": [
+                    {"expr": "faas_serving_probe_notification:state", "eval_time": "30m",
+                     "exp_samples": [{"labels": metric("faas_serving_probe_notification:state", probe_node="fsn-2", channel=channel), "value": state}
+                                     for channel, state in states.items()]},
+                    # The checked-in fixture tests the five-minute hold. This
+                    # matrix checks eligibility, including a just-valid clock
+                    # whose alert is still pending at the evaluation time.
+                    {"expr": "count without (alertstate) (ALERTS{alertname=\"FaasServingProbeNotificationFailed\"})",
+                     "eval_time": "30m", "exp_samples": expected_alerts},
+                    {"expr": "faas_serving_probe_notification:last_attempt_failure_code", "eval_time": "30m",
+                     "exp_samples": expected_codes},
+                ],
+            })
+        self.invoke({"evaluation_interval": "1m", "tests": tests}, serving_only=True)
+
+    def test_notification_warning_hold_recovery_rotation_and_disable_fixture(self):
+        fixture = ROOT / "pkg/promqlrules/testdata/serving_probe_notifications.test.yml"
+        result = subprocess.run([PROMTOOL, "test", "rules", str(fixture)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_notification_evidence_distinguishes_gaps_from_no_history(self):
+        expected = {
+            "confirmed failure": {"webhook": 0, "heartbeat": 0},
+            "quiet success": {"webhook": 0, "heartbeat": 0},
+            "disabled": {"webhook": 0, "heartbeat": 0},
+            "never attempted": {"webhook": 1, "heartbeat": 0},
+            "unknown history": {"webhook": 2, "heartbeat": 0},
+            "missing success clock": {"webhook": 2, "heartbeat": 0},
+            "success without matching clock": {"webhook": 3, "heartbeat": 0},
+            "disabled but attempted": {"webhook": 2, "heartbeat": 0},
+            "disabled with history": {"webhook": 3, "heartbeat": 0},
+            "older producer has unknown notification health": {"webhook": 2, "heartbeat": 2},
+            "credential rotation removes completed history": {"webhook": 1, "heartbeat": 0},
+            "disabling removes an existing warning without confirming recovery": {"webhook": 0, "heartbeat": 0},
+            "unsupported channel cannot qualify a webhook": {"webhook": 2, "heartbeat": 0},
+            "unreviewed labels never reach normalized output": {"webhook": 0, "heartbeat": 0},
+            "unavailable intent cannot qualify a delivery alert": {},
+        }
+        for field in NOTIFICATION_FIELDS:
+            for defect in ("missing", "duplicate", "wrong target", "old scrape"):
+                code = (0 if field == "last_success_timestamp_seconds" else 2) if defect == "missing" else 3
+                expected[f"{field}: {defect}"] = {"webhook": code, "heartbeat": 0}
+        for name, _, _, _ in notification_cases():
+            if name.startswith("invalid "):
+                expected[name] = {"webhook": 3, "heartbeat": 0}
+        for name in ("frozen run", "future run", "old run scrape", "old up scrape", "down scrape", "duplicate target",
+                     "duplicate up labels", "duplicate run", "wrong run target", "wrong node identity",
+                     "invalid policy", "duplicate policy", "old policy scrape", "run clock newer than its own scrape"):
+            expected[name] = {"webhook": 4, "heartbeat": 4}
+        tests = []
+        for name, series, _, _ in notification_cases():
+            if name not in expected:
+                continue
+            codes = expected[name]
+            tests.append({
+                "name": "notification evidence: " + name, "interval": "1m",
+                "input_series": [{"series": key, "values": value} for key, value in series.items()],
+                "promql_expr_test": [
+                    {"expr": "faas_serving_probe_notification:evidence_status", "eval_time": "30m",
+                     "exp_samples": [{"labels": metric("faas_serving_probe_notification:evidence_status", probe_node="fsn-2", channel=channel), "value": code}
+                                     for channel, code in codes.items()]},
+                    {"expr": "count without (alertstate) (ALERTS{alertname=\"FaasServingProbeNotificationTelemetryDegraded\"})",
+                     "eval_time": "30m", "exp_samples": [
+                         {"labels": metric("", alertname="FaasServingProbeNotificationTelemetryDegraded", probe_node="fsn-2", channel=channel,
+                                           severity="warn", component="node", family="serving_probe_notifications", public_status="internal"), "value": 1}
+                         for channel, code in codes.items() if code in (2, 3)]},
+                ],
+            })
+        self.assertEqual(len(tests), len(expected))
+        self.invoke({"evaluation_interval": "1m", "tests": tests}, serving_only=True)
+
+    def test_notification_telemetry_warning_lifecycle_fixture(self):
+        fixture = ROOT / "pkg/promqlrules/testdata/serving_probe_notification_evidence.test.yml"
+        result = subprocess.run([PROMTOOL, "test", "rules", str(fixture)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

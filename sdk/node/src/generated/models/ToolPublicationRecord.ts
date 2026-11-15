@@ -4,10 +4,12 @@
 /* eslint-disable */
 import type { ToolPublicationIntent } from './ToolPublicationIntent.js';
 import type { ToolPublicationOutcome } from './ToolPublicationOutcome.js';
+import type { ToolPublicationVerification } from './ToolPublicationVerification.js';
 /**
  * Account-owned durable publication review and immutable outcome bound to native deployment source identity.
  */
 export type ToolPublicationRecord = {
+  verification?: ToolPublicationVerification;
   id: string;
   account_id: string;
   intent: ToolPublicationIntent;

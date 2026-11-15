@@ -247,8 +247,9 @@ whether a person would be asked first. Sending a request with the header
 it as the real request and changes nothing. Previews work on every change
 the budget prices: app settings, scaling, prewarm, creating an app, a
 deployment's `min_instances`, managed Postgres create, compute policy,
-resize and restore, and creating, cloning or branching a project
-environment. Other routes refuse the header. An organization can cap every agent acting in it; the lower
+resize and restore, creating, cloning or branching a project
+environment, and a Git source deploy (Gregale fetches the ref and prices its
+`gregale.yaml`). Other routes refuse the header. An organization can cap every agent acting in it; the lower
 of the agent's budget and the ceiling applies:
 
 ```sh
@@ -260,7 +261,10 @@ service or worker is priced for the replicas it starts with),
 `PATCH /v1/apps/{slug}` (including the `execution_mode`, `service_replicas`
 and `worker_replicas` that `gregale deploy` applies from `gregale.yaml`),
 `POST /v1/apps/{slug}/scaling`, `POST /v1/apps/{slug}/prewarm` and
-`PATCH /v1/deployments/{id}`.
+`PATCH /v1/deployments/{id}`. A source deploy (a Git source ref, a source
+tarball or an upload) applies the source's own `gregale.yaml` deployment
+settings, so it is priced for the replicas or warm floor they add before
+any of them is written.
 
 Creating an environment from another (`gregale env create --from`, a full
 clone, or an environment branch) is priced at the warm instances it copies:

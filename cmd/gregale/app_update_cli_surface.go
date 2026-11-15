@@ -46,6 +46,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"retry_policy":                         {Path: "gregale.yaml retry_policy"},
 	"service_replicas":                     {Path: "gregale.yaml lifecycle.service_replicas"},
 	"before_checkpoint":                    {Path: "gregale.yaml lifecycle.before_checkpoint"},
+	"warmup":                               {Path: "gregale.yaml lifecycle.warmup"},
 	"worker_replicas":                      {Path: "gregale worker scale"},
 	"ports":                                {Path: "gregale app <slug> --ports", AppFlags: []string{"ports"}},
 	"favicon":                              {KnownGap: "no customer CLI setter; API-only today"},

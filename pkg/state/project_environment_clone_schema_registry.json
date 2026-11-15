@@ -21,6 +21,35 @@
     "kind": "operational"
   },
   {
+    "table": "account_signup_facts",
+    "columns": [
+      "account_id",
+      "asn",
+      "asn_org",
+      "country",
+      "created_at",
+      "disposable_email",
+      "email_domain",
+      "method",
+      "reduced_at",
+      "signup_ip",
+      "user_agent"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "account_held_links",
+    "columns": [
+      "account_id",
+      "detected_at",
+      "held_account_id",
+      "held_org_id",
+      "held_reason",
+      "signal"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "account_billing_connections",
     "columns": [
       "account_id",
@@ -3477,6 +3506,7 @@
   {
     "table": "builds",
     "columns": [
+      "builder_node_name",
       "cache_key_sha256",
       "cache_status",
       "cancelled_at",
@@ -3489,6 +3519,7 @@
       "id",
       "kind",
       "log_path",
+      "not_before",
       "source_bytes",
       "started_at",
       "status"
@@ -4007,6 +4038,7 @@
       "allow_tenant_selection",
       "app_id",
       "blocked_events",
+      "changes_feeds",
       "contract_version",
       "created_at",
       "credential_revision",
@@ -4014,10 +4046,13 @@
       "enabled",
       "id",
       "last_checked_at",
+      "managed_database_id",
       "name",
       "oldest_pending_at",
       "operation_policy",
       "pending_events",
+      "poll_interval_ms",
+      "queue_name",
       "relay_status",
       "sealed_connection"
     ],
@@ -5103,8 +5138,11 @@
       "created_at",
       "database_id",
       "desired_state",
+      "freshness_target_seconds",
       "generation",
       "id",
+      "evolution_change",
+      "index_change",
       "initialized",
       "lease_token",
       "lease_until",
@@ -5119,6 +5157,7 @@
       "revision",
       "schema_approval",
       "schema_change",
+      "serving_config",
       "source_connection_id",
       "state",
       "tables",
@@ -5127,7 +5166,9 @@
       "verification_progress",
       "verified_at",
       "verify_requested",
-      "wal_retention"
+      "wal_retention",
+      "work_config",
+      "work_status"
     ],
     "kind": "configuration",
     "capabilities": [],
@@ -12895,6 +12936,7 @@
   {
     "table": "object_inventory_schedule",
     "columns": [
+      "active_since",
       "attempt_at",
       "bucket_id",
       "mutated_at",
@@ -14909,6 +14951,16 @@
       "scope",
       "subject_id",
       "tokens"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "plan_fit_notices",
+    "columns": [
+      "subject_id",
+      "plan",
+      "apps_digest",
+      "noticed_at"
     ],
     "kind": "operational"
   },
@@ -19478,6 +19530,18 @@
       "node_id",
       "opened_at",
       "via"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "secret_verification_audit",
+    "columns": [
+      "account_id",
+      "app_id",
+      "credential_id",
+      "cutover_id",
+      "id",
+      "verified_at"
     ],
     "kind": "operational"
   },

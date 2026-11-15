@@ -61,30 +61,6 @@ func (t deletionBlockTally) publish(g *prometheus.GaugeVec) {
 	}
 }
 
-// deletionBlocked reports whether err is a deletion guard refusing the
-// account's move to deleted_pending, from apid's command or the direct store
-// transition. A guarded account stays suspended until the blocking resources
-// are gone; it is logged and counted, never retried faster than the sweep and
-// never treated as an outage. Customer databases are not deleted here.
-func (d *Dunning) deletionBlocked(acct state.Account, err error, tally deletionBlockTally) bool {
-	var reason string
-	var databases int64
-	var command *api.InternalMailNonpaymentDeletionBlocked
-	var stored *state.AccountManagedPostgresDatabasesError
-	switch {
-	case errors.As(err, &command):
-		reason, databases = command.Reason, command.ManagedPostgresDatabases
-	case errors.As(err, &stored):
-		reason, databases = api.NonpaymentDeletionBlockedManagedPostgres, stored.Live
-	case errors.Is(err, state.ErrOrgAppOwnershipPending):
-		reason = api.NonpaymentDeletionBlockedSharedAppOwnership
-	default:
-		return false
-	}
-	if _, known := tally[reason]; !known {
-		reason = deletionBlockedUnknown // keep the label set closed against a newer apid
-	}
-	tally[reason]++
-	d.p.Log.Warn("meter: non-payment deletion blocked", "account", acct.ID, "reason", reason, "managed_postgres_databases", databases)
-	return true
-}
+// Since the billing review of 2026-11-13 (R9-1) the ladder never moves an
+// account to deleted_pending for non-payment, so no deletion guard can refuse
+// it; the blocked gauge stays published at zero for its existing alert.

@@ -242,20 +242,19 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 		return nil
 	}
 	cur, prev := cmp.cur, cmp.prev
-	curStart, curEnd, prevStart, prevEnd := cmp.curStart, cmp.curEnd, cmp.prevStart, cmp.prevEnd
-
-	// Compute baseline p95 per route on the prior deployment.
-	baseline, err := s.store.RequestTelemetryBaselineP95ByRoute(ctx, sqlc.RequestTelemetryBaselineP95ByRouteParams{
-		AppID:        appID,
-		DeploymentID: prev.DeploymentID,
-		ReceivedAt:   pgtype.Timestamptz{Time: prevStart, Valid: true},
-		ReceivedAt_2: pgtype.Timestamptz{Time: prevEnd, Valid: true},
-		Column5:      true, // regression view: warm, unpinned, deployment-served latency
-	})
-	if err != nil {
-		return fmt.Errorf("baseline p95: %w", err)
+	curStart, curEnd := cmp.curStart, cmp.curEnd
+	// Dependency spans are read from the earliest baseline row on; side by
+	// side that may be the predecessor's own window.
+	prevStart := cmp.prevStart
+	if cmp.ownStart.Before(prevStart) {
+		prevStart = cmp.ownStart
 	}
-	baselineByRoute := regressionBaselineRoutes(baseline, debugRegressionMaxRoutes)
+
+	// Compute baseline p95 and error rates per route on the prior deployment.
+	baselineByRoute, baselineErrors, err := s.regressionBaseline(ctx, appID, cmp)
+	if err != nil {
+		return err
+	}
 
 	// Compute current p95 per route on the current deployment.
 	current, err := s.store.RequestTelemetryBaselineP95ByRoute(ctx, sqlc.RequestTelemetryBaselineP95ByRouteParams{
@@ -275,10 +274,6 @@ func (s *server) runRegressionForApp(ctx context.Context, log *slog.Logger, appI
 	// Like the p95 reads, a failed error-rate read skips the app for this
 	// pass: recording latency alone would rewrite an observation's kind and
 	// zero its stored error rates.
-	baselineErrors, err := s.regressionErrorsByRoute(ctx, appID, prev.DeploymentID, prevStart, prevEnd)
-	if err != nil {
-		return fmt.Errorf("baseline error rates: %w", err)
-	}
 	currentErrors, err := s.regressionErrorsByRoute(ctx, appID, cur.DeploymentID, curStart, curEnd)
 	if err != nil {
 		return fmt.Errorf("current error rates: %w", err)
@@ -325,6 +320,69 @@ func (s *server) resolveRegressionsNotSeen(ctx context.Context, log *slog.Logger
 	for _, row := range rows {
 		s.notifyDebugRegressionChanged(ctx, uuidFromPg(row.AppID), debugRegressionObservationToItem(row))
 	}
+}
+
+// regressionBaseline reads the predecessor's p95 and error rates per route
+// over the comparison's window. Side by side, a route the predecessor did not
+// serve in the shared window is judged against the predecessor's own last
+// window instead: a single platform request to the old deployment after the
+// rollout (a cold-boot health check, found on prod 2026-11-14) made the two
+// overlap, and the shared window then held no baseline for any customer route,
+// so a 24x slowdown went unreported.
+func (s *server) regressionBaseline(ctx context.Context, appID pgtype.UUID, cmp debugRegressionComparison) (map[string]int32, map[string]debugger.RouteErrors, error) {
+	read := func(from, until time.Time) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, map[string]debugger.RouteErrors, error) {
+		p95, err := s.store.RequestTelemetryBaselineP95ByRoute(ctx, sqlc.RequestTelemetryBaselineP95ByRouteParams{
+			AppID:        appID,
+			DeploymentID: cmp.prev.DeploymentID,
+			ReceivedAt:   pgtype.Timestamptz{Time: from, Valid: true},
+			ReceivedAt_2: pgtype.Timestamptz{Time: until, Valid: true},
+			Column5:      true, // regression view: warm, unpinned, deployment-served latency
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("baseline p95: %w", err)
+		}
+		errs, err := s.regressionErrorsByRoute(ctx, appID, cmp.prev.DeploymentID, from, until)
+		if err != nil {
+			return nil, nil, fmt.Errorf("baseline error rates: %w", err)
+		}
+		return p95, errs, nil
+	}
+	p95, errs, err := read(cmp.prevStart, cmp.prevEnd)
+	if err != nil {
+		return nil, nil, err
+	}
+	if cmp.sideBySide() {
+		ownP95, ownErrs, err := read(cmp.ownStart, cmp.ownEnd)
+		if err != nil {
+			return nil, nil, err
+		}
+		p95, errs = mergeRegressionBaselines(p95, errs, ownP95, ownErrs)
+	}
+	return regressionBaselineRoutes(p95, debugRegressionMaxRoutes), errs, nil
+}
+
+// mergeRegressionBaselines keeps the shared window's baseline for every
+// route it has and takes the rest from the predecessor's own window.
+func mergeRegressionBaselines(p95 []sqlc.RequestTelemetryBaselineP95ByRouteRow, errs map[string]debugger.RouteErrors,
+	ownP95 []sqlc.RequestTelemetryBaselineP95ByRouteRow, ownErrs map[string]debugger.RouteErrors) ([]sqlc.RequestTelemetryBaselineP95ByRouteRow, map[string]debugger.RouteErrors) {
+	shared := make(map[string]bool, len(p95))
+	for _, row := range p95 {
+		shared[row.Route] = true
+	}
+	for _, row := range ownP95 {
+		if !shared[row.Route] {
+			p95 = append(p95, row)
+		}
+	}
+	if errs == nil {
+		errs = map[string]debugger.RouteErrors{}
+	}
+	for route, e := range ownErrs {
+		if _, ok := errs[route]; !ok {
+			errs[route] = e
+		}
+	}
+	return p95, errs
 }
 
 // regressionBaselineRoutes maps route → baseline p95, capped so a 10k-route

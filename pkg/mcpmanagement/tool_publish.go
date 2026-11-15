@@ -38,7 +38,7 @@ func (m *management) applyToolDeploy(ctx context.Context, a applyArgs) (any, err
 		m.mu.Unlock()
 		return out, nil
 	}
-	project, err := loadToolProject(toolProjectArgs{Path: p.Path, Fixtures: p.Fixtures, AccessMode: p.AccessMode, TokenEnv: p.TokenEnv})
+	project, err := loadToolProject(toolProjectArgs{Path: p.Path, Fixtures: p.Fixtures, AccessMode: p.AccessMode, TokenEnv: p.TokenEnv, platformVerification: p.Intent.PlatformVerification})
 	if err == nil && project.digest != p.Digest {
 		err = invalid("source_changed", "source or fixtures changed since review; obtain a new publication plan")
 	}
@@ -189,6 +189,9 @@ func (m *management) runToolPublication(ctx context.Context, p *toolPublication,
 	}
 	if p.TokenEnv != "" {
 		args = append(args, "--token-env", p.TokenEnv)
+	}
+	if p.Intent.PlatformVerification {
+		args = append(args, "--publication-id", p.ID)
 	}
 	cli, err := m.opts.LocalCLI(ctx, args, nil)
 	if err == nil && ctx.Err() != nil {

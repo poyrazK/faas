@@ -158,6 +158,15 @@ type AccountEmailChange struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type AccountHeldLink struct {
+	AccountID     pgtype.UUID
+	HeldAccountID pgtype.UUID
+	HeldOrgID     pgtype.UUID
+	HeldReason    string
+	Signal        string
+	DetectedAt    pgtype.Timestamptz
+}
+
 type AccountMailThrottle struct {
 	AccountID       pgtype.UUID
 	Kind            string
@@ -176,6 +185,20 @@ type AccountPassword struct {
 	AccountID pgtype.UUID
 	Hash      string
 	UpdatedAt pgtype.Timestamptz
+}
+
+type AccountSignupFact struct {
+	AccountID       pgtype.UUID
+	Method          string
+	SignupIp        *netip.Addr
+	UserAgent       pgtype.Text
+	Country         pgtype.Text
+	Asn             pgtype.Int8
+	AsnOrg          pgtype.Text
+	EmailDomain     string
+	DisposableEmail bool
+	CreatedAt       pgtype.Timestamptz
+	ReducedAt       pgtype.Timestamptz
 }
 
 // Accounts whose combined billable overage (compute plus live secondary meters) reached overage_cap_cents this UTC month. Written by meterd, read by schedd (ADR-20261026120843).
@@ -2683,6 +2706,8 @@ type Build struct {
 	CacheStatus                  pgtype.Text
 	CacheKeySha256               pgtype.Text
 	CoalescedWith                pgtype.UUID
+	NotBefore                    pgtype.Timestamptz
+	BuilderNodeName              pgtype.Text
 }
 
 type BuildExportPublication struct {
@@ -3145,6 +3170,10 @@ type CommitSource struct {
 	ContractVersion      int32
 	AllowTenantSelection bool
 	Destination          string
+	QueueName            pgtype.Text
+	ChangesFeeds         []byte
+	ManagedDatabaseID    pgtype.UUID
+	PollIntervalMs       int32
 }
 
 // Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).
@@ -3946,36 +3975,42 @@ type DataConnectionCheck struct {
 }
 
 type DataPipeline struct {
-	ID                   pgtype.UUID
-	AccountID            pgtype.UUID
-	Name                 string
-	SourceConnectionID   pgtype.UUID
-	DatabaseID           pgtype.UUID
-	Tables               []byte
-	ReadSubjects         []byte
-	DesiredState         string
-	State                string
-	Revision             int64
-	ObservedRevision     int64
-	Generation           int64
-	Reason               string
-	TablesReady          int32
-	RetainedWalBytes     pgtype.Int8
-	ObservedAt           pgtype.Timestamptz
-	Verification         string
-	VerifiedAt           pgtype.Timestamptz
-	Initialized          bool
-	VerifyRequested      bool
-	LeaseToken           string
-	LeaseUntil           pgtype.Timestamptz
-	RetryAt              pgtype.Timestamptz
-	CreatedAt            pgtype.Timestamptz
-	AppliedThroughAt     pgtype.Timestamptz
-	SchemaApproval       string
-	SchemaChange         []byte
-	VerificationProgress []byte
-	ReaderChange         []byte
-	WalRetention         []byte
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	Name                   string
+	SourceConnectionID     pgtype.UUID
+	DatabaseID             pgtype.UUID
+	Tables                 []byte
+	ReadSubjects           []byte
+	DesiredState           string
+	State                  string
+	Revision               int64
+	ObservedRevision       int64
+	Generation             int64
+	Reason                 string
+	TablesReady            int32
+	RetainedWalBytes       pgtype.Int8
+	ObservedAt             pgtype.Timestamptz
+	Verification           string
+	VerifiedAt             pgtype.Timestamptz
+	Initialized            bool
+	VerifyRequested        bool
+	LeaseToken             string
+	LeaseUntil             pgtype.Timestamptz
+	RetryAt                pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+	AppliedThroughAt       pgtype.Timestamptz
+	SchemaApproval         string
+	SchemaChange           []byte
+	VerificationProgress   []byte
+	ReaderChange           []byte
+	WalRetention           []byte
+	ServingConfig          []byte
+	FreshnessTargetSeconds int64
+	IndexChange            []byte
+	EvolutionChange        []byte
+	WorkConfig             []byte
+	WorkStatus             []byte
 }
 
 type DataPipelineAlert struct {
@@ -10464,11 +10499,12 @@ type ObjectDeletion struct {
 }
 
 type ObjectInventorySchedule struct {
-	BucketID   pgtype.UUID
-	AttemptAt  pgtype.Timestamptz
-	ObservedAt pgtype.Timestamptz
-	QuietAfter pgtype.Timestamptz
-	MutatedAt  pgtype.Timestamptz
+	BucketID    pgtype.UUID
+	AttemptAt   pgtype.Timestamptz
+	ObservedAt  pgtype.Timestamptz
+	QuietAfter  pgtype.Timestamptz
+	MutatedAt   pgtype.Timestamptz
+	ActiveSince pgtype.Timestamptz
 }
 
 type ObjectLifecycleScan struct {
@@ -11830,6 +11866,14 @@ type PgRatelimitCounter struct {
 	Plan       string
 	Tokens     int64
 	LastRefill pgtype.Timestamptz
+}
+
+// Last plan-fit email per billing subject: the plan and the sha256 of its over-plan app set. Written by meterd (billing review H17-4).
+type PlanFitNotice struct {
+	SubjectID  pgtype.UUID
+	Plan       string
+	AppsDigest string
+	NoticedAt  pgtype.Timestamptz
 }
 
 type PlatformMailAgentRunCapture struct {
@@ -15952,6 +15996,15 @@ type SecretOpenAudit struct {
 	Entries  int32
 	OpenedAt pgtype.Timestamptz
 	JobID    pgtype.UUID
+}
+
+type SecretVerificationAudit struct {
+	ID           int64
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	CutoverID    pgtype.UUID
+	CredentialID pgtype.UUID
+	VerifiedAt   pgtype.Timestamptz
 }
 
 type ServiceCallerKey struct {

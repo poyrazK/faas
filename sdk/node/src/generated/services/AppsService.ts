@@ -11008,7 +11008,7 @@ export class AppsService {
      */
     since?: string,
     /**
-     * Exact match on the structured `level` field (info, warn, or error) surfaced in each matching log event. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
+     * Severity floor: returns lines at this level or higher, so `warn` returns warn and error lines and `info` returns info, warn and error lines. A line's level comes from its structured `level` field (info, warn, or error) surfaced in each matching log event, or from common line markers when the line has no structured level; lines with no recognisable level are omitted whenever a level is set. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
      *
      */
     level?: 'info' | 'warn' | 'error',

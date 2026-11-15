@@ -16,7 +16,7 @@ func IsDeploySetting(field string) bool {
 	switch field {
 	case "execution_mode", "restart_policy", "startup_deadline_s", "max_retries",
 		"request_timeout_s", "stop_grace_period_s", "stop_signal", "service_replicas",
-		"worker_replicas", "after_restore", "before_checkpoint", "scaling_policy", "retry_policy":
+		"worker_replicas", "after_restore", "before_checkpoint", "warmup", "scaling_policy", "retry_policy":
 		return true
 	default:
 		return false
@@ -82,7 +82,7 @@ func DeploySettingsSnapshot(app AppResponse) map[string]json.RawMessage {
 		"startup_deadline_s": m.StartupDeadlineS, "max_retries": m.MaxRetries,
 		"request_timeout_s": m.RequestTimeoutS, "stop_grace_period_s": int(m.StopGracePeriod / time.Second),
 		"stop_signal": m.StopSignal, "service_replicas": m.ServiceReplicas, "worker_replicas": m.WorkerReplicas,
-		"after_restore": m.AfterRestore, "before_checkpoint": m.BeforeCheckpoint,
+		"after_restore": m.AfterRestore, "before_checkpoint": m.BeforeCheckpoint, "warmup": m.Warmup,
 		"scaling_policy": app.ScalingPolicy, "retry_policy": app.RetryPolicy,
 	}
 	out := make(map[string]json.RawMessage, len(values))

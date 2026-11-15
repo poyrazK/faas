@@ -21,6 +21,8 @@ type contractTestStore interface {
 	projectEnvironmentQualificationStore
 	state.AccountAbuseHoldStore
 	state.AccountAbuseStrikeStore
+	state.AccountSignupFactsStore
+	state.AccountHeldLinkStore
 	state.AgentClientStore
 	state.OrgAgentStore
 	state.KeyProjectLimitStore
@@ -43,6 +45,7 @@ type contractTestStore interface {
 	state.ComputeNodeWakeBreakerStore
 	state.ComputeNodeCPUPressureStore
 	state.ComputeNodeUsageBatcher
+	state.DeferredBuildStore
 	state.DeploymentAliasStore
 	state.DeploymentHostingFailureStore
 	state.DeploymentHostingReceiptStore

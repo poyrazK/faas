@@ -150,10 +150,11 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	toolInvocations      map[string]api.ToolInvocationRecord
-	toolPublications     map[string]api.ToolPublicationRecord
-	toolGrants           map[string]api.ToolGrantRecord
-	toolOAuthConnections map[string]ToolOAuthConnection
+	toolInvocations                map[string]api.ToolInvocationRecord
+	toolPublications               map[string]api.ToolPublicationRecord
+	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
+	toolGrants                     map[string]api.ToolGrantRecord
+	toolOAuthConnections           map[string]ToolOAuthConnection
 	// ownerReleaseRequests are app_owner_release_requests by app id
 	// (ADR-20261110210000 §4); allocated on first use under mu.
 	ownerReleaseRequests map[string]AppOwnerReleaseRequest
@@ -167,12 +168,19 @@ type MemStore struct {
 	// abuseStrikes is each resource owner's abuse recycle times inside the
 	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
 	abuseStrikes map[string][]time.Time
+	// signupFacts is each account's sign-up record (ADR-20261113160000).
+	signupFacts map[string]AccountSignupFacts
+	// heldLinks is each account's links to abuse-held accounts
+	// (ADR-20261114174600).
+	heldLinks map[string][]AccountHeldLink
 	// planChangedAt is when each account's or org's plan last changed
 	// (PlanChangedAt, ADR-20261103121407).
 	planChangedAt map[string]time.Time
 	// egressOverage is each account's or org's egress overage election
 	// (EgressOverageStore, ADR-20261104204500).
 	egressOverage map[string]EgressOverageElection
+	// planFitNotices backs PlanFitNoticeStore (billing review H17-4).
+	planFitNotices map[string]PlanFitNotice
 	// creditDiscounts are the provider discounts that carry account credit
 	// (CreditDiscountStore), keyed by row id, created on first use.
 	creditDiscounts     map[string]CreditDiscount
@@ -696,9 +704,11 @@ type MemStore struct {
 	devSourceManifestSeq int64
 	devSourcePatches     []DevSourcePatch
 	devWatch             map[string]DevWatchSetting
-	devSourcePatchSeq    int64
-	domains              map[string]CustomDomain
-	defaultDomains       map[string]string
+	// buildNotBefore holds deferred builds' not_before (ADR-20261021221906).
+	buildNotBefore    map[string]time.Time
+	devSourcePatchSeq int64
+	domains           map[string]CustomDomain
+	defaultDomains    map[string]string
 	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
 	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
 	customDomainTLSHosts    map[string]customDomainTLSHost
@@ -2659,7 +2669,7 @@ func (m *MemStore) AuthenticateKey(_ context.Context, hash []byte) (Account, API
 		return Account{}, APIKey{}, ErrNotFound
 	}
 	if k.Status == string(APIKeyStatusRevoked) {
-		return Account{}, APIKey{}, ErrAPIKeyRevoked
+		return Account{}, refusedKey(k.ID, k.AccountID), ErrAPIKeyRevoked
 	}
 	if k.ExpiresAt != nil && !k.ExpiresAt.IsZero() && k.ExpiresAt.Before(time.Now()) {
 		k.Status = string(APIKeyStatusRevoked)
@@ -2669,7 +2679,7 @@ func (m *MemStore) AuthenticateKey(_ context.Context, hash []byte) (Account, API
 		}
 		m.keys[k.ID] = k
 		m.keyByHash[hex.EncodeToString(k.Hash)] = k
-		return Account{}, APIKey{}, ErrAPIKeyExpired
+		return Account{}, refusedKey(k.ID, k.AccountID), ErrAPIKeyExpired
 	}
 	return acct, k, nil
 }
@@ -2792,11 +2802,17 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 		return false, nil
 	}
 	a.Status = AccountSuspended
-	a.PastDueAt = nil
 	m.storeRouteCheckAccountLocked(id, a)
 	m.freeQuotaSuspended[id] = true
 	m.syncPersonalOrgStatusLocked(id, AccountSuspended)
 	return true, nil
+}
+
+// QuotaSuspended mirrors PgStore.QuotaSuspended.
+func (m *MemStore) QuotaSuspended(_ context.Context, id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.freeQuotaSuspended[id], nil
 }
 
 // RestoreFreeQuotaSuspension mirrors PgStore.RestoreFreeQuotaSuspension.
@@ -6418,6 +6434,9 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	if err := m.checkMCPAccessPolicyLocked(ctx, d.AppID); err != nil {
 		return Deployment{}, err
 	}
+	if err := m.checkMCPReadinessExpectationLocked(ctx, d); err != nil {
+		return Deployment{}, err
+	}
 	if len(reviews) > 0 {
 		if len(reviews) != 1 || reviews[0] == nil {
 			return Deployment{}, ErrInvalidArgument
@@ -8362,6 +8381,7 @@ func (m *MemStore) markAppPRPreviewsStaleLocked(parent App) {
 			m.apps[id] = preview
 		}
 	}
+	m.expirePullRequestBranchesLocked(parent.AccountID, parent.ProjectID, now)
 }
 
 // GithubInstallBindingForRepoBranch is the inbound-webhook dispatch
@@ -12781,15 +12801,15 @@ func (m *MemStore) CreateBuild(_ context.Context, deploymentID string, kind Depl
 }
 
 func (m *MemStore) CreateBuildWithID(_ context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string) (Build, error) {
-	build, _, err := m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, nil)
+	build, _, err := m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, nil, nil)
 	return build, err
 }
 
 func (m *MemStore) CreateBuildWithIDAndActivity(_ context.Context, id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity OrgActivity) (Build, int64, error) {
-	return m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, &activity)
+	return m.createBuildWithID(id, deploymentID, kind, sourceBytes, logPath, &activity, nil)
 }
 
-func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity) (Build, int64, error) {
+func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKind, sourceBytes int64, logPath string, activity *OrgActivity, notBefore *time.Time) (Build, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.deployments[deploymentID]; !ok {
@@ -12820,6 +12840,12 @@ func (m *MemStore) createBuildWithID(id, deploymentID string, kind DeploymentKin
 	dep.BuildID = id
 	m.putDeploymentLocked(deploymentID, dep)
 	m.builds[b.ID] = b
+	if notBefore != nil {
+		if m.buildNotBefore == nil {
+			m.buildNotBefore = map[string]time.Time{}
+		}
+		m.buildNotBefore[b.ID] = *notBefore
+	}
 	var outboxID int64
 	if activity != nil {
 		outboxID = m.enqueueOrgActivityOutboxLocked(normalized)
@@ -13119,8 +13145,9 @@ func (m *MemStore) QueuedBuildsCount(ctx context.Context) (int, error) {
 	}
 
 	n := 0
-	for _, b := range m.builds {
-		if b.Status == BuildQueued {
+	now := time.Now()
+	for id, b := range m.builds {
+		if b.Status == BuildQueued && m.buildDueLocked(id, now) {
 			n++
 		}
 	}
@@ -13212,7 +13239,7 @@ func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || m.previewBuildWaitsLocked(b) {
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || !m.buildDueLocked(id, time.Now()) || m.previewBuildWaitsLocked(b) {
 		return Build{}, ErrNotFound
 	}
 	b.Status = BuildRunning
@@ -13225,7 +13252,7 @@ func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error)
 // preview build waits while another build is queued.
 func (m *MemStore) previewBuildWaitsLocked(b Build) bool {
 	return b.Kind == DeploymentKindPreview && m.nonPreviewBuildEligibleLocked(func(o Build) bool {
-		return o.Status == BuildQueued && m.buildDependencyEligibleLocked(o, time.Now())
+		return o.Status == BuildQueued && m.buildDependencyEligibleLocked(o, time.Now()) && m.buildDueLocked(o.ID, time.Now())
 	})
 }
 
@@ -13239,7 +13266,7 @@ func (m *MemStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nod
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || m.previewBuildWaitsLocked(b) ||
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || !m.buildDueLocked(id, time.Now()) || m.previewBuildWaitsLocked(b) ||
 		!m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
 		return Build{}, ErrNotFound
 	}
@@ -13308,7 +13335,10 @@ func (m *MemStore) ClaimNextQueuedBuild(_ context.Context) (Build, error) {
 		earliest time.Time
 		found    bool
 	)
-	eligible := func(b Build) bool { return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, time.Now()) }
+	now := time.Now()
+	eligible := func(b Build) bool {
+		return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, now) && m.buildDueLocked(b.ID, now)
+	}
 	previewLast := m.nonPreviewBuildEligibleLocked(eligible)
 	for id, b := range m.builds {
 		if !eligible(b) || (previewLast && b.Kind == DeploymentKindPreview) {
@@ -13383,7 +13413,7 @@ func (m *MemStore) ClaimNextQueuedBuildWithFairness(_ context.Context, fairnessW
 	}
 	var queued []candidate
 	eligible := func(b Build) bool {
-		return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, time.Now()) && m.buildHasAppLocked(b)
+		return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, now) && m.buildDueLocked(b.ID, now) && m.buildHasAppLocked(b)
 	}
 	previewLast := m.nonPreviewBuildEligibleLocked(eligible)
 	for id, b := range m.builds {
@@ -13472,7 +13502,7 @@ func (m *MemStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nod
 	}
 	queued := make([]candidate, 0)
 	eligible := func(b Build) bool {
-		return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, now) &&
+		return b.Status == BuildQueued && m.buildDependencyEligibleLocked(b, now) && m.buildDueLocked(b.ID, now) &&
 			m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, now) && m.buildHasAppLocked(b)
 	}
 	previewLast := m.nonPreviewBuildEligibleLocked(eligible)
@@ -25184,6 +25214,17 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	delete(m.legalAcceptances, id) // ON DELETE CASCADE
+	delete(m.signupFacts, id)      // ON DELETE CASCADE
+	delete(m.heldLinks, id)        // ON DELETE CASCADE (as the new account)
+	for other, links := range m.heldLinks {
+		kept := links[:0]
+		for _, l := range links {
+			if l.HeldAccountID != id { // ON DELETE CASCADE (as the held account)
+				kept = append(kept, l)
+			}
+		}
+		m.heldLinks[other] = kept
+	}
 	delete(m.accounts, id)
 	for promotionID := range m.environmentPromotionReceipts {
 		if m.projectEnvironmentPromotions[promotionID].AccountID == id {
@@ -30139,6 +30180,9 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		delivery, ok := m.appWebhookDeliveries[event.SourceID]
 		if !ok || delivery.AccountID != accountID || delivery.AppID != appID || delivery.Status != AppWebhookDeliveryDead {
 			return DeadLetterEvent{}, ErrNotFound
+		}
+		if err := m.checkWebhookReplayAdmissionLocked(delivery); err != nil {
+			return DeadLetterEvent{}, err
 		}
 		delivery.Status = AppWebhookDeliveryPending
 		delivery.Attempt = 0

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ProjectEnvironmentBranchBucket } from './ProjectEnvironmentBranchBucket.js';
 import type { ProjectEnvironmentBranchDatabase } from './ProjectEnvironmentBranchDatabase.js';
 import type { ProjectEnvironmentBranchWorkload } from './ProjectEnvironmentBranchWorkload.js';
 /**
@@ -46,5 +47,9 @@ export type ProjectEnvironmentBranchResponse = {
    * The managed PostgreSQL copies the branch owns. Reported by the branch's own view.
    */
   databases?: Array<ProjectEnvironmentBranchDatabase>;
+  /**
+   * The overlay buckets the branch owns on its parent's buckets. Reported by the branch's own view.
+   */
+  buckets?: Array<ProjectEnvironmentBranchBucket>;
 };
 

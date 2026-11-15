@@ -21,6 +21,7 @@ import (
 )
 
 type publicationFixture struct {
+	readiness      api.MCPReadinessPolicy
 	journal        map[string]api.ToolPublicationRecord
 	base           *localFixture
 	mu             sync.Mutex
@@ -32,6 +33,7 @@ type publicationFixture struct {
 	loseBegin      bool
 	block          <-chan struct{}
 	started        chan struct{}
+	sourceFile     string
 	observedSource string
 }
 
@@ -56,6 +58,12 @@ func newPublicationFixture(t *testing.T) (*publicationFixture, *httptest.Server)
 	f := &publicationFixture{base: newLocalFixture(t, true, "stable"), journal: map[string]api.ToolPublicationRecord{}}
 	f.base.app.URL = "https://alpha.gregale.dev"
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/apps/alpha/mcp-readiness-policy" {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(f.readiness)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/v1/tool-publications/") || r.URL.Path == "/v1/tool-registry" {
 			f.serveJournal(w, r)
 			return
@@ -106,6 +114,7 @@ func (f *publicationFixture) cli(ctx context.Context, args []string, _ []byte) (
 	}
 	f.deploys++
 	fail, lose, block, started := f.fail, f.lose, f.block, f.started
+	sourceFile := f.sourceFile
 	f.mu.Unlock()
 	if started != nil {
 		close(started)
@@ -117,7 +126,10 @@ func (f *publicationFixture) cli(ctx context.Context, args []string, _ []byte) (
 			return LocalCLIResult{}, ctx.Err()
 		}
 	}
-	source, err := os.ReadFile(filepath.Join(value("--path"), "server.js"))
+	if sourceFile == "" {
+		sourceFile = "server.js"
+	}
+	source, err := os.ReadFile(filepath.Join(value("--path"), sourceFile))
 	if err != nil {
 		return LocalCLIResult{}, err
 	}
@@ -190,7 +202,7 @@ func TestToolBuildingPublicationJourney(t *testing.T) {
 			f, backend := newPublicationFixture(t)
 			cs, ctx := connectSelectedTestServer(t, backend, Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, LocalCLI: f.cli, Toolsets: []string{ToolsetBuildTools}}, protocol)
 			catalog, err := cs.ListTools(ctx, nil)
-			if err != nil || len(catalog.Tools) != 5 {
+			if err != nil || len(catalog.Tools) != 6 {
 				t.Fatalf("catalog=%v error=%v", catalog, err)
 			}
 			manifest := publicationCall(t, ctx, cs, "gregale_get_tool_template", toolTemplateArgs{Runtime: "go"}, false)
@@ -314,7 +326,7 @@ func TestToolBuildingConsentAndReadOnly(t *testing.T) {
 		opts  Options
 		count int
 	}{
-		{"read only", Options{}, 3},
+		{"read only", Options{}, 4},
 		{"hosted", Options{AllowWrites: true, Environments: &EnvironmentConsent{}}, 0},
 		{"headless hosted", Options{AllowWrites: true, agentKey: true}, 0},
 		{"app scope", Options{AllowWrites: true, AllowedApps: map[string]string{"alpha": "app-one"}}, 0},

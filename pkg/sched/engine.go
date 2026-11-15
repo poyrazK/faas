@@ -980,8 +980,14 @@ func (e *Engine) budgetForWake(in bootInput) time.Duration {
 	if e.bootBudget != nil {
 		return e.bootBudget(in.initState)
 	}
+	// A cold boot, or a restore that may fall back to one, gets the app's
+	// startup window (ADR-20261114120000).
+	extension := primeStartupExtension(in.spec.StartupDeadlineS)
 	if in.haveSnap && in.snapKey != "" {
-		return ColdBootTimeout
+		return ColdBootTimeout + extension
+	}
+	if in.initState == state.StateColdBooting {
+		return e.budgetFor(in.initState) + extension
 	}
 	return e.budgetFor(in.initState)
 }
@@ -7204,11 +7210,29 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	bootCtx, pcancel := context.WithTimeout(ctx, e.primeColdBootBudget(spec.StartupDeadlineS))
 	defer pcancel()
 	bootStartedAt := time.Now().UTC()
+	// The boot RPC runs without the app lock, as wake's does (its Phase 3):
+	// the admitted COLD_BOOTING row and ledger reservation already hold the
+	// prime's place, the per-deployment prime lock keeps a second prime out,
+	// and publication below is conditional on the row still being
+	// COLD_BOOTING. Holding the lock for the whole cold boot (up to the
+	// startup window) stalled every wake, scale-out and park of the app's
+	// serving release during each deploy (deploy-path review P12).
+	e.unlockApp(appID)
 	out, err := e.createRuntimeWithStandards(bootCtx, placement.NodeID, ins.ID, string(state.StateColdBooting), spec, nil, false)
+	e.lockApp(appID)
 	if err != nil {
 		e.ledger.Release(ins.ID)
 		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_cold_boot_failed")
 		return fmt.Errorf("sched: prime: cold boot: %w", err)
+	}
+	if out != nil && out.BaseScanGrace {
+		// vmmd keeps booting a base with a newly found fixable CRITICAL for
+		// apps already serving on it, but a new release must not start on
+		// it (deploy-path review P5).
+		e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
+		e.ledger.Release(ins.ID)
+		e.transitionWithKind(ctx, ins.ID, appID, state.StateFailed, "wake_boot_error", "prime_base_scan_grace")
+		return fmt.Errorf("sched: prime: %w", baseScanGracePrimeProblem(spec.BaseKey))
 	}
 	if out == nil || (upgradeTarget != nil && (out.Instance != ins.ID || out.Method != vmmdpb.WakeMethod_WAKE_COLD_BOOT || out.RestoreFallbackReason != "")) {
 		e.bestEffortDestroy(ctx, placement.NodeID, ins.ID)
@@ -7273,6 +7297,15 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) (primeEr
 	err = e.snapshotAndParkPrime(ctx, ins)
 	primeCompleted = err == nil
 	return err
+}
+
+// baseScanGracePrimeProblem refuses a new deployment on a runtime base whose
+// scan found a fixable CRITICAL vulnerability. Releases already serving on
+// it keep waking for api.BaseScanCriticalBootGrace.
+func baseScanGracePrimeProblem(baseKey string) *api.Problem {
+	return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		"Fixable CRITICAL vulnerability in base ext4",
+		fmt.Sprintf("Gregale's base image %q has a fix-available CRITICAL vulnerability, so Gregale will not start new deployments on it until a patched base is published; releases already serving keep running. This is a platform problem, not your code", baseKey))
 }
 
 // cleanupInterruptedPrime releases only the instance created by the Prime
@@ -8859,6 +8892,12 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			}
 		}
 		return nil
+	}
+
+	if !allowReuse && !frozenFunction {
+		// ADR-20261114153000: the deployment's first init snapshot holds
+		// code paths that already ran once. Never fails the capture.
+		e.primeInitSnapshot(ctx, ins, dep, app)
 	}
 
 	storageKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierInit, uuid.NewString())

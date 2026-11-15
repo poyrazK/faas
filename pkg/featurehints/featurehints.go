@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
 // Hint IDs. They are stable: agents and the eval key on them.
@@ -29,6 +30,7 @@ const (
 	IDUnsetEnv         = "unset-env"
 	IDDevSetup         = "dev-setup"
 	IDProjectReleases  = "project-releases"
+	IDSourceHosts      = "source-hosts"
 	maxNamedWorkloads  = 6
 	defaultHealthzPath = "/healthz"
 )
@@ -52,7 +54,7 @@ func For(in Input) []api.FeatureHint {
 	sort.Slice(workloads, func(i, j int) bool { return workloads[i].Name < workloads[j].Name })
 	var hints []api.FeatureHint
 	for _, rule := range []func(Input, []api.PlanWorkload) *api.FeatureHint{
-		healthcheck, healthDefault, publicNeedsKey, privateServices, unsetEnv, devSetup, projectReleases,
+		healthcheck, healthDefault, publicNeedsKey, privateServices, unsetEnv, devSetup, sourceHosts, projectReleases,
 	} {
 		if hint := rule(in, workloads); hint != nil {
 			hints = append(hints, *hint)
@@ -351,10 +353,97 @@ func managed(in Input, _ []api.PlanWorkload) []api.FeatureHint {
 				ID:        IDNotRunDatastore,
 				Workloads: services,
 				Applied:   applied,
-				Change:    fmt.Sprintf("Point the services at a %s you run elsewhere.", m.Kind),
+				Change:    datastoreChange(m.Kind),
 				Commands:  commands,
 			})
 		}
 	}
 	return hints
+}
+
+// sourceHosts names, for each Compose name the source dials, the variable
+// the code must read instead: Docker resolves service names on the project
+// network and Gregale does not (the 2026-11-13 eval's agent found
+// Redis(host="redis") and postgres://...@db by hand).
+func sourceHosts(in Input, ws []api.PlanWorkload) *api.FeatureHint {
+	managedByName := map[string]api.PlanManaged{}
+	for _, m := range in.Managed {
+		managedByName[strings.ToLower(m.Name)] = m
+	}
+	var hit, spots, fixes, commands []string
+	seenFix := map[string]bool{}
+	for _, wl := range ws {
+		if len(wl.SourceHosts) == 0 {
+			continue
+		}
+		hit = append(hit, wl.Name)
+		for _, h := range wl.SourceHosts {
+			spots = append(spots, fmt.Sprintf("%s:%d (%q)", h.File, h.Line, h.Host))
+			key := wl.Name + "/" + h.Host
+			if seenFix[key] {
+				continue
+			}
+			seenFix[key] = true
+			fix, command := sourceHostFix(wl, h.Host, managedByName)
+			fixes = append(fixes, fix)
+			if command != "" {
+				commands = append(commands, command)
+			}
+		}
+	}
+	if len(hit) == 0 {
+		return nil
+	}
+	return &api.FeatureHint{
+		ID:        IDSourceHosts,
+		Workloads: hit,
+		Applied: fmt.Sprintf("The source dials Compose service names, which do not resolve on Gregale: %s.",
+			list(spots)),
+		Change:   "Read the address from the environment instead, keeping the name as the local default: " + strings.Join(fixes, "; ") + ".",
+		Commands: commands,
+	}
+}
+
+// sourceHostFix says what one workload must read in place of host.
+func sourceHostFix(wl api.PlanWorkload, host string, managed map[string]api.PlanManaged) (fix, command string) {
+	if m, ok := managed[host]; ok {
+		if m.Provision != nil {
+			for _, b := range m.Provision.Bindings {
+				if b.Workload == wl.Name {
+					return fmt.Sprintf("%s reads %s for %s", wl.Name, b.EnvKey, host), ""
+				}
+			}
+		}
+		if m.Kind != "postgres" && m.Kind != "bucket" {
+			key := strings.ToUpper(strings.ReplaceAll(m.Kind, "-", "_")) + "_URL"
+			return fmt.Sprintf("%s reads %s, set to a %s you run elsewhere", wl.Name, key, m.Kind),
+				"gregale env set --app " + slug(wl) + " " + key + "=<external " + m.Kind + " URL>"
+		}
+	}
+	depends := ""
+	if !containsFold(wl.DependsOn, host) {
+		depends = fmt.Sprintf(" once it lists %s in depends_on", host)
+	}
+	return fmt.Sprintf("%s reads $%s (raw TCP) or $%s (HTTP) for %s%s", wl.Name,
+		api.ServiceBindingHostEnvKey(host), api.ServiceBindingEnvKey(host), host, depends), ""
+}
+
+func containsFold(items []string, want string) bool {
+	for _, item := range items {
+		if strings.EqualFold(item, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// datastoreChange says where a datastore Gregale does not run should live:
+// apps park to snapshots and keep no data, so a datastore image is refused
+// even when deployed on its own (stateless_only_violation).
+func datastoreChange(kind string) string {
+	change := fmt.Sprintf("Point the services at a hosted %s", kind)
+	if hosted, ok := statefuldenylist.Set[kind]; ok {
+		change += " (" + hosted + ")"
+	}
+	return change + ". Gregale will not run it as an app either: apps park to snapshots and keep no data."
 }

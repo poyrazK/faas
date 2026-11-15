@@ -42,7 +42,7 @@ func warnMissingRequiredSecrets(ctx context.Context, client *Client, slug, scope
 	if len(missing) == 0 {
 		return
 	}
-	PrintWarn(osStderr, "%s declares required names that %s does not have in scope %s: %s. The app may fail to start; set them with `gregale secrets set --app %s KEY=VALUE` or check with `gregale secrets check --app %s`.",
+	PrintWarn(osStderr, "%s declares required names that %s does not have in scope %s: %s. The app may fail to start; set them with `gregale env set --app %s KEY=VALUE` or check with `gregale env check --app %s`.",
 		oneLine(file), oneLine(slug), oneLine(scopeOrDefault(scope)), strings.Join(missing, ", "), oneLine(slug), oneLine(slug))
 }
 

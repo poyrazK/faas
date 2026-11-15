@@ -1,7 +1,9 @@
 package state_test
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -11,6 +13,9 @@ import (
 
 // A stage-owned bucket's storage events carry the stage, so only the stage's
 // subscriptions receive them; every other bucket's events stay production.
+// An object event nobody receives is not kept (ADR-614 amendment
+// 2026-11-13), so the stage event's stamp shows as production's subscription
+// never receiving it.
 //
 // adr: 20261104120000
 func TestObjectEventsCarryBucketEnvironmentMem(t *testing.T) {
@@ -24,7 +29,7 @@ func TestObjectEventsCarryBucketEnvironmentPG(t *testing.T) {
 
 func objectEventsCarryBucketEnvironment(t *testing.T, st accountingStore) {
 	ctx := t.Context()
-	b, _ := seedAccounting(t, st)
+	b, _ := seedObjectEvents(t, st)
 	full := st.(state.Store)
 	upload := func(key string) string {
 		t.Helper()
@@ -42,11 +47,12 @@ func objectEventsCarryBucketEnvironment(t *testing.T, st accountingStore) {
 		if _, err = writes.FinishTrackedObjectUpload(ctx, c); err != nil {
 			t.Fatal(err)
 		}
-		envelope, _, _ := takeObjectEvent(t, st, b.AccountID, "write:"+c.ID, api.ObjectEventCreated) //nolint:contextcheck // takeObjectEvent claims with t.Context()
-		return envelope.EnvironmentID
+		return c.ID
 	}
-	if got := upload("before.txt"); got != "" {
-		t.Fatalf("a production bucket's event carries environment %q", got)
+	id := upload("before.txt")
+	envelope, _, _ := takeObjectEvent(t, st, b.AccountID, "write:"+id, api.ObjectEventCreated) //nolint:contextcheck // takeObjectEvent claims with t.Context()
+	if envelope.EnvironmentID != "" {
+		t.Fatalf("a production bucket's event carries environment %q", envelope.EnvironmentID)
 	}
 
 	project, err := full.CreateProject(ctx, state.Project{AccountID: b.AccountID, Slug: "objenv-" + uuid.NewString()[:8]})
@@ -65,7 +71,9 @@ func objectEventsCarryBucketEnvironment(t *testing.T, st accountingStore) {
 	if err := st.(state.ProjectEnvironmentBranchBucketStore).SetProjectEnvironmentBranchBucketCopy(ctx, row.ID, b.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got := upload("after.txt"); got != branch.ID {
-		t.Fatalf("a branch copy bucket's event carries environment %q, want %s", got, branch.ID)
+	upload("after.txt")
+	work, err := st.(state.PublishedEventWorkStore).ClaimDuePublishedEvent(ctx, time.Now().Add(24*time.Hour))
+	if !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("production's subscription received a branch copy bucket's event: %+v, %v", work, err)
 	}
 }

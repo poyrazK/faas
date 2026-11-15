@@ -63,3 +63,52 @@ func foreignProviders(links []state.OAuthLink, email string) []string {
 	}
 	return out
 }
+
+// removeOldAddressProviderLinks removes the Google or GitHub sign-in links
+// made under oldEmail once the account has moved to another address. The
+// typical case is leaving a work address: the employer still controls that
+// Google or GitHub identity and could keep signing in (F11-1,
+// ADR-20261115100000). A provider that also has a link under the new
+// address stays, as do links under any other address.
+func (s *server) removeOldAddressProviderLinks(ctx context.Context, acct state.Account, oldEmail string) {
+	flow, ok := s.store.(state.AccountFlowStore)
+	if !ok {
+		return
+	}
+	links, err := flow.ListOAuthLinks(ctx, acct.ID)
+	if err != nil {
+		s.log.Warn("email change: list provider links", "account", acct.ID, "err", err)
+		return
+	}
+	for _, provider := range oldAddressProviders(links, oldEmail, acct.Email) {
+		if _, err := flow.DeleteOAuthLink(ctx, acct.ID, provider); err != nil {
+			s.log.Warn("email change: remove provider link", "account", acct.ID, "provider", provider, "err", err)
+			continue
+		}
+		s.audit.Emit(ctx, "account.sign_in_method_unlinked", &acct.ID, map[string]any{"provider": provider, "reason": "email_changed"})
+		subject, body := mailpkg.SignInMethodRemovedBody(acct.Email, provider, time.Now())
+		s.sendSecurityNotice(ctx, acct, "sign_in_method_removed", subject, body)
+	}
+}
+
+// oldAddressProviders lists, in link order, the providers with a link under
+// oldEmail and none under newEmail.
+func oldAddressProviders(links []state.OAuthLink, oldEmail, newEmail string) []string {
+	same := func(a, b string) bool { return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b)) }
+	underNew := map[string]bool{}
+	for _, l := range links {
+		if same(l.Email, newEmail) {
+			underNew[l.Provider] = true
+		}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, l := range links {
+		if !same(l.Email, oldEmail) || underNew[l.Provider] || seen[l.Provider] {
+			continue
+		}
+		seen[l.Provider] = true
+		out = append(out, l.Provider)
+	}
+	return out
+}

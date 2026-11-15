@@ -84,6 +84,21 @@ func (h *BeforeCheckpointHook) Validate() error {
 	return validateLifecycleHook("before_checkpoint", h.Path, h.TimeoutMS, AfterRestoreHookMaxTimeoutMS)
 }
 
+// WarmupHook names the path init snapshot priming GETs instead of the app's
+// readiness path (ADR-20261114153000). Priming runs once per deployment,
+// before its first init snapshot; the path should exercise the request code
+// a wake needs warm and be safe to call repeatedly.
+type WarmupHook struct {
+	Path string `json:"path" yaml:"path"`
+}
+
+func (h *WarmupHook) Validate() error {
+	if h == nil {
+		return nil
+	}
+	return validateLifecycleHook("warmup", h.Path, 0, 0)
+}
+
 func (h *BeforeCheckpointHook) EffectiveTimeout() time.Duration {
 	if h == nil || h.TimeoutMS == 0 {
 		return time.Duration(AfterRestoreHookDefaultTimeoutMS) * time.Millisecond
@@ -243,6 +258,7 @@ type AppManifest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Warmup           *WarmupHook           `json:"warmup,omitempty"`
 	// Pause declares when the platform may pause the VM (ADR-1151):
 	// between_requests, when_idle or never. Empty selects the default for
 	// the app's type (EffectivePause).
@@ -831,13 +847,14 @@ func (m AppManifest) ValidateLifecyclePlan(plan Plan) error {
 // on, with the per-plan tier tightening from M-2 / ADR-137+138.
 // Per-plan caps:
 //
-//	Free    : StopGracePeriod ≤  15s, StartupDeadlineS ≤  15s, MaxRetries ≤   3
+//	Free    : StopGracePeriod ≤  15s, StartupDeadlineS ≤  30s, MaxRetries ≤   3
 //	Hobby   : StopGracePeriod ≤  30s, StartupDeadlineS ≤  30s, MaxRetries ≤   5
-//	Pro     : StopGracePeriod ≤  60s, StartupDeadlineS ≤  30s, MaxRetries ≤  10
-//	Scale   : StopGracePeriod ≤ 120s, StartupDeadlineS ≤  30s, MaxRetries ≤  20
+//	Pro     : StopGracePeriod ≤  60s, StartupDeadlineS ≤  60s, MaxRetries ≤  10
+//	Scale   : StopGracePeriod ≤ 120s, StartupDeadlineS ≤ 120s, MaxRetries ≤  20
 //
-// Pro and Scale startup deadlines are capped at ColdBootReadyWindowS, the
-// §6.1 cold-boot window the watchdog enforces (Limits.DefaultStartupDeadlineS).
+// The startup deadline cap is the plan's startup window
+// (Limits.MaxStartupDeadlineS); every cold boot of the app gets it
+// (ADR-20261114120000).
 //
 // (replaces the gross 5 min / 300 s / 20-retry ceilings)
 //
@@ -871,6 +888,12 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	}
 	if m.BeforeCheckpoint != nil && m.EffectiveExecutionMode() != ExecutionModeRequest && m.EffectiveExecutionMode() != ExecutionModeService {
 		return fmt.Errorf("app manifest: before_checkpoint requires request or service execution mode")
+	}
+	if err := m.Warmup.Validate(); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if m.Warmup != nil && m.EffectiveExecutionMode() != ExecutionModeRequest && m.EffectiveExecutionMode() != ExecutionModeService {
+		return fmt.Errorf("app manifest: warmup requires request or service execution mode")
 	}
 	if err := ValidatePause(m.Pause); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
@@ -984,14 +1007,14 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 	// StartupDeadlineS / MaxRetries are gross-bounded AND per-plan
 	// capped per ADR-138 §Decision 5. 0 means "inherit default"
 	// and is always accepted; negative is rejected. The per-plan
-	// cap is Limits.DefaultStartupDeadlineS / DefaultMaxRetries
-	// on the matching plan entry; the gross MaxAppManifest* cap
-	// remains as a fail-closed absolute ceiling (same shape as
-	// StopGracePeriod above).
+	// cap is Limits.MaxStartupDeadlineS (ADR-20261114120000) /
+	// DefaultMaxRetries on the matching plan entry; the gross
+	// MaxAppManifest* cap remains as a fail-closed absolute ceiling
+	// (same shape as StopGracePeriod above).
 	if m.StartupDeadlineS < 0 {
 		return fmt.Errorf("app manifest: startup_deadline_s %d must be >= 0", m.StartupDeadlineS)
 	}
-	startupCap := limits.DefaultStartupDeadlineS
+	startupCap := limits.MaxStartupDeadlineS
 	if startupCap > MaxAppManifestStartupDeadlineS {
 		startupCap = MaxAppManifestStartupDeadlineS
 	}

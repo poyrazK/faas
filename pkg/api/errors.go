@@ -871,7 +871,7 @@ const (
 	CodeRecentSignInRequired = "recent_sign_in_required"
 	// CodeBrowserSessionRequired refuses an API key on an action only a
 	// person in a signed-in browser may take, such as transferring an
-	// organization's ownership (ADR 20261113180000).
+	// organization's ownership (ADR 20261114170352).
 	CodeBrowserSessionRequired = "browser_session_required"
 	// CodeMFAInvalidCode is returned when /confirm, /verify, or
 	// /recover validate a presented TOTP code / recovery code and
@@ -1478,6 +1478,12 @@ const (
 	// CodePlanQueueBacklogBytes: the account's pending queue messages hold
 	// the plan's MaxQueueBacklogBytesPerAccount (ADR-20261022105723).
 	CodePlanQueueBacklogBytes = "plan_queue_backlog_bytes"
+	// CodePlanAsyncBacklog: the app's pending async invocations are at the
+	// plan's MaxQueueDepth (ADR-20261022105723 amendment 2026-11-13).
+	CodePlanAsyncBacklog = "plan_async_backlog"
+	// CodeFunctionSendRateLimited: a function send() past the target app's
+	// plan request rate.
+	CodeFunctionSendRateLimited = "function_send_rate_limited"
 	// CodePlanWorkerReplicas: a worker asks for more running workers than
 	// the plan's WorkerReplicasMax, or the plan runs none
 	// (ADR-20261018101500 amendment 2026-10-31).
@@ -2096,7 +2102,7 @@ const (
 	CodeOrgInvitationCapExceeded = "org_invitation_cap_exceeded"
 	CodeOrgRoleForbidden         = "org_role_forbidden"
 	// CodeOrgMFARequired refuses a member without two-factor authentication
-	// on an organization that requires it (ADR 20261113180000).
+	// on an organization that requires it (ADR 20261114170352).
 	CodeOrgMFARequired       = "org_mfa_required"
 	CodeOrgAlreadyMember     = "org_already_member"
 	CodeOrgInvitationInvalid = "org_invitation_invalid"
@@ -2595,6 +2601,8 @@ func StatusForCode(code string) int {
 		return http.StatusGone
 	case CodePlanQueueDepth, CodePlanDelayedCap, CodePlanQueueBacklogBytes:
 		return http.StatusForbidden
+	case CodePlanAsyncBacklog, CodeFunctionSendRateLimited:
+		return http.StatusTooManyRequests
 	case CodePlanSourceBytes:
 		return http.StatusRequestEntityTooLarge
 	case CodePlanFeatureGated:
@@ -3387,6 +3395,21 @@ func ErrAPIRateLimited(limit, retryAfterS int) *Problem {
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithDocs(docsBase + "/errors#api_rate_limited")
+}
+
+// ErrFunctionSendRateLimited refuses a function send() past the target app's
+// plan request rate (ADR-20261022105723 amendment 2026-11-13).
+func ErrFunctionSendRateLimited(perSecond int, retryAfter time.Duration) *Problem {
+	retryAfterS := int(math.Ceil(retryAfter.Seconds()))
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeFunctionSendRateLimited,
+		"Function send rate limited",
+		fmt.Sprintf("The target app's plan accepts at most %d sends per second; retry after %d seconds.", perSecond, retryAfterS)).
+		WithLimit(int64(perSecond), int64(perSecond)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/event-driven#async-backlog")
 }
 
 // ErrColdWakeRateLimited refuses a request that would wake one more parked
@@ -6392,7 +6415,7 @@ func ErrTrafficServingChanged() *Problem {
 func ErrTrafficChangeDuringCanary() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
 		"Canary rollout controls traffic",
-		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale rollouts recover <app> --action abort`.").
+		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale release traffic rollback <app>`.").
 		WithDocs(docsBase + "/deployments#canary")
 }
 
@@ -7043,6 +7066,19 @@ func ErrPlanQueueDepth(limit, observed int) *Problem {
 		WithDocs(docsBase + "/event-driven#queue-depth")
 }
 
+// ErrPlanAsyncBacklog is returned when an async invocation (API async
+// invoke, async route or function send) finds its app's pending async
+// invocations at the plan's MaxQueueDepth (ADR-20261022105723 amendment
+// 2026-11-13). The backlog drains, so it is a 429 with Retry-After.
+func ErrPlanAsyncBacklog(limit, observed int) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodePlanAsyncBacklog,
+		"Per-app async backlog full",
+		fmt.Sprintf("the plan caps this app at %d pending async invocations; observed %d. Retry after the backlog drains.", limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithHeader("Retry-After", "60").
+		WithDocs(docsBase + "/event-driven#async-backlog")
+}
+
 // ErrPlanQueueBacklogBytes is returned on a queue send when the account's
 // pending queue messages already hold the plan's
 // MaxQueueBacklogBytesPerAccount (ADR-20261022105723). Observed is the
@@ -7050,7 +7086,7 @@ func ErrPlanQueueDepth(limit, observed int) *Problem {
 func ErrPlanQueueBacklogBytes(limit, observed int64) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanQueueBacklogBytes,
 		"Account queue backlog full",
-		fmt.Sprintf("the plan caps this account's pending queue messages at %d bytes; observed %d.", limit, observed)).
+		fmt.Sprintf("the plan caps this account's pending queue messages, async invocations and delayed tasks at %d bytes; observed %d.", limit, observed)).
 		WithLimit(limit, observed).
 		WithDocs(docsBase + "/event-driven#queue-backlog")
 }
@@ -7516,7 +7552,7 @@ func ErrOrgRoleForbidden(action string) *Problem {
 }
 
 // ErrOrgMFARequired is the 403 a member without two-factor authentication
-// gets on an organization that requires it (ADR 20261113180000).
+// gets on an organization that requires it (ADR 20261114170352).
 func ErrOrgMFARequired() *Problem {
 	return NewProblem(http.StatusForbidden, CodeOrgMFARequired,
 		"Two-factor authentication required",

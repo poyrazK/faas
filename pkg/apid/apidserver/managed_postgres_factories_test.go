@@ -19,7 +19,7 @@ func TestManagedPostgresProductionRejectsFixtureDriver(t *testing.T) {
 	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, _, _, _, err := loadManagedPostgres(nil, func(name string) string {
+	_, _, _, _, _, _, err := loadManagedPostgres(t.Context(), nil, func(name string) string {
 		if name == "FAAS_MANAGED_POSTGRES_CONFIG" {
 			return path
 		}

@@ -22,20 +22,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Secretd_OpenAppSecrets_FullMethodName       = "/onebox.faas.secretd.v1.Secretd/OpenAppSecrets"
-	Secretd_GrantPeer_FullMethodName            = "/onebox.faas.secretd.v1.Secretd/GrantPeer"
-	Secretd_OpenCaptureKey_FullMethodName       = "/onebox.faas.secretd.v1.Secretd/OpenCaptureKey"
-	Secretd_OpenSidecarEnv_FullMethodName       = "/onebox.faas.secretd.v1.Secretd/OpenSidecarEnv"
-	Secretd_OpenLogDrainHeader_FullMethodName   = "/onebox.faas.secretd.v1.Secretd/OpenLogDrainHeader"
-	Secretd_OpenTriggerConfig_FullMethodName    = "/onebox.faas.secretd.v1.Secretd/OpenTriggerConfig"
-	Secretd_OpenEdgeHeaderSecret_FullMethodName = "/onebox.faas.secretd.v1.Secretd/OpenEdgeHeaderSecret"
-	Secretd_RegistryFetch_FullMethodName        = "/onebox.faas.secretd.v1.Secretd/RegistryFetch"
+	Secretd_VerifyPostgresCutover_FullMethodName = "/onebox.faas.secretd.v1.Secretd/VerifyPostgresCutover"
+	Secretd_OpenAppSecrets_FullMethodName        = "/onebox.faas.secretd.v1.Secretd/OpenAppSecrets"
+	Secretd_GrantPeer_FullMethodName             = "/onebox.faas.secretd.v1.Secretd/GrantPeer"
+	Secretd_OpenCaptureKey_FullMethodName        = "/onebox.faas.secretd.v1.Secretd/OpenCaptureKey"
+	Secretd_OpenSidecarEnv_FullMethodName        = "/onebox.faas.secretd.v1.Secretd/OpenSidecarEnv"
+	Secretd_OpenLogDrainHeader_FullMethodName    = "/onebox.faas.secretd.v1.Secretd/OpenLogDrainHeader"
+	Secretd_OpenTriggerConfig_FullMethodName     = "/onebox.faas.secretd.v1.Secretd/OpenTriggerConfig"
+	Secretd_OpenEdgeHeaderSecret_FullMethodName  = "/onebox.faas.secretd.v1.Secretd/OpenEdgeHeaderSecret"
+	Secretd_RegistryFetch_FullMethodName         = "/onebox.faas.secretd.v1.Secretd/RegistryFetch"
 )
 
 // SecretdClient is the client API for Secretd service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SecretdClient interface {
+	// Control-plane verification only. The runtime key and SQL credential stay
+	// in secretd; a live cutover lease and exact stored envelope are required.
+	VerifyPostgresCutover(ctx context.Context, in *VerifyPostgresCutoverRequest, opts ...grpc.CallOption) (*VerifyPostgresCutoverResponse, error)
 	// OpenAppSecrets opens sealed runtime entries for app_id. Every envelope
 	// must be bound to the app's resource account.
 	OpenAppSecrets(ctx context.Context, in *OpenAppSecretsRequest, opts ...grpc.CallOption) (*OpenAppSecretsResponse, error)
@@ -88,6 +92,16 @@ type secretdClient struct {
 
 func NewSecretdClient(cc grpc.ClientConnInterface) SecretdClient {
 	return &secretdClient{cc}
+}
+
+func (c *secretdClient) VerifyPostgresCutover(ctx context.Context, in *VerifyPostgresCutoverRequest, opts ...grpc.CallOption) (*VerifyPostgresCutoverResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VerifyPostgresCutoverResponse)
+	err := c.cc.Invoke(ctx, Secretd_VerifyPostgresCutover_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *secretdClient) OpenAppSecrets(ctx context.Context, in *OpenAppSecretsRequest, opts ...grpc.CallOption) (*OpenAppSecretsResponse, error) {
@@ -183,6 +197,9 @@ type Secretd_RegistryFetchClient = grpc.ServerStreamingClient[RegistryFetchRespo
 // All implementations must embed UnimplementedSecretdServer
 // for forward compatibility.
 type SecretdServer interface {
+	// Control-plane verification only. The runtime key and SQL credential stay
+	// in secretd; a live cutover lease and exact stored envelope are required.
+	VerifyPostgresCutover(context.Context, *VerifyPostgresCutoverRequest) (*VerifyPostgresCutoverResponse, error)
 	// OpenAppSecrets opens sealed runtime entries for app_id. Every envelope
 	// must be bound to the app's resource account.
 	OpenAppSecrets(context.Context, *OpenAppSecretsRequest) (*OpenAppSecretsResponse, error)
@@ -237,6 +254,9 @@ type SecretdServer interface {
 // pointer dereference when methods are called.
 type UnimplementedSecretdServer struct{}
 
+func (UnimplementedSecretdServer) VerifyPostgresCutover(context.Context, *VerifyPostgresCutoverRequest) (*VerifyPostgresCutoverResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method VerifyPostgresCutover not implemented")
+}
 func (UnimplementedSecretdServer) OpenAppSecrets(context.Context, *OpenAppSecretsRequest) (*OpenAppSecretsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method OpenAppSecrets not implemented")
 }
@@ -280,6 +300,24 @@ func RegisterSecretdServer(s grpc.ServiceRegistrar, srv SecretdServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&Secretd_ServiceDesc, srv)
+}
+
+func _Secretd_VerifyPostgresCutover_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VerifyPostgresCutoverRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SecretdServer).VerifyPostgresCutover(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Secretd_VerifyPostgresCutover_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SecretdServer).VerifyPostgresCutover(ctx, req.(*VerifyPostgresCutoverRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _Secretd_OpenAppSecrets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -426,6 +464,10 @@ var Secretd_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "onebox.faas.secretd.v1.Secretd",
 	HandlerType: (*SecretdServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "VerifyPostgresCutover",
+			Handler:    _Secretd_VerifyPostgresCutover_Handler,
+		},
 		{
 			MethodName: "OpenAppSecrets",
 			Handler:    _Secretd_OpenAppSecrets_Handler,

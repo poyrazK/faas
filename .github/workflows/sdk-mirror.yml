@@ -15,6 +15,7 @@ on:
       - "sdk/go/**"
       - "sdk/node/**"
       - "sdk/python/**"
+      - "sdk/request-contracts/**"
       - "sdk/mirror/**"
       - "sdk/mirror.json"
       - "sdk/install-tests/**"
@@ -31,6 +32,7 @@ on:
       - "sdk/go/**"
       - "sdk/node/**"
       - "sdk/python/**"
+      - "sdk/request-contracts/**"
       - "sdk/mirror/**"
       - "sdk/mirror.json"
       - "sdk/install-tests/**"
@@ -80,6 +82,10 @@ jobs:
           # requirement is newer than the public Go SDK's minimum version.
           go-version-file: go.mod
           cache: false
+
+      - name: SDK source selection agrees with CLI
+        if: matrix.repo == 'gregale-js'
+        run: go test sdk/request-contracts/cli-source-preparation_test.go sdk/request-contracts/project-inspection-cli_test.go
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: matrix.repo == 'gregale-js'
