@@ -1042,7 +1042,10 @@ gregale mcp server tasks execution authorize --id "$INTENT_ID" --operation-id "$
 Use a stable 64-character lowercase hex operation ID. Authorization pins a salted
 digest of the local profile, API/account/intent identities and plan path, and
 retains the original review deadline. It cannot renew or replace an existing
-operation. The copied profile stays under the private Gregale configuration
+operation. Install the worker's Node dependencies before authorization. The
+owner's installed dependency tree is pinned separately from the offline source
+review; changed dependencies or links outside that tree block execution.
+The copied profile stays under the private Gregale configuration
 directory, outside deployment sources. It cannot override API credentials or
 executable/Node loader settings. Delete retained private files through owner
 maintenance after recovery is no longer needed; native identities remain retained.

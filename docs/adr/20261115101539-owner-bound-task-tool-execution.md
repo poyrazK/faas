@@ -12,6 +12,9 @@ non-agent administrator API key authorizes one immutable operation ID and salted
 digest of a private local binding profile. Bind the profile to the API, account,
 intent, operation, exact plan path and environment values. Never return its path,
 salt, credential values or the executor's claim token through agent tools.
+The profile also pins the owner's installed worker dependency tree, which the
+offline source review deliberately excludes. Dependency changes or links outside
+that tree block local execution and subsequent guards.
 
 The authorization inherits the original 15-minute review deadline. Repeated
 authorization never renews or replaces it. Only the original requesting key may

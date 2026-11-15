@@ -22,13 +22,14 @@ import (
 // This file is local owner setup. Neither its path nor any value is accepted
 // from an agent tool or included in an API record or tool result.
 type mcpTaskExecutionProfile struct {
-	APIBase     string            `json:"api_base"`
-	AccountID   string            `json:"account_id"`
-	IntentID    string            `json:"intent_id"`
-	OperationID string            `json:"operation_id"`
-	Plan        string            `json:"plan"`
-	Salt        string            `json:"salt"`
-	Env         map[string]string `json:"env"`
+	APIBase            string            `json:"api_base"`
+	AccountID          string            `json:"account_id"`
+	IntentID           string            `json:"intent_id"`
+	OperationID        string            `json:"operation_id"`
+	Plan               string            `json:"plan"`
+	Salt               string            `json:"salt"`
+	DependenciesSHA256 string            `json:"dependencies_sha256"`
+	Env                map[string]string `json:"env"`
 }
 
 func mcpTaskExecutionDir(account, id string) (string, error) {
@@ -281,10 +282,14 @@ func authorizeMCPTaskExecution(ctx context.Context, c *Client, record api.TaskTo
 	if err != nil {
 		return printErr("Task execution", err)
 	}
-	p := mcpTaskExecutionProfile{APIBase: apiBase(), AccountID: record.AccountID, IntentID: record.ID, OperationID: operation, Plan: path, Env: env}
+	dependencies, err := mcpTaskExecutionDependencies(path)
+	if err != nil {
+		return printErr("Task execution", err)
+	}
+	p := mcpTaskExecutionProfile{APIBase: apiBase(), AccountID: record.AccountID, IntentID: record.ID, OperationID: operation, Plan: path, Env: env, DependenciesSHA256: dependencies}
 	if _, e := os.Lstat(filepath.Join(dir, "profile.json")); e == nil {
 		var existing mcpTaskExecutionProfile
-		if readMCPTaskPrivate(filepath.Join(dir, "profile.json"), &existing) != nil || existing.APIBase != p.APIBase || existing.AccountID != p.AccountID || existing.IntentID != p.IntentID || existing.OperationID != p.OperationID || existing.Plan != p.Plan || !reflect.DeepEqual(existing.Env, p.Env) {
+		if readMCPTaskPrivate(filepath.Join(dir, "profile.json"), &existing) != nil || existing.APIBase != p.APIBase || existing.AccountID != p.AccountID || existing.IntentID != p.IntentID || existing.OperationID != p.OperationID || existing.Plan != p.Plan || existing.DependenciesSHA256 != p.DependenciesSHA256 || !reflect.DeepEqual(existing.Env, p.Env) {
 			return printErr("Task execution", errors.New("owner execution profile is immutable"))
 		}
 		p = existing
@@ -325,6 +330,10 @@ func loadMCPTaskExecutionProfile(record api.TaskToolReleaseIntentRecord) (mcpTas
 	err = readMCPTaskPrivate(filepath.Join(dir, "profile.json"), &p)
 	if err != nil || record.Execution == nil || p.APIBase != apiBase() || p.AccountID != record.AccountID || p.IntentID != record.ID || p.OperationID != record.Execution.OperationID || !toolpublication.ValidID(p.Salt) || p.digest() != record.Execution.BindingsSHA256 {
 		return p, dir, errors.New("owner binding profile changed")
+	}
+	dependencies, err := mcpTaskExecutionDependencies(p.Plan)
+	if err != nil || dependencies != p.DependenciesSHA256 {
+		return p, dir, errors.New("owner-installed Task dependencies changed")
 	}
 	return p, dir, nil
 }

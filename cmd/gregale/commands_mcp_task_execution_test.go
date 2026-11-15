@@ -21,7 +21,15 @@ func TestMCPTaskExecutionCLIInterruptedClaimNeverRepeats(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("private Task execution profiles require POSIX file permissions")
 	}
-	_, plan := taskReviewFixture(t)
+	root, plan := taskReviewFixture(t)
+	modules := filepath.Join(root, "worker", "node_modules")
+	if err := os.Mkdir(modules, 0700); err != nil {
+		t.Fatal(err)
+	}
+	dependency := filepath.Join(modules, "fixture.js")
+	if err := os.WriteFile(dependency, []byte("owner-installed"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	account, key, owner := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	id, operation := strings.Repeat("8", 64), strings.Repeat("9", 64)
 	reviews := map[string]api.AppReleaseReview{}
@@ -153,6 +161,16 @@ func TestMCPTaskExecutionCLIInterruptedClaimNeverRepeats(t *testing.T) {
 		t.Fatal("changed binding was claimed")
 	}
 	if err := os.WriteFile(profiles[0], original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dependency, []byte("unreviewed replacement"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	run(1, "execution", "apply", "--id", id, "--operation-id", operation, "--allow-tool-execution")
+	if claims != 0 {
+		t.Fatal("changed local dependencies were claimed")
+	}
+	if err := os.WriteFile(dependency, []byte("owner-installed"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	run(1, "execution", "apply", "--id", id, "--operation-id", operation, "--allow-tool-execution")
