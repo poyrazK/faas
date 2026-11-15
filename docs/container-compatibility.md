@@ -178,6 +178,11 @@ Reseed these yourself, or avoid keeping them across a snapshot:
   driver's `ObjectID` and the OpenTelemetry Go SDK's trace IDs repeat, and
   Gregale logs a warning on each wake of a Go app that uses them.
 
+A restore moves the app's clock forward by the time it spent parked. gunicorn
+would read that as hung workers and restart one on every wake; Gregale's
+Python preload stops that, and a worker that really hangs is still restarted
+after `--timeout`. Set `GREGALE_GUNICORN_FREEZE_GUARD=off` to turn this off.
+
 Setting `GREGALE_RESTORE_RESEED=off` in the app's environment disables the
 Node, Python and Java reseed. Only do that for an app that never generates tokens,
 keys, nonces or identifiers.
