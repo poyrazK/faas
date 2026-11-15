@@ -43,7 +43,7 @@ func TestValidateCompatibility(t *testing.T) {
 					w.WriteHeader(202)
 					return
 				case "server/discover":
-					result = fmt.Sprintf(`{"supportedVersions":[%q],"capabilities":{"tools":{}}}`, ProtocolVersion)
+					result = fmt.Sprintf(`{"supportedVersions":[%q],"capabilities":{"tools":{}}}`, tc.version)
 				case "tools/list":
 					result = `{"tools":[{"name":"hello","inputSchema":` + tc.schema + `}]}`
 				default:

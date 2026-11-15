@@ -6,6 +6,7 @@ import type { AIDeploymentUsageList } from '../models/AIDeploymentUsageList.js';
 import type { CreatedOutboundAIAccessToken } from '../models/CreatedOutboundAIAccessToken.js';
 import type { CreateOutboundAIAccessTokenRequest } from '../models/CreateOutboundAIAccessTokenRequest.js';
 import type { CreateOutboundAIEvaluationRequest } from '../models/CreateOutboundAIEvaluationRequest.js';
+import type { CreateOutboundAIPromptEvaluationRequest } from '../models/CreateOutboundAIPromptEvaluationRequest.js';
 import type { CreateOutboundAIReplayRequest } from '../models/CreateOutboundAIReplayRequest.js';
 import type { CreateOutboundAIRouteRequest } from '../models/CreateOutboundAIRouteRequest.js';
 import type { CreateOutboundCredentialKeyRequest } from '../models/CreateOutboundCredentialKeyRequest.js';
@@ -17,6 +18,14 @@ import type { OutboundAIEvaluation } from '../models/OutboundAIEvaluation.js';
 import type { OutboundAIEvaluationList } from '../models/OutboundAIEvaluationList.js';
 import type { OutboundAIPriceCatalogResponse } from '../models/OutboundAIPriceCatalogResponse.js';
 import type { OutboundAIPriceListResponse } from '../models/OutboundAIPriceListResponse.js';
+import type { OutboundAIPrompt } from '../models/OutboundAIPrompt.js';
+import type { OutboundAIPromptCanary } from '../models/OutboundAIPromptCanary.js';
+import type { OutboundAIPromptEvaluation } from '../models/OutboundAIPromptEvaluation.js';
+import type { OutboundAIPromptEvaluationList } from '../models/OutboundAIPromptEvaluationList.js';
+import type { OutboundAIPromptList } from '../models/OutboundAIPromptList.js';
+import type { OutboundAIPromptStats } from '../models/OutboundAIPromptStats.js';
+import type { OutboundAIPromptVersion } from '../models/OutboundAIPromptVersion.js';
+import type { OutboundAIPromptVersionList } from '../models/OutboundAIPromptVersionList.js';
 import type { OutboundAIQualityAlertList } from '../models/OutboundAIQualityAlertList.js';
 import type { OutboundAIReplay } from '../models/OutboundAIReplay.js';
 import type { OutboundAIRequestContent } from '../models/OutboundAIRequestContent.js';
@@ -43,9 +52,13 @@ import type { OutboundIntegrationOffer } from '../models/OutboundIntegrationOffe
 import type { OutboundIntegrationOfferList } from '../models/OutboundIntegrationOfferList.js';
 import type { OutboundIntegrationUsageResponse } from '../models/OutboundIntegrationUsageResponse.js';
 import type { Problem } from '../models/Problem.js';
+import type { PushOutboundAIPromptVersionRequest } from '../models/PushOutboundAIPromptVersionRequest.js';
+import type { PushOutboundAIPromptVersionResponse } from '../models/PushOutboundAIPromptVersionResponse.js';
 import type { PutOutboundAIFeedbackRequest } from '../models/PutOutboundAIFeedbackRequest.js';
 import type { PutOutboundAIPolicyRequest } from '../models/PutOutboundAIPolicyRequest.js';
 import type { PutOutboundAIPricesRequest } from '../models/PutOutboundAIPricesRequest.js';
+import type { PutOutboundAIPromptCanaryRequest } from '../models/PutOutboundAIPromptCanaryRequest.js';
+import type { PutOutboundAIPromptLiveRequest } from '../models/PutOutboundAIPromptLiveRequest.js';
 import type { PutOutboundAIRouteCanaryRequest } from '../models/PutOutboundAIRouteCanaryRequest.js';
 import type { PutOutboundAIRouteTargetsRequest } from '../models/PutOutboundAIRouteTargetsRequest.js';
 import type { PutOutboundAITagLimitsRequest } from '../models/PutOutboundAITagLimitsRequest.js';
@@ -1736,6 +1749,514 @@ export class OutboundService {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/outbound/ai-evaluations/{evaluation}',
+      path: {
+        'evaluation': evaluation,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List the account's managed AI prompts.
+   * Requires MFA and read scope. Returns each prompt with its live, previous live and latest versions and its canary.
+   * @returns OutboundAIPromptList The prompts.
+   * @throws ApiError
+   */
+  public static listOutboundAiPrompts(): CancelablePromise<OutboundAIPromptList> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-prompts',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read a managed AI prompt.
+   * Requires MFA and read scope. Apps call a prompt with POST $GREGALE_OUTBOUND_URL/p/{prompt}.
+   * @returns OutboundAIPrompt The prompt.
+   * @throws ApiError
+   */
+  public static getOutboundAiPrompt({
+    prompt,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+  }): CancelablePromise<OutboundAIPrompt> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-prompts/{prompt}',
+      path: {
+        'prompt': prompt,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a managed AI prompt.
+   * Requires MFA and deploy-write scope. Deletes its versions, canary and evaluations; calls to it then answer 404.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteOutboundAiPrompt({
+    prompt,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/outbound/ai-prompts/{prompt}',
+      path: {
+        'prompt': prompt,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List a managed AI prompt's versions.
+   * Requires MFA and read scope. Newest first, without their messages.
+   * @returns OutboundAIPromptVersionList The versions.
+   * @throws ApiError
+   */
+  public static listOutboundAiPromptVersions({
+    prompt,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+  }): CancelablePromise<OutboundAIPromptVersionList> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-prompts/{prompt}/versions',
+      path: {
+        'prompt': prompt,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Push a managed AI prompt version.
+   * Requires MFA and deploy-write scope. Stores an immutable version, creating the prompt on its first version, which becomes live. A later version is live only when live is true. A push identical to the latest version stores nothing and answers 200 with created false. {{name}} placeholders in message content are replaced by the call's variables or the version's defaults as plain text. The target is an openai-format route, or a managed AI integration an openai-format route accepts, with a model. Each prompt keeps 200 versions; prompts per account follow the plan.
+   * @returns PushOutboundAIPromptVersionResponse The new version.
+   * @throws ApiError
+   */
+  public static pushOutboundAiPromptVersion({
+    prompt,
+    requestBody,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+    requestBody: PushOutboundAIPromptVersionRequest,
+  }): CancelablePromise<PushOutboundAIPromptVersionResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/outbound/ai-prompts/{prompt}/versions',
+      path: {
+        'prompt': prompt,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        429: `The account reached its plan's managed prompt limit.`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read a managed AI prompt version.
+   * Requires MFA and read scope. Returns its messages, variables, defaults, target and params.
+   * @returns OutboundAIPromptVersion The version.
+   * @throws ApiError
+   */
+  public static getOutboundAiPromptVersion({
+    prompt,
+    version,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+    /**
+     * The version number.
+     */
+    version: number,
+  }): CancelablePromise<OutboundAIPromptVersion> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-prompts/{prompt}/versions/{version}',
+      path: {
+        'prompt': prompt,
+        'version': version,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Make a managed AI prompt version live.
+   * Requires MFA and deploy-write scope. The old live version becomes the previous one and any canary ends.
+   * @returns OutboundAIPrompt The prompt with the chosen version live.
+   * @throws ApiError
+   */
+  public static setOutboundAiPromptLive({
+    prompt,
+    requestBody,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+    requestBody: PutOutboundAIPromptLiveRequest,
+  }): CancelablePromise<OutboundAIPrompt> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/ai-prompts/{prompt}/live',
+      path: {
+        'prompt': prompt,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Roll a managed AI prompt back.
+   * Requires MFA and deploy-write scope. Makes the previous live version live again and ends any canary.
+   * @returns OutboundAIPrompt The prompt with its previous live version back.
+   * @throws ApiError
+   */
+  public static rollBackOutboundAiPrompt({
+    prompt,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+  }): CancelablePromise<OutboundAIPrompt> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/outbound/ai-prompts/{prompt}/rollback',
+      path: {
+        'prompt': prompt,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Start or replace a managed AI prompt canary.
+   * Requires MFA and deploy-write scope. Sends percent of unpinned calls to a version that is not live, chosen per X-Gregale-AI-Session, else X-Gregale-AI-User, else at random. The outbound gateway rolls it back with the route canary rule.
+   * @returns OutboundAIPromptCanary The canary.
+   * @throws ApiError
+   */
+  public static setOutboundAiPromptCanary({
+    prompt,
+    requestBody,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+    requestBody: PutOutboundAIPromptCanaryRequest,
+  }): CancelablePromise<OutboundAIPromptCanary> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/outbound/ai-prompts/{prompt}/canary',
+      path: {
+        'prompt': prompt,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Stop a managed AI prompt canary.
+   * Requires MFA and deploy-write scope. The live version keeps serving.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteOutboundAiPromptCanary({
+    prompt,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/outbound/ai-prompts/{prompt}/canary',
+      path: {
+        'prompt': prompt,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Promote a managed AI prompt canary.
+   * Requires MFA and deploy-write scope. Makes the canary's version live and ends the canary.
+   * @returns OutboundAIPrompt The prompt with the canary's version live.
+   * @throws ApiError
+   */
+  public static promoteOutboundAiPromptCanary({
+    prompt,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+  }): CancelablePromise<OutboundAIPrompt> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/outbound/ai-prompts/{prompt}/canary/promote',
+      path: {
+        'prompt': prompt,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read a managed AI prompt's per-version stats.
+   * Requires MFA and read scope. Returns each version's settled attempts, errors, mean time to first byte, cost and good and bad feedback over the last 24 hours.
+   * @returns OutboundAIPromptStats The stats.
+   * @throws ApiError
+   */
+  public static getOutboundAiPromptStats({
+    prompt,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+  }): CancelablePromise<OutboundAIPromptStats> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-prompts/{prompt}/stats',
+      path: {
+        'prompt': prompt,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List a managed AI prompt's evaluations.
+   * Requires MFA and read scope. Newest first, at most 100, without their cases' results.
+   * @returns OutboundAIPromptEvaluationList The evaluations.
+   * @throws ApiError
+   */
+  public static listOutboundAiPromptEvaluations({
+    prompt,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+  }): CancelablePromise<OutboundAIPromptEvaluationList> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-prompts/{prompt}/evaluations',
+      path: {
+        'prompt': prompt,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Evaluate a managed AI prompt version.
+   * Requires MFA and deploy-write scope. The outbound gateway renders the version and the live version for each case's variables, calls each version's target, and asks the judge model which answer is better, in a random order. It passes when losses and candidate errors are at most max_loss_rate percent of the cases; a passing evaluation starts its canary, if it has one, while the baseline is still live and the prompt has no active canary. Calls are metered and capped under the caller evaluation.
+   * @returns OutboundAIPromptEvaluation The prompt evaluation, pending until the outbound gateway runs it.
+   * @throws ApiError
+   */
+  public static createOutboundAiPromptEvaluation({
+    prompt,
+    requestBody,
+  }: {
+    /**
+     * Name of the managed AI prompt, a DNS label.
+     */
+    prompt: string,
+    requestBody: CreateOutboundAIPromptEvaluationRequest,
+  }): CancelablePromise<OutboundAIPromptEvaluation> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/outbound/ai-prompts/{prompt}/evaluations',
+      path: {
+        'prompt': prompt,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above.`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read a managed AI prompt evaluation.
+   * Requires MFA and read scope. Returns each case's result; answer texts need admin or secrets:read. Evaluations are kept for 30 days.
+   * @returns OutboundAIPromptEvaluation The prompt evaluation with each case's result.
+   * @throws ApiError
+   */
+  public static getOutboundAiPromptEvaluation({
+    evaluation,
+  }: {
+    /**
+     * UUID of the prompt evaluation.
+     */
+    evaluation: string,
+  }): CancelablePromise<OutboundAIPromptEvaluation> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-prompt-evaluations/{evaluation}',
       path: {
         'evaluation': evaluation,
       },

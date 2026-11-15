@@ -34,11 +34,8 @@ func TestMCPReadinessDeploymentIdentityAndCredentialIsolation(t *testing.T) {
 				w.Header().Set("MCP-Protocol-Version", mcphosting.ProtocolVersion)
 				var result any = map[string]any{}
 				switch request.Method {
-				case "initialize":
-					result = map[string]any{"protocolVersion": mcphosting.ProtocolVersion, "capabilities": map[string]any{"tools": map[string]any{}}}
-				case "notifications/initialized":
-					w.WriteHeader(202)
-					return
+				case "server/discover":
+					result = map[string]any{"supportedVersions": []string{mcphosting.ProtocolVersion}, "capabilities": map[string]any{"tools": map[string]any{}}}
 				case "ping":
 				case "tools/list":
 					result = map[string]any{"tools": []any{}}
@@ -87,7 +84,9 @@ func TestMCPReadinessDeploymentIdentityAndCredentialIsolation(t *testing.T) {
 				}
 				return
 			}
-			if code != 0 || probes != 4 || previews != 1 {
+			// server/discover, ping, tools/list: revision 2026-07-28 opens
+			// with server/discover and has no initialize handshake.
+			if code != 0 || probes != 3 || previews != 1 {
 				t.Fatalf("exit=%d probes=%d previews=%d output=%s", code, probes, previews, output.String())
 			}
 			var report main.McpDeploymentReadiness
