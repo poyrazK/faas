@@ -37,7 +37,7 @@ func TestCLIFlagCorrectionsIsolatedCLI(t *testing.T) {
 			HelpArgv       []string `json:"help_argv"`
 		}
 	}
-	if result.exit != 1 || len(result.stdout) != 0 || json.Unmarshal(result.stderr, &problem) != nil || problem.Code != "invalid_request" || problem.ExitCode != 1 || !slices.Equal(problem.CLI.SuggestedFlags, []string{"--name"}) || !slices.Equal(problem.CLI.HelpArgv, []string{"gregale", "--json", "help", "deploy"}) {
+	if result.exit != 1 || len(result.stdout) != 0 || json.Unmarshal(result.stderr, &problem) != nil || problem.Code != "validation_failed" || problem.ExitCode != 1 || !slices.Equal(problem.CLI.SuggestedFlags, []string{"--name"}) || !slices.Equal(problem.CLI.HelpArgv, []string{"gregale", "--json", "help", "deploy"}) {
 		t.Fatalf("typo correction: exit=%d stdout=%s stderr=%s", result.exit, result.stdout, result.stderr)
 	}
 	help := tg.exec(t, "fp_test_flag-corrections-journey", t.TempDir(), time.Minute, problem.CLI.HelpArgv[1:]...)

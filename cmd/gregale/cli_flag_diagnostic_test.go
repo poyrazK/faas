@@ -59,7 +59,7 @@ func TestCLIFlagDiagnosticsJSONContracts(t *testing.T) {
 				CLI      *cliDiagnosticView `json:"cli"`
 			}
 			decoder := json.NewDecoder(strings.NewReader(text))
-			if code != 1 || out.Len() != 0 || decoder.Decode(&problem) != nil || decoder.Decode(new(any)) != io.EOF || problem.Code != "invalid_request" || problem.ExitCode != 1 || problem.CLI == nil {
+			if code != 1 || out.Len() != 0 || decoder.Decode(&problem) != nil || decoder.Decode(new(any)) != io.EOF || problem.Code != "validation_failed" || problem.ExitCode != 1 || problem.CLI == nil {
 				t.Fatalf("parser contract: exit=%d stdout=%s stderr=%s", code, out, text)
 			}
 			if !reflect.DeepEqual(*problem.CLI, tc.want) {
@@ -90,7 +90,7 @@ func TestCLIFlagDiagnosticsKeepHumanOutput(t *testing.T) {
 		want string
 	}{
 		{[]string{"deploy", "--naem", "demo"}, "Invalid command flags\n  unknown flag --naem\n  Did you mean --name?\n  run 'gregale deploy --help' for usage\n"},
-		{[]string{"logs", "--profile", "staging"}, "Invalid command flags\n  unknown flag --profile\n  --profile is a global flag: put it before the command, as in 'gregale --profile NAME logs'\n  run 'gregale logs --help' for usage\n"},
+		{[]string{"logs", "--profile", "staging"}, "Invalid command flags\n  unknown flag --profile\n  --profile is a global flag: put it before the command, as in 'gregale --profile NAME logs'\n  run 'gregale logs --help' for usage\nusage: gregale logs [flags]\n  All options: gregale logs --help\n  Docs: https://gregale.dev/docs/cli\n"},
 	} {
 		out, stderr, restore := main.SwapIO(t)
 		code := main.Run(tc.args)
@@ -106,6 +106,7 @@ func TestCLIFlagDiagnosticsStayOutOfAPIErrors(t *testing.T) {
 	setupJSONHelp(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("X-Faas-Request-Id", errorCorrelationID)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = io.WriteString(w, `{"status":503,"code":"service_unavailable","title":"Try later"}`)
 	}))
@@ -117,7 +118,7 @@ func TestCLIFlagDiagnosticsStayOutOfAPIErrors(t *testing.T) {
 	text := stderr()
 	restore()
 	var p map[string]json.RawMessage
-	if code != 3 || out.Len() != 0 || json.Unmarshal([]byte(text), &p) != nil || p["cli"] != nil || string(p["code"]) != `"service_unavailable"` {
+	if code != 3 || out.Len() != 0 || json.Unmarshal([]byte(text), &p) != nil || p["cli"] != nil || string(p["code"]) != `"service_unavailable"` || string(p["request_id"]) != `"`+errorCorrelationID+`"` {
 		t.Fatalf("API Problem changed: exit=%d stdout=%s stderr=%s", code, out, text)
 	}
 }

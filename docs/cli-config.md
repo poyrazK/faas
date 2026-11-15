@@ -622,7 +622,7 @@ are `boolean`, `integer`, `number`, `duration`, `enum` and `value` (a documented
 format with no narrower parser type). Command-specific limits still apply.
 
 For example, `gregale --json deploy --naem demo` returns exit `1` and one
-`invalid_request` Problem whose `cli.suggested_flags` is `["--name"]` and whose
+`validation_failed` Problem (category `invalid_request`) whose `cli.suggested_flags` is `["--name"]` and whose
 `cli.help_argv` is `["gregale", "--json", "help", "deploy"]`. Follow that argument
 array to discover the flag; the CLI never applies or executes the suggestion.
 Ambiguous typos have no suggestion. `help_argv` uses a validated visible command

@@ -7035,7 +7035,11 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	projectSlug := fs.String("project", "", "read every service of this project together, each line prefixed with its service")
 	projectServices := fs.String("service", "", "with --project, only these services (comma-separated)")
 	if err := parseAppLogFlags(fs, args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
+		// The parser already wrote its single JSON Problem. Keep the
+		// existing synopsis for human output and unreported local errors.
+		if diagnostic, ok := fs.Output().(*jsonFlagErrorWriter); !ok || !diagnostic.wrote {
+			PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
+		}
 		return 1
 	}
 	if *projectSlug != "" {
