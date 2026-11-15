@@ -715,6 +715,9 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 			PrintOK(osStdout, "%s", parkedSecretChangeNote)
 			return 0
 		}
+		if err := waitSecretRestart(ctx, client, app, wakeID); err != nil {
+			return printConfigurationPartialError("Restart failed", err, app, scope, "All requested secret values were saved; the restart did not complete.", keys, "")
+		}
 		if jsonOutput {
 			return jsonOut(writeJSON(secretsSetReceipt{
 				App: app, Status: "updated", Scope: scopeOrDefault(scope), Keys: keys,
@@ -1086,6 +1089,43 @@ func restartAfterSecretChange(ctx context.Context, client *Client, app string) (
 	return "", false, err
 }
 
+// secretRestartWait bounds how long `env set|unset --restart` follows the
+// rolling refresh it requested before handing back a resume command.
+const secretRestartWait = 5 * time.Minute
+
+// waitSecretRestart follows an accepted fresh restart until the rolling
+// refresh completes: fresh instances serve and the stale ones are withdrawn.
+// Returning at acceptance let callers hit the app mid-refresh and read a 503
+// (2026-11-15 production journey run). A refresh that is still running at
+// the bound is not an error: it continues server-side, so the caller gets a
+// warning and the status command instead.
+func waitSecretRestart(ctx context.Context, client *Client, app, wakeID string) error {
+	if wakeID == "" {
+		return nil
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, secretRestartWait)
+	defer cancel()
+	last, err := pollAppRestartStatus(waitCtx, client, app, wakeID, true, 2*time.Second, nil)
+	if err == nil {
+		return nil
+	}
+	if last.Status == "failed" {
+		return err
+	}
+	if waitCtx.Err() != nil && ctx.Err() == nil {
+		PrintWarn(osStderr, "Restart still in progress after %s (last status: %s); follow it with: %s", secretRestartWait, orUnknown(last.Status), restartStatusCommand(app, wakeID))
+		return nil
+	}
+	return err
+}
+
+func orUnknown(s string) string {
+	if s == "" {
+		return "unknown"
+	}
+	return s
+}
+
 func executeSecretsUnset(ctx context.Context, client *Client, app, key, scope string, restart, waitForAck bool, timeout time.Duration) int {
 	revocation, err := client.UnsetSecretWithScopeAndStatus(ctx, app, key, scope)
 	if err != nil {
@@ -1105,6 +1145,10 @@ func executeSecretsUnset(ctx context.Context, client *Client, app, key, scope st
 			restart = false
 			if !jsonOutput {
 				PrintOK(osStdout, "%s", parkedSecretChangeNote)
+			}
+		} else if !waitForAck {
+			if err := waitSecretRestart(ctx, client, app, wakeID); err != nil {
+				return printConfigurationPartialError("Secret removed, but restart failed", err, app, scope, "Secret removal was saved; the restart did not complete.", []string{key}, "")
 			}
 		}
 	}
