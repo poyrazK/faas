@@ -366,6 +366,26 @@ func (q *Queries) SecretGrantValid(ctx context.Context, db DBTX, arg SecretGrant
 	return valid, err
 }
 
+const snapshotSealedKey = `-- name: SnapshotSealedKey :one
+SELECT d.app_id, s.sealed_key FROM snapshots s JOIN deployments d ON d.id = s.deployment_id
+ WHERE s.sealed_capture_id = $1::uuid AND s.sealed_key IS NOT NULL AND NOT s.delete_pending
+ ORDER BY s.created_at DESC LIMIT 1
+`
+
+type SnapshotSealedKeyRow struct {
+	AppID     pgtype.UUID
+	SealedKey []byte
+}
+
+// A sealed park or warm snapshot's app and key (ADR-20261110210000 slice
+// 3d-3), through its deployment.
+func (q *Queries) SnapshotSealedKey(ctx context.Context, db DBTX, id pgtype.UUID) (SnapshotSealedKeyRow, error) {
+	row := db.QueryRow(ctx, snapshotSealedKey, id)
+	var i SnapshotSealedKeyRow
+	err := row.Scan(&i.AppID, &i.SealedKey)
+	return i, err
+}
+
 const triggerConfig = `-- name: TriggerConfig :one
 SELECT kind, config FROM triggers
  WHERE id = $1::uuid AND app_id = $2::uuid

@@ -19818,6 +19818,8 @@
       "id",
       "mem_bytes",
       "recovery_generation",
+      "sealed_capture_id",
+      "sealed_key",
       "stale",
       "stale_at",
       "storage_key",
