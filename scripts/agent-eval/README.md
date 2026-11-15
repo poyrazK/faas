@@ -19,6 +19,7 @@ Tasks live in `tasks.json`:
 | `fix-failed-deploy` | Find why a deploy crashes (a missing import), fix it and redeploy |
 | `rollback-bad-release` | Restore service after a release that returns 500, without editing files |
 | `diagnose-failure` | Name the root cause of a failed deploy, changing nothing |
+| `delete-cron-lost-reply` | Finish one reviewed cron deletion after its first committed reply is lost, retaining the same attempt |
 | `deploy-retail-store` | Deploy `aws-containers/retail-store-sample-app` (five services, Compose) from the owner's own words |
 
 ### Foreign-repository tasks (ADR-20261112223000)
@@ -119,3 +120,26 @@ agent ran (`commands`), which the graders read.
 
 `make agent-eval-test` runs the harness's unit tests. It uses recorded
 transcript shapes and starts no agent.
+
+## Management recovery and read-only grading
+
+`diagnose-failure` now requires MCP calls, no shell commands, unchanged project
+file names/content and zero observed API writes. An answer mentioning the missing
+module cannot pass by itself. `delete-cron-lost-reply` creates a disposable app and
+cron, then drops the first successful native deletion reply after it commits.
+The grade requires that the fault actually fired, retries kept one request UUID
+and unchanged inputs, and an independent native read confirms the cron is absent.
+The app must still serve its original response.
+
+```sh
+python3 scripts/agent-eval/agent_eval.py run --agents codex --toolsets provision \
+  --tasks delete-cron-lost-reply --gregale ./bin/gregale
+```
+
+These tasks require `GREGALE_EVAL_TOKEN` for a dedicated evaluation account;
+`--cli-login` is refused. The deletion task also needs a cron-enabled plan and a
+control plane with the reviewed mutation routes. A loopback proxy forwards to
+that configured API and records only counters and request fingerprints in memory.
+Reports contain no tokens, proofs, payloads or native response bodies. Observation
+is evaluation instrumentation, not a sandbox; the MCP-only grade rejects shell
+workarounds. No model run or deployed result is implied by harness unit tests.
