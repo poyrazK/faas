@@ -126,7 +126,7 @@ func inspectMCPTaskRestore(ctx context.Context, c *Client, id string, in api.Tas
 
 func applyMCPTaskRestore(ctx context.Context, c *Client, record api.TaskToolReleaseIntentRecord, profile mcpTaskExecutionProfile, dir string, plan mcpNativeReleasePlan, in api.TaskToolRecoveryRestoreRequest) int {
 	if err := verifyMCPTaskExecutionBindings(ctx, plan, profile); err != nil {
-		return printErr("Task restore", errors.New("Task role bindings changed"))
+		return printErr("Task restore", errors.New("task role bindings changed"))
 	}
 	receipt := record.Execution.Receipt
 	s := mcpNativeReleaseState{Fingerprint: record.Intent.ReleaseFingerprint, ServingCaptured: receipt.ServingCaptured, ServingDeployment: receipt.ServingDeploymentID, WebDeployment: receipt.WebDeploymentID, WorkerDeployment: receipt.WorkerDeploymentID, PreviousDeployments: receipt.PreviousDeployments, WorkerIDs: receipt.WorkerIDs, Parked: receipt.Parked}
@@ -135,7 +135,7 @@ func applyMCPTaskRestore(ctx context.Context, c *Client, record api.TaskToolRele
 	slices.Sort(wantIDs)
 	slices.Sort(currentIDs)
 	if err != nil || !slices.Equal(wantIDs, currentIDs) {
-		return printErr("Task restore", errors.New("Task worker identities changed"))
+		return printErr("Task restore", errors.New("task worker identities changed"))
 	}
 	if err := mcpNativeCheckWorkers(ctx, c, plan, &s); err != nil {
 		return printErr("Task restore", errors.New("candidate Task worker readiness changed"))

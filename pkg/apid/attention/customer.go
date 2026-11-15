@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -60,6 +61,17 @@ var customerWording = map[string]func(s api.ObsAttentionSignal) api.AccountHealt
 			Title: "Scheduled job " + s.Subject + " keeps failing",
 			Detail: fmt.Sprintf("Its last %s failed. Run gregale jobs runs %s to see the runs and their logs.",
 				plural(s.Observed, "scheduled run"), s.Subject),
+		}
+	},
+	// The subject is "<app> <path>".
+	api.AttentionKindCronsFailing: func(s api.ObsAttentionSignal) api.AccountHealthSignal {
+		slug, path, _ := strings.Cut(s.Subject, " ")
+		return api.AccountHealthSignal{
+			Title: "Cron " + path + " on " + slug + " keeps failing",
+			Detail: fmt.Sprintf("Its last %s failed, and each one still wakes and bills the app. "+
+				"Fix the path or the handler, or disable the cron (gregale cron list --app %s).",
+				plural(s.Observed, "run"), slug),
+			Action: "Open the app", ActionURL: appURL(slug),
 		}
 	},
 	api.AttentionKindLimitPressure: func(s api.ObsAttentionSignal) api.AccountHealthSignal {

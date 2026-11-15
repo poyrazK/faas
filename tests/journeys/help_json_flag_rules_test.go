@@ -3,6 +3,7 @@ package journeys
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -56,7 +57,7 @@ func TestJSONHelpFlagRulesIsolatedCLI(t *testing.T) {
 				Schema int                  `json:"schema_version"`
 				Rules  []discoveredFlagRule `json:"flag_rules"`
 			}
-			if help.exit != 0 || len(help.stderr) != 0 || json.Unmarshal(help.stdout, &document) != nil || document.Schema != 1 || len(document.Rules) != 2 || calls.Load() != 0 {
+			if help.exit != 0 || len(help.stderr) != 0 || json.Unmarshal(help.stdout, &document) != nil || document.Schema != 1 || len(document.Rules) != 3 || calls.Load() != 0 {
 				t.Fatalf("offline help: %d %s %s calls=%d", help.exit, help.stdout, help.stderr, calls.Load())
 			}
 			for _, rule := range document.Rules {
@@ -64,10 +65,14 @@ func TestJSONHelpFlagRulesIsolatedCLI(t *testing.T) {
 					path := filepath.Join(t.TempDir(), "private-rule-rows.jsonl")
 					args := []string{kind, "list"}
 					file := false
+					progress := false
 					for _, condition := range rule.When {
 						if condition.Flag == "output" && condition.Test == "present" && condition.Value {
 							args = append(args, "--output", path)
 							file = true
+						} else if condition.Flag == "progress" && condition.Test == "active" && condition.Value {
+							args = append(args, "--progress", "ndjson")
+							progress = true
 						} else if condition.Test == "enabled" && condition.Value {
 							args = append(args, "--"+condition.Flag)
 						} else if condition.Flag != "output" || condition.Value {
@@ -90,7 +95,7 @@ func TestJSONHelpFlagRulesIsolatedCLI(t *testing.T) {
 						t.Fatalf("dependency: %d %s %s calls=%d", res.exit, res.stdout, res.stderr, calls.Load())
 					}
 					wantCode := "validation_failed"
-					if file {
+					if file || progress {
 						wantCode = "invalid_request"
 					}
 					if problem.Code != wantCode {
@@ -99,7 +104,11 @@ func TestJSONHelpFlagRulesIsolatedCLI(t *testing.T) {
 					if strings.Contains(string(res.stderr), path) || !reflect.DeepEqual(problem.CLI.HelpArgv, []string{"gregale", "--json", "help", kind, "list"}) {
 						t.Fatalf("unsafe help: %s", res.stderr)
 					}
-					if len(problem.CLI.Missing) != 1 || problem.CLI.Missing[0] != (discoveredFlagCondition{Flag: "all", Test: "enabled", Value: true}) {
+					wantMissing := []discoveredFlagCondition{{Flag: "all", Test: "enabled", Value: true}}
+					if progress {
+						wantMissing = append([]discoveredFlagCondition{{Flag: "output", Test: "present", Value: true}}, wantMissing...)
+					}
+					if !reflect.DeepEqual(problem.CLI.Missing, wantMissing) {
 						t.Fatal(problem.CLI.Missing)
 					}
 					if _, err := os.Lstat(path); !os.IsNotExist(err) {
@@ -110,15 +119,44 @@ func TestJSONHelpFlagRulesIsolatedCLI(t *testing.T) {
 						t.Fatalf("offline advice: %d %s %s", advice.exit, advice.stdout, advice.stderr)
 					}
 					for _, requirement := range rule.Requires {
-						if requirement.Test == "enabled" && requirement.Value {
+						if requirement.Flag == "output" && requirement.Test == "present" && requirement.Value {
+							args = append(args, "--output", path)
+							file = true
+						} else if requirement.Test == "enabled" && requirement.Value {
 							args = append(args, "--"+requirement.Flag)
 						} else if requirement.Flag != "json" || requirement.Test != "effective" || !requirement.Value {
 							t.Fatalf("unrecognized requirement: %+v", requirement)
 						}
 					}
 					fixed := tg.exec(t, "fp_test_flag-rule-journey", tg.home, time.Minute, args...)
-					if fixed.exit != 0 || len(fixed.stderr) != 0 || calls.Load() != before+1 {
+					if fixed.exit != 0 || (!progress && len(fixed.stderr) != 0) || calls.Load() != before+1 {
 						t.Fatalf("repaired combination: %d %s %s", fixed.exit, fixed.stdout, fixed.stderr)
+					}
+					if progress {
+						decoder := json.NewDecoder(bytes.NewReader(fixed.stderr))
+						count := 0
+						var last struct {
+							Type, Event string
+							Published   bool
+						}
+						for {
+							var event struct {
+								Type, Event string
+								Published   bool
+							}
+							err := decoder.Decode(&event)
+							if err == io.EOF {
+								break
+							}
+							if err != nil || event.Type != "list_export_progress" {
+								t.Fatalf("invalid progress: %s", fixed.stderr)
+							}
+							last = event
+							count++
+						}
+						if count < 2 || last.Event != "published" || !last.Published {
+							t.Fatalf("publication progress: %s", fixed.stderr)
+						}
 					}
 					if file {
 						var receipt struct {
