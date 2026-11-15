@@ -51,7 +51,7 @@ func TestExportDiffIsolatedCLI(t *testing.T) {
 			case "last-false":
 				extra = []string{"--fail-on-change", "--fail-on-change=false"}
 			case "invalid":
-				after = "{}\n{\"secret\":credential-secret}\n"
+				after = "{\"id\":\"valid-first\"}\n{\"secret\":credential-secret}\n"
 				want = 1
 			case "duplicate":
 				after = "{\"id\":\"credential-secret\"}\n{\"id\":\"credential-secret\"}\n"
