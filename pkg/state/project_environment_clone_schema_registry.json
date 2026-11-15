@@ -5112,6 +5112,7 @@
       "freshness_target_seconds",
       "generation",
       "id",
+      "evolution_change",
       "index_change",
       "initialized",
       "lease_token",
@@ -5136,7 +5137,9 @@
       "verification_progress",
       "verified_at",
       "verify_requested",
-      "wal_retention"
+      "wal_retention",
+      "work_config",
+      "work_status"
     ],
     "kind": "configuration",
     "capabilities": [],
