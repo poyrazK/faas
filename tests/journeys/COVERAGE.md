@@ -73,6 +73,9 @@ recovery; local preparation checks do not establish deployed acceptance.
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
+`TestCLIArgumentCountsIsolatedCLI` extends row 156: missing invocation IDs and
+extra flag-only positionals expose counts and offline help without API requests.
+
 `TestCLICommandCorrectionsIsolatedCLI` extends row 156: misspelled invocation
 commands and help topics return canonical argument arrays; following help makes
 zero requests and never replays the failed invocation.

@@ -27,6 +27,7 @@
 - [ADR-20261115071638: Global option discovery in CLI JSON help](20261115071638-cli-json-global-flags.md) — accepted; inherited option spellings, values and placement from the same registry as human root help.
 - [ADR-20261115082128: Structured corrections for CLI flag errors](20261115082128-cli-structured-flag-corrections.md)
 - [ADR-20261115100510: Structured corrections for unknown CLI commands](20261115100510-cli-structured-command-corrections.md)
+- [ADR-20261115103154: Structured CLI argument-count diagnostics](20261115103154-cli-argument-count-diagnostics.md)
 - [ADR-20261114143410: Structured recovery for CLI Job waits](20261114143410-cli-job-wait-recovery.md) — accepted; Problem diagnostics on stderr, compatible stdout receipts and exact-run, profile-preserving recovery.
 
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`

@@ -645,6 +645,16 @@ the deepest visible parent or root. Advice uses offline capability state and
 never executes a command. Human diagnostics and existing Problem codes remain
 unchanged; API errors omit this metadata.
 
+Invalid positional counts in `invocation get/wait`, shared zero-argument
+commands and flag-only guards expose `cli.kind: "missing_argument"` or
+`"unexpected_argument"`. The `cli.arguments` object contains registered
+`labels`, `expected_min`, `expected_max` and `received_count`, including zero
+counts. For example, `gregale --json invocation wait` reports labels `["ID"]`,
+expected minimum/maximum `1`, and received count `0`. `help_argv` discovers that
+command offline. Metadata contains no supplied arguments or values. A valid
+count continues through existing option/authentication/API checks; those errors
+do not acquire argument metadata. Existing usage text and exit codes remain.
+
 Successful `--json` output takes one of two shapes, and a command keeps its
 shape across releases:
 

@@ -115,7 +115,7 @@ func rejectUnexpectedFlagArgs(fs *flag.FlagSet) bool {
 	if fields := strings.Fields(topic); len(fields) > 0 {
 		topic = fields[0]
 	}
-	printUsage(osStderr, "usage: gregale "+name+" [flags]; unexpected positional argument(s): "+strings.Join(fs.Args(), " "), topic)
+	rejectArgumentCount(name, "usage: gregale "+name+" [flags]; unexpected positional argument(s): "+strings.Join(fs.Args(), " "), topic, fs.NArg(), 0, 0)
 	// A command with verbs (`dev`, `test`) parses its own flags when the
 	// first word is none of them; that word is a mistyped verb, so name them
 	// (Hunt 14 H14-64).
