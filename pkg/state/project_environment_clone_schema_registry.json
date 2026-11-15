@@ -3945,8 +3945,10 @@
       "expires_at",
       "org_id",
       "project_ids",
+      "requester_ip",
       "status",
-      "token_hash"
+      "token_hash",
+      "verifier_hash"
     ],
     "kind": "account_identity"
   },
@@ -19816,6 +19818,8 @@
       "id",
       "mem_bytes",
       "recovery_generation",
+      "sealed_capture_id",
+      "sealed_key",
       "stale",
       "stale_at",
       "storage_key",
@@ -20288,6 +20292,21 @@
       "revision",
       "status",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "storage_object_deletions",
+    "columns": [
+      "attempts",
+      "decided_at",
+      "last_error",
+      "next_attempt_at",
+      "reason",
+      "requested_at",
+      "requested_by",
+      "state",
+      "storage_key"
     ],
     "kind": "operational"
   },

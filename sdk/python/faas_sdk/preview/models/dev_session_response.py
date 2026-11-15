@@ -40,6 +40,9 @@ class DevSessionResponse:
     require authentication."""
     go_command: str | Unset = UNSET
     """The stored Go command; omitted when none."""
+    live_patches: bool | Unset = UNSET
+    """Whether this control plane delivers live source patches to developer environments. Automatic watch mode is
+    chosen only when it does. Omitted by older servers."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,6 +67,8 @@ class DevSessionResponse:
 
         go_command = self.go_command
 
+        live_patches = self.live_patches
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -80,6 +85,8 @@ class DevSessionResponse:
             field_dict["watch"] = watch
         if go_command is not UNSET:
             field_dict["go_command"] = go_command
+        if live_patches is not UNSET:
+            field_dict["live_patches"] = live_patches
 
         return field_dict
 
@@ -120,6 +127,8 @@ class DevSessionResponse:
 
         go_command = d.pop("go_command", UNSET)
 
+        live_patches = d.pop("live_patches", UNSET)
+
         dev_session_response = cls(
             app=app,
             expires_at=expires_at,
@@ -127,6 +136,7 @@ class DevSessionResponse:
             buckets=buckets,
             watch=watch,
             go_command=go_command,
+            live_patches=live_patches,
         )
 
         dev_session_response.additional_properties = d

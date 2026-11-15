@@ -1,3 +1,15 @@
+- [ADR-20261115153000: Application file workflows in the SDKs](20261115153000-sdk-application-files.md) — accepted; SDK preview
+- [ADR-20261115210000: Typed file-triggered jobs](20261115210000-sdk-file-triggered-jobs.md) — accepted; SDK preview
+- [ADR-20261115223000: Typed live views of Jobs and file pipelines](20261115223000-sdk-live-job-views.md) — accepted; SDK preview
+- [ADR-20261116010000: Typed durable job pipelines](20261116010000-sdk-durable-job-pipelines.md) — accepted; SDK preview
+- [ADR-20261115162700: Typed pipeline approval and input gates](20261115162700-sdk-pipeline-gates.md) — accepted; SDK preview
+- [ADR-20261115172526: Typed child pipeline composition](20261115172526-sdk-pipeline-composition.md) — accepted; SDK preview
+
+- [ADR-20261115170000: Typed background jobs in application SDKs](20261115170000-sdk-typed-background-jobs.md) — accepted; portable schemas and generated types, local/native runners, resumable handles and verified per-input results
+
+- [ADR-20261115192838: SDK project verification with explicit deployment evidence](20261115192838-sdk-project-verification.md) — accepted; typed Node/Python verification, identity-aware smoke checks, bounded read-only diagnostics and portable resume targets
+
+- [ADR-20261114150000: Flags usability: short commands, attribute targeting, gateway kill switch, lifecycle](20261114150000-flags-usability.md) — accepted; read-modify-write CLI verbs (`flags create/set/on/off/percent/rule/rm/kill/stale`), rule `attributes` on gateway-verified `gregale.country`/`gregale.ua_family` and app-supplied `app.*` (SDK capability `attribute-targeting-v1`), `killed` flags served as the app fallback and stamped by the gateway in `X-Faas-Flag-Kills`, flag `owner`/`expires_at` with a lifecycle report and hourly `flags.lifecycle_attention` audit events (amends ADR-377)
 - [ADR-20261114120000: Per-plan startup window on every cold boot](20261114120000-per-plan-startup-window.md) — accepted; amends ADR-138 (2026-10-22): `startup_deadline_s` may reach the plan window (Free/Hobby 30 s, Pro 60 s, Scale 120 s; defaults unchanged) and every cold boot, not only the deploy prime, gets it in its RPC budget and watchdog reprieve; `wake_max_queue_wait_seconds` may reach 120 s (deploy-path review P1)
 
 - [ADR-20261114090001 · Deployment qualification changes and wait timing](20261114090001-deployment-qualification-progress.md) — monitoring implementation; production convergence separate
@@ -22,11 +34,18 @@
 
 - [ADR-20261115163305: Offline comparison of CLI export inventories](20261115163305-cli-offline-export-diff.md) — accepted; deterministic keyed JSON comparisons, exact decimal values and opt-in CI failures without API reads.
 
+- [ADR-20261115135218: Discoverable CLI list flag dependencies](20261115135218-cli-list-flag-dependencies.md) — accepted; shared dependency registry, offline help and typed local advice with preserved validation contracts.
+
+- [ADR-20261115175928: Customer attention contact and outcomes](20261115175928-customer-attention-contact-and-outcomes.md) — accepted; distinct identifier for customer attention, preserving historical migration citations.
+- [ADR-20261115175927: Operator console signal actions](20261115175927-operator-console-signal-actions.md) — accepted; JSON routes for signal actions, customer health and the support inbox.
+- [ADR-20261115133053: Offline output contracts in CLI JSON help](20261115133053-cli-json-help-output-contracts.md) — accepted; explicit list formats, selectors, empty behavior, publication and error contracts without API discovery.
+
 - [ADR-20261115153114: Offline verification of CLI list exports](20261115153114-cli-offline-export-verification.md) — accepted; exact bytes, SHA-256 and record counts checked against saved receipts without API access.
 
 - [ADR-20261115110124: gRPC steps in `gregale test` scenarios](20261115110124-test-grpc-steps.md) — accepted; a request or check may carry a `grpc:` call (definitions from `.proto` files compiled with protocompile and/or server reflection; unary and all streaming shapes; status, protobuf-JSON pointers, message count, header and trailer metadata); `local` dials plaintext HTTP/2, `real-vm` the deployed app over TLS; load mode stays HTTP-only
 - [ADR-20261115105130: Opt-in streamed list output](20261115105130-cli-streamed-list-output.md)
 - [ADR-20261115121720: Atomic CLI list exports](20261115121720-cli-atomic-list-exports.md) — accepted; private JSON Lines staging, no-overwrite publication and completion integrity receipts.
+
 - [ADR-20261115090000: Operator account risk view](20261115090000-account-risk-view.md) — accepted; `gregalectl accounts risk` and `held-links` show an account's hold, sign-up record, held-account links, strikes and abuse events; PII only with `--include-pii`
 - [ADR-20261114180740: AI gateway managed prompts](20261114180740-ai-gateway-managed-prompts.md) — accepted; named, immutable prompt versions (messages with plain-text `{{variable}}` substitution, route or integration target, sampling params) called at `$GREGALE_OUTBOUND_URL/p/{name}` through the ordinary route path; live/previous-live pointers, canaries with route-canary rollback, per-version minute stats and feedback, evaluations on supplied variable sets; plan limits 25/100/500 prompts (Hobby/Pro/Scale)
 - [ADR-20261114174600: Flag new accounts that resemble abuse-held ones](20261114174600-held-account-links.md) — accepted; a sign-up sharing a /24 or /48 or a private email domain with an abuse-held account is stored in `account_held_links`, audited and counted; flag only
@@ -2392,4 +2411,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261114201959: Resumable source deployment workflows in the SDKs](20261114201959-sdk-resumable-source-deployment-workflows.md) — accepted; local journals compose preparation, checkpointed uploads, receipt recovery and release observation with one deadline and typed outcomes.
 - [ADR-20261114220642: Typed project inspection in Node and Python](20261114220642-sdk-typed-project-inspection.md) — accepted; immutable discovery plans resolve manifest/workspace intent and bind configuration fingerprints to resumable deployments without rewriting source.
 - [ADR-20261114232023: Reviewed project workflows in Node and Python](20261114232023-sdk-reviewed-project-workflows.md) — accepted; server previews, exact-source cached apply, durable submission receipts and per-service outcomes compose complete local projects.
+
+- [ADR-20261115072125: Read-only agent review of MCP Task releases](20261115072125-agent-task-release-review.md) — accepted; offline local stack review reuses native release parsing and fingerprints, reports credential-free roles and limits, and preserves the separate owner-operated release flow.
 - [ADR-20261115100336: A restore keeps gunicorn's workers](20261115100336-restore-keeps-gunicorn-workers.md) — accepted; the Python restore preload stops gunicorn's master from killing workers after the restore clock jump (amends ADR-680, ADR-20261109120000)

@@ -55,8 +55,8 @@ type Store interface {
 	GrantValid(ctx context.Context, appID, nodeID string, at time.Time) (bool, error)
 	UpsertGrant(ctx context.Context, appID, nodeID, grantedByNodeID string, expiresAt time.Time) (time.Time, error)
 	RecordOpen(ctx context.Context, nodeID, appID, via string, entries int) error
-	// CaptureKey returns a live sealed crash capture's app id and sealed
-	// key, or ErrUnknownCapture.
+	// CaptureKey returns a live sealed crash capture's (or sealed snapshot's,
+	// slice 3d-3) app id and sealed key, or ErrUnknownCapture.
 	CaptureKey(ctx context.Context, captureID string) (appID string, sealed []byte, err error)
 	// SidecarEnv returns the sealed direct env of sidecarName in
 	// deploymentID, a deployment of appID (SidecarCiphertexts), or
@@ -185,6 +185,9 @@ type Server struct {
 	buildScope    BuildRegistryScopeMode
 	postgresHMAC  []byte
 	postgresProbe func(context.Context, string, managedpostgres.CredentialAccess, int) error
+	// internalSvc mints internal-service tokens (slice 3k); nil refuses
+	// MintInternalServiceToken.
+	internalSvc *internalSvcSigner
 }
 
 // WithDeliveryIdentities lets secretd open delivery seal-domain values

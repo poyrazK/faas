@@ -42,3 +42,44 @@ app authentication. Its JSON `processed` count should grow as the worker writes.
 Remove the project and its managed database through the CLI when finished; deleting
 apps does not purge a managed database. This example creates real resources only
 when `apply` is explicitly run.
+
+
+Verify the exact deployments after apply or recovery:
+
+```sh
+export GREGALE_APPLICATION_URL=https://your-api.example
+node examples/sdk-project-application/verify.mjs
+# The same verification-target.json works in either language:
+python examples/sdk-project-application/verify.py
+```
+
+The drivers save an identity-only `verification-target.json` beside the private
+journal. Verification needs no source files and performs no apply or repair.
+The API must be reachable with application authentication handled separately in
+`checks.mjs`/`verification_checks.py`; these examples use a publicly accessible API
+and never forward `FAAS_TOKEN`. They bound responses and disable redirects.
+The API returns its own `FAAS_DEPLOYMENT_ID` and the heartbeat of the exact worker
+requested by ID. A fresh heartbeat follows a successful database insert. Old rows
+and a worker from another deployment cannot verify the selected release.
+
+To exercise failure, work on a disposable source copy and set
+`worker-fault.json` to `{"fail":true,"round":1}`. Choose a new state directory,
+preview and apply that source, then verify: the API check passes and the worker
+check reports `smoke_failed`. Set `{"fail":false,"round":2}`, use another new
+state directory and deploy the correction. Verification then observes rows and a
+fresh heartbeat from the corrected deployment. No automatic recovery is performed.
+The round field makes the corrected source distinct from the original build.
+
+Local integration testing uses isolated PostgreSQL and real API/worker processes:
+
+```sh
+npm --prefix sdk/node run build
+GREGALE_LOCAL_PG_BIN=/path/to/postgresql/bin \
+GREGALE_LOCAL_PYTHON=/path/to/sdk-venv/bin/python \
+node --test examples/sdk-project-application/local-verification.test.mjs
+```
+
+This exercises both SDKs through worker failure and correction with fixture
+control-plane observations. The deployed public API/CLI journey is
+`tests/journeys/TestSDKReviewedProject`; it requires an explicitly configured
+isolated target and checks actual release and health evidence as well.

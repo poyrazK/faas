@@ -192,6 +192,15 @@ var cliTreeAliases = []cliTreeAlias{
 	{"api spec", "openapi"},
 	{"api consumer", "consumers"},
 	{"api tenant", "platform-tenants"},
+	// ADR 20261114150000: tree names for the short flag commands.
+	{"flag enable", "flags on"},
+	{"flag disable", "flags off"},
+	{"flag rollout set", "flags percent"},
+	{"flag rule create", "flags rule-add"},
+	{"flag rule delete", "flags rule-rm"},
+	{"flag kill set", "flags kill"},
+	{"flag kill unset", "flags unkill"},
+	{"flag stale list", "flags stale"},
 	{"flag", "flags"},
 
 	// Data.

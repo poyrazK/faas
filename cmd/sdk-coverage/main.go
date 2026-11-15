@@ -1097,6 +1097,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/flags":                        "ProjectFlags",
 	"PUT /v1/projects/{slug}/environments/{environment}/flags":                        "PublishProjectFlags",
 	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":               "ProjectFlagVersions",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle":              "ProjectFlagLifecycle",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":              "RollbackProjectFlags",
 	"POST /v1/projects/{slug}/environments/{environment}/automation/resume":           "ResumeEnvironmentAutomation",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":         "InspectProjectFlag",

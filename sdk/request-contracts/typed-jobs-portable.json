@@ -1,0 +1,11 @@
+{
+  "contract_sha256": "ddcbc29448d327201c6f12942dd5cefbbe963c2192e64c9b5dc8d8008eaa5450",
+  "payload": {
+    "row": 1,
+    "email": "one@example.test"
+  },
+  "binding": {
+    "input_id": "row-1",
+    "input_ref": "gregale-job:v1:eyJ2ZXJzaW9uIjoxLCJjb250cmFjdCI6ImRkY2JjMjk0NDhkMzI3MjAxYzZmMTI5NDJkZDVjZWZiYmU5NjNjMjE5MmU2NGM5YjVkYzhkODAwOGVhYTU0NTAiLCJpbnB1dF9pZCI6InJvdy0xIiwiZGF0YSI6eyJyb3ciOjEsImVtYWlsIjoib25lQGV4YW1wbGUudGVzdCJ9fQ"
+  }
+}

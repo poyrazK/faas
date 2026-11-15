@@ -18,7 +18,10 @@ T = TypeVar("T", bound="QueueReceiveResponse")
 
 @_attrs_define
 class QueueReceiveResponse:
-    """200 — a completed queue invocation observed by the long-poll feed. 204 (no body) on timeout."""
+    """200 — a settled queue invocation observed by the long-poll feed: every waiting receive sees it, and one that settles
+    while none waits is not replayed. 204 (no body) on timeout. Consume with pull leases instead.
+
+    """
 
     id: str
     payload: QueueReceiveResponsePayload
@@ -27,6 +30,9 @@ class QueueReceiveResponse:
     queue_binding_id: str | Unset = UNSET
     """Retained binding identity of the completed queue invocation; absent for legacy work."""
     result: QueueReceiveResponseResult | Unset = UNSET
+    state: str | Unset = UNSET
+    """How the message settled: completed, failed or cancelled. A failed or cancelled message's result is its
+    error."""
     trace_id: str | Unset = UNSET
     traceparent: str | Unset = UNSET
     """W3C traceparent propagated from the producer."""
@@ -44,6 +50,8 @@ class QueueReceiveResponse:
         result: dict[str, Any] | Unset = UNSET
         if not isinstance(self.result, Unset):
             result = self.result.to_dict()
+
+        state = self.state
 
         trace_id = self.trace_id
 
@@ -63,6 +71,8 @@ class QueueReceiveResponse:
             field_dict["queue_binding_id"] = queue_binding_id
         if result is not UNSET:
             field_dict["result"] = result
+        if state is not UNSET:
+            field_dict["state"] = state
         if trace_id is not UNSET:
             field_dict["trace_id"] = trace_id
         if traceparent is not UNSET:
@@ -91,6 +101,8 @@ class QueueReceiveResponse:
         else:
             result = QueueReceiveResponseResult.from_dict(_result)
 
+        state = d.pop("state", UNSET)
+
         trace_id = d.pop("trace_id", UNSET)
 
         traceparent = d.pop("traceparent", UNSET)
@@ -101,6 +113,7 @@ class QueueReceiveResponse:
             environment=environment,
             queue_binding_id=queue_binding_id,
             result=result,
+            state=state,
             trace_id=trace_id,
             traceparent=traceparent,
         )

@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const moduleURL = process.env.GREGALE_NODE_SDK
   ? pathToFileURL(resolve(process.env.GREGALE_NODE_SDK))
   : new URL('../../sdk/node/dist/index.js', import.meta.url);
-const { createClient, parseReviewedProjectPlan } = await import(moduleURL.href);
+const { createClient, parseReviewedProjectPlan, projectVerificationTarget } = await import(moduleURL.href);
 const mode = process.argv[2] ?? 'preview';
 if (!['preview', 'apply', 'resume'].includes(mode)) throw new Error('Use preview, apply or resume');
 const projectSlug = process.env.GREGALE_PROJECT_SLUG;
@@ -25,6 +25,7 @@ try {
     const plan = parseReviewedProjectPlan(JSON.parse(await readFile(resolve(state, 'plan.json'), 'utf8')));
     const options = { statePath: resolve(state, 'apply.json'), timeoutMs: 1200000 };
     const result = await (mode === 'apply' ? client.projects.applyPlan(plan, options) : client.projects.resumePlanApplication(plan, options));
+    await writeFile(resolve(state, 'verification-target.json'), JSON.stringify(await projectVerificationTarget(result)), { mode: 0o600 });
     console.log(JSON.stringify({ outcome: result.outcome, attemptId: result.attemptId, workloads: result.workloads }));
     if (result.outcome !== 'succeeded') process.exitCode = 1;
   }
