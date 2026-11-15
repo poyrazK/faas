@@ -8861,9 +8861,12 @@ WHERE app_id=sqlc.arg(app_id)::uuid
 GROUP BY source
 ORDER BY source;
 
--- name: SumAccountQueueBacklogBytes :one
+-- name: SumAccountBacklogBytes :one
+-- ADR-20261022105723 (amended 2026-11-13): the account's pending queue,
+-- async and delayed-task payload bytes, one pool against
+-- MaxQueueBacklogBytesPerAccount.
 SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
-WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
+WHERE account_id=sqlc.arg(account_id)::uuid AND source IN ('queue','async_invoke','delayed_task');
 
 -- name: ExpirePendingQueueMessages :many
 -- ADR-20261022105723: a pending queue message past its plan's retention
@@ -9646,6 +9649,46 @@ WITH cur AS (
 SELECT EXISTS (SELECT 1 FROM cur) AS found,
        COALESCE((SELECT granted FROM upd), 0)::bigint AS granted,
        COALESCE((SELECT remaining FROM upd), (SELECT GREATEST(avail, 0) FROM cur), 0)::bigint AS remaining;
+
+-- name: ConsumeEventPublishTokens :one
+-- Event-driven hunt #16: the shared per-account event publish counter. Refill
+-- follows ConsumeTrafficRateTokens exactly, but the grant is all or nothing:
+-- a batch of n events takes n tokens or none.
+WITH cur AS (
+    SELECT LEAST(FLOOR(sqlc.arg(burst)::double precision)::bigint,
+               tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+                   * sqlc.arg(rps)::double precision)::bigint) AS avail,
+           tokens + FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * sqlc.arg(rps)::double precision)::bigint AS refilled,
+           FLOOR(GREATEST(0, EXTRACT(EPOCH FROM (now() - last_refill)))
+               * sqlc.arg(rps)::double precision) AS whole
+    FROM pg_ratelimit_counters
+    WHERE scope = 'event_publish' AND subject_id = sqlc.arg(subject_id)::uuid
+      AND plan = sqlc.arg(plan)::text
+    FOR UPDATE
+), upd AS (
+    UPDATE pg_ratelimit_counters c
+    SET tokens = cur.avail - sqlc.arg(n)::bigint,
+        last_refill = CASE
+            WHEN cur.refilled >= FLOOR(sqlc.arg(burst)::double precision)::bigint
+            THEN GREATEST(now(), c.last_refill)
+            ELSE c.last_refill + (cur.whole / sqlc.arg(rps)::double precision) * interval '1 second'
+        END
+    FROM cur
+    WHERE c.scope = 'event_publish' AND c.subject_id = sqlc.arg(subject_id)::uuid
+      AND c.plan = sqlc.arg(plan)::text AND cur.avail >= sqlc.arg(n)::bigint
+    RETURNING 1
+)
+SELECT EXISTS (SELECT 1 FROM cur) AS found, EXISTS (SELECT 1 FROM upd) AS granted;
+
+-- name: CreateEventPublishCounter :one
+-- The first publish creates the account's counter with its grant taken; the
+-- caller never asks for more than the burst.
+INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
+VALUES ('event_publish', sqlc.arg(subject_id)::uuid, sqlc.arg(plan)::text,
+    FLOOR(sqlc.arg(burst)::double precision)::bigint - sqlc.arg(n)::bigint, now())
+ON CONFLICT (scope, subject_id, plan) DO NOTHING
+RETURNING tokens;
 
 -- name: CreateTrafficRateBatchCounter :one
 INSERT INTO pg_ratelimit_counters (scope, subject_id, plan, tokens, last_refill)
@@ -14410,7 +14453,49 @@ select
       where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
         and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending' and i.due_at <= now()
       order by i.due_at, i.created_at, i.id limit 1)
-  ) first)::timestamptz as oldest_pending_at;
+  ) first)::timestamptz as oldest_pending_at,
+  -- Ordered work (ADR-20261112193306): due messages waiting behind an older
+  -- message of their key cannot run, so queue_depth scaling leaves them out.
+  (select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state='pending' and i.due_at <= now() and i.work_policy_name is not null
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+       and exists (select 1 from invocations older
+         where older.app_id=i.app_id and older.work_policy_name=i.work_policy_name
+           and older.work_key_digest=i.work_key_digest
+           and ((older.work_sequence<i.work_sequence and older.state='pending') or older.state='dispatching'))
+     limit sqlc.arg(row_limit)::integer) waiting)::bigint as waiting_behind_key,
+  -- A blocked lane's head has failed at least once and holds later messages
+  -- of its key until it succeeds or dead-letters.
+  (select count(*) from (
+     select 1 from invocations h, b
+     where h.app_id=sqlc.arg(app_id)::uuid and h.queue_binding_id=b.id and h.account_id=b.account_id
+       and h.source='queue' and h.state in ('pending','dispatching') and h.attempts > 0
+       and h.work_policy_name is not null
+       and (b.deployment_scope='' or h.deployment_scope=b.deployment_scope)
+       and not exists (select 1 from invocations older
+         where older.app_id=h.app_id and older.work_policy_name=h.work_policy_name
+           and older.work_key_digest=h.work_key_digest and older.work_sequence<h.work_sequence
+           and older.state in ('pending','dispatching'))
+       and exists (select 1 from invocations later
+         where later.app_id=h.app_id and later.work_policy_name=h.work_policy_name
+           and later.work_key_digest=h.work_key_digest and later.work_sequence>h.work_sequence
+           and later.state='pending')
+     limit sqlc.arg(row_limit)::integer) blocked)::bigint as blocked_lanes,
+  (select min(h.created_at) from invocations h, b
+   where h.app_id=sqlc.arg(app_id)::uuid and h.queue_binding_id=b.id and h.account_id=b.account_id
+     and h.source='queue' and h.state in ('pending','dispatching') and h.attempts > 0
+     and h.work_policy_name is not null
+     and (b.deployment_scope='' or h.deployment_scope=b.deployment_scope)
+     and not exists (select 1 from invocations older
+       where older.app_id=h.app_id and older.work_policy_name=h.work_policy_name
+         and older.work_key_digest=h.work_key_digest and older.work_sequence<h.work_sequence
+         and older.state in ('pending','dispatching'))
+     and exists (select 1 from invocations later
+       where later.app_id=h.app_id and later.work_policy_name=h.work_policy_name
+         and later.work_key_digest=h.work_key_digest and later.work_sequence>h.work_sequence
+         and later.state='pending'))::timestamptz as oldest_blocked_at;
 
 -- name: QueueClaimActiveCount :one
 select count(*)::bigint from invocations i
@@ -14903,10 +14988,17 @@ ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED
 -- name: ObjectNotificationsCapture :execrows
 -- Notification recipients meet the same company reach as subscriptions
 -- (ADR-20261025211616): a rule cannot route a company bucket's events past it.
-UPDATE event_fanout_outbox SET recipient_snapshot=recipient_snapshot ||
- event_recipients_in_producer_reach(account_id, payload->>'producer', sqlc.arg(recipients)::jsonb)
-WHERE account_id=sqlc.arg(account_id)::uuid AND source='gregale.storage' AND event_id=sqlc.arg(event_id)::text
-AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(recipient_snapshot) r WHERE r ? 'object_notification');
+-- enqueue_event_fanout keeps no row for a platform event without subscribers
+-- (ADR-614 amendment 2026-11-13), so the capture inserts it from the event
+-- envelope when it is missing and appends to it otherwise.
+INSERT INTO event_fanout_outbox AS o
+    (account_id, source, event_id, event_type, schema_version, event_data, payload, recipient_snapshot)
+SELECT sqlc.arg(account_id)::uuid, 'gregale.storage', sqlc.arg(event_id)::text,
+    e.p->>'type', e.p->>'schemaversion', e.p->'data', e.p,
+    event_recipients_in_producer_reach(sqlc.arg(account_id)::uuid, e.p->>'producer', sqlc.arg(recipients)::jsonb)
+FROM (SELECT sqlc.arg(payload)::jsonb AS p) e
+ON CONFLICT (account_id, source, event_id) DO UPDATE SET recipient_snapshot = o.recipient_snapshot || EXCLUDED.recipient_snapshot
+WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements(o.recipient_snapshot) r WHERE r ? 'object_notification');
 
 -- name: ObjectNotificationTargetApp :one
 SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted';
@@ -30375,3 +30467,17 @@ VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(
 -- name: GetInvocationSend :one
 SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
 FROM invocation_sends WHERE invocation_id = sqlc.arg(invocation_id)::uuid;
+
+-- Plan-fit notices (billing review H17-4): the plan and over-plan app set a
+-- billing subject was last emailed about.
+-- name: GetPlanFitNotice :one
+SELECT plan, apps_digest FROM plan_fit_notices WHERE subject_id = $1;
+
+-- name: PutPlanFitNotice :exec
+INSERT INTO plan_fit_notices (subject_id, plan, apps_digest, noticed_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (subject_id) DO UPDATE
+   SET plan = EXCLUDED.plan, apps_digest = EXCLUDED.apps_digest, noticed_at = now();
+
+-- name: ClearPlanFitNotice :exec
+DELETE FROM plan_fit_notices WHERE subject_id = $1;

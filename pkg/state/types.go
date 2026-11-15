@@ -585,6 +585,18 @@ func (a Account) Active() bool {
 	return (a.Status == AccountActive || a.Status == AccountPastDue) && !a.AbuseHeld()
 }
 
+// MovedToFreeForNonpayment reports an account the dunning ladder moved to
+// the Free plan for an overdue payment (billing review 2026-11-13, R9-1): it
+// is active, or since stopped by the Free quota, and still carries
+// past_due_at, which marks the unpaid balance until a paid order or an
+// operator clears it. A further payment failure or update on the old
+// subscription must not move it back into past_due or onto its paid plan. An
+// account the retired ladder suspended for non-payment reads the same; the
+// dunning sweep moves it to Free.
+func (a Account) MovedToFreeForNonpayment() bool {
+	return (a.Status == AccountActive || a.Status == AccountSuspended) && a.PastDueAt != nil
+}
+
 // MayDeploy reports whether the account may start new deployments. A
 // past_due account keeps serving during its grace period but cannot deploy
 // (spec §4.7), and a suspended, deleted_pending or abuse-held account
@@ -2135,6 +2147,9 @@ type AppManifest struct {
 	RestartPolicy    string                    `json:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	// Warmup is the path init snapshot priming GETs instead of the
+	// readiness path (ADR-20261114153000).
+	Warmup *api.WarmupHook `json:"warmup,omitempty"`
 	// Pause is the app's declared pause value (ADR-1151); empty selects the
 	// default for the app's type (api.EffectivePause).
 	Pause            string               `json:"pause,omitempty"`
@@ -2219,7 +2234,7 @@ func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
 		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
-		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Warmup == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
@@ -4936,9 +4951,15 @@ type Invocation struct {
 	// It is admission input only, never persisted or customer-authored.
 	AdmissionMaxPending int `json:"-"`
 	// AdmissionMaxBacklogBytes is the producer's per-account cap on pending
-	// queue payload bytes (ADR-20261022105723; 0 = uncapped). Like
-	// AdmissionMaxPending it is admission input only.
+	// queue, async and delayed-task payload bytes (ADR-20261022105723; 0 =
+	// uncapped). Like AdmissionMaxPending it is admission input only.
 	AdmissionMaxBacklogBytes int64 `json:"-"`
+	// AdmissionUnlocked counts the caps without taking the app's admission
+	// lock: concurrent producers may pass a cap by the rows they are
+	// inserting at once. High-rate async producers (async invoke, async
+	// routes, function send) use it so admission never serializes an app's
+	// enqueues (ADR-20261022105723 amendment 2026-11-13).
+	AdmissionUnlocked bool `json:"-"`
 	// Host-to-host operation metadata is trusted protocol state, never persisted or guest-authored.
 	OperationResultVersion     int    `json:"-"`
 	ManagedOperationID         string `json:"-"`
@@ -5369,6 +5390,21 @@ type QueueStats struct {
 	InFlight        int
 	OldestPendingAt time.Time
 	DeadLetter      int
+	// Ordered work (ADR-20261112193306), from bounded binding telemetry;
+	// other readers leave them zero. WaitingBehindKey counts due messages
+	// held behind an older message of their work key; BlockedLanes counts
+	// keys whose head has failed and holds later messages, the oldest head
+	// created at OldestBlockedAt.
+	WaitingBehindKey int
+	BlockedLanes     int
+	OldestBlockedAt  time.Time
+}
+
+// RunnableDepth is the backlog that could run now: Depth without messages
+// waiting behind their key. queue_depth scaling sizes workers by it, so a
+// blocked key does not start idle workers.
+func (q QueueStats) RunnableDepth() int {
+	return max(q.Depth-q.WaitingBehindKey, 0)
 }
 
 // QueueBinding is the durable app-scoped contract between a logical queue and

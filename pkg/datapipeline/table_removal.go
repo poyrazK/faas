@@ -15,6 +15,9 @@ import (
 // RemovableTables exposes only completed, freshly observed selections. The
 // ordinary disconnect action owns stopping the final table/pipeline.
 func RemovableTables(p Pipeline) []string {
+	if snapshotMode(p) {
+		return nil
+	}
 	if p.State != "live" || p.DesiredState != "running" || !p.Initialized || !p.ObservationFresh || len(p.Tables) < 2 || p.VerifyRequested || activeTableCancellation(p) {
 		return nil
 	}
@@ -24,7 +27,18 @@ func RemovableTables(p Pipeline) []string {
 	if p.VerificationProgress != nil && slices.Contains([]string{"running", "waiting"}, p.VerificationProgress.State) {
 		return nil
 	}
-	return slices.Clone(p.Tables)
+	tables := slices.Clone(p.Tables)
+	if p.Serving != nil {
+		tables = slices.DeleteFunc(tables, func(table string) bool {
+			return slices.ContainsFunc(p.Serving.Relationships, func(r api.DataPipelineRelationship) bool { return r.SourceTable == table || r.TargetTable == table })
+		})
+	}
+	if p.Operations != nil && p.Operations.Quality != nil {
+		tables = slices.DeleteFunc(tables, func(table string) bool {
+			return slices.ContainsFunc(p.Operations.Quality.Rules, func(r api.DataPipelineQualityRule) bool { return r.Table == table || r.ReferenceTable == table })
+		})
+	}
+	return tables
 }
 
 func (s *Service) TableRemoval(ctx context.Context, account, id string, revision int64, table, approval string) error {
@@ -59,7 +73,7 @@ func (s *PostgresStore) TableRemoval(ctx context.Context, account, id string, re
 	if err != nil {
 		return err
 	}
-	if p.Revision != revision {
+	if snapshotMode(p) || p.Revision != revision {
 		return ErrConflict
 	}
 	var n int64

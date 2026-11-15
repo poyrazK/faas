@@ -2707,6 +2707,7 @@ type Build struct {
 	CacheKeySha256               pgtype.Text
 	NotBefore                    pgtype.Timestamptz
 	CoalescedWith                pgtype.UUID
+	BuilderNodeName              pgtype.Text
 }
 
 type BuildExportPublication struct {
@@ -3169,6 +3170,10 @@ type CommitSource struct {
 	ContractVersion      int32
 	AllowTenantSelection bool
 	Destination          string
+	QueueName            pgtype.Text
+	ChangesFeeds         []byte
+	ManagedDatabaseID    pgtype.UUID
+	PollIntervalMs       int32
 }
 
 // Accounts given a paid plan without a subscription; not billed, held to the plan allowance; written only by apid (ADR-20261111140000).
@@ -4003,6 +4008,9 @@ type DataPipeline struct {
 	ServingConfig          []byte
 	FreshnessTargetSeconds int64
 	IndexChange            []byte
+	EvolutionChange        []byte
+	WorkConfig             []byte
+	WorkStatus             []byte
 }
 
 type DataPipelineAlert struct {
@@ -11849,6 +11857,14 @@ type PgRatelimitCounter struct {
 	LastRefill pgtype.Timestamptz
 }
 
+// Last plan-fit email per billing subject: the plan and the sha256 of its over-plan app set. Written by meterd (billing review H17-4).
+type PlanFitNotice struct {
+	SubjectID  pgtype.UUID
+	Plan       string
+	AppsDigest string
+	NoticedAt  pgtype.Timestamptz
+}
+
 type PlatformMailAgentRunCapture struct {
 	Namespace  string
 	ProducerID string
@@ -15969,6 +15985,15 @@ type SecretOpenAudit struct {
 	Entries  int32
 	OpenedAt pgtype.Timestamptz
 	JobID    pgtype.UUID
+}
+
+type SecretVerificationAudit struct {
+	ID           int64
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	CutoverID    pgtype.UUID
+	CredentialID pgtype.UUID
+	VerifiedAt   pgtype.Timestamptz
 }
 
 type ServiceCallerKey struct {

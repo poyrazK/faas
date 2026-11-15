@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// TestRequireSessionNotesTheCredentialsAccount pins ADR-20261114090000: the
+// TestRequireSessionNotesTheCredentialsAccount pins ADR-20261114190002: the
 // middleware names the account a bearer key belongs to on the request's
 // note, including when it refuses the key, and names none for an unknown
 // key.

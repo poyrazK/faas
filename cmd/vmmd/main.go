@@ -953,7 +953,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// files): both on unless an operator switches them off.
 			WithMemoryPeerSharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_PEER_SHARING") != "off").
 			WithMemorySharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_SHARING") != "off")
-		// ADR-20261114120000: remove cached captures and runtime release
+		// ADR-20261114182830: remove cached captures and runtime release
 		// bases nothing references, and order eviction by what is live.
 		// FAAS_NODE_CACHE_SWEEP=off leaves the cache to oldest-first eviction.
 		if os.Getenv("FAAS_NODE_CACHE_SWEEP") != "off" {
@@ -1416,6 +1416,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	defer closeOpener()
 	if opener != nil {
 		mgr.SetRuntimeSecretOpener(opener)
+	}
+	// ADR-20261110210000 slice 3j-3: builders pull private registries
+	// through secretd, and no registry password opens here.
+	buildMirror, closeBuildMirror, err := buildRegistryMirrorFromEnv(ctx, os.Getenv, log)
+	if err != nil {
+		return err
+	}
+	defer closeBuildMirror()
+	if buildMirror != nil {
+		mgr.SetBuildRegistryMirror(buildMirror)
 	}
 	var signatureStore any
 	if store != nil {

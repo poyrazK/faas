@@ -1,0 +1,31 @@
+BEGIN
+DO
+GRANT
+CREATE TABLE AS
+CREATE TABLE AS
+CREATE TRIGGER
+CREATE TRIGGER
+CREATE TRIGGER
+INSERT 0 1
+INSERT 0 1
+CREATE FUNCTION
+DO
+GRANT
+GRANT
+SET
+
+UPDATE 1
+
+UPDATE 1
+
+UPDATE 1
+UPDATE 1
+
+
+UPDATE 1
+
+
+
+DO
+legacy CDC/serving/index/monitor accepted; advanced evolution/work/monitor fenced; capable protocols accepted
+ROLLBACK

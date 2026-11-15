@@ -38,8 +38,11 @@ func newToolPublication(account, id string, in api.ToolPublicationIntent) (api.T
 }
 
 func completeToolPublication(record api.ToolPublicationRecord, out api.ToolPublicationOutcome, source string) (api.ToolPublicationRecord, error) {
-	if toolpublication.ValidateOutcome(record.Intent, out) != nil || (out.Status == "completed" && !toolpublication.ValidID(source)) {
+	if toolpublication.ValidateOutcome(record.Intent, out) != nil || !toolpublication.VerifiedOutcome(record, out) || (out.Status == "completed" && !toolpublication.ValidID(source)) {
 		return record, ErrInvalidArgument
+	}
+	if record.Intent.PlatformVerification && out.Status == "completed" && record.Verification.DeploymentSourceSHA256 != source {
+		return record, ErrConflict
 	}
 	if record.Status != "running" {
 		if record.Outcome != nil && reflect.DeepEqual(*record.Outcome, out) && record.DeploymentSourceSHA256 == source {
@@ -92,6 +95,7 @@ func (m *MemStore) BeginToolPublication(_ context.Context, account, id string, i
 		return api.BeginToolPublicationResponse{}, ErrToolPublicationLimit
 	}
 	m.toolPublications[key] = cloneToolPublication(record)
+	delete(m.toolPublicationTestCredentials, key)
 	return api.BeginToolPublicationResponse{Created: true, Record: record}, nil
 }
 
@@ -118,6 +122,7 @@ func (m *MemStore) FinishToolPublication(_ context.Context, account, id string, 
 		return record, err
 	}
 	m.toolPublications[key] = cloneToolPublication(record)
+	delete(m.toolPublicationTestCredentials, key)
 	return record, nil
 }
 

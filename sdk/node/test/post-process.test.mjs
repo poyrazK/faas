@@ -20,14 +20,16 @@ test('client isolation patches are repeatable and fail closed on core and servic
     const configPath = join(dir, 'core', 'OpenAPI.ts');
     const requestPath = join(dir, 'core', 'request.ts');
     const servicePath = join(dir, 'services', 'AppsService.ts');
-    await writeFile(configPath, 'export type OpenAPIConfig = {\n  BASE: string;\n};\nexport const OpenAPI: OpenAPIConfig = {\n  ENCODE_PATH: undefined,\n};\n');
-    await writeFile(requestPath, 'return await fetch(url, request);\n');
+    await writeFile(configPath, "import type { ApiRequestOptions } from './ApiRequestOptions.js';\n" + 'export type OpenAPIConfig = {\n  BASE: string;\n};\nexport const OpenAPI: OpenAPIConfig = {\n  ENCODE_PATH: undefined,\n};\n');
+    await writeFile(requestPath, 'export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions): CancelablePromise<T> => {\nreturn await fetch(url, request);\n};\n');
     await writeFile(servicePath, 'export class AppsService {\n  public static getApp() { return __request(OpenAPI, { method: "GET" }); }\n}\n');
     await patchClientCore(dir);
     await patchClientServices(dir);
     const paths = [configPath, requestPath, servicePath];
     const first = await Promise.all(paths.map(path => readFile(path, 'utf8')));
     assert.match(first[0], /FETCH\?: typeof fetch/);
+    assert.match(first[0], /REQUEST\?: <T>/);
+    assert.match(first[1], /if \(config.REQUEST\) return config.REQUEST<T>\(options\)/);
     assert.match(first[0], /OpenAPIConfig = createOpenAPIConfig\(\)/);
     assert.match(first[1], /\(config.FETCH \?\? fetch\)\(url, request\)/);
     assert.match(first[2], /__request\(this\?\.clientConfig \?\? OpenAPI/);

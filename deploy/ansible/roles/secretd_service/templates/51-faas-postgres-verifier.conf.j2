@@ -1,0 +1,8 @@
+# Only the dedicated control-plane leaf may verify staged cutover credentials.
+# Runtime decryption and SQL credentials remain inside secretd.
+[Service]
+LoadCredential=postgres_verifier_key:/etc/faas/tls/secretd-verifier/apid.key
+Environment=FAAS_APID_SECRETD_TARGET={{ faas_secretd_listen }}
+Environment=FAAS_APID_SECRETD_TLS_CERT_PATH=/etc/faas/tls/secretd-verifier/apid.crt
+Environment=FAAS_APID_SECRETD_TLS_KEY_PATH=%d/postgres_verifier_key
+Environment=FAAS_APID_SECRETD_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt

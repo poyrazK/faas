@@ -13,13 +13,17 @@
       "key": "JS",
       "paths": [
         {"from": "sdk/node", "to": "packages/sdk-node"},
+        {"from": "sdk/request-contracts", "to": "packages/request-contracts"},
         {"from": "sdk/node/LICENSE", "to": "LICENSE"}
       ]
     },
     {
       "name": "gregale-python",
       "key": "PYTHON",
-      "paths": [{"from": "sdk/python", "to": ""}]
+      "paths": [
+        {"from": "sdk/python", "to": ""},
+        {"from": "sdk/request-contracts", "to": "request-contracts"}
+      ]
     }
   ]
 }

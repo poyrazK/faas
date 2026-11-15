@@ -346,6 +346,12 @@ paths:
         sealed before any deployment is enqueued. Failed configuration starts
         no builds; saved apps and any completed configuration remain available
         for correction. Values are never included in responses or scan plans.
+      parameters:
+        - name: Deployment-Attempt-ID
+          in: header
+          required: false
+          description: Durable project submission identity. Persist before apply; after an uncertain response inspect the receipt instead of resubmitting.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
       requestBody:
         required: true
         content:
@@ -1743,6 +1749,31 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/MFADisableEmailResponse'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+  /v1/account/mfa/disable-email-cancel:
+    post:
+      tags: [mfa]
+      operationId: mfaDisableEmailCancel
+      summary: Cancel a pending email-assisted MFA disable.
+      description: |
+        Cancels every pending email-assisted MFA disable on the account,
+        so its emailed link stops working. A browser session must have
+        passed the second factor; a session from a password reset alone
+        is refused. Signing in with the authenticator app or a recovery
+        code cancels a pending disable too. The owner is emailed when a
+        request is cancelled.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFADisableEmailCancelRequest'
+      responses:
+        '200':
+          description: Pending requests cancelled (`cancelled` is 0 when none was pending).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MFADisableEmailCancelResponse'}
         '403': {$ref: '#/components/responses/Forbidden'}
   /v1/account/mfa/disable-email/confirm:
     post:
@@ -7191,7 +7222,7 @@ paths:
           in: query
           schema: {type: string, enum: [info, warn, error]}
           description: >
-            Exact match on the structured `level` field (info, warn, or error) surfaced in each matching log event. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
+            Severity floor: returns lines at this level or higher, so `warn` returns warn and error lines and `info` returns info, warn and error lines. A line's level comes from its structured `level` field (info, warn, or error) surfaced in each matching log event, or from common line markers when the line has no structured level; lines with no recognisable level are omitted whenever a level is set. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
 
         - name: archive
           in: query
@@ -15919,7 +15950,9 @@ paths:
         default). Status flips to 'grace' for the window, then to
         'revoked' at the deadline. Setting
         `accounts.key_grace_window_days = 0` makes rotation atomic
-        (old key revoked immediately).
+        (old key revoked immediately). The optional body's
+        `grace_window_days` overrides the window for this rotation
+        only; send `0` to revoke a leaked key at once.
 
         Returns the new plaintext exactly once — the old plaintext
         is not re-issued (we only store the SHA-256 hash). The
@@ -15929,6 +15962,14 @@ paths:
 
         Quota: rotation is quota-neutral (-1 +1 = 0 net). A
         customer AT the per-account cap can still rotate.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateKeyRequest'
+            example:
+              grace_window_days: 0
       responses:
         '200':
           description: New key minted, old key now in 'grace' (or 'revoked' if grace_window_days=0).
@@ -20688,6 +20729,12 @@ paths:
       operationId: applyCachedOrgProjectPlan
       summary: "Deploy a company project's reviewed source without another upload."
       description: "Applies the exact archive retained by a company project scan in the same organization. A plan reviewed for a personal project or another organization is refused. The normal scanner and apply admission gates run again; the reviewed source expires after one hour. Requires the deploy role."
+      parameters:
+        - name: Deployment-Attempt-ID
+          in: header
+          required: false
+          description: Durable organization project submission identity. Persist before applying this organization's reviewed plan; after an uncertain response inspect its submission receipt instead of resubmitting.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
       requestBody:
         required: true
         content:
@@ -21741,6 +21788,18 @@ components:
         until: {type: string, format: date-time, description: Exclusive first_at bound for the traversal.}
         limit: {type: integer, minimum: 1, maximum: 100, default: 100, description: Page size included in the cursor scope binding.}
         cursor: {type: string, maxLength: 2048, description: Previous page continuation retaining its initial cutoff.}
+    MCPReadinessExpectation:
+      type: object
+      description: Exact fresh role observations required in the traffic transaction, independently of emergency overrides. Mismatches return 409 without changing traffic.
+      required: [policy_revision, artifact_sha256, evidence_ids]
+      properties:
+        policy_revision: {type: string, format: uuid}
+        artifact_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        evidence_ids:
+          type: object
+          minProperties: 1
+          maxProperties: 32
+          additionalProperties: {type: string, format: uuid}
     MCPPolicyConvergenceSnapshot:
       description: "Account-scoped live gateway replay observation for an active HTTP deployment. Snapshot metadata only; token enforcement is not attested. Correlates retained admission evidence when available."
       type: object
@@ -27847,6 +27906,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -28202,7 +28263,7 @@ components:
           minProperties: 1
           maxProperties: 13
           propertyNames:
-            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, scaling_policy, retry_policy]
+            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, warmup, scaling_policy, retry_policy]
           additionalProperties: {}
           description: Observed values from the app read; null represents an unset optional policy. Must cover every mutated setting.
     UpdateAppRequest:
@@ -28277,6 +28338,9 @@ components:
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
           description: "Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it."
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
+          description: "Set the path a deployment's first init snapshot is primed with. Omit to preserve; an empty path clears it."
         pause:
           type: string
           enum: [between_requests, when_idle, never, ""]
@@ -29032,6 +29096,14 @@ components:
           maximum: 2000
           default: 500
           description: "Deadline for checkpoint response in milliseconds; 0 uses the 500 ms default."
+    WarmupHook:
+      description: "Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests (5 s at most) to it on the app's HTTP port; without it, the HTTP health check path is used. Priming never fails a deploy."
+      type: object
+      properties:
+        path:
+          type: string
+          description: "Absolute path on the app's HTTP port. Should exercise the request code a wake needs warm and be safe to call repeatedly."
+          example: "/internal/warmup"
     AppManifest:
       description: "App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag. The optional `env_secrets` field carries sealed-secret refs (\"secret:NAME\" strings) resolved by the host at wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."
       type: object
@@ -29112,6 +29184,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -30375,6 +30449,7 @@ components:
             type: integer
             minimum: 1
             maximum: 100
+        expected_mcp_readiness: {$ref: '#/components/schemas/MCPReadinessExpectation'}
         expected_mcp_access_policy:
           type: object
           description: "Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the transaction also requires the unchanged account revision and fresh replay from every currently registered serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on fleet membership."
@@ -39263,6 +39338,11 @@ components:
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project."}
         approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field."}
+    RotateKeyRequest:
+      description: "Optional body of POST /v1/keys/{id}/rotate. `grace_window_days` overrides, for this rotation only, how many days the old key keeps working; `0` revokes it at once (use it for a leaked key). Omitted uses the account's grace window or the plan default (7 days)."
+      type: object
+      properties:
+        grace_window_days: {type: integer, minimum: 0, maximum: 30, description: "Days the old key keeps working after this rotation. `0` revokes it at once."}
     RotateKeyResponse:
       description: "Response body of POST /v1/keys/{id}/rotate. The new `key_plaintext` is returned exactly once; the old plaintext is NEVER returned (only the hash is stored). `old_key_expires_at` is the grace deadline applied to the predecessor — the customer's CI rotates over by then."
       type: object
@@ -43093,6 +43173,19 @@ components:
       description: Empty success body; the confirmation link is sent by email.
       type: object
       additionalProperties: false
+    MFADisableEmailCancelRequest:
+      description: Optional body; a browser session sends the CSRF token minted for `mfa_disable_email_cancel`.
+      type: object
+      additionalProperties: false
+      properties:
+        csrf_token: {type: string}
+    MFADisableEmailCancelResponse:
+      description: How many pending email-assisted MFA disables were cancelled.
+      type: object
+      required: [cancelled]
+      additionalProperties: false
+      properties:
+        cancelled: {type: integer, minimum: 0, example: 1}
     MFADisableEmailConfirmRequest:
       description: Body for consuming the emailed token after the cooldown.
       type: object

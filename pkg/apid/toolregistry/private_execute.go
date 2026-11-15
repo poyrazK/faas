@@ -20,6 +20,8 @@ import (
 )
 
 type PrivateExecutionOptions struct {
+	PublicationEnabled   bool
+	PublicationProtocols func(context.Context, api.ToolInvocationTarget, string, string, mcphosting.Contract, bool, func(http.RoundTripper) http.RoundTripper) error
 	Enabled              bool
 	Identities           func(context.Context) []*age.X25519Identity
 	ConnectionIdentities func(context.Context) []*age.X25519Identity

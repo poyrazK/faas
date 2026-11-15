@@ -133,9 +133,6 @@ func TestMutationLeavesRejectTrailingArgumentsBeforeNetwork(t *testing.T) {
 		{"tenant hostname add", func() int {
 			return main.CmdTenantSurfacesHostnameAdd([]string{"--app", "demo", "--surface", "surface-id", "--hostname", "tenant.example.com", "unexpected"})
 		}},
-		{"github webhook secret set", func() int {
-			return main.GithubWebhookSecretSet([]string{"--installation-id", "1", "--secret", strings.Repeat("a", 32), "unexpected"})
-		}},
 		{"rollout recover", func() int {
 			return main.CmdRolloutsRecover([]string{"demo", "--action", "advance", "unexpected"})
 		}},

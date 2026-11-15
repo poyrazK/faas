@@ -588,6 +588,9 @@ type CreateAppRequest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	// Warmup names the path init snapshot priming GETs instead of the
+	// readiness path (ADR-20261114153000). An empty path clears it.
+	Warmup *WarmupHook `json:"warmup,omitempty"`
 	// Pause declares when the platform may pause the VM (ADR-1151):
 	// between_requests, when_idle or never. Empty selects the default for
 	// the app's type.
@@ -1049,6 +1052,9 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	// Warmup names the path init snapshot priming GETs instead of the
+	// readiness path (ADR-20261114153000). An empty path clears it.
+	Warmup *WarmupHook `json:"warmup,omitempty"`
 	// Pause replaces the declared pause value; "" restores the default.
 	Pause            *string          `json:"pause,omitempty"`
 	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
@@ -3918,8 +3924,9 @@ type DeploymentAliasListResponse struct {
 // its own "min_instances required" presence rule. Splitting the
 // DTOs keeps each handler's contract crisp.
 type UpdateDeploymentTrafficRequest struct {
-	ExpectedReview *AppReleaseReview `json:"expected_review,omitempty"`
-	TrafficPercent int               `json:"traffic_percent"`
+	ExpectedMCPReadiness *MCPReadinessExpectation `json:"expected_mcp_readiness,omitempty"`
+	ExpectedReview       *AppReleaseReview        `json:"expected_review,omitempty"`
+	TrafficPercent       int                      `json:"traffic_percent"`
 	// An explicit empty id requires no live sibling with positive traffic.
 	ExpectedServingDeploymentID *string                     `json:"expected_serving_deployment_id,omitempty"`
 	ExpectedMCPAccessPolicy     *MCPAccessPolicyExpectation `json:"expected_mcp_access_policy,omitempty"`
@@ -4646,6 +4653,18 @@ type ListOrgAPIKeysResponse struct {
 // re-bound.
 type RotateOrgAPIKeyRequest struct {
 	Label string `json:"label,omitempty"`
+	// GraceWindowDays overrides, for this rotation only, how many days the
+	// old key keeps working (0 revokes it at once). Omitted uses the
+	// account setting or the plan default.
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
+}
+
+// RotateKeyRequest is the optional body of POST /v1/keys/{id}/rotate.
+// GraceWindowDays overrides, for this rotation only, how many days the old
+// key keeps working; 0 revokes it at once, which is what to do with a key
+// that leaked. Omitted uses the account setting or the plan default.
+type RotateKeyRequest struct {
+	GraceWindowDays *int `json:"grace_window_days,omitempty"`
 }
 
 // RotateOrgAPIKeyResponse is the body of
@@ -6083,6 +6102,9 @@ type QueueSendBatchRequest struct {
 // QueueSendBatchMessage is one message of a batch send.
 type QueueSendBatchMessage struct {
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// GroupKey orders this message after earlier ones with the same key
+	// (ADR-20261112193306); see QueueSendRequest.GroupKey.
+	GroupKey string `json:"group_key,omitempty"`
 }
 
 // QueueSendBatchResult reports one message by its zero-based input index:
@@ -6372,6 +6394,11 @@ type QueueSendRequest struct {
 	QueueName   string          `json:"queue_name,omitempty"`
 	RetryPolicy *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	Work        *InvokeWork     `json:"work,omitempty"`
+	// GroupKey delivers messages with the same key one at a time, in send
+	// order; a message waiting to retry holds later ones of its key
+	// (ADR-20261112193306). It is the work key of the built-in
+	// gregale-ordered policy, so it cannot be combined with Work.
+	GroupKey string `json:"group_key,omitempty"`
 }
 
 // DelayedTaskRequest is the body for POST /v1/apps/{slug}/delayed-tasks.

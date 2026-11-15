@@ -72,6 +72,45 @@ func writeObsServingHealth(w io.Writer, out api.ObsServingHealth) {
 			reporting = strconv.FormatBool(*probe.Reporting)
 		}
 		_, _ = fmt.Fprintf(w, "  node=%s url_id=%s state=%s reason=%s reporting=%s evaluated_at=%s last_run_at=%s expected_first_byte_seconds=%s max_result_age_seconds=%s\n", probe.Node, probe.URLID, probe.State, probe.Reason, reporting, servingTime(probe.EvaluatedAt), servingTime(probe.LastRunAt), strconv.FormatFloat(probe.ExpectedFirstByteSeconds, 'g', -1, 64), strconv.FormatFloat(probe.MaxResultAgeSeconds, 'g', -1, 64))
+		writeServingProbeDiagnostics(w, probe.Diagnostics)
 	}
+	writeServingProbeNotifications(w, out.ProbeNotifications)
 	_, _ = fmt.Fprintln(w, "coverage=expected_serving_probes url_identity=sha256_exact_url direct_probe=not_executed notification_delivery=unassessed")
+}
+
+func writeServingProbeNotifications(w io.Writer, d *api.ObsServingProbeNotificationHealth) {
+	if d == nil {
+		_, _ = fmt.Fprintln(w, "probe_notifications=unknown reason=server_does_not_report_probe_notifications")
+		return
+	}
+	expected := "unknown"
+	if d.ExpectedChannels != nil {
+		expected = strconv.Itoa(*d.ExpectedChannels)
+	}
+	_, _ = fmt.Fprintf(w, "probe_notifications=%s reason=%s expected_channels=%s retained=%d omitted=%d truncated=%t\n", d.State, d.Reason, expected, len(d.Channels), d.Omitted, d.Truncated)
+	if c := d.Counts; c != nil {
+		_, _ = fmt.Fprintf(w, "  disabled=%d unknown=%d last_submission_succeeded=%d last_submission_failed=%d\n", c.Disabled, c.Unknown, c.LastSubmissionSucceeded, c.LastSubmissionFailed)
+	}
+	writeServingProbeNotificationItems(w, d.Channels)
+	_, _ = fmt.Fprintln(w, "  evidence=last_completed_submission provider_receipt=unassessed human_receipt=unassessed")
+}
+
+func writeServingProbeNotificationItems(w io.Writer, items []api.ObsServingProbeNotification) {
+	for _, item := range items {
+		evidence := ""
+		if item.EvidenceReason != "" {
+			evidence = " evidence_reason=" + item.EvidenceReason
+		}
+		_, _ = fmt.Fprintf(w, "  node=%s channel=%s state=%s reason=%s%s failure_code=%s evaluated_at=%s last_run_at=%s last_attempt_at=%s last_success_at=%s\n", item.Node, item.Channel, item.State, item.Reason, evidence, item.FailureCode, servingTime(item.EvaluatedAt), servingTime(item.LastRunAt), servingTime(item.LastAttemptAt), servingTime(item.LastSuccessAt))
+	}
+}
+
+func writeServingProbeDiagnostics(w io.Writer, d *api.ObsServingProbeDiagnostics) {
+	if d == nil {
+		_, _ = fmt.Fprintln(w, "    diagnostics=unknown reason=server_does_not_report_diagnostics")
+	} else if d.State == "unknown" {
+		_, _ = fmt.Fprintf(w, "    diagnostics=unknown reason=%s\n", d.Reason)
+	} else {
+		_, _ = fmt.Fprintf(w, "    diagnostics=available failure_code=%s first_failure_code=%s attempts=%d http_status=%d recovered_on_retry=%t evaluated_at=%s\n", d.FailureCode, d.FirstFailureCode, *d.Attempts, *d.HTTPStatus, *d.RecoveredOnRetry, servingTime(d.EvaluatedAt))
+	}
 }

@@ -1018,6 +1018,8 @@ func syncPersonalOrgStatus(ctx context.Context, tx pgx.Tx, accountID string, sta
 // SuspendAccountForFreeQuota applies the Free plan's monthly hard stop.
 // Only an active account is suspended, so a dunning or operator suspension
 // is never relabelled as a quota stop that the next month would lift.
+// past_due_at is kept: an account moved to Free for non-payment keeps its
+// unpaid-balance marker through the stop (billing review 2026-11-13, R9-1).
 func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bool, error) {
 	if n, err := ownersql.New().SuspendForQuota(ctx, s.pool, mustPgUUID(id)); err != nil {
 		return false, mapErr(err)
@@ -1026,7 +1028,7 @@ func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bo
 	}
 	return s.flipAccountForFreeQuota(ctx, id, `
 		update accounts
-		   set status = 'suspended', suspended_reason = 'free_quota', past_due_at = null
+		   set status = 'suspended', suspended_reason = 'free_quota'
 		 where id = $1 and status = 'active'`, AccountSuspended)
 }
 
@@ -9183,6 +9185,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	}
 
 	if err := s.checkMCPAccessPolicy(ctx, tx, appID); err != nil {
+		return Deployment{}, err
+	}
+	if err := s.checkMCPReadinessExpectation(ctx, tx, appID, id); err != nil {
 		return Deployment{}, err
 	}
 

@@ -93,7 +93,7 @@ func customerAccountHealth(d api.ObsTenantDiagnosis) api.AccountHealth {
 }
 
 // withSignals adds the account's open signals in customer wording
-// (ADR-20261114090000) and counts them towards Attention.
+// (ADR-20261114190002) and counts them towards Attention.
 func withSignals(h api.AccountHealth, signals []api.AccountHealthSignal) api.AccountHealth {
 	h.Signals = append(h.Signals, signals...)
 	h.Attention += len(signals)

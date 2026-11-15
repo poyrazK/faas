@@ -150,10 +150,11 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
-	toolInvocations      map[string]api.ToolInvocationRecord
-	toolPublications     map[string]api.ToolPublicationRecord
-	toolGrants           map[string]api.ToolGrantRecord
-	toolOAuthConnections map[string]ToolOAuthConnection
+	toolInvocations                map[string]api.ToolInvocationRecord
+	toolPublications               map[string]api.ToolPublicationRecord
+	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
+	toolGrants                     map[string]api.ToolGrantRecord
+	toolOAuthConnections           map[string]ToolOAuthConnection
 	// ownerReleaseRequests are app_owner_release_requests by app id
 	// (ADR-20261110210000 §4); allocated on first use under mu.
 	ownerReleaseRequests map[string]AppOwnerReleaseRequest
@@ -178,6 +179,8 @@ type MemStore struct {
 	// egressOverage is each account's or org's egress overage election
 	// (EgressOverageStore, ADR-20261104204500).
 	egressOverage map[string]EgressOverageElection
+	// planFitNotices backs PlanFitNoticeStore (billing review H17-4).
+	planFitNotices map[string]PlanFitNotice
 	// creditDiscounts are the provider discounts that carry account credit
 	// (CreditDiscountStore), keyed by row id, created on first use.
 	creditDiscounts     map[string]CreditDiscount
@@ -2799,7 +2802,6 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 		return false, nil
 	}
 	a.Status = AccountSuspended
-	a.PastDueAt = nil
 	m.storeRouteCheckAccountLocked(id, a)
 	m.freeQuotaSuspended[id] = true
 	m.syncPersonalOrgStatusLocked(id, AccountSuspended)
@@ -6430,6 +6432,9 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
 	defer func() { m.finishMCPAdmissionLocked(admission, resultErr) }()
 	if err := m.checkMCPAccessPolicyLocked(ctx, d.AppID); err != nil {
+		return Deployment{}, err
+	}
+	if err := m.checkMCPReadinessExpectationLocked(ctx, d); err != nil {
 		return Deployment{}, err
 	}
 	if len(reviews) > 0 {

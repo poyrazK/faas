@@ -10,7 +10,7 @@ organization stays stuck.
 The person asking may be trying to take over a company they do not belong to.
 Record everything in the ticket and refuse when in doubt.
 
-Decision: ADR-20261113180000. Related: [account-recovery-lost-factors.md](account-recovery-lost-factors.md).
+Decision: ADR-20261114170352. Related: [account-recovery-lost-factors.md](account-recovery-lost-factors.md).
 
 ## 1. Confirm the owner cannot act
 

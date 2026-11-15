@@ -58,78 +58,30 @@ func (f *suspensionCommandFake) Complete(context.Context, string, string, string
 	return nil
 }
 
-func TestDunningDurableSuspensionSelectionAndFollowup(t *testing.T) {
-	for _, mode := range []string{"enabled", "off", "unconfigured", "offline", "withdrawn", "lost_reply", "ack_failure"} {
-		t.Run(mode, func(t *testing.T) {
-			ctx := t.Context()
-			_, store, parker, notif, mailer, now := dunningTestFixture(t, ctx)
-			acct := seedPastDue(t, ctx, store, "durable-suspension@example.com", api.PlanHobby, now.Add(-8*24*time.Hour))
-			app := newApp(t, ctx, store, acct.ID)
-			ins := makeLiveInstance(t, ctx, store, app.ID, acct.ID, 256)
-			var on atomic.Bool
-			on.Store(mode != "off")
-			fake := &suspensionCommandFake{store: store, mode: mode, on: &on, intent: uuid.NewString(), lease: uuid.NewString(), at: *now}
-			var commands meter.SuspensionCommands = fake
-			if mode == "unconfigured" {
-				commands = nil
-			}
-			d := meter.NewDunning(meter.DunningParams{Store: store, Parker: parker, Notif: notif, Mailer: mailer, Now: func() time.Time { return *now }, Log: discardLog(), SuspensionRequested: on.Load, SuspensionCommands: commands})
-			// A failed suspension command fails the tick, so the dunning
-			// alert sees it (adr: 20261030120000).
-			if err, wantErr := d.RunOnce(ctx), mode != "enabled" && mode != "off"; (err != nil) != wantErr {
-				t.Fatalf("RunOnce error = %v, want an error: %v", err, wantErr)
-			}
-			got, err := store.AccountByID(ctx, acct.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if mode == "unconfigured" || mode == "offline" {
-				if got.Status != state.AccountPastDue || len(parker.parked) != 0 || mailer.count() != 0 {
-					t.Fatal("selected failure fell back to legacy transition")
-				}
-				return
-			}
-			if got.Status != state.AccountSuspended {
-				t.Fatal("suspension did not commit", got.Status)
-			}
-			if mode == "lost_reply" || mode == "withdrawn" {
-				if len(parker.parked) != 0 || mailer.count() != 0 {
-					t.Fatal("uncertain or withdrawn response ran follow-up")
-				}
-				if mode == "withdrawn" {
-					return
-				}
-				if err := d.RunOnce(ctx); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if mode == "ack_failure" {
-				if err := d.RunOnce(ctx); err != nil {
-					t.Fatal(err)
-				}
-			}
-			want := 1
-			if mode == "ack_failure" {
-				want = 2
-			}
-			if len(parker.parked) != want || parker.parked[0].InstanceID != ins.ID || parker.parked[0].Reason != "dunning_past_due_7d" || len(notif.byChannel(db.NotifyBillingPastDue)) != want {
-				t.Fatal("existing parking/notification follow-up changed")
-			}
-			if mode == "off" {
-				if fake.calls != 0 || mailer.count() != 1 {
-					t.Fatal("flag-off legacy path changed")
-				}
-				return
-			}
-			if mailer.count() != 0 || !fake.done {
-				t.Fatal("durable path sent inline or failed to acknowledge follow-up")
-			}
-			if err := d.RunOnce(ctx); err != nil {
-				t.Fatal(err)
-			}
-			if len(parker.parked) != want || mailer.count() != 0 {
-				t.Fatal("completed follow-up repeated")
-			}
-		})
+// With the durable suspension command configured and on, the ladder still
+// never suspends for non-payment: past the grace the account moves to Free
+// and the command is not issued (billing review 2026-11-13, R9-1).
+func TestDunningNeverIssuesTheSuspensionCommand(t *testing.T) {
+	ctx := t.Context()
+	_, store, parker, notif, mailer, now := dunningTestFixture(t, ctx)
+	acct := seedPastDue(t, ctx, store, "durable-suspension@example.com", api.PlanHobby, now.Add(-8*24*time.Hour))
+	app := newApp(t, ctx, store, acct.ID)
+	makeLiveInstance(t, ctx, store, app.ID, acct.ID, 256)
+	var on atomic.Bool
+	on.Store(true)
+	fake := &suspensionCommandFake{store: store, mode: "enabled", on: &on, intent: uuid.NewString(), lease: uuid.NewString(), at: *now}
+	d := meter.NewDunning(meter.DunningParams{Store: store, Parker: parker, Notif: notif, Mailer: mailer, Now: func() time.Time { return *now }, Log: discardLog(), SuspensionRequested: on.Load, SuspensionCommands: fake})
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.AccountByID(ctx, acct.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != state.AccountActive || got.Plan != api.PlanFree || fake.calls != 0 || len(parker.parked) != 0 {
+		t.Fatalf("status %s plan %s, command calls %d, parked %d; want active on Free and no suspension", got.Status, got.Plan, fake.calls, len(parker.parked))
+	}
+	if len(notif.byChannel(db.NotifyBillingPastDue)) != 1 || mailer.count() != 1 {
+		t.Fatal("the move to Free was not announced once")
 	}
 }
