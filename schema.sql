@@ -48995,6 +48995,10 @@ CREATE TABLE public.meter_network_checkpoints (
     net_rx_valid boolean DEFAULT false NOT NULL,
     observed_at timestamp with time zone NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    internal_tx_bytes bigint DEFAULT 0 NOT NULL,
+    internal_tx_valid boolean DEFAULT false NOT NULL,
+    internal_tx_pending bigint DEFAULT 0 NOT NULL,
+    service_reply_pending bigint DEFAULT 0 NOT NULL,
     CONSTRAINT meter_network_checkpoints_net_rx_bytes_check CHECK ((net_rx_bytes >= 0)),
     CONSTRAINT meter_network_checkpoints_net_tx_bytes_check CHECK ((net_tx_bytes >= 0))
 );
@@ -70651,11 +70655,35 @@ ALTER TABLE ONLY public.meter_gateway_usage_events
 
 
 --
+-- Name: meter_network_checkpoints meter_network_checkpoints_internal_tx_bytes_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_internal_tx_bytes_check CHECK ((internal_tx_bytes >= 0)) NOT VALID;
+
+
+--
+-- Name: meter_network_checkpoints meter_network_checkpoints_internal_tx_pending_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_internal_tx_pending_check CHECK ((internal_tx_pending >= 0)) NOT VALID;
+
+
+--
 -- Name: meter_network_checkpoints meter_network_checkpoints_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.meter_network_checkpoints
     ADD CONSTRAINT meter_network_checkpoints_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: meter_network_checkpoints meter_network_checkpoints_service_reply_pending_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.meter_network_checkpoints
+    ADD CONSTRAINT meter_network_checkpoints_service_reply_pending_check CHECK ((service_reply_pending >= 0)) NOT VALID;
 
 
 --

@@ -112,6 +112,11 @@ type networkUsageCheckpoint struct {
 	netRx      int64
 	netTxValid bool
 	netRxValid bool
+	// Internal egress checkpoint (billing review R8-2), see
+	// SubtractInternalEgress.
+	internalTx        int64
+	internalTxValid   bool
+	internalTxPending int64
 }
 
 // auditEventOutboxRow is the in-memory mirror of audit_event_outbox. The
@@ -20612,8 +20617,22 @@ func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID s
 // counter checkpoint. MemStore's single mutex makes the checkpoint advance and
 // usage delta append one atomic operation.
 func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
+	tx, rx, _, err := m.appendNetworkUsageObservation(appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
+	return tx, rx, err
+}
+
+// AppendNetworkUsageObservationExcludingInternal mirrors PgStore (billing
+// review R8-2). MemStore keeps no gateway service reply queue.
+func (m *MemStore) AppendNetworkUsageObservationExcludingInternal(_ context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internalCumulative int64) (int64, int64, int64, error) {
+	if internalCumulative < 0 {
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	return m.appendNetworkUsageObservation(appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
+}
+
+func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
 	if netTxCumulative < 0 || netRxCumulative < 0 {
-		return 0, 0, fmt.Errorf("network usage counters must be non-negative")
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -20628,7 +20647,7 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, in
 		}
 	}
 	if usageIndex < 0 {
-		return 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, key.Format(time.RFC3339))
+		return 0, 0, 0, fmt.Errorf("network usage base row missing for instance %s at %s", instanceID, key.Format(time.RFC3339))
 	}
 
 	billingAccountID := m.usage[usageIndex].AccountID
@@ -20654,6 +20673,16 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, in
 		checkpoint.netRx = netRxCumulative
 		checkpoint.netRxValid = true
 	}
+	var excluded int64
+	if internal != nil {
+		var nextPending int64
+		excluded, nextPending = internalEgressStep(checkpoint.internalTx, checkpoint.internalTxValid,
+			checkpoint.internalTxPending, 0, *internal, netTxDelta)
+		netTxDelta -= excluded
+		checkpoint.internalTx = *internal
+		checkpoint.internalTxValid = true
+		checkpoint.internalTxPending = nextPending
+	}
 	checkpoint.accountID = billingAccountID
 	m.networkUsageCheckpoints[instanceID] = checkpoint
 	previousFinancialUsage := m.usage[usageIndex]
@@ -20661,7 +20690,7 @@ func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, in
 	m.usage[usageIndex].NetRxBytes += netRxDelta
 	m.recomputeMonthLocked(billingAccountID, appID, key)
 	m.retainFinancialUsageLocked(previousFinancialUsage, m.usage[usageIndex])
-	return netTxDelta, netRxDelta, nil
+	return netTxDelta, netRxDelta, excluded, nil
 }
 
 // AppendBuilderUsage mirrors pgstore's AppendBuilderUsage
