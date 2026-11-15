@@ -524,8 +524,18 @@ func cmdJobsRm(args []string) int {
 	if len(args) == 1 && args[0] == "--interactive" { //nolint:gosec // G602: len(args) == 1 guarantees index zero exists.
 		return cmdJobsRmInteractive()
 	}
+	// Every other non-interactive delete requires --yes; accept it here too
+	// so the same script line works (prod 2026-11-15: "job delete X --yes"
+	// printed usage and left the job).
+	kept := args[:0:0]
+	for _, a := range args {
+		if a != "--yes" && a != "-y" {
+			kept = append(kept, a)
+		}
+	}
+	args = kept
 	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale job delete <name>", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job delete <name> [--yes]", "jobs")
 		return 1
 	}
 	client, err := authedClient()
