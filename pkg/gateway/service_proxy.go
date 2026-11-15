@@ -1833,6 +1833,11 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	ctx := r.Context()
 	request := r.Clone(ctx)
 	ctx = p.prepareGuestRequest(ctx, request, targetPath, target, caller)
+	if p.recordServiceReply != nil {
+		// The raw bridge counts what the callee streams back as service
+		// reply bytes (billing review R8-2).
+		ctx = withServiceReplyAccounting(ctx)
+	}
 	request = request.WithContext(ctx)
 	request = requestForServiceEndpoint(ctx, request, target, endpoint, caller)
 	if enrollTrafficScopes(w, request, p.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: endpoint.DeploymentID}) {

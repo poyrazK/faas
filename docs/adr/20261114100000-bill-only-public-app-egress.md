@@ -139,7 +139,9 @@ own interface and was never in the veth counter.
   subtraction.
 - The count is HTTP body bytes, so the callee's response headers and TCP/IP
   overhead stay billed: slightly more than public egress, never less.
-- Not covered: replies on upgraded (WebSocket) service calls, whose bytes
-  bypass the response writer, and private TCP services (`service_tcp_listen`),
-  whose copy path uses kernel splice that a counting wrapper would lose. Both
-  stay billed.
+- Upgraded (WebSocket) service calls: the service proxy marks the request's
+  context, and the raw bridge records every chunk the callee streams back as
+  service reply bytes as well as response bytes.
+- Not covered: private TCP services (`service_tcp_listen`), whose copy path
+  uses kernel splice that a counting wrapper would lose. Their replies stay
+  billed.
