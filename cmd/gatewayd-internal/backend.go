@@ -1427,6 +1427,20 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// Phase 4's MigrateInstanceOwner which stamps node_id
 		// before the gateway's RUNNING emission from the wake
 		// path lands).
+		//
+		// Track boots in progress so a request answered at capacity while
+		// another gateway's boot holds the slot waits for that boot rather
+		// than 503ing after the flat settle wait (prod 2026-11-15).
+		if boots, ok := inv.(interface {
+			NoteInstanceBooting(appID, instanceID string)
+			NoteInstanceSettled(appID, instanceID string)
+		}); ok {
+			if p.State == "waking" || p.State == "cold_booting" {
+				boots.NoteInstanceBooting(p.AppID, p.InstanceID)
+			} else {
+				boots.NoteInstanceSettled(p.AppID, p.InstanceID)
+			}
+		}
 		switch p.State {
 		case "running":
 			// RUNNING may have been produced by another gateway process,

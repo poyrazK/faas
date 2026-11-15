@@ -277,6 +277,7 @@ type PGBackend struct {
 	trafficRevocations atomic.Pointer[trafficrevocation.Registry]
 	publicRoutingView  atomic.Pointer[publicrouting.Registry]
 	workloadAdmissions workloadAdmissionCache
+	boots              bootTracker
 	router             Router
 	sched              Scheduler
 	log                *slog.Logger
