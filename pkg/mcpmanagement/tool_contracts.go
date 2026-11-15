@@ -155,8 +155,8 @@ func toolSuccessSchema(name string) map[string]any {
 }
 
 func toolIdempotent(name string, readOnly bool) bool {
-	if name == "gregale_plan_task_tool_deploy" {
-		return true // Offline review creates no plan or release state.
+	if name == "gregale_plan_task_tool_deploy" || name == "gregale_plan_task_tool_recovery" {
+		return true // Read-only reviews create no durable plan or release state.
 	}
 	if name == "gregale_start_job" || name == "gregale_cancel_job_run" {
 		return true // Caller-stable dispatch key, or native repeat-safe cancellation.

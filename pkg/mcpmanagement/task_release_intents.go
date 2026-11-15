@@ -89,6 +89,9 @@ func validateTaskIntentReceipt(record api.TaskToolReleaseIntentRecord, id string
 		return api.TaskToolReleaseIntentRecord{}, invalid("invalid_response", "Task intent receipt differs from its reviewed identity")
 	}
 	if e := record.Execution; e != nil {
+		if e.Receipt != nil && (tasktoolrelease.ValidateReceipt(record, *e.Receipt) != nil || !slices.Equal(e.CompletedStages, tasktoolrelease.ReceiptStages(*e.Receipt))) {
+			return api.TaskToolReleaseIntentRecord{}, invalid("invalid_response", "invalid Task checkpoint receipt")
+		}
 		if !toolpublication.ValidID(e.OperationID) || !toolpublication.ValidID(e.BindingsSHA256) || uuid.Validate(e.AuthorizerKeyID) != nil || e.AuthorizedAt.Before(record.CreatedAt) || !e.AuthorizedAt.Before(record.ExpiresAt) ||
 			(e.State != "authorized" && e.State != "running" && e.State != "reconcile_required" && e.State != "completed") || e.ClaimSHA256 != "" && !toolpublication.ValidID(e.ClaimSHA256) {
 			return api.TaskToolReleaseIntentRecord{}, invalid("invalid_response", "invalid Task execution receipt")

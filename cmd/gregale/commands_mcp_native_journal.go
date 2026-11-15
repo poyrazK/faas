@@ -151,5 +151,8 @@ func saveMCPNativeState(path string, s *mcpNativeReleaseState) error {
 		return fmt.Errorf("persist MCP journal (reload before retrying): %w", err)
 	}
 	*s = next
+	if s.TaskIntentID != "" && s.Stage != "restore_pending" && s.Stage != "web_restored" && s.Stage != "quarantined" && s.Stage != "retirement_pending" && s.Stage != "worker_retired" {
+		return publishMCPTaskReleaseReceipt(s)
+	}
 	return nil
 }

@@ -50,23 +50,43 @@ type TaskToolReleaseIntentRecord struct {
 // TaskToolReleaseExecution is separate, single-use owner authority for the
 // trusted local Task adapter. A running claim is never automatically taken over.
 type TaskToolReleaseExecution struct {
-	OperationID     string    `json:"operation_id"`
-	BindingsSHA256  string    `json:"bindings_sha256"`
-	AuthorizerKeyID string    `json:"authorizer_key_id"`
-	State           string    `json:"state"`
-	AuthorizedAt    time.Time `json:"authorized_at"`
-	ClaimSHA256     string    `json:"claim_sha256,omitempty"`
-	Stage           string    `json:"stage,omitempty"`
+	OperationID     string                  `json:"operation_id"`
+	BindingsSHA256  string                  `json:"bindings_sha256"`
+	AuthorizerKeyID string                  `json:"authorizer_key_id"`
+	State           string                  `json:"state"`
+	AuthorizedAt    time.Time               `json:"authorized_at"`
+	ClaimSHA256     string                  `json:"claim_sha256,omitempty"`
+	Stage           string                  `json:"stage,omitempty"`
+	Receipt         *TaskToolReleaseReceipt `json:"receipt,omitempty"`
+	CompletedStages []string                `json:"completed_stages,omitempty"`
+}
+
+// TaskToolReleaseReceipt is a claim-holder checkpoint, not a health verdict.
+// Recovery inspection independently verifies these identities against native facts.
+type TaskToolReleaseReceipt struct {
+	Revision            uint64            `json:"revision"`
+	ReleaseID           string            `json:"release_id"`
+	Stage               string            `json:"stage"`
+	ServingCaptured     bool              `json:"serving_captured"`
+	ServingDeploymentID string            `json:"serving_deployment_id,omitempty"`
+	WebDeploymentID     string            `json:"web_deployment_id,omitempty"`
+	WorkerDeploymentID  string            `json:"worker_deployment_id,omitempty"`
+	PendingSubmission   string            `json:"pending_submission,omitempty"`
+	PreviousDeployments map[string]string `json:"previous_deployments"`
+	WorkerIDs           []string          `json:"worker_ids"`
+	Promoted            bool              `json:"promoted"`
+	Parked              map[string]bool   `json:"parked"`
 }
 
 // TaskToolReleaseExecutionRequest names bounded adapter operations; ClaimToken
 // is private local executor material and is never returned in a receipt.
 type TaskToolReleaseExecutionRequest struct {
-	Action         string `json:"action"`
-	OperationID    string `json:"operation_id"`
-	BindingsSHA256 string `json:"bindings_sha256"`
-	ClaimToken     string `json:"claim_token,omitempty"`
-	Stage          string `json:"stage,omitempty"`
+	Action         string                  `json:"action"`
+	OperationID    string                  `json:"operation_id"`
+	BindingsSHA256 string                  `json:"bindings_sha256"`
+	ClaimToken     string                  `json:"claim_token,omitempty"`
+	Stage          string                  `json:"stage,omitempty"`
+	Receipt        *TaskToolReleaseReceipt `json:"receipt,omitempty"`
 }
 
 // TaskToolReleaseIntentCheck supplies a freshly recomputed local fingerprint.

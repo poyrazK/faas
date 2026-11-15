@@ -77,8 +77,21 @@ func Execution(record api.TaskToolReleaseIntentRecord, in api.TaskToolReleaseInt
 		if r.Stage != "" {
 			e.Stage = r.Stage
 		}
+		if r.Receipt != nil {
+			if r.Stage != "" && r.Stage != r.Receipt.Stage {
+				return record, ErrChanged
+			}
+			receipt, err := advanceReceipt(record, *r.Receipt)
+			if err != nil {
+				return record, err
+			}
+			e.Receipt, e.CompletedStages = receipt, ReceiptStages(*receipt)
+		}
 	case "complete":
 		if e.State != "running" {
+			return record, ErrChanged
+		}
+		if e.Receipt != nil && !receiptComplete(e.Receipt) {
 			return record, ErrChanged
 		}
 		e.State = "completed"

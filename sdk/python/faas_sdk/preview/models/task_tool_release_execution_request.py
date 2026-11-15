@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 
@@ -14,6 +14,10 @@ from ..models.task_tool_release_execution_request_stage import (
     check_task_tool_release_execution_request_stage,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.task_tool_release_receipt import TaskToolReleaseReceipt
+
 
 T = TypeVar("T", bound="TaskToolReleaseExecutionRequest")
 
@@ -30,6 +34,9 @@ class TaskToolReleaseExecutionRequest:
     bindings_sha256: str
     claim_token: str | Unset = UNSET
     stage: TaskToolReleaseExecutionRequestStage | Unset = UNSET
+    receipt: TaskToolReleaseReceipt | Unset = UNSET
+    """Monotonic checkpoint from the authenticated local execution claim holder. Deployment and worker identities
+    require independent fresh native observation during recovery; this metadata grants no action authority."""
 
     def to_dict(self) -> dict[str, Any]:
         action: str = self.action
@@ -44,6 +51,10 @@ class TaskToolReleaseExecutionRequest:
         if not isinstance(self.stage, Unset):
             stage = self.stage
 
+        receipt: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.receipt, Unset):
+            receipt = self.receipt.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -57,11 +68,15 @@ class TaskToolReleaseExecutionRequest:
             field_dict["claim_token"] = claim_token
         if stage is not UNSET:
             field_dict["stage"] = stage
+        if receipt is not UNSET:
+            field_dict["receipt"] = receipt
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.task_tool_release_receipt import TaskToolReleaseReceipt
+
         d = dict(src_dict)
         action = check_task_tool_release_execution_request_action(d.pop("action"))
 
@@ -78,12 +93,20 @@ class TaskToolReleaseExecutionRequest:
         else:
             stage = check_task_tool_release_execution_request_stage(_stage)
 
+        _receipt = d.pop("receipt", UNSET)
+        receipt: TaskToolReleaseReceipt | Unset
+        if isinstance(_receipt, Unset):
+            receipt = UNSET
+        else:
+            receipt = TaskToolReleaseReceipt.from_dict(_receipt)
+
         task_tool_release_execution_request = cls(
             action=action,
             operation_id=operation_id,
             bindings_sha256=bindings_sha256,
             claim_token=claim_token,
             stage=stage,
+            receipt=receipt,
         )
 
         return task_tool_release_execution_request

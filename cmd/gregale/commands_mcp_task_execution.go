@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
+	"github.com/onebox-faas/faas/pkg/tasktoolrelease"
 	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
@@ -188,7 +189,7 @@ func mcpTaskExecutionEnv(p mcpTaskExecutionProfile) (func(), error) {
 
 func cmdMCPTaskExecution(args []string) int {
 	if len(args) == 0 {
-		return printErr("Task execution", errors.New("use execution authorize|apply|get|guard"))
+		return printErr("Task execution", errors.New("use execution authorize|apply|get|guard|inspect|plan-recovery"))
 	}
 	action := args[0]
 	flags := newFlagSet("mcp-task-execution", flag.ContinueOnError)
@@ -201,8 +202,9 @@ func cmdMCPTaskExecution(args []string) int {
 	if flags.Parse(args[1:]) != nil {
 		return 1
 	}
-	if flags.NArg() != 0 || !toolpublication.ValidID(*id) || (action != "authorize" && action != "apply" && action != "get" && action != "guard") ||
-		(action != "get" && !toolpublication.ValidID(*op)) || (action == "authorize" && (*plan == "" || *bindings == "" || !toolpublication.ValidID(*digest) || !*allow)) ||
+	readOnly := action == "get" || action == "inspect" || action == "plan-recovery"
+	if flags.NArg() != 0 || !toolpublication.ValidID(*id) || (action != "authorize" && action != "apply" && action != "get" && action != "guard" && action != "inspect" && action != "plan-recovery") ||
+		(!readOnly && !toolpublication.ValidID(*op)) || (action == "authorize" && (*plan == "" || *bindings == "" || !toolpublication.ValidID(*digest) || !*allow)) ||
 		(action != "authorize" && (*plan != "" || *bindings != "" || *digest != "")) || (action == "apply" && !*allow) {
 		return printErr("Task execution", errors.New("require an exact intent/operation; owner authorization additionally requires plan, private bindings, digest and explicit execution consent"))
 	}
@@ -212,6 +214,13 @@ func cmdMCPTaskExecution(args []string) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), api.TaskToolReleaseApprovalTTL)
 	defer cancel()
+	if action == "inspect" || action == "plan-recovery" {
+		out, err := tasktoolrelease.InspectRecovery(ctx, c, *id, action == "plan-recovery", time.Now())
+		if err != nil {
+			return printErr("Task recovery", err)
+		}
+		return jsonOut(writeJSON(out))
+	}
 	record, err := c.GetTaskToolReleaseIntent(ctx, *id)
 	if err != nil {
 		return printErr("Task execution", err)
@@ -416,6 +425,7 @@ func applyMCPTaskExecution(ctx context.Context, c *Client, record api.TaskToolRe
 		return printErr("Task execution", errors.New("prior native journal requires owner reconciliation"))
 	}
 	s.TaskIntentID, s.TaskOperationID = record.ID, p.OperationID
+	s.ReleaseID = tasktoolrelease.ExecutionReleaseID(record)
 	if err = saveMCPNativeState(state, &s); err != nil {
 		return printErr("Task execution", err)
 	}

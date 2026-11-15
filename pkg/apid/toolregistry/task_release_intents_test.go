@@ -192,6 +192,23 @@ func exerciseTaskIntents(t *testing.T, s state.Store, reopen func() state.Store)
 				in.Apps[i].Review = current
 			}
 		} else {
+			checkpoint := &api.TaskToolReleaseReceipt{Revision: 1, ReleaseID: tasktoolrelease.ExecutionReleaseID(running), Stage: "prepared", PreviousDeployments: map[string]string{}, WorkerIDs: []string{}, Parked: map[string]bool{}}
+			r.Receipt = checkpoint
+			r.Stage = checkpoint.Stage
+			retained := decode(call("POST", id, "/check", check, publisher), "approved")
+			if retained.Execution.Receipt == nil || retained.Execution.Receipt.ReleaseID != checkpoint.ReleaseID {
+				t.Fatal("native checkpoint not retained")
+			}
+			checkpoint.Revision++
+			checkpoint.Stage = "deploying_worker"
+			checkpoint.ServingCaptured = true
+			checkpoint.PendingSubmission = "worker"
+			r.Stage = checkpoint.Stage
+			decode(call("POST", id, "/check", check, publisher), "approved")
+			reconnected := decode(call("GET", id, "", nil, publisher), "approved")
+			if reconnected.Execution.Receipt == nil || reconnected.Execution.Receipt.PendingSubmission != "worker" || reconnected.Execution.Receipt.Revision != 2 {
+				t.Fatal("submission identity did not survive a new store connection")
+			}
 			if _, err := s.MarkAPIKeyRevoked(ctx, account.ID, executionOwner.ID); err != nil {
 				t.Fatal(err)
 			}

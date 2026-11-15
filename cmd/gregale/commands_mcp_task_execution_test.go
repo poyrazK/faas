@@ -38,6 +38,8 @@ func TestMCPTaskExecutionCLIInterruptedClaimNeverRepeats(t *testing.T) {
 	}
 	var saved api.TaskToolReleaseIntentRecord
 	claims := 0
+	failCheckpoint := false
+	checkpointAttempts := 0
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var out any
 		switch {
@@ -68,6 +70,11 @@ func TestMCPTaskExecutionCLIInterruptedClaimNeverRepeats(t *testing.T) {
 			var in api.TaskToolReleaseIntentCheck
 			if json.NewDecoder(r.Body).Decode(&in) != nil || in.Execution == nil {
 				w.WriteHeader(400)
+				return
+			}
+			if in.Execution.Receipt != nil && failCheckpoint {
+				checkpointAttempts++
+				w.WriteHeader(503)
 				return
 			}
 			if in.Execution.Action == "claim" {
@@ -181,8 +188,50 @@ func TestMCPTaskExecutionCLIInterruptedClaimNeverRepeats(t *testing.T) {
 		t.Fatal(err)
 	}
 	run(0, "execution", "get", "--id", id)
+	for _, action := range []string{"inspect", "plan-recovery"} {
+		output := run(0, "execution", action, "--id", id)
+		var report tasktoolrelease.RecoveryReport
+		if json.Unmarshal([]byte(output), &report) != nil || !report.ReadOnly || report.ReadyToApply || !report.OwnerAuthorizationRequired {
+			t.Fatal("missing local files changed recovery authority", output)
+		}
+	}
 	run(0, "execution", "apply", "--id", id, "--operation-id", operation, "--allow-tool-execution")
 	if claims != 1 {
 		t.Fatal("interrupted execution was repeated", claims)
+	}
+	// Acknowledgement of the first native checkpoint must precede the gate,
+	// even after local fsync and read-only binding verification succeeded.
+	if err := os.Rename(plan+".missing", plan); err != nil {
+		t.Fatal(err)
+	}
+	id, operation = strings.Repeat("a", 64), strings.Repeat("b", 64)
+	claims = 0
+	failCheckpoint = true
+	marker := filepath.Join(t.TempDir(), "gate-must-not-run")
+	env["MCP_UNRESOLVED_TOKEN"] = marker
+	body, _ = json.Marshal(env)
+	if err := os.WriteFile(bindings, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	nodeDir := t.TempDir()
+	node := `#!/bin/sh
+case "$1" in
+  --input-type=module) printf '{"verified":true}' ;;
+  *) printf 'unexpected gate' > "$MCP_UNRESOLVED_TOKEN"; exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(nodeDir, "node"), []byte(node), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", nodeDir)
+	run(0, "intent", "prepare", "--id", id, "--plan", plan, "--reason", "Review checkpoint acknowledgement")
+	run(0, "intent", "approve", "--id", id, "--plan", plan, "--intent-sha256", saved.IntentSHA256)
+	run(0, "execution", "authorize", "--id", id, "--operation-id", operation, "--plan", plan, "--bindings-file", bindings, "--intent-sha256", saved.IntentSHA256, "--allow-tool-execution")
+	run(1, "execution", "apply", "--id", id, "--operation-id", operation, "--allow-tool-execution")
+	if checkpointAttempts < 1 || claims != 1 || saved.Execution.State != "reconcile_required" {
+		t.Fatal("missing acknowledgement did not retain its original claim", checkpointAttempts, claims, saved.Execution.State)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("gate ran before native checkpoint acknowledgement", err)
 	}
 }
