@@ -46,6 +46,10 @@ usage: scripts/e2e-journeys.sh [flags]
   --github-functions-repo O/N
                          dedicated fixture repository for TestFunctionsProjectFromGitHub;
                          the journey rewrites its gregale.yaml and functions/ on main
+  --timeout DURATION     go test -timeout (default 150m smoke, 240m full); a timeout kills
+                         unfinished journeys before their cleanup, so their apps leak
+  --strict-skips         fail the run when a journey skips for a reason not in
+                         tests/journeys/allowed_skips.json (CI uses this)
   --list                 list journeys and exit
 EOF
 }
@@ -71,6 +75,8 @@ github_repo="${GREGALE_E2E_GITHUB_REPO:-}"
 github_functions_repo="${GREGALE_E2E_GITHUB_FUNCTIONS_REPO:-}"
 sweep_hours=3
 list=0
+strict_skips="${GREGALE_E2E_STRICT_SKIPS:-0}"
+go_timeout=""
 
 while (($#)); do
 	case "$1" in
@@ -92,6 +98,8 @@ while (($#)); do
 	--mcp-url) mcp_url="$2"; shift 2 ;;
 	--github-functions-repo) github_functions_repo="$2"; shift 2 ;;
 	--sweep-hours) sweep_hours="$2"; shift 2 ;;
+	--strict-skips) strict_skips=1; shift ;;
+	--timeout) go_timeout="$2"; shift 2 ;;
 	--list) list=1; shift ;;
 	-h|--help) usage; exit 0 ;;
 	*) echo "unknown flag: $1" >&2; usage >&2; exit 2 ;;
@@ -176,6 +184,10 @@ mkdir -p "$out"
 cli_reported="$("$cli" version 2>/dev/null || echo unknown)"
 echo "journeys: tier=$tier api=$api cli=$cli_reported out=$out" >&2
 
+if [[ -z "$go_timeout" ]]; then go_timeout=150m; [[ "$tier" == full ]] && go_timeout=240m; fi
+strict_skips_args=()
+if [[ "$strict_skips" == 1 ]]; then strict_skips_args=(--allowed-skips tests/journeys/allowed_skips.json); fi
+
 cd "$REPO_ROOT"
 set +e
 GREGALE_E2E_API="$api" \
@@ -194,10 +206,11 @@ GREGALE_E2E_API="$api" \
 	GREGALE_E2E_MCP_URL="$mcp_url" \
 	GREGALE_E2E_GITHUB_FUNCTIONS_REPO="$github_functions_repo" \
 	GREGALE_E2E_SWEEP_HOURS="$( [[ "$sweep_hours" == 0 ]] || echo "$sweep_hours")" \
-	go test ./tests/journeys -count=1 -json -timeout 150m -parallel 32 -skip '^TestHarness' ${run_re:+-run "$run_re"} 2>&1 |
+	go test ./tests/journeys -count=1 -json -timeout "$go_timeout" -parallel 32 -skip '^TestHarness' ${run_re:+-run "$run_re"} 2>&1 |
 	tee "$out/go-test.json" |
 	python3 -I tests/journeys/report.py --markdown "$out/report.md" \
 		--known tests/journeys/known_failures.json \
+		${strict_skips_args[@]+"${strict_skips_args[@]}"} \
 		--summary "$out/summary.json" --history-dir "$(dirname "$out")" \
 		--header "target: $api" --header "tier: $tier" --header "cli: $cli_reported" \
 		--header "started: $(date -u +%Y-%m-%dT%H:%M:%SZ)"

@@ -1,0 +1,174 @@
+# .github/workflows/journeys.yml — customer journeys against a deployed Gregale
+# (tests/journeys, scripts/e2e-journeys.sh).
+#
+# - Nightly: the full tier.
+# - After every successful `release` run: the smoke tier, with that release's CLI.
+# - On demand: either tier, optionally one --run expression.
+#
+# Each run checks out the suite at the same release tag as the CLI it drives,
+# so it never tests CLI features the release does not have. Reports compare
+# with the earlier runs of the same tier (their summary.json artifacts), so
+# newly failing, fixed, slower and flaky steps show up.
+#
+# Off until the owner opts in: set the repository variable
+# GREGALE_E2E_ENABLED=true and the secret GREGALE_E2E_TOKEN (an API key of a
+# DEDICATED e2e account: the harness holds at most the account's free app
+# slots, so a busy account serialises the suite and the run times out).
+# Optional variables: GREGALE_E2E_API (default production),
+# GREGALE_E2E_MAX_DEPLOYS (default 4), GREGALE_E2E_GITHUB_REPO.
+name: journeys
+
+on:
+  schedule:
+    - cron: "23 4 * * *"
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: smoke or full
+        type: choice
+        options: [smoke, full]
+        default: smoke
+      run:
+        description: optional go test -run expression
+        type: string
+        default: ""
+      ref:
+        description: release tag to test (default newest v* release)
+        type: string
+        default: ""
+  pull_request:
+    paths:
+      - tests/journeys/report.py
+      - tests/journeys/report_test.py
+      - tests/journeys/allowed_skips.json
+      - tests/journeys/known_failures.json
+      - .github/workflows/journeys.yml
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  report-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: report.py unit tests
+        run: python3 -I tests/journeys/report_test.py
+      - name: journey data files are valid JSON
+        run: |
+          python3 -I -c 'import json,sys; [json.load(open(p)) for p in sys.argv[1:]]' \
+            tests/journeys/known_failures.json tests/journeys/allowed_skips.json
+
+  journeys:
+    if: >-
+      vars.GREGALE_E2E_ENABLED == 'true' &&
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    # The full tier's go test timeout is 240m; leave room for setup and upload.
+    timeout-minutes: 270
+    concurrency:
+      # One run at a time per target: concurrent runs share the account's app slots.
+      group: journeys-${{ vars.GREGALE_E2E_API || 'production' }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GREGALE_E2E_API: ${{ vars.GREGALE_E2E_API || 'https://api.gregale.dev' }}
+    steps:
+      - name: Select tier and release
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TIER: ${{ inputs.tier }}
+          INPUT_REF: ${{ inputs.ref }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            schedule) tier=full; tag="" ;;
+            workflow_run) tier=smoke; tag="$RUN_TAG" ;;
+            *) tier="$INPUT_TIER"; tag="$INPUT_REF" ;;
+          esac
+          if [[ -z "$tag" ]]; then
+            tag="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 20 --json tagName \
+              --jq '[.[] | select(.tagName | startswith("v"))][0].tagName')"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]] || { echo "::error::not a release tag: '$tag'"; exit 1; }
+          echo "tier=$tier" >>"$GITHUB_OUTPUT"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "testing $tag, $tier tier"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ steps.select.outputs.tag }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: go.mod
+
+      - name: Fetch earlier summaries
+        env:
+          TIER: ${{ steps.select.outputs.tier }}
+        run: |
+          set -uo pipefail
+          mkdir -p history
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow journeys.yml --status completed --limit 10 \
+            --json databaseId,createdAt --jq '.[] | "\(.databaseId) \(.createdAt)"' |
+          while read -r id created; do
+            dir="history/$(echo "$created" | tr -d ':-')"
+            gh run download "$id" --repo "$GITHUB_REPOSITORY" --name "journeys-$TIER-summary" --dir "$dir" 2>/dev/null || rmdir "$dir" 2>/dev/null
+          done
+          ls history
+
+      - name: Run journeys
+        id: run
+        env:
+          GREGALE_E2E_TOKEN: ${{ secrets.GREGALE_E2E_TOKEN }}
+          GREGALE_E2E_GITHUB_REPO: ${{ vars.GREGALE_E2E_GITHUB_REPO }}
+          TIER: ${{ steps.select.outputs.tier }}
+          TAG: ${{ steps.select.outputs.tag }}
+          RUN_RE: ${{ inputs.run }}
+          MAX_DEPLOYS: ${{ vars.GREGALE_E2E_MAX_DEPLOYS || '4' }}
+        run: |
+          set -uo pipefail
+          [[ -n "$GREGALE_E2E_TOKEN" ]] || { echo "::error::secret GREGALE_E2E_TOKEN is not set"; exit 1; }
+          out="history/$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "out=$out" >>"$GITHUB_OUTPUT"
+          # A release cut before this workflow landed has no --strict-skips.
+          strict=()
+          grep -q -- '--strict-skips' scripts/e2e-journeys.sh && strict=(--strict-skips)
+          scripts/e2e-journeys.sh --tier "$TIER" --cli-version "$TAG" --out "$out" \
+            "${strict[@]}" --max-deploys "$MAX_DEPLOYS" ${RUN_RE:+--run "$RUN_RE"}
+
+      - name: Job summary
+        if: always() && steps.run.outputs.out != ''
+        env:
+          OUT: ${{ steps.run.outputs.out }}
+        run: |
+          [[ -f "$OUT/report.md" ]] && head -c 900000 "$OUT/report.md" >>"$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload summary (history for later runs)
+        if: always() && steps.run.outputs.out != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: journeys-${{ steps.select.outputs.tier }}-summary
+          path: ${{ steps.run.outputs.out }}/summary.json
+          retention-days: 90
+          if-no-files-found: ignore
+
+      - name: Upload report
+        if: always() && steps.run.outputs.out != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: journeys-${{ steps.select.outputs.tier }}-report
+          path: |
+            ${{ steps.run.outputs.out }}/report.md
+            ${{ steps.run.outputs.out }}/go-test.json
+          retention-days: 30
+          if-no-files-found: ignore

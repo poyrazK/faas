@@ -14,8 +14,18 @@ and, given earlier runs, what changed since the last one.
   --history-dir DIR   compare with the newest earlier summary.json under DIR
                       and flag flaky steps across the last runs
   --markdown FILE     also write the report as Markdown
+  --allowed-skips FILE  skip reasons that may skip a whole journey
+                      (allowed_skips.json): a journey skipped for any other
+                      reason fails the run, so a green run cannot hide a
+                      journey that silently stopped running
+  --now YYYY-MM-DD    today's date for known-failure review (default: UTC today)
 
-Exits 1 when a step fails that is not a known bug, or nothing ran.
+Every report lists the journeys that did not run and why, and the known
+failures to review: entries past their review date (`review_by`, else
+`since` + 21 days) and entries whose journey ran without the listed step.
+
+Exits 1 when a step fails that is not a known bug, a journey skips for a
+reason --allowed-skips does not list, or nothing ran.
 
 Usage:
   go test -json ./tests/journeys | python3 -I tests/journeys/report.py \\
@@ -23,6 +33,7 @@ Usage:
       --history-dir .e2e-journeys --markdown out/report.md
 """
 import argparse
+import datetime
 import glob
 import json
 import os
@@ -36,10 +47,14 @@ ICON = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP", "known": "KNOWN"}
 FLAKY_WINDOW = 5
 SLOWER_FACTOR = 1.5
 SLOWER_MIN_SECONDS = 30
+KNOWN_REVIEW_DAYS = 21
+BLOCKED_PREFIX = "blocked: "
+TIMEOUT_RE = re.compile(r"panic: test timed out after (\S+)")
+RUNNING_RE = re.compile(r"^\t\t(\S+) \(([^)]*)\)$")
 
 
 class Report:
-    def __init__(self, known=None):
+    def __init__(self, known=None, allowed_skips=None, today=None):
         self.results = {}  # test name -> (action, elapsed seconds)
         self.output = {}   # test name -> [lines]
         self.order = []
@@ -47,11 +62,18 @@ class Report:
         self.warnings = []
         self.package_failed = False
         self.package_output = []
+        self.timeout = None      # go test -timeout that killed the run
+        self.still_running = []  # (test, elapsed) when it fired
+        self._in_running = False
         self.known = {k["step"]: k for k in (known or [])}
+        self.allowed_skips = list(allowed_skips or [])
+        self.today = today or datetime.datetime.now(datetime.timezone.utc).date()
 
     def feed(self, event):
         test = event.get("Test")
         action = event.get("Action")
+        if action == "output":
+            self.scan_timeout(event.get("Output", ""))
         if not test:
             if action == "output":
                 self.package_output.append(event.get("Output", ""))
@@ -75,6 +97,23 @@ class Report:
             self.results[test] = (action, float(event.get("Elapsed", 0)))
             return test
         return None
+
+    def scan_timeout(self, line):
+        """go test's timeout panic names the tests still running; it is
+        printed under whichever test happened to be current."""
+        match = TIMEOUT_RE.search(line)
+        if match:
+            self.timeout, self._in_running = match.group(1), True
+            return
+        if self._in_running:
+            running = RUNNING_RE.match(line.rstrip("\n"))
+            if running:
+                self.still_running.append((running.group(1), running.group(2)))
+            elif line.strip() and "running tests:" not in line:
+                self._in_running = False
+
+    def timed_out_journeys(self):
+        return sorted({t.split("/")[0] for t, _ in self.still_running})
 
     def progress_line(self, test):
         action, elapsed = self.results[test]
@@ -112,11 +151,50 @@ class Report:
         """Known bugs whose step passed this run."""
         return [t for t in self.leaves() if t in self.known and self.results[t][0] == "pass"]
 
+    def not_run(self):
+        """Skipped steps and journeys that never ran, by reason. A step
+        skipped because an earlier step failed ("blocked: ...") is reported
+        with its failure, not here."""
+        groups = {}
+        for test in self.leaves():
+            if self.results[test][0] != "skip":
+                continue
+            reason = self.reason(test) or "no reason given"
+            if reason.startswith(BLOCKED_PREFIX):
+                continue
+            groups.setdefault(reason, []).append(test)
+        return sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+
+    def unexpected_skips(self):
+        """Not-run tests whose reason matches no allowed skip pattern."""
+        if not self.allowed_skips:
+            return []
+        out = []
+        for reason, tests in self.not_run():
+            if not any(p["pattern"] in reason for p in self.allowed_skips):
+                out.extend((t, reason) for t in tests)
+        return out
+
+    def known_to_review(self):
+        """Known-failure entries a human should look at again: past their
+        review date, or listed for a step this run's journey no longer has."""
+        # A journey ran when it reached steps; one skipped whole has none.
+        ran = {t.split("/")[0] for t in self.results if "/" in t}
+        out = []
+        for step, entry in sorted(self.known.items()):
+            due = review_date(entry)
+            if due is not None and due < self.today:
+                out.append((step, f"review date {due.isoformat()} passed"))
+            elif step.split("/")[0] in ran and step not in self.results:
+                out.append((step, "its journey ran without this step (renamed or removed?)"))
+        return out
+
     def failed(self):
         # A package failure with no failing step is a build error or a
         # crash outside any journey; a known failure alone is not a failure.
         leaf_failures = [t for t in self.leaves() if self.results[t][0] in ("fail", "known")]
-        return bool(self.new_failures()) or (self.package_failed and not leaf_failures)
+        return (bool(self.new_failures()) or bool(self.unexpected_skips()) or bool(self.timeout)
+                or (self.package_failed and not leaf_failures))
 
     def failure_log(self, test, limit=40):
         lines = [l.rstrip("\n") for l in self.output.get(test, [])
@@ -129,6 +207,7 @@ class Report:
             "steps": {t: {"result": self.results[t][0], "seconds": round(self.results[t][1], 1)}
                       for t in self.leaves()},
             "metrics": {name: float(value) for _, name, value in self.metrics},
+            "timed_out": self.timed_out_journeys(),
         }
 
     def text(self, changes=None):
@@ -142,6 +221,11 @@ class Report:
         c = self.counts()
         out.append("")
         out.append(f"{c['pass']} passed, {c['fail']} failed, {c['known']} known bugs, {c['skip']} skipped")
+        if self.timeout:
+            out.append("")
+            out.append(f"TIMED OUT after {self.timeout}: {len(self.timed_out_journeys())} journeys never finished, "
+                       "their remaining steps are missing above and their apps were not cleaned up:")
+            out.extend(f"  {t} (running {d})" for t, d in self.still_running)
         if self.metrics:
             out.append("")
             out.append("metrics:")
@@ -161,6 +245,19 @@ class Report:
             out.append("")
             out.append("known bugs that passed (remove from known_failures.json once confirmed):")
             out.extend(f"  {t}: {self.known[t]['bug']}" for t in self.maybe_fixed())
+        if self.known_to_review():
+            out.append("")
+            out.append("known failures to review (known_failures.json):")
+            out.extend(f"  {t}: {why}" for t, why in self.known_to_review())
+        if self.not_run():
+            out.append("")
+            out.append("not run:")
+            for reason, tests in self.not_run():
+                out.append(f"  {len(tests)} x {reason}: {', '.join(tests)}")
+        if self.unexpected_skips():
+            out.append("")
+            out.append("unexpected skips (not in allowed_skips.json; these fail the run):")
+            out.extend(f"  {t}: {reason}" for t, reason in self.unexpected_skips())
         if changes:
             out.append("")
             out.extend(changes_text(changes))
@@ -179,6 +276,11 @@ class Report:
         out.extend(f"- {line}" for line in header)
         c = self.counts()
         out += ["", f"**{c['pass']} passed, {c['fail']} failed, {c['known']} known bugs, {c['skip']} skipped**", ""]
+        if self.timeout:
+            out += [f"**Timed out after {self.timeout}:** {len(self.timed_out_journeys())} journeys never finished; "
+                    "their remaining steps are missing from this report and their apps were not cleaned up.", ""]
+            out.extend(f"- `{t}` (running {d})" for t, d in self.still_running)
+            out.append("")
         if changes:
             out += ["## Since the last run", ""]
             out.extend(changes_text(changes, bullet="- "))
@@ -201,6 +303,19 @@ class Report:
         if self.maybe_fixed():
             out += ["", "## Known bugs that passed", ""]
             out.extend(f"- `{t}`: {self.known[t]['bug']}" for t in self.maybe_fixed())
+        if self.known_to_review():
+            out += ["", "## Known failures to review", ""]
+            out.extend(f"- `{t}`: {why}" for t, why in self.known_to_review())
+        if self.unexpected_skips():
+            out += ["", "## Unexpected skips", "",
+                    "These reasons are not in `allowed_skips.json`, so they fail the run.", ""]
+            out.extend(f"- `{t}`: {reason}" for t, reason in self.unexpected_skips())
+        if self.not_run():
+            out += ["", "## Not run", ""]
+            for reason, tests in self.not_run():
+                names = ", ".join(f"`{t}`" for t in tests)
+                reason = reason.replace("|", "\\|")
+                out.append(f"- **{len(tests)}** × {reason}: {names}")
         if self.new_failures():
             out += ["", "## Failures"]
             for test in self.new_failures():
@@ -208,6 +323,18 @@ class Report:
                 out.extend(self.failure_log(test))
                 out.append("```")
         return "\n".join(out) + "\n"
+
+
+def review_date(entry):
+    """When a known failure is due for review: review_by, else since + 21 days."""
+    for key, extra in (("review_by", 0), ("since", KNOWN_REVIEW_DAYS)):
+        value = entry.get(key)
+        if value:
+            try:
+                return datetime.date.fromisoformat(value) + datetime.timedelta(days=extra)
+            except ValueError:
+                return None
+    return None
 
 
 def earlier_summaries(history_dir, exclude):
@@ -283,13 +410,20 @@ def main(argv=None):
     parser.add_argument("--known", help="known_failures.json")
     parser.add_argument("--summary", help="write this run's summary JSON here")
     parser.add_argument("--history-dir", help="directory of earlier runs to compare with")
+    parser.add_argument("--allowed-skips", help="allowed_skips.json: skip reasons that may skip a journey")
+    parser.add_argument("--now", help="today's date (YYYY-MM-DD) for known-failure review")
     args = parser.parse_args(argv)
 
     known = []
     if args.known:
         with open(args.known) as f:
             known = json.load(f)
-    report = Report(known)
+    allowed = []
+    if args.allowed_skips:
+        with open(args.allowed_skips) as f:
+            allowed = json.load(f)
+    today = datetime.date.fromisoformat(args.now) if args.now else None
+    report = Report(known, allowed, today)
     for raw in sys.stdin:
         raw = raw.strip()
         if not raw:

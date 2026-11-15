@@ -1,0 +1,14 @@
+[
+  {"pattern": "full tier only", "why": "smoke runs skip full-tier journeys by design"},
+  {"pattern": "no fixture repository", "why": "GitHub journeys need GREGALE_E2E_GITHUB_REPO"},
+  {"pattern": "no functions fixture repository", "why": "needs GREGALE_E2E_GITHUB_FUNCTIONS_REPO"},
+  {"pattern": "GREGALE_E2E_GITHUB_SECOND_TOKEN", "why": "shared-installation journey needs a second connected account"},
+  {"pattern": "GREGALE_E2E_BILLING_TOKEN", "why": "billing journeys need a fixture account on a target with live billing"},
+  {"pattern": "GREGALE_E2E_BILLING_FREE_TOKEN", "why": "billing journeys need a fixture account on a target with live billing"},
+  {"pattern": "GREGALE_E2E_NODE_SDK", "why": "SDK journey needs a built SDK entry"},
+  {"pattern": "preview journey: enable --mcp-", "why": "MCP tool lifecycle journeys run only against an explicit staging target"},
+  {"pattern": "read-only Job discovery requires a configured bearer key", "why": "needs GREGALE_E2E_TOKEN, not a CLI login"},
+  {"pattern": "is not released to this account", "why": "preview capability not released to the e2e account (agents, resource labels)"},
+  {"pattern": "on-demand profiling is off on this installation", "why": "profiling is disabled on production"},
+  {"pattern": "custom metric history is not enabled", "why": "custom metric history is disabled on production"}
+]

@@ -246,6 +246,31 @@ target, named by a full-access API key:
   newly failing and now-passing steps, steps 50% (and 30 s) slower, metric
   changes (wake p50/p95, clock skew, deploy stage times), and steps that both
   passed and failed in the last five runs (flaky).
+- Each known entry is due for review on its `review_by` date (or `since` + 21
+  days). The report lists entries past that date, and entries whose journey
+  ran without the listed step, under "Known failures to review".
+- The report lists every journey or step that did not run, grouped by reason
+  ("Not run"); steps blocked by an earlier failure are not repeated there.
+  With `--strict-skips`, a skip whose reason matches no pattern in
+  `allowed_skips.json` fails the run, so a journey that silently stops running
+  turns the run red. Add a pattern only for a deliberate gate (a fixture,
+  token or preview capability the target lacks).
+- A run killed by the `go test` timeout (`--timeout`, default 150m smoke,
+  240m full) fails and names the journeys still running: their remaining
+  steps are missing and their apps were not cleaned up (the next run's
+  sweeper removes them).
+
+## Scheduled runs in CI
+
+`.github/workflows/journeys.yml` runs the full tier nightly and the smoke tier
+after every successful `release`, with that release's CLI and the suite
+checked out at the same tag, `--strict-skips`, and history from earlier runs'
+`summary.json` artifacts. The job summary shows the report. It is off until
+the owner sets the repository variable `GREGALE_E2E_ENABLED=true` and the
+secret `GREGALE_E2E_TOKEN`: an API key of a **dedicated** e2e account. The
+harness holds at most the account's free app slots, so on a busy account the
+suite serialises behind a handful of apps and times out (the 2026-11-15 full
+run on a 95/100-app account did).
 
 ## Scheduled runs (this Mac, no CI)
 

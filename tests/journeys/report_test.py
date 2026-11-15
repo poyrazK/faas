@@ -145,5 +145,101 @@ class ReportTest(unittest.TestCase):
         self.assertNotIn("since ", out)
 
 
+SKIPS = stream(
+    {"Action": "run", "Test": "TestBilling"},
+    {"Action": "output", "Test": "TestBilling", "Output": "    billing_test.go:20: needs GREGALE_E2E_BILLING_TOKEN: a dedicated fixture account\n"},
+    {"Action": "skip", "Test": "TestBilling", "Elapsed": 0},
+    {"Action": "run", "Test": "TestNewThing"},
+    {"Action": "output", "Test": "TestNewThing", "Output": "    new_test.go:9: feature flag off\n"},
+    {"Action": "skip", "Test": "TestNewThing", "Elapsed": 0},
+    {"Action": "run", "Test": "TestApp"},
+    {"Action": "run", "Test": "TestApp/deploy"},
+    {"Action": "pass", "Test": "TestApp/deploy", "Elapsed": 1},
+    {"Action": "run", "Test": "TestApp/blocked_step"},
+    {"Action": "output", "Test": "TestApp/blocked_step", "Output": "    harness_test.go:390: blocked: step \"x\" failed\n"},
+    {"Action": "skip", "Test": "TestApp/blocked_step", "Elapsed": 0},
+    {"Action": "pass", "Test": "TestApp", "Elapsed": 2},
+    {"Action": "pass", "Elapsed": 3},
+)
+
+
+TIMEOUT = stream(
+    {"Action": "run", "Test": "TestA"},
+    {"Action": "run", "Test": "TestA/one"},
+    {"Action": "pass", "Test": "TestA/one", "Elapsed": 1},
+    {"Action": "run", "Test": "TestB"},
+    {"Action": "run", "Test": "TestB/step"},
+    {"Action": "output", "Test": "TestA", "Output": "panic: test timed out after 2h30m0s\n"},
+    {"Action": "output", "Test": "TestA", "Output": "\trunning tests:\n"},
+    {"Action": "output", "Test": "TestA", "Output": "\t\tTestB/step (2h29m51s)\n"},
+    {"Action": "output", "Test": "TestA", "Output": "\t\tTestC (2h5m43s)\n"},
+    {"Action": "output", "Test": "TestA", "Output": "\n"},
+    {"Action": "output", "Test": "TestA", "Output": "goroutine 1 [running]:\n"},
+    {"Action": "fail", "Test": "TestA", "Elapsed": 9000},
+    {"Action": "fail", "Elapsed": 9000},
+)
+
+
+class TimeoutTest(unittest.TestCase):
+    def test_timeout_names_unfinished_journeys_and_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "summary.json")
+            code, out = run(TIMEOUT, "--quiet", "--summary", path)
+            with open(path) as f:
+                summary = json.load(f)
+        self.assertEqual(code, 1)
+        self.assertIn("TIMED OUT after 2h30m0s: 2 journeys never finished", out)
+        self.assertIn("TestB/step (running 2h29m51s)", out)
+        self.assertNotIn("goroutine", out.split("TIMED OUT")[1].split("\n\n")[0])
+        self.assertEqual(summary["timed_out"], ["TestB", "TestC"])
+
+
+class SkipAndKnownReviewTest(unittest.TestCase):
+    def files(self, d, known=None, allowed=None):
+        paths = []
+        for name, doc in (("known.json", known), ("allowed.json", allowed)):
+            path = os.path.join(d, name)
+            with open(path, "w") as f:
+                json.dump(doc or [], f)
+            paths.append(path)
+        return paths
+
+    def test_not_run_lists_reasons_but_not_blocked_steps(self):
+        code, out = run(SKIPS, "--quiet")
+        self.assertEqual(code, 0)
+        self.assertIn("not run:\n", out)
+        self.assertIn("1 x feature flag off: TestNewThing", out)
+        self.assertNotIn("blocked_step", out.split("not run:")[1])
+
+    def test_unexpected_skip_fails_the_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            known, allowed = self.files(d, allowed=[{"pattern": "GREGALE_E2E_BILLING_TOKEN"}])
+            code, out = run(SKIPS, "--quiet", "--allowed-skips", allowed)
+            self.assertEqual(code, 1)
+            self.assertIn("unexpected skips", out)
+            self.assertIn("TestNewThing: feature flag off", out)
+            self.assertNotIn("TestBilling: needs", out.split("unexpected skips")[1])
+            _, allowed = self.files(d, allowed=[{"pattern": "BILLING_TOKEN"}, {"pattern": "feature flag off"}])
+            code, _ = run(SKIPS, "--quiet", "--allowed-skips", allowed)
+            self.assertEqual(code, 0)
+
+    def test_known_failures_to_review(self):
+        known = [
+            {"step": "TestApp/deploy", "bug": "b", "since": "2026-10-01"},
+            {"step": "TestApp/renamed", "bug": "b", "since": "2026-11-14"},
+            {"step": "TestBilling/x", "bug": "b", "since": "2026-11-14"},
+            {"step": "TestOther/y", "bug": "b", "since": "2026-01-01", "review_by": "2026-12-01"},
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            path, _ = self.files(d, known=known)
+            _, out = run(SKIPS, "--quiet", "--known", path, "--now", "2026-11-15")
+        review = out.split("known failures to review")[1].split("\n\n")[0]
+        self.assertIn("TestApp/deploy: review date 2026-10-22 passed", review)
+        self.assertIn("TestApp/renamed: its journey ran without this step", review)
+        # A journey skipped whole, or not run at all, says nothing about its steps.
+        self.assertNotIn("TestBilling/x", review)
+        self.assertNotIn("TestOther/y", review)
+
+
 if __name__ == "__main__":
     unittest.main()
