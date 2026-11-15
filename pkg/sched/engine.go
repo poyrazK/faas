@@ -7383,12 +7383,22 @@ const watchdogColdBootFailurePrefix = "cold_boot_timeout: "
 // deployment the watchdog already failed with its generic cold-boot timeout:
 // vmmd's typed readiness problem for the stopped guest (for example a
 // healthcheck that answered 503) says why the app was not ready.
+//
+// vmmd's catch-all "internal" is not a reason: when the watchdog stops the
+// guest, vmmd's wait for readiness ends as "readiness: context canceled" with
+// that code, and replacing the timeout with it told a Spring app that needed
+// more than the 30 s default window that the platform had failed (2026-11-15
+// agent eval, deployment 20b6a0a4).
 func refinesWatchdogStartupTimeout(dep state.Deployment, cause error) bool {
 	var problem *api.Problem
 	return dep.Status == state.DeployFailed && dep.ErrorCode == api.CodeAppStartupTimeout &&
 		strings.HasPrefix(dep.Error, watchdogColdBootFailurePrefix) &&
-		errors.As(cause, &problem) && problem != nil && problem.Code != ""
+		errors.As(cause, &problem) && problem != nil && problem.Code != "" && problem.Code != vmmdCatchAllCode
 }
+
+// vmmdCatchAllCode is the Problem code vmmd gives a boot failure it did not
+// classify (see nodeCausedBootFailure).
+const vmmdCatchAllCode = "internal"
 
 // projectServiceModeConflict reports a project service that was deployed as a
 // worker and listens: the scan found nothing calling it, so the customer's fix

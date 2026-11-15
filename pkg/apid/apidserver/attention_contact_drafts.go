@@ -7,7 +7,7 @@ import (
 )
 
 // attentionDraft is the prefilled contact message for one signal
-// (ADR-20261113180000). Staff edit it before sending; it names only what
+// (ADR-20261115175928). Staff edit it before sending; it names only what
 // the customer can already see in their own dashboard.
 type attentionDraft struct {
 	Subject, Category, Body string

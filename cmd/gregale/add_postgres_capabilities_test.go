@@ -53,12 +53,12 @@ func TestAddPostgresUnsupportedChecksRegionCapabilities(t *testing.T) {
 
 func TestAddPostgresMigrationHintOnlyForRuntimeBindings(t *testing.T) {
 	var out bytes.Buffer
-	main.PrintAddPostgresMigrationHint(&out, "orders", "my-api", "production", "read_write")
+	main.PrintAddPostgresMigrationHint(&out, "orders", "my-api", "app", "production", "read_write")
 	if got := out.String(); !strings.Contains(got, "gregale postgres attach orders my-api --scope production --access migration --env MIGRATION_DATABASE_URL") {
 		t.Fatalf("hint = %q", got)
 	}
 	out.Reset()
-	main.PrintAddPostgresMigrationHint(&out, "orders", "my-api", "production", "migration")
+	main.PrintAddPostgresMigrationHint(&out, "orders", "my-api", "app", "production", "migration")
 	if out.Len() != 0 {
 		t.Fatalf("migration binding must not print the hint: %q", out.String())
 	}

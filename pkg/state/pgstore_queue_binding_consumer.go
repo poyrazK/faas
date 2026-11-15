@@ -108,7 +108,7 @@ func (s *PgStore) mutateQueueBindingConsumerTx(ctx context.Context, tx pgx.Tx, a
 		// and queue name revives it, so its held messages drain again; it
 		// then takes the requested settings as an ordinary update.
 		retired, err := q.QueueConsumerRetiredBindingForRevive(ctx, tx, sqlc.QueueConsumerRetiredBindingForReviveParams{
-			AppID: appUUID, AccountID: accountUUID, Name: create.Name, QueueName: create.QueueName})
+			AppID: appUUID, AccountID: accountUUID, Name: create.Name})
 		switch {
 		case err == nil:
 			if err := q.QueueConsumerAuthorizeRevive(ctx, tx, uuidString(retired.ID)); err != nil {
