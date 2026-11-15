@@ -23,7 +23,7 @@ var (
 	attentionMigrationUpRe = regexp.MustCompile(`(?s)-- \+goose Up(.*?)-- \+goose Down`)
 )
 
-// ADR-20261113123000 / ADR-20261113180000: only support staff see customers
+// ADR-20261113123000 / ADR-20261115175928: only support staff see customers
 // who may be stuck; dismissing with an outcome and contacting the customer
 // are stepped-up staff writes.
 func TestSupportAttentionStaffPage(t *testing.T) {

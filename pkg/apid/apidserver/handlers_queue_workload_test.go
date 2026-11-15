@@ -103,7 +103,7 @@ func TestConfigureQueueWorkloadRejectsQueueMoveWithoutForce(t *testing.T) {
 	}
 }
 
-// adr: 20261115183906 (R5-9) — re-running queue setup re-enabled a binding
+// adr: 20261113180000 (R5-9) — re-running queue setup re-enabled a binding
 // the customer had disabled.
 func TestConfigureQueueWorkloadKeepsDisabledBinding(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
