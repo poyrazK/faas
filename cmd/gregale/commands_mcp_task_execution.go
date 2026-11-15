@@ -132,7 +132,7 @@ func mcpTaskExecutionEnv(p mcpTaskExecutionProfile) (func(), error) {
 	}
 	cfg, err := mcphosting.Load(plan.WorkerPath)
 	if err != nil || cfg.Tasks == nil {
-		return nil, errors.New("Task worker configuration unavailable")
+		return nil, errors.New("task worker configuration unavailable")
 	}
 	allowed := map[string]bool{"MCP_TASK_NAMESPACE": true, "MCP_TASK_MIGRATION_DATABASE_URL": true, "MCP_TASK_OBSERVER_DATABASE_URL": true}
 	for _, name := range []string{cfg.Tasks.DatabaseURLEnv, cfg.Tasks.OwnerKeyEnv, cfg.Tasks.EncryptionKeysEnv, cfg.Tasks.NamespaceEnv, plan.TokenEnv} {
@@ -158,12 +158,12 @@ func mcpTaskExecutionEnv(p mcpTaskExecutionProfile) (func(), error) {
 	for name, value := range p.Env {
 		if !allowed[name] || value == "" || strings.ContainsRune(value, 0) || strings.HasPrefix(name, "FAAS_") || strings.HasPrefix(name, "GREGALE_") ||
 			name == "PATH" || strings.HasPrefix(name, "NODE_") || strings.HasPrefix(name, "LD_") || name == "HOME" || name == "XDG_CONFIG_HOME" || name == "SSLKEYLOGFILE" {
-			return nil, errors.New("Task binding profile contains an unapproved environment setting")
+			return nil, errors.New("task binding profile contains an unapproved environment setting")
 		}
 	}
 	for name := range allowed {
 		if p.Env[name] == "" {
-			return nil, errors.New("Task binding profile is incomplete")
+			return nil, errors.New("task binding profile is incomplete")
 		}
 	}
 	old := map[string]*string{}
