@@ -496,7 +496,7 @@ def regen(overwrite: bool = True) -> None:
         restore_handwritten()
 
         _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
-        (OUT / "faas_sdk" / "preview" / "__init__.py").write_text(_PREVIEW_INIT_PY_TEMPLATE)
+        (OUT / "faas_sdk" / "preview" / "__init__.py").write_text(_PREVIEW_INIT_PY_TEMPLATE.rstrip() + "\n")
         _patch_generator_bugs(OUT / "faas_sdk")
         _preserve_pagination_cursor_inputs(OUT / "faas_sdk")
         _adapt_source_upload_binary(OUT / "faas_sdk")
