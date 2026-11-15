@@ -105,6 +105,9 @@ func (h *Handler) usageEvent(r *http.Request, in usageEventInput) usageoutbox.Ev
 		}
 		if event.DiscoveredRoute != "" {
 			event.DiscoveredAtUnixMs = in.at.UTC().UnixMilli()
+			if _, err := uuid.Parse(in.target.DeploymentID); err == nil {
+				event.DiscoveredDeploymentID = in.target.DeploymentID
+			}
 		}
 	}
 	if h.requestAuditEnabled {
