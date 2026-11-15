@@ -24,7 +24,7 @@ type mcpTaskFenceTransport struct {
 func (t mcpTaskFenceTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead && !strings.HasPrefix(r.URL.Path, "/v1/task-tool-release-intents/") {
 		if t.origin == nil || r.URL.Scheme != t.origin.Scheme || !strings.EqualFold(r.URL.Host, t.origin.Host) {
-			return nil, errors.New("Task executor request left its native API origin")
+			return nil, errors.New("task executor request left its native API origin")
 		}
 		r = r.Clone(r.Context())
 		r.Header.Set(api.TaskExecutionIntentHeader, t.intent)

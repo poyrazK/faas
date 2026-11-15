@@ -240,6 +240,7 @@ func cmdInvocationsList(args []string) int {
 	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	stream := fs.Bool("stream", false, "emit rows as JSON Lines as pages arrive (stdout requires --json --all)")
 	outputPath := fs.String("output", "", "publish a new JSON Lines file after all pages complete (requires --all)")
+	progress := fs.String("progress", "off", "export progress on stderr: off, plain or ndjson (requires --all --output)")
 	timeout := fs.Duration("timeout", 0, "overall list read budget including page requests and retries (positive duration)")
 	limit := fs.Int("limit", 50, "max rows (1..100; server caps at 100)")
 	if err := fs.Parse(args); err != nil {
@@ -255,6 +256,13 @@ func cmdInvocationsList(args []string) int {
 	}
 	if err := validateListTimeout(*timeout, flagWasSet(fs, "timeout")); err != nil {
 		return printErr("Invalid list timeout", err)
+	}
+	progressMode, err := parseListExportProgress(*progress)
+	if err != nil {
+		return printErr("Invalid list progress", err)
+	}
+	if violation := listFlagRuleViolation(listProgressRequiresExport, listFlagRuleState{Progress: progressMode != listExportProgressOff, Output: flagWasSet(fs, "output"), All: *all}, "invocation list"); violation != nil {
+		return printErr("Invalid list progress", violation)
 	}
 	output, err := prepareListOutput(*outputPath, flagWasSet(fs, "output"), *all, "invocation list")
 	if err != nil {
@@ -282,7 +290,7 @@ func cmdInvocationsList(args []string) int {
 		return page.Invocations, page.NextBefore, err
 	}
 	if output != nil {
-		return runListFileExport(ctx, "Could not list invocations", *before, output, fetch)
+		return runListFileExport(ctx, "Could not list invocations", *before, output, progressMode, fetch)
 	}
 	if *stream {
 		return runStreamList(ctx, "Could not list invocations", *before, fetch)

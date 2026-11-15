@@ -3,8 +3,9 @@ package main
 import "slices"
 
 const (
-	listOutputRequiresAll     = "list_output_requires_all"
-	listStreamRequiresAllJSON = "list_stdout_stream_requires_all_and_json"
+	listOutputRequiresAll      = "list_output_requires_all"
+	listStreamRequiresAllJSON  = "list_stdout_stream_requires_all_and_json"
+	listProgressRequiresExport = "list_progress_requires_file_export"
 )
 
 // Conditions use registered option names, never supplied values. "present"
@@ -24,7 +25,7 @@ type cliFlagRule struct {
 	message  string
 }
 
-type listFlagRuleState struct{ All, Stream, Output, JSON bool }
+type listFlagRuleState struct{ All, Stream, Output, JSON, Progress bool }
 
 type cliFlagRuleDiagnostic struct {
 	Kind     string                 `json:"kind"`
@@ -51,6 +52,9 @@ func listFlagRules() []cliFlagRule {
 		{ID: listStreamRequiresAllJSON, Kind: "requires", message: "--stream requires --json and --all",
 			When:     []cliFlagRuleCondition{{Flag: "stream", Test: "enabled", Value: true}, {Flag: "output", Test: "present", Value: false}},
 			Requires: []cliFlagRuleCondition{{Flag: "all", Test: "enabled", Value: true}, {Flag: "json", Test: "effective", Value: true}}},
+		{ID: listProgressRequiresExport, Kind: "requires", message: "--progress requires --all and --output",
+			When:     []cliFlagRuleCondition{{Flag: "progress", Test: "active", Value: true}},
+			Requires: []cliFlagRuleCondition{{Flag: "output", Test: "present", Value: true}, {Flag: "all", Test: "enabled", Value: true}}},
 	}
 }
 
@@ -65,6 +69,8 @@ func (state listFlagRuleState) matches(condition cliFlagRuleCondition) bool {
 		value = state.Stream
 	case condition.Flag == "json" && condition.Test == "effective":
 		value = state.JSON
+	case condition.Flag == "progress" && condition.Test == "active":
+		value = state.Progress
 	default:
 		return false
 	}
