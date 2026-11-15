@@ -37,6 +37,14 @@ func cmdBillingDispatch(args []string) int {
 		return cmdOperatorPaddlePreflight(args[1:])
 	case "webhook-test":
 		return cmdOperatorWebhookTest(args[1:])
+	case "credit":
+		return cmdBillingCredit(args[1:])
+	case "refund":
+		return cmdBillingRefund(args[1:])
+	case "consume-credits":
+		return cmdBillingConsumeCredits(args[1:])
+	case "postgres":
+		return cmdOperatorBillingPostgres(args[1:])
 	default:
 		_, _ = fmt.Fprintf(osStderr, "gregalectl billing: unknown subcommand %q\n", args[0])
 		return 2
@@ -53,7 +61,7 @@ func hasOperatorHelp(args []string) bool {
 }
 
 func printOperatorBillingUsage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "usage: gregalectl billing <price-catalog|reconcile|reconcile-paddle-overage|webhook-test> ...")
+	_, _ = fmt.Fprintln(w, "usage: gregalectl billing <price-catalog|reconcile|reconcile-paddle-overage|webhook-test|credit|refund|consume-credits|postgres> ...")
 }
 
 func cmdOperatorPriceCatalog(args []string) int {
