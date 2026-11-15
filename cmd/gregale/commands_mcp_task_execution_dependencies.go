@@ -23,7 +23,7 @@ func mcpTaskExecutionDependencies(plan string) (string, error) {
 	root := filepath.Join(p.WorkerPath, "node_modules")
 	info, err := os.Lstat(root)
 	if err != nil || !info.IsDir() {
-		return "", errors.New("Task execution requires an owner-installed local Node dependency tree")
+		return "", errors.New("task execution requires an owner-installed local Node dependency tree")
 	}
 	h := sha256.New()
 	var bytes int64
