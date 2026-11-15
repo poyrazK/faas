@@ -22,56 +22,74 @@ import (
 	"time"
 )
 
+// OpenAPI tool generation is offline and bounded independently of deployment
+// quotas. Generated adapters use the normal application egress and MCP limits.
+const (
+	ToolOpenAPIDocumentMaxBytes = 256 << 10
+	ToolOpenAPIOperationsMax    = 16
+	ToolOpenAPISchemaMaxDepth   = 16
+	ToolOpenAPISchemaMaxNodes   = 4096
+	ToolOpenAPIManifestMaxBytes = 64 << 10
+	ToolOpenAPIResponseMaxBytes = 32 << 10
+	ToolOpenAPIURLMaxBytes      = 8 << 10
+	ToolOpenAPIRequestTimeout   = 15 * time.Second
+)
+
 // Private tool publication journals retain bounded metadata, never source or
 // credentials. The deadline fences abandoned publishers; it never grants a retry.
 const (
-	ToolPublicationIntentMaxBytes            = 64 << 10
-	ToolPublicationOutcomeMaxBytes           = 512 << 10
-	ToolPublicationCatalogMaxBytes           = 256 << 10
-	ToolPublicationMaxTools                  = 64
-	ToolPublicationMaxCases                  = 64
-	ToolPublicationsPerAccount               = 256
-	ToolPublicationDeadline                  = 35 * time.Minute
-	ToolRegistryPageMax                      = 20
-	ToolRegistryQueryMaxBytes                = 128
-	ToolPrivateInvocationWorkers             = 4
-	ToolPrivateInvocationRequestMaxBytes     = 256 << 10 // bounded JSON escaping of 32-KiB canonical arguments
-	ToolInvocationArgsMaxBytes               = 32 << 10
-	ToolInvocationResultMaxBytes             = 64 << 10
-	ToolInvocationRequestMaxBytes            = 4 << 10
-	ToolInvocationOutcomeMaxBytes            = 128 << 10
-	ToolInvocationEndpointMaxBytes           = 512
-	ToolInvocationsPerAccount                = 1024
-	ToolInvocationsActiveMax                 = 4
-	ToolInvocationDefaultTimeout             = 60
-	ToolInvocationMaxTimeout                 = 600
-	ToolInvocationReportGrace                = 30 * time.Second
-	ToolInvocationCancelPoll                 = time.Second
-	ToolGrantIntentMaxBytes                  = 4 << 10
-	ToolGrantsPerAccount                     = 1024
-	ToolGrantsPerKey                         = 64
-	ToolGrantPageMax                         = 20
-	ToolGrantMaxLifetime                     = 30 * 24 * time.Hour
-	ToolOAuthConnectionIntentMaxBytes        = 8 << 10
-	ToolOAuthConnectionRecordMaxBytes        = 16 << 10
-	ToolOAuthConnectionsPerAccount           = 128
-	ToolOAuthConnectionsPerApp               = 32
-	ToolOAuthConnectionPageMax               = 20
-	ToolOAuthURLMaxBytes                     = 2048
-	ToolOAuthClientIDMaxBytes                = 512
-	ToolOAuthScopesMax                       = 64
-	ToolOAuthScopeMaxBytes                   = 128
-	ToolOAuthRefreshTimeout                  = 15 * time.Second
-	ToolOAuthPersistTimeout                  = 5 * time.Second
-	ToolOAuthRenewalLease                    = 45 * time.Second
-	ToolOAuthRefreshSkew                     = 30 * time.Second
-	ToolOAuthProviderResponseMaxBytes        = 64 << 10
-	ToolOAuthCiphertextMaxBytes              = 128 << 10
-	ToolOAuthMaxTokenLifetimeSeconds         = 365 * 24 * 60 * 60
-	ToolOAuthAuthorizationLifetime           = 5 * time.Minute
-	ToolOAuthAuthorizationRequestMaxBytes    = 24 << 10
-	ToolOAuthAuthorizationCiphertextMaxBytes = 16 << 10
-	ToolOAuthCallbackTimeout                 = 5 * time.Second
+	ToolPublicationIntentMaxBytes              = 64 << 10
+	ToolPublicationOutcomeMaxBytes             = 512 << 10
+	ToolPublicationCatalogMaxBytes             = 256 << 10
+	ToolPublicationMaxTools                    = 64
+	ToolPublicationMaxCases                    = 64
+	ToolPublicationsPerAccount                 = 256
+	ToolPublicationDeadline                    = 35 * time.Minute
+	ToolRegistryPageMax                        = 20
+	ToolRegistryQueryMaxBytes                  = 128
+	ToolPrivateInvocationWorkers               = 4
+	ToolPublicationVerificationTimeout         = 90 * time.Second
+	ToolPublicationReadinessMaxRoles           = 32
+	ToolPublicationReadinessRoleTimeout        = 30 * time.Second
+	ToolPublicationVerificationRequestMaxBytes = 256 << 10
+	ToolPublicationFixturesMaxBytes            = 64 << 10
+	ToolPrivateInvocationRequestMaxBytes       = 256 << 10 // bounded JSON escaping of 32-KiB canonical arguments
+	ToolInvocationArgsMaxBytes                 = 32 << 10
+	ToolInvocationResultMaxBytes               = 64 << 10
+	ToolInvocationRequestMaxBytes              = 4 << 10
+	ToolInvocationOutcomeMaxBytes              = 128 << 10
+	ToolInvocationEndpointMaxBytes             = 512
+	ToolInvocationsPerAccount                  = 1024
+	ToolInvocationsActiveMax                   = 4
+	ToolInvocationDefaultTimeout               = 60
+	ToolInvocationMaxTimeout                   = 600
+	ToolInvocationReportGrace                  = 30 * time.Second
+	ToolInvocationCancelPoll                   = time.Second
+	ToolGrantIntentMaxBytes                    = 4 << 10
+	ToolGrantsPerAccount                       = 1024
+	ToolGrantsPerKey                           = 64
+	ToolGrantPageMax                           = 20
+	ToolGrantMaxLifetime                       = 30 * 24 * time.Hour
+	ToolOAuthConnectionIntentMaxBytes          = 8 << 10
+	ToolOAuthConnectionRecordMaxBytes          = 16 << 10
+	ToolOAuthConnectionsPerAccount             = 128
+	ToolOAuthConnectionsPerApp                 = 32
+	ToolOAuthConnectionPageMax                 = 20
+	ToolOAuthURLMaxBytes                       = 2048
+	ToolOAuthClientIDMaxBytes                  = 512
+	ToolOAuthScopesMax                         = 64
+	ToolOAuthScopeMaxBytes                     = 128
+	ToolOAuthRefreshTimeout                    = 15 * time.Second
+	ToolOAuthPersistTimeout                    = 5 * time.Second
+	ToolOAuthRenewalLease                      = 45 * time.Second
+	ToolOAuthRefreshSkew                       = 30 * time.Second
+	ToolOAuthProviderResponseMaxBytes          = 64 << 10
+	ToolOAuthCiphertextMaxBytes                = 128 << 10
+	ToolOAuthMaxTokenLifetimeSeconds           = 365 * 24 * 60 * 60
+	ToolOAuthAuthorizationLifetime             = 5 * time.Minute
+	ToolOAuthAuthorizationRequestMaxBytes      = 24 << 10
+	ToolOAuthAuthorizationCiphertextMaxBytes   = 16 << 10
+	ToolOAuthCallbackTimeout                   = 5 * time.Second
 )
 
 // Referral program bounds. Rewards are estimates only; payout execution is
@@ -222,6 +240,11 @@ const (
 	SignInAPIKeysMax = 5
 )
 
+// CLILoginKeysMax caps the live keys `gregale login` has minted for one
+// account: each login keeps the newest CLILoginKeysMax and revokes older
+// ones (ADR-20261114120000).
+const CLILoginKeysMax = 5
+
 // Request bodies one gateway holds at once. Uploads spooled to disk share
 // RequestBodySpoolNodeBytes, one app owner holds at most a quarter of it, and
 // one client IP (an IPv6 /56) holds at most RequestBodySpoolPerClient of
@@ -267,6 +290,10 @@ const EmailChangeRevertWindow = 30 * 24 * time.Hour
 const (
 	SecurityMailPerAccountInterval = time.Minute
 	SecurityMailPerAccountPerHour  = 5
+	// CredentialNoticeMailsPerHour caps "a new credential was created"
+	// notices to one account. They have no minimum gap, so each of several
+	// keys minted together gets its own mail (ADR-20261114120000).
+	CredentialNoticeMailsPerHour   = 20
 	SecurityMailTrackedAccountsMax = 100_000
 )
 
@@ -336,7 +363,13 @@ const (
 // LoginFailureEvictionSample random entries, so filling the table with random
 // addresses does not stop a targeted one from being counted.
 const (
-	LoginFailuresPerEmail        = 20
+	LoginFailuresPerEmail = 20
+	// LoginFailuresPerEmailFleet bounds failed password checks for one
+	// address over every client network in LoginFailureEmailWindow.
+	// LoginFailuresPerEmail applies per client network (/24 or /48), so
+	// failures from other networks do not pause the owner's
+	// (ADR-20261115100000).
+	LoginFailuresPerEmailFleet   = 300
 	LoginFailureEmailWindow      = time.Hour
 	LoginFailureEmailsTrackedMax = 100_000
 	LoginFailureEvictionSample   = 32
@@ -399,6 +432,11 @@ const (
 	SignupAccountsPerNetworkPerDay = 50
 	SignupAccountsPerDay           = 2_000
 )
+
+// SignupFactsPersonalRetention is how long an account's sign-up address and
+// user agent are kept (ADR-20261113160000). Afterwards meterd clears them;
+// the method, country, network owner and email domain stay with the account.
+const SignupFactsPersonalRetention = 90 * 24 * time.Hour
 
 // An agent connection's mcp-login key slides (ADR-20261028205920): each use
 // extends it to MCPLoginKeyIdle from now, never past MCPLoginKeyMaxAge after
@@ -908,6 +946,18 @@ const (
 	// outages in three days (bug hunt 2026-10-28 H102). Changed bytes and
 	// blocking findings still refuse at once.
 	SharedBaseScanFailureGrace = 24 * time.Hour
+
+	// BaseScanCriticalBootGrace is how long after a scan of an unchanged
+	// shared runtime base first finds a fixable CRITICAL vulnerability vmmd
+	// keeps booting it for apps already serving on it. A new Grype database
+	// marking a CRITICAL in, say, the node22 base refused every cold boot and
+	// restore on it, so every app on that runtime stopped waking until a
+	// patched base shipped (Hunt 12 H12-1; deploy-path review P5). New
+	// deployments on the base are still refused at once (schedd's prime
+	// refuses a boot vmmd admitted under this grace), and vmmd alerts while
+	// it lasts. Scanner failures and missing or stale scan records still
+	// refuse at once.
+	BaseScanCriticalBootGrace = 72 * time.Hour
 
 	// Safety bounds for a complete filesystem projection handed to Grype.
 	// These are separate from the tenant's rootfs/disk entitlements.
@@ -2180,6 +2230,10 @@ const (
 	QueueSendBatchMaxMessages = 100
 	QueueSendBatchMaxBytes    = 8 << 20
 )
+
+// QueueGroupKeyMaxBytes bounds a queue message's group_key
+// (ADR-20261112193306).
+const QueueGroupKeyMaxBytes = 128
 
 // Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
 // takes at most QueueLeaseMaxReceipts receipts. A lease without an explicit
@@ -3613,6 +3667,13 @@ const (
 	// DevSourceCacheTTL keeps the node-local reconstruction base disposable.
 	// Cache absence is a normal condition and makes the CLI resend a full tree.
 	DevSourceCacheTTL = 24 * time.Hour
+	// DevBuildCoalesceWindow is how long apid holds back the convergence
+	// build of a developer sync that already reached the running instance
+	// as a live patch (ADR-20261021221906). Each such sync restarts the window; a
+	// developer who stops saving gets one build when it ends. It stays well
+	// inside DevSourceCacheTTL, so the patch a cold boot replays never
+	// expires before the build that replaces it.
+	DevBuildCoalesceWindow = 3 * time.Minute
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
@@ -3622,6 +3683,27 @@ const (
 	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
 	// the filesystem has less than this free.
 	ArtifactCacheMinFreeBytes int64 = 8 << 30
+	// ArtifactCacheReservePercent is the share of the cache filesystem kept
+	// free when the cache budget is derived from the disk
+	// (ADR-20261114182830): the free-space floor is this percentage of the
+	// disk, never below ArtifactCacheMinFreeBytes, and the budget is the rest.
+	// A capture of the largest plan (2 GiB of memory plus its drive), a
+	// writable layer clone and a build drive all fit in 15 GB of a 100 GB disk.
+	ArtifactCacheReservePercent int64 = 15
+	// SnapshotCacheOrphanGrace is how long a node keeps a cached snapshot
+	// capture that no database row references (ADR-20261114182830). A capture
+	// is cached before schedd records its row, so a younger one may still be
+	// in flight; after this it belongs to a snapshot that was deleted.
+	SnapshotCacheOrphanGrace = 6 * time.Hour
+	// RuntimeReleaseCacheGrace keeps a runtime release base cached on a node
+	// for this long after the release is created, before any deployment binds
+	// to it (ADR-20261114182830). After that a node keeps only releases bound
+	// to a deployment that is not failed or cancelled, or that a runtime
+	// upgrade targets.
+	RuntimeReleaseCacheGrace = 24 * time.Hour
+	// NodeCacheSweepInterval is how often a compute node removes cached
+	// snapshot captures and runtime release bases nothing needs any more.
+	NodeCacheSweepInterval = 10 * time.Minute
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
@@ -9400,16 +9482,13 @@ const (
 	// holding state about a target that no longer exists.
 	MaxEdgeRuleCircuitOpenSeconds = 3_600
 
-	// API-key lifetime (issue #189 / IAM-5). New non-admin keys
-	// minted by createKey get `expires_at = now + DefaultAPIKeyLifetimeDays`.
-	// 365 days is the issue-189 spec: long enough to be
-	// "set-and-forget" for a customer's CI rotation, short enough
-	// that an exfiltrated key expires within a year of theft even
-	// without rotation. Admin keys default to nil expiry (per
-	// existing admin semantics — never expire, must be explicitly
-	// revoked). Legacy admin keys (pre-IAM-5) keep null expiry
-	// forever; rotation is the migration path for customers who
-	// want a finite window on their admin keys.
+	// API-key lifetime (issue #189 / IAM-5). Every new key, admin
+	// keys included (ADR-20261114120000), gets `expires_at = now +
+	// DefaultAPIKeyLifetimeDays` (api.NewAPIKeyExpiry). 365 days is
+	// long enough to be "set-and-forget" for a customer's CI
+	// rotation, short enough that an exfiltrated key expires within
+	// a year of theft even without rotation. Admin keys minted
+	// before that ADR keep null expiry until rotated or revoked.
 	DefaultAPIKeyLifetimeDays = 365
 
 	// DefaultAPIKeyGraceWindowDays (issue #189 / IAM-5) is the
@@ -14129,6 +14208,11 @@ const (
 	ObsServingProbePairsMax     = 1000
 	ObsServingProbeNodeMaxBytes = 128
 	ObsServingProbeURLMaxBytes  = 2048
+	// Two fixed notification channels per expected node; summaries cover all
+	// channels while the preview keeps CLI and deployment reports bounded.
+	ObsServingProbeNotificationNodeChannelsMax = 2
+	ObsServingProbeNotificationChannelsMax     = ObsServingProbeNotificationNodeChannelsMax * ObsServingProbePairsMax
+	ObsServingProbeNotificationItemsMax        = 32
 
 	// Post-deployment verification is a bounded read-only wait, not a rollout
 	// controller. Automatic timing follows probe age policy plus evaluation lag.
@@ -14138,6 +14222,32 @@ const (
 	ObsPostDeployPollMax       = time.Minute
 	ObsPostDeployHTTPTimeout   = 10 * time.Second
 	ObsPostDeployTokenMaxBytes = 4096
+	// Keep the latest check transitions; summaries survive history truncation.
+	ObsPostDeployTransitionsMax = 256
+	// Detailed fault history shares a report-wide count and serialized-byte
+	// budget; it never repeats every source payload for every transition.
+	ObsPostDeployProbeEvidencePerTransitionMax = 4
+	ObsPostDeployProbeEvidenceItemsMax         = 64
+	ObsPostDeployProbeEvidenceBytesMax         = 64 << 10
+	// Primary notification fault details have independent retention; they do
+	// not consume serving fault budgets or the advisory direct-channel history.
+	ObsPostDeployNotificationEvidencePerTransitionMax = 4
+	ObsPostDeployNotificationEvidenceItemsMax         = 16
+	ObsPostDeployNotificationEvidenceBytesMax         = 8 << 10
+	// Advisory direct-notification history has independent retention so it
+	// cannot evict health-check transitions or retained serving fault details.
+	ObsPostDeployNotificationEventsMax       = 3 * ObsServingProbeNotificationItemsMax
+	ObsPostDeployNotificationHistoryBytesMax = 48 << 10
+	// Stability waits and the latest reset each expose a bounded source preview.
+	// The byte budget includes conservatively indented serialized item arrays.
+	ObsPostDeployStabilityItemsMax = 4
+	ObsPostDeployStabilityBytesMax = 4 << 10
+	// Each qualification check retains one current or last-readable preview.
+	ObsPostDeployEvidenceItemsMax = 4
+	ObsPostDeployEvidenceBytesMax = 4 << 10
+	// Qualification changes share a separate report-wide history budget.
+	ObsPostDeployEvidenceEventsMax       = 16
+	ObsPostDeployEvidenceHistoryBytesMax = 16 << 10
 
 	// Rule diagnostics assess the full bounded Prometheus rule snapshot and
 	// expose only a bounded, unhealthy-first metadata preview.
@@ -16955,6 +17065,18 @@ const EventCircuitEvaluationInterval = time.Second
 // Maximum wall-clock age before application event routing admission.
 const EventDeliveryAgeMaxMS int64 = 30 * 24 * 60 * 60 * 1000
 
+// EventDeliveryHoldMax is how long an event delivery may be held because
+// events or workflows are switched off for its app, or its plan lost
+// workflows, before it moves to the dead-letter queue as
+// delivery_held_expired. While held it is re-checked every
+// EventDeliveryHoldRecheckMin, backing off to EventDeliveryHoldRecheckMax
+// (ADR-20261027125625 amendment 2026-11-13).
+const (
+	EventDeliveryHoldMax        = 7 * 24 * time.Hour
+	EventDeliveryHoldRecheckMin = time.Minute
+	EventDeliveryHoldRecheckMax = time.Hour
+)
+
 // Maximum explicit schema versions selected by one event subscription.
 const EventSubscriptionSchemaVersionsMax = 16
 
@@ -17267,10 +17389,15 @@ const (
 	RealtimeConsumerGroupLeaseDefaultSeconds   = 30
 	RealtimeConsumerGroupLeaseMaxSeconds       = 300
 	RealtimeConsumerGroupAttemptsDefault       = 5
-	RealtimeConsumerGroupAttemptsMax           = 10
-	RealtimeConsumerGroupRetryMaxSeconds       = 300
-	RealtimeConsumerGroupFailureMaxBytes       = 64
-	RealtimeConsumerGroupBodyMaxBytes          = 4096
+	// RealtimeConsumerGroupReleasesMax: a release hands its attempt back,
+	// so a worker that always releases would loop on one message forever;
+	// at this many releases the message dead-letters as release_limit
+	// (event-driven hunt #7).
+	RealtimeConsumerGroupReleasesMax     = 100
+	RealtimeConsumerGroupAttemptsMax     = 10
+	RealtimeConsumerGroupRetryMaxSeconds = 300
+	RealtimeConsumerGroupFailureMaxBytes = 64
+	RealtimeConsumerGroupBodyMaxBytes    = 4096
 
 	// RealtimeConsumerGroupWaitersPerAccount is one account's share of an
 	// apid's RealtimeConsumerGroupWaitersMax long-poll claims. SDK workers
@@ -18849,10 +18976,15 @@ const (
 	DataPipelineTablesMax                  = 16
 	DataPipelineRetainedTablesMax          = 32
 	DataPipelineColumnsMax                 = 128
-	DataPipelineSubjectsMax                = 32
+	DataPipelineSubjectsMax                = 128
+	DataPipelineTenantMembershipsMax       = 256
+	DataPipelineTenantMaxBytes             = 256
 	DataPipelineSubjectMaxBytes            = 256
 	DataPipelineCredentialMaxBytes         = 8192
-	DataPipelineRequestMaxBytes            = 32768
+	DataPipelineRequestMaxBytes            = 2 << 20
+	DataPipelineServingMaxBytes            = 2 << 20
+	DataPipelineReaderChangeMaxBytes       = 2 << 20
+	DataPipelineSetupRequestMaxBytes       = 2 << 20
 	DataPipelineLease                      = 60 * time.Second
 	DataPipelineOperationTimeout           = 20 * time.Second
 	DataPipelineNativeConnectTimeout       = 5 * time.Second
@@ -18892,6 +19024,16 @@ const (
 	DataPipelineQualificationMaxAge       = 24 * time.Hour
 	DataPipelineQualificationsMax         = 200
 	DataPipelineDashboardRefresh          = 2 * time.Second
+	DataPipelineFreshnessTargetMinSeconds = int64(15)
+	DataPipelineFreshnessTargetMaxSeconds = int64(24 * 60 * 60)
+	DataPipelineIndexColumnsMax           = 4
+	DataPipelineIndexesMax                = 8
+	DataPipelineIndexChangeMaxBytes       = 64 << 10
+	DataPipelineIndexTableMaxBytes        = int64(64 << 20)
+	DataPipelineIndexBuildMaxBytes        = int64(32 << 20)
+	DataPipelineIndexMemoryKB             = 16 << 10
+	DataPipelineIndexBuildTimeout         = 2 * time.Second
+	DataPipelineIndexLockTimeout          = 250 * time.Millisecond
 )
 
 // Pipeline health webhooks have one encrypted destination per pipeline. The
@@ -19337,3 +19479,25 @@ const (
 // MaxObjectKeyScopeBytes bounds a bucket binding's key_prefix
 // (ADR-20261106114500); the catalog CHECK enforces the same bound.
 const MaxObjectKeyScopeBytes = 512
+
+const (
+	DataPipelineRelationshipsMax        = 16
+	DataPipelineRelationshipKeysMax     = 4
+	DataPipelineOrganizationMappingsMax = 32
+	DataPipelineAuthSnapshotTTL         = time.Minute
+	DataPipelineAuthQueryTimeout        = 5 * time.Second
+)
+
+// Scheduled pipeline work remains bounded independently of owner-selected budgets.
+const (
+	DataPipelineScheduleMinSeconds       = int64(3600)
+	DataPipelineScheduleMaxSeconds       = int64(86400)
+	DataPipelineSnapshotRowsMax          = int64(100000)
+	DataPipelineSnapshotBytesMax         = int64(64 << 20)
+	DataPipelineSnapshotOperationTimeout = 45 * time.Second
+	DataPipelineQualityRulesMax          = 16
+	DataPipelineQualityBoundBytesMax     = 64
+	DataPipelineQualityScanRowsMax       = int64(10000)
+	DataPipelineWorkQueryMinMillis       = int64(50)
+	DataPipelineMinutesPerDay            = 24 * 60
+)

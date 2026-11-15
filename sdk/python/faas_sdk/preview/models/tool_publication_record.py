@@ -18,6 +18,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.tool_publication_intent import ToolPublicationIntent
     from ..models.tool_publication_outcome import ToolPublicationOutcome
+    from ..models.tool_publication_verification import ToolPublicationVerification
 
 
 T = TypeVar("T", bound="ToolPublicationRecord")
@@ -35,6 +36,8 @@ class ToolPublicationRecord:
     created_at: datetime.datetime
     deadline: datetime.datetime
     evidence_origin: ToolPublicationRecordEvidenceOrigin
+    verification: ToolPublicationVerification | Unset = UNSET
+    """Durable public candidate-test metadata; never includes a token, secret reference or ciphertext."""
     outcome: ToolPublicationOutcome | Unset = UNSET
     """Immutable publisher-attested evidence bounded to 512 KiB. Completed outcomes require the complete observed
     catalog and exact passing tests. Failed or uncertain outcomes contain only status and protocol_verified=false.
@@ -59,6 +62,10 @@ class ToolPublicationRecord:
 
         evidence_origin: str = self.evidence_origin
 
+        verification: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.verification, Unset):
+            verification = self.verification.to_dict()
+
         outcome: dict[str, Any] | Unset = UNSET
         if not isinstance(self.outcome, Unset):
             outcome = self.outcome.to_dict()
@@ -82,6 +89,8 @@ class ToolPublicationRecord:
                 "evidence_origin": evidence_origin,
             }
         )
+        if verification is not UNSET:
+            field_dict["verification"] = verification
         if outcome is not UNSET:
             field_dict["outcome"] = outcome
         if deployment_source_sha256 is not UNSET:
@@ -95,6 +104,7 @@ class ToolPublicationRecord:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.tool_publication_intent import ToolPublicationIntent
         from ..models.tool_publication_outcome import ToolPublicationOutcome
+        from ..models.tool_publication_verification import ToolPublicationVerification
 
         d = dict(src_dict)
         id = d.pop("id")
@@ -110,6 +120,13 @@ class ToolPublicationRecord:
         deadline = datetime.datetime.fromisoformat(d.pop("deadline"))
 
         evidence_origin = check_tool_publication_record_evidence_origin(d.pop("evidence_origin"))
+
+        _verification = d.pop("verification", UNSET)
+        verification: ToolPublicationVerification | Unset
+        if isinstance(_verification, Unset):
+            verification = UNSET
+        else:
+            verification = ToolPublicationVerification.from_dict(_verification)
 
         _outcome = d.pop("outcome", UNSET)
         outcome: ToolPublicationOutcome | Unset
@@ -135,6 +152,7 @@ class ToolPublicationRecord:
             created_at=created_at,
             deadline=deadline,
             evidence_origin=evidence_origin,
+            verification=verification,
             outcome=outcome,
             deployment_source_sha256=deployment_source_sha256,
             finished_at=finished_at,

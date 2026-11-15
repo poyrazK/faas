@@ -233,6 +233,15 @@ service Vmmd {
   // is not frozen is a successful no-op.
   rpc ThawInstance(ThawInstanceRequest) returns (ThawInstanceResponse);
 
+  // PrimeInstance (ADR-20261114153000) sends a short burst of GET requests
+  // to a live instance's own HTTP port before schedd captures its first
+  // init snapshot, so the snapshot holds code paths that already ran once
+  // (JIT-compiled methods, loaded classes and modules, warmed pools). It
+  // changes no lifecycle state; schedd captures the snapshot whatever the
+  // result. An older vmmd answers Unimplemented and the snapshot is captured
+  // unprimed.
+  rpc PrimeInstance(PrimeInstanceRequest) returns (PrimeInstanceResponse);
+
   // WaitBuilderReady blocks until a KeepWarm builder writes its durable
   // build-done marker and emits the guest-stage build-ready line. A builder
   // that exits before that handoff returns ready=false with its exit code.
@@ -1276,6 +1285,12 @@ message WakeResponse {
   // The contained environment branch profile was installed before guest
   // execution (ADR-20261031193635).
   bool environment_branch_contained = 20;
+  // The base scan gate admitted this boot only inside the grace that keeps
+  // apps already serving on a base waking after a scan finds a fixable
+  // CRITICAL vulnerability in it (api.BaseScanCriticalBootGrace). schedd
+  // refuses a new deployment's prime that reports it. Older vmmd never sets
+  // it; it refused such boots outright.
+  bool base_scan_grace = 21;
 }
 
 // WakeMethod is whether a wake was a snapshot restore or a cold boot.
@@ -1585,6 +1600,12 @@ message BuildSpec {
   // .ext4 path in drive1's directory. Empty: two drives, as before. An older
   // vmmd ignores it and the guest keeps BuildKit on drive1.
   string buildkit_seed_drive = 4;
+  // The build's builds.id (ADR-20261110210000 slice 3j-3). A vmmd that
+  // serves builds a registry mirror (FAAS_VMMD_BUILD_REGISTRY_MIRROR=secretd)
+  // pulls the registry_credentials' hosts through secretd by this id and
+  // gives the builder no password. Empty from an older builderd: vmmd then
+  // opens the passwords as before.
+  string build_id = 5;
 }
 
 // BuildRegistryCredential is one app_registry_credentials row: the registry
@@ -3291,6 +3312,27 @@ message ResumeWarmInstanceResponse {
 message FreezeInstanceRequest {
   string instance = 1;
   bool reclaim = 2;
+}
+
+// PrimeInstanceRequest (ADR-20261114153000) names the instance and the HTTP
+// path to GET. path must start with "/". requests is the most GETs vmmd sends
+// (in order, one at a time); budget_millis bounds the whole burst. vmmd caps
+// both at its own limits.
+message PrimeInstanceRequest {
+  string instance = 1;
+  string path = 2;
+  int32 requests = 3;
+  int64 budget_millis = 4;
+}
+
+// PrimeInstanceResponse reports one priming burst. sent counts GETs that got
+// an HTTP response or a transport error; ok counts 2xx responses. A burst the
+// budget cut short reports what completed.
+message PrimeInstanceResponse {
+  string instance = 1;
+  int32 sent = 2;
+  int32 ok = 3;
+  int64 duration_micros = 4;
 }
 
 // FreezeInstanceResponse (ADR-1151) reports one freeze. Resident bytes are the

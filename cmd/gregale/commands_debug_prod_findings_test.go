@@ -2,6 +2,10 @@ package main_test
 
 import (
 	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -33,6 +37,43 @@ func TestProfileCapturesVerb(t *testing.T) {
 		if ok != tc.ok || (ok && (!reflect.DeepEqual(rest, tc.rest) || del != tc.del)) {
 			t.Errorf("%v → %v del=%t ok=%t, want %v del=%t ok=%t", tc.in, rest, del, ok, tc.rest, tc.del, tc.ok)
 		}
+	}
+}
+
+// Found on prod 2026-11-14: `debug profiles <slug>` on a source-built HTTP
+// app refused with "the app has no recorded runtime". Such apps' samples are
+// labelled "custom" (vmmd), which is what the dashboard queries too.
+func TestDebugProfilesDefaultsRuntimeToCustom(t *testing.T) {
+	main.SetupConnectionProfiles(t)
+	main.SetFakeKeyring(t)
+	t.Setenv("FAAS_JSON", "1")
+	t.Setenv("FAAS_TOKEN", "fp_test")
+	var query url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/apps/my-app":
+			_, _ = io.WriteString(w, `{"slug":"my-app","runtime":""}`)
+		case "/v1/apps/my-app/debug/status":
+			_, _ = io.WriteString(w, `{"deployments":[{"id":"dep-old","traffic_percent":0},{"id":"dep-live","traffic_percent":100}]}`)
+		case "/v1/apps/my-app/profiles":
+			query = r.URL.Query()
+			_, _ = io.WriteString(w, `{"functions":[]}`)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("FAAS_API", server.URL)
+	_, stderr, restore := main.SwapIO(t)
+	code := main.Run([]string{"debug", "profiles", "my-app"})
+	restore()
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr())
+	}
+	if query.Get("runtime") != "custom" || query.Get("deployment_id") != "dep-live" {
+		t.Fatalf("profiles query = %v, want runtime custom and the serving deployment", query)
 	}
 }
 

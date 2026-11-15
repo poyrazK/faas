@@ -554,7 +554,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":              true, // operator-only tenant security control
 	"POST /v1/admin/ops/accounts/{id}/reset-mfa":                    true, // operator-only account recovery (ADR-20261108160000)
 	"POST /v1/admin/ops/accounts/{id}/revert-email":                 true, // operator-only account recovery (ADR-20261110100000)
-	"POST /v1/admin/ops/accounts/{id}/make-org-owner":               true, // operator-only org recovery (ADR-20261113180000)
+	"POST /v1/admin/ops/accounts/{id}/make-org-owner":               true, // operator-only org recovery (ADR-20261114170352)
 	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling":       true, // operator-only support grant (ADR-20261101214152)
 	"POST /v1/admin/ops/accounts/{id}/complimentary":                true, // operator-only complimentary plan (ADR-20261111140000)
 	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
@@ -1707,6 +1707,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "mcp_convergence.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_monitor.go"),
 		filepath.Join(root, "pkg", "api", "tool_publications.go"),
+		filepath.Join(root, "pkg", "api", "tool_publication_verification.go"),
+		filepath.Join(root, "pkg", "api", "tool_publication_readiness.go"),
 		filepath.Join(root, "pkg", "api", "tool_invocations.go"),
 		filepath.Join(root, "pkg", "api", "tool_grants.go"),
 		filepath.Join(root, "pkg", "api", "tool_connections.go"),
@@ -1896,6 +1898,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_attack_mode.go"),                // attack mode (ADR-20261021220456)
 		filepath.Join(root, "pkg", "api", "edge_rule_penalty.go"),               // rule penalty box (ADR-20261022105846)
 		filepath.Join(root, "pkg", "api", "conditions.go"),                      // resource conditions (ADR-20261030151810)
+		filepath.Join(root, "pkg", "api", "postgres_changes.go"),                // Postgres change workers (ADR-20261112140000)
 		filepath.Join(root, "pkg", "api", cliauthFile),
 		filepath.Join(root, "pkg", "api", "browser_approvals.go"),
 		filepath.Join(root, "pkg", "api", "source_review.go"),
@@ -1952,6 +1955,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "obs_collection_history.go"),
 		filepath.Join(root, "pkg", "api", "obs_notifications.go"),
 		filepath.Join(root, "pkg", "api", "obs_serving_health.go"),
+		filepath.Join(root, "pkg", "api", "obs_serving_probe_notifications.go"),
 		filepath.Join(root, "pkg", "api", "obs_rule_health.go"),
 		filepath.Join(root, "pkg", "api", "obs_rule_coverage.go"),
 		filepath.Join(root, "pkg", "api", "obs_recording_coverage.go"),
@@ -1966,6 +1970,12 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", agentInspectionFile),
 		filepath.Join(root, "pkg", "api", "app_resource_inventory.go"),
 		filepath.Join(root, "pkg", "api", "data_pipelines.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_serving.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_evolution.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_operations.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_freshness.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_setups.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_indexes.go"),
 		filepath.Join(root, "pkg", "api", "data_connection_checks.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_capabilities.go"),

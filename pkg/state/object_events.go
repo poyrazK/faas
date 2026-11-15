@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"github.com/google/uuid"
@@ -73,7 +74,7 @@ func publishObjectEventTx(ctx context.Context, db sqlc.DBTX, account, identity, 
 		AccountID: mustPgUUID(account), Payload: payload, At: objectUsageTime(now)}); err != nil {
 		return mapErr(err)
 	}
-	return captureObjectNotifications(ctx, db, account, identity, typ, data)
+	return captureObjectNotifications(ctx, db, account, identity, typ, data, payload)
 }
 
 func (m *MemStore) publishObjectEventLocked(account, identity, typ string, data api.ObjectStorageEvent, now time.Time) error {
@@ -101,8 +102,29 @@ func (m *MemStore) publishObjectEventLocked(account, identity, typ string, data 
 	if err = m.appendEventLocked("objectstorage", "event.published", &account, payload, nil, now); err != nil {
 		return err
 	}
-	if previous == nil {
-		m.eventFanout[key].RecipientSnapshot = append(m.eventFanout[key].RecipientSnapshot, recipients...)
+	if previous != nil || len(recipients) == 0 {
+		return nil
 	}
+	// The notification keeps an entry even when no subscription received
+	// the event, as ObjectNotificationsCapture inserts it.
+	work := m.platformEventWorkLocked(key, payload, now)
+	work.RecipientSnapshot = append(work.RecipientSnapshot, recipients...)
 	return nil
+}
+
+// platformEventWorkLocked is the outbox entry of an object event appended
+// just now, created when enqueuePublishedEventLocked kept none because no
+// subscription received it, as ObjectNotificationsCapture inserts the row.
+func (m *MemStore) platformEventWorkLocked(key string, payload []byte, now time.Time) *PublishedEventWork {
+	if work := m.eventFanout[key]; work != nil {
+		return work
+	}
+	if m.eventFanout == nil {
+		m.eventFanout = make(map[string]*PublishedEventWork)
+	}
+	m.eventFanoutNextID++
+	work := &PublishedEventWork{ID: m.eventFanoutNextID, Payload: bytes.Clone(payload), SnapshotCaptured: true,
+		RecipientProgress: make(map[string]PublishedEventRecipientProgress), AvailableAt: now, CreatedAt: time.Now().UTC()}
+	m.eventFanout[key] = work
+	return work
 }

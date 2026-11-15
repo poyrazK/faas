@@ -72,6 +72,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_REQUEST_WRITE_TIMEOUT` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_ROLE` | apid, shared | `dropin` |  |  | `` |  |
 | `FAAS_APID_RUNTIME_SIGNING_KEY_FILE` | apid | `dropin` |  |  | `` | runtime secret writer signing key (ADR 20261028161502 amendment 1): an Ed25519 PKCS#8 key apid signs every runtime secret it seals with, storing the signature in runtime_secret_signatures; delivered as a credential by the seal_domains role to faas-apid and faas-apid-clone-worker; unset seals unsigned |
+| `FAAS_APID_SECRETD_TARGET` | apid | `dropin` |  |  | `` | TLS address of secretd for live leased PostgreSQL cutover verification; no plaintext credentials return to apid |
+| `FAAS_APID_SECRETD_TLS_CA_PATH` | apid | `dropin` |  |  | `` | CA for the secretd PostgreSQL verifier connection |
+| `FAAS_APID_SECRETD_TLS_CERT_PATH` | apid | `dropin` |  |  | `` | Dedicated apid-postgres-verifier.faas client certificate |
+| `FAAS_APID_SECRETD_TLS_KEY_PATH` | apid | `dropin` |  |  | `` | Dedicated PostgreSQL verifier client key via systemd LoadCredential |
 | `FAAS_API_CONTRACT_DIFF_ENABLED` | shared | `dropin` |  |  | `` | public-beta control-plane and compute-only drop-ins enable the OpenAPI contract-diff gate; unset remains off for local/dev installs |
 | `FAAS_API_DISCOVERY_ENABLED` | gatewayd-internal | `default` |  |  | `` | opt-in durable API route inventory; off by default pending operator path-privacy review (ADR-270) |
 | `FAAS_API_HOSTING_SMOKE_REQUIRED` | imaged | `dropin` |  |  | `` | public-beta compute-only drop-in enables fail-closed post-readiness API hosting smoke verification |
@@ -156,6 +160,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMMIT_API_ENABLED` | apid | `default` |  |  | `` | opt-in Gregale Commit qualification gate; disabled unless explicitly set to true |
 | `FAAS_COMMIT_DATABASE_CIDRS` | schedd | `default` |  |  | `` | operator-approved database address prefixes; required when the Commit relay is enabled |
 | `FAAS_COMMIT_DATABASE_HOSTS` | schedd | `default` |  |  | `` | exact operator-approved database hostnames; required when the Commit relay is enabled |
+| `FAAS_COMMIT_PUBLIC_DATABASES` | schedd | `default` |  | false | `` | ADR-20261112140000 §6: true lets Postgres changes sources reach customer databases at any globally reachable address; other Commit sources keep the FAAS_COMMIT_DATABASE_HOSTS/CIDRS allowlist; true or false only |
 | `FAAS_COMMIT_RELAY_ENABLED` | schedd | `default` |  |  | `` | opt-in Gregale Commit qualification gate; disabled unless explicitly set to true |
 | `FAAS_COMMIT_SHA` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_COMMIT_TLS_PG_BIN_DIR` | shared | `dev-only` |  |  | `` | PostgreSQL server binaries for the private TLS acceptance fixture |
@@ -230,6 +235,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DEV_BRIDGE_ENABLED` | apid, bridged, gatewayd-internal | `default` |  | 0 | `` | ADR-378 operator gate; explicit 1 on the API, relay and compute gateways |
 | `FAAS_DEV_BRIDGE_GATEWAY_URL` | bridged | `default` |  | http://127.0.0.1:8080 | `` | existing public gateway ingress for scoped development dependencies |
 | `FAAS_DEV_BRIDGE_RELAY_URL` | apid | `dropin` |  | http://127.0.0.1:9098 | `` | API-to-relay loopback hop |
+| `FAAS_DEV_BUILD_COALESCE_SECONDS` | apid | `default` |  | 180 | `` | ADR-20261021221906 window a live-patched developer sync holds its build back; 0 turns coalescing off; tests shorten it |
 | `FAAS_DEV_DEBUG` | shared | `guest` |  |  | `` | ADR-741 developer debugger switch; set by `gregale dev --debug` as app env on the developer environment only and read by guest-init, which starts the Node inspector only when FAAS_DEVELOPER_ENVIRONMENT=1 |
 | `FAAS_DEV_PATCH_DELIVERY` | apid, vmmd | `dropin` |  | 0 | `` | ADR-740 developer live source patches; 99-faas-dev-patch.conf drop-ins from control_plane_service and vmmd_service (faas_dev_patch_delivery_enabled); both daemons must agree |
 | `FAAS_DEV_TOKEN` | apid | `dev-only` |  |  | `` | must never be set on a production host |
@@ -446,9 +452,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_WAKE_FAILOVER` | gatewayd-public | `default` |  | 0 | `` | ADR-20261022184531 step 5; 1 retries a response gatewayd-internal marked not dispatched (no request byte reached a guest) on another compute node, within api.GatewayFailover* limits; default off; needs a node-choosing dialer (compute pool or compute edge) |
 | `FAAS_GCS_BUCKET` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` | private regional bucket used when `FAAS_STORAGE_BACKEND=gcs`; authenticated with ADC |
 | `FAAS_GC_INTERVAL` | imaged | `default` |  |  | `` |  |
-| `FAAS_GEOIP_ASN_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it |
+| `FAAS_GEOIP_ASN_DB_PATH` | apid, gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it, and apid leaves the sign-up network owner empty (ADR-20261113160000) |
 | `FAAS_GEOIP_AUTO_REFRESH` | gatewayd-internal | `default` |  |  | `` | 0; the geoip role owns refresh through re-bootstrap |
-| `FAAS_GEOIP_DB_PATH` | gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it |
+| `FAAS_GEOIP_DB_PATH` | apid, gatewayd-internal | `default` |  |  | `` | the geoip role stages the DB-IP database at the code default (ADR-143); geo edge rules are no-ops without it, and apid leaves the sign-up country empty (ADR-20261113160000) |
 | `FAAS_GITHUBD_AUTOMATION_EVENTS` | githubd | `default` |  |  | `` | ADR-20261027090010 §9: 1 forwards pull_request deliveries to apid's bridge (FAAS_APID_GITHUBD_BRIDGE_SOCK) as gregale.github events; apid publishes them only for accounts the agents capability is released to; unset forwards none |
 | `FAAS_GITHUBD_LISTEN_ADDR` | githubd | `dropin` |  |  | `` | private mTLS gRPC listener for source-ref verification on compute-only hosts |
 | `FAAS_GITHUBD_LOOPBACK` | apid, gatewayd-internal, gatewayd-public | `default` |  |  | `` |  |
@@ -659,6 +665,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_MCP_BRIDGE_LOOPBACK` | gatewayd-public | `dropin` |  |  | `` | ADR-20261026195952; absolute URL of the hosted management MCP bridge on the control-plane host. Unset leaves /mcp on the api. host to the compute data plane |
 | `FAAS_MCP_PRIVATE_TOOL_INVOCATION` | apid | `default` |  |  | `` | ADR-20261113200000; operator opt-in for private delegated tool execution. Unset or any value other than 1 disables execution. Enable on apid only after the tool migrations and a separate Account seal-domain identity are staged; bridge flags and independent connection consent remain required |
+| `FAAS_MCP_PRIVATE_TOOL_PUBLICATION` | apid | `default` |  |  | `` | ADR-20261114173309; operator opt-in for API-held private candidate verification. Unset or any value other than 1 disables it. Enable only with matching API, CLI and bridge versions; separate owner approval remains required and approved behavioral fixtures may have external effects |
 | `FAAS_MEASURED_CPU_ADMISSION` | schedd | `default` |  |  | `` | optional boolean switch for ADR 20261029151111 measured CPU admission; default on since its 2026-10-31 amendment; overrides measured_cpu_admission in schedd.toml either way, so an environment drop-in turns it off on a node across manifest renders |
 | `FAAS_METADATA_ENV_ENDPOINT` | guest, shared | `guest` |  | http://169.254.169.254/v1/metadata/env | `` | guest-init stamps the platform metadata endpoint; opt-in SDK helpers may override it for tests |
 | `FAAS_METERD_ROLE` | meterd, shared | `dropin` |  |  | `` |  |
@@ -677,6 +684,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NEOND_ORG_ID` | neond | `dropin` |  |  | `` | ADR-20261112160000 decision 3: the Neon organization the admin key's service user administers; with FAAS_SEAL_DOMAIN_NEON_IDENTITY_PATH (the neon seal domain) it turns on project keys (minted on project create, revoked on delete). Unset, every call uses the admin key |
 | `FAAS_NEOND_PROJECT_KEY_MAX_AGE` | neond | `default` |  | 2160h | `` | ADR-20261112160000 decision 3: neond's key sweep re-mints a project key once it is this old (Go duration, at least 1h). Lower it and restart neond to rotate every key on the next passes |
 | `FAAS_NEOND_ROLE` | neond | `dropin` |  |  | `` | ADR-20261112160000: the box role neond checks it runs on (control-plane or single-box) |
+| `FAAS_NODE_CACHE_SWEEP` | vmmd | `default` |  |  | `` | ADR-20261114182830: the node cache drops snapshot captures no row references and runtime release bases nothing uses, and evicts live snapshots last; on by default, `off` leaves the cache to oldest-first eviction |
 | `FAAS_NODE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |
@@ -1003,6 +1011,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SECRETD_EDGE_IDENTITY` | secretd | `dropin` |  |  | `` | ADR-20261110210000 slice 3f: the edge seal domain's identity, through LoadCredential=faas_seal_domain_edge from /etc/faas/secrets/domains/edge.age (faas_seal_domain_edge_previous beside it during a rotation), staged on the control plane only with SEAL_DOMAIN_EDGE_ON_CONTROL_PLANE=true; set, secretd opens log drain headers (OpenLogDrainHeader); unset refuses them |
 | `FAAS_SECRETD_LISTEN` | secretd | `dropin` |  |  | `` | ADR-20261110210000 §3: tcp://<control plane private address>:<port>; secretd_service renders it from faas_secretd_listen |
 | `FAAS_SECRETD_METRICS_ADDR` | secretd | `dropin` |  |  | `` | ADR-20261110210000: loopback host:port serving /metrics (faas_secretd_opens_total, faas_secretd_refusals_total); secretd_service renders it from faas_secretd_metrics_listen (127.0.0.1:9114) and the prometheus role scrapes it; unset serves no metrics |
+| `FAAS_SECRETD_POSTGRES_HMAC_KEY` | secretd | `dropin` |  |  | `` | Control-plane fingerprint key via LoadCredential; validates staged SQL credential fingerprints inside secretd |
 | `FAAS_SECRETD_REQUIRE_REFERENCES` | secretd | `dropin` |  | false | `` | ADR-20261110210000 slice 3d-4 contract step: true refuses app-secret entries that carry ciphertext instead of naming the app's own app_secrets row (scope, key); secretd_service renders it from faas_secretd_require_references once every schedd and vmmd sends references |
 | `FAAS_SECRETD_ROLE` | secretd | `dropin` |  |  | `` | ADR-20261110210000 §3: the box role secretd checks it runs on (control-plane or single-box) |
 | `FAAS_SECRETD_RUNTIME_IDENTITY` | secretd | `dropin` |  |  | `` | ADR-20261110210000 §3: the runtime seal domain's identity, through LoadCredential=faas_seal_domain_runtime from /etc/faas/secrets/domains/runtime.age, with faas_seal_domain_runtime_previous beside it during a rotation; staged on the control plane only with SEAL_DOMAIN_RUNTIME_ON_CONTROL_PLANE=true |
@@ -1132,6 +1141,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_APID_CLIENT_TLS_CA_PATH` | vmmd | `dropin` |  |  | `` | split-box guest trace exports (ADR-958); vmmd_service 99-faas-spans-writer.conf |
 | `FAAS_VMMD_APID_CLIENT_TLS_CERT_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/apid-client leaf (ADR-958) |
 | `FAAS_VMMD_APID_CLIENT_TLS_KEY_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/apid-client leaf (ADR-958) |
+| `FAAS_VMMD_BUILD_REGISTRY_MIRROR` | vmmd | `dropin` |  | off | `` | ADR-20261110210000 slice 3j-3: off gives a builder VM a Docker config with its app's registry passwords, opened with the build identity; secretd serves the builder those registries as a mirror on its vsock, pulled through secretd's RegistryFetch by build id, and opens no password on the node. Needs FAAS_SECRETD_TARGET and FAAS_SECRETD_TLS_{CERT,KEY,CA}_PATH. Set by vmmd_service (faas_vmmd_build_registry_mirror); read at start |
 | `FAAS_VMMD_CONFIG` | vmmd | `default` |  |  | `` |  |
 | `FAAS_VMMD_DATABASE_ROUTE_ENABLED` | vmmd | `dropin` |  |  | `` | ADR-1027 lets app VMs reach managed PostgreSQL through the node's database route; set from the manifest's managed_postgres.app_route |
 | `FAAS_VMMD_DBURL` | vmmd | `envfile` |  |  | `` |  |

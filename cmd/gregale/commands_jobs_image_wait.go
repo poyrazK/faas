@@ -56,9 +56,15 @@ func cmdJobsInfoWaitArgs(args []string) int {
 	job, err := client.GetJob(readCtx, name)
 	cancel()
 	if err != nil {
+		if *wait && jsonOutput {
+			return renderJobImageWaitError(err, jobImageInitialReadCode(err), name, api.JobResponse{}, *timeout, *interval)
+		}
 		return printErr("Could not read Job", err)
 	}
 	if job.Name != name || ((*wait || *check) && !jobRunIDPattern.MatchString(job.ID)) {
+		if *wait && jsonOutput {
+			return renderJobImageWaitError(errors.New("server returned another Job"), 1, name, api.JobResponse{}, *timeout, *interval)
+		}
 		return printErr("Invalid Job", errors.New("server returned another Job"))
 	}
 	if *wait {
@@ -98,10 +104,15 @@ func outputJobImageWait(ctx context.Context, client *api.Client, job api.JobResp
 			Error         string          `json:"error,omitempty"`
 		}{Job: last, ExitCode: code, ResumeCommand: resume}
 		if err != nil {
-			receipt.Error = err.Error()
+			receipt.Error = redactErrorText(err.Error())
+			receipt.ResumeCommand = redactErrorText(receipt.ResumeCommand)
+			receipt.Job.ImageMaterializationError = redactErrorText(receipt.Job.ImageMaterializationError)
 		}
 		if outputCode := jsonOut(writeJSONSingle(receipt)); outputCode != 0 {
 			return outputCode
+		}
+		if err != nil {
+			return renderJobImageWaitError(err, code, job.Name, last, timeout, interval)
 		}
 	} else {
 		renderJobState(osStdout, last)
@@ -116,11 +127,8 @@ func followJobImage(ctx context.Context, client *api.Client, pin api.JobResponse
 	last := pin
 	previous := ""
 	for {
-		if last.ID != pin.ID || last.Name != pin.Name || last.AccountID != pin.AccountID || last.ImageRef != pin.ImageRef {
-			return last, 1, errors.New("job identity or selected image changed; inspect the Job and start a new wait")
-		}
-		if pin.ImageResolvedDigest != "" && last.ImageResolvedDigest != pin.ImageResolvedDigest {
-			return last, 1, errors.New("resolved image digest changed")
+		if err := jobImageSelectionError(pin, last); err != nil {
+			return last, 1, err
 		}
 		if pin.ImageResolvedDigest == "" && last.ImageResolvedDigest != "" {
 			pin.ImageResolvedDigest = last.ImageResolvedDigest
@@ -134,7 +142,7 @@ func followJobImage(ctx context.Context, client *api.Client, pin api.JobResponse
 		case "ready":
 			return last, 0, nil
 		case "failed":
-			return last, 1, fmt.Errorf("image preparation failed: %s", oneLine(last.ImageMaterializationError))
+			return last, 1, fmt.Errorf("%w: %s", errJobImagePreparationFailed, oneLine(last.ImageMaterializationError))
 		case "pending", "verifying_legacy":
 		default:
 			return last, 1, errors.New("unknown image preparation status")
@@ -159,6 +167,9 @@ func followJobImage(ctx context.Context, client *api.Client, pin api.JobResponse
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return last, 124, ctx.Err()
 			}
+			return last, 1, err
+		}
+		if err := jobImageSelectionError(pin, got); err != nil {
 			return last, 1, err
 		}
 		last = got

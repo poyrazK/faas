@@ -52,11 +52,18 @@ func (e *PrivateExecutor) connectionRedactions(ctx context.Context, g api.ToolGr
 	if err != nil {
 		return nil, err
 	}
-	values, err := e.openConnectionTokens(ctx, c)
-	if err != nil {
-		return nil, state.ErrToolOAuthReconnect
+	return e.connectionSensitiveValues(ctx, c)
+}
+
+func (e *PrivateExecutor) connectionSensitiveValues(ctx context.Context, c state.ToolOAuthConnection) ([]string, error) {
+	out := []string{}
+	if len(c.Ciphertext) > 0 {
+		values, err := e.openConnectionTokens(ctx, c)
+		if err != nil {
+			return nil, state.ErrToolOAuthReconnect
+		}
+		out = append(out, values["REFRESH_TOKEN"], values["ACCESS_TOKEN"])
 	}
-	out := []string{values["REFRESH_TOKEN"], values["ACCESS_TOKEN"]}
 	for _, source := range []struct{ ref, digest string }{{c.Record.Intent.RefreshTokenSecretRef, c.Record.SourceSHA256}, {c.Record.Intent.ClientSecretRef, c.Record.ClientSourceSHA256}} {
 		if source.ref != "" {
 			value, e := e.connectionSecretValue(ctx, c.Record, source.ref, source.digest)
@@ -78,28 +85,42 @@ func (e *PrivateExecutor) connectionToken(ctx context.Context, g api.ToolGrantRe
 	if err != nil {
 		return "", err
 	}
+	access, err := e.useConnectionClaim(ctx, g.AccountID, claim)
+	return access.token, err
+}
+
+type connectionAccess struct {
+	token     string
+	expiresAt *time.Time
+}
+
+func (e *PrivateExecutor) useConnectionClaim(ctx context.Context, account string, claim state.ToolOAuthConnectionClaim, guards ...func(http.RoundTripper) http.RoundTripper) (connectionAccess, error) {
 	c := claim.Connection
 	if !claim.Fresh {
 		values, err := e.openConnectionTokens(ctx, c)
 		if err != nil || !executionToken(values["ACCESS_TOKEN"]) {
-			return "", state.ErrToolOAuthReconnect
+			return connectionAccess{}, state.ErrToolOAuthReconnect
 		}
-		return values["ACCESS_TOKEN"], nil
+		return connectionAccess{token: values["ACCESS_TOKEN"], expiresAt: c.Record.ExpiresAt}, nil
 	}
-	access, ciphertext, expiry, reason := e.renewConnection(ctx, c)
+	access, ciphertext, expiry, reason := e.renewConnection(ctx, c, guards...)
 	// A successful response is saved even if the originating request disconnects.
 	// Only a durable save grants use of the new access token. Lost responses and
 	// expired leases never authorize another exchange of the old refresh token.
 	persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ToolOAuthPersistTimeout)
 	defer cancel()
-	_, err = store.FinishToolOAuthRenewal(persist, g.AccountID, c.Record.ID, c.LeaseID, ciphertext, expiry, reason)
+	store, ok := e.store.(state.ToolOAuthConnectionStore)
+	if !ok {
+		return connectionAccess{}, state.ErrNotFound
+	}
+	_, err := store.FinishToolOAuthRenewal(persist, account, c.Record.ID, c.LeaseID, ciphertext, expiry, reason)
 	if err != nil {
-		return "", err
+		return connectionAccess{}, err
 	}
 	if reason != "" {
-		return "", state.ErrToolOAuthReconnect
+		return connectionAccess{}, state.ErrToolOAuthReconnect
 	}
-	return access, nil
+	return connectionAccess{token: access, expiresAt: expiry}, nil
 }
 
 func (e *PrivateExecutor) connectionSecretValue(ctx context.Context, c api.ToolOAuthConnectionRecord, ref, digest string) (string, error) {
@@ -115,7 +136,7 @@ func (e *PrivateExecutor) connectionSecretValue(ctx context.Context, c api.ToolO
 	return value, nil
 }
 
-func (e *PrivateExecutor) renewConnection(ctx context.Context, c state.ToolOAuthConnection) (string, []byte, *time.Time, string) {
+func (e *PrivateExecutor) renewConnection(ctx context.Context, c state.ToolOAuthConnection, guards ...func(http.RoundTripper) http.RoundTripper) (string, []byte, *time.Time, string) {
 	r := c.Record
 	if e.opts.ConnectionRecipients == nil || e.opts.ConnectionIdentities == nil || e.opts.HTTP == nil {
 		return "", nil, nil, "credential_unavailable"
@@ -143,7 +164,7 @@ func (e *PrivateExecutor) renewConnection(ctx context.Context, c state.ToolOAuth
 			return "", nil, nil, "credential_unavailable"
 		}
 	}
-	response, reason := e.refreshExecutionOAuth(ctx, r.Intent, refresh, secret)
+	response, reason := e.refreshExecutionOAuth(ctx, r.Intent, refresh, secret, guards...)
 	if reason != "" {
 		return "", nil, nil, reason
 	}
@@ -199,9 +220,9 @@ type executionOAuthResponse struct {
 	Scope        string `json:"scope"`
 }
 
-func (e *PrivateExecutor) refreshExecutionOAuth(ctx context.Context, in api.ToolOAuthConnectionIntent, refresh, secret string) (executionOAuthResponse, string) {
+func (e *PrivateExecutor) refreshExecutionOAuth(ctx context.Context, in api.ToolOAuthConnectionIntent, refresh, secret string, guards ...func(http.RoundTripper) http.RoundTripper) (executionOAuthResponse, string) {
 	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "scope": {strings.Join(in.Scopes, " ")}, "resource": {in.Resource}}
-	return e.requestExecutionOAuth(ctx, in, form, secret)
+	return e.requestExecutionOAuth(ctx, in, form, secret, guards...)
 }
 
 func (e *PrivateExecutor) exchangeAuthorization(ctx context.Context, c state.ToolOAuthConnection, code string, values secretbox.Envelope) ([]byte, *time.Time, string) {
@@ -221,7 +242,7 @@ func (e *PrivateExecutor) exchangeAuthorization(ctx context.Context, c state.Too
 	return ciphertext, expiry, reason
 }
 
-func (e *PrivateExecutor) requestExecutionOAuth(ctx context.Context, in api.ToolOAuthConnectionIntent, form url.Values, secret string) (executionOAuthResponse, string) {
+func (e *PrivateExecutor) requestExecutionOAuth(ctx context.Context, in api.ToolOAuthConnectionIntent, form url.Values, secret string, guards ...func(http.RoundTripper) http.RoundTripper) (executionOAuthResponse, string) {
 	var out executionOAuthResponse
 	work, cancel := context.WithTimeout(ctx, api.ToolOAuthRefreshTimeout)
 	defer cancel()
@@ -238,6 +259,9 @@ func (e *PrivateExecutor) requestExecutionOAuth(ctx context.Context, in api.Tool
 		req.SetBasicAuth(url.QueryEscape(in.ClientID), url.QueryEscape(secret))
 	}
 	client := *e.opts.HTTP
+	if len(guards) > 0 {
+		client.Transport = guards[0](client.Transport)
+	}
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {

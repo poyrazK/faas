@@ -14,7 +14,15 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.data_pipeline_capacity import DataPipelineCapacity
+    from ..models.data_pipeline_evolution import DataPipelineEvolution
+    from ..models.data_pipeline_freshness import DataPipelineFreshness
     from ..models.data_pipeline_health import DataPipelineHealth
+    from ..models.data_pipeline_index_advice import DataPipelineIndexAdvice
+    from ..models.data_pipeline_operations import DataPipelineOperations
+    from ..models.data_pipeline_operations_status import DataPipelineOperationsStatus
+    from ..models.data_pipeline_schema_review import DataPipelineSchemaReview
+    from ..models.data_pipeline_serving import DataPipelineServing
+    from ..models.data_pipeline_tenant_change import DataPipelineTenantChange
     from ..models.data_pipeline_wal_retention import DataPipelineWALRetention
 
 
@@ -42,6 +50,36 @@ class DataPipeline:
     tables_ready: int
     verification: DataPipelineVerification
     created_at: datetime.datetime
+    operations: DataPipelineOperations | Unset = UNSET
+    """Versioned policy for bounded scheduled snapshots, mirror quality checks and optional maintenance. Snapshot
+    mode is chosen at creation and cannot be changed later."""
+    operations_status: DataPipelineOperationsStatus | Unset = UNSET
+    """Historical scheduled-work observations. Capture time bounds data age independently of the catalog worker
+    observation timestamp."""
+    schema_review: DataPipelineSchemaReview | Unset = UNSET
+    """Worker-generated exact source-definition review with column and table metadata only. Its ID binds the
+    generation, recorded baseline and requested source schema."""
+    evolution: DataPipelineEvolution | Unset = UNSET
+    """Frozen account and generation-bound serving preview. Approved indicates owner intent; applied requires
+    worker verification and any required API cache refresh."""
+    freshness_target_seconds: int | Unset = UNSET
+    """Current owner-configured checkpoint confirmation target; zero means disabled and enabled targets range from
+    15 to 86400 seconds."""
+    freshness: DataPipelineFreshness | Unset = UNSET
+    """Read-time confirmation of an applied checkpoint against the owner freshness target. Old confirmation is not
+    measured replication lag; an idle source may already be caught up."""
+    index_advice: DataPipelineIndexAdvice | Unset = UNSET
+    """Frozen metadata-based mirror index advice. Size is a conservative estimate, not measured query performance.
+    Explicit approval permits a transactional build for tables up to 64 MiB, indexes up to 32 MiB, at most eight
+    owned indexes per pipeline, with a two-second deadline and 250 ms lock timeout. Failures roll back and require a
+    fresh preview."""
+    serving: DataPipelineServing | Unset = UNSET
+    """Versioned serving contract affecting publication, mirror schema and recovery. Creation accepts version 1;
+    approved evolution installs version 2. Omit columns for all-column replication. Tenant claims grant no
+    memberships. Column expansion requires source-definition approval, backfill, verification and API refresh."""
+    tenant_change: DataPipelineTenantChange | Unset = UNSET
+    """Frozen membership preview. Approval applies this exact after set atomically at the mirror before catalog
+    acknowledgement."""
     wal_retention: DataPipelineWALRetention | Unset = UNSET
     """Fresh source-specific WAL headroom. The remaining-time estimate uses sampled cluster WAL generation and does
     not guarantee when a slot will be invalidated."""
@@ -89,6 +127,40 @@ class DataPipeline:
         verification: str = self.verification
 
         created_at = self.created_at.isoformat()
+
+        operations: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.operations, Unset):
+            operations = self.operations.to_dict()
+
+        operations_status: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.operations_status, Unset):
+            operations_status = self.operations_status.to_dict()
+
+        schema_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.schema_review, Unset):
+            schema_review = self.schema_review.to_dict()
+
+        evolution: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.evolution, Unset):
+            evolution = self.evolution.to_dict()
+
+        freshness_target_seconds = self.freshness_target_seconds
+
+        freshness: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.freshness, Unset):
+            freshness = self.freshness.to_dict()
+
+        index_advice: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.index_advice, Unset):
+            index_advice = self.index_advice.to_dict()
+
+        serving: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.serving, Unset):
+            serving = self.serving.to_dict()
+
+        tenant_change: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tenant_change, Unset):
+            tenant_change = self.tenant_change.to_dict()
 
         wal_retention: dict[str, Any] | Unset = UNSET
         if not isinstance(self.wal_retention, Unset):
@@ -139,6 +211,24 @@ class DataPipeline:
                 "created_at": created_at,
             }
         )
+        if operations is not UNSET:
+            field_dict["operations"] = operations
+        if operations_status is not UNSET:
+            field_dict["operations_status"] = operations_status
+        if schema_review is not UNSET:
+            field_dict["schema_review"] = schema_review
+        if evolution is not UNSET:
+            field_dict["evolution"] = evolution
+        if freshness_target_seconds is not UNSET:
+            field_dict["freshness_target_seconds"] = freshness_target_seconds
+        if freshness is not UNSET:
+            field_dict["freshness"] = freshness
+        if index_advice is not UNSET:
+            field_dict["index_advice"] = index_advice
+        if serving is not UNSET:
+            field_dict["serving"] = serving
+        if tenant_change is not UNSET:
+            field_dict["tenant_change"] = tenant_change
         if wal_retention is not UNSET:
             field_dict["wal_retention"] = wal_retention
         if applied_through_at is not UNSET:
@@ -161,7 +251,15 @@ class DataPipeline:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.data_pipeline_capacity import DataPipelineCapacity
+        from ..models.data_pipeline_evolution import DataPipelineEvolution
+        from ..models.data_pipeline_freshness import DataPipelineFreshness
         from ..models.data_pipeline_health import DataPipelineHealth
+        from ..models.data_pipeline_index_advice import DataPipelineIndexAdvice
+        from ..models.data_pipeline_operations import DataPipelineOperations
+        from ..models.data_pipeline_operations_status import DataPipelineOperationsStatus
+        from ..models.data_pipeline_schema_review import DataPipelineSchemaReview
+        from ..models.data_pipeline_serving import DataPipelineServing
+        from ..models.data_pipeline_tenant_change import DataPipelineTenantChange
         from ..models.data_pipeline_wal_retention import DataPipelineWALRetention
 
         d = dict(src_dict)
@@ -194,6 +292,64 @@ class DataPipeline:
         verification = check_data_pipeline_verification(d.pop("verification"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _operations = d.pop("operations", UNSET)
+        operations: DataPipelineOperations | Unset
+        if isinstance(_operations, Unset):
+            operations = UNSET
+        else:
+            operations = DataPipelineOperations.from_dict(_operations)
+
+        _operations_status = d.pop("operations_status", UNSET)
+        operations_status: DataPipelineOperationsStatus | Unset
+        if isinstance(_operations_status, Unset):
+            operations_status = UNSET
+        else:
+            operations_status = DataPipelineOperationsStatus.from_dict(_operations_status)
+
+        _schema_review = d.pop("schema_review", UNSET)
+        schema_review: DataPipelineSchemaReview | Unset
+        if isinstance(_schema_review, Unset):
+            schema_review = UNSET
+        else:
+            schema_review = DataPipelineSchemaReview.from_dict(_schema_review)
+
+        _evolution = d.pop("evolution", UNSET)
+        evolution: DataPipelineEvolution | Unset
+        if isinstance(_evolution, Unset):
+            evolution = UNSET
+        else:
+            evolution = DataPipelineEvolution.from_dict(_evolution)
+
+        freshness_target_seconds = d.pop("freshness_target_seconds", UNSET)
+
+        _freshness = d.pop("freshness", UNSET)
+        freshness: DataPipelineFreshness | Unset
+        if isinstance(_freshness, Unset):
+            freshness = UNSET
+        else:
+            freshness = DataPipelineFreshness.from_dict(_freshness)
+
+        _index_advice = d.pop("index_advice", UNSET)
+        index_advice: DataPipelineIndexAdvice | Unset
+        if isinstance(_index_advice, Unset):
+            index_advice = UNSET
+        else:
+            index_advice = DataPipelineIndexAdvice.from_dict(_index_advice)
+
+        _serving = d.pop("serving", UNSET)
+        serving: DataPipelineServing | Unset
+        if isinstance(_serving, Unset):
+            serving = UNSET
+        else:
+            serving = DataPipelineServing.from_dict(_serving)
+
+        _tenant_change = d.pop("tenant_change", UNSET)
+        tenant_change: DataPipelineTenantChange | Unset
+        if isinstance(_tenant_change, Unset):
+            tenant_change = UNSET
+        else:
+            tenant_change = DataPipelineTenantChange.from_dict(_tenant_change)
 
         _wal_retention = d.pop("wal_retention", UNSET)
         wal_retention: DataPipelineWALRetention | Unset
@@ -257,6 +413,15 @@ class DataPipeline:
             tables_ready=tables_ready,
             verification=verification,
             created_at=created_at,
+            operations=operations,
+            operations_status=operations_status,
+            schema_review=schema_review,
+            evolution=evolution,
+            freshness_target_seconds=freshness_target_seconds,
+            freshness=freshness,
+            index_advice=index_advice,
+            serving=serving,
+            tenant_change=tenant_change,
             wal_retention=wal_retention,
             applied_through_at=applied_through_at,
             health=health,

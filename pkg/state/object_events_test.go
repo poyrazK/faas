@@ -143,7 +143,7 @@ func objectMutationEvents(t *testing.T, st accountingStore) {
 			}
 		})
 	}
-	b, _ := seedAccounting(t, st)
+	b, _ := seedObjectEvents(t, st)
 	writes := st.(state.ObjectTrackedGatewayUploadStore)
 	c, err := writes.BeginTrackedGatewayUpload(t.Context(), state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: "owner", Key: "failed", Status: "pending"}, accountingPolicy())
 	if err != nil {
@@ -173,7 +173,7 @@ func TestObjectMutationEventRollbackPG(t *testing.T) {
 	objectMutationEventRollback(t, s)
 }
 func objectMutationEventRollback(t *testing.T, st accountingStore) {
-	b, _ := seedAccounting(t, st)
+	b, _ := seedObjectEvents(t, st)
 	writes := st.(state.ObjectTrackedGatewayUploadStore)
 	c, err := writes.BeginTrackedGatewayUpload(t.Context(), state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: "owner", Key: "rollback", Bytes: 1, Status: "pending"}, accountingPolicy())
 	if err != nil {
@@ -229,8 +229,27 @@ func TestObjectMultipartMutationEventsPG(t *testing.T) {
 	s, _ := pgStore(t)
 	objectMultipartMutationEvent(t, s)
 }
+
+// seedObjectEvents is seedAccounting with the bucket's app subscribed to its
+// object events: an object event nobody receives is not kept (ADR-614
+// amendment 2026-11-13), so a test that reads one needs a recipient.
+func seedObjectEvents(t *testing.T, st accountingStore) (state.ObjectBucket, api.ObjectStorageUsageReport) {
+	t.Helper()
+	b, r := seedAccounting(t, st)
+	subscribeObjectEvents(t, st, b)
+	return b, r
+}
+
+func subscribeObjectEvents(t *testing.T, st accountingStore, b state.ObjectBucket) {
+	t.Helper()
+	if _, _, err := st.(state.EventSubscriptionStore).UpsertEventSubscription(t.Context(), b.AccountID, b.AppID, api.ObjectEventSource, "*", nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func objectMultipartMutationEvent(t *testing.T, st accountingStore) {
 	b, u := preparedMultipartResult(t, st, "multipart")
+	subscribeObjectEvents(t, st, b)
 	results := st.(state.ObjectMultipartCompletionStore)
 	if err := results.DispatchObjectMultipartCompletion(t.Context(), u); err != nil {
 		t.Fatal(err)
@@ -278,7 +297,7 @@ func objectDeletionMutationEvents(t *testing.T, st accountingStore, advance func
 		marker, lifecycle        bool
 	}{{"", "", "", false, false}, {"Enabled", "", "provider-private-marker", true, false}, {"Suspended", "", "null", true, false}, {"", "immutable", "provider-private-target", false, false}, {"", "immutable", "provider-private-marker-target", true, false}, {"", "", "", false, true}} {
 		t.Run(tc.status+tc.selector+tc.native, func(t *testing.T) {
-			b, _ := seedAccounting(t, st)
+			b, _ := seedObjectEvents(t, st)
 			d := st.(state.ObjectDeletionStore)
 			if tc.status != "" {
 				configureObjectEventVersioning(t, st, b, tc.status, advance)
@@ -407,7 +426,7 @@ func TestObjectMutationVersionMigrationPG(t *testing.T) {
 	if err = tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := seedAccounting(t, st)
+	b, _ := seedObjectEvents(t, st)
 	c, err := st.BeginTrackedGatewayUpload(ctx, state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, SubjectID: "owner", Key: "version", Status: "pending", Bytes: 1}, accountingPolicy())
 	if err != nil {
 		t.Fatal(err)

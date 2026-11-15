@@ -153,6 +153,9 @@ type Workload struct {
 	// reconciliation metadata; the signed archive hash still binds the full
 	// project request.
 	SourceSHA256 string
+	// SourceHosts are literals in this workload's source that dial another
+	// service by its Compose name (detectSourceHosts).
+	SourceHosts []api.PlanSourceHost
 	// DependsOn contains service names declared by Compose's depends_on or by
 	// .gregale/project.yaml (ADR-20261025093331). The graph orders admission;
 	// explicit conditions also gate release.
@@ -542,6 +545,7 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 		}
 		workloads[i].SourceSHA256 = digest
 	}
+	detectSourceHosts(fsys, workloads, managed)
 	sortStableByName(workloads)
 	sortManagedByName(managed)
 

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"io"
 	"log/slog"
 	"net"
@@ -31,6 +32,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
+	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
@@ -399,6 +401,7 @@ var AnnotateRouteDeploymentCPURegressions = annotateRouteDeploymentCPURegression
 var ApiManifestFromState = apiManifestFromState
 var ApidListener = apidListener
 var AppDeclaresTCPListener = appDeclaresTCPListener
+var AppInternalTCPPort = appInternalTCPPort
 var AppDeclaresUDPListener = appDeclaresUDPListener
 var AppHostForDomain = appHostForDomain
 var AppIDFromPayload = appIDFromPayload
@@ -608,6 +611,20 @@ func UploadSessionLockTracked(key string) bool {
 var MustSeedEdgeRuleApp = mustSeedEdgeRuleApp
 var NearestRunningTelemetryRow = nearestRunningTelemetryRow
 var NewAppSecretCredentialSink = newAppSecretCredentialSink
+
+func NewPostgresCutoverVerifierFixture(identity *age.X25519Identity, key []byte, probe func(context.Context, string, managedpostgres.CredentialAccess, int) error, client secretdpb.SecretdClient) managedpostgres.CutoverCredentialVerifier {
+	return &appSecretCredentialSink{
+		identities:   func() []*age.X25519Identity { return []*age.X25519Identity{identity} },
+		hmacKey:      func() []byte { return key },
+		probe:        probe,
+		cutoverProbe: postgresRemoteVerifier(client),
+	}
+}
+
+func CheckPostgresCutoverVerifierConfigurationForTest(ctx context.Context, getenv func(string) string) error {
+	return configurePostgresCutoverVerifier(ctx, &appSecretCredentialSink{}, getenv)
+}
+
 var NewAuditor = newAuditor
 var NewAuthedDashboardServer = newAuthedDashboardServer
 var NewAuthedDashboardServerFull = newAuthedDashboardServerFull
@@ -1442,8 +1459,17 @@ func (r *server) PurgeAppCache(p0 http.ResponseWriter, p1 *http.Request, p2 stat
 func (r *server) RealtimedMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.realtimedMetricsDiscovery(p0, p1)
 }
-func (r *server) RecordDevPatchSource(p0 context.Context, p1 state.App, p2 string, p3 string, p4 string, p5 devPatchPlan) {
-	r.recordDevPatchSource(p0, p1, p2, p3, p4, p5)
+func (r *server) RecordDevPatchSource(p0 context.Context, p1 state.App, p2 string, p3 string, p4 string, p5 devPatchPlan) bool {
+	return r.recordDevPatchSource(p0, p1, p2, p3, p4, p5)
+}
+func (r *server) SettleDeferredDevBuild(p0 context.Context, p1 state.App, p2 string, p3 time.Time, p4 bool, p5 *api.DevPatchPreview) {
+	r.settleDeferredDevBuild(p0, p1, p2, p3, p4, p5)
+}
+func (r *server) CancelSupersededDevBuilds(p0 context.Context, p1 state.Account, p2 state.App, p3 string) {
+	r.cancelSupersededDevBuilds(p0, p1, p2, p3)
+}
+func (r *server) StartDeferredDevBuilds(p0 context.Context, p1 state.App) {
+	r.startDeferredDevBuilds(p0, p1)
 }
 func (r *server) RedirectToGitHubAuthorization(p0 http.ResponseWriter, p1 *http.Request, p2 int64) bool {
 	return r.redirectToGitHubAuthorization(p0, p1, p2)
@@ -1629,6 +1655,9 @@ func (r *server) KeysLeftAfterReset(p0 context.Context, p1 state.Account) []stat
 func (r *server) RemoveForeignProviderLinks(p0 context.Context, p1 string, p2 string) {
 	r.removeForeignProviderLinks(p0, p1, p2)
 }
+func (r *server) RemoveOldAddressProviderLinks(p0 context.Context, p1 state.Account, p2 string) {
+	r.removeOldAddressProviderLinks(p0, p1, p2)
+}
 func (r *server) VmmdMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.vmmdMetricsDiscovery(p0, p1)
 }
@@ -1717,6 +1746,7 @@ var PrepareIssueOTLP = prepareIssueOTLP
 
 // Storage integration tests compile in the external unit (ADR-982).
 var SetupSecrets = setupSecrets
+var EnvironmentBranchSourceVersioned = environmentBranchSourceVersioned
 var SelectedObjectStorageVerification = selectedObjectStorageVerification
 
 func (r *fakeObjectProvider) Created() *[]string { return &r.created }
@@ -2149,6 +2179,18 @@ func (r *server) ExpireComplimentaryAccounts(ctx context.Context, now time.Time)
 	return r.expireComplimentaryAccounts(ctx, now)
 }
 
+// StampActiveBillingSubscription stamps subscriptionID as acct's subscription,
+// as a provider webhook does.
+func (r *server) StampActiveBillingSubscription(ctx context.Context, acct state.Account, subscriptionID string) error {
+	return r.stampActiveBillingSubscription(ctx, acct, subscriptionID)
+}
+
+// ManagedPostgresSubjectInactive reports whether account's databases stop
+// because the account is not active.
+func ManagedPostgresSubjectInactive(ctx context.Context, store any, account state.Account) (bool, error) {
+	return managedPostgresSubjectInactive(ctx, store, account)
+}
+
 // ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
 func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
 	return r.expireUnverifiedAccounts(ctx)
@@ -2370,10 +2412,15 @@ func (r *server) LinkOAuthByEmail(req *http.Request, acct state.Account, provide
 
 // Login failure limiter internals (bug hunt round 8: eviction when full).
 func NewLoginFailureLimiterForTest() *loginFailureLimiter { return newLoginFailureLimiter() }
-func (l *loginFailureLimiter) Record(key string) bool     { return l.record(key) }
-func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
-	return l.retryAfter(key)
+func (l *loginFailureLimiter) Record(key string) bool {
+	return l.record(key, api.LoginFailuresPerEmail)
 }
+func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
+	return l.retryAfter(key, api.LoginFailuresPerEmail)
+}
+
+// LoginNetwork exposes the failed-password budget's client network (F10-1).
+var LoginNetwork = loginNetwork
 
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
@@ -2403,6 +2450,8 @@ type RegressionComparison struct {
 	Cur, Prev          string
 	CurStart, CurEnd   time.Time
 	PrevStart, PrevEnd time.Time
+	OwnStart, OwnEnd   time.Time
+	SideBySide         bool
 }
 
 func ChooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now time.Time) (RegressionComparison, bool) {
@@ -2410,8 +2459,11 @@ func ChooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now ti
 	return RegressionComparison{
 		Cur: c.cur.DeploymentID.String(), Prev: c.prev.DeploymentID.String(),
 		CurStart: c.curStart, CurEnd: c.curEnd, PrevStart: c.prevStart, PrevEnd: c.prevEnd,
+		OwnStart: c.ownStart, OwnEnd: c.ownEnd, SideBySide: c.sideBySide(),
 	}, ok
 }
+
+var MergeRegressionBaselines = mergeRegressionBaselines
 
 var DebugEvidenceLogWindow = debugEvidenceLogWindow
 
@@ -2523,6 +2575,25 @@ var FinancialBudgetProblem = financialBudgetProblem
 
 // AppOOMRecommendation is the operational-summary OOM recommendation (2026-11-13).
 var AppOOMRecommendation = appOOMRecommendation
+
+func (s *server) PrivatePublicationReplicaClientForTest(ctx context.Context, target api.ToolInvocationTarget, instance, host, token, version string) (*mcphosting.Client, error) {
+	app, err := s.store.AppByID(ctx, target.AppID)
+	if err != nil {
+		return nil, err
+	}
+	probe, err := mcphosting.NewClient("https://"+host+target.EndpointPath, token, version)
+	if err != nil {
+		return nil, err
+	}
+	probe.HTTP = &http.Client{Timeout: 10 * time.Second, Transport: privatePublicationReplicaTransport{server: s, app: app, target: target, instance: instance, host: host, version: version}}
+	return probe, nil
+}
+
+// SetSignupGeoForTest replaces the sign-up country and network-owner lookups
+// (ADR-20261113160000); nil lookups leave the facts empty.
+func (s *server) SetSignupGeoForTest(country func(net.IP) string, asn func(net.IP) (uint32, string)) {
+	s.signupGeo = &signupGeo{country: country, asn: asn}
+}
 
 func (r pgHandlerEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map[string]string) *httptest.ResponseRecorder {
 	return r.doSession(p0, p1, p2, p3, p4, p5)

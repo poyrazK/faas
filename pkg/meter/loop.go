@@ -323,7 +323,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	finalLag := newUsageFinalLagGauge(l.ops.Registry())
 	// One result slot per possible worker, including monitoring and delivery;
 	// a cancelled Run must not strand workers trying to report their exit.
-	errc := make(chan error, 12)
+	errc := make(chan error, 13)
 	go func() {
 		errc <- l.runTicksImmediately(ctx, l.cfg.SampleInterval, func(c context.Context) error {
 			// PR-A (ADR-060, issue #515): capture the
@@ -382,6 +382,11 @@ func (l *Loop) Run(ctx context.Context) error {
 			errc <- l.runTicks(ctx, l.cfg.DunningInterval,
 				func(c context.Context) error { return l.dunning.RunOnce(c) },
 				"dunning")
+		}()
+		// Billing review H17-4: tell subjects which apps their plan parks.
+		// Runs with dunning, on the same interval.
+		go func() {
+			errc <- l.runTicks(ctx, l.cfg.DunningInterval, l.RunPlanFitNoticesOnce, "plan_fit_notices")
 		}()
 	}
 	if l.residency != nil {
@@ -740,9 +745,23 @@ func (l *Loop) recordSpendCapHold(ctx context.Context, acct state.Account, now t
 		l.log.Warn("meter: object storage charge read failed", "account", acct.ID, "err", err)
 		return err
 	}
-	observed := saturatedAdd(saturatedAdd(monthCents, meterCents), objectStorageCents)
+	// Managed PostgreSQL overage counts toward the cap too (billing review
+	// 2026-11-13, R7-1), delivered the same way.
+	databaseCents, err := SpendCapManagedPostgresCents(ctx, l.store, acct.ID, now)
+	if err != nil {
+		l.log.Warn("meter: managed postgres charge read failed", "account", acct.ID, "err", err)
+		return err
+	}
+	observed := saturatedAdd(saturatedAdd(saturatedAdd(monthCents, meterCents), objectStorageCents), databaseCents)
+	complimentary := false
+	if capCents == 0 {
+		if complimentary, err = state.IsComplimentaryAccount(ctx, l.store, acct.ID); err != nil {
+			l.log.Warn("meter: complimentary read failed", "account", acct.ID, "err", err)
+			return err
+		}
+	}
 	holds, hasHolds := l.store.(state.SpendCapHoldStore)
-	if observed < capCents {
+	if !state.SpendCapReached(capCents, observed, complimentary) {
 		if hasHolds {
 			if err := holds.ClearSpendCapHold(ctx, acct.ID); err != nil {
 				l.log.Warn("meter: clear spend cap hold failed", "account", acct.ID, "err", err)

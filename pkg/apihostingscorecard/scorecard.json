@@ -81,7 +81,7 @@
       "name": "Capability acceptance: async",
       "category": "reliability",
       "description": "Each released async capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["account-release-webhooks", "async-invocations", "crons", "dead-letter-queues", "event-acknowledgments", "event-delivery-controls", "event-recoveries", "event-replays", "event-schemas", "event-subscriptions", "event-triggers", "events", "execution-workflows", "failed-events-console", "jobs", "operation-approvals", "operation-artifacts", "operation-children", "operation-concurrency", "operation-effects", "operation-milestones", "operation-recovery", "operation-schedules", "operation-signals", "operations", "outbound-webhooks", "queue-bindings", "queue-pull-leases", "queues", "work-policies", "workflow-insights", "workflow-recovery", "workflow-schedules", "workflows"],
+      "capabilities": ["account-release-webhooks", "async-invocations", "crons", "dead-letter-queues", "event-acknowledgments", "event-delivery-controls", "event-recoveries", "event-replays", "event-schemas", "event-subscriptions", "event-triggers", "events", "execution-workflows", "failed-events-console", "jobs", "operation-approvals", "operation-artifacts", "operation-children", "operation-concurrency", "operation-effects", "operation-milestones", "operation-recovery", "operation-schedules", "operation-signals", "operations", "outbound-webhooks", "postgres-changes", "queue-bindings", "queue-pull-leases", "queues", "work-policies", "workflow-insights", "workflow-recovery", "workflow-schedules", "workflows"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/e2e/cron_e2e_test.go::TestE2E_Cron_FiresOnScheduleAndOnDemand"},
@@ -112,6 +112,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/operations_approval_inputs_test.go::TestOperationApprovalFormsAreHiddenUntilAllowlisted"},
         {"kind": "test", "locator": "pkg/apid/apidserver/operations_children_test.go::TestOperationChildrenPlanLimit"},
         {"kind": "test", "locator": "pkg/apid/apidserver/operations_signals_test.go::TestOperationSignalRoutes"},
+        {"kind": "test", "locator": "pkg/commitmanaged/changes_test.go::TestChangesSourceDeliversToWorkerQueue"},
         {"kind": "test", "locator": "pkg/operations/acceptance/artifacts_test.go::TestPgOperationArtifacts"},
         {"kind": "test", "locator": "pkg/operations/acceptance/recovery_test.go::TestPgOperationRecovery"},
         {"kind": "test", "locator": "pkg/operations/milestones_test.go::TestMilestoneContracts"},

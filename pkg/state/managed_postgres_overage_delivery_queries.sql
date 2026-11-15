@@ -57,6 +57,19 @@ FROM (
 GROUP BY s.subject_id
 ORDER BY s.subject_id;
 
+-- name: ManagedPostgresLiveOverageMillicents :one
+-- Billing review 2026-11-13 (R7-1): the subject's live managed PostgreSQL
+-- overage charge for the month, which the spend cap counts like compute,
+-- egress and object storage: delivered, and reserved in steps not yet
+-- finished (their target past their starting point).
+SELECT
+    COALESCE((SELECT sum(d.delivered_millicents) FROM managed_postgres_overage_deliveries d
+        WHERE d.subject_id = sqlc.arg(subject_id)::uuid AND d.period_start = sqlc.arg(period_start)::timestamptz
+          AND d.live), 0)::bigint AS delivered_millicents,
+    COALESCE((SELECT sum(greatest(p.target_millicents - p.from_millicents, 0)) FROM managed_postgres_overage_pending p
+        WHERE p.subject_id = sqlc.arg(subject_id)::uuid AND p.period_start = sqlc.arg(period_start)::timestamptz
+          AND p.live), 0)::bigint AS pending_millicents;
+
 -- name: ManagedPostgresOverageDelivered :one
 SELECT d.live, d.billed_unit_seconds, d.delivered_millicents, d.updated_at, d.billed_storage_byte_seconds,
     d.billed_egress_bytes

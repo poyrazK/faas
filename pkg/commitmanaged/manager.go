@@ -25,6 +25,12 @@ type Store interface {
 	RecordCommitBlockedEvents(context.Context, state.CommitRelaySource, []state.CommitBlockedEvent) error
 	PendingCommitReplays(context.Context, string, string) ([]state.CommitReplay, error)
 	CompleteCommitReplay(context.Context, string, string, string, int64) error
+	// AcceptCommitChange enqueues a changes source's captured row change into
+	// its app's named queue (ADR-20261112140000), in its row's order when
+	// work is set (ADR-20261112193306).
+	AcceptCommitChange(context.Context, string, string, string, string, json.RawMessage, state.Invocation, *state.CommitChangeWork) (state.CommitReceipt, error)
+	// Changes order each row's changes under the built-in ordered policy.
+	state.AppWorkPolicyStore
 }
 
 type Manager struct {
@@ -33,11 +39,24 @@ type Manager struct {
 	Policy            commitwork.NetworkPolicy
 	AcceptedRetention time.Duration
 	RealtimeEnabled   bool
+	// PublicDatabases lets changes sources reach customer databases at any
+	// globally reachable address (FAAS_COMMIT_PUBLIC_DATABASES,
+	// ADR-20261112140000 §6). Other sources keep the operator allowlist.
+	PublicDatabases bool
 	// Open is injectable for isolated acceptance environments. Production uses
 	// the policy-enforcing TLS dialer. Each pool is closed after its bounded tick.
 	Open   func(context.Context, string, commitwork.NetworkPolicy) (*pgxpool.Pool, error)
 	Report func(string, string, int)
+	// Now is injectable for tests; nil uses time.Now.
+	Now    func() time.Time
 	cursor string
+}
+
+func (m *Manager) now() time.Time {
+	if m.Now != nil {
+		return m.Now()
+	}
+	return time.Now()
 }
 
 func (m *Manager) Tick(ctx context.Context) error {
@@ -55,6 +74,12 @@ func (m *Manager) Tick(ctx context.Context) error {
 	for _, src := range sources {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		// A changes source is polled no more often than its interval, so an
+		// idle scale-to-zero database can suspend (ADR-20261112140000 §7).
+		if !src.Changes.PollDue(src.LastCheckedAt, m.now()) {
+			m.cursor = src.ID
+			continue
 		}
 		sourceCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		count, code, backlog := m.tickSource(sourceCtx, src)
@@ -92,7 +117,9 @@ func (m *Manager) tickSource(ctx context.Context, src state.CommitRelaySource) (
 	if open == nil {
 		open = commitwork.OpenPool
 	}
-	pool, err := open(ctx, raw, m.Policy)
+	policy := m.Policy
+	policy.PublicInternet = m.PublicDatabases && src.Changes.IsChanges()
+	pool, err := open(ctx, raw, policy)
 	if err != nil {
 		return 0, "database_unavailable", nil
 	}
@@ -221,6 +248,9 @@ func (a *acceptor) Accept(ctx context.Context, e commitwork.Event) (commitwork.R
 	}
 	if e.SchemaVersion != "" {
 		return commitwork.Receipt{}, &commitwork.PermanentError{Code: "invalid_event"}
+	}
+	if a.source.Changes.IsChanges() {
+		return a.acceptChange(ctx, e)
 	}
 	// Recover receipt before current version/plan checks. Content comparison is
 	// always performed by the durable store, even when the destination changed.

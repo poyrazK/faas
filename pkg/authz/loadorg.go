@@ -254,7 +254,7 @@ func handleLoadOrg(cfg LoadOrgConfig, r OrgResolver, w http.ResponseWriter, req 
 	}
 
 	// (4b) An organization that requires two-factor authentication does
-	// not admit a member without it (ADR 20261113180000).
+	// not admit a member without it (ADR 20261114170352).
 	if policy, ok := r.(OrgMFAPolicyResolver); ok && !acct.MFAEnrolled() {
 		required, err := policy.OrgRequiresMFA(req.Context(), org.ID)
 		if err != nil {

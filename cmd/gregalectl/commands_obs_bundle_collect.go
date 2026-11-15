@@ -94,30 +94,30 @@ func validObsBundleEvidence(requested string, evidence api.ObsIncidentEvidenceRe
 func fetchObsBundleSection(ctx context.Context, client *http.Client, address string, cred obsCredential, section string, dst any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return fmt.Errorf("%s: invalid apid URL", section)
+		return obsFetchFailed(section, "invalid_url", "invalid apid URL", 0)
 	}
 	cred.apply(req)
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
 		// Transport errors may contain URLs, proxy credentials or response text.
-		return fmt.Errorf("%s: apid request failed (check connectivity and collection timeout)", section)
+		return obsFetchFailed(section, obsFetchTransportReason(ctx, err, "transport_unavailable"), "apid request failed (check connectivity and collection timeout)", 0)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: apid returned HTTP %d", section, resp.StatusCode)
+		return obsFetchHTTPFailure(section, resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, api.ObsIncidentBundleResponseMaxBytes+1))
 	if err != nil {
-		return fmt.Errorf("%s: could not read apid response", section)
+		return obsFetchFailed(section, obsFetchTransportReason(ctx, err, "response_read_failed"), "could not read apid response", resp.StatusCode)
 	}
 	if len(body) > api.ObsIncidentBundleResponseMaxBytes {
-		return fmt.Errorf("%s: response exceeds %d-byte limit", section, api.ObsIncidentBundleResponseMaxBytes)
+		return obsFetchFailed(section, "response_too_large", fmt.Sprintf("response exceeds %d-byte limit", api.ObsIncidentBundleResponseMaxBytes), resp.StatusCode)
 	}
 	// Decode into the closed API types so unknown payload fields cannot be
 	// forwarded into the artifact. Never print JSON parse errors or raw bodies.
 	if err := json.Unmarshal(body, dst); err != nil {
-		return fmt.Errorf("%s: invalid JSON response", section)
+		return obsFetchFailed(section, "invalid_response", "invalid JSON response", resp.StatusCode)
 	}
 	return nil
 }

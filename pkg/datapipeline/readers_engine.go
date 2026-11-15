@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func readerPredicate(subjects []string) string {
@@ -21,12 +22,21 @@ func readerPredicate(subjects []string) string {
 func readerAuthority(ctx context.Context, p Pipeline, tx receiptSQL, exclusive bool) ([]string, string, int64, error) {
 	if _, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS gregale_pipeline.reader_access(
  pipeline_id uuid PRIMARY KEY REFERENCES gregale_pipeline.mirrors(pipeline_id) ON DELETE CASCADE,
- generation bigint NOT NULL,revision bigint NOT NULL DEFAULT 0,change_id text NOT NULL DEFAULT '',subjects text[] NOT NULL)`); err != nil {
+ generation bigint NOT NULL,revision bigint NOT NULL DEFAULT 0,change_id text NOT NULL DEFAULT '',subjects text[] NOT NULL,tenant_access jsonb NOT NULL DEFAULT '{}',auth_issuer text NOT NULL DEFAULT '')`); err != nil {
 		return nil, "", 0, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO gregale_pipeline.reader_access(pipeline_id,generation,subjects)
- SELECT pipeline_id,generation,$3::text[] FROM gregale_pipeline.mirrors WHERE pipeline_id=$1 AND generation=$2 AND NOT retiring
- ON CONFLICT DO NOTHING`, p.ID, p.Generation, p.ReadSubjects); err != nil {
+	var installed bool
+	if err := tx.QueryRow(ctx, `SELECT count(*)=2 FROM pg_attribute WHERE attrelid='gregale_pipeline.reader_access'::regclass AND attname IN ('tenant_access','auth_issuer') AND NOT attisdropped`).Scan(&installed); err != nil {
+		return nil, "", 0, err
+	}
+	if !installed {
+		if _, err := tx.Exec(ctx, `ALTER TABLE gregale_pipeline.reader_access ADD COLUMN IF NOT EXISTS tenant_access jsonb NOT NULL DEFAULT '{}',ADD COLUMN IF NOT EXISTS auth_issuer text NOT NULL DEFAULT ''`); err != nil {
+			return nil, "", 0, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO gregale_pipeline.reader_access(pipeline_id,generation,subjects,tenant_access,auth_issuer)
+ SELECT pipeline_id,generation,$3::text[],$4::jsonb,$5 FROM gregale_pipeline.mirrors WHERE pipeline_id=$1 AND generation=$2 AND NOT retiring
+ ON CONFLICT DO NOTHING`, p.ID, p.Generation, p.ReadSubjects, tenantJSON(tenantAccess(p)), appliedReaderIssuer(p)); err != nil {
 		return nil, "", 0, err
 	}
 	lock := " FOR SHARE"
@@ -47,10 +57,19 @@ func applyReaders(ctx context.Context, p Pipeline, target *pgx.Conn, current fun
 	if c == nil || c.State != "approved" {
 		return nil, nil
 	}
-	if p.DesiredState == "deleted" && !readerSubset(c.Before, c.After) {
+	if p.DesiredState == "deleted" && !readerReduction(*c) {
+		return nil, ErrConflict
+	}
+	if c.Tenant != (tenantAccess(p) != nil) || (c.Tenant && (!validMemberships(c.BeforeMemberships) || !validMemberships(c.AfterMemberships) || !slices.Equal(c.Before, membershipSubjects(c.BeforeMemberships)) || !slices.Equal(c.After, membershipSubjects(c.AfterMemberships)))) {
 		return nil, ErrConflict
 	}
 	if c.Generation != p.Generation || c.ID != readerChangeID(p, *c) || !validReaders(c.After) {
+		return nil, ErrConflict
+	}
+	if c.AfterIssuer != "" && (!c.Tenant || p.Serving == nil || p.Serving.AuthOrganizations == nil || !validAuthIssuer(c.AfterIssuer)) {
+		return nil, ErrConflict
+	}
+	if p.Serving != nil && p.Serving.AuthOrganizations != nil && !c.ResetAuth && c.AfterIssuer == "" {
 		return nil, ErrConflict
 	}
 	tx, err := target.Begin(ctx)
@@ -65,12 +84,57 @@ func applyReaders(ctx context.Context, p Pipeline, target *pgx.Conn, current fun
 	if err != nil {
 		return nil, err
 	}
+	access, err := authorityTenant(ctx, p, tx, subjects)
+	if err != nil {
+		return nil, err
+	}
+	var issuer string
+	if err = tx.QueryRow(ctx, `SELECT auth_issuer FROM gregale_pipeline.reader_access WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation).Scan(&issuer); err != nil {
+		return nil, err
+	}
+	expectedIssuer := c.BeforeIssuer
+	if id == c.ID {
+		expectedIssuer = c.AfterIssuer
+	}
+	if issuer != expectedIssuer {
+		return nil, ErrConflict
+	}
+	if c.Tenant {
+		expected := c.BeforeMemberships
+		if id == c.ID {
+			expected = c.AfterMemberships
+		}
+		expectedUntil := c.BeforeValidUntil
+		if id == c.ID {
+			expectedUntil = c.AfterValidUntil
+		}
+		if access == nil || !slices.Equal(access.Memberships, expected) || access.ValidUntil != expectedUntil {
+			return nil, ErrConflict
+		}
+	}
+	afterAccess := access
+	if c.Tenant {
+		afterAccess = &api.DataPipelineTenantAccess{Column: access.Column, Memberships: c.AfterMemberships, ValidUntil: c.AfterValidUntil}
+	}
+	predicate := readerPredicate(c.After)
+	if afterAccess != nil {
+		predicate = tenantReaderPredicate(afterAccess)
+	}
+	predicate = issuerPredicate(predicate, c.AfterIssuer)
 	if revision > p.Revision || id == c.ID && !slices.Equal(subjects, c.After) {
 		return nil, ErrConflict
 	}
 	if id != c.ID {
 		if !slices.Equal(subjects, c.Before) {
 			return nil, ErrConflict
+		}
+		if c.ResetAuth {
+			if p.Serving == nil || p.Serving.AuthOrganizations == nil || len(c.AfterMemberships) != 0 {
+				return nil, ErrConflict
+			}
+			if err = updateMirrorReads(ctx, p, tx, false); err != nil {
+				return nil, err
+			}
 		}
 		// Missing future tables are allowed: their CREATE and final gate opening
 		// use this same authority. Retained private tables are never included.
@@ -120,12 +184,12 @@ func applyReaders(ctx context.Context, p Pipeline, target *pgx.Conn, current fun
 				return nil, err
 			}
 			if !closed {
-				if _, err = tx.Exec(ctx, "ALTER POLICY gregale_pipeline_read ON "+tableIdent(table.name)+" USING ("+readerPredicate(c.After)+")"); err != nil {
+				if _, err = tx.Exec(ctx, "ALTER POLICY gregale_pipeline_read ON "+tableIdent(table.name)+" USING ("+predicate+")"); err != nil {
 					return nil, err
 				}
 			}
 		}
-		if _, err = tx.Exec(ctx, `UPDATE gregale_pipeline.reader_access SET subjects=$3,change_id=$4,revision=$5 WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation, c.After, c.ID, p.Revision); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE gregale_pipeline.reader_access SET subjects=$3,change_id=$4,revision=$5,tenant_access=$6::jsonb,auth_issuer=$7 WHERE pipeline_id=$1 AND generation=$2`, p.ID, p.Generation, c.After, c.ID, p.Revision, tenantJSON(afterAccess), c.AfterIssuer); err != nil {
 			return nil, err
 		}
 	}

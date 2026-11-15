@@ -83,7 +83,9 @@ def sync_detailed(
     """Journal a reviewed publication before execution; requires deploy-write scope and MFA policy
 
      Only created=true authorizes the publisher to start once. Duplicate identities return created=false;
-    changed reviews conflict. Local paths and credentials are excluded.
+    changed reviews conflict. Local paths and credentials are excluded. Hosted private reviews include
+    platform_verification and the reviewed OAuth contract; their completed outcomes must match API-held
+    candidate verification.
 
     Args:
         id (str):
@@ -119,7 +121,9 @@ def sync(
     """Journal a reviewed publication before execution; requires deploy-write scope and MFA policy
 
      Only created=true authorizes the publisher to start once. Duplicate identities return created=false;
-    changed reviews conflict. Local paths and credentials are excluded.
+    changed reviews conflict. Local paths and credentials are excluded. Hosted private reviews include
+    platform_verification and the reviewed OAuth contract; their completed outcomes must match API-held
+    candidate verification.
 
     Args:
         id (str):
@@ -150,7 +154,9 @@ async def asyncio_detailed(
     """Journal a reviewed publication before execution; requires deploy-write scope and MFA policy
 
      Only created=true authorizes the publisher to start once. Duplicate identities return created=false;
-    changed reviews conflict. Local paths and credentials are excluded.
+    changed reviews conflict. Local paths and credentials are excluded. Hosted private reviews include
+    platform_verification and the reviewed OAuth contract; their completed outcomes must match API-held
+    candidate verification.
 
     Args:
         id (str):
@@ -184,7 +190,9 @@ async def asyncio(
     """Journal a reviewed publication before execution; requires deploy-write scope and MFA policy
 
      Only created=true authorizes the publisher to start once. Duplicate identities return created=false;
-    changed reviews conflict. Local paths and credentials are excluded.
+    changed reviews conflict. Local paths and credentials are excluded. Hosted private reviews include
+    platform_verification and the reviewed OAuth contract; their completed outcomes must match API-held
+    candidate verification.
 
     Args:
         id (str):

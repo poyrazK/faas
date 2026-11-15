@@ -11,7 +11,8 @@
 # ranges, which both count release commits as fixes). Re-reviewed 2026-10-30
 # for v3.12.16 against its 13 commits and Misc/NEWS.d/3.12.16.rst: it fixes
 # CVE-2026-12345 (tempfile.TemporaryDirectory cleanup, gh-157579), whose rule
-# is gone, and none of the five below. No 3.12 release fixes these, so a base
+# is gone, and none of the first five below (CVE-2026-116566, added
+# 2026-11-14, is reviewed in its own rule). No 3.12 release fixes these, so a base
 # refresh cannot clear them. Each one is reached only when function code calls
 # the named standard-library API.
 ignore:
@@ -56,6 +57,17 @@ ignore:
       http.cookies BaseCookie.js_output() does not neutralize a closing script
       tag in cookie values. Fixed in 3.13.16 and 3.14.8, not in 3.12. Reached
       only by code that renders cookies into HTML with js_output().
+    package:
+      name: python
+      version: 3.12.16
+      type: binary
+  - vulnerability: CVE-2026-116566
+    reason: >-
+      socket.getaddrinfo() accepts embedded NUL bytes in host and port.
+      Reviewed 2026-11-14: the fix (gh-160898, CPython #160899) is only on
+      main for 3.16; no 3.12 or 3.13 branch carries it, and OSV's other
+      "fixed" commit is the 3.16.0a1 release commit. Reached only by code that
+      resolves untrusted host or port strings without rejecting NUL itself.
     package:
       name: python
       version: 3.12.16

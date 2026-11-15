@@ -11,15 +11,19 @@ import (
 // ToolPublicationIntent is the reviewed, credential-free publication input.
 // Local source paths and token environment references never enter this record.
 type ToolPublicationIntent struct {
-	EndpointPath                string              `json:"endpoint_path,omitempty"`
-	App                         string              `json:"app"`
-	AppID                       string              `json:"app_id,omitempty"`
-	ExpectedServingDeploymentID string              `json:"expected_serving_deployment_id,omitempty"`
-	SourceSHA256                string              `json:"source_sha256"`
-	FixturesSHA256              string              `json:"fixtures_sha256"`
-	AccessMode                  string              `json:"access_mode"`
-	ToolScopes                  map[string][]string `json:"tool_scopes"`
-	TestCases                   []string            `json:"test_cases"`
+	Readiness                   *ToolPublicationReadiness `json:"readiness,omitempty"`
+	PlatformVerification        bool                      `json:"platform_verification,omitempty"`
+	Auth                        *ToolPublicationAuth      `json:"auth,omitempty"`
+	Legacy                      bool                      `json:"legacy,omitempty"`
+	EndpointPath                string                    `json:"endpoint_path,omitempty"`
+	App                         string                    `json:"app"`
+	AppID                       string                    `json:"app_id,omitempty"`
+	ExpectedServingDeploymentID string                    `json:"expected_serving_deployment_id,omitempty"`
+	SourceSHA256                string                    `json:"source_sha256"`
+	FixturesSHA256              string                    `json:"fixtures_sha256"`
+	AccessMode                  string                    `json:"access_mode"`
+	ToolScopes                  map[string][]string       `json:"tool_scopes"`
+	TestCases                   []string                  `json:"test_cases"`
 }
 
 type ToolPublicationCheck struct {
@@ -41,16 +45,17 @@ type ToolPublicationOutcome struct {
 }
 
 type ToolPublicationRecord struct {
-	ID                     string                  `json:"id"`
-	AccountID              string                  `json:"account_id"`
-	Intent                 ToolPublicationIntent   `json:"intent"`
-	Status                 string                  `json:"status"`
-	Outcome                *ToolPublicationOutcome `json:"outcome,omitempty"`
-	DeploymentSourceSHA256 string                  `json:"deployment_source_sha256,omitempty"`
-	CreatedAt              time.Time               `json:"created_at"`
-	Deadline               time.Time               `json:"deadline"`
-	FinishedAt             *time.Time              `json:"finished_at,omitempty"`
-	EvidenceOrigin         string                  `json:"evidence_origin"`
+	Verification           *ToolPublicationVerification `json:"verification,omitempty"`
+	ID                     string                       `json:"id"`
+	AccountID              string                       `json:"account_id"`
+	Intent                 ToolPublicationIntent        `json:"intent"`
+	Status                 string                       `json:"status"`
+	Outcome                *ToolPublicationOutcome      `json:"outcome,omitempty"`
+	DeploymentSourceSHA256 string                       `json:"deployment_source_sha256,omitempty"`
+	CreatedAt              time.Time                    `json:"created_at"`
+	Deadline               time.Time                    `json:"deadline"`
+	FinishedAt             *time.Time                   `json:"finished_at,omitempty"`
+	EvidenceOrigin         string                       `json:"evidence_origin"`
 }
 
 type BeginToolPublicationResponse struct {

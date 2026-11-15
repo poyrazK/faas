@@ -208,6 +208,11 @@ var cliTreeAliases = []cliTreeAlias{
 	{"bucket inventory get", "bucket reconcile status"},
 	{"bucket inventory", "bucket reconcile"},
 	{"bucket", "bucket"},
+	{"pipeline connection explain", "pipeline connection guide"},
+	{"pipeline index review", "pipeline indexes"},
+	{"pipeline access review", "pipeline access"},
+	{"pipeline evolution review", "pipeline evolve"},
+	{"pipeline work update", "pipeline operations"},
 	{"pipeline", "pipeline"},
 	{"data-api", "data-api"},
 	{"ai", "ai"},
@@ -496,6 +501,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Proposed 2026-10-29 for review (round 9: one-off verbs).
 	{"account dpa get", "account dpa"},
+	{"account health get", "account health"},
 	{"account billing-run schedule get", "account billing-run schedule"},
 	{"ai quality-alert list", "ai quality-alerts"},
 	{"api consumer plan history", "consumers plan-history"},
@@ -577,6 +583,15 @@ var cliTreeAliases = []cliTreeAlias{
 	{"api tenant activation wait", "platform-tenants activation"},
 	{"workflow stored recovery-policy get", "stored-workflows recovery-policy"},
 	{"workflow stored recovery-policy set", "stored-workflows recovery-policy"},
+	// Pipeline verbs from #7219 and #7239: freshness shows or sets the
+	// target; indexes and access preview a change, then approve it.
+	{"pipeline freshness get", "pipeline freshness"},
+	{"pipeline freshness set", "pipeline freshness"},
+	{"pipeline index check", "pipeline indexes"},
+	{"pipeline index approve", "pipeline indexes"},
+	{"pipeline access check", "pipeline access"},
+	{"pipeline access approve", "pipeline access"},
+	{"pipeline connection guide get", "pipeline connection guide"},
 	{"bucket protection legal-hold get", "bucket protection legal-hold"},
 	{"bucket protection legal-hold set", "bucket protection legal-hold"},
 	{"bucket protection event-hold set", "bucket protection event-hold"},
@@ -624,11 +639,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"admin product", "product"},
 	{"admin tenant-surfaces", "tenant-surfaces"},
 	{"admin rollouts", "rollouts"},
-	{"admin github-webhook-secret", "github-webhook-secret"},
 	{"admin mail", "mail"},
-	{"admin postgres reconcile", "postgres reconcile"},
-	{"admin postgres usage-import", "postgres usage-import"},
-	{"admin postgres diagnostics", "postgres diagnostics"},
 	// Sealed live queries stay an operator preview (ADR-20261016151947);
 	// customers read live through `data-api live`.
 	{"admin postgres live", "postgres live"},
@@ -1295,7 +1306,8 @@ func treeHelpWords(typed []string) ([]string, bool) {
 	// `--help --all` on one of today's commands (`github`, `deploy`, `app`)
 	// asks for that command's full manifest help, every option grouped; a
 	// tree-only noun (`release`) has no such help, so the tree's answers.
-	if path := leadingTreeWords(words); slices.Contains(words, "--all") && (words[0] == appSlugFallback || oldPathDepth(path) == len(path)) {
+	if path := leadingTreeWords(words); slices.Contains(words, "--all") && (words[0] == appSlugFallback || oldPathDepth(path) == len(path)) &&
+		!appTreeOnlyVerb(path) {
 		return nil, false
 	}
 	if _, ok := lookupCliTreeNoun(words[0]); ok || slices.Contains(cliTreeShortcutCommands, words[0]) {
@@ -1577,6 +1589,22 @@ func cliTreeVerbsSharing(old string) int {
 }
 
 // cliTreeAppVerb reports a word the tree's `app` takes as its verb.
+// appTreeOnlyVerb reports `app <verb>` where the verb exists only in the
+// tree (`app listener`): today's `app` help would read the verb as a slug and
+// its words as positionals, so `--help --all` must take the tree's help
+// (agent eval 2026-11-13, ADR-20261112223000).
+func appTreeOnlyVerb(path []string) bool {
+	if len(path) < 2 || path[0] != appSlugFallback || !cliTreeAppVerb(path[1]) {
+		return false
+	}
+	command, ok := lookupCliCommand(appSlugFallback)
+	if !ok {
+		return false
+	}
+	_, today := findCliSubcommand(command.Subcommands, path[1])
+	return !today && path[1] != "get" && path[1] != "update"
+}
+
 func cliTreeAppVerb(word string) bool {
 	if _, _, ok := matchCliTreeAlias([]string{appSlugFallback, word}); ok {
 		return true

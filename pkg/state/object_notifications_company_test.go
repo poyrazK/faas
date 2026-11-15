@@ -59,6 +59,11 @@ func objectNotificationsKeepCompanyBoundary(t *testing.T, st accountingStore) {
 	company, personal := newApp("company", org.ID), newApp("personal", "")
 	notifications := st.(state.ObjectNotificationStore)
 	b := readyCompanyBucket(t, st, creator.ID, company.ID)
+	// The company app receives every event, so one no notification reaches
+	// is still kept to inspect (ADR-614 amendment 2026-11-13).
+	if _, _, err = st.(state.EventSubscriptionStore).UpsertEventSubscription(ctx, b.AccountID, b.AppID, api.ObjectEventSource, "*", nil); err != nil {
+		t.Fatal(err)
+	}
 
 	rule := func(id, appID string) api.ObjectNotificationRule {
 		return api.ObjectNotificationRule{ID: id, Destination: "arn:gregale:lambda:" + b.Region + ":" + uuid.MustParse(creator.ID).String() + ":function:" + appID, Events: []string{"s3:ObjectCreated:Put"}}
