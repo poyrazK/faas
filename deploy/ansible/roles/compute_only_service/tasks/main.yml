@@ -115,6 +115,22 @@
     group: root
     mode: "0755"
 
+# ADR-20261110120000 (amended 2026-11-15): the node-local schedd serves peer
+# compute nodes on every address (9091), so it refuses to start until the host
+# firewall is loaded. A change here only reloads systemd and applies at the
+# next start, so a rollout restarts nothing.
+- name: compute_only_service — render the schedd host-firewall start guard
+  ansible.builtin.template:
+    src: 60-faas-require-host-firewall.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/60-faas-require-host-firewall.conf
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    faas_unit_section: Service
+    faas_require_host_firewall_on: "{{ faas_require_host_firewall | bool }}"
+  notify: reload systemd for the host-firewall start guard
+
 - name: compute_only_service — install schedd role gate (M9)
   notify: restart faas-schedd
   ansible.builtin.template:
