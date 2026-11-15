@@ -487,10 +487,10 @@ func testCliAuthLoopbackClaimRebindsDevice(t *testing.T, fx *Fixture) {
 	tokenHash := api.HashToken([]byte("loopback-" + uuid.NewString()))
 	minted := api.HashToken([]byte("minted-" + uuid.NewString()))
 	fresh := api.HashToken([]byte("fresh-" + uuid.NewString()))
-	if err := devices.IssueCliAuthDeviceCode(fx.Ctx, tokenHash, minted, time.Now().UTC().Add(10*time.Minute)); err != nil {
+	if err := devices.IssueCliAuthDeviceCode(fx.Ctx, tokenHash, minted, nil, time.Now().UTC().Add(10*time.Minute)); err != nil {
 		t.Fatalf("IssueCliAuthDeviceCode: %v", err)
 	}
-	if status, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted); err != nil || status != api.CliAuthStatusPending {
+	if status, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted, nil); err != nil || status != api.CliAuthStatusPending {
 		t.Fatalf("before approval: %q, %v; want pending", status, err)
 	}
 	if err := devices.ClaimCliAuthCodeForDevice(fx.Ctx, tokenHash, fx.Account.ID, fresh); err != nil {
@@ -499,14 +499,52 @@ func testCliAuthLoopbackClaimRebindsDevice(t *testing.T, fx *Fixture) {
 	if err := devices.ClaimCliAuthCodeForDevice(fx.Ctx, tokenHash, fx.Account.ID, minted); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("second claim: %v, want ErrConflict (and the device code kept)", err)
 	}
-	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted); !errors.Is(err, state.ErrNotFound) {
+	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted, nil); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("exchange with the minting device code: %v, want ErrNotFound", err)
 	}
-	status, accountID, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh)
+	status, accountID, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh, nil)
 	if err != nil || status != api.CliAuthStatusConsumed || accountID != fx.Account.ID {
 		t.Fatalf("exchange with the new device code: %q/%q, %v; want consumed/%s", status, accountID, err, fx.Account.ID)
 	}
-	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh); !errors.Is(err, state.ErrNotFound) {
+	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh, nil); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("second exchange: %v, want ErrNotFound", err)
+	}
+}
+
+// testCliAuthDeviceCodeNeedsItsVerifier pins the verifier binding (account
+// audit F10-3): a code minted with a verifier hash exchanges only together
+// with it, and a wrong or missing verifier leaves the approved row for the
+// real CLI instead of consuming it. The binding survives a loopback approval,
+// which replaces only the device code.
+func testCliAuthDeviceCodeNeedsItsVerifier(t *testing.T, fx *Fixture) {
+	devices, ok := fx.Store.(state.CliAuthDeviceCodeStore)
+	if !ok {
+		t.Skip("store has no device codes")
+	}
+	tokenHash := api.HashToken([]byte("verifier-" + uuid.NewString()))
+	minted := api.HashToken([]byte("minted-" + uuid.NewString()))
+	fresh := api.HashToken([]byte("fresh-" + uuid.NewString()))
+	verifier := api.HashToken([]byte("verifier-secret-" + uuid.NewString()))
+	other := api.HashToken([]byte("other-secret-" + uuid.NewString()))
+	if err := devices.IssueCliAuthDeviceCode(fx.Ctx, tokenHash, minted, verifier, time.Now().UTC().Add(10*time.Minute)); err != nil {
+		t.Fatalf("IssueCliAuthDeviceCode: %v", err)
+	}
+	if status, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted, nil); err != nil || status != api.CliAuthStatusPending {
+		t.Fatalf("pending without verifier: %q, %v; want pending", status, err)
+	}
+	if err := devices.ClaimCliAuthCodeForDevice(fx.Ctx, tokenHash, fx.Account.ID, fresh); err != nil {
+		t.Fatalf("ClaimCliAuthCodeForDevice: %v", err)
+	}
+	for name, presented := range map[string][]byte{"no verifier": nil, "wrong verifier": other} {
+		if status, accountID, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh, presented); !errors.Is(err, state.ErrNotFound) || accountID != "" {
+			t.Fatalf("approved, %s: %q/%q, %v; want ErrNotFound and no account", name, status, accountID, err)
+		}
+	}
+	status, accountID, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh, verifier)
+	if err != nil || status != api.CliAuthStatusConsumed || accountID != fx.Account.ID {
+		t.Fatalf("exchange with the verifier: %q/%q, %v; want consumed/%s", status, accountID, err, fx.Account.ID)
+	}
+	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh, verifier); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("second exchange: %v, want ErrNotFound", err)
 	}
 }

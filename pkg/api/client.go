@@ -5010,16 +5010,40 @@ func (c *Client) ListAuditLogAllPage(ctx context.Context, before, accountID, sin
 // MintCliAuthCode anonymously mints a fresh login code bound to a device
 // code; ExchangeCliAuthLogin exchanges it.
 func (c *Client) MintCliAuthCode(ctx context.Context) (CliAuthCodeResponse, error) {
-	var out CliAuthCodeResponse
-	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true}, &out)
+	return c.mintCliAuthLoginCode(ctx, CliAuthCodeRequest{Device: true})
 }
 
 // MintCliAuthLoopbackCode mints a one-click login code whose approval is
 // sent to 127.0.0.1:port (ADR-20261111170000). The response's Loopback is
 // false when the server kept the typed-code flow.
 func (c *Client) MintCliAuthLoopbackCode(ctx context.Context, port int) (CliAuthCodeResponse, error) {
+	return c.mintCliAuthLoginCode(ctx, CliAuthCodeRequest{Device: true, LoopbackPort: port})
+}
+
+// mintCliAuthLoginCode mints a login code bound to a fresh verifier, whose
+// SHA-256 goes as the code challenge and which only the exchange sees, so a
+// device code that leaks on its way back (browser history, a local server's
+// log) is useless alone. A server that predates code challenges refuses the
+// unknown field with 400; the request is then sent once without it.
+func (c *Client) mintCliAuthLoginCode(ctx context.Context, req CliAuthCodeRequest) (CliAuthCodeResponse, error) {
+	verifier, challenge, err := NewCliAuthVerifier()
+	if err != nil {
+		return CliAuthCodeResponse{}, err
+	}
+	withChallenge := req
+	withChallenge.CodeChallenge = challenge
 	var out CliAuthCodeResponse
-	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true, LoopbackPort: port}, &out)
+	err = c.do(ctx, "POST", "/v1/cli-auth/code", withChallenge, &out)
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Problem.Status == http.StatusBadRequest {
+		out = CliAuthCodeResponse{}
+		return out, c.do(ctx, "POST", "/v1/cli-auth/code", req, &out)
+	}
+	if err != nil {
+		return out, err
+	}
+	out.Verifier = verifier
+	return out, nil
 }
 
 // ExchangeCliAuthLogin polls for a minted code's approval: with its device
@@ -5030,7 +5054,7 @@ func (c *Client) ExchangeCliAuthLogin(ctx context.Context, minted CliAuthCodeRes
 	}
 	var out CliAuthExchangeResponse
 	return out, c.do(ctx, "POST", "/v1/cli-auth/exchange",
-		CliAuthExchangeRequest{DeviceCode: minted.DeviceCode}, &out)
+		CliAuthExchangeRequest{DeviceCode: minted.DeviceCode, CodeVerifier: minted.Verifier}, &out)
 }
 
 // ExchangeCliAuthCode polls the server for the user's approval.

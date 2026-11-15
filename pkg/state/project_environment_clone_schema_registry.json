@@ -3946,7 +3946,8 @@
       "org_id",
       "project_ids",
       "status",
-      "token_hash"
+      "token_hash",
+      "verifier_hash"
     ],
     "kind": "account_identity"
   },

@@ -7435,9 +7435,13 @@ type EmailVerificationToken struct {
 type CliAuthCode struct {
 	TokenHash  []byte
 	DeviceHash []byte
-	AccountID  string // empty until ClaimCliAuthCode
-	ExpiresAt  time.Time
-	ConsumedAt *time.Time
+	// VerifierHash is the SHA-256 of a secret the minting CLI keeps; when
+	// set, the device code is exchanged only together with that secret
+	// (account audit F10-3).
+	VerifierHash []byte
+	AccountID    string // empty until ClaimCliAuthCode
+	ExpiresAt    time.Time
+	ConsumedAt   *time.Time
 	// OrgID is the organization a hosted MCP sign-in acts in, chosen at
 	// approval; "" is the personal one (ADR-20261101225122).
 	OrgID string
@@ -7451,10 +7455,15 @@ type CliAuthCode struct {
 // issued through it is refused by ConsumeCliAuthCode, so guessing the short
 // code the user approves never yields a key.
 type CliAuthDeviceCodeStore interface {
-	IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error
+	// IssueCliAuthDeviceCode stores a code bound to a device code. A
+	// non-empty verifierHash also binds it to the minting CLI's verifier.
+	IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash, verifierHash []byte, expiresAt time.Time) error
 	// ConsumeCliAuthDeviceCode has ConsumeCliAuthCode's contract, keyed by
-	// the device code's hash.
-	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error)
+	// the device code's hash. A row bound to a verifier is consumed only
+	// when verifierHash matches; otherwise it is left as it is and reported
+	// as unavailable once approved, so a device code that leaked without
+	// its verifier never yields a key and the real CLI can still finish.
+	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash, verifierHash []byte) (api.CliAuthStatus, string, error)
 	// ClaimCliAuthCodeForDevice is ClaimCliAuthCode that also replaces the
 	// row's device hash in the same statement. The one-click loopback login
 	// (ADR-20261111170000) hands the new device code to the approving
