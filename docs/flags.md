@@ -656,7 +656,10 @@ DATABASE_URL=postgres://... make test-flags
 ```
 
 This gate builds the Node SDK and runs evaluator, SDK, gateway, API and real
-PostgreSQL coverage. The integrated scenario targets three of four customers,
+PostgreSQL coverage, including attribute targeting, the gateway kill list and
+the lifecycle report. Against a deployed Gregale with Flags on, the
+`TestFeatureFlagsJourney` journey (`scripts/e2e-journeys.sh`) checks the same
+features end to end through the CLI and a real app. The integrated scenario targets three of four customers,
 checks forged context replacement, filters their errors, and observes disablement
 in the same Node process after simulated inactivity. This is application and
 configuration acceptance; it does not exercise a native VM restore.
@@ -677,8 +680,9 @@ entries and 16 KiB decoded evidence per request.
 
 Synchronous decision inheritance is available for managed service calls when
 the Node SDK fetch helper is explicitly configured. Producers can also carry
-marked decisions into `queues/send` and the app inbox. Arbitrary user attributes
-and propagation through cron, delayed tasks, and external broker deliveries
-remain future work; those workloads otherwise evaluate flags using their own
-environment and verified customer identity. Automatic advancement runs as a
+marked decisions into `queues/send` and the app inbox. Attribute targeting
+(see above) covers gateway and application attributes on requests. Propagation
+through cron, delayed tasks, and external broker deliveries remains future
+work; those workloads otherwise evaluate flags using their own environment and
+verified customer identity. Automatic advancement runs as a
 bounded apid reconciliation loop and remains opt-in per rule.
