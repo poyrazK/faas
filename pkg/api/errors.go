@@ -943,6 +943,10 @@ const (
 	// unauthenticated developer app, a Dockerfile build, or a build plan the
 	// watch overlay does not understand.
 	CodeDevWatchUnsupported = "dev_watch_unsupported"
+	// CodeDevSessionTearingDown refuses to renew a developer environment
+	// that its lease or `gregale dev --stop` is already tearing down. The
+	// environment comes back on the first start after the teardown finishes.
+	CodeDevSessionTearingDown = "dev_session_tearing_down"
 	// ADR-1151 frozen tier. CodeInstanceNotFreezable is vmmd's refusal to
 	// freeze an instance whose traffic or lifecycle does not allow it (warm
 	// pool, job, app task, builder, private network member, pending waitUntil
@@ -2825,7 +2829,7 @@ func ErrPlanLimitApps(l Limits, observed int) *Problem {
 func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanLimitDeveloperApps,
 		"Developer environment limit reached",
-		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
+		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Find them with `gregale dev list` and stop an unused one with `gregale dev --stop --name PROJECT --app APP` from any directory.", l.Plan, l.DeveloperApps, observed)).
 		WithLimit(int64(l.DeveloperApps), int64(observed)).
 		WithDocs(docsBase + "/plans#developer-environments")
 }
@@ -2856,8 +2860,18 @@ func ErrPlanLimitPreviewWorkloads(l Limits, observed int) *Problem {
 func ErrDevWatchRAM(ramMB int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeDevWatchUnsupported,
 		"Watch mode needs more memory",
-		fmt.Sprintf("watch mode runs your development server, which needs at least %d MB; this developer environment has %d MB. Upgrade the plan or use gregale dev without --watch.", DevWatchMinRAMMB, ramMB)).
+		fmt.Sprintf("watch mode runs your development server, which needs at least %d MB; this developer environment has %d MB on your plan. A production-shaped developer build (gregale dev --watch=false) works on every plan.", DevWatchMinRAMMB, ramMB)).
 		WithLimit(int64(DevWatchMinRAMMB), int64(ramMB)).
+		WithDocs(docsBase + "/cli#dev")
+}
+
+// ErrDevSessionTearingDown is returned when a developer environment cannot
+// be renewed because its teardown has started. Starting it again after the
+// teardown finishes restores it.
+func ErrDevSessionTearingDown() *Problem {
+	return NewProblem(http.StatusConflict, CodeDevSessionTearingDown,
+		"Developer environment is being removed",
+		"its lease ended or it was stopped, and its database and buckets are being cleaned up; run gregale dev again in a minute to start it fresh").
 		WithDocs(docsBase + "/cli#dev")
 }
 

@@ -1357,6 +1357,28 @@ jobs:
           if [[ -f "$ARTIFACT_DIR/ansible-vars.yml" ]]; then
             JOIN_ARGS+=(--ansible-vars-file "$ARTIFACT_DIR/ansible-vars.yml")
           fi
+          # ADR-20261115120000: a stale contract converges only the compute
+          # roles whose content hash differs from the node's record, and the
+          # node records this release's hashes after it converged. A release
+          # cut before that, a node without a record, or any failure to read
+          # it converges every role, as before.
+          if [[ "$ROLLOUT_PHASE" != prepare ]] && grep -q faas_join_converge_roles deploy/ansible/bootstrap.yml; then
+            role_work="$RUNNER_TEMP/compute-roles"
+            rm -rf -- "$role_work"
+            install -d -m 0700 "$role_work"
+            python3 scripts/ci/host_roles.py hashes --group compute_nodes > "$role_work/hashes.json"
+            JOIN_ARGS+=(--role-record-file "$role_work/hashes.json")
+            if bash scripts/ci/compute_role_record.sh fetch "$role_work/record.json" &&
+              python3 scripts/ci/host_roles.py changed --group compute_nodes --to HEAD \
+                --record "$role_work/record.json" > "$role_work/changed.json"; then
+              if jq -e '(.all | not) and (.roles | length > 0)' "$role_work/changed.json" >/dev/null; then
+                JOIN_ARGS+=(--roles "$(jq -r '.roles | join(",")' "$role_work/changed.json")")
+              fi
+              echo "Compute roles for ${NODE}: $(jq -r 'if .all then "every role (no usable record or globals changed)" elif (.roles | length) == 0 then "none changed (the contract decides)" else (.roles | join(", ")) end' "$role_work/changed.json")." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Compute roles for ${NODE}: every role (no role record on the node)." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
           "$ARTIFACT_DIR/gregalectl-linux-amd64" "${JOIN_ARGS[@]}"
 
       - name: Pin adopted compute SSH key for post-join probes

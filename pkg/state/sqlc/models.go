@@ -7633,6 +7633,8 @@ type InvocationSend struct {
 	SenderAppID     pgtype.UUID
 	OnCompleteAppID pgtype.UUID
 	CreatedAt       pgtype.Timestamptz
+	WorkflowRunID   pgtype.UUID
+	WorkflowOp      pgtype.Text
 }
 
 type InvocationWorkCancellation struct {
@@ -17205,6 +17207,12 @@ type WorkflowRunResume struct {
 	PreviousError  pgtype.Text
 	ResumedSteps   []byte
 	CreatedAt      pgtype.Timestamptz
+}
+
+type WorkflowRunStart struct {
+	RunID        pgtype.UUID
+	StarterAppID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
 }
 
 type WorkflowScheduleCursor struct {
