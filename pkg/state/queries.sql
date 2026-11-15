@@ -8861,9 +8861,12 @@ WHERE app_id=sqlc.arg(app_id)::uuid
 GROUP BY source
 ORDER BY source;
 
--- name: SumAccountQueueBacklogBytes :one
+-- name: SumAccountBacklogBytes :one
+-- ADR-20261022105723 (amended 2026-11-13): the account's pending queue,
+-- async and delayed-task payload bytes, one pool against
+-- MaxQueueBacklogBytesPerAccount.
 SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
-WHERE account_id=sqlc.arg(account_id)::uuid AND source='queue';
+WHERE account_id=sqlc.arg(account_id)::uuid AND source IN ('queue','async_invoke','delayed_task');
 
 -- name: ExpirePendingQueueMessages :many
 -- ADR-20261022105723: a pending queue message past its plan's retention
@@ -30375,3 +30378,17 @@ VALUES (sqlc.arg(invocation_id)::uuid, sqlc.arg(sender_app_id)::uuid, sqlc.narg(
 -- name: GetInvocationSend :one
 SELECT sender_app_id::text AS sender_app_id, coalesce(on_complete_app_id::text, '')::text AS on_complete_app_id
 FROM invocation_sends WHERE invocation_id = sqlc.arg(invocation_id)::uuid;
+
+-- Plan-fit notices (billing review H17-4): the plan and over-plan app set a
+-- billing subject was last emailed about.
+-- name: GetPlanFitNotice :one
+SELECT plan, apps_digest FROM plan_fit_notices WHERE subject_id = $1;
+
+-- name: PutPlanFitNotice :exec
+INSERT INTO plan_fit_notices (subject_id, plan, apps_digest, noticed_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (subject_id) DO UPDATE
+   SET plan = EXCLUDED.plan, apps_digest = EXCLUDED.apps_digest, noticed_at = now();
+
+-- name: ClearPlanFitNotice :exec
+DELETE FROM plan_fit_notices WHERE subject_id = $1;
