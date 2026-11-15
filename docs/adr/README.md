@@ -20,6 +20,7 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261115173752: Explicit ignored paths in offline export diffs](20261115173752-cli-export-diff-ignore-paths.md) — accepted; reviewable field exclusions preserve record identity and strict input validation.
 - [ADR-20261115170835: Field explanations for offline export diffs](20261115170835-cli-export-diff-explanations.md) — accepted; opt-in JSON Pointer paths and change kinds without field values.
 - [ADR-20261115163305: Offline comparison of CLI export inventories](20261115163305-cli-offline-export-diff.md) — accepted; deterministic keyed JSON comparisons, exact decimal values and opt-in CI failures without API reads.
 

@@ -108,6 +108,10 @@ func readExportDiffObjectMode(decoder *json.Decoder, explain bool) (exportDiffVa
 	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
 		return exportDiffValue{}, errors.New("invalid JSON object")
 	}
+	return exportDiffObjectValue(members), nil
+}
+
+func exportDiffObjectValue(members map[string]exportDiffValue) exportDiffValue {
 	keys := make([]string, 0, len(members))
 	for key := range members {
 		keys = append(keys, key)
@@ -122,7 +126,7 @@ func readExportDiffObjectMode(decoder *json.Decoder, explain bool) (exportDiffVa
 	}
 	var digest [sha256.Size]byte
 	copy(digest[:], h.Sum(nil))
-	return exportDiffValue{kind: 'o', digest: digest, members: members}, nil
+	return exportDiffValue{kind: 'o', digest: digest, members: members}
 }
 
 func readExportDiffArray(decoder *json.Decoder) (exportDiffValue, error) {

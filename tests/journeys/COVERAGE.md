@@ -174,3 +174,9 @@ explanations, human and environment JSON, exact integer drift, whole-field
 subtree changes, empty explanations, opt-in/false behavior, CI exits, help,
 invalid-input privacy, unchanged files and zero API requests. A core-only pass
 does not qualify the built-CLI journey.
+
+`TestExportDiffIgnoreIsolatedCLI` extends row 156: explicit exact-path exclusions,
+visible deduplicated policy, ignored-only CI success, remaining exact-number
+drift and explanations, human/environment JSON, protected IDs, record additions,
+invalid excluded data, help, unchanged inputs and zero API requests. Core tests
+do not establish built-CLI journey qualification.
