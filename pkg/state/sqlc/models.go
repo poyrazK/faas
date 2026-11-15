@@ -2705,8 +2705,8 @@ type Build struct {
 	CancelledByDeploymentCascade bool
 	CacheStatus                  pgtype.Text
 	CacheKeySha256               pgtype.Text
-	CoalescedWith                pgtype.UUID
 	NotBefore                    pgtype.Timestamptz
+	CoalescedWith                pgtype.UUID
 	BuilderNodeName              pgtype.Text
 }
 
@@ -4396,6 +4396,7 @@ type Deployment struct {
 	PromotedAt                 pgtype.Timestamptz
 	RollbackReleaseReview      []byte
 	BeforeCheckpointHook       pgtype.Bool
+	BuildRegistryScope         []string
 }
 
 type DeploymentAlias struct {
