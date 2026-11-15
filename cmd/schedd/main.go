@@ -772,6 +772,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	defer closeGrants()
 	// ADR-20261110210000 slice 3g: delivery values by reference.
+	mintViaSecretd, err := internalSvcMinterFromEnv(os.Getenv, grantRPC != nil)
+	if err != nil {
+		return err
+	}
 	deliveryViaSecretd, err := deliveryOpenerFromEnv(os.Getenv, grantRPC != nil, executionEnabled)
 	if err != nil {
 		return err
@@ -2537,7 +2541,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// source leaves the minter nil and SynthesizeRequest
 			// logs a loud warn + internal_only requests 403.
 			var workflowOutboundMinter sched.WorkflowOutboundMinter
-			if minter, mErr := newSchedInternalSvcMinter(ctx, store, log); mErr != nil {
+			if grants, ok := grantRPC.(secretdGrants); mintViaSecretd && ok {
+				// ADR-20261110210000 slice 3k: the control plane's secretd
+				// mints each app's token; this box loads no cluster key, so
+				// workflow outbound (which signs with it) stays off here.
+				remote := newRemoteInternalSvcMinter(grants.rpc)
+				modeLookup := sched.PublicAuthModeFromStore(store.AppByID)
+				internalSvcModeLookup = modeLookup
+				internalSvcTokenMinter = remote.AsFunc()
+				sched.ConfigureInternalSvcAuth(synth, modeLookup, remote.AsFunc())
+				loop.WithAppPublicAuthModeLookup(modeLookup)
+				loop.WithMintInternalSvcToken(remote.AsFunc())
+				log.Info("schedd: internal-service tokens minted by secretd")
+			} else if minter, mErr := newSchedInternalSvcMinter(ctx, store, log); mErr != nil {
 				log.Warn("schedd: internal-svc minter not wired; internal_only cron requests will 403 until corrected",
 					"err", mErr.Error())
 			} else {

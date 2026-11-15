@@ -10,6 +10,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,6 +25,7 @@ import (
 
 	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/internalsvc"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
@@ -59,6 +61,8 @@ type config struct {
 	// buildRegistryScope (slice 3j-4): how builds' pulls are held to their
 	// deployment's recorded registry scope.
 	buildRegistryScope secretd.BuildRegistryScopeMode
+	// controlIdentityPath opens the cluster signing key (slice 3k).
+	controlIdentityPath string
 }
 
 func configFromEnv(getenv func(string) string) (config, error) {
@@ -77,6 +81,8 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		// Optional too: without it RegistryFetch refuses.
 		buildIdentityPath: getenv("FAAS_SECRETD_BUILD_IDENTITY"),
 		postgresHMACPath:  getenv("FAAS_SECRETD_POSTGRES_HMAC_KEY"),
+		// Optional too: without it MintInternalServiceToken refuses (slice 3k).
+		controlIdentityPath: getenv("FAAS_SECRETD_CONTROL_IDENTITY"),
 	}
 	if cfg.metricsAddr != "" {
 		host, _, err := net.SplitHostPort(cfg.metricsAddr)
@@ -160,12 +166,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("secretd: build identity: %w", err)
 		}
 	}
+	var controlIdentities []*age.X25519Identity
+	if cfg.controlIdentityPath != "" {
+		if controlIdentities, err = sealdomain.LoadReaderIdentities(cfg.controlIdentityPath); err != nil {
+			return fmt.Errorf("secretd: control identity: %w", err)
+		}
+	}
 	pool, err := db.OpenWithAppName(ctx, "", "faas-secretd")
 	if err != nil {
 		return fmt.Errorf("secretd: open database: %w", err)
 	}
 	defer pool.Close()
-	store := secretpg.New(pool, state.NewPgStore(pool))
+	pgState := state.NewPgStore(pool)
+	store := secretpg.New(pool, pgState)
 
 	// The handshake admits only registered compute nodes' leaves; the
 	// handler maps the leaf's CN to the node and checks ownership or grant.
@@ -207,6 +220,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		RequireReferences(cfg.requireReferences).WithMetrics(metrics).WithEdgeIdentities(edgeIdentities).
 		WithDeliveryIdentities(deliveryIdentities).WithBuildIdentities(buildIdentities).
 		WithBuildRegistryScope(cfg.buildRegistryScope).
+		WithInternalServiceKey(clusterKeyLoader(pgState, controlIdentities)).
 		WithPostgresVerification(postgresHMAC, managedpostgres.VerifyCredentialSQL))
 	go func() {
 		<-ctx.Done()
@@ -258,5 +272,20 @@ func sweepGrants(ctx context.Context, store grantSweeper, log *slog.Logger) {
 				log.Info("secretd: swept expired grants", "deleted", n)
 			}
 		}
+	}
+}
+
+// clusterKeyLoader opens the cluster signing key with the control seal
+// domain (ADR-20261110210000 slice 3k); nil without the identity.
+func clusterKeyLoader(store *state.PgStore, identities []*age.X25519Identity) secretd.InternalServiceKeyLoader {
+	if len(identities) == 0 {
+		return nil
+	}
+	return func(ctx context.Context) (ed25519.PrivateKey, string, error) {
+		row, err := store.LoadClusterSigningKey(ctx)
+		if err != nil {
+			return nil, "", fmt.Errorf("secretd: load cluster signing key: %w", err)
+		}
+		return internalsvc.OpenClusterKey(row.SealedBlob, row.PublicKeyPEM, row.KeyID, identities)
 	}
 }
