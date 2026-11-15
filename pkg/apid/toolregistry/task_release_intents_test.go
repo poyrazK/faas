@@ -141,6 +141,9 @@ func exerciseTaskIntents(t *testing.T, s state.Store, reopen func() state.Store)
 	revokedID := fmt.Sprintf("%064x", 4)
 	pending := decode(call("PUT", revokedID, "", in, publisher), "pending")
 	decode(call("PUT", revokedID, "/decision", api.TaskToolReleaseIntentDecision{IntentSHA256: pending.IntentSHA256, ReleaseFingerprint: in.ReleaseFingerprint, Decision: "approve"}, owner), "approved")
+	cancelID := fmt.Sprintf("%064x", 5)
+	cancelReview := decode(call("PUT", cancelID, "", in, publisher), "pending")
+	decode(call("PUT", cancelID, "/decision", api.TaskToolReleaseIntentDecision{IntentSHA256: cancelReview.IntentSHA256, ReleaseFingerprint: in.ReleaseFingerprint, Decision: "approve"}, owner), "approved")
 	if _, err := s.MarkAPIKeyRevoked(ctx, account.ID, publisher.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -148,4 +151,5 @@ func exerciseTaskIntents(t *testing.T, s state.Store, reopen func() state.Store)
 		t.Fatal("cached revoked principal retained access")
 	}
 	decode(call(http.MethodPost, revokedID, "/check", api.TaskToolReleaseIntentCheck{ReleaseFingerprint: in.ReleaseFingerprint}, owner), "stale")
+	decode(call("PUT", cancelID, "/decision", api.TaskToolReleaseIntentDecision{IntentSHA256: cancelReview.IntentSHA256, ReleaseFingerprint: in.ReleaseFingerprint, Decision: "revoke"}, owner), "revoked")
 }

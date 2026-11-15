@@ -27,14 +27,19 @@ func cmdMCPTaskIntent(args []string) int {
 	if err := flags.Parse(args[1:]); err != nil {
 		return 1
 	}
-	if flags.NArg() != 0 || *plan == "" || (action != "prepare" && action != "get" && action != "approve" && action != "reject" && action != "revoke") ||
+	cancelling := action == "reject" || action == "revoke"
+	if flags.NArg() != 0 || !cancelling && *plan == "" || (action != "prepare" && action != "get" && action != "approve" && action != "reject" && action != "revoke") ||
 		(action != "prepare" && !toolpublication.ValidID(*id)) || (*id != "" && !toolpublication.ValidID(*id)) ||
 		(action != "get" && action != "prepare" && !toolpublication.ValidID(*digest)) || (action == "prepare" && *reason == "") {
-		return printErr("Task release intent", errors.New("require --plan, --id for existing intents, --reason for prepare and --intent-sha256 for owner decisions"))
+		return printErr("Task release intent", errors.New("require --plan except for reject/revoke, --id for existing intents, --reason for prepare and --intent-sha256 for owner decisions"))
 	}
-	review, err := reviewMCPTaskRelease(*plan)
-	if err != nil {
-		return printErr("Task release intent source", err)
+	var review mcphosting.TaskReleaseReview
+	if !cancelling {
+		var err error
+		review, err = reviewMCPTaskRelease(*plan)
+		if err != nil {
+			return printErr("Task release intent source", err)
+		}
 	}
 	out, err := requestMCPTaskIntent(action, *id, *digest, *reason, review)
 	if err != nil {
@@ -71,6 +76,16 @@ func requestMCPTaskIntent(action, id, digest, reason string, review mcphosting.T
 	}
 	if action == "get" {
 		return c.CheckTaskToolReleaseIntent(ctx, id, api.TaskToolReleaseIntentCheck{ReleaseFingerprint: review.Fingerprint})
+	}
+	if action == "reject" || action == "revoke" {
+		retained, err := c.GetTaskToolReleaseIntent(ctx, id)
+		if err != nil {
+			return out, err
+		}
+		if retained.IntentSHA256 != digest {
+			return out, errors.New("owner digest differs from the retained Task review")
+		}
+		review.Fingerprint = retained.Intent.ReleaseFingerprint
 	}
 	return c.DecideTaskToolReleaseIntent(ctx, id, api.TaskToolReleaseIntentDecision{
 		IntentSHA256: digest, ReleaseFingerprint: review.Fingerprint, Decision: action})

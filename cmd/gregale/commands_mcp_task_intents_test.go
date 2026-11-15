@@ -31,6 +31,8 @@ func TestMCPTaskIntentCLIReviewJourney(t *testing.T) {
 		}
 		var out any
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/v1/task-tool-release-intents/"+id:
+			out = saved
 		case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/apps/") && strings.HasSuffix(r.URL.Path, "/release-review"):
 			out = reviews[strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/apps/"), "/release-review")]
 		case r.Method == "PUT" && r.URL.Path == "/v1/task-tool-release-intents/"+id:
@@ -102,6 +104,19 @@ func TestMCPTaskIntentCLIReviewJourney(t *testing.T) {
 	}
 	run("approve", "approved", "--intent-sha256", saved.IntentSHA256)
 	run("get", "approved")
+	if err := os.Rename(plan, plan+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	code, output, stderr := runCLI(t, "mcp", "server", "tasks", "intent", "revoke", "--id", id, "--intent-sha256", saved.IntentSHA256, "--json")
+	if code != 0 || saved.Status != "revoked" {
+		t.Fatalf("owner cancellation required unavailable source: %d %s %s", code, output, stderr)
+	}
+	if err := os.Rename(plan+".saved", plan); err != nil {
+		t.Fatal(err)
+	}
+	id = strings.Repeat("f", 64)
+	run("prepare", "pending", "--reason", "Review reports")
+	run("approve", "approved", "--intent-sha256", saved.IntentSHA256)
 	if err := os.WriteFile(filepath.Join(root, "worker", "server.js"), []byte("changed source"), 0600); err != nil {
 		t.Fatal(err)
 	}

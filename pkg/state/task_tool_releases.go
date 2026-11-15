@@ -40,7 +40,13 @@ func changeTaskToolRelease(record api.TaskToolReleaseIntentRecord, action string
 	if action != "check" && (in.IntentSHA256 != record.IntentSHA256 || in.ReleaseFingerprint != record.Intent.ReleaseFingerprint) {
 		return record, ErrConflict
 	}
-	record = tasktoolrelease.Check(record, in.ReleaseFingerprint, fresh, time.Now())
+	if action == "check" || in.Decision == "approve" {
+		record = tasktoolrelease.Check(record, in.ReleaseFingerprint, fresh, time.Now())
+	} else {
+		// Cancelling the exact retained review does not certify current app,
+		// source or requester authority, and must remain possible after drift.
+		record = tasktoolrelease.View(record, time.Now())
+	}
 	if action == "check" || record.Status == "stale" || record.Status == "expired" {
 		return record, nil
 	}

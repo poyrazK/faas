@@ -36,8 +36,10 @@ no approval or execution tool. Another publishing key cannot inspect or invalida
 the requesting key's review; the owner retains inspection and decision access.
 
 The CLI `gregale mcp server tasks intent` offers prepare, get, approve, reject and
-revoke. Each action reviews the supplied local plan; CLI get checks its fresh
-fingerprint and native app reviews. Owner decisions require `--intent-sha256`.
+revoke. Prepare, get and approve review the supplied local plan; CLI get checks
+its fresh fingerprint and native app reviews. Owner decisions require
+`--intent-sha256`. Rejection and revocation use the exact retained intent and
+remain available without local files or live requesting-key/app authority.
 Native GET reads retained metadata. POST check re-evaluates current facts and is
 excluded from HTTP idempotency replay. Observed source or native drift permanently
 marks an approval stale, including if the original inputs are later restored.

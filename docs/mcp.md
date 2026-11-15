@@ -1000,10 +1000,12 @@ The owner uses a personal non-agent administrator connection and the complete
 gregale mcp server tasks intent prepare --plan release.json --id "$INTENT_ID" --reason 'Review reports worker upgrade'
 gregale mcp server tasks intent get --plan release.json --id "$INTENT_ID"
 gregale mcp server tasks intent approve --plan release.json --id "$INTENT_ID" --intent-sha256 "$INTENT_SHA256"
-gregale mcp server tasks intent revoke --plan release.json --id "$INTENT_ID" --intent-sha256 "$INTENT_SHA256"
+gregale mcp server tasks intent revoke --id "$INTENT_ID" --intent-sha256 "$INTENT_SHA256"
 ```
 
-The owner can also `reject` a pending review. Agents and MCP-login credentials
+The owner can also `reject` a pending review. Rejection and revocation use the
+retained intent, so they remain available when source files are missing or the
+requesting key has lost authority. Agents and MCP-login credentials
 cannot approve, reject or revoke; no owner-decision tool is in the agent catalog.
 Another publisher cannot read or invalidate the requesting key's intent. Hosted,
 organization and app-scoped management connections cannot use these local tools.

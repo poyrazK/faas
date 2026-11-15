@@ -250,8 +250,8 @@ func mcpCLICommand() cliCommand {
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
 		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{
-			{Name: "intent", Short: "Prepare and inspect a durable Task stack review, or record an owner decision", Positionals: []string{"<prepare|get|approve|reject|revoke>"}, Notes: []string{"Approval covers the pinned review only. It grants no deployment, migration or invocation authority. Every action re-reviews --plan; get invalidates observed source or native app drift."}, Flags: []cliFlag{
-				{Name: "plan", Short: "local native Task release plan", Value: "PATH", Req: true},
+			{Name: "intent", Short: "Prepare and inspect a durable Task stack review, or record an owner decision", Positionals: []string{"<prepare|get|approve|reject|revoke>"}, Notes: []string{"Approval covers the pinned review only and grants no execution authority. Prepare, get and approve re-review --plan; get invalidates observed drift. Reject/revoke use the retained review and need no source files."}, Flags: []cliFlag{
+				{Name: "plan", Short: "local native plan required by prepare/get/approve", Value: "PATH"},
 				{Name: "id", Short: "stable intent ID; generated on prepare if omitted", Value: "ID"},
 				{Name: "reason", Short: "reviewable purpose required by prepare", Value: "TEXT"},
 				{Name: "intent-sha256", Short: "exact digest required by owner decisions", Value: "SHA256"},
