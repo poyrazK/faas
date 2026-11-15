@@ -2902,3 +2902,6 @@ func DeployOverridesCLISurfaces() map[string]UpdateAppCLISurface { return deploy
 func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, id string, in api.ToolPublicationVerificationRequest) (api.ToolPublicationVerification, error) {
 	return waitPrivatePublicationVerification(ctx, c, id, in)
 }
+
+var RememberInitApp = rememberInitApp
+var LinkedDefaultAppName = linkedDefaultAppName
