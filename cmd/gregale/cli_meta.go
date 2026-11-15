@@ -3493,7 +3493,7 @@ var cliCommands = []cliCommand{
 			{Name: "validate", Short: "validate local scenario sources without a platform login"},
 			{Name: "preflight", Short: "check account entitlements and developer app capacity"},
 			{Name: "engine", Short: "execution engine (default real-vm)", Value: "ENGINE", ClosedSet: []string{"real-vm", "local", "simulated"}},
-			{Name: "base-url", Short: "HTTP loopback origin (optional with local.command)", Value: "URL"},
+			{Name: "base-url", Short: "loopback origin or https://<app>.gregale.dev (optional with local.command)", Value: "URL"},
 			{Name: "data", Short: "JSON or CSV case data for the local engine", Value: "PATH"},
 			{Name: "load", Short: "repeat native HTTP journeys concurrently with the local engine"},
 			{Name: "vus", Short: "concurrent users or arrival-rate concurrency cap (1..50, default 1)", Value: "N"},
