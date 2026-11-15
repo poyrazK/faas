@@ -769,10 +769,38 @@ rows remain under `invocations`. Invocation `--all --json` returns one envelope
 with the combined rows. Deployment `--all --json` retains its existing NDJSON
 format (one deployment per line; an empty list emits no lines).
 
-All-page traversal buffers rows before printing. An API failure, cancellation,
+Default all-page traversal buffers rows before printing. An API failure, cancellation,
 repeated cursor, or more than 1,000 pages fails without partial list output.
 Large inventories should be fetched page by page. Pagination reflects live API
 results and does not guarantee a snapshot while resources are changing.
+
+### Streamed invocation and build lists
+
+Opt into incremental JSON Lines with `--json --all --stream`:
+
+```sh
+gregale --json invocation list --all --stream --limit 100
+gregale --json build list --app my-api --status failed --all --stream
+```
+
+Rows arrive in page order before later pages complete. Empty pages are followed
+when they carry a cursor; a completely empty result writes no lines. Existing
+filters, cursor aliases, page-size validation and the 1,000-page/cycle guards
+apply. Memory holds one decoded page plus the bounded cursor history. The
+existing non-streaming output contracts remain compatible.
+
+On failure, stdout can contain an incomplete stream. Check the process exit
+code. The single stderr Problem retains its existing code, category, exit and
+API request ID, adding `pagination.pages_completed`, `items_emitted` and
+`partial`. Pages count only after all their rows are emitted; items count
+complete JSON records. `partial` records any stdout bytes written before the
+error, including a truncated first record. Metadata contains no cursors, rows,
+filters or credentials. No final envelope is appended to stdout.
+
+Ctrl-C cancels the active HTTP read and exits 130. Write failures stop further
+page requests; normal OS SIGPIPE behavior applies to a closed stdout pipe.
+Streaming does not resume or replay a failed read automatically. Inventory
+changes during traversal can affect the observed rows.
 
 ### Apps and builds
 
@@ -795,7 +823,7 @@ honors the selected page size and starting cursor instead of ignoring them.
 
 Paged JSON retains `items` and `next_before`, adding `next_cursor`. Completed
 traversals omit continuation fields. `--all --json` retains the existing plain
-JSON array, including `[]` for no matches. Traversal errors emit no partial list;
+JSON array, including `[]` for no matches. Default traversal errors emit no partial list;
 repeated cursors and the 1,000-page ceiling stop the walk.
 
 ### Webhook deliveries and queue inspection

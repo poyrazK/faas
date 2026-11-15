@@ -4396,6 +4396,7 @@ type Deployment struct {
 	PromotedAt                 pgtype.Timestamptz
 	RollbackReleaseReview      []byte
 	BeforeCheckpointHook       pgtype.Bool
+	BuildRegistryScope         []string
 }
 
 type DeploymentAlias struct {

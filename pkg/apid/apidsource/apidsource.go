@@ -548,6 +548,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 	var sourceErr error
 	sourceSHA256 := ""
 	var inferredProfile json.RawMessage
+	// Slice 3j-4: recorded only from an accepted archive; a recovered row
+	// already has its own, a retry keeps none.
+	var buildRegistryScope []string
 	if recovered != nil {
 		sourceSHA256 = recovered.SourceSHA256
 		inferredProfile = append(json.RawMessage(nil), recovered.InferredProfile...)
@@ -632,6 +635,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 				inferredProfile = nil
 			}
 		}
+		buildRegistryScope = sourceBuildRegistryScope(p)
 		sourceErr = publishSourceWithDeadline(ctx, sourceStorage, buildID, p.SourcePath, p.OperationID != "")
 	}
 	if err := sourceErr; err != nil {
@@ -702,6 +706,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		OverrideReadinessProbe:   append(json.RawMessage(nil), p.OverrideReadinessProbe...),
 		OverrideMainDependsOn:    append(json.RawMessage(nil), p.OverrideMainDependsOn...),
 		InferredProfile:          append(json.RawMessage(nil), inferredProfile...),
+		BuildRegistryScope:       buildRegistryScope,
 		TrafficPercent:           p.TrafficPercent,
 		TrafficPercentExplicit:   p.TrafficPercentExplicit,
 		RollbackOn5xx:            p.RollbackOn5xx,

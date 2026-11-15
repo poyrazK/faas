@@ -157,7 +157,8 @@ func TestAnalyzeDockerfileWarnsForRawTCPServer(t *testing.T) {
 		{"registry path and digest", "FROM --platform=linux/amd64 docker.io/library/postgres:16@sha256:abc\n", true, "gregale postgres create"},
 		{"own EXPOSE of a raw port", "FROM alpine:3.20\nEXPOSE 9092\n", true, "gregale deploy --image"},
 		{"stateless TCP server", "FROM rabbitmq:3\n", true, "gregale deploy --image"},
-		{"server with HTTP sidecar", "FROM redis:7-alpine\nRUN apk add busybox-extras\nEXPOSE 8080\nCMD [\"/start.sh\"]\n", false, ""},
+		// apid refuses a datastore build whatever it exposes (2026-11-15 agent eval).
+		{"datastore with HTTP sidecar", "FROM redis:7-alpine\nRUN apk add busybox-extras\nEXPOSE 8080\nCMD [\"/start.sh\"]\n", true, "Upstash"},
 		{"final stage decides", "FROM redis:7 AS tools\nFROM node:22\nEXPOSE 3000\n", false, ""},
 		{"http app", "FROM node:22\nEXPOSE 9000\n", false, ""},
 	}
