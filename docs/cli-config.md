@@ -804,6 +804,37 @@ including `FAAS_JSON=1`, emits `schema_version: 1`, `key`, `has_changes`, `summa
 `added`, `removed` and `changed`. Zero/false values and empty arrays are explicit.
 Row bodies and input paths are not included in the report.
 
+Use `--explain` to identify fields within records present in both files:
+
+```sh
+gregale --json export diff before.jsonl after.jsonl --explain --fail-on-change
+```
+
+JSON mode adds `explanations`, an array of `{id, changes}` entries in the same
+order as `changed`. Each change has `path` and `kind` (`added`, `removed`, or
+`changed`). Paths use JSON Pointer escaping: `~` becomes `~0`, `/` becomes `~1`,
+and the empty field name is `/`. Changes sort by escaped path. For example:
+
+```json
+{"id":"build-1","changes":[{"path":"/status","kind":"changed"}]}
+```
+
+Object fields are compared recursively. Arrays, scalar/object replacements, and
+added or removed objects are reported once at their containing field; array
+indices and descendants of those objects are omitted. Empty objects and null
+remain distinct from missing fields. Semantic equality, including equivalent
+number spellings and object-field order, still produces no change.
+
+Only changed IDs get explanations; added and removed records stay in the existing
+ID arrays. Enabled explanations are `[]` when no records changed, including empty
+inventories. Human mode appends field paths and kinds with JSON escaping for
+control characters. IDs and field names are intentional result data; field values
+and input paths are omitted. No additional file read or API request is made.
+Explain mode retains object field names and digests across the indexes, so memory
+also grows with indexed object fields. Arrays retain one digest. Without the flag,
+or with `--explain=false`, the existing JSON and human report bytes are unchanged.
+Repeated Boolean flags keep normal last-value-wins behavior.
+
 Comparisons exit 0 by default. `--fail-on-change` exits 1 after printing a complete
 report when additions, removals or changes exist. `--fail-on-change=false`
 disables that behavior; repeated flags retain normal last-value-wins handling.

@@ -4856,11 +4856,12 @@ A receipt is an integrity reference, not a signature or a point-in-time API snap
 
 Compare saved JSON Lines records by a unique key
 
-`gregale export diff [--key <FIELD>] [--fail-on-change] <BEFORE> <AFTER>`
+`gregale export diff [--key <FIELD>] [--explain] [--fail-on-change] <BEFORE> <AFTER>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--key <FIELD>` | unique top-level string or number field (default id) |  |
+| `--explain` | show changed field paths and kinds without field values |  |
 | `--fail-on-change` | exit 1 when added, removed or changed records exist |  |
 
 Examples:
@@ -4868,6 +4869,7 @@ Examples:
 ```sh
 gregale export diff before.jsonl after.jsonl
 gregale --json export diff before.jsonl after.jsonl --key id --fail-on-change
+gregale --json export diff before.jsonl after.jsonl --explain
 ```
 
 Runs offline. Reports sorted added, removed and changed IDs and counts without row bodies. Duplicate record keys or object fields fail before output.
@@ -4875,6 +4877,8 @@ Runs offline. Reports sorted added, removed and changed IDs and counts without r
 Row and object-field order are ignored; array order is preserved. Numbers compare as exact decimal values without floating-point conversion.
 
 Comparisons exit 0 unless --fail-on-change is enabled and changes exist, then exit 1 with a result. Invalid input reports an error without a result.
+
+--explain adds JSON Pointer field paths and added/removed/changed kinds for changed IDs, without field values. Arrays and added/removed objects are reported at their parent field; the default report is unchanged.
 
 
 ## cron

@@ -15,6 +15,7 @@ import (
 type exportDiffEntry struct {
 	digest [sha256.Size]byte
 	key    json.RawMessage
+	fields *exportDiffField
 }
 
 type exportDiffSummary struct {
@@ -27,16 +28,21 @@ type exportDiffSummary struct {
 }
 
 type exportDiffReport struct {
-	SchemaVersion int               `json:"schema_version"`
-	Key           string            `json:"key"`
-	HasChanges    bool              `json:"has_changes"`
-	Summary       exportDiffSummary `json:"summary"`
-	Added         []json.RawMessage `json:"added"`
-	Removed       []json.RawMessage `json:"removed"`
-	Changed       []json.RawMessage `json:"changed"`
+	SchemaVersion int                      `json:"schema_version"`
+	Key           string                   `json:"key"`
+	HasChanges    bool                     `json:"has_changes"`
+	Summary       exportDiffSummary        `json:"summary"`
+	Added         []json.RawMessage        `json:"added"`
+	Removed       []json.RawMessage        `json:"removed"`
+	Changed       []json.RawMessage        `json:"changed"`
+	Explanations  *[]exportDiffExplanation `json:"explanations,omitempty"`
 }
 
 func readExportDiffIndex(reader io.Reader, key, label string) (map[string]exportDiffEntry, error) {
+	return readExportDiffIndexMode(reader, key, label, false)
+}
+
+func readExportDiffIndexMode(reader io.Reader, key, label string, explain bool) (map[string]exportDiffEntry, error) {
 	index := make(map[string]exportDiffEntry)
 	lines := bufio.NewReader(reader)
 	for lineNumber := 1; ; lineNumber++ {
@@ -45,7 +51,7 @@ func readExportDiffIndex(reader io.Reader, key, label string) (map[string]export
 			return nil, fmt.Errorf("read %s export: %w", label, err)
 		}
 		if len(line) > 0 {
-			entryID, entry, parseErr := parseExportDiffRecord(line, key)
+			entryID, entry, parseErr := parseExportDiffRecordMode(line, key, explain)
 			if parseErr != nil {
 				return nil, fmt.Errorf("%s export line %d: %w", label, lineNumber, parseErr)
 			}
@@ -60,13 +66,13 @@ func readExportDiffIndex(reader io.Reader, key, label string) (map[string]export
 	}
 }
 
-func parseExportDiffRecord(line []byte, key string) (string, exportDiffEntry, error) {
+func parseExportDiffRecordMode(line []byte, key string, explain bool) (string, exportDiffEntry, error) {
 	if !utf8.Valid(line) || !json.Valid(line) || !exportDiffUnicodeValid(line) {
 		return "", exportDiffEntry{}, errors.New("invalid UTF-8 JSON Lines record")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(line))
 	decoder.UseNumber()
-	value, err := readExportDiffValue(decoder)
+	value, err := readExportDiffValueMode(decoder, explain)
 	if err != nil {
 		return "", exportDiffEntry{}, err
 	}
@@ -83,7 +89,12 @@ func parseExportDiffRecord(line []byte, key string) (string, exportDiffEntry, er
 	} else {
 		encoded = json.RawMessage(selected.scalar)
 	}
-	return string(selected.kind) + selected.scalar, exportDiffEntry{digest: value.digest, key: encoded}, nil
+	entry := exportDiffEntry{digest: value.digest, key: encoded}
+	if explain {
+		fields := exportDiffFields(value)
+		entry.fields = &fields
+	}
+	return string(selected.kind) + selected.scalar, entry, nil
 }
 
 func compareExportDiffIndexes(before, after map[string]exportDiffEntry, key string) exportDiffReport {
@@ -119,12 +130,16 @@ func compareExportDiffIndexes(before, after map[string]exportDiffEntry, key stri
 }
 
 func diffExportFiles(beforePath, afterPath, key string) (exportDiffReport, error) {
+	return diffExportFilesMode(beforePath, afterPath, key, false)
+}
+
+func diffExportFilesMode(beforePath, afterPath, key string, explain bool) (exportDiffReport, error) {
 	beforeFile, err := openExportVerificationInput(beforePath, "before export")
 	if err != nil {
 		return exportDiffReport{}, err
 	}
 	defer beforeFile.Close()
-	before, err := readExportDiffIndex(beforeFile, key, "before")
+	before, err := readExportDiffIndexMode(beforeFile, key, "before", explain)
 	if err != nil {
 		return exportDiffReport{}, err
 	}
@@ -133,11 +148,11 @@ func diffExportFiles(beforePath, afterPath, key string) (exportDiffReport, error
 		return exportDiffReport{}, err
 	}
 	defer afterFile.Close()
-	after, err := readExportDiffIndex(afterFile, key, "after")
+	after, err := readExportDiffIndexMode(afterFile, key, "after", explain)
 	if err != nil {
 		return exportDiffReport{}, err
 	}
-	return compareExportDiffIndexes(before, after, key), nil
+	return compareExportDiffIndexesExplained(before, after, key, explain), nil
 }
 
 func writeExportDiff(w io.Writer, report exportDiffReport, jsonMode bool) error {
@@ -159,6 +174,7 @@ func writeExportDiff(w io.Writer, report exportDiffReport, jsonMode bool) error 
 				_, _ = fmt.Fprintf(&output, "%s: %s\n", group.name, id)
 			}
 		}
+		appendExportDiffExplanations(&output, report.Explanations)
 		data = output.Bytes()
 	}
 	n, err := w.Write(data)
