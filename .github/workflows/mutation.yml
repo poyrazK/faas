@@ -22,6 +22,10 @@ name: mutation
 # behaviour) are expected and stay as survivors.
 
 on:
+  # TEMPORARY: second full run with the widened ledger tests (dispatch needs
+  # the workflow on main). Remove before merging.
+  push:
+    branches: [test/mutation-testing]
   workflow_dispatch:
     inputs:
       target:
