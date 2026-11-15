@@ -17,12 +17,14 @@ import (
 type contractTestStore interface {
 	state.Store // teststorecheck:allow the one Store-sized interface the contracts alias
 	state.RollbackTrafficStore
+	state.WorkflowRunStartStore
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
 	state.AccountAbuseHoldStore
 	state.AccountAbuseStrikeStore
 	state.AccountSignupFactsStore
 	state.AccountHeldLinkStore
+	state.AccountRiskStore
 	state.AgentClientStore
 	state.OrgAgentStore
 	state.KeyProjectLimitStore

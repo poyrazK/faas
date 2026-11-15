@@ -210,6 +210,7 @@ export type { CreateBindingVerificationRunRequest } from './CreateBindingVerific
 export type { CreateCorsPresetRequest } from './CreateCorsPresetRequest.js';
 export type { CreateCronRequest } from './CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './CreateCustomDomainRequest.js';
+export type { CreateDatabaseSwitchRequest } from './CreateDatabaseSwitchRequest.js';
 export type { CreateDeployTokenRequest } from './CreateDeployTokenRequest.js';
 export type { CreateDeploymentOverrides } from './CreateDeploymentOverrides.js';
 export type { CreateDeploymentRequest } from './CreateDeploymentRequest.js';
@@ -245,6 +246,7 @@ export type { DailyUsagePoint } from './DailyUsagePoint.js';
 export type { DailyUsageResponse } from './DailyUsageResponse.js';
 export type { DatabaseSwitch } from './DatabaseSwitch.js';
 export type { DatabaseSwitchDrain } from './DatabaseSwitchDrain.js';
+export type { DatabaseSwitchList } from './DatabaseSwitchList.js';
 export type { DebugCoverageResponse } from './DebugCoverageResponse.js';
 export type { DebugCoverageSignal } from './DebugCoverageSignal.js';
 export type { DebugCriticalPathSegment } from './DebugCriticalPathSegment.js';

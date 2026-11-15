@@ -44,8 +44,9 @@ type CrashCapture struct {
 }
 
 type Deployment struct {
-	ID    pgtype.UUID
-	AppID pgtype.UUID
+	ID                 pgtype.UUID
+	AppID              pgtype.UUID
+	BuildRegistryScope []string
 }
 
 type DeploymentImagePreparation struct {

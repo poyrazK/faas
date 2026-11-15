@@ -54,23 +54,23 @@ func (s *PgStore) RecordAccountAbuseStrike(ctx context.Context, accountID, reaso
 }
 
 // RecordAccountAbuseStrike implements AccountAbuseStrikeStore.
-func (m *MemStore) RecordAccountAbuseStrike(_ context.Context, accountID, reason, _ string, at time.Time, window time.Duration) (int, error) {
+func (m *MemStore) RecordAccountAbuseStrike(_ context.Context, accountID, reason, appID string, at time.Time, window time.Duration) (int, error) {
 	if !validAbuseStrikeReason(reason) || window <= 0 || accountID == "" {
 		return 0, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.abuseStrikes == nil {
-		m.abuseStrikes = make(map[string][]time.Time)
+		m.abuseStrikes = make(map[string][]AccountAbuseStrike)
 	}
 	cutoff := at.Add(-window)
 	kept := m.abuseStrikes[accountID][:0]
 	for _, struck := range m.abuseStrikes[accountID] {
-		if struck.After(cutoff) {
+		if struck.StruckAt.After(cutoff) {
 			kept = append(kept, struck)
 		}
 	}
-	kept = append(kept, at)
+	kept = append(kept, AccountAbuseStrike{Reason: reason, AppID: appID, StruckAt: at.UTC()})
 	m.abuseStrikes[accountID] = kept
 	return len(kept), nil
 }

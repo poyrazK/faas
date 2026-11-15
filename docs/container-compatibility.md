@@ -137,6 +137,12 @@ draws from. Every JVM then prints `Picked up JAVA_TOOL_OPTIONS: …` on stderr
 when it starts. Java's default `SecureRandom` reads the kernel and needs
 nothing.
 
+A JVM built with `jlink` cannot load any agent unless it includes the
+`java.instrument` module, and it would not start with one named. When the
+image holds such a JVM, Gregale leaves the agent out, so the app starts but
+its JVMs are not reseeded and Gregale warns on each wake. Add
+`--add-modules java.instrument` to the `jlink` command to keep the reseed.
+
 Go cannot be reseeded from outside the program. Use `crypto/rand` for anything
 that must be unique. To reseed generators your program owns, import
 `github.com/gregale-dev/gregale-go/reseed` and register a callback with
@@ -177,6 +183,11 @@ Reseed these yourself, or avoid keeping them across a snapshot:
   than 22.15, and Go libraries are not reset: Go `rs/xid`, the MongoDB Go
   driver's `ObjectID` and the OpenTelemetry Go SDK's trace IDs repeat, and
   Gregale logs a warning on each wake of a Go app that uses them.
+
+A restore moves the app's clock forward by the time it spent parked. gunicorn
+would read that as hung workers and restart one on every wake; Gregale's
+Python preload stops that, and a worker that really hangs is still restarted
+after `--timeout`. Set `GREGALE_GUNICORN_FREEZE_GUARD=off` to turn this off.
 
 Setting `GREGALE_RESTORE_RESEED=off` in the app's environment disables the
 Node, Python and Java reseed. Only do that for an app that never generates tokens,
