@@ -478,6 +478,8 @@ func TestIsLongWaitRequest(t *testing.T) {
 		{http.MethodPost, "/v1/projects/scan", true},
 		{http.MethodPost, "/v1/orgs/acme/projects/scan", true},
 		{http.MethodPost, "/v1/projects/scan/source-ref", true},
+		{http.MethodPost, "/v1/orgs/acme/projects/shop/scan", true},
+		{http.MethodPost, "/v1/orgs/acme/projects/scan/source-ref", true},
 		{http.MethodGet, "/v1/projects/scan", false},
 		{http.MethodPost, "/v1/apps/demo/deployments/dev-source", true},
 		// Handlers with their own longer timeouts that the 5 s default cut.
