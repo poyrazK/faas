@@ -119,6 +119,9 @@ type AIUsageRecord struct {
 	// Route is a route attempt while the route runs a canary; it adds to
 	// the target's per-minute row (ADR-1340).
 	Route *AIRouteAttemptRecord
+	// Prompt is an attempt of a managed prompt call; it adds to the
+	// version's per-minute row (ADR 20261114180740).
+	Prompt *AIPromptAttemptRecord
 	// Export is the call's line for the calling app's log drains
 	// (ADR-1340).
 	Export *AILogExport
@@ -141,6 +144,16 @@ type AIRouteAttemptRecord struct {
 	TTFBMS   *int64
 }
 
+// AIPromptAttemptRecord is one settled attempt of a managed prompt call:
+// an error for any provider status of 400 or above, and the time to first
+// byte of a successful attempt (ADR 20261114180740).
+type AIPromptAttemptRecord struct {
+	PromptID string
+	Version  int
+	Error    bool
+	TTFBMS   *int64
+}
+
 // AILogExport is one export line and its OTLP attributes (ADR-1340).
 type AILogExport struct {
 	AppID      string
@@ -152,9 +165,13 @@ type AILogExport struct {
 // AIRequestLog is the non-usage metadata of one logged AI call. It holds
 // content only when the integration opted in to capture (ADR-996).
 type AIRequestLog struct {
-	RouteID    string
-	Status     int
-	DurationMS int64
+	RouteID string
+	// PromptID and PromptVersion name the managed prompt version of a
+	// prompt call (ADR 20261114180740).
+	PromptID      string
+	PromptVersion int
+	Status        int
+	DurationMS    int64
 	// TTFBMS is nil when no response byte arrived.
 	TTFBMS   *int64
 	Attempts int
@@ -223,6 +240,9 @@ func newAIRequestLog(settlement aiSettlement, timeToFirstByte time.Duration, now
 	log := &AIRequestLog{
 		RouteID: settlement.routeID, Status: settlement.status, Attempts: settlement.attempts,
 		DurationMS: max(now.Sub(settlement.started).Milliseconds(), 0),
+	}
+	if validUUID(settlement.prompt.promptID) && settlement.prompt.version >= 1 {
+		log.PromptID, log.PromptVersion = settlement.prompt.promptID, settlement.prompt.version
 	}
 	if timeToFirstByte > 0 {
 		ttfb := timeToFirstByte.Milliseconds()
@@ -323,6 +343,9 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	if err := validateAIRouteAttempt(record.Route); err != nil {
 		return err
 	}
+	if err := validateAIPromptAttempt(record.Prompt); err != nil {
+		return err
+	}
 	if err := validateAILogExport(record.Export); err != nil {
 		return err
 	}
@@ -336,6 +359,16 @@ func validateAIRouteAttempt(attempt *AIRouteAttemptRecord) error {
 	if !validUUID(attempt.RouteID) || attempt.Position < 1 || attempt.Position > api.OutboundAIRouteTargetsMax ||
 		(attempt.TTFBMS != nil && (*attempt.TTFBMS < 0 || *attempt.TTFBMS > 1<<31-1)) {
 		return fmt.Errorf("%w: AI route attempt is out of range", ErrInvalidIntegration)
+	}
+	return nil
+}
+
+func validateAIPromptAttempt(attempt *AIPromptAttemptRecord) error {
+	if attempt == nil {
+		return nil
+	}
+	if !validUUID(attempt.PromptID) || attempt.Version < 1 || (attempt.TTFBMS != nil && (*attempt.TTFBMS < 0 || *attempt.TTFBMS > 1<<31-1)) {
+		return fmt.Errorf("%w: AI prompt attempt is out of range", ErrInvalidIntegration)
 	}
 	return nil
 }
