@@ -760,15 +760,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load build seal domain: %w", err)
 	}
+	// ADR-20261110210000 slice 3g-3: a node whose build identity is
+	// retired pulls builder registries through secretd and holds none.
+	if cfg.BuildSealDomainRetired {
+		if err := checkBuildRetired(filepath.Dir(keyPath), cfg.RuntimeSealDomainContracted,
+			os.Getenv("FAAS_VMMD_BUILD_REGISTRY_MIRROR")); err != nil {
+			return err
+		}
+		log.Info("vmmd: build identity retired; builder registry passwords open on the control plane only")
+	}
 	hostIdentities, registryIdentities, err := unsealIdentities(runtimeIdentities, buildIdentities, legacyIdentities,
-		cfg.RuntimeSealDomainContracted, cfg.RuntimeSealDomainRetired)
+		cfg.RuntimeSealDomainContracted, cfg.RuntimeSealDomainRetired, cfg.BuildSealDomainRetired)
 	if err != nil {
 		return err
 	}
 	// ADR-20261110210000 slice 3e: a retired node holds no runtime
 	// identity and seals capture keys to the runtime recipient.
 	var captureRecipient *age.X25519Recipient
-	loadedDomains := map[sealdomain.Domain]bool{sealdomain.Build: len(buildIdentities) > 0}
+	// A retired domain is not reported at all, so
+	// FaasSealDomainIdentityMissing does not read the node as one that lost
+	// its identity.
+	loadedDomains := map[sealdomain.Domain]bool{}
+	if !cfg.BuildSealDomainRetired {
+		loadedDomains[sealdomain.Build] = len(buildIdentities) > 0
+	}
 	if cfg.RuntimeSealDomainRetired {
 		captureRecipient, err = runtimeRetiredRecipient(filepath.Dir(keyPath), cfg.RuntimeSealDomainContracted,
 			os.Getenv("FAAS_RUNTIME_SECRET_OPENER"))
