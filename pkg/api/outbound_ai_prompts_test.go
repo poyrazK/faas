@@ -38,12 +38,14 @@ func TestPushOutboundAIPromptVersionProblem(t *testing.T) {
 		edit func(*PushOutboundAIPromptVersionRequest)
 		want string
 	}{
-		"valid":             {func(*PushOutboundAIPromptVersionRequest) {}, ""},
-		"bad role":          {func(r *PushOutboundAIPromptVersionRequest) { r.Messages[0].Role = "tool" }, "role must be"},
-		"empty content":     {func(r *PushOutboundAIPromptVersionRequest) { r.Messages[0].Content = " " }, "must not be empty"},
-		"both targets":      {func(r *PushOutboundAIPromptVersionRequest) { r.Target.RouteID = "r" }, "exactly one"},
-		"no model":          {func(r *PushOutboundAIPromptVersionRequest) { r.Target.Model = "" }, "needs a model"},
-		"route with model":  {func(r *PushOutboundAIPromptVersionRequest) { r.Target = OutboundAIPromptTarget{RouteID: "r", Model: "m"} }, ""},
+		"valid":         {func(*PushOutboundAIPromptVersionRequest) {}, ""},
+		"bad role":      {func(r *PushOutboundAIPromptVersionRequest) { r.Messages[0].Role = "tool" }, "role must be"},
+		"empty content": {func(r *PushOutboundAIPromptVersionRequest) { r.Messages[0].Content = " " }, "must not be empty"},
+		"both targets":  {func(r *PushOutboundAIPromptVersionRequest) { r.Target.RouteID = "r" }, "exactly one"},
+		"no model":      {func(r *PushOutboundAIPromptVersionRequest) { r.Target.Model = "" }, "needs a model"},
+		"route with model": {func(r *PushOutboundAIPromptVersionRequest) {
+			r.Target = OutboundAIPromptTarget{RouteID: "r", Model: "m"}
+		}, ""},
 		"unused default":    {func(r *PushOutboundAIPromptVersionRequest) { r.Defaults = map[string]string{"x": "1"} }, "names no"},
 		"temperature":       {func(r *PushOutboundAIPromptVersionRequest) { r.Params.Temperature = &temperature }, "temperature"},
 		"max tokens":        {func(r *PushOutboundAIPromptVersionRequest) { r.Params.MaxTokens = &maxTokens }, "max_tokens"},
