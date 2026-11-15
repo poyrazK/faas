@@ -46,6 +46,189 @@ evaluation/run times rather than substituting false or an epoch-zero time.
 A successful read exits normally for degraded or partial assessments; inspect
 the JSON states when making operational decisions.
 
+## Inspect failure and retry diagnostics
+
+Each probe can include an optional `diagnostics` section for the last evaluated
+run. It does not change the coverage assessment. Human output shows it below
+each node/URL pair; deployment reports retain it in their latest serving snapshot
+and can preserve bounded fault details in the
+[deployment timeline](post-deployment-monitoring.md#retained-probe-failure-details).
+
+`state=available` requires four observations from the same current coverage
+evaluation: final failure code, first failure code, attempt count and HTTP status.
+Rules bind each field to the discovered compute target, require a unique series
+and match its scrape timestamp to the result. The API also checks the run clock,
+code ranges and consistency with coverage.
+
+| Metric code | API failure code | Meaning |
+|---|---|---|
+| 0 | `none` | The configured checks passed on this attempt. |
+| 1 | `dns` | A typed name-resolution error. |
+| 2 | `connection` | A typed connection or network error. |
+| 3 | `tls` | A typed TLS error, including certificate validation. |
+| 4 | `timeout` | A request/read timeout or body completion over budget. |
+| 5 | `http_status` | A non-2xx HTTP response, including a refused redirect. |
+| 6 | `latency` | First-byte latency exceeded the configured budget. |
+| 7 | `body_mismatch` | The exact expected body did not match. |
+| 8 | `unknown` | An observed failure could not be classified safely. |
+
+`first_failure_code` describes the first attempt of this run; `failure_code`
+describes its final attempt. A first-attempt success has `attempts=1` and both
+codes `none`. A retried run has `attempts=2` and a non-`none` first code.
+`recovered_on_retry=true` means the second attempt passed. That remains a passing
+probe and does not mark a confirmed deployment-verification fault; it makes the
+intermittent failure visible without changing the existing retry policy.
+
+`http_status=0` means no response headers were observed. HTTP 200 can accompany
+a latency, body or subsequent read failure. Codes identify the observed category,
+not the responsible service or network hop. Classification never parses provider
+exception strings to guess a cause.
+
+`state=unknown` means evidence is missing, inconsistent, unavailable or from
+another evaluation. Numeric values and retry recovery remain null; codes are
+absent. This differs from `state=available, failure_code=unknown`, a real
+unclassified failed attempt. Older probes/rules produce unknown diagnostics;
+older APIs can omit the section. Human CLI output labels an omitted section
+`server_does_not_report_diagnostics`, without inventing zero failures.
+
+The two extra strict queries share the existing three-second budget. Four
+scalars per expected pair fit the 4,096-series bound at the full 1,000-pair fleet.
+A diagnostic query failure leaves coverage assessment intact. Updated Node and
+Python SDKs accept older responses without the section.
+
+See [ADR-20261113190000](../adr/20261113190000-serving-probe-failure-diagnostics.md).
+
+## Inspect direct notification submissions
+
+The response adds optional `probe_notifications` for the compute-node probe's
+direct webhook and heartbeat path. Human output prints the same section after
+the serving probes. It uses the [notification recordings](serving-probe.md#warnings-from-completed-notification-failures)
+without sending a message, contacting a provider or reading its credentials.
+
+Each unique expected node contributes two channel slots, `heartbeat` and
+`webhook`, regardless of how many probe URLs that node has. The optional
+heartbeat can be explicitly disabled. A channel reports:
+
+| State | Meaning |
+| --- | --- |
+| `disabled` | A fresh source reports the channel disabled with no submission history. |
+| `unknown` | Evidence is missing, stale, unavailable, inconsistent, or the recording reports no usable outcome. |
+| `last_submission_succeeded` | Its last completed HTTP submission passed the transport checks. |
+| `last_submission_failed` | Its last completed HTTP submission failed, with a fixed failure code. |
+
+For known outcomes, `evaluated_at` is the recording evaluation clock and
+`last_run_at` is the original probe-completion clock. The API requires a fresh
+evaluation, a run within the node's result-age policy and matching evaluation
+timestamps on all used observations. `last_attempt_at` and `last_success_at`
+remain historical completion clocks. A quiet run never advances them; an old
+successful submission does not prove current reachability, provider processing,
+external watchdog receipt or human acknowledgement. The CLI's delivery/receipt
+limitations still apply after submission evidence becomes available.
+
+Failures use `dns`, `connection`, `tls`, `timeout`, `http_status` or `unknown`.
+The last category is an observed unclassified failure; `state=unknown` instead
+means the outcome cannot be established. Disabled or unknown channels have null
+configuration/history fields as appropriate and no fabricated failure code or
+epoch-zero success. A fresh recording of unknown evidence can still provide
+`evaluated_at`; stale or missing recordings do not acquire a new timestamp.
+
+For `reason=recording_unknown`, optional `evidence_reason` explains the current
+notification evidence:
+
+| Evidence reason | Meaning |
+| --- | --- |
+| `no_submission_yet` | A fresh enabled channel reports no attempted request and no retained history, including after credential rotation. Quiet webhooks can remain in this state. |
+| `telemetry_missing` | A fresh probe source lacks required notification fields. Missing optional success history on a failed submission is allowed. |
+| `telemetry_invalid` | Notification fields are duplicated, stale relative to the source scrape, malformed or contradictory. |
+| `source_unavailable` | The discovered probe source, run clock or node timing policy cannot establish usable evidence. |
+
+The coarse `reason` remains compatible with older clients. Older rules omit
+the detail and retain `recording_unknown`. Query failures remain `query_failed`;
+absent, stale or mismatched recordings retain `recording_missing` or
+`recording_not_current` as applicable. Detailed evidence requires a current
+recording evaluation; channel configuration and submission history remain null.
+An evaluated source-unavailable
+reason describes the monitoring assessment, without inventing a run clock.
+Missing or invalid telemetry sustained for five minutes raises
+[`FaasServingProbeNotificationTelemetryDegraded`](../runbooks/FaasServingProbeNotificationTelemetryDegraded.md).
+Valid channels without history and explicitly disabled channels do not raise
+that warning. Source and inventory failures remain covered by their existing
+warnings. A telemetry warning clearing does not establish a completed success.
+
+The section's `counts` cover **all** expected channels, up to 2,000, independently
+of the preview. `state=available` means all channel outcomes are known, even if
+some failed; `partial` means some are unknown; `unknown` means all outcomes or
+the inventory are unavailable. An explicitly configured empty inventory is
+`not_applicable`. Unknown inventory has null `expected_channels` and `counts`.
+
+`channels` retains at most **32** entries, ordered failed first, then unknown,
+successful and disabled; ties use node/channel order. `limit`, `omitted` and
+`truncated` disclose the bound. An omitted channel is not evidence of success;
+use the full counts and the direct node lookup below when the preview is
+truncated. The bounded preview keeps the maximum deployment evidence report
+inside its existing response envelope.
+
+Eight notification queries run concurrently under the existing shared
+three-second deadline, for fourteen serving-health queries in total. Each
+returns at most 4,000 series at the maximum fleet, below the 4,096-series
+transport limit. Raw URLs, scrape addresses, arbitrary
+labels and provider text are excluded; malformed or partial queries become
+unknown evidence without changing serving coverage. Optional metadata is
+validated before either human or JSON CLI output. The generated Node and
+Python SDKs support this section; an older server can omit it, which the CLI
+labels `server_does_not_report_probe_notifications`.
+
+Submission evidence is separate from the serving assessment and the existing
+deployment-verification checks. A failed, quiet, disabled or unknown channel
+does not add a serving qualification gate. Deployment reports retain the safe
+preview in their latest serving snapshot; malformed optional metadata is
+replaced by an unknown section without copying unsafe values or blocking
+otherwise valid serving evidence. The standalone CLI rejects malformed responses.
+An alert can stop firing because evidence disappeared or a credential changed;
+inspect state and completion clocks before treating resolution as recovery.
+
+See [ADR-20261113233000](../adr/20261113233000-serving-probe-notification-operator-evidence.md).
+
+## Inspect one node beyond the fleet preview
+
+```bash
+gregalectl obs node fsn-2
+gregalectl obs node fsn-2 --json
+```
+
+The node inspector includes `probe_notifications` from GET
+`/v1/admin/obs/nodes/fsn-2/probe-notifications`. This direct lookup returns both
+channel slots for an expected node, including a node omitted from the fleet's
+32-channel preview. It checks the full independent inventory first, then reads
+notification recordings filtered to that exact node. It uses the same operator
+authorization, MFA and allowlist as serving health and accepts no query parameters.
+
+| `expected` | Meaning |
+| --- | --- |
+| `null` | Inventory is unavailable, stale or unconfigured; expectation is unknown and `channels` is empty. |
+| `false` | Fresh configured monitoring intent excludes this node; state is `not_applicable` and `channels` is empty. This says nothing about whether the node exists in the registry. |
+| `true` | Monitoring intent includes this node; both `heartbeat` and `webhook` slots are returned, even when their evidence is unknown. |
+
+`state=available` describes complete evidence, including known failed
+submissions. `partial` and `unknown` preserve incomplete outcomes. Read the
+channel states and completion clocks using the historical-submission semantics
+above; a previous success does not establish current provider health or receipt.
+The node response also carries the inventory observation time, evaluation time,
+freshness limit and the node's result-age policy.
+
+Two inventory queries and, only for an expected node, eight filtered channel
+queries share one evaluation time and one three-second deadline. Scoped vectors
+are bounded to four rows each; foreign-node or malformed observations become
+unknown. The lookup performs no writes or notification sends. The CLI treats
+this additional read as optional: an older server, unavailable endpoint or
+invalid response produces a fixed unknown note while the existing node detail
+remains usable. It validates the node identity and metadata before human or
+JSON output and refuses redirects for this read.
+
+See [ADR-20261114010000](../adr/20261114010000-node-probe-notification-lookup.md).
+Detailed unknown reasons and telemetry warnings are specified in
+[ADR-20261114020000](../adr/20261114020000-serving-probe-notification-telemetry.md).
+
 ## Match a URL without exposing its credentials
 
 `url_id` is lowercase SHA-256 of the **exact configured UTF-8 URL bytes**.
@@ -62,7 +245,7 @@ python3 -c 'import getpass, hashlib; print(hashlib.sha256(getpass.getpass("Exact
 ```
 
 The same URL ID can appear on multiple nodes; the node/URL-ID pair is the
-identity. No URL or node filter is accepted by the endpoint or CLI.
+identity. The fleet serving-health endpoint and CLI accept no URL or node filter.
 
 ## Evidence and timing
 
@@ -93,6 +276,11 @@ watchdog. Use [notification health](notification-delivery.md#operator-api-and-cl
 and the established external-monitor qualification procedures separately.
 
 ## Rollout and verification
+
+Converge the probe helper's notification fields before enabling the telemetry
+warning rules. A fresh older helper without these fields is classified as
+`telemetry_missing` and will warn after five minutes. Older rules without the
+detailed recording remain usable with the coarse unknown reason.
 
 Use [post-deployment monitoring verification](post-deployment-monitoring.md)
 to wait for post-rollout serving and notification evidence and retain a

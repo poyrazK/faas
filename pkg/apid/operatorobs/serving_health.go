@@ -20,16 +20,20 @@ const ServingHealthPath = "/v1/admin/obs/serving-health"
 const ServingHealthScope = "expected_serving_probe_coverage"
 
 const (
-	probeConfigured  = "faas_serving_probe_inventory_configured"
-	probePairs       = "faas_serving_probe_expected_pairs"
-	probeExpected    = "faas_serving_probe_expected"
-	probeBudget      = "faas_serving_probe_expected_first_byte_seconds"
-	probeAge         = "faas_serving_probe_expected_max_age_seconds"
-	probeState       = "faas_serving_probe:coverage_state"
-	probeEvalBudget  = "faas_serving_probe:expected_budget"
-	probeEvalAge     = "faas_serving_probe:expected_max_age"
-	probeRun         = "faas_serving_probe:last_run"
-	probeMetricLabel = "evidence_metric"
+	probeConfigured   = "faas_serving_probe_inventory_configured"
+	probePairs        = "faas_serving_probe_expected_pairs"
+	probeExpected     = "faas_serving_probe_expected"
+	probeBudget       = "faas_serving_probe_expected_first_byte_seconds"
+	probeAge          = "faas_serving_probe_expected_max_age_seconds"
+	probeState        = "faas_serving_probe:coverage_state"
+	probeEvalBudget   = "faas_serving_probe:expected_budget"
+	probeEvalAge      = "faas_serving_probe:expected_max_age"
+	probeRun          = "faas_serving_probe:last_run"
+	probeFailure      = "faas_serving_probe:failure_code"
+	probeFirstFailure = "faas_serving_probe:first_failure_code"
+	probeAttempts     = "faas_serving_probe:attempts"
+	probeHTTPStatus   = "faas_serving_probe:http_status"
+	probeMetricLabel  = "evidence_metric"
 )
 
 var servingProbeNodePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
@@ -79,7 +83,10 @@ func servingHealthQueries() []string {
 	// At most 1000 pair states and three policies/run clocks per node: each
 	// vector remains below the shared 4096-series Prometheus transport bound.
 	recordings := `label_replace({__name__=~"faas_serving_probe:(coverage_state|expected_budget|expected_max_age|last_run)"},"evidence_metric","$1","__name__","(.+)")`
-	return []string{inventory, "timestamp(" + inventory + ")", recordings, "timestamp(" + recordings + ")"}
+	// Four diagnostic scalars per expected pair fit the 4096-series bound even
+	// at the full 1000-pair inventory. Separate failures cannot poison coverage.
+	diagnostics := `label_replace({__name__=~"faas_serving_probe:(failure_code|first_failure_code|attempts|http_status)"},"evidence_metric","$1","__name__","(.+)")`
+	return append([]string{inventory, "timestamp(" + inventory + ")", recordings, "timestamp(" + recordings + ")", diagnostics, "timestamp(" + diagnostics + ")"}, servingNotificationQueries()...)
 }
 
 // ServingHealth reads one pinned snapshot under a shared deadline. It never
@@ -88,9 +95,11 @@ func ServingHealth(ctx context.Context, client *promql.Client, now time.Time) ap
 	ctx, cancel := context.WithTimeout(ctx, api.ObsServingProbeBudget)
 	defer cancel()
 	out := api.ObsServingHealth{GeneratedAt: now.UTC(), Scope: ServingHealthScope, State: "partial", MaxAgeSeconds: int(api.ObsHealthFreshnessMaxAge.Seconds()), Probes: []api.ObsServingProbe{}, Limitations: ServingHealthLimitations()}
+	out.ProbeNotifications = UnavailableServingProbeNotifications("inventory_unavailable")
 	if client == nil || client.BaseURL() == "" {
 		out.Reason = "prometheus_not_configured"
 		out.Inventory = api.ObsServingProbeInventory{State: "unavailable", Reason: out.Reason}
+		out.ProbeNotifications = UnavailableServingProbeNotifications("prometheus_not_configured")
 		return out
 	}
 	queries := servingHealthQueries()
@@ -112,14 +121,20 @@ func ServingHealth(ctx context.Context, client *promql.Client, now time.Time) ap
 		out.Reason = intent.status.Reason
 		if intent.status.State == "healthy" {
 			out.Reason = "inventory_not_configured"
+			out.ProbeNotifications = UnavailableServingProbeNotifications("inventory_not_configured")
 		}
 		return out
 	}
 	recordings, err := servingProbeSnapshot(results[2], results[3], true)
 	out.Probes = servingProbeAssess(intent, recordings, err, now)
+	diagnostics, diagnosticErr := servingProbeSnapshot(results[4], results[5], true)
+	for i := range out.Probes {
+		out.Probes[i].Diagnostics = assessServingProbeDiagnostics(out.Probes[i], diagnostics, diagnosticErr, now)
+	}
 	counts := ServingProbeCounts(out.Probes)
 	out.Counts = &counts
 	out.State, out.Reason = ServingProbeOverall(counts)
+	out.ProbeNotifications = assessServingProbeNotifications(out, results[6:], now)
 	return out
 }
 
@@ -144,6 +159,9 @@ func servingProbeIndex(rows []promql.VectorSample, recording bool) (map[servingP
 		if !valid || math.IsNaN(row.Value) || math.IsInf(row.Value, 0) {
 			return nil, errors.New("invalid serving evidence")
 		}
+		if slices.Contains([]string{probeFailure, probeFirstFailure, probeAttempts, probeHTTPStatus}, key.metric) {
+			key.url = servingProbeURLID(key.url)
+		}
 		if _, exists := out[key]; exists {
 			return nil, errors.New("duplicate serving evidence")
 		}
@@ -159,7 +177,7 @@ func servingProbeIdentity(labels map[string]string, recording bool) (servingProb
 	}
 	metrics := []string{probeConfigured, probePairs, probeExpected, probeBudget, probeAge, "up"}
 	if recording {
-		metrics = []string{probeState, probeEvalBudget, probeEvalAge, probeRun}
+		metrics = []string{probeState, probeEvalBudget, probeEvalAge, probeRun, probeFailure, probeFirstFailure, probeAttempts, probeHTTPStatus}
 		for name := range labels {
 			if !slices.Contains([]string{"__name__", probeMetricLabel, "probe_node", "url"}, name) {
 				return key, false
@@ -182,7 +200,7 @@ func servingProbeIdentity(labels map[string]string, recording bool) (servingProb
 		return key, false
 	}
 	nodeMetric := !slices.Contains([]string{probeConfigured, probePairs, "up"}, key.metric)
-	pairMetric := key.metric == probeExpected || key.metric == probeState
+	pairMetric := slices.Contains([]string{probeExpected, probeState, probeFailure, probeFirstFailure, probeAttempts, probeHTTPStatus}, key.metric)
 	if nodeMetric != (key.node != "") || nodeMetric && !ServingProbeNodeValid(key.node) || pairMetric != (key.url != "") || pairMetric && !servingProbeURLValid(key.url) {
 		return key, false
 	}

@@ -128,12 +128,38 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchBilling,
 		DocSlug: "billing",
-		Short:   "Operator billing catalog, reconciliation, and webhook diagnostics",
+		Short:   "Operator billing catalog, credits, refunds, reconciliation, and webhook diagnostics",
 		Subcommands: []cliSub{
 			{Name: "price-catalog", Short: "List, sync, or reset the provider catalog"},
 			{Name: "reconcile", Short: "Reconcile usage for one account"},
 			{Name: "reconcile-paddle-overage", Short: "Check Paddle overage schema readiness"},
 			{Name: "webhook-test", Short: "Send a locally signed Paddle or Stripe webhook"},
+			{Name: "credit", Short: "Issue a billing credit to an account", Flags: []cliFlag{
+				{Name: "account-id", Short: "account id (uuid)", Req: true},
+				{Name: "cents", Short: "credit amount in USD cents", Req: true},
+				{Name: "reason", Short: "reason text (3..500 chars)", Req: true},
+				{Name: "yes", Short: "acknowledge issuing a credit", Req: true},
+			}},
+			{Name: "refund", Short: "Refund part or all of a paid invoice", Flags: []cliFlag{
+				{Name: "account-id", Short: "account id (uuid)", Req: true},
+				{Name: "invoice-id", Short: "local invoice id (uuid)", Req: true},
+				{Name: "cents", Short: "refund amount in USD cents", Req: true},
+				{Name: "reason", Short: "reason text (3..500 chars)", Req: true},
+				{Name: "idempotency-key", Short: "provider idempotency key (derived from the intent when empty)"},
+				{Name: "yes", Short: "acknowledge moving money back to the customer", Req: true},
+			}},
+			{Name: "consume-credits", Short: "Apply an account's credits to an invoice's overage", Flags: []cliFlag{
+				{Name: "invoice-id", Short: "local invoice id (uuid)", Req: true},
+				{Name: "idempotency-key", Short: "Idempotency-Key (generated when empty)"},
+				{Name: "yes", Short: "acknowledge consuming the account's credits", Req: true},
+			}},
+			{Name: "postgres", Short: "Managed PostgreSQL accounting: diagnostics | usage-import | reconcile", Flags: []cliFlag{
+				{Name: "account-id", Short: "account id (uuid)", Req: true},
+				{Name: "file", Short: "evidence JSON file (usage-import, reconcile)"},
+				{Name: "apply", Short: "apply the reviewed preview revision (usage-import, reconcile)"},
+				{Name: "after", Short: "resume after this database id (diagnostics)"},
+				{Name: "limit", Short: "maximum databases per page, 1..100 (diagnostics)"},
+			}},
 		},
 	},
 	{
@@ -199,6 +225,14 @@ var cliCommands = []cliCommand{
 					{Name: "reason", Short: "durable audit reason slug", Req: true},
 					{Name: "trace-id", Short: "32-char hex trace id (generated when omitted)"},
 					{Name: "yes", Short: "acknowledge retrying the GitHub Check Run write", Req: true},
+				},
+			},
+			{
+				Name:  "webhook-secret",
+				Short: "Rotate a legacy installation-scoped webhook secret (set; secret hex on stdin)",
+				Flags: []cliFlag{
+					{Name: "installation-id", Short: "GitHub App installation_id", Req: true},
+					{Name: "yes", Short: "acknowledge replacing the installation's webhook secret", Req: true},
 				},
 			},
 		},
@@ -793,6 +827,26 @@ var cliCommands = []cliCommand{
 				Flags: append(accountMutationCLIFlags(), cliFlag{Name: "org", Short: "organization slug", Req: true}),
 			},
 			{
+				Name:  "abuse-hold",
+				Short: "Place or release an account abuse hold (place|release)",
+				Flags: []cliFlag{
+					{Name: "account-id", Short: "account id (uuid)", Req: true},
+					{Name: "note", Short: "audit note (3..500 chars)", Req: true},
+					{Name: "yes", Short: "acknowledge the hold change", Req: true},
+				},
+			},
+			{
+				Name:  "egress-flows",
+				Short: "Search the egress flow log: which account connected to an address, and when",
+				Flags: []cliFlag{
+					{Name: "remote", Short: "remote IP address or CIDR"},
+					{Name: "account-id", Short: "account id (uuid)"},
+					{Name: "from", Short: "window start, RFC 3339"},
+					{Name: "to", Short: "window end, RFC 3339"},
+					{Name: "limit", Short: "maximum rows (1..1000)"},
+				},
+			},
+			{
 				Name:  "complimentary",
 				Short: "Give an account a paid plan without a subscription, or end it",
 				Flags: []cliFlag{
@@ -1259,6 +1313,7 @@ var cliCommands = []cliCommand{
 			{Name: subRotate, Short: "Rotate host.age (delegates to host-age rotate)"},
 			{Name: subStatus, Short: "Show mode/mtime/sha256 for the 5 secret files"},
 			{Name: subSecretsStamp, Short: "Stamp the existing vmmd TLS certificate without rotating secrets"},
+			{Name: "rekey-progress", Short: "Show the customer-secret re-key walk's counters (operator session)"},
 		},
 		Flags: []cliFlag{
 			{Name: "dir", Short: "root secrets directory (default /etc/faas/secrets)"},

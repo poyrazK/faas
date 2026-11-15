@@ -94,11 +94,11 @@ var (
 // init/rotate/status each fan to a leaf.
 func cmdSecretsDispatch(args []string) int {
 	if len(args) > 0 && (args[0] == flagHelpLong || args[0] == flagHelpShort) {
-		PrintUsage(os.Stderr, "usage: gregalectl secrets <init|rotate|status|stamp> [flags]", "secrets")
+		PrintUsage(os.Stderr, "usage: gregalectl secrets <init|rotate|status|stamp|rekey-progress> [flags]", "secrets")
 		return 0
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregalectl secrets <init|rotate|status|stamp> [flags]", "secrets")
+		PrintUsage(os.Stderr, "usage: gregalectl secrets <init|rotate|status|stamp|rekey-progress> [flags]", "secrets")
 		return 1
 	}
 	switch args[0] {
@@ -110,8 +110,10 @@ func cmdSecretsDispatch(args []string) int {
 		return cmdSecretsStatus(args[1:])
 	case subSecretsStamp:
 		return cmdSecretsStamp(args[1:])
+	case "rekey-progress":
+		return cmdSecretsRekeyProgress(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregalectl secrets: unknown subcommand %q (known: init, rotate, status, stamp)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl secrets: unknown subcommand %q (known: init, rotate, status, stamp, rekey-progress)\n", args[0])
 		return 1
 	}
 }

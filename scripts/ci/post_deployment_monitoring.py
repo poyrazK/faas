@@ -144,6 +144,8 @@ def summarize(report):
     text = "### Post-deployment monitoring\n\n"
     text += "Release: `" + report["requested_release"] + "`\n\n"
     text += "Result: **" + report["state"] + "**. See the monitoring evidence artifact and [operator guide](" + GUIDE + ").\n\n"
+    if report["had_confirmed_faults"]:
+        text += "Confirmed faults were observed during verification. Inspect the evidence artifact for their causes and any recorded recovery.\n\n"
     for check in report["checks"]:
         text += "- " + check["name"] + ": " + check["state"] + (" (" + check["reason"] + ")" if check["reason"] else "") + "\n"
     summary = os.environ.get("GITHUB_STEP_SUMMARY")

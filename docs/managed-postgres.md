@@ -868,8 +868,8 @@ in the customer response.
 
 Operators can diagnose stale accounting with
 `GET /v1/admin/managed-postgres/accounting/{account_id}` or
-`gregale postgres diagnostics ACCOUNT_ID --json`. The route uses the admin scope,
-MFA middleware, and operator email allowlist. Pages default to 50 resources, with
+`gregalectl billing postgres diagnostics --account-id ACCOUNT_ID --json`. The route
+requires an MFA-completed operator session. Pages default to 50 resources, with
 `limit` capped at 100 and `after` set to the preceding page's `next_cursor`.
 Each page is a current local snapshot; a multi-page read does not freeze the
 account. The report reads the catalog and ledger without provider calls or writes.
@@ -889,13 +889,13 @@ material are excluded. See [ADR-582](adr/582-managed-postgres-accounting-diagnos
 Operators can repair unavailable historical usage with retained evidence:
 
 ```sh
-gregale postgres usage-import ACCOUNT_ID --file retained-usage.json --json
+gregalectl billing postgres usage-import --account-id ACCOUNT_ID --file retained-usage.json --json
 # Review the costs/coverage; put the returned revision in expected_revision.
-gregale postgres usage-import ACCOUNT_ID --file retained-usage.json --apply --session-file operator-session --json
+gregalectl billing postgres usage-import --account-id ACCOUNT_ID --file retained-usage.json --apply --json
 ```
 
 Preview makes no provider calls or writes. Apply requires an allowlisted operator
-session with a recent MFA step-up; the ordinary CLI bearer login cannot apply.
+session with a recent MFA step-up (`gregalectl auth login`, then `gregalectl auth step-up`).
 The session file contains the opaque `faas_sid` cookie value and must be a private
 regular file (mode 0600). It is never saved in the normal CLI token store.
 Go SDK callers can use an empty bearer token and a cookie jar on `HTTPClient()`;
@@ -934,9 +934,9 @@ shutdown evidence before usage recovery. An allowlisted operator can preview
 and apply that repair:
 
 ```sh
-gregale postgres reconcile ACCOUNT_ID --file retained-shutdown.json --json
+gregalectl billing postgres reconcile --account-id ACCOUNT_ID --file retained-shutdown.json --json
 # Review the confirmed shutdown; put the returned revision in expected_revision.
-gregale postgres reconcile ACCOUNT_ID --file retained-shutdown.json --apply --session-file operator-session --json
+gregalectl billing postgres reconcile --account-id ACCOUNT_ID --file retained-shutdown.json --apply --json
 ```
 
 The file contains the following fields; replace the illustrative IDs, times,
@@ -980,7 +980,7 @@ Recorded quantities and costs stay intact. Derived coverage is reset, so the
 account remains stale until the collector or retained-usage import establishes
 complete history and final correction observations. Shared restore children
 continue to use their root's aggregate; import quantities against that root.
-Recheck `gregale postgres diagnostics ACCOUNT_ID --json` after recovery. A repair
+Recheck `gregalectl billing postgres diagnostics --account-id ACCOUNT_ID --json` after recovery. A repair
 receipt reports the committed repair, not current admission or final invoice
 settlement. See [ADR-591](adr/591-managed-postgres-legacy-accounting-reconciliation.md).
 
