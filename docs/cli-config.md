@@ -170,10 +170,12 @@ hold. Conditions use registered option names, a `test` and a Boolean `value`:
   `false` and repeated flags retain their normal parsing rules.
 - `effective` on `json` tests the selected output mode, including environment
   or saved preferences, rather than requiring the literal `--json` spelling.
+- `active` on `progress` means a validated progress mode other than `off`.
 
 An output flag requires enabled `--all`. Enabled stdout streaming requires
 both `--all` and effective JSON mode, conditional on output being absent.
-`--stream=false` adds no requirement. File output accepts redundant `--stream`
+`--stream=false` adds no requirement. Active export progress requires both
+output presence and enabled `--all`. File output accepts redundant `--stream`
 with a human receipt. These rules do not replace other validation of paths,
 limits, arguments or flag values. Unregistered commands omit `flag_rules`;
 filtered options and rules requiring unavailable options remain undiscoverable.
@@ -874,6 +876,43 @@ Ctrl-C cancels the active HTTP read and exits 130. Write failures stop further
 page requests; normal OS SIGPIPE behavior applies to a closed stdout pipe.
 Streaming does not resume or replay a failed read automatically. Inventory
 changes during traversal can affect the observed rows.
+
+### Live progress for file exports
+
+File exports accept opt-in `--progress plain` or `--progress ndjson` on both
+build and invocation lists. The default is `off`; explicitly selecting `off`
+keeps the same silent stderr behavior and does not require file output.
+Active progress requires both `--all` and `--output`, and invalid modes or
+combinations fail before login, API access or private-file creation.
+
+```sh
+gregale --json build list --all --output builds.jsonl --progress ndjson
+gregale invocation list --all --output invocations.jsonl --progress plain
+```
+
+Progress goes only to stderr; stdout retains the normal JSON or human receipt.
+Plain mode prints counter lines. NDJSON mode emits `type: "list_export_progress"`
+and `schema_version: 1`, with `event`, `pages_completed`, `items_emitted`,
+`bytes_written`, `elapsed_ms` and `published`. All counters and false values
+are explicit, including zeros. Events contain no rows, cursors, paths, filters,
+profiles, API addresses or credentials. JSON help describes this optional
+stderr stream on the file-output mode.
+
+A `start` event precedes reads. `update` events follow complete validated pages,
+including empty pages, at most once per 250 ms. This is cooperative page progress,
+not a background heartbeat while a read is blocked. The unthrottled terminal
+`published` event follows the atomic link and sets `published: true`. A failure
+before publication emits `stopped` with `published: false`, followed by the
+existing Problem or human error. Partial private bytes can be counted without
+being usable as an export. A receipt-write failure after publication retains
+the completed file and its `published` event.
+
+Use `--json --progress ndjson` when parsing both progress and the final error.
+The existing error code, category, exit and request ID remain authoritative;
+private file bytes do not acquire stdout pagination metadata. Progress is
+best effort: a failed or short diagnostic write disables further progress
+without changing export reads or publication. Native OS signal behavior and
+the cooperative limits of local I/O remain unchanged.
 
 ### Overall timeout for list reads
 

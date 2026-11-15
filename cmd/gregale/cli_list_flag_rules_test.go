@@ -17,21 +17,24 @@ func TestListFlagRuleBooleanMatrix(t *testing.T) {
 		for _, stream := range []bool{false, true} {
 			for _, output := range []bool{false, true} {
 				for _, mode := range []bool{false, true} {
-					state := main.ListFlagRuleState{All: all, Stream: stream, Output: output, JSON: mode}
-					for _, test := range []struct {
-						id   string
-						fail bool
-						text string
-					}{
-						{main.ListOutputRequiresAll, output && !all, "--output requires --all"},
-						{main.ListStreamRequiresAllJSON, stream && !output && (!all || !mode), "--stream requires --json and --all"},
-					} {
-						err := main.ListFlagRuleViolation(test.id, state, "build list")
-						if (err != nil) != test.fail {
-							t.Fatalf("%s %+v: %v", test.id, state, err)
-						}
-						if err != nil && err.Error() != test.text {
-							t.Fatalf("human error changed: %q", err.Error())
+					for _, progress := range []bool{false, true} {
+						state := main.ListFlagRuleState{All: all, Stream: stream, Output: output, JSON: mode, Progress: progress}
+						for _, test := range []struct {
+							id   string
+							fail bool
+							text string
+						}{
+							{main.ListOutputRequiresAll, output && !all, "--output requires --all"},
+							{main.ListStreamRequiresAllJSON, stream && !output && (!all || !mode), "--stream requires --json and --all"},
+							{main.ListProgressRequiresExport, progress && (!output || !all), "--progress requires --all and --output"},
+						} {
+							err := main.ListFlagRuleViolation(test.id, state, "build list")
+							if (err != nil) != test.fail {
+								t.Fatalf("%s %+v: %v", test.id, state, err)
+							}
+							if err != nil && err.Error() != test.text {
+								t.Fatalf("human error changed: %q", err.Error())
+							}
 						}
 					}
 				}
@@ -44,11 +47,11 @@ func TestListFlagRuleBooleanMatrix(t *testing.T) {
 }
 
 func TestListFlagRuleVisibilityAndOwnership(t *testing.T) {
-	complete := main.VisibleListFlagRules([]string{"all", "stream", "output"})
+	complete := main.VisibleListFlagRules([]string{"all", "stream", "output", "progress"})
 	if !reflect.DeepEqual(complete, main.ListFlagRules()) {
 		t.Fatal("discovery and validation rules drifted")
 	}
-	for _, flags := range [][]string{nil, {"all"}, {"all", "stream"}, {"all", "output"}} {
+	for _, flags := range [][]string{nil, {"all"}, {"all", "stream"}, {"all", "output"}, {"all", "output", "progress"}, {"output", "progress"}, {"all", "progress"}} {
 		rules := main.VisibleListFlagRules(flags)
 		for _, rule := range rules {
 			for _, condition := range append(append([]main.CLIFlagRuleCondition{}, rule.When...), rule.Requires...) {
@@ -70,6 +73,7 @@ func TestListFlagRuleVisibilityAndOwnership(t *testing.T) {
 	}
 	complete[0].When[0].Flag = "private-input"
 	complete[1].Requires[0].Flag = "private-input"
+	complete[2].When[0].Flag = "private-mode"
 	data, err := json.Marshal(main.ListFlagRules())
 	if err != nil {
 		t.Fatal(err)

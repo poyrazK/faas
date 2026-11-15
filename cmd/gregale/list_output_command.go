@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf8"
 )
 
@@ -68,26 +69,38 @@ func (o *preparedListOutput) validateParent() error {
 	return nil
 }
 
-func runListFileExport[T any](parent context.Context, title, cursor string, output *preparedListOutput, fetch func(context.Context, string) ([]T, string, error)) int {
+func runListFileExport[T any](parent context.Context, title, cursor string, output *preparedListOutput, mode listExportProgressMode, fetch func(context.Context, string) ([]T, string, error)) int {
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	progress, err := streamListPages(ctx, output.file, cursor, fetch)
+	reporter := newListExportProgress(osStderr, mode, time.Now)
+	var observe func(listStreamProgress)
+	if reporter != nil {
+		observe = func(p listStreamProgress) { reporter.observe(p, output.file.bytes) }
+	}
+	progress, err := streamListPagesObserved(ctx, output.file, cursor, fetch, observe)
 	err = listReadError(ctx, err)
 	if err == nil {
 		err = output.validateParent()
 	}
 	if err != nil {
+		reporter.finish(false, progress, output.file.bytes)
 		// Private file bytes are not partial stdout. Preserve the underlying
 		// API/cancellation classification without stream pagination metadata.
 		return printErr(title, err)
 	}
 	receipt, err := output.file.Publish(ctx, progress)
 	if err != nil {
+		reporter.finish(false, progress, output.file.bytes)
 		return printErr(title, err)
 	}
+	reporter.finish(true, progress, receipt.BytesWritten)
+	return renderListExportReceipt(receipt, output.path)
+}
+
+func renderListExportReceipt(receipt *listOutputReceipt, outputPath string) int {
 	redact := errorTextRedactor()
-	if utf8.ValidString(output.path) && redact(output.path) == output.path {
-		receipt.Path = output.path
+	if utf8.ValidString(outputPath) && redact(outputPath) == outputPath {
+		receipt.Path = outputPath
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(receipt))

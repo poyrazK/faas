@@ -2020,7 +2020,7 @@ Show the current status of one build
 
 List builds and discover build IDs
 
-`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--stream] [--output <PATH>] [--timeout <DURATION>]`
+`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--stream] [--output <PATH>] [--progress <MODE>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2032,6 +2032,7 @@ List builds and discover build IDs
 | `--all` | walk every page using --limit and --cursor |  |
 | `--stream` | emit JSON Lines as pages arrive; stdout requires --json --all |  |
 | `--output <PATH>` | publish a new JSON Lines file after all pages complete; requires --all |  |
+| `--progress <MODE>` | export progress on stderr; requires --all --output | one of `off` · `plain` · `ndjson` |
 | `--timeout <DURATION>` | overall list read budget including page requests and retries (positive duration) |  |
 
 ### build provenance
@@ -3094,7 +3095,7 @@ Watch invocations finish across your account in real time
 
 List invocations
 
-`gregale invocation list [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] [--stream] [--output <PATH>] [--timeout <DURATION>]`
+`gregale invocation list [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] [--stream] [--output <PATH>] [--progress <MODE>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3104,6 +3105,7 @@ List invocations
 | `--all` | walk every page using --limit and --cursor |  |
 | `--stream` | emit JSON Lines as pages arrive; stdout requires --json --all |  |
 | `--output <PATH>` | publish a new JSON Lines file after all pages complete; requires --all |  |
+| `--progress <MODE>` | export progress on stderr; requires --all --output | one of `off` · `plain` · `ndjson` |
 | `--timeout <DURATION>` | overall list read budget including page requests and retries (positive duration) |  |
 
 ### invocation get
