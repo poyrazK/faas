@@ -110,7 +110,7 @@ type Loop struct {
 	// (ADR-972). In memory and per schedd; a restart ramps from one lane.
 	queuePushLanes queuePushLaneAllowance
 	// queueHoldRefreshed is when each held push-queue trigger last refreshed
-	// its messages' retention (trigger ID → time.Time; ADR-20261113180000).
+	// its messages' retention (trigger ID → time.Time; ADR-20261115183906).
 	queueHoldRefreshed sync.Map
 	// brokerLanes tracks broker trigger lanes and app owners (ADR-20261027162741).
 	brokerLanes brokerLanes

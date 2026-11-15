@@ -200,7 +200,7 @@ func (s *server) configureQueueWorkload(w http.ResponseWriter, r *http.Request, 
 	enabled := true
 	if existing != nil {
 		// Re-running setup keeps a binding the customer disabled disabled
-		// (ADR-20261113180000, R5-9); `queue bindings update --enabled
+		// (ADR-20261115183906, R5-9); `queue bindings update --enabled
 		// true` turns it back on.
 		enabled = existing.Enabled
 	}
