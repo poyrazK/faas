@@ -2035,6 +2035,12 @@ paths:
         sealed before any deployment is enqueued. Failed configuration starts
         no builds; saved apps and any completed configuration remain available
         for correction. Values are never included in responses or scan plans.
+      parameters:
+        - name: Deployment-Attempt-ID
+          in: header
+          required: false
+          description: Durable project submission identity. Persist before apply; after an uncertain response inspect the receipt instead of resubmitting.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
       requestBody:
         required: true
         content:
@@ -3167,7 +3173,7 @@ paths:
     put:
       operationId: beginToolPublication
       summary: Journal a reviewed publication before execution; requires deploy-write scope and MFA policy
-      description: Only created=true authorizes the publisher to start once. Duplicate identities return created=false; changed reviews conflict. Local paths and credentials are excluded.
+      description: Only created=true authorizes the publisher to start once. Duplicate identities return created=false; changed reviews conflict. Local paths and credentials are excluded. Hosted private reviews include platform_verification and the reviewed OAuth contract; their completed outcomes must match API-held candidate verification.
       requestBody:
         required: true
         content:
@@ -3205,6 +3211,50 @@ paths:
         '403': {description: Account authority or MFA requirement not satisfied}
         '404': {description: Publication or deployment unavailable to this account}
         '409': {description: Outcome immutable or publisher deadline elapsed}
+  /v1/tool-publications/{id}/verification:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Exact private publication identity}
+    post:
+      operationId: verifyToolPublication
+      summary: Request owner-approved platform verification of one private candidate
+      description: Requires unscoped personal deploy-write authority and MFA policy. Returns a pending owner review binding the publishing key, native candidate/source, catalog pin and immutable publication review. Only an owner-approved fresh begin launches a bounded API-held credential worker. Repeats return retained status and never replay fixtures. Fixture bodies remain transient; credentials and secret names are never returned. Requires the private-publication operator gate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolPublicationVerificationRequest'}
+      responses:
+        '200':
+          description: Pending approval or retained verification receipt; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolPublicationVerification'}
+        '400': {description: Invalid candidate or fixtures}
+        '403': {description: Publishing authority or MFA requirement not satisfied}
+        '404': {description: Current publisher or candidate authority unavailable}
+        '409': {description: Review differs or source/serving identity changed}
+        '429': {description: Verification workers busy; retry the same unstarted request}
+        '503': {description: Platform-held candidate verification is disabled by the operator}
+    put:
+      operationId: decideToolPublicationVerification
+      summary: Approve or revoke private candidate test authority as the personal administrator
+      description: Requires unscoped personal administrator authority and MFA policy. Approval selects exactly one existing ordinary secret:MCP_* test token or managed execution OAuth connection on the candidate app's default environment. The exact request digest and credential authorization binding are immutable. Managed connections must match the reviewed issuer and resource and cover all reviewed scopes. Approval performs no provider request. Candidates with readiness roles also require approve_readiness_roles acknowledgement bound to the reviewed policy and credential authority. Revocation blocks subsequent credential dispatches; an accepted HTTP request may finish. Completed test evidence is consumed and cannot be reauthorized or revoked. This grants no invocation access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolPublicationVerificationDecision'}
+      responses:
+        '200':
+          description: Public approval status without credential metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolPublicationVerification'}
+        '400': {description: Invalid decision or secret namespace}
+        '403': {description: Personal administrator or MFA requirement not satisfied}
+        '404': {description: Candidate or ordinary app credential unavailable}
+        '409': {description: 'Review changed, expired or consumed'}
+        '503': {description: Owner candidate-test approval is disabled or the OAuth connection needs reconnection}
   /v1/tool-oauth-connections:
     get:
       operationId: listToolOAuthConnections
@@ -8134,6 +8184,344 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OutboundAIEvaluation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts:
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIPrompts
+      summary: List the account's managed AI prompts.
+      description: >-
+        Requires MFA and read scope. Returns each prompt with its live, previous live and latest versions and its canary.
+      responses:
+        '200':
+          description: The prompts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIPrompt
+      summary: Read a managed AI prompt.
+      description: >-
+        Requires MFA and read scope. Apps call a prompt with POST $GREGALE_OUTBOUND_URL/p/{prompt}.
+      responses:
+        '200':
+          description: The prompt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPrompt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundAIPrompt
+      summary: Delete a managed AI prompt.
+      description: >-
+        Requires MFA and deploy-write scope. Deletes its versions, canary and evaluations; calls to it then answer 404.
+      responses:
+        '204': { description: Prompt deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/versions:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIPromptVersions
+      summary: List a managed AI prompt's versions.
+      description: >-
+        Requires MFA and read scope. Newest first, without their messages.
+      responses:
+        '200':
+          description: The versions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptVersionList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: pushOutboundAIPromptVersion
+      summary: Push a managed AI prompt version.
+      description: >-
+        Requires MFA and deploy-write scope. Stores an immutable version, creating the prompt on its first version, which becomes live. A later version is live only when live is true. A push identical to the latest version stores nothing and answers 200 with created false. {{name}} placeholders in message content are replaced by the call's variables or the version's defaults as plain text. The target is an openai-format route, or a managed AI integration an openai-format route accepts, with a model. Each prompt keeps 200 versions; prompts per account follow the plan.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushOutboundAIPromptVersionRequest' }
+      responses:
+        '201':
+          description: The new version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushOutboundAIPromptVersionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '429':
+          description: The account reached its plan's managed prompt limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/outbound/ai-prompts/{prompt}/versions/{version}:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+      - name: version
+        in: path
+        required: true
+        description: The version number.
+        schema: { type: integer, minimum: 1 }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIPromptVersion
+      summary: Read a managed AI prompt version.
+      description: >-
+        Requires MFA and read scope. Returns its messages, variables, defaults, target and params.
+      responses:
+        '200':
+          description: The version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptVersion' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/live:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    put:
+      tags: [outbound]
+      operationId: setOutboundAIPromptLive
+      summary: Make a managed AI prompt version live.
+      description: >-
+        Requires MFA and deploy-write scope. The old live version becomes the previous one and any canary ends.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIPromptLiveRequest' }
+      responses:
+        '200':
+          description: The prompt with the chosen version live.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPrompt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/rollback:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    post:
+      tags: [outbound]
+      operationId: rollBackOutboundAIPrompt
+      summary: Roll a managed AI prompt back.
+      description: >-
+        Requires MFA and deploy-write scope. Makes the previous live version live again and ends any canary.
+      responses:
+        '200':
+          description: The prompt with its previous live version back.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPrompt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/canary:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    put:
+      tags: [outbound]
+      operationId: setOutboundAIPromptCanary
+      summary: Start or replace a managed AI prompt canary.
+      description: >-
+        Requires MFA and deploy-write scope. Sends percent of unpinned calls to a version that is not live, chosen per X-Gregale-AI-Session, else X-Gregale-AI-User, else at random. The outbound gateway rolls it back with the route canary rule.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIPromptCanaryRequest' }
+      responses:
+        '200':
+          description: The canary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptCanary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundAIPromptCanary
+      summary: Stop a managed AI prompt canary.
+      description: >-
+        Requires MFA and deploy-write scope. The live version keeps serving.
+      responses:
+        '204': { description: The prompt's canary stopped. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/canary/promote:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    post:
+      tags: [outbound]
+      operationId: promoteOutboundAIPromptCanary
+      summary: Promote a managed AI prompt canary.
+      description: >-
+        Requires MFA and deploy-write scope. Makes the canary's version live and ends the canary.
+      responses:
+        '200':
+          description: The prompt with the canary's version live.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPrompt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/stats:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIPromptStats
+      summary: Read a managed AI prompt's per-version stats.
+      description: >-
+        Requires MFA and read scope. Returns each version's settled attempts, errors, mean time to first byte, cost and good and bad feedback over the last 24 hours.
+      responses:
+        '200':
+          description: The stats.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptStats' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/evaluations:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIPromptEvaluations
+      summary: List a managed AI prompt's evaluations.
+      description: >-
+        Requires MFA and read scope. Newest first, at most 100, without their cases' results.
+      responses:
+        '200':
+          description: The evaluations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptEvaluationList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: createOutboundAIPromptEvaluation
+      summary: Evaluate a managed AI prompt version.
+      description: >-
+        Requires MFA and deploy-write scope. The outbound gateway renders the version and the live version for each case's variables, calls each version's target, and asks the judge model which answer is better, in a random order. It passes when losses and candidate errors are at most max_loss_rate percent of the cases; a passing evaluation starts its canary, if it has one, while the baseline is still live and the prompt has no active canary. Calls are metered and capped under the caller evaluation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundAIPromptEvaluationRequest' }
+      responses:
+        '202':
+          description: The prompt evaluation, pending until the outbound gateway runs it.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptEvaluation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompt-evaluations/{evaluation}:
+    parameters:
+      - name: evaluation
+        in: path
+        required: true
+        description: UUID of the prompt evaluation.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIPromptEvaluation
+      summary: Read a managed AI prompt evaluation.
+      description: >-
+        Requires MFA and read scope. Returns each case's result; answer texts need admin or secrets:read. Evaluations are kept for 30 days.
+      responses:
+        '200':
+          description: The prompt evaluation with each case's result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptEvaluation' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
@@ -14969,6 +15357,32 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/MFADisableEmailResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/account/mfa/disable-email-cancel:
+    post:
+      tags: [mfa]
+      operationId: mfaDisableEmailCancel
+      summary: Cancel a pending email-assisted MFA disable.
+      description: |
+        Cancels every pending email-assisted MFA disable on the account,
+        so its emailed link stops working. A browser session must have
+        passed the second factor; a session from a password reset alone
+        is refused. Signing in with the authenticator app or a recovery
+        code cancels a pending disable too. The owner is emailed when a
+        request is cancelled.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFADisableEmailCancelRequest'
+      responses:
+        '200':
+          description: Pending requests cancelled (`cancelled` is 0 when none was pending).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MFADisableEmailCancelResponse' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /v1/account/mfa/disable-email/confirm:
@@ -49986,6 +50400,95 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/postgres-changes:
+    get:
+      tags: [queues]
+      operationId: getPostgresChanges
+      summary: Show the app's Postgres change capture and its relay health.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: The app's Postgres change capture.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PostgresChangesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [queues]
+      operationId: putPostgresChanges
+      summary: Capture Postgres row changes into one of the app's queues.
+      description: Declares which table columns are captured and the queue that receives each change. For a managed database Gregale installs capture and connects at once; for a database you run, finish with `gregale postgres-changes install`.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutPostgresChangesRequest' }
+      responses:
+        '200':
+          description: Capture declared; for a managed database, installed and connected.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PostgresChangesResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [queues]
+      operationId: deletePostgresChanges
+      summary: Stop capturing Postgres changes for the app.
+      description: Pauses delivery. On a managed database the capture triggers and the relay login are removed; on a database you run, use `gregale postgres-changes uninstall`.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '204':
+          description: Capture stopped.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/postgres-changes/connection:
+    put:
+      tags: [queues]
+      operationId: putPostgresChangesConnection
+      summary: Store the relay login for a database you run; credentials are never returned.
+      description: The URL must log in as the relay role the install created and verify TLS. Owner credentials are refused.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connection_url]
+              properties:
+                connection_url: { type: string, maxLength: 8192, writeOnly: true }
+      responses:
+        '204':
+          description: Relay login sealed without returning credential material.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/commit-sources:
     post:
       tags: [queues]
@@ -59572,6 +60075,41 @@ paths:
         '400': { description: Serving health accepts no query parameters. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Serving health read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/admin/obs/nodes/{name}/probe-notifications:
+    get:
+      tags: [admin]
+      operationId: getObsNodeProbeNotifications
+      summary: Inspect both direct notification channels for one expected node.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Accepts a
+        stable node name with no query parameters. Reads independent inventory
+        and then node-filtered notification recordings under one pinned time
+        and shared three-second deadline. It does not filter the truncated
+        fleet preview. Returns both channels when the node is expected, even
+        when their outcomes are unknown. Missing or unconfigured inventory has
+        expected null; fresh configured inventory without that node has
+        expected false and not_applicable. This is monitoring intent, not proof
+        of registry existence. No writes, direct probes, messages or credential
+        reads occur. Historical submissions do not prove current reachability,
+        provider processing or human receipt. Raw URLs, addresses, arbitrary
+        source labels and provider text are excluded.
+      parameters:
+        - in: path
+          name: name
+          required: true
+          description: Stable node name, excluding double-dot path segments.
+          schema: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]*$' }
+      responses:
+        '200':
+          description: Complete two-channel lookup, an explicit unknown assessment or no expectation for this node.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsNodeProbeNotifications' }
+        '400': { description: "Invalid node name or any query parameter, including an empty query." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Node notification read denied by operator scope or MFA or allowlist policy. }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/admin/obs/input-health:
@@ -69262,6 +69800,12 @@ paths:
       operationId: applyCachedOrgProjectPlan
       summary: "Deploy a company project's reviewed source without another upload."
       description: "Applies the exact archive retained by a company project scan in the same organization. A plan reviewed for a personal project or another organization is refused. The normal scanner and apply admission gates run again; the reviewed source expires after one hour. Requires the deploy role."
+      parameters:
+        - name: Deployment-Attempt-ID
+          in: header
+          required: false
+          description: Durable organization project submission identity. Persist before applying this organization's reviewed plan; after an uncertain response inspect its submission receipt instead of resubmitting.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
       requestBody:
         required: true
         content:
@@ -72103,6 +72647,93 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /v1/data/pipelines/{id}/operations:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Pipeline whose scheduled maintenance policy is updated.
+      schema: {type: string, format: uuid}
+    post:
+      summary: Configure scheduled pipeline work
+      operationId: configureDataPipelineOperations
+      tags: [data_pipelines]
+      description: Set bounded snapshot schedules, curated quality rules and UTC work budgets, or request the next snapshot or quality run. Import mode and serving selection remain immutable. Manual requests respect work windows.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DataPipelineOperationsRequest'}
+      responses:
+        '202':
+          description: Scheduled work policy or explicit run request accepted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DataPipeline'}
+        default:
+          description: Scheduled operations validation, ownership, admission or intent conflict.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+
+  /v1/data/pipelines/{id}/evolution:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Pipeline whose serving evolution is reviewed.
+      schema: {type: string, format: uuid}
+    post:
+      summary: Preview or approve pipeline serving evolution
+      operationId: evolveDataPipeline
+      tags: [data_pipelines]
+      description: Save an additive projection, Auth organization mapping, or declared relationship preview. Approval supplies only its saved ID and revision. Projection changes subsequently require the exact source schema or table approval before copying and exposure.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DataPipelineEvolutionRequest'}
+      responses:
+        '202':
+          description: Serving evolution preview saved, discarded or approved for reconciliation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DataPipeline'}
+        default:
+          description: Evolution validation, ownership, admission or revision conflict.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+
+  /v1/data/pipelines/{id}/schema-approval:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Pipeline whose worker-generated source schema review is approved.
+      schema: {type: string, format: uuid}
+    post:
+      summary: Approve the exact pipeline source schema
+      operationId: approveDataPipelineSchema
+      tags: [data_pipelines]
+      description: Approve the saved schema_review.id after inspecting its exact column and table changes. Retry reuses the previously approved change and preserves bounded backfill and verification receipts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DataPipelineSchemaApprovalRequest'}
+      responses:
+        '202':
+          description: Exact source-definition approval saved for verified pipeline evolution.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DataPipeline'}
+        default:
+          description: Source-schema approval validation, ownership, freshness or revision conflict.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+
   /v1/data/pipelines/{id}/tenant-readers:
     parameters:
     - name: id
@@ -72544,6 +73175,12 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    OutboundAIPromptName:
+      name: prompt
+      in: path
+      required: true
+      description: Name of the managed AI prompt, a DNS label.
+      schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
     AgentActivityBefore:
       name: before
       in: query
@@ -75471,11 +76108,111 @@ components:
         required_scopes: {type: array, maxItems: 64, items: {type: string, maxLength: 256}}
         evidence_origin: {type: string, enum: [publisher_attested]}
         availability: {type: string, enum: [not_checked]}
+    ToolPublicationAuth:
+      type: object
+      description: Reviewed external OAuth issuer, signing keys, resource and scopes for one private publication.
+      additionalProperties: false
+      required: [issuer, jwks_url, resource, scopes]
+      properties:
+        issuer: {type: string, format: uri, maxLength: 2048}
+        jwks_url: {type: string, format: uri, maxLength: 2048}
+        resource: {type: string, format: uri, maxLength: 2048}
+        scopes: {type: array, maxItems: 64, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 256}}
+    ToolPublicationReadinessRole:
+      type: object
+      description: One required role with its reviewed protocol and canonical catalog identity.
+      required: [name, protocol_version, catalog_format, catalog_sha256]
+      properties:
+        name: {type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'}
+        protocol_version: {type: string, enum: ['2026-07-28', '2025-11-25']}
+        catalog_format: {type: integer, enum: [1, 2]}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+    ToolPublicationReadiness:
+      type: object
+      description: Reviewed default-environment role expectations without credential sources or monitors.
+      required: [policy_revision, endpoint, max_age_seconds, roles]
+      properties:
+        policy_revision: {type: string, format: uuid}
+        endpoint: {type: string, maxLength: 256}
+        max_age_seconds: {type: integer, minimum: 60, maximum: 3600}
+        roles: {type: array, minItems: 1, maxItems: 32, items: {$ref: '#/components/schemas/ToolPublicationReadinessRole'}}
+    ToolPublicationRoleResult:
+      type: object
+      description: Sanitized read-only role probe result; no catalog or credentials.
+      required: [role, passed]
+      properties:
+        role: {type: string}
+        evidence_id: {type: string, format: uuid}
+        passed: {type: boolean}
+    MCPReadinessExpectation:
+      type: object
+      description: Exact fresh role observations required in the traffic transaction, independently of emergency overrides. Mismatches return 409 without changing traffic.
+      required: [policy_revision, artifact_sha256, evidence_ids]
+      properties:
+        policy_revision: {type: string, format: uuid}
+        artifact_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        evidence_ids:
+          type: object
+          minProperties: 1
+          maxProperties: 32
+          additionalProperties: {type: string, format: uuid}
+    ToolPublicationVerificationRequest:
+      type: object
+      description: Exact native candidate and catalog pin with the reviewed transient behavioral fixture bytes.
+      additionalProperties: false
+      required: [deployment_id, catalog_sha256, fixtures_json]
+      properties:
+        deployment_id: {type: string, format: uuid}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        fixtures_json: {type: string, maxLength: 65536, description: Exact reviewed fixture bytes; SHA-256 must match the publication intent}
+    ToolPublicationVerificationDecision:
+      type: object
+      description: Owner approval selecting one sealed test token or managed OAuth connection, or revoking unconsumed candidate-test authority.
+      additionalProperties: false
+      required: [request_sha256]
+      properties:
+        request_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        credential_secret_ref: {type: string, description: Existing ordinary secret:MCP_* app test-token reference; exclusive with credential_connection_id and forbidden for revocation}
+        credential_connection_id: {type: string, format: uuid, description: Existing owner-approved execution OAuth connection; exclusive with credential_secret_ref and forbidden for revocation}
+        approve_readiness_roles: {type: boolean, default: false, description: Required explicit owner acknowledgement for this candidate to use its reviewed policy readiness credentials; forbidden on revocation}
+        revoke: {type: boolean, default: false}
+    ToolPublicationVerification:
+      type: object
+      description: Durable public candidate-test metadata; never includes a token, secret reference or ciphertext.
+      required: [request_sha256, publication_id, key_id, app_id, deployment_id, deployment_source_sha256, catalog_sha256, status, created_at, deadline]
+      properties:
+        request_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        publication_id: {type: string, pattern: '^[0-9a-f]{64}$'}
+        key_id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        deployment_id: {type: string, format: uuid}
+        deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        readiness_artifact_sha256: {type: string, pattern: '^[0-9a-f]{64}$', description: Candidate readiness configuration and credential authority fingerprint}
+        status: {type: string, enum: [pending, approved, running, completed, failed, revoked, not_started, outcome_unknown]}
+        created_at: {type: string, format: date-time}
+        deadline: {type: string, format: date-time}
+        outcome: {$ref: '#/components/schemas/ToolPublicationVerificationOutcome'}
+    ToolPublicationVerificationOutcome:
+      type: object
+      description: Platform-observed catalog and named test results without credentials or upstream response data.
+      required: [ok, protocol_verified, checks]
+      properties:
+        ok: {type: boolean}
+        protocol_verified: {type: boolean}
+        catalog_base64: {type: string, format: byte, description: Canonical verified catalog; absent on failure}
+        checks: {type: array, maxItems: 64, items: {type: object, required: [name, status], properties: {name: {type: string}, status: {type: string, enum: [passed, failed]}}}}
+        readiness: {type: array, maxItems: 32, items: {$ref: '#/components/schemas/ToolPublicationRoleResult'}}
+        code: {type: string, description: Stable verification failure stage without upstream response data}
     ToolPublicationIntent:
       type: object
       description: Reviewed publication metadata bounded to 64 KiB; never includes local paths or credentials.
       required: [app, source_sha256, fixtures_sha256, access_mode, tool_scopes, test_cases]
       properties:
+        platform_verification: {type: boolean, default: false, description: Private hosted candidates require separate owner-approved API-held test execution}
+        auth: {$ref: '#/components/schemas/ToolPublicationAuth'}
+        readiness: {$ref: '#/components/schemas/ToolPublicationReadiness'}
+        legacy: {type: boolean, default: false, description: Include legacy protocol qualification for platform verification}
         endpoint_path: {type: string, maxLength: 512, description: Reviewed canonical MCP path; new invocations require this field and never infer a missing endpoint}
         app: {type: string}
         app_id: {type: string}
@@ -75610,6 +76347,7 @@ components:
       description: Account-owned durable publication review and immutable outcome bound to native deployment source identity.
       required: [id, account_id, intent, status, created_at, deadline, evidence_origin]
       properties:
+        verification: {$ref: '#/components/schemas/ToolPublicationVerification'}
         id: {type: string, pattern: '^[0-9a-f]{64}$'}
         account_id: {type: string, format: uuid}
         intent: {$ref: '#/components/schemas/ToolPublicationIntent'}
@@ -87622,6 +88360,57 @@ components:
         p50_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p50 from stored latency bucket upper bounds. }
         p95_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p95 from stored latency bucket upper bounds. }
         latency_quantized: { type: boolean, enum: [true], description: Latency values are conservative bucket upper bounds. }
+    PostgresChangeFeed:
+      description: Allowlisted columns of one table whose row changes are captured.
+      type: object
+      required: [name, table, columns]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_]{0,39}$', description: 'Appears in each event type, database.<name>.<operation>.' }
+        table: { type: string, maxLength: 256, description: Table name; unqualified names are in the public schema. }
+        columns:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: The only columns an event carries. The primary key must be listed.
+          items: { type: string, maxLength: 63 }
+        operations:
+          type: array
+          description: Operations to capture; all three when omitted.
+          items: { type: string, enum: [insert, update, delete] }
+    PutPostgresChangesRequest:
+      description: Declares the app's Postgres change capture.
+      type: object
+      required: [queue_name, feeds]
+      properties:
+        database: { type: string, maxLength: 256, description: A managed database name or ID. Omit for a database you run. }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: The app queue binding that receives the changes. }
+        poll_interval_seconds: { type: integer, minimum: 1, maximum: 600, description: 'How often the outbox is read; default 5. 300 or more lets an idle managed database suspend.' }
+        feeds:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { $ref: '#/components/schemas/PostgresChangeFeed' }
+    PostgresChangesResponse:
+      description: The app's Postgres change capture and its relay health.
+      type: object
+      required: [source_id, queue_name, managed, poll_interval_seconds, feeds, enabled, connected, relay_role, relay_status]
+      properties:
+        source_id: { type: string, format: uuid }
+        queue_name: { type: string }
+        database: { type: string, description: 'The managed database name, when managed.' }
+        managed: { type: boolean }
+        poll_interval_seconds: { type: integer }
+        feeds:
+          type: array
+          items: { $ref: '#/components/schemas/PostgresChangeFeed' }
+        enabled: { type: boolean }
+        connected: { type: boolean, description: Whether Gregale holds the relay login. }
+        relay_role: { type: string, description: The least-privilege login the install creates for delivery. }
+        relay_status: { type: string }
+        last_checked_at: { type: string, format: date-time }
+        pending_events: { type: integer, format: int64 }
+        blocked_events: { type: integer, format: int64 }
+        oldest_pending_at: { type: string, format: date-time }
     CreateCommitSourceRequest:
       description: Register an immutable database source bound to managed Operations or application-event publication. Event destinations require version 3, no operation policy and no customer selection.
       type: object
@@ -88489,6 +89278,234 @@ components:
           - type: 'null'
         started_at: { type: string, format: date-time }
         decided_at: { type: [string, 'null'], format: date-time }
+    OutboundAIPromptMessage:
+      type: object
+      description: A templated message; content may hold {{name}} placeholders.
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [system, developer, user, assistant] }
+        content: { type: string, minLength: 1 }
+    OutboundAIPromptTarget:
+      type: object
+      description: >-
+        Where a version's calls go: an openai-format route, or a managed AI integration with a model. Exactly one of route_id
+        and integration_id is set; on a route target model is optional and is the request's model.
+      properties:
+        route_id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        model: { type: string, minLength: 1, maxLength: 128 }
+    OutboundAIPromptParams:
+      type: object
+      description: The sampling settings a version sends.
+      properties:
+        temperature: { type: number, minimum: 0, maximum: 2 }
+        top_p: { type: number, minimum: 0, maximum: 1 }
+        max_tokens: { type: integer, minimum: 1 }
+        stop: { type: array, maxItems: 4, items: { type: string, minLength: 1 } }
+        response_format: { type: object, additionalProperties: true }
+    PushOutboundAIPromptVersionRequest:
+      type: object
+      description: A new version. messages, defaults and params together are at most 64 KiB.
+      required: [messages, target]
+      properties:
+        description: { type: string, maxLength: 280, description: Replaces the prompt's description when set. }
+        messages: { type: array, minItems: 1, maxItems: 32, items: { $ref: '#/components/schemas/OutboundAIPromptMessage' } }
+        defaults: { type: object, additionalProperties: { type: string }, description: Values for variables a call may omit. }
+        target: { $ref: '#/components/schemas/OutboundAIPromptTarget' }
+        params: { $ref: '#/components/schemas/OutboundAIPromptParams' }
+        note: { type: string, maxLength: 280 }
+        live: { type: boolean, description: Make the version live. A prompt's first version always is. }
+    OutboundAIPromptVersion:
+      description: One immutable version of a managed AI prompt.
+      type: object
+      required: [version, messages, variables, defaults, target, params, note, created_at]
+      properties:
+        version: { type: integer, minimum: 1 }
+        messages: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptMessage' } }
+        variables: { type: array, items: { type: string }, description: The distinct placeholder names, sorted. }
+        defaults: { type: object, additionalProperties: { type: string } }
+        target: { $ref: '#/components/schemas/OutboundAIPromptTarget' }
+        params: { $ref: '#/components/schemas/OutboundAIPromptParams' }
+        note: { type: string }
+        created_at: { type: string, format: date-time }
+    OutboundAIPromptVersionSummary:
+      description: A managed AI prompt version without its messages.
+      type: object
+      required: [version, target, note, created_at]
+      properties:
+        version: { type: integer, minimum: 1 }
+        target: { $ref: '#/components/schemas/OutboundAIPromptTarget' }
+        note: { type: string }
+        created_at: { type: string, format: date-time }
+    OutboundAIPromptVersionList:
+      description: A managed AI prompt's versions, newest first.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptVersionSummary' } }
+    PushOutboundAIPromptVersionResponse:
+      description: The prompt and the version a push stored, or the identical latest version.
+      type: object
+      required: [prompt, version, created]
+      properties:
+        prompt: { $ref: '#/components/schemas/OutboundAIPrompt' }
+        version: { $ref: '#/components/schemas/OutboundAIPromptVersion' }
+        created: { type: boolean, description: False when the push matched the latest version. }
+    OutboundAIPrompt:
+      type: object
+      description: A managed AI prompt. live_version serves unpinned calls; previous_live_version is what a rollback restores.
+      required: [id, name, description, live_version, previous_live_version, latest_version, canary, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        live_version: { type: [integer, 'null'], minimum: 1 }
+        previous_live_version: { type: [integer, 'null'], minimum: 1 }
+        latest_version: { type: integer, minimum: 0 }
+        canary:
+          oneOf:
+          - $ref: '#/components/schemas/OutboundAIPromptCanary'
+          - type: 'null'
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    OutboundAIPromptList:
+      description: The account's managed AI prompts.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/OutboundAIPrompt' } }
+    PutOutboundAIPromptLiveRequest:
+      description: The version to make live.
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+    OutboundAIPromptCanary:
+      type: object
+      description: >-
+        A prompt canary: version serves percent of unpinned calls. It is rolled back when, after min_calls attempts in the
+        window, its error rate exceeds the live version's by more than max_error_rate_increase percentage points, or its mean
+        time to first byte by more than max_latency_increase_percent.
+      required: [version, percent, max_error_rate_increase, max_latency_increase_percent, min_calls, window_minutes, state, reason, started_at, decided_at]
+      properties:
+        version: { type: integer, minimum: 1 }
+        percent: { type: integer, minimum: 1, maximum: 50 }
+        max_error_rate_increase: { type: integer, minimum: 0, maximum: 100 }
+        max_latency_increase_percent: { type: [integer, 'null'], minimum: 1, maximum: 1000 }
+        min_calls: { type: integer, minimum: 10, maximum: 100000 }
+        window_minutes: { type: integer, minimum: 5, maximum: 1440 }
+        state: { type: string, enum: [active, rolled_back] }
+        reason:
+          oneOf:
+          - type: string
+            enum: [error_rate, latency]
+          - type: 'null'
+        started_at: { type: string, format: date-time }
+        decided_at: { type: [string, 'null'], format: date-time }
+    PutOutboundAIPromptCanaryRequest:
+      type: object
+      description: Start or replace a prompt canary. Omitted margins take the route canary defaults.
+      required: [version, percent]
+      properties:
+        version: { type: integer, minimum: 1 }
+        percent: { type: integer, minimum: 1, maximum: 50 }
+        max_error_rate_increase: { type: integer, minimum: 0, maximum: 100 }
+        max_latency_increase_percent: { type: integer, minimum: 1, maximum: 1000 }
+        min_calls: { type: integer, minimum: 10, maximum: 100000 }
+        window_minutes: { type: integer, minimum: 5, maximum: 1440 }
+    OutboundAIPromptVersionStats:
+      description: One version's calls, errors, latency, cost and feedback over the stats window.
+      type: object
+      required: [version, calls, errors, error_rate, mean_ttfb_ms, cost_millicents, mean_cost_millicents, good_feedback, bad_feedback]
+      properties:
+        version: { type: integer, minimum: 1 }
+        calls: { type: integer, format: int64 }
+        errors: { type: integer, format: int64 }
+        error_rate: { type: number }
+        mean_ttfb_ms: { type: [integer, 'null'], format: int64 }
+        cost_millicents: { type: integer, format: int64 }
+        mean_cost_millicents: { type: [integer, 'null'], format: int64 }
+        good_feedback: { type: integer, format: int64 }
+        bad_feedback: { type: integer, format: int64 }
+    OutboundAIPromptStats:
+      description: A managed AI prompt's per-version stats.
+      type: object
+      required: [window_start, live_version, canary_version, versions]
+      properties:
+        window_start: { type: string, format: date-time }
+        live_version: { type: [integer, 'null'] }
+        canary_version: { type: [integer, 'null'] }
+        versions: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptVersionStats' } }
+    CreateOutboundAIPromptEvaluationRequest:
+      description: A candidate version, the variable sets to run it on, and the judge model.
+      type: object
+      required: [version, cases, judge_integration_id, judge_model]
+      properties:
+        version: { type: integer, minimum: 1 }
+        cases:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { type: object, additionalProperties: { type: string } }
+          description: Variable sets; each is rendered with the candidate and the live version.
+        judge_integration_id: { type: string, format: uuid }
+        judge_model: { type: string, minLength: 1, maxLength: 128 }
+        max_loss_rate: { type: integer, minimum: 0, maximum: 100 }
+        canary: { $ref: '#/components/schemas/PutOutboundAIPromptCanaryRequest' }
+    OutboundAIPromptEvaluationItem:
+      description: One case's result in a managed AI prompt evaluation.
+      type: object
+      required: [case, verdict, baseline_status, candidate_status, baseline_cost_millicents, candidate_cost_millicents, baseline_ttfb_ms, candidate_ttfb_ms]
+      properties:
+        case: { type: integer, minimum: 0 }
+        verdict: { type: string, enum: [win, tie, loss, candidate_error, judge_error] }
+        baseline_status: { type: [integer, 'null'] }
+        candidate_status: { type: [integer, 'null'] }
+        baseline_cost_millicents: { type: integer, format: int64 }
+        candidate_cost_millicents: { type: integer, format: int64 }
+        baseline_ttfb_ms: { type: [integer, 'null'], format: int64 }
+        candidate_ttfb_ms: { type: [integer, 'null'], format: int64 }
+        baseline_output_text: { type: string }
+        candidate_output_text: { type: string }
+    OutboundAIPromptEvaluation:
+      description: A comparison of a candidate prompt version against the live version.
+      type: object
+      required: [id, prompt, baseline_version, candidate_version, judge_integration_id, judge_model, max_loss_rate, canary, state, verdict, error_code, cases, wins, ties, losses, candidate_errors, judge_errors, baseline, candidate, canary_started, created_at, started_at, finished_at]
+      properties:
+        id: { type: string, format: uuid }
+        prompt: { type: string }
+        baseline_version: { type: integer, minimum: 1 }
+        candidate_version: { type: integer, minimum: 1 }
+        judge_integration_id: { type: string, format: uuid }
+        judge_model: { type: string }
+        max_loss_rate: { type: integer }
+        canary:
+          oneOf:
+          - $ref: '#/components/schemas/PutOutboundAIPromptCanaryRequest'
+          - type: 'null'
+        state: { type: string, enum: [pending, running, done, failed] }
+        verdict: { type: [string, 'null'], enum: [pass, fail, null] }
+        error_code: { type: [string, 'null'] }
+        cases: { type: integer }
+        wins: { type: integer }
+        ties: { type: integer }
+        losses: { type: integer }
+        candidate_errors: { type: integer }
+        judge_errors: { type: integer }
+        baseline: { $ref: '#/components/schemas/OutboundAIEvaluationTargetStats' }
+        candidate: { $ref: '#/components/schemas/OutboundAIEvaluationTargetStats' }
+        canary_started: { type: boolean }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        items: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptEvaluationItem' } }
+        content_withheld: { type: boolean, description: The items' answer texts were left out; reading them needs admin or secrets:read. }
+    OutboundAIPromptEvaluationList:
+      description: A managed AI prompt's evaluations, newest first.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptEvaluation' } }
     PutOutboundAIRouteCanaryRequest:
       type: object
       description: >-
@@ -89881,7 +90898,7 @@ components:
         request_id: { type: string, format: uuid, description: "Optional reserved database identity for durable workflows. Identical retries recover the same resource independently of the HTTP response cache. A different reservation cannot adopt an existing name." }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         region: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
-        postgres_major: { type: integer, minimum: 12, maximum: 99, default: 16 }
+        postgres_major: { type: integer, minimum: 12, maximum: 99, default: 17 }
         service_class: { type: string, enum: [development, burstable, production], default: development }
         availability: { type: string, enum: [single_zone, high_availability], default: single_zone }
         scale_to_zero: { type: boolean, default: true }
@@ -93259,9 +94276,97 @@ components:
           type: array
           maxItems: 1000
           items: { $ref: '#/components/schemas/ObsServingProbe' }
+        probe_notifications:
+          $ref: '#/components/schemas/ObsServingProbeNotificationHealth'
         limitations:
           type: array
           items: { type: string }
+    ObsNodeProbeNotifications:
+      type: object
+      description: |
+        Complete direct submission evidence for a selected node, independent of
+        the fleet preview. Expected is null when inventory cannot establish
+        intent, false when fresh configured intent excludes the node, and true
+        when both channel slots are expected. Available describes evidence
+        completeness, not current provider health or external receipt.
+      required: [generated_at, scope, node, state, max_age_seconds, inventory, expected, max_result_age_seconds, channels]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, const: node_serving_probe_notification_submissions }
+        node: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]*$' }
+        state: { type: string, enum: [available, partial, unknown, not_applicable] }
+        reason:
+          type: string
+          enum: [prometheus_not_configured, inventory_unavailable, inventory_not_configured, node_not_expected, incomplete_evidence]
+        max_age_seconds: { type: integer, const: 120 }
+        inventory: { $ref: '#/components/schemas/ObsServingProbeInventory' }
+        expected: { type: [boolean, 'null'] }
+        max_result_age_seconds: { type: [number, 'null'], exclusiveMinimum: 0 }
+        channels:
+          type: array
+          maxItems: 2
+          items: { $ref: '#/components/schemas/ObsServingProbeNotification' }
+    ObsServingProbeNotificationHealth:
+      type: object
+      description: |
+        Optional, independent evidence for direct compute-node webhook and
+        heartbeat submissions. Counts cover every expected node/channel; the
+        bounded preview orders failures first, then unknowns, successes and
+        disabled channels. Available describes evidence completeness and may
+        include failed submissions. Historical success does not establish
+        current reachability, provider processing or human receipt. This
+        section does not change serving or deployment qualification results.
+      required: [state, expected_channels, counts, limit, omitted, truncated, channels]
+      properties:
+        state: { type: string, enum: [available, partial, unknown, not_applicable] }
+        reason:
+          type: string
+          enum: [inventory_unavailable, inventory_not_configured, prometheus_not_configured, zero_expected_probes, incomplete_evidence, metadata_inconsistent]
+        expected_channels: { type: [integer, 'null'], minimum: 0, maximum: 2000 }
+        counts:
+          anyOf: [{ $ref: '#/components/schemas/ObsServingProbeNotificationCounts' }, { type: 'null' }]
+        limit: { type: integer, const: 32 }
+        omitted: { type: integer, minimum: 0, maximum: 2000 }
+        truncated: { type: boolean }
+        channels:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/ObsServingProbeNotification' }
+    ObsServingProbeNotificationCounts:
+      type: object
+      description: Counts include all expected node/channel pairs, including items omitted from the preview.
+      required: [disabled, unknown, last_submission_succeeded, last_submission_failed]
+      properties:
+        disabled: { type: integer, minimum: 0, maximum: 2000 }
+        unknown: { type: integer, minimum: 0, maximum: 2000 }
+        last_submission_succeeded: { type: integer, minimum: 0, maximum: 2000 }
+        last_submission_failed: { type: integer, minimum: 0, maximum: 2000 }
+    ObsServingProbeNotification:
+      type: object
+      description: |
+        Direct submission history for one node/channel. Clocks and outcome
+        fields remain null or absent when unavailable. Evaluated_at describes
+        the recording evaluation; last_run_at is the source probe-completion
+        clock. Last_attempt_at and last_success_at are historical completed
+        submission clocks, not provider delivery or acknowledgement times.
+      required: [node, channel, state, enabled, evaluated_at, last_run_at, last_attempt_at, last_success_at]
+      properties:
+        node: { type: string, maxLength: 128, pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]*$' }
+        channel: { type: string, enum: [heartbeat, webhook] }
+        state: { type: string, enum: [disabled, unknown, last_submission_succeeded, last_submission_failed] }
+        reason:
+          type: string
+          enum: [query_failed, recording_missing, recording_not_current, recording_unknown, source_unavailable, metadata_inconsistent]
+        evidence_reason:
+          type: string
+          description: Optional detail for a recording_unknown outcome from a coherent current evidence-status recording. Distinguishes valid enabled channels without history from missing or invalid telemetry and an unavailable source. Older rules omit this field. A current evaluation does not establish a submission or external receipt.
+          enum: [no_submission_yet, telemetry_missing, telemetry_invalid, source_unavailable]
+        enabled: { type: [boolean, 'null'] }
+        evaluated_at: { type: [string, 'null'], format: date-time }
+        last_run_at: { type: [string, 'null'], format: date-time }
+        last_attempt_at: { type: [string, 'null'], format: date-time }
+        last_success_at: { type: [string, 'null'], format: date-time }
+        failure_code: { type: string, enum: [none, dns, connection, tls, timeout, http_status, unknown] }
     ObsServingProbeInventory:
       type: object
       description: Configuration and freshness of independent serving-probe intent.
@@ -93301,6 +94406,27 @@ components:
         last_run_at: { type: [string, 'null'], format: date-time }
         expected_first_byte_seconds: { type: number, exclusiveMinimum: 0 }
         max_result_age_seconds: { type: number, exclusiveMinimum: 0 }
+        diagnostics:
+          $ref: '#/components/schemas/ObsServingProbeDiagnostics'
+
+    ObsServingProbeDiagnostics:
+      type: object
+      description: |
+        Optional diagnostics from the same evaluated serving run. Available
+        diagnostics have complete, coherent fixed codes and retry metadata.
+        Unknown diagnostics have no numeric values or inferred success. This
+        section does not change coverage state. Raw URLs, bodies and exceptions
+        are excluded; none is success and unknown is an unclassified failure.
+      required: [state, evaluated_at, attempts, http_status, recovered_on_retry]
+      properties:
+        state: { type: string, enum: [available, unknown] }
+        reason: { type: string, enum: [diagnostics_missing, query_failed, coverage_unavailable, diagnostics_not_current, diagnostics_inconsistent] }
+        evaluated_at: { type: [string, 'null'], format: date-time }
+        failure_code: { type: string, enum: [none, dns, connection, tls, timeout, http_status, latency, body_mismatch, unknown] }
+        first_failure_code: { type: string, enum: [none, dns, connection, tls, timeout, http_status, latency, body_mismatch, unknown] }
+        attempts: { type: [integer, 'null'], minimum: 1, maximum: 2 }
+        http_status: { type: [integer, 'null'], minimum: 0, maximum: 599 }
+        recovered_on_retry: { type: [boolean, 'null'] }
 
     ObsNotificationHealth:
       type: object
@@ -97349,6 +98475,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -98708,7 +99836,7 @@ components:
           minProperties: 1
           maxProperties: 13
           propertyNames:
-            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, scaling_policy, retry_policy]
+            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, warmup, scaling_policy, retry_policy]
           additionalProperties: {}
           description: Observed values from the app read; null represents an unset optional policy. Must cover every mutated setting.
 
@@ -98784,6 +99912,9 @@ components:
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
           description: "Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it."
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
+          description: "Set the path a deployment's first init snapshot is primed with. Omit to preserve; an empty path clears it."
         pause:
           type: string
           enum: [between_requests, when_idle, never, ""]
@@ -99805,6 +100936,14 @@ components:
           maximum: 2000
           default: 500
           description: "Deadline for checkpoint response in milliseconds; 0 uses the 500 ms default."
+    WarmupHook:
+      description: "Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests (5 s at most) to it on the app's HTTP port; without it, the HTTP health check path is used. Priming never fails a deploy."
+      type: object
+      properties:
+        path:
+          type: string
+          description: "Absolute path on the app's HTTP port. Should exercise the request code a wake needs warm and be safe to call repeatedly."
+          example: "/internal/warmup"
     AppManifest:
       description: "App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag. The optional `env_secrets` field carries sealed-secret refs (\"secret:NAME\" strings) resolved by the host at wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."
       type: object
@@ -99885,6 +101024,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -101477,6 +102618,7 @@ components:
             type: integer
             minimum: 1
             maximum: 100
+        expected_mcp_readiness: {$ref: '#/components/schemas/MCPReadinessExpectation'}
         expected_mcp_access_policy:
           type: object
           description: "Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the transaction also requires the unchanged account revision and fresh replay from every currently registered serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on fleet membership."
@@ -124413,6 +125555,7 @@ components:
         work:
           allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
           description: "Optional keyed ordering policy for a queue message. Scoped environment bindings reject this option until their policy adapter is available."
+        group_key: { type: string, minLength: 1, maxLength: 128, description: "Messages with the same group_key are delivered one at a time, in send order, on push and pull consumers; a message waiting to retry holds later ones with its key. Cannot be combined with work. Preview: refused with queue_groups_unavailable until released to the account." }
 
     QueueSendBatchRequest:
       description: "Body for POST /v1/apps/{slug}/queues/send-batch: up to 100 messages for one queue, sent in order. The body is at most 8 MiB; each message meets its plan's message size."
@@ -124436,6 +125579,7 @@ components:
       type: object
       properties:
         payload: { type: object, additionalProperties: true }
+        group_key: { type: string, minLength: 1, maxLength: 128, description: "Ordering key for this message: it is delivered after earlier messages with the same group_key, from this batch or any send, and before later ones. Preview: refused with queue_groups_unavailable until released to the account." }
 
     QueueSendBatchResult:
       description: "The outcome of one message by its zero-based input index: accepted, rejected with the problem, or not attempted after an earlier rejection."
@@ -124564,6 +125708,8 @@ components:
         dead_letter: { type: integer, minimum: 0 }
         oldest_pending_at: { type: [string, "null"], format: date-time }
         oldest_pending_age_seconds: { type: [integer, "null"], minimum: 0 }
+        blocked_groups: { type: integer, minimum: 0, description: "group_key groups whose first message has failed and holds later messages with its key until it succeeds or dead-letters. Omitted when zero." }
+        oldest_blocked_age_seconds: { type: integer, minimum: 0, description: "Age of the oldest message holding its group_key group." }
         generated_at: { type: string, format: date-time }
 
     RetryPolicyDTO:
@@ -125318,6 +126464,21 @@ components:
       description: Empty success body; the confirmation link is sent by email.
       type: object
       additionalProperties: false
+
+    MFADisableEmailCancelRequest:
+      description: Optional body; a browser session sends the CSRF token minted for `mfa_disable_email_cancel`.
+      type: object
+      additionalProperties: false
+      properties:
+        csrf_token: { type: string }
+
+    MFADisableEmailCancelResponse:
+      description: How many pending email-assisted MFA disables were cancelled.
+      type: object
+      required: [cancelled]
+      additionalProperties: false
+      properties:
+        cancelled: { type: integer, minimum: 0, example: 1 }
 
     MFADisableEmailConfirmRequest:
       description: Body for consuming the emailed token after the cooldown.
@@ -140512,6 +141673,10 @@ components:
       required:
       - expected_revision
       properties:
+        mode:
+          type: string
+          enum: [snapshot]
+          description: Select snapshot inspection for read-only scheduled imports; omit for continuous replication.
         tables:
           type: array
           maxItems: 16
@@ -140545,6 +141710,10 @@ components:
       - tables
       - created_at
       properties:
+        mode:
+          type: string
+          enum: [snapshot]
+          description: Snapshot-specific compatibility evidence, without native replication requirements.
         source_provider_hint:
           type: string
           description: Hostname-derived setup hint; never a qualification or admission grant.
@@ -140786,6 +141955,8 @@ components:
       - database_id
       - tables
       properties:
+        operations:
+          $ref: '#/components/schemas/DataPipelineOperations'
         freshness_target_seconds:
           type: integer
           format: int64
@@ -140822,13 +141993,13 @@ components:
           maxItems: 128
           uniqueItems: true
     DataPipelineServing:
-      description: Versioned serving contract. Columns are immutable and affect publication, mirror schema and recovery. Omit columns for all-column replication. Tenant access uses owner-managed subject memberships; JWT tenant claims grant nothing. At least columns or tenant_access is required. A missing version defaults to 1 at creation.
+      description: Versioned serving contract affecting publication, mirror schema and recovery. Creation accepts version 1; approved evolution installs version 2. Omit columns for all-column replication. Tenant claims grant no memberships. Column expansion requires source-definition approval, backfill, verification and API refresh.
       type: object
       additionalProperties: false
       properties:
         version:
           type: integer
-          enum: [1]
+          enum: [1, 2]
           default: 1
         columns:
           type: object
@@ -140840,6 +142011,12 @@ components:
             maxItems: 128
             uniqueItems: true
             items: {type: string, minLength: 1, maxLength: 63}
+        auth_organizations:
+          $ref: '#/components/schemas/DataPipelineAuthOrganizations'
+        relationships:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/DataPipelineRelationship'}
         tenant_access:
           $ref: '#/components/schemas/DataPipelineTenantAccess'
     DataPipelineTenantAccess:
@@ -140848,6 +142025,11 @@ components:
       additionalProperties: false
       required: [column, memberships]
       properties:
+        valid_until:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Worker-maintained expiry of the last authoritative Auth membership proof. Expired policies deny SQL reads and return HTTP 503.
         column: {type: string, minLength: 1, maxLength: 63}
         memberships:
           type: array
@@ -140881,6 +142063,129 @@ components:
           type: array
           maxItems: 256
           items: {$ref: '#/components/schemas/DataPipelineTenantMembership'}
+    DataPipelineSchemaReview:
+      description: Worker-generated exact source-definition review with column and table metadata only. Its ID binds the generation, recorded baseline and requested source schema.
+      type: object
+      additionalProperties: false
+      required: [id, state, supported, changes]
+      properties:
+        id: {type: string}
+        state: {type: string}
+        supported: {type: boolean}
+        changes:
+          type: array
+          items: {$ref: '#/components/schemas/DataPipelineSchemaColumnChange'}
+        requested_tables:
+          type: array
+          maxItems: 16
+          items: {type: string}
+    DataPipelineSchemaColumnChange:
+      description: One exact source column or table change and the worker's compatibility decision.
+      type: object
+      additionalProperties: false
+      required: [table, column, kind, reason, safe]
+      properties:
+        table: {type: string}
+        column: {type: string}
+        kind: {type: string}
+        before_type: {type: string}
+        after_type: {type: string}
+        reason: {type: string}
+        safe: {type: boolean}
+    DataPipelineSchemaApprovalRequest:
+      description: Owner approval of the exact saved source-definition review, or a bounded retry of the already approved backfill and refresh workflow.
+      type: object
+      additionalProperties: false
+      required: [expected_revision, change_id]
+      properties:
+        expected_revision: {type: integer, format: int64, minimum: 1}
+        change_id: {type: string, pattern: '^[a-f0-9]{64}$'}
+        retry: {type: boolean}
+    DataPipelineAuthOrganizations:
+      description: Owner-approved Auth organization mapping. Internal binding identifiers are resolved by the control plane and rechecked on every snapshot.
+      type: object
+      additionalProperties: false
+      required: [auth_app_id, mappings]
+      properties:
+        auth_app_id: {type: string, format: uuid}
+        binding_id: {type: string, format: uuid, readOnly: true}
+        database_id: {type: string, format: uuid, readOnly: true}
+        mappings:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: {$ref: '#/components/schemas/DataPipelineOrganizationTenant'}
+    DataPipelineOrganizationTenant:
+      description: One authoritative Auth organization mapped to an exact source tenant value.
+      type: object
+      additionalProperties: false
+      required: [organization_id, tenant]
+      properties:
+        organization_id: {type: string, format: uuid}
+        tenant: {type: string, minLength: 1, maxLength: 256}
+    DataPipelineRelationship:
+      description: Read-only computed relationship joining selected source columns to the target complete primary key. Both rows remain subject to RLS and exact tenant equality; forged RPC row attributes do not grant access.
+      type: object
+      additionalProperties: false
+      required: [name, source_table, target_table, source_columns, target_columns]
+      properties:
+        name: {type: string, pattern: '^[a-z][a-z0-9_]{0,62}$'}
+        source_table: {type: string, pattern: '^[a-z][a-z0-9_]{0,62}$'}
+        target_table: {type: string, pattern: '^[a-z][a-z0-9_]{0,62}$'}
+        source_columns:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 63}
+        target_columns:
+          type: array
+          minItems: 1
+          maxItems: 4
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 63}
+    DataPipelineEvolutionRequest:
+      description: Revision-fenced owner evolution action. Preview supplies one kind and its complete selection or mapping. Approve and discard supply only a saved change_id; approval never accepts replacement intent.
+      type: object
+      additionalProperties: false
+      required: [expected_revision, action]
+      properties:
+        expected_revision: {type: integer, format: int64, minimum: 1}
+        action: {type: string, enum: [preview, approve, discard, retry]}
+        change_id: {type: string}
+        kind: {type: string, enum: [projection, auth_organizations, relationships]}
+        columns:
+          type: object
+          maxProperties: 16
+          additionalProperties:
+            type: array
+            minItems: 1
+            maxItems: 128
+            uniqueItems: true
+            items: {type: string, minLength: 1, maxLength: 63}
+        auth_organizations: {$ref: '#/components/schemas/DataPipelineAuthOrganizations'}
+        relationships:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/DataPipelineRelationship'}
+    DataPipelineEvolution:
+      description: Frozen account and generation-bound serving preview. Approved indicates owner intent; applied requires worker verification and any required API cache refresh.
+      type: object
+      additionalProperties: false
+      required: [id, state, kind, generation, preview_revision, after]
+      properties:
+        retry: {type: integer, minimum: 0, readOnly: true}
+        id: {type: string}
+        state: {type: string, enum: [preview, approved, applied, superseded]}
+        kind: {type: string, enum: [projection, auth_organizations, relationships]}
+        generation: {type: integer, format: int64, minimum: 1}
+        preview_revision: {type: integer, format: int64, minimum: 1}
+        before: {$ref: '#/components/schemas/DataPipelineServing'}
+        after: {$ref: '#/components/schemas/DataPipelineServing'}
+        added_tables:
+          type: array
+          maxItems: 16
+          items: {type: string}
     DataPipelineTenantReadersRequest:
       description: Account-owner-only, revision-fenced membership preview, approval or discard. Preview supplies the complete replacement membership array. Approve supplies only the saved change_id; grace permits strict membership reductions only.
       type: object
@@ -140936,6 +142241,13 @@ components:
       - verification
       - created_at
       properties:
+        operations:
+          $ref: '#/components/schemas/DataPipelineOperations'
+        operations_status:
+          $ref: '#/components/schemas/DataPipelineOperationsStatus'
+        schema_review: {$ref: '#/components/schemas/DataPipelineSchemaReview'}
+        evolution:
+          $ref: '#/components/schemas/DataPipelineEvolution'
         freshness_target_seconds:
           type: integer
           format: int64
@@ -141091,6 +142403,278 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DataPipeline'
+
+    DataPipelineOperations:
+      description: Versioned policy for bounded scheduled snapshots, mirror quality checks and optional maintenance. Snapshot
+        mode is chosen at creation and cannot be changed later.
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        snapshot:
+          $ref: '#/components/schemas/DataPipelineSnapshotSchedule'
+        quality:
+          $ref: '#/components/schemas/DataPipelineQualitySchedule'
+        workload:
+          $ref: '#/components/schemas/DataPipelineWorkload'
+    DataPipelineSnapshotSchedule:
+      description: Read-only full snapshot cadence. Zero row/byte budgets select the pilot ceilings of 100000 rows and 64 MiB.
+        Runs are bounded to 45 seconds and retain the last successful capture on failure.
+      type: object
+      additionalProperties: false
+      required:
+      - every_seconds
+      properties:
+        every_seconds:
+          type: integer
+          format: int64
+          minimum: 3600
+          maximum: 86400
+        max_rows:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 100000
+        max_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 67108864
+    DataPipelineWorkload:
+      description: Owner maintenance budgets within hard pilot bounds. Query timeout is zero for the default or 50 through 2000
+        milliseconds; batch count is zero for default or one through four. Native COPY bandwidth is outside this policy.
+      type: object
+      additionalProperties: false
+      properties:
+        window:
+          $ref: '#/components/schemas/DataPipelineWorkWindow'
+        query_timeout_millis:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 2000
+        batches_per_tick:
+          type: integer
+          minimum: 0
+          maximum: 4
+    DataPipelineWorkWindow:
+      description: Daily UTC minute window with an inclusive start and exclusive end. Start and end differ; a start after end
+        crosses midnight. Omit the window for all-day work.
+      type: object
+      additionalProperties: false
+      required:
+      - start_minute_utc
+      - end_minute_utc
+      properties:
+        start_minute_utc:
+          type: integer
+          minimum: 0
+          maximum: 1439
+        end_minute_utc:
+          type: integer
+          minimum: 0
+          maximum: 1439
+    DataPipelineQualitySchedule:
+      description: Scheduled curated mirror checks, limited to 16 named rules and 10000 inspected source rows per rule. Incomplete
+        coverage cannot be reported as passed; only counts and status leave the private worker.
+      type: object
+      additionalProperties: false
+      required:
+      - every_seconds
+      - rules
+      properties:
+        every_seconds:
+          type: integer
+          format: int64
+          minimum: 3600
+          maximum: 86400
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineQualityRule'
+          minItems: 1
+          maxItems: 16
+    DataPipelineQualityRule:
+      description: Structured business-data assertion on selected columns. Numeric bounds are exact decimal strings; reference
+        rules match a complete selected target primary key and preserve tenant equality. SQL expressions are not accepted.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - kind
+      - table
+      - columns
+      properties:
+        name:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{0,62}$
+        kind:
+          type: string
+          enum:
+          - required
+          - unique
+          - range
+          - reference
+        table:
+          type: string
+          maxLength: 63
+        columns:
+          type: array
+          items:
+            type: string
+            maxLength: 63
+          minItems: 1
+          maxItems: 4
+        minimum:
+          type: string
+          maxLength: 64
+        maximum:
+          type: string
+          maxLength: 64
+        reference_table:
+          type: string
+          maxLength: 63
+        reference_columns:
+          type: array
+          items:
+            type: string
+            maxLength: 63
+          minItems: 1
+          maxItems: 4
+    DataPipelineOperationsRequest:
+      description: Revision-checked replacement maintenance configuration or an explicit snapshot/quality run request. Configure
+        supplies config; run actions omit it and still respect the saved UTC window.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_revision
+      - action
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        action:
+          type: string
+          enum:
+          - configure
+          - run_snapshot
+          - run_quality
+        config:
+          $ref: '#/components/schemas/DataPipelineOperations'
+    DataPipelineOperationsStatus:
+      description: Historical scheduled-work observations. Capture time bounds data age independently of the catalog worker observation
+        timestamp.
+      type: object
+      additionalProperties: false
+      properties:
+        snapshot:
+          $ref: '#/components/schemas/DataPipelineSnapshotStatus'
+        quality:
+          $ref: '#/components/schemas/DataPipelineQualityStatus'
+    DataPipelineSnapshotStatus:
+      description: Most recent snapshot attempt plus the last activated capture. Rows and bytes describe that successful capture
+        and remain unchanged after failed refreshes. A private target receipt preserves capture time through lost acknowledgements.
+      type: object
+      additionalProperties: false
+      required:
+      - run_id
+      - state
+      - rows
+      - bytes
+      properties:
+        run_id:
+          type: string
+        state:
+          type: string
+          enum:
+          - due
+          - running
+          - succeeded
+          - failed
+        reason:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        next_run_at:
+          type: string
+          format: date-time
+        captured_at:
+          type: string
+          format: date-time
+        rows:
+          type: integer
+          format: int64
+          minimum: 0
+        bytes:
+          type: integer
+          format: int64
+          minimum: 0
+    DataPipelineQualityStatus:
+      description: Last completed or attempted quality scan for the recorded generation. Unknown and inconclusive are separate
+        from passed; failing row values never appear in this observation.
+      type: object
+      additionalProperties: false
+      required:
+      - state
+      - checked_at
+      - next_run_at
+      - generation
+      - results
+      properties:
+        state:
+          type: string
+          enum:
+          - passed
+          - failed
+          - inconclusive
+          - unknown
+        checked_at:
+          type: string
+          format: date-time
+        next_run_at:
+          type: string
+          format: date-time
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineQualityResult'
+    DataPipelineQualityResult:
+      description: One curated rule outcome. A lower-bound count reflects limited coverage; zero violations with incomplete coverage
+        is inconclusive rather than passed.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - state
+      - violations
+      - count_is_lower_bound
+      properties:
+        name:
+          type: string
+        state:
+          type: string
+          enum:
+          - passed
+          - failed
+          - inconclusive
+          - unknown
+        violations:
+          type: integer
+          format: int64
+          minimum: 0
+        count_is_lower_bound:
+          type: boolean
 
   responses:
     SupportInvalid:

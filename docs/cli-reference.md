@@ -2020,7 +2020,7 @@ Show the current status of one build
 
 List builds and discover build IDs
 
-`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all]`
+`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--stream]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2030,6 +2030,7 @@ List builds and discover build IDs
 | `--before <CURSOR>` | alias for --cursor |  |
 | `--cursor <CURSOR>` | opaque cursor from a prior page |  |
 | `--all` | walk every page using --limit and --cursor |  |
+| `--stream` | emit JSON Lines as pages arrive; requires --json --all |  |
 
 ### build provenance
 
@@ -2719,7 +2720,7 @@ Show an app&#39;s settings and status
 
 Change an app&#39;s settings
 
-`gregale app update [--concurrency] [--env <SLUG>] [--visibility <public|internal>] [--size <SIZE>] [--profile <SIZE>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--function-concurrency <N>] [--revision-pin-ttl <DURATION>] [--require-signed <true|false>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes[=true|false]] [--ports <[NAME=]tcp|udp:PORT[:internal],...>] [--crawler-policy <wake|cached|block>] [--pre-auth <off|observe|enforce>] [--pre-auth-rps <N>] [--pre-auth-burst <N>] [--release-policy <safe|fast|immediate>] [--release-probe-paths <PATH,PATH>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>] [<app>]`
+`gregale app update [--concurrency] [--env <SLUG>] [--visibility <public|internal>] [--size <SIZE>] [--profile <SIZE>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--function-concurrency <N>] [--revision-pin-ttl <DURATION>] [--require-signed <true|false>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes[=true|false]] [--ports <[NAME=]tcp|udp:PORT[:internal],...>] [--crawler-policy <wake|cached|block>] [--pre-auth <off|observe|enforce>] [--pre-auth-rps <N>] [--pre-auth-burst <N>] [--release-policy <safe|fast|immediate>] [--release-probe-paths <PATH,PATH>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--request-rate-limit-rps <N>] [--request-rate-limit-burst <N>] [--cors-default] [--no-cors-default] [--cors-default-origins <ORIGINS>] [--session-affinity] [--no-session-affinity] [--version-affinity-cookie <NAME>] [--version-affinity-managed-cookie] [--no-version-affinity-managed-cookie] [--robots-txt-file <PATH>] [--default-robots-txt] [--favicon-file <PATH>] [--no-favicon] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2780,6 +2781,20 @@ Change an app&#39;s settings
 | `--health-path <PATH>` | set the monitor-facing health path |  |
 | `--health-path-wakes` | allow health probes to wake the app |  |
 | `--no-health-path-wakes` | answer health probes without waking the app |  |
+| `--request-rate-limit-rps <N>` | app-wide request rate limit per second; 0 restores the plan default |  |
+| `--request-rate-limit-burst <N>` | app-wide request burst; 0 restores the plan default |  |
+| `--cors-default` | answer CORS for --cors-default-origins when no CORS edge rule matches |  |
+| `--no-cors-default` | turn the default CORS answer off |  |
+| `--cors-default-origins <ORIGINS>` | comma-separated origins for the default CORS answer; empty clears |  |
+| `--session-affinity` | route a client to the same running instance (best effort) |  |
+| `--no-session-affinity` | turn session affinity off |  |
+| `--version-affinity-cookie <NAME>` | cookie that pins a client to a release; empty turns it off |  |
+| `--version-affinity-managed-cookie` | let Gregale set the version-affinity cookie |  |
+| `--no-version-affinity-managed-cookie` | stop Gregale setting the version-affinity cookie |  |
+| `--robots-txt-file <PATH>` | serve this file as /robots.txt at the edge |  |
+| `--default-robots-txt` | restore the platform&#39;s allow-all /robots.txt |  |
+| `--favicon-file <PATH>` | serve this icon as /favicon.ico at the edge |  |
+| `--no-favicon` | remove the app&#39;s edge favicon |  |
 | `--app-protocol <http1|http2|grpc>` | set the wire-protocol selector | one of `http1` · `http2` · `grpc` |
 | `--public-auth <open|bearer|basic|ip_allowlist|internal_only>` | set public URL authentication; internal_only admits Gregale internal services, ip_allowlist is Pro+ | one of `open` · `bearer` · `basic` · `ip_allowlist` · `internal_only` |
 | `--ip-allowlist <CIDR>` | allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist |  |
@@ -3077,7 +3092,7 @@ Watch invocations finish across your account in real time
 
 List invocations
 
-`gregale invocation list [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all]`
+`gregale invocation list [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] [--stream]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3085,6 +3100,7 @@ List invocations
 | `--cursor <CURSOR>` | opaque cursor from a prior page |  |
 | `--before <CURSOR>` | alias for --cursor |  |
 | `--all` | walk every page using --limit and --cursor |  |
+| `--stream` | emit JSON Lines as pages arrive; requires --json --all |  |
 
 ### invocation get
 

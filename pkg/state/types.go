@@ -585,6 +585,18 @@ func (a Account) Active() bool {
 	return (a.Status == AccountActive || a.Status == AccountPastDue) && !a.AbuseHeld()
 }
 
+// MovedToFreeForNonpayment reports an account the dunning ladder moved to
+// the Free plan for an overdue payment (billing review 2026-11-13, R9-1): it
+// is active, or since stopped by the Free quota, and still carries
+// past_due_at, which marks the unpaid balance until a paid order or an
+// operator clears it. A further payment failure or update on the old
+// subscription must not move it back into past_due or onto its paid plan. An
+// account the retired ladder suspended for non-payment reads the same; the
+// dunning sweep moves it to Free.
+func (a Account) MovedToFreeForNonpayment() bool {
+	return (a.Status == AccountActive || a.Status == AccountSuspended) && a.PastDueAt != nil
+}
+
 // MayDeploy reports whether the account may start new deployments. A
 // past_due account keeps serving during its grace period but cannot deploy
 // (spec §4.7), and a suspended, deleted_pending or abuse-held account
@@ -650,6 +662,41 @@ type AccountSignupFactsStore interface {
 	// ReduceAccountSignupFacts clears SignupIP and UserAgent on up to batch
 	// records created before cutoff and returns how many it reduced.
 	ReduceAccountSignupFacts(ctx context.Context, cutoff, now time.Time, batch int) (int64, error)
+}
+
+// Held-account link signals (ADR-20261114174600).
+const (
+	// HeldLinkSignalNetwork: the new account's sign-up address shares a /24
+	// (IPv4) or /48 (IPv6) with the held account's sign-up address or a
+	// recent sign-in address.
+	HeldLinkSignalNetwork = "signup_network"
+	// HeldLinkSignalEmailDomain: both accounts use the same private email
+	// domain (not a public provider, not disposable).
+	HeldLinkSignalEmailDomain = "email_domain"
+)
+
+// AccountHeldLink records that a new account resembles an abuse-held one
+// (ADR-20261114174600). It is a flag for operator review only.
+type AccountHeldLink struct {
+	AccountID     string
+	HeldAccountID string // the held account, or a held organization's owner
+	HeldOrgID     string // set when the hold is on an organization
+	HeldReason    string
+	Signal        string
+	DetectedAt    time.Time
+}
+
+// AccountHeldLinkStore links new accounts to abuse-held ones. Both PgStore
+// and MemStore implement it; callers type-assert.
+type AccountHeldLinkStore interface {
+	// LinkAccountToHeld compares the account's sign-up record with every
+	// abuse-held account and held organization's owner, stores the new
+	// links and returns them. Sign-in addresses count from since on; the
+	// email domain counts only when domainLinkable. An account without a
+	// sign-up record links to nothing.
+	LinkAccountToHeld(ctx context.Context, accountID string, domainLinkable bool, since, at time.Time) ([]AccountHeldLink, error)
+	// AccountHeldLinks lists the links stored for an account.
+	AccountHeldLinks(ctx context.Context, accountID string) ([]AccountHeldLink, error)
 }
 
 // AccountAbuseStrikeStore records abuse recycles against a resource owner
@@ -2100,6 +2147,9 @@ type AppManifest struct {
 	RestartPolicy    string                    `json:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	// Warmup is the path init snapshot priming GETs instead of the
+	// readiness path (ADR-20261114153000).
+	Warmup *api.WarmupHook `json:"warmup,omitempty"`
 	// Pause is the app's declared pause value (ADR-1151); empty selects the
 	// default for the app's type (api.EffectivePause).
 	Pause            string               `json:"pause,omitempty"`
@@ -2184,7 +2234,7 @@ func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
 		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
-		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
+		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Warmup == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
@@ -3128,6 +3178,12 @@ type Deployment struct {
 	// carries the advertised serving port across imaged -> schedd -> vmmd.
 	// Raw JSON keeps state independent of the framework-profile package shape.
 	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
+	// BuildRegistryScope (ADR-20261110210000 slice 3j-4) lists the image
+	// repositories ("host/repository") the deployment's Dockerfiles name;
+	// secretd lets its builds pull only those with the app's registry
+	// credential. apid records it at creation and the column never changes;
+	// nil means not recorded. Written only; secretd reads the column.
+	BuildRegistryScope []string `json:"-"`
 	// ReleaseCommand is immutable pre-activation intent captured from the
 	// exact source version (gregale.yaml release.command or Procfile release:).
 	// The orchestrator converts it into the deployment's unique release task;
@@ -5340,6 +5396,21 @@ type QueueStats struct {
 	InFlight        int
 	OldestPendingAt time.Time
 	DeadLetter      int
+	// Ordered work (ADR-20261112193306), from bounded binding telemetry;
+	// other readers leave them zero. WaitingBehindKey counts due messages
+	// held behind an older message of their work key; BlockedLanes counts
+	// keys whose head has failed and holds later messages, the oldest head
+	// created at OldestBlockedAt.
+	WaitingBehindKey int
+	BlockedLanes     int
+	OldestBlockedAt  time.Time
+}
+
+// RunnableDepth is the backlog that could run now: Depth without messages
+// waiting behind their key. queue_depth scaling sizes workers by it, so a
+// blocked key does not start idle workers.
+func (q QueueStats) RunnableDepth() int {
+	return max(q.Depth-q.WaitingBehindKey, 0)
 }
 
 // QueueBinding is the durable app-scoped contract between a logical queue and

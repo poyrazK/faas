@@ -989,33 +989,6 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:     "admin",
-		DocSlug:  "admin",
-		Short:    "Operator account actions: credits, refunds and abuse holds",
-		Audience: cliAudienceOperator,
-		Subcommands: []cliSub{
-			{Name: "credit", Short: "Issue a billing credit", Flags: []cliFlag{
-				{Name: "reason", Short: "credit reason text", Req: true, Value: "text"},
-			}},
-			{Name: "refund", Short: "Refund a paid Polar invoice", Flags: []cliFlag{
-				{Name: "reason", Short: "refund reason text", Req: true, Value: "text"},
-				{Name: "idempotency-key", Short: "stable provider retry key", Value: "key"},
-			}},
-			{Name: "consume-credits", Short: "Consume credits against an invoice", Positionals: []string{"<invoice-id>"}, Flags: []cliFlag{{Name: "idempotency-key", Short: "stable retry key", Value: "K"}}},
-			{Name: "abuse-hold", Short: "Place or release an account abuse hold", Flags: []cliFlag{
-				{Name: "note", Short: "audit note", Req: true, Value: "text"},
-			}},
-			{Name: "egress-flows", Short: "Search the egress flow log (which tenant connected where)", Flags: []cliFlag{
-				{Name: "remote", Short: "remote IP address or CIDR", Value: "ip|cidr"},
-				{Name: "account", Short: "account id", Value: "id"},
-				{Name: "from", Short: "window start (RFC 3339)", Value: "time"},
-				{Name: "to", Short: "window end (RFC 3339)", Value: "time"},
-				{Name: "limit", Short: "maximum rows", Value: "n"},
-			}},
-		},
-		Positionals: []string{"<uuid>", "<cents>"},
-	},
-	{
 		Name:    "ai",
 		DocSlug: "ai",
 		Short:   "Configure the AI gateway: providers, cost caps, guardrails and usage",
@@ -1196,6 +1169,24 @@ var cliCommands = []cliCommand{
 				{Name: "canary-percent", Short: "start a canary with this share of calls when the evaluation passes", Value: "N"},
 				{Name: "no-wait", Short: "print the evaluation without waiting for its verdict", Bool: true},
 				{Name: "timeout", Short: "how long to wait for the verdict (default 30m)", Value: "duration"},
+			}},
+			{Name: "prompts", Short: "Manage versioned prompts that apps call by name", Notes: []string{"Push a prompt file, diff and render versions, make one live, roll back, canary or evaluate a version."}, Positionals: []string{"<list|get|push|diff|render|promote|rollback|canary|stats|evaluate|rm>", "[<name>|<file>]", "[<version>]"}, Flags: []cliFlag{
+				{Name: "version", Short: "get or render: this version instead of the live one", Value: "N"},
+				{Name: "live", Short: "push: make the pushed version live", Bool: true},
+				{Name: "name", Short: "push: prompt name (default: the file's name field)", Value: "NAME"},
+				{Name: "var", Short: "render: a variable as key=value (repeat)", Value: "KEY=VALUE"},
+				{Name: "percent", Short: "canary: share of unpinned calls the version serves, 1 to 50", Value: "N"},
+				{Name: "max-error-increase", Short: "canary: roll back past this many error-rate points worse (default 5)", Value: "N"},
+				{Name: "max-latency-increase", Short: "canary: roll back past this many percent slower time to first byte", Value: "N"},
+				{Name: "min-calls", Short: "canary: calls needed before judging (default 50)", Value: "N"},
+				{Name: "window", Short: "canary: minutes of calls to judge (default 30)", Value: "N"},
+				{Name: "cases", Short: "evaluate: a JSON array, or JSON lines, of variable sets", Value: "FILE"},
+				{Name: "judge", Short: "evaluate: the AI integration whose model judges the answers", Value: "INTEGRATION"},
+				{Name: "judge-model", Short: "evaluate: the judge model", Value: "MODEL"},
+				{Name: "max-loss-rate", Short: "evaluate: pass when losses and errors are at most this percent (default 20)", Value: "N"},
+				{Name: "canary-percent", Short: "evaluate: start a canary with this share of calls when it passes", Value: "N"},
+				{Name: "no-wait", Short: "evaluate: print the evaluation without waiting for its verdict", Bool: true},
+				{Name: "timeout", Short: "evaluate: how long to wait for the verdict (default 30m)", Value: "duration"},
 			}},
 			{Name: "tokens", Short: "Manage tokens that let dev, CI or notebooks call the AI gateway", Notes: []string{"List, create or revoke tokens; a token acts as the app."}, Positionals: []string{"<list|create|revoke>", "[<token-id>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "the app the token acts as", Value: "SLUG"},
@@ -1520,6 +1511,19 @@ var cliCommands = []cliCommand{
 			{Name: "receipt", Short: "Recover a source event acceptance receipt"},
 			{Name: "operation", Short: "Inspect durable execution status"},
 		},
+	},
+	{
+		// ADR-20261112140000; dark behind the postgres_changes platform flag.
+		// Callable but out of customer discovery until launch, like other
+		// previews.
+		Name: "postgres-changes", DocSlug: "postgres-changes", Short: "Capture Postgres row changes into an app queue (preview)", Audience: cliAudienceOperator,
+		Subcommands: []cliSub{
+			{Name: "apply", Short: "Apply gregale.yaml's postgres_changes block", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug (defaults to the linked app)"}, {Name: "path", Value: "DIR", Short: "directory holding gregale.yaml (default .)"}, {Name: "connection-url-env", Value: "VAR", Short: "local variable holding the owner URL of a database you run"}}},
+			{Name: "status", Short: "Show capture, relay health and backlog", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug (defaults to the linked app)"}}},
+			{Name: "install", Short: "Install capture on a database you run; uploads only the relay login", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug (defaults to the linked app)"}, {Name: "connection-url-env", Value: "VAR", Short: "local variable holding the owner URL (default: the manifest's connection_url_env)"}}},
+			{Name: "uninstall", Short: "Stop capture and remove triggers and the relay login", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug (defaults to the linked app)"}, {Name: "connection-url-env", Value: "VAR", Short: "local variable holding the owner URL (default: the manifest's connection_url_env)"}}},
+		},
+		Examples: []string{"gregale postgres-changes apply", "ORDERS_DATABASE_URL=postgres://... gregale postgres-changes install --connection-url-env ORDERS_DATABASE_URL", "gregale postgres-changes status --app orders-worker"},
 	},
 	{
 		Name:    "events",
@@ -1994,6 +1998,20 @@ var cliCommands = []cliCommand{
 			{Name: "health-path", Group: "Wake behavior", Short: "set the monitor-facing health path", Value: "PATH"},
 			{Name: "health-path-wakes", Group: "Wake behavior", Short: "allow health probes to wake the app"},
 			{Name: "no-health-path-wakes", Group: "Wake behavior", Short: "answer health probes without waking the app"},
+			{Name: "request-rate-limit-rps", Group: "Request handling", Short: "app-wide request rate limit per second; 0 restores the plan default", Value: "N"},
+			{Name: "request-rate-limit-burst", Group: "Request handling", Short: "app-wide request burst; 0 restores the plan default", Value: "N"},
+			{Name: "cors-default", Group: "Request handling", Short: "answer CORS for --cors-default-origins when no CORS edge rule matches", Bool: true},
+			{Name: "no-cors-default", Group: "Request handling", Short: "turn the default CORS answer off", Bool: true},
+			{Name: "cors-default-origins", Group: "Request handling", Short: "comma-separated origins for the default CORS answer; empty clears", Value: "ORIGINS"},
+			{Name: "session-affinity", Group: "Request handling", Short: "route a client to the same running instance (best effort)", Bool: true},
+			{Name: "no-session-affinity", Group: "Request handling", Short: "turn session affinity off", Bool: true},
+			{Name: "version-affinity-cookie", Group: "Request handling", Short: "cookie that pins a client to a release; empty turns it off", Value: "NAME"},
+			{Name: "version-affinity-managed-cookie", Group: "Request handling", Short: "let Gregale set the version-affinity cookie", Bool: true},
+			{Name: "no-version-affinity-managed-cookie", Group: "Request handling", Short: "stop Gregale setting the version-affinity cookie", Bool: true},
+			{Name: "robots-txt-file", Group: "Wake behavior", Short: "serve this file as /robots.txt at the edge", Value: "PATH"},
+			{Name: "default-robots-txt", Group: "Wake behavior", Short: "restore the platform's allow-all /robots.txt", Bool: true},
+			{Name: "favicon-file", Group: "Wake behavior", Short: "serve this icon as /favicon.ico at the edge", Value: "PATH"},
+			{Name: "no-favicon", Group: "Wake behavior", Short: "remove the app's edge favicon", Bool: true},
 			{Name: "app-protocol", Group: "Request handling", Short: "set the wire-protocol selector", Value: "http1|http2|grpc", ClosedSet: []string{"http1", "http2", "grpc"}},
 			{Name: "public-auth", Group: "Access and security", Short: "set public URL authentication; internal_only admits Gregale internal services, ip_allowlist is Pro+", Value: "open|bearer|basic|ip_allowlist|internal_only", ClosedSet: []string{"open", "bearer", "basic", "ip_allowlist", "internal_only"}},
 			{Name: "ip-allowlist", Group: "Access and security", Short: "allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist", Value: "CIDR", Repeatable: true},
@@ -2233,6 +2251,7 @@ var cliCommands = []cliCommand{
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
+				{Name: "stream", Short: "emit JSON Lines as pages arrive; requires --json --all", Bool: true},
 			}},
 			{Name: "provenance", Short: "Show the build provenance attestation", Positionals: []string{"<id>"}},
 			{Name: "sbom", Short: "Show the build SBOM", Positionals: []string{"<id>"}},
@@ -4973,6 +4992,7 @@ var cliCommands = []cliCommand{
 				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
+				{Name: "stream", Short: "emit JSON Lines as pages arrive; requires --json --all", Bool: true},
 			}},
 			{Name: "get", Short: "Show or recover one invocation", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "replay", Short: "re-issue failed unkeyed work"},
@@ -5785,6 +5805,7 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "create", Short: "Create a managed mirror and begin initial copying", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "durable", Short: "save setup as a resumable server job; requires --connection"}, {Name: "plan", Short: "preview resources and billing without allocation"}, {Name: "freshness-target", Value: "DURATION", Short: "checkpoint confirmation target; 0 or 15s to 24h"},
+				{Name: "operations-file", Value: "FILE", Short: "scheduled work JSON; requires --connection and an existing --database; excludes --durable and --plan"},
 				{Name: "connection", Value: "ID", Short: "registered source connection (or use --url-file)"}, {Name: "url-file", Value: "FILE", Short: "register a source from a private URL file"}, {Name: "database", Value: "DATABASE", Short: "existing empty managed database; otherwise create NAME-mirror"}, {Name: "region", Value: "REGION", Short: "placement of an automatically created mirror"}, {Name: "tables", Value: "TABLES", Req: true, Short: "comma-separated public table names"}, {Name: "read-subjects", Value: "SUBJECTS", Short: "identities with whole-table access; omit for tenant access"}, {Name: "serving-file", Value: "FILE", Short: "version 1 column selection and tenant membership JSON contract"}, {Name: "wait", Short: "wait for initial copying and catch-up"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}, {Name: "api", Value: "NAME", Short: "deploy a read-only Data API after initial sync", Unreleased: true}, {Name: "auth", Value: "AUTH_APP", Short: "Auth app used by --api", Unreleased: true},
 			}},
 			{Name: "setup", Short: "Plan and resume server-owned provisioning", Subcommands: []cliSub{
@@ -5796,7 +5817,22 @@ var cliCommands = []cliCommand{
 				{Name: "retry", Short: "Retry saved setup", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "timeout", Value: "DURATION", Short: "maximum wait up to 1h"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}, {Name: "yes", Short: "confirm cancellation; resources are retained"}}},
 				{Name: "cancel", Short: "Cancel saved setup", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "timeout", Value: "DURATION", Short: "maximum wait up to 1h"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}, {Name: "yes", Short: "confirm cancellation; resources are retained"}}},
 			}},
-			{Name: "freshness", Short: "Inspect or configure checkpoint confirmation", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "target", Value: "DURATION", Short: "0 disables; otherwise 15s to 24h"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}}},
+			{Name: "operations", Short: "Configure scheduled work or request a bounded run", Positionals: []string{"<id>"}, Notes: []string{"Choose exactly one of --file, --run-snapshot or --run-quality. A file replaces the complete operations configuration; manual runs respect the work window."}, Flags: []cliFlag{
+				{Name: "file", Value: "FILE", Short: "complete operations configuration JSON"},
+				{Name: "revision", Value: "REVISION", Req: true, Short: "expected pipeline revision"},
+				{Name: "run-snapshot", Short: "request a snapshot during the next allowed work window"},
+				{Name: "run-quality", Short: "request quality checks during the next allowed work window"},
+			}},
+			{Name: "evolve", Short: "Review and approve projection, Auth and relationship changes", Positionals: []string{"<id>"}, Notes: []string{"Choose exactly one of --file, --approve, --discard, --retry or --approve-schema. Preview files contain only the proposed changes; --revision supplies the expected revision."}, Flags: []cliFlag{
+				{Name: "file", Value: "FILE", Short: "JSON preview request for projection, Auth organizations or relationships"},
+				{Name: "approve", Value: "CHANGE_ID", Short: "approve the exact saved change"},
+				{Name: "discard", Value: "CHANGE_ID", Short: "discard the saved preview"},
+				{Name: "retry", Value: "CHANGE_ID", Short: "retry the failed API refresh for an approved change"},
+				{Name: "approve-schema", Value: "CHANGE_ID", Short: "approve the worker's exact source schema review"},
+				{Name: "retry-schema", Short: "retry an approved schema workflow; requires --approve-schema"},
+				{Name: "revision", Value: "REVISION", Req: true, Short: "expected pipeline revision"},
+			}},
+			{Name: "freshness", Short: "Inspect or configure checkpoint confirmation", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "target", Value: "DURATION", Short: "0 disables; otherwise 15s to 24h; omit to inspect"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}}},
 			{Name: "indexes", Short: "Preview and approve bounded mirror indexes", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "table", Value: "TABLE", Short: "preview a selected table"}, {Name: "filters", Value: "COLUMNS", Short: "equality filter column names without values"}, {Name: "order-by", Value: "COLUMNS", Short: "ordered columns; prefix descending columns with -"}, {Name: "max-index-bytes", Value: "BYTES", Short: "index budget, maximum 32 MiB"}, {Name: "approve", Value: "ADVICE_ID", Short: "approve the exact frozen preview"}, {Name: "discard", Short: "discard unapproved advice"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}, {Name: "wait", Short: "wait for advice or build acknowledgement"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait up to 1h"}}},
 			{Name: "access", Short: "Preview and approve tenant membership changes", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "members-file", Value: "FILE", Short: "preview the complete subject/tenant JSON array; [] revokes all access"}, {Name: "approve", Value: "CHANGE_ID", Short: "approve the exact saved preview"}, {Name: "discard", Short: "discard an unapproved preview"}, {Name: "revision", Value: "REVISION", Short: "expected revision; defaults to current"}, {Name: "wait", Short: "wait for approval acknowledgement"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 5m; maximum 1h)"}}},
 			{Name: "list", Short: "List pipeline intent and observations"},
@@ -6123,20 +6159,6 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"gregale postgres capabilities --json"}},
 			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
 			{Name: "overage", Short: "Show or change compute overage past the monthly allowance", Notes: []string{"With overage on, databases keep running up to twice the allowance."}, Positionals: []string{"[on|off]"}, Examples: []string{"gregale postgres overage on"}},
-			{Name: "reconcile", Short: "Preview or apply legacy identity and shutdown evidence (operator only)", Positionals: []string{"<account_id>"}, Flags: []cliFlag{
-				{Name: "file", Short: "verified identity and shutdown evidence JSON file", Value: "FILE", Req: true},
-				{Name: "apply", Short: "apply with expected_revision from preview"},
-				{Name: "session-file", Short: "private operator session cookie file (required for apply)", Value: "FILE"},
-			}, Examples: []string{"gregale postgres reconcile ACCOUNT_ID --file reconciliation.json --json"}},
-			{Name: "usage-import", Short: "Preview or apply retained usage evidence (operator only)", Positionals: []string{"<account_id>"}, Flags: []cliFlag{
-				{Name: "file", Short: "normalized retained evidence JSON file", Value: "FILE", Req: true},
-				{Name: "apply", Short: "apply with expected_revision from preview"},
-				{Name: "session-file", Short: "private operator session cookie file (required for apply)", Value: "FILE"},
-			}, Examples: []string{"gregale postgres usage-import ACCOUNT_ID --file retained-usage.json --json"}},
-			{Name: "diagnostics", Short: "Explain accounting blockers for an account (operator only)", Positionals: []string{"<account_id>"}, Flags: []cliFlag{
-				{Name: "after", Short: "resume after next_cursor", Value: "UUID"},
-				{Name: "limit", Short: "maximum databases in this page (1-100)", Value: "N"},
-			}, Examples: []string{"gregale postgres diagnostics ACCOUNT_ID --json"}},
 			{Name: "create", Short: "Create a managed PostgreSQL database", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "region", Short: "provider-neutral region", Req: true, Value: "REGION"},
 				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
@@ -6897,18 +6919,6 @@ var cliCommands = []cliCommand{
 				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret; needs com.gregale.secret-reload-signal, even with --restart"},
 				{Name: "timeout", Short: "maximum time to wait for application acknowledgements (requires --wait-for-ack)", Value: "DURATION"},
 			}},
-		},
-	},
-	{
-		// Compatibility surface for installation-scoped secrets used by
-		// legacy non-GitHub senders. Standard GitHub App webhooks use the
-		// single platform App secret documented in ADR-012 §8.
-		Name:     "github-webhook-secret",
-		DocSlug:  "github-webhook-secret",
-		Short:    "Manage legacy installation-scoped webhook secrets (admin)",
-		Audience: cliAudienceCompatibility,
-		Subcommands: []cliSub{
-			{Name: "set", Short: "Rotate the secret for one installation_id", Flags: []cliFlag{{Name: "installation-id", Short: "GitHub App installation_id", Req: true, Value: "ID"}, {Name: "secret", Short: "secret hex (32-64 chars; prefer --from-stdin)", Value: "HEX"}, {Name: "from-stdin", Short: "read the secret hex from stdin"}}},
 		},
 	},
 	// operator-side verbs (sign-keys, node-key) moved to gregalectl

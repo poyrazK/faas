@@ -19,8 +19,13 @@ const requiredSecretPreflightTimeout = 10 * time.Second
 // then failed its startup as app_startup_crash (deploy-path review P10).
 // It only warns: a value can also reach the app another way (a binding or
 // the image's own env), and a failed read never blocks the deploy.
-func warnMissingRequiredSecrets(ctx context.Context, client *Client, slug, scope string) {
-	file, err := discoverRequiredSecretFile()
+//
+// The deploy calls it once the app exists and --secrets-file values are
+// sealed, for a first deploy too (that is when a name is most often missing),
+// and reads the declaration of the deployed source directory, not the shell's
+// (prod test 2026-11-15: it ran only for `gregale dev` and helper deploys).
+func warnMissingRequiredSecrets(ctx context.Context, client *Client, slug, scope, sourceDir string) {
+	file, err := requiredSecretFileForSource(sourceDir)
 	if err != nil || file == "" {
 		return
 	}
@@ -42,7 +47,7 @@ func warnMissingRequiredSecrets(ctx context.Context, client *Client, slug, scope
 	if len(missing) == 0 {
 		return
 	}
-	PrintWarn(osStderr, "%s declares required names that %s does not have in scope %s: %s. The app may fail to start; set them with `gregale env set --app %s KEY=VALUE` or check with `gregale secrets check --app %s`.",
+	PrintWarn(osStderr, "%s declares required names that %s does not have in scope %s: %s. The app may fail to start; set them with `gregale env set --app %s KEY=VALUE` or check with `gregale env check --app %s`.",
 		oneLine(file), oneLine(slug), oneLine(scopeOrDefault(scope)), strings.Join(missing, ", "), oneLine(slug), oneLine(slug))
 }
 

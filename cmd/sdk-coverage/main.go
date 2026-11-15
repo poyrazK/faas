@@ -408,6 +408,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/wakes/{wake_id}":                              true, // private one-wake event timeline (gregalectl obs wake)
 	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
 	"GET /v1/admin/obs/serving-health":                               true, // private serving-probe coverage evidence
+	"GET /v1/admin/obs/nodes/{name}/probe-notifications":             true, // private node notification submission evidence
 	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
 	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
 	"GET /v1/admin/obs/rule-coverage":                                true, // private explicitly selected rule coverage
@@ -632,11 +633,13 @@ var methodRouteMap = map[string]string{
 	"POST /v1/tool-invocations/{id}/{action}":            "DispatchToolInvocation",
 	"POST /v1/tool-oauth-connections/{id}/authorization": "AuthorizeToolOAuthConnection",
 	"POST /v1/tool-publications/{id}/outcome":            "FinishToolPublication",
+	"POST /v1/tool-publications/{id}/verification":       "VerifyToolPublication",
 	"PUT /v1/delegated-tool-invocations/{id}":            "BeginDelegatedToolInvocation",
 	"PUT /v1/tool-grants/{id}":                           "PutToolGrant",
 	"PUT /v1/tool-invocations/{id}":                      "BeginToolInvocation",
 	"PUT /v1/tool-oauth-connections/{id}":                "PutToolOAuthConnection",
 	"PUT /v1/tool-publications/{id}":                     "BeginToolPublication",
+	"PUT /v1/tool-publications/{id}/verification":        "DecideToolPublicationVerification",
 
 	// Customer support uses typed personal and organization methods.
 	"GET /v1/support/tickets":                                   "ListSupportTickets",
@@ -1290,6 +1293,21 @@ var methodRouteMap = map[string]string{
 	"GET /v1/outbound/integrations/{integration}/ai-prices":                            "GetOutboundIntegrationAIPrices",
 	"PUT /v1/outbound/integrations/{integration}/ai-prices":                            "SetOutboundIntegrationAIPrices",
 	"PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-budget":                    "SetOutboundBindingAIBudget",
+	"GET /v1/outbound/ai-prompts":                                                      "ListOutboundAIPrompts",
+	"GET /v1/outbound/ai-prompts/{prompt}":                                             "GetOutboundAIPrompt",
+	"DELETE /v1/outbound/ai-prompts/{prompt}":                                          "DeleteOutboundAIPrompt",
+	"GET /v1/outbound/ai-prompts/{prompt}/versions":                                    "ListOutboundAIPromptVersions",
+	"POST /v1/outbound/ai-prompts/{prompt}/versions":                                   "PushOutboundAIPromptVersion",
+	"GET /v1/outbound/ai-prompts/{prompt}/versions/{version}":                          "GetOutboundAIPromptVersion",
+	"PUT /v1/outbound/ai-prompts/{prompt}/live":                                        "SetOutboundAIPromptLive",
+	"POST /v1/outbound/ai-prompts/{prompt}/rollback":                                   "RollBackOutboundAIPrompt",
+	"PUT /v1/outbound/ai-prompts/{prompt}/canary":                                      "SetOutboundAIPromptCanary",
+	"POST /v1/outbound/ai-prompts/{prompt}/canary/promote":                             "PromoteOutboundAIPromptCanary",
+	"DELETE /v1/outbound/ai-prompts/{prompt}/canary":                                   "DeleteOutboundAIPromptCanary",
+	"GET /v1/outbound/ai-prompts/{prompt}/stats":                                       "GetOutboundAIPromptStats",
+	"POST /v1/outbound/ai-prompts/{prompt}/evaluations":                                "CreateOutboundAIPromptEvaluation",
+	"GET /v1/outbound/ai-prompts/{prompt}/evaluations":                                 "ListOutboundAIPromptEvaluations",
+	"GET /v1/outbound/ai-prompt-evaluations/{evaluation}":                              "GetOutboundAIPromptEvaluation",
 	"GET /v1/outbound/ai-routes":                                                       "ListOutboundAIRoutes",
 	"PUT /v1/outbound/ai-routes/{route}/canary":                                        "SetOutboundAIRouteCanary",
 	"GET /v1/outbound/ai-routes/{route}/canary":                                        "GetOutboundAIRouteCanary",
@@ -1596,6 +1614,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/account/egress-overage":                             "SetEgressOverage",
 	"POST /v1/account/mfa/disable-email":                         "PostAccountMfaDisableEmail",
 	"POST /v1/account/mfa/disable-email/confirm":                 "PostAccountMfaDisableEmailConfirm",
+	"POST /v1/account/mfa/disable-email-cancel":                  "PostAccountMfaDisableEmailCancel", // literal hyphen; operationId mfaDisableEmailCancel (ADR-20261115100000)
 	// ADR-20261107103000 account flow routes.
 	"PATCH /v1/account":                              "SetDisplayName",
 	"GET /v1/account/sign-in-methods":                "SignInMethods",
@@ -1650,6 +1669,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/data/pipelines":                                                          "ListDataPipelines",
 	"GET /v1/data/pipelines/{id}":                                                     "GetDataPipeline",
 	"POST /v1/data/pipelines/{id}/control":                                            "ControlDataPipeline",
+	"POST /v1/data/pipelines/{id}/schema-approval":                                    "ApproveDataPipelineSchema",
+	"POST /v1/data/pipelines/{id}/operations":                                         "ConfigureDataPipelineOperations",
+	"POST /v1/data/pipelines/{id}/evolution":                                          "EvolveDataPipeline",
 	"POST /v1/data/pipelines/{id}/tenant-readers":                                     "ChangeDataPipelineTenantReaders",
 	"POST /v1/data/pipeline-setups/plan":                                              "PlanDataPipelineSetup",
 	"POST /v1/data/pipeline-setups":                                                   "CreateDataPipelineSetup",
@@ -2847,6 +2869,12 @@ var methodRouteMap = map[string]string{
 	"GET /v1/invitations/{token}":                "PeekInvitation",
 	"POST /v1/invitations/{token}/accept":        "AcceptInvitation",
 	"DELETE /v1/orgs/{slug}/invitations/{token}": "RevokeInvitation",
+	// Postgres change workers (ADR-20261112140000): literal hyphen; the SDK
+	// verbs follow the operationIds.
+	"GET /v1/apps/{slug}/postgres-changes":            "GetPostgresChanges",
+	"PUT /v1/apps/{slug}/postgres-changes":            "PutPostgresChanges",
+	"DELETE /v1/apps/{slug}/postgres-changes":         "DeletePostgresChanges",
+	"PUT /v1/apps/{slug}/postgres-changes/connection": "PutPostgresChangesConnection",
 	// PR-8 §2 — cursor-paginated list of every invitation minted on
 	// the org (pending/consumed/revoked/expired). Auto-derivation
 	// yields "GetOrgsSlugInvitations" which reads as a singleton

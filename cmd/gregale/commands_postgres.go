@@ -21,7 +21,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|create|get|status|wait|delete|recover|resize|resize-status|compute-policy|compute-policy-status|restore|branch|bindings|attach|connect|cutover|live>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -33,12 +33,6 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresUsage(args[1:])
 	case "overage":
 		return cmdPostgresOverage(args[1:])
-	case "diagnostics":
-		return cmdPostgresDiagnostics(args[1:])
-	case "usage-import":
-		return cmdPostgresUsageImport(args[1:])
-	case "reconcile":
-		return cmdPostgresReconcile(args[1:])
 	case subCreate:
 		return cmdPostgresCreate(args[1:])
 	case subGet:
@@ -393,7 +387,7 @@ func cmdPostgresCreate(args []string) int {
 	args = normalizePostgresArgs(args)
 	fs := newFlagSet("postgres create", flag.ContinueOnError)
 	region := fs.String("region", "", "provider-neutral region (required)")
-	major := fs.Int("postgres-major", 16, "PostgreSQL major version")
+	major := fs.Int("postgres-major", api.ManagedPostgresDefaultMajor, "PostgreSQL major version")
 	serviceClass := fs.String("class", "development", "service class: development|burstable|production")
 	availability := fs.String("availability", "single_zone", "availability: single_zone|high_availability")
 	scaleToZero := fs.Bool("scale-to-zero", true, "suspend compute when idle")

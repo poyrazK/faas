@@ -326,6 +326,7 @@ func cmdApp(args []string) int {
 	healthPath := fs.String("health-path", "", "monitor-facing health path (default /healthz)")
 	healthPathWakes := fs.Bool("health-path-wakes", false, "allow health probes to wake the app (Pro/Scale only)")
 	noHealthPathWakes := fs.Bool("no-health-path-wakes", false, "answer health probes at the edge without waking")
+	settingFlags := registerAppSettingFlags(fs)
 	// ADR-124: per-app wire-protocol selector. Single string
 	// flag (closed set {http1, http2, grpc}) — empty value
 	// means "use the per-plan default" (http1 universal). The
@@ -793,6 +794,9 @@ func cmdApp(args []string) int {
 	if explicit["overflow-node"] {
 		v := *overflowNode
 		req.OverflowNode = &v
+	}
+	if err := settingFlags.apply(explicit, &req); err != nil {
+		return printErr("Invalid flags", err)
 	}
 
 	// Any update flag sets a field of req; none means a read. Listing fields
@@ -3916,6 +3920,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		source, changes := deployPreflightSource(prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath)
 		opts.Preview = newCLIPreview("remote comparison", slug, "", source, changes, "Compares current remote settings; build execution and readiness are not verified. State can change before deployment.")
 		deploymentPreviewTargetSources(opts.Preview, contextDir, *name != "", explicit["environment"])
+		opts.TargetLinked = sourceLinkedTo(contextDir, slug)
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
 		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
 		opts.Canary = canarySpec
@@ -4117,9 +4122,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err != nil {
 		return printErr("Manifest resource scope resolution failed", err)
 	}
-	if existingApp && !projectRequested && !*createOnly {
-		warnMissingRequiredSecrets(ctx, client, slug, manifestScope)
-	}
 	// The deploy session is written after the app is created or updated;
 	// prove it can be before changing anything remotely (#6625).
 	if !*createOnly {
@@ -4163,6 +4165,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			existingReq := createReq
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
+			}
+			if !*createOnly {
+				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
+					return code
+				}
 			}
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 		}
@@ -4219,6 +4226,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if !jsonOutput {
 			PrintOK(osStdout, "Configured %d secret(s) before deployment", len(deploySecrets))
 		}
+	}
+	// After the app exists and --secrets-file values are sealed, so a first
+	// deploy is checked and the file's names count (deploy-path review P10).
+	if !projectRequested {
+		warnMissingRequiredSecrets(ctx, client, slug, manifestScope, sourceDir)
 	}
 
 	// Issue #791 PR-C / ADR-090: gregale.yaml triggers are staged after
@@ -4329,6 +4341,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 
 	if err := deployManifestQueueBindings(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest queue bindings failed", err)
+	}
+	if err := deployManifestPostgresChanges(ctx, client, slug, sourceDir); err != nil {
+		return printErr("Manifest postgres_changes failed", err)
 	}
 	if err := deployManifestLabels(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest labels failed", err)

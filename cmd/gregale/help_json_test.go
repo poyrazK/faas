@@ -23,10 +23,12 @@ type helpDocument struct {
 	Positionals                 []string
 	Examples                    []string
 	Notes                       []string
-	SubcommandsAfterPositionals bool `json:"subcommands_after_positionals"`
-	FlagsAfterPositionals       bool `json:"flags_after_positionals"`
+	SubcommandsAfterPositionals bool             `json:"subcommands_after_positionals"`
+	FlagsAfterPositionals       bool             `json:"flags_after_positionals"`
+	GlobalFlags                 []helpGlobalFlag `json:"global_flags"`
 	Flags                       []struct {
 		Name       string
+		Value      string
 		Spellings  []string
 		TakesValue bool `json:"takes_value"`
 		Required   bool
@@ -65,7 +67,7 @@ func readJSONHelp(t *testing.T, args ...string) helpDocument {
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		t.Fatalf("help must be exactly one JSON document: %v", err)
 	}
-	if document.SchemaVersion != 1 || document.DocsURL == "" || document.Aliases == nil || document.Positionals == nil || document.Flags == nil || document.Examples == nil || document.Notes == nil || document.Subcommands == nil {
+	if document.SchemaVersion != 1 || document.DocsURL == "" || document.Aliases == nil || document.Positionals == nil || document.Flags == nil || document.GlobalFlags == nil || document.Examples == nil || document.Notes == nil || document.Subcommands == nil {
 		t.Fatalf("missing schema metadata or array collections: %+v", document)
 	}
 	return document
@@ -148,7 +150,7 @@ func TestJSONHelpOfflineAndInvalidTopics(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "fp_test_help-private")
 	readJSONHelp(t, "--profile", "missing", "--debug-http", "--non-interactive", "--json", "help", "invocation", "run", "--all")
 	for _, topic := range [][]string{
-		{"not-a-command"}, {"invocation", "run", "unexpected"}, {"realtime"}, {"release", "approval", "list"},
+		{"not-a-command"}, {"deply"}, {"invocation", "run", "unexpected"}, {"realtime"}, {"release", "approval", "list"},
 		{"invocation", "--bad-option"}, {"--", "--json"}, {"invocation", "--operator"},
 		{"fp_test_help-private"},
 	} {
@@ -158,10 +160,14 @@ func TestJSONHelpOfflineAndInvalidTopics(t *testing.T) {
 		restore()
 		var problem struct {
 			Code     string `json:"code"`
+			Detail   string `json:"detail"`
 			ExitCode int    `json:"exit_code"`
 		}
 		if code != 1 || out.Len() != 0 || json.Unmarshal([]byte(errText), &problem) != nil || problem.Code != "invalid_request" || problem.ExitCode != 1 || strings.Contains(errText, "fp_test_help-private") {
 			t.Fatalf("invalid topic %q: exit=%d stdout=%q stderr=%q", topic, code, out, errText)
+		}
+		if len(topic) == 1 && topic[0] == "deply" && !strings.Contains(problem.Detail, "gregale help deploy") {
+			t.Fatalf("offline typo recovery hint missing: %s", errText)
 		}
 	}
 	if requests.Load() != 0 {

@@ -37,7 +37,7 @@ import (
 // internals).
 func floorPgStore(t *testing.T) (*state.PgStore, context.Context) {
 	t.Helper()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)

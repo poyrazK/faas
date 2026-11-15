@@ -354,6 +354,10 @@ type Querier interface {
 	// An activated cutover is final (ADR-20261023181931); cancelling it matches no row.
 	CancelManagedPostgresCutover(ctx context.Context, db DBTX, arg CancelManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	CancelManagedPostgresScheduledDelete(ctx context.Context, db DBTX, arg CancelManagedPostgresScheduledDeleteParams) (ManagedPostgresDatabase, error)
+	// A successful second-factor sign-in, or the owner pressing Cancel, ends every
+	// pending email-assisted disable (F14-1, ADR-20261115100000). Account lock
+	// first, then requests and tokens, matching issuance.
+	CancelPendingMFADisable(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	// ADR-20261021152201: scheduled releases.
 	// Ends the app's pending schedule before another one is recorded.
 	CancelPendingScheduledReleasesForApp(ctx context.Context, db DBTX, arg CancelPendingScheduledReleasesForAppParams) ([]ScheduledRelease, error)
@@ -752,6 +756,10 @@ type Querier interface {
 	// Empty address is the unchanged legacy token format. New bound tokens never
 	// verify a different current address, including after the maild handoff.
 	ConsumeEmailVerificationToken(ctx context.Context, db DBTX, tokenHash []byte) (pgtype.UUID, error)
+	// Event-driven hunt #16: the shared per-account event publish counter. Refill
+	// follows ConsumeTrafficRateTokens exactly, but the grant is all or nothing:
+	// a batch of n events takes n tokens or none.
+	ConsumeEventPublishTokens(ctx context.Context, db DBTX, arg ConsumeEventPublishTokensParams) (ConsumeEventPublishTokensRow, error)
 	ConsumeInlineResetToken(ctx context.Context, db DBTX, arg ConsumeInlineResetTokenParams) (pgtype.UUID, error)
 	ConsumePromotionAdmissionApproval(ctx context.Context, db DBTX, arg ConsumePromotionAdmissionApprovalParams) (ConsumePromotionAdmissionApprovalRow, error)
 	ConsumeTrafficRateToken(ctx context.Context, db DBTX, arg ConsumeTrafficRateTokenParams) (int64, error)
@@ -931,6 +939,9 @@ type Querier interface {
 	CreateEnvironmentWorkloadGraph(ctx context.Context, db DBTX, arg CreateEnvironmentWorkloadGraphParams) error
 	CreateEnvironmentWorkloadQualification(ctx context.Context, db DBTX, arg CreateEnvironmentWorkloadQualificationParams) (int64, error)
 	CreateEventExecutionLineageRetryJob(ctx context.Context, db DBTX, arg CreateEventExecutionLineageRetryJobParams) error
+	// The first publish creates the account's counter with its grant taken; the
+	// caller never asks for more than the burst.
+	CreateEventPublishCounter(ctx context.Context, db DBTX, arg CreateEventPublishCounterParams) (int64, error)
 	CreateInstance(ctx context.Context, db DBTX, arg CreateInstanceParams) (CreateInstanceRow, error)
 	// ADR-531: queue ownership is operational evidence, never a cloned message.
 	CreateInvocationEnvironmentQueueAdmission(ctx context.Context, db DBTX, arg CreateInvocationEnvironmentQueueAdmissionParams) (int64, error)
@@ -5427,6 +5438,9 @@ type Querier interface {
 	ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) ([]QueueBinding, error)
 	// Notification recipients meet the same company reach as subscriptions
 	// (ADR-20261025211616): a rule cannot route a company bucket's events past it.
+	// enqueue_event_fanout keeps no row for a platform event without subscribers
+	// (ADR-614 amendment 2026-11-13), so the capture inserts it from the event
+	// envelope when it is missing and appends to it otherwise.
 	ObjectNotificationsCapture(ctx context.Context, db DBTX, arg ObjectNotificationsCaptureParams) (int64, error)
 	ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error)
 	ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error
@@ -5739,6 +5753,10 @@ type Querier interface {
 	PendingEnvironmentQualificationPostgresChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationPostgresChecksRow, error)
 	PendingLayerArtifactDeletions(ctx context.Context, db DBTX) ([]PendingLayerArtifactDeletionsRow, error)
 	PendingLogArchiveErasureInstances(ctx context.Context, db DBTX, arg PendingLogArchiveErasureInstancesParams) ([]pgtype.UUID, error)
+	// The earliest still-usable pending email-assisted disable, for the account
+	// page's banner. Legacy requests carry no expiry column; they stop working
+	// window_seconds after they were requested.
+	PendingMFADisableRequestedAt(ctx context.Context, db DBTX, arg PendingMFADisableRequestedAtParams) (pgtype.Timestamptz, error)
 	PendingManagedPostgresCutoverPreflights(ctx context.Context, db DBTX, batchSize int32) ([]ManagedPostgresCutover, error)
 	PendingPromotionHealth(ctx context.Context, db DBTX, batchSize int32) ([]PendingPromotionHealthRow, error)
 	PendingPromotionRecoveryQuiescence(ctx context.Context, db DBTX, batchSize int32) ([]PendingPromotionRecoveryQuiescenceRow, error)
@@ -6201,7 +6219,7 @@ type Querier interface {
 	// 2026-10-24). The due bound uses statement_timestamp(): it is stable, so it
 	// bounds the index range, where volatile clock_timestamp() left only a filter
 	// and the planner walked the global due index instead.
-	QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLeaseCandidatesParams) ([]pgtype.UUID, error)
+	QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLeaseCandidatesParams) ([]QueueLeaseCandidatesRow, error)
 	QueueLeaseClaimInvocation(ctx context.Context, db DBTX, arg QueueLeaseClaimInvocationParams) (Invocation, error)
 	QueueLeaseClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	// A message whose leases kept expiring has no attempts left to lease.

@@ -198,7 +198,12 @@ func (s *CutoverService) verifyClaim(ctx context.Context, c Cutover) (Cutover, e
 		if !m.VerifiedAt.IsZero() && !m.VerifiedAt.After(s.bindings.now()) && s.bindings.now().Sub(m.VerifiedAt) <= CutoverVerificationMaxAge {
 			continue
 		}
-		err := s.verifier.VerifyCredential(probe, cutoverBinding(c, m), m.Sealed, target)
+		var err error
+		if verifier, ok := s.verifier.(CutoverCredentialVerifier); ok {
+			err = verifier.VerifyCutoverCredential(probe, c, m, target)
+		} else {
+			err = s.verifier.VerifyCredential(probe, cutoverBinding(c, m), m.Sealed, target)
+		}
 		if err == nil {
 			err = probe.Err()
 		}

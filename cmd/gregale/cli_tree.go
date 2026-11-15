@@ -217,6 +217,11 @@ var cliTreeAliases = []cliTreeAlias{
 	{"bucket inventory get", "bucket reconcile status"},
 	{"bucket inventory", "bucket reconcile"},
 	{"bucket", "bucket"},
+	{"pipeline connection explain", "pipeline connection guide"},
+	{"pipeline index review", "pipeline indexes"},
+	{"pipeline access review", "pipeline access"},
+	{"pipeline evolution review", "pipeline evolve"},
+	{"pipeline work update", "pipeline operations"},
 	{"pipeline", "pipeline"},
 	{"data-api", "data-api"},
 	{"ai", "ai"},
@@ -643,11 +648,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"admin product", "product"},
 	{"admin tenant-surfaces", "tenant-surfaces"},
 	{"admin rollouts", "rollouts"},
-	{"admin github-webhook-secret", "github-webhook-secret"},
 	{"admin mail", "mail"},
-	{"admin postgres reconcile", "postgres reconcile"},
-	{"admin postgres usage-import", "postgres usage-import"},
-	{"admin postgres diagnostics", "postgres diagnostics"},
 	// Sealed live queries stay an operator preview (ADR-20261016151947);
 	// customers read live through `data-api live`.
 	{"admin postgres live", "postgres live"},

@@ -91,10 +91,12 @@ CREATE TABLE deployment_image_preparations (
 );
 
 -- Projection of deployments: which app a deployment belongs to
--- (ADR-20261110210000 slice 3j-2).
+-- (ADR-20261110210000 slice 3j-2), and the registry repositories its builds
+-- may pull (slice 3j-4).
 CREATE TABLE deployments (
-    id     uuid NOT NULL PRIMARY KEY,
-    app_id uuid NOT NULL
+    id                   uuid NOT NULL PRIMARY KEY,
+    app_id               uuid NOT NULL,
+    build_registry_scope text[]
 );
 
 -- Projections of job_registry_credentials and jobs: a job's registry
@@ -111,4 +113,37 @@ CREATE TABLE jobs (
     id                                uuid NOT NULL PRIMARY KEY,
     image_materialization_lease_owner text,
     image_materialization_lease_until timestamptz
+);
+
+-- Projection of builds: the node running a build, recorded when it was
+-- claimed (ADR-20261110210000 slice 3j-3).
+CREATE TABLE builds (
+    id                uuid NOT NULL PRIMARY KEY,
+    deployment_id     uuid NOT NULL,
+    status            text NOT NULL,
+    started_at        timestamptz,
+    builder_node_name text
+);
+
+CREATE TABLE managed_postgres_cutovers (
+ id uuid PRIMARY KEY, account_id uuid NOT NULL, app_id uuid NOT NULL,
+ target_database_id uuid NOT NULL, target_backend_id text NOT NULL,
+ target_backend_fingerprint text NOT NULL, target_resource_id text NOT NULL,
+ target_generation bigint NOT NULL, state text NOT NULL,
+ lease_token text, lease_until timestamptz
+);
+CREATE TABLE managed_postgres_cutover_credentials (
+ id uuid PRIMARY KEY, cutover_id uuid NOT NULL, environment_key text NOT NULL,
+ access text NOT NULL, state text NOT NULL, provider_identity_id text,
+ credential_ref text, ciphertext bytea, kid text, value_hash text
+);
+CREATE TABLE managed_postgres_databases (
+ id uuid PRIMARY KEY, account_id uuid NOT NULL, state text NOT NULL,
+ backend_id text NOT NULL, backend_fingerprint text NOT NULL,
+ provider_resource_id text, desired_generation bigint NOT NULL, postgres_major smallint NOT NULL
+);
+CREATE TABLE secret_verification_audit (
+ id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ account_id uuid NOT NULL, app_id uuid NOT NULL, cutover_id uuid NOT NULL,
+ credential_id uuid NOT NULL, verified_at timestamptz NOT NULL DEFAULT now()
 );

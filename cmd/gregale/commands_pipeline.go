@@ -17,7 +17,7 @@ import (
 
 func cmdPipeline(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale pipeline <connection|setup|create|freshness|indexes|access|list|status|wait|pause|resume|resync|verify|delete>", "pipeline")
+		PrintUsage(os.Stderr, "usage: gregale pipeline <connection|setup|create|freshness|indexes|evolve|operations|access|list|status|wait|pause|resume|resync|verify|delete>", "pipeline")
 		return 1
 	}
 	switch args[0] {
@@ -25,8 +25,12 @@ func cmdPipeline(args []string) int {
 		return cmdPipelineSetup(args[1:])
 	case "freshness":
 		return cmdPipelineFreshness(args[1:])
+	case "operations":
+		return cmdPipelineOperations(args[1:])
 	case "indexes":
 		return cmdPipelineIndexes(args[1:])
+	case "evolve":
+		return cmdPipelineEvolve(args[1:])
 	case "access":
 		return cmdPipelineTenantAccess(args[1:])
 	case "connection":
@@ -49,7 +53,7 @@ func cmdPipeline(args []string) int {
 	case "status", "wait", "pause", "resume", "resync", "verify", "delete":
 		return cmdPipelineControl(args[0], args[1:])
 	default:
-		return printErr("Unknown pipeline command", errors.New("use connection, setup, create, freshness, indexes, access, list, status, wait, pause, resume, resync, verify or delete"))
+		return printErr("Unknown pipeline command", errors.New("use connection, setup, create, freshness, indexes, evolve, operations, access, list, status, wait, pause, resume, resync, verify or delete"))
 	}
 }
 
@@ -152,6 +156,7 @@ func cmdPipelineCreate(args []string) int {
 	region := fs.String("region", "", "placement for an automatically created mirror")
 	tables := fs.String("tables", "", "comma-separated public table names")
 	subjects := fs.String("read-subjects", "", "comma-separated application JWT subjects allowed to read the mirror")
+	operationsFile := fs.String("operations-file", "", "scheduled work JSON; requires --connection and an existing --database")
 	servingFile := fs.String("serving-file", "", "JSON serving contract with column selection and optional tenant memberships")
 	wait := fs.Bool("wait", false, "wait until initial copying and catch-up complete")
 	timeout := fs.Duration("timeout", 10*time.Minute, "maximum provisioning and pipeline wait (maximum 1h)")
@@ -173,6 +178,15 @@ func cmdPipelineCreate(args []string) int {
 	if err != nil {
 		return printErr("Could not read serving contract", err)
 	}
+	var operations *api.DataPipelineOperations
+	if *operationsFile != "" {
+		if err = readPipelineJSON(*operationsFile, &operations); err != nil || operations == nil {
+			return printErr("Invalid operations file", errors.New("supply a non-null configuration"))
+		}
+		if *connection == "" || *database == "" || *durable || *plan {
+			return printErr("Invalid scheduled setup", errors.New("operations require --connection and an existing --database; durable provisioning remains separate"))
+		}
+	}
 	readers := []string{}
 	if *subjects != "" {
 		readers = strings.Split(*subjects, ",")
@@ -181,7 +195,7 @@ func cmdPipelineCreate(args []string) int {
 	if validationID == "" {
 		validationID = uuid.NewString()
 	}
-	validation := api.CreateDataPipelineRequest{Name: fs.Arg(0), SourceConnectionID: validationID, DatabaseID: validationID, Tables: strings.Split(*tables, ","), ReadSubjects: readers, Serving: serving, FreshnessTargetSeconds: int64(*freshness / time.Second)}
+	validation := api.CreateDataPipelineRequest{Operations: operations, Name: fs.Arg(0), SourceConnectionID: validationID, DatabaseID: validationID, Tables: strings.Split(*tables, ","), ReadSubjects: readers, Serving: serving, FreshnessTargetSeconds: int64(*freshness / time.Second)}
 	if err := datapipeline.ValidateCreate(validation); err != nil {
 		return printErr("Invalid pipeline", err)
 	}
@@ -189,6 +203,24 @@ func cmdPipelineCreate(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if operations != nil {
+		if *apiName != "" {
+			if _, err := resolveAuthIssuer(context.Background(), client, *authApp); err != nil {
+				return printErr("Could not resolve the Auth app before provisioning", err)
+			}
+			if _, err := client.GetApp(context.Background(), *apiName); err == nil {
+				return printErr("Data API app already exists", errors.New("choose an unused API app name"))
+			} else if apiErr := new(api.APIError); !errors.As(err, &apiErr) || apiErr.Problem.Status != 404 {
+				return printErr("Could not check Data API app name", err)
+			}
+		}
+		validation.SourceConnectionID = *connection
+		validation.DatabaseID = *database
+		if _, err := canonicalPipelineID(validation.DatabaseID); err != nil {
+			return printErr("Invalid mirror ID", err)
+		}
+		return createPipelineWithOperations(client, validation, *wait, *timeout, *apiName, *authApp)
 	}
 	if *durable || *plan {
 		if *database != "" {
@@ -260,7 +292,7 @@ func cmdPipelineCreate(args []string) int {
 			}
 			*region = caps.Region
 		}
-		req := api.CreateManagedPostgresDatabaseRequest{Name: pipelineMirrorName(fs.Arg(0)), Region: *region, PostgresMajor: 16}
+		req := api.CreateManagedPostgresDatabaseRequest{Name: pipelineMirrorName(fs.Arg(0)), Region: *region, PostgresMajor: api.ManagedPostgresDefaultMajor}
 		db, err = client.CreateManagedPostgresDatabase(api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("pipeline-mirror", req.Name, req.Region)), req)
 	}
 	if err != nil {
@@ -385,7 +417,7 @@ func waitDataPipeline(ctx context.Context, client pipelineReader, p api.DataPipe
 			return p, errors.New("verification is paused; resume the pipeline to continue")
 		}
 		qualificationRunning := (p.Reason == "source_storage_verification" || p.Reason == "replication_continuity_verification") && p.Verification == "pending"
-		progressing := p.Reason == "database_unavailable" || p.Reason == "schema_api_refresh_pending" || qualificationRunning
+		progressing := p.Reason == "database_unavailable" || p.Reason == "schema_api_refresh_pending" || p.Reason == "relationship_api_refresh_pending" || qualificationRunning
 		currentResync := p.State == "resync_required" && (p.ObservationFresh || (p.Revision > 0 && p.ObservedRevision == p.Revision))
 		if (currentResync || (p.ObservationFresh && p.State == "blocked" && !progressing)) && expected != "deleted" && expected != "paused" {
 			return p, fmt.Errorf("pipeline %s: %s", p.State, p.Reason)

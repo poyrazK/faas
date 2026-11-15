@@ -125,8 +125,19 @@ all visible commands. A topic includes its immediate `subcommands`, positional
 argument markers, examples, notes, docs URL, and every visible local flag.
 Flags describe accepted spellings, whether they take a value, required and
 repeatable markers, and any documented closed choices. Collections are arrays,
-including when empty. Global prefix options retain their existing placement;
-the topic's `flags` describe its local options.
+including when empty. Every document also includes `global_flags`, separately
+from the topic's command-local `flags`. Each global option reports `name`,
+`spellings`, `description`, `takes_value`, `value` and `placement`. A value
+marker such as `NAME` or `DURATION` describes the argument, not a saved value.
+
+`before_command` means the option must precede the command. `before_separator`
+means JSON selection is accepted in CLI arguments before `--`; forwarded
+application arguments retain their existing boundaries. For example, global
+`--profile NAME` selects a connection before the command, while a command-local
+`--profile SIZE` retains its resource meaning. `--json` also advertises `-j`.
+No parser rule, output preference, connection setting or approval changes
+when help is requested. Global descriptions come from the same static registry
+as human root help and never include credentials or supplied option values.
 
 JSON help uses the same command manifest and canonical names as completion and
 the reference. It describes documented argument contracts, without inferring
@@ -238,6 +249,81 @@ prove that it exists or is still running. No recovery ID is invented for a
 missing or invalid submission receipt. Agents should read these fields instead
 of parsing the human hint. The CLI never executes the recovery command itself.
 
+## Job wait recovery
+
+`gregale --json job wait nightly RUN_ID` and `gregale --json job run nightly
+--tasks 1 --wait` keep their existing stdout receipts. When local waiting times
+out, is interrupted, or fails while polling, they additionally write one
+Problem JSON object to stderr. Its `recovery` object identifies the exact run:
+
+```json
+{
+  "code": "job_wait_timeout",
+  "exit_code": 124,
+  "recovery": {
+    "job": "nightly",
+    "run_id": "11111111-1111-4111-8111-111111111111",
+    "inspect_command": "gregale --profile staging job status nightly 11111111-1111-4111-8111-111111111111",
+    "resume_command": "gregale --profile staging job wait nightly 11111111-1111-4111-8111-111111111111 --timeout 10m0s --poll-interval 2s"
+  }
+}
+```
+
+Timeout exits `124` with code `job_wait_timeout`; Ctrl-C exits `130` with code
+`job_wait_interrupted`. Polling errors retain exit `1`; use the Problem's `code`
+and `status` to distinguish API refusals, transport failures and invalid
+responses. Server remediation and valid request IDs are preserved. Error text,
+recovery commands and correlation metadata apply the existing credential
+redaction rules. A per-request HTTP timeout is a polling failure rather than
+the overall Job wait deadline.
+
+The stdout receipt retains `run` when a snapshot is known, `exit_code`,
+`resume_command` and optional `error`. Accepted waits retain the acceptance
+snapshot when no polling snapshot is available. An unsuccessful terminal run
+retains its existing receipt and exit `1` without an added wait-error Problem;
+the run's recorded status describes that outcome.
+
+Recovery preserves the selected profile and timeout/interval settings and
+always names the selected UUID, including after `latest` was used. Resume with
+the same endpoint and credential overrides. The commands inspect or wait; they
+never submit, retry or cancel Job work. Stopping the CLI leaves durable work
+unchanged. Recovery identifies a requested/accepted target and does not prove
+its current state. Missing or invalid acceptance identity does not invent a
+recovery ID. Condition waits and artifact-collection receipts retain their
+documented formats.
+
+## Job image-readiness recovery
+
+`gregale --json job get nightly --wait-ready` and `gregale --json job run nightly
+--tasks 1 --wait-ready` emit one Problem on stderr if image preparation cannot
+be followed. The existing stdout receipt and exit codes remain: overall timeout
+is `124`, interruption is `130`, and polling or preparation failure is `1`.
+An individual HTTP-request timeout remains a polling failure. Problem codes
+`job_image_wait_timeout`, `job_image_wait_interrupted`,
+`job_image_preparation_failed` and `job_image_changed` describe local outcomes;
+API failures retain their server code, status, remediation and valid request ID.
+Before a standalone readiness wait starts, its initial read keeps the normal
+API exit classification (`2` for authentication and `3` for platform failures)
+and emits no stdout receipt when that read fails.
+
+The Problem's `recovery` includes `job`, `phase: "image_wait"`, `submitted:
+false` and `inspect_command`. A verified selection also carries `job_id`,
+`image_ref` and, when known, `image_resolved_digest`. A pending verified image
+includes a `resume_command` using `job get --wait-ready`, the selected profile
+and the original timing options. A failed or changed image has inspection
+guidance without an automatic resume command. An unverified initial response
+does not invent an image identity or a resume command. The stdout pre-submission
+receipt retains its existing `phase` and `submitted: false` fields.
+
+Recovery only reads readiness, including when the interrupted command was
+`job run --wait-ready`. It never submits the deferred run. Resuming performs a
+fresh readiness check of the named Job; verify its current image against the
+recorded selection first, and retain the same endpoint and credential overrides.
+Within one wait, a changed Job identity, image reference or selected digest stops
+polling, retains the last verified snapshot, and prevents submission. Recovery
+does not promise that the image is still selected between CLI invocations.
+Credential redaction applies to diagnostic text, recovery metadata and commands.
+
 ## Workflow wait recovery
 
 `gregale --json workflow wait RUN_ID` and `workflow run/resume/retry --wait`
@@ -273,6 +359,34 @@ deadline or interruption carries no invented correlation from an earlier
 transient failure. Successful and unsuccessful terminal outcomes keep their
 existing exit behavior, including exit `1` for failed/cancelled/dead or unknown
 terminal state. Diagnostic text and recovery metadata redact credentials.
+
+## App health wait recovery
+
+`gregale --json app health APP --wait` includes a `recovery` object in timeout,
+interruption and permanent API-error Problems on stderr. It contains `app`,
+optional `environment`, `inspect_command` and `resume_command`. For example:
+
+```sh
+gregale --profile staging app health --app my-api --env production
+gregale --profile staging app health --app my-api --env production --wait --timeout 5m0s --poll-interval 30s
+```
+
+The commands retain the resolved app, selected profile, environment, timeout
+and polling interval. When no environment was selected, recovery keeps the
+default-scope read without adding an environment flag. A resumed wait starts
+a new local budget of the same duration. Retain endpoint and credential
+overrides separately; recovery commands redact credentials and contain no
+tokens. These commands only read recorded health; they do not wake, restart,
+redeploy or probe the app, and do not establish that its health is known.
+
+The existing health assessment stays on stdout when an observation is
+available, including after Ctrl-C or a later permanent read failure. Its scope
+and evidence timestamps are unchanged and can be stale or unhealthy. No
+observation means empty stdout. Freshness and scope checks still determine
+success; retaining a snapshot does not make the wait successful. Timeout exits
+`124`, interruption exits `130`, and permanent API errors retain their existing
+Problems, exit mapping and valid request IDs. Local stops do not reuse a
+request ID from an earlier transient failure. Human output is unchanged.
 
 ## Request IDs on API errors
 
@@ -655,10 +769,38 @@ rows remain under `invocations`. Invocation `--all --json` returns one envelope
 with the combined rows. Deployment `--all --json` retains its existing NDJSON
 format (one deployment per line; an empty list emits no lines).
 
-All-page traversal buffers rows before printing. An API failure, cancellation,
+Default all-page traversal buffers rows before printing. An API failure, cancellation,
 repeated cursor, or more than 1,000 pages fails without partial list output.
 Large inventories should be fetched page by page. Pagination reflects live API
 results and does not guarantee a snapshot while resources are changing.
+
+### Streamed invocation and build lists
+
+Opt into incremental JSON Lines with `--json --all --stream`:
+
+```sh
+gregale --json invocation list --all --stream --limit 100
+gregale --json build list --app my-api --status failed --all --stream
+```
+
+Rows arrive in page order before later pages complete. Empty pages are followed
+when they carry a cursor; a completely empty result writes no lines. Existing
+filters, cursor aliases, page-size validation and the 1,000-page/cycle guards
+apply. Memory holds one decoded page plus the bounded cursor history. The
+existing non-streaming output contracts remain compatible.
+
+On failure, stdout can contain an incomplete stream. Check the process exit
+code. The single stderr Problem retains its existing code, category, exit and
+API request ID, adding `pagination.pages_completed`, `items_emitted` and
+`partial`. Pages count only after all their rows are emitted; items count
+complete JSON records. `partial` records any stdout bytes written before the
+error, including a truncated first record. Metadata contains no cursors, rows,
+filters or credentials. No final envelope is appended to stdout.
+
+Ctrl-C cancels the active HTTP read and exits 130. Write failures stop further
+page requests; normal OS SIGPIPE behavior applies to a closed stdout pipe.
+Streaming does not resume or replay a failed read automatically. Inventory
+changes during traversal can affect the observed rows.
 
 ### Apps and builds
 
@@ -681,7 +823,7 @@ honors the selected page size and starting cursor instead of ignoring them.
 
 Paged JSON retains `items` and `next_before`, adding `next_cursor`. Completed
 traversals omit continuation fields. `--all --json` retains the existing plain
-JSON array, including `[]` for no matches. Traversal errors emit no partial list;
+JSON array, including `[]` for no matches. Default traversal errors emit no partial list;
 repeated cursors and the 1,000-page ceiling stop the walk.
 
 ### Webhook deliveries and queue inspection

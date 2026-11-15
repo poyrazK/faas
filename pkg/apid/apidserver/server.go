@@ -7,6 +7,7 @@ import (
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"io/fs"
+	"os"
 
 	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"log/slog"
@@ -2012,6 +2013,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/data/pipeline-setups/{id}/control", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineControlSetup))))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/freshness", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineFreshness))))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/indexes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineIndexes))))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/evolution", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineEvolve))))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/operations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineOperations))))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/schema-approval", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.pipelineApproveSchema))))
 	mux.HandleFunc("GET /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresDatabases))))
 	mux.HandleFunc("GET /v1/postgres/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresCapabilities))))
 	mux.HandleFunc("GET /v1/postgres/overage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresOverage))))
@@ -3103,12 +3107,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/mcp-catalog-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(mcpcatalog.Handler(s.store, s.authMw)))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/mcp-catalog-monitor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(mcpcatalog.Handler(s.store, s.authMw)))))
 	mux.HandleFunc("GET /v1/mcp-connection-health", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(mcpcatalog.ConnectionHealthHandler(s.store))))
-	mux.HandleFunc("GET /v1/tool-publications/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(toolregistry.Handler(s.store))))
-	mux.HandleFunc("PUT /v1/tool-publications/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(toolregistry.Handler(s.store)))))
-	mux.HandleFunc("POST /v1/tool-publications/{id}/outcome", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(toolregistry.Handler(s.store)))))
+	mux.HandleFunc("GET /v1/tool-publications/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(toolregistry.Handler(s.store, os.Getenv("FAAS_MCP_PRIVATE_TOOL_PUBLICATION") == "1"))))
+	mux.HandleFunc("PUT /v1/tool-publications/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(toolregistry.Handler(s.store, os.Getenv("FAAS_MCP_PRIVATE_TOOL_PUBLICATION") == "1")))))
+	mux.HandleFunc("POST /v1/tool-publications/{id}/outcome", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(toolregistry.Handler(s.store, os.Getenv("FAAS_MCP_PRIVATE_TOOL_PUBLICATION") == "1")))))
 	mux.HandleFunc("GET /v1/tool-registry", s.authLimited(s.requireScope(api.ScopesReadSurface...)(toolregistry.Search(s.store))))
 	mux.HandleFunc("GET /v1/tool-registry/{version}/tools/{name}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(toolregistry.Describe(s.store))))
 	s.privateToolsOnce.Do(func() { s.privateTools = s.newPrivateTools() })
+	mux.HandleFunc("POST /v1/tool-publications/{id}/verification", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.PublicationVerification()))))
+	mux.HandleFunc("PUT /v1/tool-publications/{id}/verification", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.PublicationVerification()))))
 	toolConnections := toolregistry.Connections(s.store, s.agentConnectionDeps().Audit)
 	mux.HandleFunc("GET /v1/tool-oauth-connections", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(toolConnections))))
 	mux.HandleFunc("GET /v1/tool-oauth-connections/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(toolConnections))))
@@ -4163,6 +4169,22 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/outbound/ai-routes/{route}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateEvaluation)))))
 	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListEvaluations)))))
 	mux.HandleFunc("GET /v1/outbound/ai-evaluations/{evaluation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetEvaluation)))))
+	// ADR 20261114180740: managed prompts.
+	mux.HandleFunc("GET /v1/outbound/ai-prompts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListPrompts)))))
+	mux.HandleFunc("GET /v1/outbound/ai-prompts/{prompt}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetPrompt)))))
+	mux.HandleFunc("DELETE /v1/outbound/ai-prompts/{prompt}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.DeletePrompt)))))
+	mux.HandleFunc("POST /v1/outbound/ai-prompts/{prompt}/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PushPromptVersion)))))
+	mux.HandleFunc("GET /v1/outbound/ai-prompts/{prompt}/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListPromptVersions)))))
+	mux.HandleFunc("GET /v1/outbound/ai-prompts/{prompt}/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetPromptVersion)))))
+	mux.HandleFunc("PUT /v1/outbound/ai-prompts/{prompt}/live", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutPromptLive)))))
+	mux.HandleFunc("POST /v1/outbound/ai-prompts/{prompt}/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.RollBackPrompt)))))
+	mux.HandleFunc("PUT /v1/outbound/ai-prompts/{prompt}/canary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutPromptCanary)))))
+	mux.HandleFunc("POST /v1/outbound/ai-prompts/{prompt}/canary/promote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PromotePromptCanary)))))
+	mux.HandleFunc("DELETE /v1/outbound/ai-prompts/{prompt}/canary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.DeletePromptCanary)))))
+	mux.HandleFunc("GET /v1/outbound/ai-prompts/{prompt}/stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetPromptStats)))))
+	mux.HandleFunc("POST /v1/outbound/ai-prompts/{prompt}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreatePromptEvaluation)))))
+	mux.HandleFunc("GET /v1/outbound/ai-prompts/{prompt}/evaluations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListPromptEvaluations)))))
+	mux.HandleFunc("GET /v1/outbound/ai-prompt-evaluations/{evaluation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetPromptEvaluation)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateAccessToken)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListAccessTokens)))))
 	// ADR 20261022153155: an app's AI calls by deployment.
@@ -4395,6 +4417,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.queueSend))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/send-batch", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBatchBodyLimit, s.queueSendBatch))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEventsPublishSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.sendAppMessage))))))
+	// Postgres change workers (ADR-20261112140000).
+	mux.HandleFunc("PUT /v1/apps/{slug}/postgres-changes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putPostgresChanges))))
+	mux.HandleFunc("GET /v1/apps/{slug}/postgres-changes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getPostgresChanges))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/postgres-changes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deletePostgresChanges))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/postgres-changes/connection", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putPostgresChangesConnection))))
 	mux.HandleFunc("POST /v1/apps/{slug}/commit-sources", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createCommitSource))))
 	mux.HandleFunc("PUT /v1/commit-sources/{source}/connection", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putCommitSourceConnection))))
 	mux.HandleFunc("GET /v1/commit-sources/{source}/publications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCommitPublications))))
@@ -4685,6 +4712,8 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireOperatorSessionRead(s.obsNodeDetail)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
+	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",
+		s.authLimited(s.requireOperatorRead(s.obsNodeProbeNotifications)))
 	// PR #4 (ADR-092 §3.6) — per-node wake-latency quantiles.
 	// Literal path /wake-latency sits before the SSE /events
 	// route; Go 1.22+ mux disambiguates by exact match.
@@ -5174,6 +5203,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("DELETE /v1/account/sign-in-methods/{provider}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.unlinkSignInMethod)))))
 	mux.HandleFunc("POST /v1/account/mfa/disable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisable))))
 	mux.HandleFunc("POST /v1/account/mfa/disable-email", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmail))))
+	// Not on the mfa_pending allowlist: a session from a password reset
+	// alone cannot cancel, only one that passed the second factor (F14-1).
+	mux.HandleFunc("POST /v1/account/mfa/disable-email-cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmailCancel))))
 	mux.HandleFunc("/auth/reset/mfa", s.mfaDisableEmailPageRoute())
 	mux.HandleFunc("POST /v1/account/mfa/disable-email/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmailConfirm))))
 

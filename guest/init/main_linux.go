@@ -538,6 +538,9 @@ func boot() error {
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: app restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
+	supRef.OnCleanExit = func() {
+		fmt.Fprintf(os.Stderr, "guest-init: app exited cleanly (status 0, policy=%s); a clean exit is not restarted\n", policy)
+	}
 	// ADR-051 Phase 4: characterize the workload by observing the
 	// first cold boot. Runs in parallel with sup.Run() so the
 	// PID-fd walk finds the customer's listener without blocking
@@ -658,7 +661,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	}
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
-	env = StampRestoreReseedEnv(env)
+	env = StampRestoreReseedEnv(env, argv...)
 	env = StampInstanceIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", "/")
@@ -1338,10 +1341,19 @@ func runBuildOnce(m api.BuildManifest) error {
 		"--oci-worker-snapshotter", buildkitSnapshotter(m),
 		"--oci-worker-net", "host",
 	}
+	// ADR-20261110210000 slice 3j-3: vmmd may serve this build its app's
+	// private registries as loopback mirrors; the guest holds no password.
+	privateMirrors, mirrorErr := buildRegistryMirrors(m)
+	if mirrorErr != nil {
+		return writeAndPoweroff(m, mirrorErr, "")
+	}
+	if mirrorErr := startBuildRegistryForwarders(privateMirrors); mirrorErr != nil {
+		return writeAndPoweroff(m, mirrorErr, "")
+	}
 	// ADR-20261025114554: BuildKit tries the operator's Docker Hub mirrors
 	// before Docker Hub, which limits anonymous pulls per IP.
-	if len(m.DockerHubMirrors) > 0 {
-		config, err := buildkitMirrorConfig(m.DockerHubMirrors)
+	if len(m.DockerHubMirrors) > 0 || len(privateMirrors) > 0 {
+		config, err := buildkitRegistryConfig(m.DockerHubMirrors, privateMirrors)
 		if err != nil {
 			return writeAndPoweroff(m, fmt.Errorf("buildkit mirror config: %w", err), "")
 		}

@@ -53,22 +53,7 @@ func topLevelUsage(showAll, showOperator bool) string {
 	if showAll && !showOperator {
 		b.WriteString("Run 'gregale help --all --operator' to include operator and compatibility commands.\n")
 	}
-	b.WriteString("\nGlobal flags:\n")
-	b.WriteString("  --http-timeout DURATION  API request timeout, such as 90s (before the command).\n")
-	b.WriteString("  --debug-http           Write HTTP metadata diagnostics to stderr (before the command).\n")
-	b.WriteString("  --agent-reason TEXT    With an agent key, tell the person who approves a request\n")
-	b.WriteString("                         what it is for (before the command; up to 280 characters).\n")
-	b.WriteString("                         Equivalent env: GREGALE_AGENT_REASON.\n")
-	b.WriteString("  --json                 Machine-readable output where supported (NDJSON lists, RFC 7807\n")
-	b.WriteString("                         errors on stderr; prompts stay human). Equivalent env: FAAS_JSON=1.\n")
-	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
-	b.WriteString("  --http-retries N       Retry selected read-only API requests up to N times (0–5; before the command).\n")
-	b.WriteString("  --org SLUG             Run project commands on a company's projects (before\n")
-	b.WriteString("                         the command), e.g. gregale --org acme deploy --project.\n")
-	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
-	b.WriteString("  --wait-for-approval    When an agent key's request needs a person's approval,\n")
-	b.WriteString("                         wait for the decision and retry once (before the\n")
-	b.WriteString("                         command). Equivalent env: GREGALE_WAIT_FOR_APPROVAL=1.\n")
+	writeGlobalFlagHelp(&b)
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
 }
@@ -195,6 +180,9 @@ func run(args []string) (status int) {
 			return printErr("Missing required flag", err)
 		}
 		return printErr("Invalid app target", err)
+	}
+	if code, moved := movedOperatorCommand(args); moved {
+		return code
 	}
 	if slices.Equal(typed, args) {
 		printCliTreeHint(osStderr, typed)
@@ -695,17 +683,13 @@ func run(args []string) (status int) {
 		// every leaf calls authedClient() and hits apid. The
 		// operator-only surfaces (sign-keys, node-key, pki,
 		// host-age, manifest, release, backup) moved to
-		// `gregalectl` in PR-6.5 — this is the only operator verb
-		// that stayed in `gregale` because it's a customer/admin
-		// API surface.
+		// `gregalectl` in PR-6.5, and admin credit/refund/abuse-hold,
+		// github-webhook-secret and the Postgres accounting verbs
+		// followed (commands_moved_operator.go). This one stays: its
+		// routes check the customer's own account-admin scope.
 		return cmdTrustedPublishers(args[1:])
 	case "secrets":
 		return cmdSecrets(args[1:])
-	case "github-webhook-secret":
-		// PR-D / ADR-012 §7 amendment. Distinct top-level
-		// command; dispatches to a single verb (set) for the
-		// per-tenant webhook secret rotation.
-		return cmdGithubWebhookSecret(args[1:])
 	case "account":
 		return cmdAccount(args[1:])
 	case "channels":
@@ -785,6 +769,9 @@ func run(args []string) (status int) {
 		return cmdStoredWorkflows(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
+	case "postgres-changes":
+		// Capture Postgres row changes into an app queue (ADR-20261112140000).
+		return cmdPostgresChanges(args[1:])
 	case "data-repair":
 		return cmdDataRepair(args[1:])
 	case "events":
@@ -811,8 +798,6 @@ func run(args []string) (status int) {
 		// button has a CLI twin. Subcommands live in
 		// commands_billing.go.
 		return cmdBilling(args[1:])
-	case "admin":
-		return cmdAdmin(args[1:])
 	case "logs":
 		return cmdLogs(args[1:])
 	case "tail":

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -48,7 +49,7 @@ func (s *PgStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest)
 	if messages <= 0 {
 		return []QueueLease{}, tx.Commit(ctx)
 	}
-	ids, err := q.QueueLeaseCandidates(ctx, tx, sqlc.QueueLeaseCandidatesParams{
+	candidates, err := q.QueueLeaseCandidates(ctx, tx, sqlc.QueueLeaseCandidatesParams{
 		AppID: app, BindingID: binding.ID, QueueName: binding.QueueName, CandidateLimit: int32(messages * 4)})
 	if err != nil {
 		return nil, err
@@ -56,12 +57,18 @@ func (s *PgStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest)
 	instance := pgtype.Text{String: req.InstanceID, Valid: req.InstanceID != ""}
 	leases := make([]QueueLease, 0, messages)
 	usedBytes := 0
-	for _, id := range ids {
+	for _, candidate := range candidates {
 		if len(leases) == messages {
 			break
 		}
 		fits := func(inv Invocation) bool { return queueLeaseFits(len(leases), usedBytes, inv) }
-		lease, ok, err := leaseQueueCandidateTx(ctx, tx, q, app, id, visibility, instance, limits, fits)
+		var lease QueueLease
+		var ok bool
+		if candidate.WorkPolicyName.Valid {
+			lease, ok, err = leaseKeyedQueueCandidateTx(ctx, tx, q, req.AppID, app, candidate, visibility, instance, limits, fits)
+		} else {
+			lease, ok, err = leaseQueueCandidateTx(ctx, tx, q, app, candidate.ID, visibility, instance, limits, fits)
+		}
 		if errors.Is(err, errQueueLeaseFull) {
 			break
 		}
@@ -77,6 +84,41 @@ func (s *PgStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest)
 		return nil, fmt.Errorf("state: lease queue messages: %w", err)
 	}
 	return leases, nil
+}
+
+// leaseKeyedQueueCandidateTx leases a work-policy row only as its lane's head
+// (ADR-20261112193306, the ADR-374 lane rule push consumers already follow):
+// one running row per app, policy and key, in admission order, a retrying
+// head blocking later rows. The lane and fairness locks come before the row
+// lock, the order keyed enqueue and the push claim take them. The claim runs
+// in a savepoint because the lane check may commit lane expiries.
+func leaseKeyedQueueCandidateTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID string, app pgtype.UUID, candidate sqlc.QueueLeaseCandidatesRow,
+	visibility int, instance pgtype.Text, limits api.Limits, fits func(Invocation) bool) (QueueLease, bool, error) {
+	id := uuid.UUID(candidate.ID.Bytes).String()
+	lane, err := tx.Begin(ctx)
+	if err != nil {
+		return QueueLease{}, false, err
+	}
+	defer func() { _ = lane.Rollback(context.WithoutCancel(ctx)) }()
+	err = lockKeyedClaimTx(ctx, lane, id, appID, candidate.WorkPolicyName.String, candidate.WorkKeyDigest)
+	if err == nil && candidate.WorkFairnessLimit.Valid {
+		err = lockFairnessClaimTx(ctx, lane, appID, candidate.WorkPolicyName.String, candidate.WorkFairnessDigest, int(candidate.WorkFairnessLimit.Int32))
+	}
+	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+		// Not the head, its fairness group is full, or it just expired.
+		return QueueLease{}, false, nil
+	}
+	if err != nil {
+		return QueueLease{}, false, err
+	}
+	lease, ok, err := leaseQueueCandidateTx(ctx, lane, q, app, candidate.ID, visibility, instance, limits, fits)
+	if err != nil {
+		return QueueLease{}, false, err
+	}
+	if err := lane.Commit(ctx); err != nil {
+		return QueueLease{}, false, err
+	}
+	return lease, ok, nil
 }
 
 // errQueueLeaseFull stops a lease whose next message would pass the response

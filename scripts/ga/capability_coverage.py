@@ -219,7 +219,7 @@ RULES = [
     (r"signup|login|logout|mfa|password|session|cli-auth|email-verif|verify|whoami|account|oauth-links|link$|unlink", "Signup, login"),
     (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags|^flag-(kills|request-attributes)$", "Customer feature flags"),
     # --- developer tools
-    (r"mcp-management|mcpmanagement|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
+    (r"mcp-management|mcpmanagement|mcp[-_]?openapi|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
     (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories|^/(terms|privacy|acceptable-use)$|^legal$|legal[-_]pages|^legal-acceptances$", "Docs site and trust pages"),
     (r"openapi\.(json|yaml)|^/v1/openapi|capabilities|productcap|sdk-coverage|^meta$", "Public OpenAPI spec"),
     (r"^sdk|sdk$|webhook-receiver|idempotency|transport|^client|options$|dto$|codes$|errors$|scopes$|^doc$|streaming$|release-context|^context", "SDKs:"),
@@ -356,6 +356,9 @@ RULES = [
     (r"affected|deploydiff|^diff$|^scan$", "Affected-workload preview"),
     (r"stateless|source-review|unreviewed", "Stateless-contract checks"),
     (r"registry", "Private registry credentials"),
+    # ADR-20261110210000 slice 3j-4: the Dockerfile reader that scopes a
+    # build's private-registry pulls.
+    (r"^dockerfilebase$", "Private registry credentials"),
     (r"trusted-signer|signer|require-signed|signature-enforcement|fleet-signing", "Signed deploys"),
     (r"deploy-token", "Per-app deploy tokens"),
     (r"source-ref", "Source-ref deploys"),

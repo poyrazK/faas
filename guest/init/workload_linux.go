@@ -662,6 +662,9 @@ func newSupervisorForMain(spec workloadSpec, manifest api.AppManifest, secrets, 
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: main restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
+	supRef.OnCleanExit = func() {
+		fmt.Fprintf(os.Stderr, "guest-init: main exited cleanly (status 0, policy=%s); a clean exit is not restarted\n", policy)
+	}
 	return supRef
 }
 

@@ -1,0 +1,335 @@
+# Notification evidence warnings require five minutes and a usable independent source.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: failure, missing telemetry, quiet channel, malformed telemetry, success, rotation, disablement and source loss
+  interval: 1m
+  input_series:
+  - series: faas_serving_probe_inventory_configured{job="node",instance="cp:9100"}
+    values: 1x54 stale
+  - series: faas_serving_probe_expected_pairs{job="node",instance="cp:9100"}
+    values: 1x54 stale
+  - series: faas_serving_probe_expected{job="node",instance="cp:9100",probe_node="fsn-2",url="https://probe.example/"}
+    values: 1x54 stale
+  - series: faas_serving_probe_expected_first_byte_seconds{job="node",instance="cp:9100",probe_node="fsn-2"}
+    values: 2x54 stale
+  - series: faas_serving_probe_expected_max_age_seconds{job="node",instance="cp:9100",probe_node="fsn-2"}
+    values: 900x54 stale
+  - series: up{job="node-compute",node="fsn-2",instance="fsn-2:9100"}
+    values: 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 1 1 1 1 1 1 1
+  - series: faas_serving_probe_last_run_timestamp_seconds{job="node-compute",node="fsn-2",instance="fsn-2:9100"}
+    values: 0+60x61
+  - series: faas_serving_probe_content_check_enabled{job="node-compute",node="fsn-2",instance="fsn-2:9100"}
+    values: 1x61
+  - series: faas_serving_probe_first_byte_budget_seconds{job="node-compute",node="fsn-2",instance="fsn-2:9100"}
+    values: 2x61
+  - series: faas_serving_probe_success{job="node-compute",node="fsn-2",instance="fsn-2:9100",url="https://probe.example/"}
+    values: 1x61
+  - series: faas_serving_probe_notification_enabled{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+    values: 1 1 1 1 1 1 stale _ _ _ _ _ _ 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  - series: faas_serving_probe_notification_attempted{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+    values: 1 1 1 1 1 1 stale _ _ _ _ _ _ 0 0 0 0 0 0 0 2 2 2 2 2 2 2 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+  - series: faas_serving_probe_notification_last_attempt_success{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+    values: 0 0 0 0 0 0 stale _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 1 1 1 1 1 1 1 stale _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  - series: faas_serving_probe_notification_last_attempt_failure_code{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+    values: 4 4 4 4 4 4 stale _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 0 0 0 0 0 0 0 stale _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+  - series: faas_serving_probe_notification_last_attempt_timestamp_seconds{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+    values: 1 1 1 1 1 1 stale _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 1620 1620 1620 1620 1620 1620 1620 stale _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+      _
+  - series: faas_serving_probe_notification_last_success_timestamp_seconds{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+    values: _ _ _ _ _ _ stale _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 1620 1620 1620 1620 1620 1620 1620 stale _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+      _
+  - series: faas_serving_probe_notification_enabled{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="heartbeat"}
+    values: '0x61'
+  - series: faas_serving_probe_notification_attempted{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="heartbeat"}
+    values: '0x61'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts:
+    - exp_labels:
+        probe_node: fsn-2
+        channel: webhook
+        severity: warn
+        component: node
+        family: serving_probe_notifications
+        public_status: internal
+      exp_annotations:
+        summary: Serving probe webhook telemetry is degraded on fsn-2
+        description: 'An expected node has a fresh, unique probe source, but its webhook notification telemetry has remained unusable for five minutes. Evidence code
+          2: 2 missing required fields, 3 invalid or inconsistent fields. Valid channels with no submission history and explicitly disabled channels do not trigger
+          this warning. Inspect the node lookup and metrics writer; this is lost evidence, not a confirmed submission failure or recovery.'
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbeNotificationTelemetryDegraded.md
+  - eval_time: 12m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts:
+    - exp_labels:
+        probe_node: fsn-2
+        channel: webhook
+        severity: warn
+        component: node
+        family: serving_probe_notifications
+        public_status: internal
+      exp_annotations:
+        summary: Serving probe webhook telemetry is degraded on fsn-2
+        description: 'An expected node has a fresh, unique probe source, but its webhook notification telemetry has remained unusable for five minutes. Evidence code
+          2: 2 missing required fields, 3 invalid or inconsistent fields. Valid channels with no submission history and explicitly disabled channels do not trigger
+          this warning. Inspect the node lookup and metrics writer; this is lost evidence, not a confirmed submission failure or recovery.'
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbeNotificationTelemetryDegraded.md
+  - eval_time: 13m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 19m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 24m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 25m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts:
+    - exp_labels:
+        probe_node: fsn-2
+        channel: webhook
+        severity: warn
+        component: node
+        family: serving_probe_notifications
+        public_status: internal
+      exp_annotations:
+        summary: Serving probe webhook telemetry is degraded on fsn-2
+        description: 'An expected node has a fresh, unique probe source, but its webhook notification telemetry has remained unusable for five minutes. Evidence code
+          3: 2 missing required fields, 3 invalid or inconsistent fields. Valid channels with no submission history and explicitly disabled channels do not trigger
+          this warning. Inspect the node lookup and metrics writer; this is lost evidence, not a confirmed submission failure or recovery.'
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbeNotificationTelemetryDegraded.md
+  - eval_time: 26m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts:
+    - exp_labels:
+        probe_node: fsn-2
+        channel: webhook
+        severity: warn
+        component: node
+        family: serving_probe_notifications
+        public_status: internal
+      exp_annotations:
+        summary: Serving probe webhook telemetry is degraded on fsn-2
+        description: 'An expected node has a fresh, unique probe source, but its webhook notification telemetry has remained unusable for five minutes. Evidence code
+          3: 2 missing required fields, 3 invalid or inconsistent fields. Valid channels with no submission history and explicitly disabled channels do not trigger
+          this warning. Inspect the node lookup and metrics writer; this is lost evidence, not a confirmed submission failure or recovery.'
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbeNotificationTelemetryDegraded.md
+  - eval_time: 27m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 33m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 34m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 41m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 47m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 48m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 54m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 55m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  - eval_time: 61m
+    alertname: FaasServingProbeNotificationTelemetryDegraded
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 5m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 0
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 5m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 3
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 6m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 2
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 6m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 12m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 2
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 12m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 13m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 13m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 19m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 19m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 20m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 3
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 20m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 26m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 3
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 26m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 27m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 0
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 27m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 2
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 34m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 34m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 40m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 40m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 41m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 0
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 41m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 0
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 47m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 0
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 47m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 0
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 48m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 4
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 48m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 54m
+    exp_samples:
+    - labels: faas_serving_probe_notification:evidence_status{probe_node="fsn-2",channel="webhook"}
+      value: 4
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 54m
+    exp_samples:
+    - labels: faas_serving_probe_notification:state{probe_node="fsn-2",channel="webhook"}
+      value: 1
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 55m
+    exp_samples: []
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 55m
+    exp_samples: []
+  - expr: faas_serving_probe_notification:evidence_status{channel="webhook"}
+    eval_time: 61m
+    exp_samples: []
+  - expr: faas_serving_probe_notification:state{channel="webhook"}
+    eval_time: 61m
+    exp_samples: []
+  - expr: ALERTS{alertname="FaasServingProbeNotificationFailed",alertstate="firing"}
+    eval_time: 5m
+    exp_samples:
+    - labels: ALERTS{alertname="FaasServingProbeNotificationFailed",alertstate="firing",probe_node="fsn-2",channel="webhook",severity="warn",component="node",family="serving_probe_notifications",public_status="internal"}
+      value: 1
+  - expr: ALERTS{alertname="FaasServingProbeNotificationFailed",alertstate="firing"}
+    eval_time: 6m
+    exp_samples: []
+  - expr: ALERTS{alertname="FaasServingProbeNotificationFailed",alertstate="firing"}
+    eval_time: 11m
+    exp_samples: []
+  - expr: ALERTS{alertname="FaasServingProbeNotificationFailed",alertstate="firing"}
+    eval_time: 27m
+    exp_samples: []
+  - expr: ALERTS{alertname="FaasServingProbeNotificationFailed",alertstate="firing"}
+    eval_time: 34m
+    exp_samples: []
+  - expr: ALERTS{alertname="FaasServingProbeNotificationFailed",alertstate="firing"}
+    eval_time: 41m
+    exp_samples: []

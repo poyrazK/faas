@@ -1018,6 +1018,8 @@ func syncPersonalOrgStatus(ctx context.Context, tx pgx.Tx, accountID string, sta
 // SuspendAccountForFreeQuota applies the Free plan's monthly hard stop.
 // Only an active account is suspended, so a dunning or operator suspension
 // is never relabelled as a quota stop that the next month would lift.
+// past_due_at is kept: an account moved to Free for non-payment keeps its
+// unpaid-balance marker through the stop (billing review 2026-11-13, R9-1).
 func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bool, error) {
 	if n, err := ownersql.New().SuspendForQuota(ctx, s.pool, mustPgUUID(id)); err != nil {
 		return false, mapErr(err)
@@ -1026,7 +1028,7 @@ func (s *PgStore) SuspendAccountForFreeQuota(ctx context.Context, id string) (bo
 	}
 	return s.flipAccountForFreeQuota(ctx, id, `
 		update accounts
-		   set status = 'suspended', suspended_reason = 'free_quota', past_due_at = null
+		   set status = 'suspended', suspended_reason = 'free_quota'
 		 where id = $1 and status = 'active'`, AccountSuspended)
 }
 
@@ -8260,7 +8262,8 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 		                          traffic_percent_explicit, created_at,
 		                          canary_preset, canary_step, canary_total_steps, canary_step_started_at, canary_stages,
 		                          stage_state, rollback_on_5xx, release_command, release_command_shell, disable_startup_cpu_boost,
-		                          override_readiness_probe, override_main_depends_on, github_source_ref, github_installation_id)
+		                          override_readiness_probe, override_main_depends_on, github_source_ref, github_installation_id,
+		                          build_registry_scope)
 		 values (coalesce(nullif($36, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21, $22, $23, coalesce(nullif($24, ''), 'default'),
 		         -- ADR-198: next per-app revision. Safe without extra
 		         -- locking because step 1 above already holds FOR UPDATE
@@ -8274,7 +8277,8 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 		           where app_id = $1),
 		         nullif($25, '')::uuid, coalesce(nullif($26, ''), 'api'), nullif($27, '')::inet, nullif($28, ''),
 		         $29, $30, $31, nullif($32, 0), $33, $34, $35, $37, $38, coalesce($39, now()),
-		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51, nullif($52, ''), nullif($53, 0))
+		         coalesce(nullif($40, ''), 'none'), $41, $42, coalesce($43, now()), $44, $45, $46, $47, $48, $49, $50, $51, nullif($52, ''), nullif($53, 0),
+		         $54::text[])
 		 returning `+deploymentSelectColumnsWithRootfs,
 		d.AppID, d.ImageDigest, string(d.Kind), nullString(d.SourcePath), nullString(d.SourceRoot), d.SourceBytes,
 		nullString(d.SourceSHA256), nullString(d.Handler), nullString(d.LogPath),
@@ -8318,7 +8322,9 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 		d.CanaryPreset, d.CanaryStep, d.CanaryTotalSteps, d.CanaryStepStartedAt, nullJSONRaw(d.CanaryStages), stageState, d.RollbackOn5xx,
 		notNullEmptyTextArray(d.ReleaseCommand), d.ReleaseCommandShell, d.DisableStartupCPUBoost,
 		nullJSONRaw(d.OverrideReadinessProbe), notNullEmptyJSONRaw(d.OverrideMainDependsOn),
-		d.GitHubSourceRef, d.GitHubInstallationID)
+		d.GitHubSourceRef, d.GitHubInstallationID,
+		// Slice 3j-4: nil stays NULL (not recorded).
+		d.BuildRegistryScope)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, 0, err
@@ -9183,6 +9189,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	}
 
 	if err := s.checkMCPAccessPolicy(ctx, tx, appID); err != nil {
+		return Deployment{}, err
+	}
+	if err := s.checkMCPReadinessExpectation(ctx, tx, appID, id); err != nil {
 		return Deployment{}, err
 	}
 
@@ -12317,7 +12326,8 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		                          traffic_percent_explicit,
 		                          release_command, release_command_shell,
 		                          override_readiness_probe, override_main_depends_on,
-		                          github_source_ref, github_installation_id, disable_startup_cpu_boost)
+		                          github_source_ref, github_installation_id, disable_startup_cpu_boost,
+		                          build_registry_scope)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, 'pending', $20, $21,
 		         $22,
 		         coalesce(nullif($23, ''), 'none'), $24, $25, $26, $27,
@@ -12331,7 +12341,10 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		         nullif($31, '')::uuid, coalesce(nullif($32, ''), 'api'), nullif($33, '')::inet, nullif($34, ''),
 		         $35, $36, $37, nullif($38, 0),
 		         $39,
-		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, nullif($50, ''), nullif($51, 0), $52)
+		         $40, $41, $42, $43, $44, $45, $46, $47, $48, $49, nullif($50, ''), nullif($51, 0), $52,
+		         -- Slice 3j-4: the retry builds the same source, so it keeps
+		         -- the failed row's build registry scope.
+		         (select build_registry_scope from deployments where id = $53::uuid))
 		 returning `+deploymentSelectColumnsWithRootfs,
 		newDep.AppID, newDep.ImageDigest, string(newDep.Kind),
 		nullString(newDep.SourcePath), nullString(newDep.SourceRoot), newDep.SourceBytes,
@@ -12362,7 +12375,8 @@ func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID str
 		newDep.TrafficPercentExplicit,
 		notNullEmptyTextArray(newDep.ReleaseCommand), newDep.ReleaseCommandShell,
 		nullJSONRaw(newDep.OverrideReadinessProbe), notNullEmptyJSONRaw(newDep.OverrideMainDependsOn),
-		newDep.GitHubSourceRef, newDep.GitHubInstallationID, newDep.DisableStartupCPUBoost)
+		newDep.GitHubSourceRef, newDep.GitHubInstallationID, newDep.DisableStartupCPUBoost,
+		src.ID)
 	created, err := scanDeployment(row)
 	if err != nil {
 		return Deployment{}, err

@@ -28,6 +28,14 @@ type AppSecret struct {
 	Ciphertext []byte
 }
 
+type Build struct {
+	ID              pgtype.UUID
+	DeploymentID    pgtype.UUID
+	Status          string
+	StartedAt       pgtype.Timestamptz
+	BuilderNodeName pgtype.Text
+}
+
 type CrashCapture struct {
 	ID        pgtype.UUID
 	AppID     pgtype.UUID
@@ -36,8 +44,9 @@ type CrashCapture struct {
 }
 
 type Deployment struct {
-	ID    pgtype.UUID
-	AppID pgtype.UUID
+	ID                 pgtype.UUID
+	AppID              pgtype.UUID
+	BuildRegistryScope []string
 }
 
 type DeploymentImagePreparation struct {
@@ -73,6 +82,44 @@ type JobRegistryCredential struct {
 	PasswordEncrypted []byte
 }
 
+type ManagedPostgresCutover struct {
+	ID                       pgtype.UUID
+	AccountID                pgtype.UUID
+	AppID                    pgtype.UUID
+	TargetDatabaseID         pgtype.UUID
+	TargetBackendID          string
+	TargetBackendFingerprint string
+	TargetResourceID         string
+	TargetGeneration         int64
+	State                    string
+	LeaseToken               pgtype.Text
+	LeaseUntil               pgtype.Timestamptz
+}
+
+type ManagedPostgresCutoverCredential struct {
+	ID                 pgtype.UUID
+	CutoverID          pgtype.UUID
+	EnvironmentKey     string
+	Access             string
+	State              string
+	ProviderIdentityID pgtype.Text
+	CredentialRef      pgtype.Text
+	Ciphertext         []byte
+	Kid                pgtype.Text
+	ValueHash          pgtype.Text
+}
+
+type ManagedPostgresDatabase struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	State              string
+	BackendID          string
+	BackendFingerprint string
+	ProviderResourceID pgtype.Text
+	DesiredGeneration  int64
+	PostgresMajor      int16
+}
+
 type SecretGrant struct {
 	AppID           pgtype.UUID
 	NodeID          pgtype.UUID
@@ -89,6 +136,15 @@ type SecretOpenAudit struct {
 	Via      string
 	Entries  int32
 	OpenedAt pgtype.Timestamptz
+}
+
+type SecretVerificationAudit struct {
+	ID           int64
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	CutoverID    pgtype.UUID
+	CredentialID pgtype.UUID
+	VerifiedAt   pgtype.Timestamptz
 }
 
 type Trigger struct {
