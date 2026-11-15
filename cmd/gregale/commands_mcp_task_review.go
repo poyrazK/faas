@@ -20,7 +20,7 @@ func reviewMCPTaskRelease(path string) (mcphosting.TaskReleaseReview, error) {
 	var out mcphosting.TaskReleaseReview
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() || info.Size() > 64<<10 {
-		return out, errors.New("Task release plan must be a regular file of at most 64 KiB")
+		return out, errors.New("task release plan must be a regular file of at most 64 KiB")
 	}
 	p, err := readMCPNativePlan(path)
 	if err != nil {
@@ -42,10 +42,10 @@ func reviewMCPTaskRelease(path string) (mcphosting.TaskReleaseReview, error) {
 	}
 	family, err := markers.DetectFromFS(os.DirFS(p.WorkerPath))
 	if err != nil || family != markers.FrameworkNode {
-		return out, errors.New("Task release review requires native Node worker source markers")
+		return out, errors.New("task release review requires native Node worker source markers")
 	}
 	if len(web.Auth.ToolScopes) == 0 || len(web.Auth.ToolScopes) > api.ToolPublicationMaxTools {
-		return out, errors.New("Task tool review requires an explicit, bounded tool_scopes policy")
+		return out, errors.New("task tool review requires an explicit, bounded tool_scopes policy")
 	}
 	roles, err := loadMCPReleasePolicyWithTokens(p.ReleasePolicy, false)
 	if err != nil {
@@ -73,7 +73,7 @@ func reviewMCPTaskRelease(path string) (mcphosting.TaskReleaseReview, error) {
 
 func reviewMCPTaskSource(dir string) (mcphosting.Config, error) {
 	if filepath.Base(dir) == "node_modules" || filepath.Base(dir) == ".git" || filepath.Base(dir) == ".gregale" {
-		return mcphosting.Config{}, errors.New("Task source must not be a release cache directory")
+		return mcphosting.Config{}, errors.New("task source must not be a release cache directory")
 	}
 	var size int64
 	var files int
@@ -94,7 +94,7 @@ func reviewMCPTaskSource(dir string) (mcphosting.Config, error) {
 		files++
 		size += info.Size()
 		if !info.Mode().IsRegular() || files > mcpTaskReviewSourceMaxFiles || size > mcpTaskReviewSourceMaxBytes {
-			return errors.New("Task review sources require bounded regular files without symbolic links")
+			return errors.New("task review sources require bounded regular files without symbolic links")
 		}
 		return nil
 	})
@@ -106,7 +106,7 @@ func reviewMCPTaskSource(dir string) (mcphosting.Config, error) {
 		return cfg, err
 	}
 	if cfg.Tasks == nil || cfg.Tasks.Enabled == nil || !*cfg.Tasks.Enabled {
-		return cfg, errors.New("Task release review requires enabled Tasks in both web and worker sources")
+		return cfg, errors.New("task release review requires enabled Tasks in both web and worker sources")
 	}
 	return cfg, nil
 }

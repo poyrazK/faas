@@ -39,6 +39,7 @@ type TaskReviewLimits struct {
 	ShutdownTimeoutMS      int `json:"shutdown_timeout_ms,omitempty"`
 }
 
+// ReviewTaskLimits omits all credential references from configured Task limits.
 func ReviewTaskLimits(c TasksConfig) TaskReviewLimits {
 	return TaskReviewLimits{TTLSeconds: c.TTLSeconds, WorkerConcurrency: c.WorkerConcurrency,
 		MaxAttempts: c.MaxAttempts, MaxRunning: c.MaxRunning, MaxRunningPerOwner: c.MaxRunningPerOwner,

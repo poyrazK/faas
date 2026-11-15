@@ -18,9 +18,12 @@ func taskReviewFixture(t *testing.T) (string, string) {
 	t.Helper()
 	root := t.TempDir()
 	enabled := true
-	cfg := mcphosting.Config{Version: 1, Endpoint: "/mcp", Transport: "streamable-http", Mode: "stateless",
+	cfg := mcphosting.Config{Version: 1, Endpoint: "/mcp", Transport: "streamable-http", Mode: "stateless", AllowedOrigins: []string{},
 		Auth:  mcphosting.AuthConfig{Mode: "open", ToolScopes: mcphosting.ScopePolicy{"build_report": {}}},
 		Tasks: &mcphosting.TasksConfig{Enabled: &enabled, DatabaseURLEnv: "DATABASE_URL", OwnerKeyEnv: "MCP_TASK_OWNER_KEY", NamespaceEnv: "MCP_TASK_NAMESPACE", TTLSeconds: 3600, WorkerConcurrency: 2}}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal("invalid Task source fixture", err)
+	}
 	for _, name := range []string{"web", "worker"} {
 		dir := filepath.Join(root, name)
 		if err := os.Mkdir(dir, 0700); err != nil {
@@ -44,11 +47,40 @@ func taskReviewFixture(t *testing.T) (string, string) {
 
 func TestMCPTaskReleasePlanOffline(t *testing.T) {
 	root, path := taskReviewFixture(t)
+	baseline, err := mcphosting.NewCatalogContract(mcphosting.ProtocolVersion, mcphosting.Catalog{Tools: []mcphosting.Tool{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := mcphosting.MarshalContract(baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "web", "reader.json"), body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	policy := `{"version":1,"roles":[{"name":"reader","token_env":"MCP_READER_TOKEN","baseline":"reader.json"}]}`
+	if err := os.WriteFile(filepath.Join(root, "web", "release-policy.json"), []byte(policy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	body, err = os.ReadFile(path)
+	var declared main.McpNativeReleasePlan
+	if err != nil || json.Unmarshal(body, &declared) != nil {
+		t.Fatal("read fixture plan", err)
+	}
+	declared.ReleasePolicy = "web/release-policy.json"
+	body, err = json.Marshal(declared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.WriteHeader(500) }))
 	defer server.Close()
 	t.Setenv("FAAS_API", server.URL)
 	t.Setenv("MCP_UNRESOLVED_TOKEN", "")
+	t.Setenv("MCP_READER_TOKEN", "")
 	t.Setenv("MCP_TASK_MIGRATION_DATABASE_URL", "postgres://owner:SECRET_SENTINEL@invalid/db")
 	t.Setenv("PATH", t.TempDir()) // Review must not require Node or another executable.
 	code, output, stderr := runCLI(t, "mcp", "tasks", "release", "plan", "--plan", path, "--json")
@@ -61,6 +93,9 @@ func TestMCPTaskReleasePlanOffline(t *testing.T) {
 	}
 	if requests.Load() != 0 || strings.Contains(output, "SECRET_SENTINEL") || strings.Contains(output, "MCP_UNRESOLVED_TOKEN") || strings.Contains(output, "MCP_TASK_OWNER_KEY") || strings.Contains(output, root) {
 		t.Fatal("offline review performed network IO or exposed a credential reference/source path")
+	}
+	if len(review.ReadinessRoles) != 1 || review.ReadinessRoles[0] != "reader" || strings.Contains(output, "MCP_READER_TOKEN") {
+		t.Fatal("review failed to project readiness roles without resolving or exposing their credentials")
 	}
 	plan, err := main.ReadMCPNativePlan(path)
 	if err != nil {
