@@ -1,11 +1,12 @@
 from typing import Literal
 
-DevSyncPhasePhase = Literal["boot", "build", "cache", "ready", "route", "sync"]
+DevSyncPhasePhase = Literal["boot", "build", "cache", "patch", "ready", "route", "sync"]
 
 DEV_SYNC_PHASE_PHASE_VALUES: set[DevSyncPhasePhase] = {
     "boot",
     "build",
     "cache",
+    "patch",
     "ready",
     "route",
     "sync",

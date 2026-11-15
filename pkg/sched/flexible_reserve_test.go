@@ -9,6 +9,39 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// The vCPU and CPU budgets a flexible job is held to keep one vCPU and one
+// default app's CPU back for app wakes (ADR-366). They are counted, not
+// refused (ADR-20261109172421), so the gate is read through XCPUOverBudget:
+// a flexible job may fill the budget up to the reserve and no further, and
+// standard work may use the reserve.
+func TestFlexibleJobCPUBudgetsKeepTheReserve(t *testing.T) {
+	const vcpuBudget, cpuBudget = 4, 4000
+	req := func(vcpu, cpu int, flexible bool) sched.Request {
+		return sched.Request{Instance: "job", NodeID: "node-1", Plan: api.PlanScale, RAMMB: 128,
+			VCPU: vcpu, CPUMillicores: cpu, Kind: sched.KindJob, Flexible: flexible,
+			NodeCeilingMB: 100_000, VCPUBudget: vcpuBudget, CPUBudgetMillicores: cpuBudget}
+	}
+	ledger := sched.NewNodeLedger()
+	cpuFit := cpuBudget - api.DefaultAppCPUMillicores
+	for _, tc := range []struct {
+		name      string
+		vcpu, cpu int
+		flexible  bool
+		wantOver  bool
+	}{
+		{"flexible fills up to the reserve", vcpuBudget - 1, cpuFit, true, false},
+		{"flexible vCPU into the reserve", vcpuBudget, cpuFit, true, true},
+		{"flexible CPU into the reserve", vcpuBudget - 1, cpuFit + 1, true, true},
+		{"standard work uses the vCPU reserve", vcpuBudget, cpuFit, false, false},
+		{"standard work uses the CPU reserve", vcpuBudget - 1, cpuBudget, false, false},
+	} {
+		err := ledger.XCPUOverBudget(req(tc.vcpu, tc.cpu, tc.flexible))
+		if (err != nil) != tc.wantOver {
+			t.Errorf("%s: over budget = %v, want %v", tc.name, err, tc.wantOver)
+		}
+	}
+}
+
 // A flexible job leaves an app wake's worth of memory free. Its vCPU and CPU
 // reserve only count since memory became the only capacity limit
 // (ADR-20261109172421), so the RAM reserve binds here: two 600 MB jobs fit

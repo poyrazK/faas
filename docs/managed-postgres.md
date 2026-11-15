@@ -199,15 +199,22 @@ customers out until the owner has tested production
 
    ```bash
    gregalectl flags default --key managed_postgres --value true --reason "GA" --yes
+   gregalectl flags default --key database_rollbacks --value true --reason "GA" --yes
    ```
+
+   `database_rollbacks` is GA as well, but a stored definition wins over the
+   tier default: a platform that closed it during the preview keeps it closed
+   until this second command.
 
 `gregalectl flags disable --capability managed-postgres --reason "<why>" --yes`
 hides managed PostgreSQL again. Existing databases keep running, and the
 credentials apps already hold keep working.
 
-Rollbacks that restore the database are a separate preview,
-`database-rollbacks`. An account that used them through a `postgres_restore`
-rule needs `database_rollbacks` allowed as well.
+Rollbacks that restore the database and `gregale postgres restore --switch`
+belong to `database-rollbacks`, which is GA
+([ADR-20261031091607 amendment 1](adr/20261031091607-managed-postgres-ga.md)).
+An account that used them through a `postgres_restore` rule needs
+`database_rollbacks` allowed as well while that flag stays closed.
 
 ## Provider health
 

@@ -1,3 +1,4 @@
+- [ADR-20261114150000: Flags usability: short commands, attribute targeting, gateway kill switch, lifecycle](20261114150000-flags-usability.md) — accepted; read-modify-write CLI verbs (`flags create/set/on/off/percent/rule/rm/kill/stale`), rule `attributes` on gateway-verified `gregale.country`/`gregale.ua_family` and app-supplied `app.*` (SDK capability `attribute-targeting-v1`), `killed` flags served as the app fallback and stamped by the gateway in `X-Faas-Flag-Kills`, flag `owner`/`expires_at` with a lifecycle report and hourly `flags.lifecycle_attention` audit events (amends ADR-377)
 - [ADR-20261114120000: Per-plan startup window on every cold boot](20261114120000-per-plan-startup-window.md) — accepted; amends ADR-138 (2026-10-22): `startup_deadline_s` may reach the plan window (Free/Hobby 30 s, Pro 60 s, Scale 120 s; defaults unchanged) and every cold boot, not only the deploy prime, gets it in its RPC budget and watchdog reprieve; `wake_max_queue_wait_seconds` may reach 120 s (deploy-path review P1)
 
 - [ADR-20261114090001 · Deployment qualification changes and wait timing](20261114090001-deployment-qualification-progress.md) — monitoring implementation; production convergence separate
@@ -22,6 +23,7 @@
 
 - [ADR-20261115133053: Offline output contracts in CLI JSON help](20261115133053-cli-json-help-output-contracts.md) — accepted; explicit list formats, selectors, empty behavior, publication and error contracts without API discovery.
 
+- [ADR-20261115110124: gRPC steps in `gregale test` scenarios](20261115110124-test-grpc-steps.md) — accepted; a request or check may carry a `grpc:` call (definitions from `.proto` files compiled with protocompile and/or server reflection; unary and all streaming shapes; status, protobuf-JSON pointers, message count, header and trailer metadata); `local` dials plaintext HTTP/2, `real-vm` the deployed app over TLS; load mode stays HTTP-only
 - [ADR-20261115105130: Opt-in streamed list output](20261115105130-cli-streamed-list-output.md)
 - [ADR-20261115121720: Atomic CLI list exports](20261115121720-cli-atomic-list-exports.md) — accepted; private JSON Lines staging, no-overwrite publication and completion integrity receipts.
 
