@@ -73,6 +73,10 @@ recovery; local preparation checks do not establish deployed acceptance.
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
+`TestJSONInputLocationsIsolatedCLI` extends row 156: malformed file input
+returns a typed source/line/column, then returned offline help is followed,
+with zero API requests and no invocation submission.
+
 `TestCLIFlagCorrectionsIsolatedCLI` extends row 156: a misspelled deploy flag
 returns structured advice, and its help argument array discovers the suggested
 flag from another directory, with zero requests and no deployment submission.

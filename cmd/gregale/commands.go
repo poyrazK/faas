@@ -556,7 +556,7 @@ func printErr(title string, err error) int {
 		} else if platformErr {
 			code = 3
 		}
-		_ = writeJSONProblemWithExit(os.Stderr, diagnosticProblem(problem), code)
+		_ = writeJSONProblemWithCLI(os.Stderr, diagnosticProblem(problem), code, jsonInputDiagnostic(err))
 		if hasExit {
 			return ec.code
 		}
