@@ -35843,6 +35843,8 @@ CREATE TABLE public.cli_auth_codes (
     device_hash bytea,
     org_id uuid,
     project_ids uuid[],
+    verifier_hash bytea,
+    requester_ip text,
     CONSTRAINT cli_auth_codes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'consumed'::text, 'expired'::text])))
 );
 

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -93,6 +95,27 @@ func exerciseTaskIntents(t *testing.T, s state.Store, reopen func() state.Store)
 		changed.Reason = "different review"
 		if w := call("PUT", id, "", changed, publisher); w.Code != 409 {
 			t.Fatal("intent overwritten", w.Code)
+		}
+		changedNested := in
+		changedNested.ToolScopes = map[string][]string{"report": {"review:changed"}}
+		journal := s.(state.TaskToolReleaseIntentStore)
+		if _, err := journal.PrepareTaskToolReleaseIntent(ctx, account.ID, publisher.ID, id, changedNested); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("changed nested Task review accepted: %v", err)
+		}
+		if scopes := changedNested.ToolScopes["report"]; len(scopes) != 1 || scopes[0] != "review:changed" {
+			t.Fatal("retained Task review rewrote caller permissions")
+		}
+		if attempt == 0 {
+			var replay sync.WaitGroup
+			for range 8 {
+				replay.Go(func() {
+					r, err := journal.PrepareTaskToolReleaseIntent(ctx, account.ID, publisher.ID, id, in)
+					if err != nil || r.IntentSHA256 != pending.IntentSHA256 || !r.ExpiresAt.Equal(pending.ExpiresAt) {
+						t.Errorf("concurrent replay changed Task review: %v", err)
+					}
+				})
+			}
+			replay.Wait()
 		}
 		decision := api.TaskToolReleaseIntentDecision{IntentSHA256: pending.IntentSHA256, ReleaseFingerprint: in.ReleaseFingerprint, Decision: "approve"}
 		for _, forbidden := range []state.APIKey{publisher, agentAdmin} {
