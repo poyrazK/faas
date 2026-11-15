@@ -4902,7 +4902,7 @@ func (q *Queries) RestoreAccountWithConfirmation(ctx context.Context, db DBTX, i
 
 const restorePaymentAccount = `-- name: RestorePaymentAccount :execrows
 UPDATE accounts SET status='active',past_due_at=NULL,deletion_requested_at=NULL,suspended_reason=NULL
-WHERE id=$1 AND (status='past_due' OR (status IN ('suspended','deleted_pending') AND past_due_at IS NOT NULL))
+WHERE id=$1 AND (status='past_due' OR (status IN ('active','suspended','deleted_pending') AND past_due_at IS NOT NULL))
 `
 
 // Preserve UpdateAccountStatus's recovery behavior and personal-org mirror.

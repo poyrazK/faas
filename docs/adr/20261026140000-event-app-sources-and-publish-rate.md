@@ -62,3 +62,25 @@ Two GA blockers from the 2026-10-25 event audit:
 - **Trust the producer stamp instead of the source.** The `producer` extension
   (ADR 20261025211616) is server-stamped, but subscriptions match sources, and
   the Auth app contract is written against its source.
+
+## Amendment 2026-11-14: one shared counter as well (event-driven hunt #16)
+
+Per process, the plan rate multiplied with the fleet: every apid replica and
+every vmmd node admitted the full rate on its own, so a Free account publishing
+from functions spread over N nodes got N × 5/s. Item 3 changes:
+
+- The process bucket stays and runs first: a burst over the rate is refused
+  without touching the database, as before.
+- What it admits is then charged to one shared counter per account
+  (`pg_ratelimit_counters`, scope `event_publish`, the token bucket the
+  central edge limiter already uses), all or nothing per request. Over it the
+  request gets the same `429 event_publish_rate_limited`.
+- The charge is its own short autocommit statement before publication, not
+  inside the publication transaction, so the counter row lock is held for one
+  statement. A batch is one statement for all its events.
+- If the counter cannot be read the request is judged on the process bucket
+  alone; publication needs the same database anyway.
+
+This takes the "database-wide rate" alternative above after all: one extra
+statement per publish request is small next to the rows publication already
+writes, and the process bucket keeps a burst from reaching it.
