@@ -56,9 +56,18 @@ func exerciseTaskRecoveryHandover(t *testing.T, s state.Store, reopen func() sta
 	intent := api.TaskToolReleaseIntent{ReleaseFingerprint: strings.Repeat("a", 64), WorkerRuntime: "node", Protocol: api.MCPProtocolVersion, Endpoint: "/mcp", AccessMode: "open", ObserverMetricApp: "observer", ToolScopes: map[string][]string{"report": {}}, RequiredSetup: tasktoolrelease.RequiredSetup(), Reason: "Recovery handover fixture"}
 	var web, worker, baseline string
 	deploy := func(appID string, traffic int) state.Deployment {
-		d, err := s.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindTarball, Status: state.DeployLive, TrafficPercent: traffic, SourceSHA256: strings.Repeat("b", 64), SourcePath: "/fixture/source.tar.gz", SourceBytes: 1})
+		d, err := s.CreateDeployment(ctx, state.Deployment{AppID: appID, Kind: state.DeploymentKindTarball, Status: state.DeployLive, TrafficPercent: traffic, TrafficPercentExplicit: true, SourceSHA256: strings.Repeat("b", 64), SourcePath: "/fixture/source.tar.gz", SourceBytes: 1})
 		if err != nil {
 			t.Fatal(err)
+		}
+		if d.Status != state.DeployLive {
+			if err := s.MarkDeploymentLive(ctx, d.ID); err != nil {
+				t.Fatal(err)
+			}
+			d, err = s.DeploymentByID(ctx, d.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 		return d
 	}
