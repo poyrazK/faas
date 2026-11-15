@@ -88,22 +88,29 @@ run on the control plane.
    sudo chmod 0400 /etc/faas/secrets/serving-probe/*
    ```
 
-5. **List the probe URLs** in the compute operator variables
-   (`COMPUTE_ANSIBLE_VARS_B64`) and converge the compute nodes. The role refuses
-   to install the probe without a root-only `webhook_url`.
+5. **List the probe URLs** in the manifest's `serving_probes` section and
+   release. The manifest renders one `faas_serving_probe_fleet` for every
+   host, so the control plane's expected-probe inventory and each static
+   compute node's probe read the same policy, keyed by the node name the
+   probe reports (`fsn-2.faas`). The role refuses to install the probe
+   without a root-only `webhook_url`, so write step 4's credential on every
+   compute node first.
 
    ```yaml
-   faas_serving_probe_urls:
-     - https://probe.example.gregale.app/
-   faas_serving_probe_expected_body: gregale-serving-probe-ok
-   faas_serving_probe_max_first_byte_seconds: 2
+   serving_probes:
+     urls: ["https://serving-probe.gregale.dev/"]
+     expected_body: gregale-serving-probe-ok
+     # Optional: interval (5min), timeout_seconds (20),
+     # max_first_byte_seconds (the timeout), max_age_seconds (900).
    ```
+
+   A host converged without a manifest can still take
+   `faas_serving_probe_fleet` from its operator variables in the same shape.
 
    The same expected body and budget apply to every configured URL. Choose a
    budget for the full public path, including network time and waking the app;
    this is separate from the platform-only snapshot-restore target. It must
-   be positive and no greater than `faas_serving_probe_timeout_seconds` (20 s
-   by default). The expected body is limited to 4096 UTF-8 bytes without
+   be positive and no greater than the attempt timeout (20 s by default). The expected body is limited to 4096 UTF-8 bytes without
    control characters. Responses are read only far enough to reject an
    unexpected suffix, and response content is never put into notifications.
 

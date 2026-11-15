@@ -28,6 +28,17 @@ CREATE TABLE crash_captures (
     sealed_key bytea
 );
 
+-- Projection of snapshots, read by OpenCaptureKey for sealed park and warm
+-- snapshots (ADR-20261110210000 slice 3d-3): only the columns secretd reads.
+CREATE TABLE snapshots (
+    id                uuid        NOT NULL PRIMARY KEY,
+    deployment_id     uuid        NOT NULL,
+    created_at        timestamptz NOT NULL,
+    delete_pending    boolean     NOT NULL,
+    sealed_key        bytea,
+    sealed_capture_id uuid
+);
+
 -- Projection of app_secrets: the key and ciphertext OpenAppSecrets reads by
 -- reference (ADR-20261110210000 slice 3d-4).
 CREATE TABLE app_secrets (

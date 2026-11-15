@@ -1,5 +1,8 @@
 // Browser-safe entry point. Keep this barrel free of imports from the Node
 // SDK's root surface, which intentionally includes Node-only helpers.
+export * from './files.js';
+export * from './live-jobs.js';
+export * from './live-job-realtime.js';
 export {
   createGregaleBrowserFetch,
   GREGALE_RELEASE_HEADER,
@@ -115,3 +118,7 @@ export { createBrowserRealtimeTicketSocketFactory } from './browser-realtime.js'
 
 export { consumeRealtimeChannelWithFallback } from './realtime-transport.js';
 export type { RealtimeTransport, RealtimeTransportMessage, RealtimeTransportOptions } from './realtime-transport.js';
+
+export type * from './pipeline-gate-types.js';
+
+export type * from './pipeline-children-types.js';

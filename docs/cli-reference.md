@@ -49,6 +49,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`domain`](#domain) | Manage custom domains |
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
 | [`postgres`](#postgres) | Create, attach and restore managed PostgreSQL databases |
+| [`export`](#export) | Verify saved JSON Lines exports offline |
 | [`cron`](#cron) | Schedule requests and commands |
 | [`job`](#job) | Manage jobs that run to completion |
 | [`workflow`](#workflow) | Manage durable workflows |
@@ -4820,6 +4821,36 @@ Examples:
 ```sh
 gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 ```
+
+
+## export
+
+Verify saved JSON Lines exports offline
+
+`gregale export [<subcommand>]`
+
+### export verify
+
+Check a file against its saved completion receipt
+
+`gregale export verify --receipt <RECEIPT> <FILE>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--receipt <RECEIPT>` | saved JSON completion receipt | required |
+
+Examples:
+
+```sh
+gregale export verify builds.jsonl --receipt builds.receipt.json
+gregale --json export verify invocations.jsonl --receipt invocations.receipt.json
+```
+
+Runs offline without login. Compares SHA-256, exact bytes and JSON Lines record count; the receipt path is ignored.
+
+Exit 0 means all three checks matched; exit 1 means mismatch or invalid input. A valid comparison prints verified true or false; invalid input reports an error without a result.
+
+A receipt is an integrity reference, not a signature or a point-in-time API snapshot.
 
 
 ## cron

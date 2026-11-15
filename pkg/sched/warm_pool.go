@@ -434,6 +434,9 @@ func (e *Engine) restoreWarmInstance(ctx context.Context, app state.App, acct st
 		VMStatePath:                     vmstatePath,
 		VMStateStorageKey:               vmstateStorageKey,
 		MemBytes:                        snap.MemBytes,
+		CaptureID:                       snap.SealedCaptureID,
+		SealedKey:                       string(snap.SealedKey),
+		SealedCache:                     len(snap.SealedKey) > 0,
 	}, true)
 	cancel()
 	if err != nil {

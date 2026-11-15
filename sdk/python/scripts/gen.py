@@ -185,6 +185,10 @@ ROOT_WRAPPER_MODULES = (
     "_source_deployment.py",
     "_project_inspection.py",
     "_project_workflows.py",
+    "_project_verification.py",
+    "job_runtime.py",
+    "_typed_jobs.py",
+    "job_types.py",
     "_wrapper.py",
     "_rfc7807.py",
     "_sse.py",
@@ -206,6 +210,15 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
+    "pipeline_children_state.py",
+    "pipeline_children.py",
+    "pipeline_state.py",
+    "job_pipelines.py",
+    "job_pipeline_client.py",
+    "pipeline_gates.py",
+    "live_jobs.py",
+    "file_pipelines.py",
+    "files.py",
     "_wrapper.py",
     "_binding_qualification.py",
     "_binding_creation.py",
@@ -483,7 +496,7 @@ def regen(overwrite: bool = True) -> None:
         restore_handwritten()
 
         _rewrite_init_py(OUT / "faas_sdk" / "__init__.py")
-        (OUT / "faas_sdk" / "preview" / "__init__.py").write_text(_PREVIEW_INIT_PY_TEMPLATE)
+        (OUT / "faas_sdk" / "preview" / "__init__.py").write_text(_PREVIEW_INIT_PY_TEMPLATE.rstrip() + "\n")
         _patch_generator_bugs(OUT / "faas_sdk")
         _preserve_pagination_cursor_inputs(OUT / "faas_sdk")
         _adapt_source_upload_binary(OUT / "faas_sdk")
@@ -565,7 +578,7 @@ def regen(overwrite: bool = True) -> None:
                         "--quiet",
                         str(sdk_root),
                         "--exclude",
-                        "_async_request.py,_pagination.py,_waiters.py,_source_upload.py,_source_preparation.py,_source_deployment.py,_project_inspection.py,_project_workflows.py,_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
+                        "_async_request.py,_pagination.py,_waiters.py,_source_upload.py,_source_preparation.py,_source_deployment.py,_project_inspection.py,_project_workflows.py,_project_verification.py,job_runtime.py,_typed_jobs.py,job_types.py,_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
                     ],
                     check=False,
                     capture_output=True,
@@ -942,6 +955,49 @@ from ._rfc7807 import (
     parse_problem,
     raise_for_problem,
 )
+from .job_runtime import (
+    JobContract as JobContract,
+    JobError as JobError,
+    JobCode as JobCode,
+    JobInput as JobInput,
+    JobInputBinding as JobInputBinding,
+    JobContext as JobContext,
+    JobStore as JobStore,
+    LocalJobOutcome as LocalJobOutcome,
+    LocalJobStore as LocalJobStore,
+    prepare_job_input as prepare_job_input,
+    read_job_input as read_job_input,
+    decode_job_output as decode_job_output,
+    run_local_job_batch as run_local_job_batch,
+    run_job_task as run_job_task,
+)
+from ._typed_jobs import (
+    TypedJob as TypedJob,
+    TypedJobRun as TypedJobRun,
+    JobCheckpoint as JobCheckpoint,
+    JobCheckpointInput as JobCheckpointInput,
+    JobProgress as JobProgress,
+    JobRunOptions as JobRunOptions,
+    JobSubmitOptions as JobSubmitOptions,
+    JobItemOutcome as JobItemOutcome,
+)
+from ._project_verification import (
+    VerificationOutcome as VerificationOutcome,
+    VerificationCode as VerificationCode,
+    VerificationWorkload as VerificationWorkload,
+    ProjectVerificationTarget as ProjectVerificationTarget,
+    VerificationCheckResult as VerificationCheckResult,
+    VerificationCheckContext as VerificationCheckContext,
+    VerificationCheck as VerificationCheck,
+    VerificationCheckEvidence as VerificationCheckEvidence,
+    VerificationHealth as VerificationHealth,
+    VerificationTimelineEvent as VerificationTimelineEvent,
+    VerificationTimeline as VerificationTimeline,
+    VerificationWorkloadReport as VerificationWorkloadReport,
+    ProjectVerificationReport as ProjectVerificationReport,
+    ProjectVerificationOptions as ProjectVerificationOptions,
+    project_verification_target as project_verification_target,
+)
 from ._project_workflows import (
     ProjectArchive as ProjectArchive,
     ReviewedProjectPlan as ReviewedProjectPlan,
@@ -1233,6 +1289,58 @@ elsewhere its calls answer 404 no such API route.
 """
 
 # ruff: noqa: F401
+from .pipeline_state import PipelineFailure, pipeline_failure, PIPELINE_JOB_SCHEMA, PipelineError, PipelineJobReceipt, PipelineJobStore, PipelineScope, PostgresPipelineJobStore, pipeline_job_identity, read_pipeline_artifact
+from .pipeline_children_state import PIPELINE_CHILDREN_SCHEMA, PipelineChildrenError, PipelineChildrenReceipt, PipelineChildrenStore, PostgresPipelineChildrenStore, pipeline_children_identity, pipeline_children_intent
+from .pipeline_children import PipelineChildren, PipelineChild, PipelineChildOptions, PipelineChildView, PipelineBatchResult, PipelineChildrenTransport, NativePipelineChildrenTransport, pipeline_children_live_snapshot
+from .pipeline_gates import PIPELINE_GATE_SCHEMA, NativePipelineGateTransport, PipelineGateActor, PipelineGateError, PipelineGateOptions, PipelineGateOutcome, PipelineGateRecord, PipelineGateService, PipelineGateStore, PipelineGateTransport, PipelineGateView, PostgresPipelineGateStore, pipeline_gate_intent
+from .job_pipelines import JobPipeline, JobPipelineContext, JobPipelineOptions, PipelineItem, PipelineJob, PipelineJobResult
+from .job_pipeline_client import job_pipeline_live_snapshot, JobPipelineClient, PipelineCheckpoint, PipelineInspection, PipelineStepInspection, TypedPipelineRun
+from .live_jobs import LiveJobWaiting, LiveJob, LiveJobError, LiveJobFailure, LiveJobSink, LiveJobSnapshot, LiveJobSource, LiveJobStatus, realtime_live_job_source
+from .file_pipelines import FILE_PIPELINE_SCHEMA, FileCreatedEvent, FileDelivery, FilePipeline, FilePipelineError, FilePipelineInput, FilePipelineIntent, FilePipelineOptions, FilePipelineOutcome, FilePipelineOwner, FilePipelineReceipt, FilePipelineScope, FilePipelineStore, NativeFileVerifier, PostgresFilePipelineStore, file_event_invocation_id, file_pipeline_identity, parse_file_created_event
+from .files import BytesFileSource, FileBucket, FileCheckpoint, FileCode, FileError, FileMetadata, FileObject, FileOptions, FilePage, FilePart, FileProgress, FileSource, FileUploadResult, PathFileSource, file_source_digest
+from ..job_runtime import (
+    JobContract as JobContract,
+    JobError as JobError,
+    JobCode as JobCode,
+    JobInput as JobInput,
+    JobInputBinding as JobInputBinding,
+    JobContext as JobContext,
+    JobStore as JobStore,
+    LocalJobOutcome as LocalJobOutcome,
+    LocalJobStore as LocalJobStore,
+    prepare_job_input as prepare_job_input,
+    read_job_input as read_job_input,
+    decode_job_output as decode_job_output,
+    run_local_job_batch as run_local_job_batch,
+    run_job_task as run_job_task,
+)
+from .._typed_jobs import (
+    TypedJob as TypedJob,
+    TypedJobRun as TypedJobRun,
+    JobCheckpoint as JobCheckpoint,
+    JobCheckpointInput as JobCheckpointInput,
+    JobProgress as JobProgress,
+    JobRunOptions as JobRunOptions,
+    JobSubmitOptions as JobSubmitOptions,
+    JobItemOutcome as JobItemOutcome,
+)
+from .._project_verification import (
+    VerificationOutcome as VerificationOutcome,
+    VerificationCode as VerificationCode,
+    VerificationWorkload as VerificationWorkload,
+    ProjectVerificationTarget as ProjectVerificationTarget,
+    VerificationCheckResult as VerificationCheckResult,
+    VerificationCheckContext as VerificationCheckContext,
+    VerificationCheck as VerificationCheck,
+    VerificationCheckEvidence as VerificationCheckEvidence,
+    VerificationHealth as VerificationHealth,
+    VerificationTimelineEvent as VerificationTimelineEvent,
+    VerificationTimeline as VerificationTimeline,
+    VerificationWorkloadReport as VerificationWorkloadReport,
+    ProjectVerificationReport as ProjectVerificationReport,
+    ProjectVerificationOptions as ProjectVerificationOptions,
+    project_verification_target as project_verification_target,
+)
 from .._project_workflows import (
     ProjectArchive as ProjectArchive,
     ReviewedProjectPlan as ReviewedProjectPlan,
@@ -1715,6 +1823,12 @@ from .event_acknowledgment_intent_recovery_pass import (
 )
 
 __all__ = (
+    'PipelineChildren', 'PipelineChild', 'PipelineChildOptions', 'PipelineChildView', 'PipelineBatchResult', 'PipelineChildrenTransport', 'NativePipelineChildrenTransport', 'pipeline_children_live_snapshot', 'PIPELINE_CHILDREN_SCHEMA', 'PipelineChildrenError', 'PipelineChildrenReceipt', 'PipelineChildrenStore', 'PostgresPipelineChildrenStore', 'pipeline_children_identity', 'pipeline_children_intent',
+    'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',
+    'PipelineFailure', 'pipeline_failure', 'job_pipeline_live_snapshot', 'PIPELINE_JOB_SCHEMA', 'PipelineError', 'PipelineJobReceipt', 'PipelineJobStore', 'PipelineScope', 'PostgresPipelineJobStore', 'pipeline_job_identity', 'read_pipeline_artifact', 'JobPipeline', 'JobPipelineContext', 'JobPipelineOptions', 'PipelineItem', 'PipelineJob', 'PipelineJobResult', 'JobPipelineClient', 'PipelineCheckpoint', 'PipelineInspection', 'PipelineStepInspection', 'TypedPipelineRun',
+    'LiveJob', 'LiveJobError', 'LiveJobFailure', 'LiveJobSink', 'LiveJobSnapshot', 'LiveJobSource', 'LiveJobStatus', 'realtime_live_job_source',
+    "BytesFileSource", "FileBucket", "FileCheckpoint", "FileCode", "FileError", "FileMetadata", "FileObject", "FileOptions", "FilePage", "FilePart", "FileProgress", "FileSource", "FileUploadResult", "PathFileSource", "file_source_digest",
+    'FILE_PIPELINE_SCHEMA', 'FileCreatedEvent', 'FileDelivery', 'FilePipeline', 'FilePipelineError', 'FilePipelineInput', 'FilePipelineIntent', 'FilePipelineOptions', 'FilePipelineOutcome', 'FilePipelineOwner', 'FilePipelineReceipt', 'FilePipelineScope', 'FilePipelineStore', 'NativeFileVerifier', 'PostgresFilePipelineStore', 'file_event_invocation_id', 'file_pipeline_identity', 'parse_file_created_event',
     *_PACKAGE_ALL,
     "AI_CALL_HEADER",
     "AI_PROMPT_VERSION_HEADER",
