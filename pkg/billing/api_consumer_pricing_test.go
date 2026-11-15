@@ -46,6 +46,36 @@ func TestQuoteAPIConsumerUsageReportsUnpricedUnits(t *testing.T) {
 	}
 }
 
+// A rate card is only priced with a three-letter upper-case ISO currency, a
+// non-negative price (zero is a free tier) and an effective_from on a UTC
+// minute; anything else is refused rather than quoted.
+func TestQuoteAPIConsumerUsageValidatesRateCards(t *testing.T) {
+	minute := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	valid := state.APIConsumerRateCard{ID: "a", Currency: "EUR", Unit: state.APIConsumerRateCardUnitRequest,
+		PriceMillicentsPerUnit: 5, EffectiveFrom: minute}
+	for _, tc := range []struct {
+		name   string
+		edit   func(*state.APIConsumerRateCard)
+		wantOK bool
+	}{
+		{"valid", func(*state.APIConsumerRateCard) {}, true},
+		{"zero price is a free tier", func(c *state.APIConsumerRateCard) { c.PriceMillicentsPerUnit = 0 }, true},
+		{"negative price", func(c *state.APIConsumerRateCard) { c.PriceMillicentsPerUnit = -1 }, false},
+		{"empty currency", func(c *state.APIConsumerRateCard) { c.Currency = "" }, false},
+		{"four-letter currency", func(c *state.APIConsumerRateCard) { c.Currency = "EURO" }, false},
+		{"lower-case currency", func(c *state.APIConsumerRateCard) { c.Currency = "eur" }, false},
+		{"zero effective_from", func(c *state.APIConsumerRateCard) { c.EffectiveFrom = time.Time{} }, false},
+		{"effective_from mid-minute", func(c *state.APIConsumerRateCard) { c.EffectiveFrom = minute.Add(30 * time.Second) }, false},
+	} {
+		card := valid
+		tc.edit(&card)
+		_, err := QuoteAPIConsumerUsage([]state.APIConsumerRateCard{card}, nil)
+		if (err == nil) != tc.wantOK {
+			t.Errorf("%s: err = %v, want ok=%v", tc.name, err, tc.wantOK)
+		}
+	}
+}
+
 func TestQuoteAPIConsumerUsageRejectsCurrencyChangesAndOverflow(t *testing.T) {
 	minute := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
 	_, err := QuoteAPIConsumerUsage([]state.APIConsumerRateCard{
