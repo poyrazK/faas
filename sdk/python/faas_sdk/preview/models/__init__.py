@@ -1464,7 +1464,9 @@ from .dev_postgres_request import DevPostgresRequest
 from .dev_postgres_response import DevPostgresResponse
 from .dev_postgres_response_binding_state import DevPostgresResponseBindingState
 from .dev_postgres_response_state import DevPostgresResponseState
+from .dev_session_list_response import DevSessionListResponse
 from .dev_session_response import DevSessionResponse
+from .dev_session_summary import DevSessionSummary
 from .dev_sync_history_item import DevSyncHistoryItem
 from .dev_sync_history_item_status import DevSyncHistoryItemStatus
 from .dev_sync_history_response import DevSyncHistoryResponse
@@ -8112,7 +8114,9 @@ __all__ = (
     "DevPostgresResponse",
     "DevPostgresResponseBindingState",
     "DevPostgresResponseState",
+    "DevSessionListResponse",
     "DevSessionResponse",
+    "DevSessionSummary",
     "DevSyncHistoryItem",
     "DevSyncHistoryItemStatus",
     "DevSyncHistoryResponse",
