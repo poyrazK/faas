@@ -93,6 +93,10 @@ type Querier interface {
 	// Registers an event name while the environment holds fewer than max_names.
 	AddFlagEventName(ctx context.Context, db DBTX, arg AddFlagEventNameParams) (int64, error)
 	AddFlagEventUsage(ctx context.Context, db DBTX, arg AddFlagEventUsageParams) (AddFlagEventUsageRow, error)
+	// A customer seen with another variant than its first is marked crossed and
+	// left out of results.
+	// The arrays are parallel: the select list unnests them in step.
+	AddFlagExperimentUnits(ctx context.Context, db DBTX, arg AddFlagExperimentUnitsParams) error
 	// ADR-20261103113952 amendment 2: the same flush folded to UTC hours, in
 	// the same shape as AddRequestAnalyticsMinutes.
 	AddRequestAnalyticsHours(ctx context.Context, db DBTX, arg AddRequestAnalyticsHoursParams) error
@@ -122,6 +126,7 @@ type Querier interface {
 	// (2026-11-10). Updating from pending reads invocations only for rows it
 	// locked.
 	AdvanceEventExecutionReconciliations(ctx context.Context, db DBTX, batchLimit int32) (int64, error)
+	AdvanceFlagExperiment(ctx context.Context, db DBTX, arg AdvanceFlagExperimentParams) error
 	AdvanceImagePreparation(ctx context.Context, db DBTX, arg AdvanceImagePreparationParams) (int64, error)
 	AdvanceProjectEnvironmentCloneCheckpointIntent(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneCheckpointIntentParams) (int64, error)
 	AdvanceProjectEnvironmentCloneConfigurationClock(ctx context.Context, db DBTX, arg AdvanceProjectEnvironmentCloneConfigurationClockParams) (int64, error)
@@ -947,6 +952,7 @@ type Querier interface {
 	// The first publish creates the account's counter with its grant taken; the
 	// caller never asks for more than the burst.
 	CreateEventPublishCounter(ctx context.Context, db DBTX, arg CreateEventPublishCounterParams) (int64, error)
+	CreateFlagExperiment(ctx context.Context, db DBTX, arg CreateFlagExperimentParams) (FlagExperiment, error)
 	CreateInstance(ctx context.Context, db DBTX, arg CreateInstanceParams) (CreateInstanceRow, error)
 	// ADR-531: queue ownership is operational evidence, never a cloned message.
 	CreateInvocationEnvironmentQueueAdmission(ctx context.Context, db DBTX, arg CreateInvocationEnvironmentQueueAdmissionParams) (int64, error)
@@ -1215,6 +1221,7 @@ type Querier interface {
 	DeleteExpiredTriggerRecords(ctx context.Context, db DBTX, arg DeleteExpiredTriggerRecordsParams) (int64, error)
 	DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db DBTX, recordID pgtype.UUID) error
 	DeleteFlagConversionsBefore(ctx context.Context, db DBTX, arg DeleteFlagConversionsBeforeParams) (int64, error)
+	DeleteFlagExperiment(ctx context.Context, db DBTX, arg DeleteFlagExperimentParams) (int64, error)
 	DeleteGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	DeleteGuardedCron(ctx context.Context, db DBTX, arg DeleteGuardedCronParams) error
 	DeleteLegacyStaticEgressProvisioning(ctx context.Context, db DBTX) error
@@ -2252,6 +2259,11 @@ type Querier interface {
 	// Accounts holding conversion rows older than cutoff, for the retention sweep.
 	FlagConversionAccounts(ctx context.Context, db DBTX, arg FlagConversionAccountsParams) ([]FlagConversionAccountsRow, error)
 	FlagEventNamesKnown(ctx context.Context, db DBTX, arg FlagEventNamesKnownParams) ([]string, error)
+	FlagExperimentArms(ctx context.Context, db DBTX, experimentID pgtype.UUID) ([]FlagExperimentArmsRow, error)
+	FlagExperimentCrossedUnits(ctx context.Context, db DBTX, experimentID pgtype.UUID) (int64, error)
+	// First and last exposure per verified customer and variant to the
+	// experiment's rule in request telemetry received in (from, until].
+	FlagExperimentExposures(ctx context.Context, db DBTX, arg FlagExperimentExposuresParams) ([]FlagExperimentExposuresRow, error)
 	// ADR-1740, ADR-1741: read first when a VM freezes, before the rest of its
 	// ticket, so any change after it moves the generation the guarded thaw
 	// compares. selected is true when the thaw a ticket would allow is the one
@@ -2391,6 +2403,7 @@ type Querier interface {
 	GetEventWorkflowReceipt(ctx context.Context, db DBTX, arg GetEventWorkflowReceiptParams) (pgtype.UUID, error)
 	GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFeatureFlagVersionParams) (FeatureFlagVersion, error)
 	GetFirstBuildExportPublicationForClaim(ctx context.Context, db DBTX, arg GetFirstBuildExportPublicationForClaimParams) (BuildExportPublication, error)
+	GetFlagExperiment(ctx context.Context, db DBTX, arg GetFlagExperimentParams) (FlagExperiment, error)
 	GetFreshBaseImageScan(ctx context.Context, db DBTX, arg GetFreshBaseImageScanParams) (BaseImageScan, error)
 	GetFunctionMigrationDestination(ctx context.Context, db DBTX, arg GetFunctionMigrationDestinationParams) (FunctionMigrationDestination, error)
 	GetFunctionMigrationDestinationIdentity(ctx context.Context, db DBTX, arg GetFunctionMigrationDestinationIdentityParams) (GetFunctionMigrationDestinationIdentityRow, error)
@@ -4056,6 +4069,7 @@ type Querier interface {
 	// successful public request and terminal instances remain for 30 days, which
 	// fully covers the 14-day beta cohort window.
 	ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, db DBTX, createdAt pgtype.Timestamptz) ([]ListFirstSuccessfulRequestsForAccountsCreatedSinceRow, error)
+	ListFlagExperiments(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]FlagExperiment, error)
 	ListFreshCustomMetrics(ctx context.Context, db DBTX, arg ListFreshCustomMetricsParams) ([]ListFreshCustomMetricsRow, error)
 	ListFunctionMigrationSourceInstances(ctx context.Context, db DBTX, appID pgtype.UUID) ([]pgtype.UUID, error)
 	// Source spool retention (ADR-20261026152731). A deployment that can still
@@ -4315,6 +4329,7 @@ type Querier interface {
 	// time; the runner decides which are due. The public edge does not serve an
 	// internal app, so its checks wait until it is public (ADR-20261031144636).
 	ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error)
+	ListRunningFlagExperiments(ctx context.Context, db DBTX, arg ListRunningFlagExperimentsParams) ([]ListRunningFlagExperimentsRow, error)
 	// ADR-20261114182830: every runtime release, and whether a compute node must
 	// keep its base cached: a deployment that is not failed or cancelled is
 	// bound to it, or a runtime upgrade targets it.
@@ -5061,6 +5076,9 @@ type Querier interface {
 	MarkDeploymentSuperseded(ctx context.Context, db DBTX, id pgtype.UUID) error
 	MarkDomainVerified(ctx context.Context, db DBTX, domain interface{}) error
 	MarkEnvironmentQualificationDispatched(ctx context.Context, db DBTX, instanceID pgtype.UUID) (int64, error)
+	// A unit converts when the metric event was sent on or after its first
+	// exposure.
+	MarkFlagExperimentConversions(ctx context.Context, db DBTX, arg MarkFlagExperimentConversionsParams) (int64, error)
 	// Recovery callers must lock an unmarked run and execute unknown-effect marking,
 	// attempt closure and running-step reset in that order in one transaction.
 	MarkLegacyWorkflowOutboundUnknown(ctx context.Context, db DBTX, runID pgtype.UUID) error
@@ -8161,12 +8179,15 @@ type Querier interface {
 	// ADR-1027 restore drills (pkg/dbsched drill.go). schedd is the only writer.
 	StartDatabaseRestoreDrill(ctx context.Context, db DBTX, arg StartDatabaseRestoreDrillParams) (int64, error)
 	StartEnvironmentWorkloadRetirement(ctx context.Context, db DBTX, arg StartEnvironmentWorkloadRetirementParams) (EnvironmentWorkloadRetirement, error)
+	// Starts a draft while the environment runs fewer than max_running.
+	StartFlagExperiment(ctx context.Context, db DBTX, arg StartFlagExperimentParams) (FlagExperiment, error)
 	StartMigrationAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	StartOperatorPark(ctx context.Context, db DBTX, arg StartOperatorParkParams) (OperatorParkExecution, error)
 	StartOperatorRestartDestroy(ctx context.Context, db DBTX, arg StartOperatorRestartDestroyParams) (OperatorRestartExecution, error)
 	StartProfileCapture(ctx context.Context, db DBTX, arg StartProfileCaptureParams) (int64, error)
 	StartScenarioRecorder(ctx context.Context, db DBTX, arg StartScenarioRecorderParams) error
 	StopEnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error)
+	StopFlagExperiment(ctx context.Context, db DBTX, arg StopFlagExperimentParams) (FlagExperiment, error)
 	StopManagedPostgresDrainInstance(ctx context.Context, db DBTX, arg StopManagedPostgresDrainInstanceParams) (int64, error)
 	StopOperatorRestartInstance(ctx context.Context, db DBTX, arg StopOperatorRestartInstanceParams) (int64, error)
 	StopUncertainCustomerOperationWorkflow(ctx context.Context, db DBTX, id pgtype.UUID) error

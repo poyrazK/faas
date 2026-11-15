@@ -191,3 +191,97 @@ func upperRegularizedGamma(a, x float64) float64 {
 	}
 	return math.Min(1, math.Exp(-x+a*math.Log(x)-lg)*h)
 }
+
+// Result statuses, in the order results are checked.
+const (
+	ExperimentSampleRatioMismatch = "sample_ratio_mismatch"
+	ExperimentInsufficientData    = "insufficient_data"
+	ExperimentSignificant         = "significant"
+	ExperimentNotSignificant      = "not_significant"
+)
+
+// ResultsInput is everything ExperimentResults needs.
+type ResultsInput struct {
+	Arms           []Arm
+	Control        string
+	Weights        map[string]int
+	MixingLift     float64
+	Alpha          float64
+	SRMAlpha       float64
+	MinUnits       int64
+	MinConversions int64
+	// MinPValues are the running minimum p-values the reconciler stored per
+	// variant; the always-valid p-value is the minimum over time.
+	MinPValues map[string]float64
+}
+
+// VariantResult is one variant compared with control.
+type VariantResult struct {
+	Arm
+	Rate       float64     `json:"rate"`
+	Comparison *Comparison `json:"comparison,omitempty"`
+	Status     string      `json:"status"`
+}
+
+// Results is an experiment's report.
+type Results struct {
+	Control          Arm             `json:"control"`
+	ControlRate      float64         `json:"control_rate"`
+	Variants         []VariantResult `json:"variants"`
+	SampleRatioP     float64         `json:"sample_ratio_p_value"`
+	SampleRatioError bool            `json:"sample_ratio_mismatch"`
+}
+
+// ExperimentResults compares every non-control arm with control. A sample
+// ratio mismatch makes every variant sample_ratio_mismatch; an arm below
+// the unit or conversion floor is insufficient_data; otherwise a variant is
+// significant when its always-valid p-value is below alpha.
+func ExperimentResults(in ResultsInput) Results {
+	byVariant := map[string]Arm{}
+	for _, a := range in.Arms {
+		byVariant[a.Variant] = a
+	}
+	// A weighted variant nobody was exposed to is an arm with zero units.
+	all := make([]Arm, 0, len(in.Weights))
+	for v := range in.Weights {
+		a := byVariant[v]
+		a.Variant = v
+		all = append(all, a)
+	}
+	out := Results{SampleRatioP: SampleRatioPValue(all, in.Weights)}
+	out.SampleRatioError = out.SampleRatioP < in.SRMAlpha
+	control := byVariant[in.Control]
+	control.Variant = in.Control
+	out.Control, out.ControlRate = control, control.Rate()
+	variants := make([]string, 0, len(in.Weights))
+	for v := range in.Weights {
+		if v != in.Control {
+			variants = append(variants, v)
+		}
+	}
+	slices.Sort(variants)
+	enough := func(a Arm) bool { return a.Exposed >= in.MinUnits && a.Converted >= in.MinConversions }
+	for _, v := range variants {
+		arm := byVariant[v]
+		arm.Variant = v
+		r := VariantResult{Arm: arm, Rate: arm.Rate()}
+		if c, err := CompareSequential(control, arm, in.MixingLift, in.Alpha); err == nil {
+			if prev, ok := in.MinPValues[v]; ok && prev < c.PValue {
+				c.PValue = prev
+			}
+			r.Comparison = &c
+		}
+		switch {
+		case out.SampleRatioError:
+			r.Status = ExperimentSampleRatioMismatch
+		case !enough(control) || !enough(arm) || r.Comparison == nil:
+			r.Status = ExperimentInsufficientData
+		case r.Comparison.PValue < in.Alpha:
+			r.Status = ExperimentSignificant
+		default:
+			r.Status = ExperimentNotSignificant
+		}
+		out.Variants = append(out.Variants, r)
+	}
+	return out
+}

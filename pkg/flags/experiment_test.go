@@ -158,6 +158,31 @@ func TestExperimentRule(t *testing.T) {
 	}
 }
 
+func TestExperimentResultsStatuses(t *testing.T) {
+	weights := map[string]int{"legacy": 50, "new": 50}
+	base := ResultsInput{Control: "legacy", Weights: weights, MixingLift: 0.02, Alpha: 0.05, SRMAlpha: 0.001, MinUnits: 100, MinConversions: 10}
+	for _, tc := range []struct {
+		name   string
+		arms   []Arm
+		minP   map[string]float64
+		status string
+	}{
+		{"too few units", []Arm{{Variant: "legacy", Exposed: 50, Converted: 20}, {Variant: "new", Exposed: 50, Converted: 30}}, nil, ExperimentInsufficientData},
+		{"only control exposed", []Arm{{Variant: "legacy", Exposed: 500, Converted: 50}}, nil, ExperimentSampleRatioMismatch},
+		{"clear win", []Arm{{Variant: "legacy", Exposed: 5000, Converted: 500}, {Variant: "new", Exposed: 5000, Converted: 650}}, nil, ExperimentSignificant},
+		{"no difference", []Arm{{Variant: "legacy", Exposed: 5000, Converted: 500}, {Variant: "new", Exposed: 5000, Converted: 505}}, nil, ExperimentNotSignificant},
+		{"earlier minimum p-value counts", []Arm{{Variant: "legacy", Exposed: 5000, Converted: 500}, {Variant: "new", Exposed: 5000, Converted: 505}}, map[string]float64{"new": 0.01}, ExperimentSignificant},
+		{"allocation mismatch", []Arm{{Variant: "legacy", Exposed: 5000, Converted: 500}, {Variant: "new", Exposed: 6000, Converted: 800}}, nil, ExperimentSampleRatioMismatch},
+	} {
+		in := base
+		in.Arms, in.MinPValues = tc.arms, tc.minP
+		got := ExperimentResults(in)
+		if len(got.Variants) != 1 || got.Variants[0].Status != tc.status {
+			t.Errorf("%s: %+v; want status %s", tc.name, got.Variants, tc.status)
+		}
+	}
+}
+
 func TestValidEventName(t *testing.T) {
 	for name, want := range map[string]bool{
 		"order_completed": true, "signup.v2": true, "a": true,

@@ -139,6 +139,120 @@ func (q *Queries) AddFlagEventUsage(ctx context.Context, db DBTX, arg AddFlagEve
 	return i, err
 }
 
+const addFlagExperimentUnits = `-- name: AddFlagExperimentUnits :exec
+INSERT INTO flag_experiment_units (experiment_id, customer_id, variant, first_exposed_at, crossed)
+SELECT $1::uuid, unnest($2::uuid[]), unnest($3::text[]),
+       unnest($4::timestamptz[]), unnest($5::boolean[])
+ON CONFLICT (experiment_id, customer_id) DO UPDATE
+SET crossed = flag_experiment_units.crossed OR EXCLUDED.crossed OR flag_experiment_units.variant <> EXCLUDED.variant
+`
+
+type AddFlagExperimentUnitsParams struct {
+	ExperimentID pgtype.UUID
+	CustomerIds  []pgtype.UUID
+	Variants     []string
+	FirstAts     []pgtype.Timestamptz
+	Crossed      []bool
+}
+
+// A customer seen with another variant than its first is marked crossed and
+// left out of results.
+// The arrays are parallel: the select list unnests them in step.
+func (q *Queries) AddFlagExperimentUnits(ctx context.Context, db DBTX, arg AddFlagExperimentUnitsParams) error {
+	_, err := db.Exec(ctx, addFlagExperimentUnits,
+		arg.ExperimentID,
+		arg.CustomerIds,
+		arg.Variants,
+		arg.FirstAts,
+		arg.Crossed,
+	)
+	return err
+}
+
+const advanceFlagExperiment = `-- name: AdvanceFlagExperiment :exec
+UPDATE flag_experiments
+SET telemetry_cursor = $1::timestamptz, min_p_values = $2::jsonb
+WHERE id = $3::uuid AND status = 'running'
+`
+
+type AdvanceFlagExperimentParams struct {
+	TelemetryCursor pgtype.Timestamptz
+	MinPValues      []byte
+	ID              pgtype.UUID
+}
+
+func (q *Queries) AdvanceFlagExperiment(ctx context.Context, db DBTX, arg AdvanceFlagExperimentParams) error {
+	_, err := db.Exec(ctx, advanceFlagExperiment, arg.TelemetryCursor, arg.MinPValues, arg.ID)
+	return err
+}
+
+const createFlagExperiment = `-- name: CreateFlagExperiment :one
+INSERT INTO flag_experiments (id, account_id, project_id, environment_id, key, flag_key, rule_id, control,
+    metric_event, mixing_lift, weights, created_by)
+SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+    $5::text, $6::text, $7::text, $8::text,
+    $9::text, $10::double precision, $11::jsonb, $12::text
+WHERE (SELECT count(*) FROM flag_experiments x WHERE x.environment_id = $4::uuid) < $13::bigint
+RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at
+`
+
+type CreateFlagExperimentParams struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	ProjectID      pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	Key            string
+	FlagKey        string
+	RuleID         string
+	Control        string
+	MetricEvent    string
+	MixingLift     float64
+	Weights        []byte
+	CreatedBy      string
+	MaxExperiments int64
+}
+
+func (q *Queries) CreateFlagExperiment(ctx context.Context, db DBTX, arg CreateFlagExperimentParams) (FlagExperiment, error) {
+	row := db.QueryRow(ctx, createFlagExperiment,
+		arg.ID,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Key,
+		arg.FlagKey,
+		arg.RuleID,
+		arg.Control,
+		arg.MetricEvent,
+		arg.MixingLift,
+		arg.Weights,
+		arg.CreatedBy,
+		arg.MaxExperiments,
+	)
+	var i FlagExperiment
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Key,
+		&i.FlagKey,
+		&i.RuleID,
+		&i.Control,
+		&i.MetricEvent,
+		&i.MetricKind,
+		&i.Status,
+		&i.MixingLift,
+		&i.Weights,
+		&i.MinPValues,
+		&i.TelemetryCursor,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.StoppedAt,
+	)
+	return i, err
+}
+
 const deleteFlagConversionsBefore = `-- name: DeleteFlagConversionsBefore :execrows
 DELETE FROM flag_conversion_daily
 WHERE account_id = $1::uuid AND day < $2::date
@@ -151,6 +265,24 @@ type DeleteFlagConversionsBeforeParams struct {
 
 func (q *Queries) DeleteFlagConversionsBefore(ctx context.Context, db DBTX, arg DeleteFlagConversionsBeforeParams) (int64, error) {
 	result, err := db.Exec(ctx, deleteFlagConversionsBefore, arg.AccountID, arg.Before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteFlagExperiment = `-- name: DeleteFlagExperiment :execrows
+DELETE FROM flag_experiments
+WHERE environment_id = $1::uuid AND key = $2::text AND status <> 'running'
+`
+
+type DeleteFlagExperimentParams struct {
+	EnvironmentID pgtype.UUID
+	Key           string
+}
+
+func (q *Queries) DeleteFlagExperiment(ctx context.Context, db DBTX, arg DeleteFlagExperimentParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteFlagExperiment, arg.EnvironmentID, arg.Key)
 	if err != nil {
 		return 0, err
 	}
@@ -243,6 +375,285 @@ func (q *Queries) FlagEventNamesKnown(ctx context.Context, db DBTX, arg FlagEven
 	return items, nil
 }
 
+const flagExperimentArms = `-- name: FlagExperimentArms :many
+SELECT variant, count(*)::bigint AS exposed, count(converted_at)::bigint AS converted
+FROM flag_experiment_units
+WHERE experiment_id = $1::uuid AND NOT crossed
+GROUP BY variant
+ORDER BY variant
+`
+
+type FlagExperimentArmsRow struct {
+	Variant   string
+	Exposed   int64
+	Converted int64
+}
+
+func (q *Queries) FlagExperimentArms(ctx context.Context, db DBTX, experimentID pgtype.UUID) ([]FlagExperimentArmsRow, error) {
+	rows, err := db.Query(ctx, flagExperimentArms, experimentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FlagExperimentArmsRow{}
+	for rows.Next() {
+		var i FlagExperimentArmsRow
+		if err := rows.Scan(&i.Variant, &i.Exposed, &i.Converted); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const flagExperimentCrossedUnits = `-- name: FlagExperimentCrossedUnits :one
+SELECT count(*)::bigint FROM flag_experiment_units
+WHERE experiment_id = $1::uuid AND crossed
+`
+
+func (q *Queries) FlagExperimentCrossedUnits(ctx context.Context, db DBTX, experimentID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, flagExperimentCrossedUnits, experimentID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const flagExperimentExposures = `-- name: FlagExperimentExposures :many
+SELECT t.platform_tenant_id::uuid AS customer_id, (e->>'value')::text AS variant,
+       min(t.received_at)::timestamptz AS first_at
+FROM request_telemetry t
+JOIN apps a ON a.id = t.app_id
+JOIN deployments d ON d.id = t.deployment_id
+CROSS JOIN LATERAL jsonb_array_elements(t.flag_evidence) AS decision(e)
+WHERE t.account_id = $1::uuid
+  AND a.project_id = $2::uuid
+  AND (d.scope = $3::text OR (d.scope = 'default' AND $3::text = 'production'))
+  AND t.received_at > $4::timestamptz
+  AND t.received_at <= $5::timestamptz
+  AND t.platform_tenant_id IS NOT NULL
+  AND e->>'flag' = $6::text
+  AND e->>'rule_id' = $7::text
+  AND jsonb_typeof(e->'value') = 'string'
+GROUP BY 1, 2
+ORDER BY 3
+LIMIT $8::int
+`
+
+type FlagExperimentExposuresParams struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	ReceivedFrom    pgtype.Timestamptz
+	ReceivedUntil   pgtype.Timestamptz
+	FlagKey         string
+	RuleID          string
+	MaxRows         int32
+}
+
+type FlagExperimentExposuresRow struct {
+	CustomerID pgtype.UUID
+	Variant    string
+	FirstAt    pgtype.Timestamptz
+}
+
+// First and last exposure per verified customer and variant to the
+// experiment's rule in request telemetry received in (from, until].
+func (q *Queries) FlagExperimentExposures(ctx context.Context, db DBTX, arg FlagExperimentExposuresParams) ([]FlagExperimentExposuresRow, error) {
+	rows, err := db.Query(ctx, flagExperimentExposures,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentSlug,
+		arg.ReceivedFrom,
+		arg.ReceivedUntil,
+		arg.FlagKey,
+		arg.RuleID,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FlagExperimentExposuresRow{}
+	for rows.Next() {
+		var i FlagExperimentExposuresRow
+		if err := rows.Scan(&i.CustomerID, &i.Variant, &i.FirstAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getFlagExperiment = `-- name: GetFlagExperiment :one
+SELECT id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at FROM flag_experiments
+WHERE environment_id = $1::uuid AND key = $2::text
+`
+
+type GetFlagExperimentParams struct {
+	EnvironmentID pgtype.UUID
+	Key           string
+}
+
+func (q *Queries) GetFlagExperiment(ctx context.Context, db DBTX, arg GetFlagExperimentParams) (FlagExperiment, error) {
+	row := db.QueryRow(ctx, getFlagExperiment, arg.EnvironmentID, arg.Key)
+	var i FlagExperiment
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Key,
+		&i.FlagKey,
+		&i.RuleID,
+		&i.Control,
+		&i.MetricEvent,
+		&i.MetricKind,
+		&i.Status,
+		&i.MixingLift,
+		&i.Weights,
+		&i.MinPValues,
+		&i.TelemetryCursor,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.StoppedAt,
+	)
+	return i, err
+}
+
+const listFlagExperiments = `-- name: ListFlagExperiments :many
+SELECT id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at FROM flag_experiments
+WHERE environment_id = $1::uuid
+ORDER BY created_at DESC, key
+`
+
+func (q *Queries) ListFlagExperiments(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]FlagExperiment, error) {
+	rows, err := db.Query(ctx, listFlagExperiments, environmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FlagExperiment{}
+	for rows.Next() {
+		var i FlagExperiment
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.Key,
+			&i.FlagKey,
+			&i.RuleID,
+			&i.Control,
+			&i.MetricEvent,
+			&i.MetricKind,
+			&i.Status,
+			&i.MixingLift,
+			&i.Weights,
+			&i.MinPValues,
+			&i.TelemetryCursor,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.StoppedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunningFlagExperiments = `-- name: ListRunningFlagExperiments :many
+SELECT x.id, x.account_id, x.project_id, x.environment_id, x.key, x.flag_key, x.rule_id, x.control, x.metric_event, x.metric_kind, x.status, x.mixing_lift, x.weights, x.min_p_values, x.telemetry_cursor, x.created_by, x.created_at, x.started_at, x.stopped_at, e.slug AS environment_slug, a.plan::text AS plan
+FROM flag_experiments x
+JOIN project_environments e ON e.id = x.environment_id
+JOIN accounts a ON a.id = x.account_id
+WHERE x.status = 'running' AND x.id > $1::uuid
+ORDER BY x.id
+LIMIT $2::int
+`
+
+type ListRunningFlagExperimentsParams struct {
+	AfterID pgtype.UUID
+	MaxRows int32
+}
+
+type ListRunningFlagExperimentsRow struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	Key             string
+	FlagKey         string
+	RuleID          string
+	Control         string
+	MetricEvent     string
+	MetricKind      string
+	Status          string
+	MixingLift      float64
+	Weights         []byte
+	MinPValues      []byte
+	TelemetryCursor pgtype.Timestamptz
+	CreatedBy       string
+	CreatedAt       pgtype.Timestamptz
+	StartedAt       pgtype.Timestamptz
+	StoppedAt       pgtype.Timestamptz
+	EnvironmentSlug string
+	Plan            string
+}
+
+func (q *Queries) ListRunningFlagExperiments(ctx context.Context, db DBTX, arg ListRunningFlagExperimentsParams) ([]ListRunningFlagExperimentsRow, error) {
+	rows, err := db.Query(ctx, listRunningFlagExperiments, arg.AfterID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRunningFlagExperimentsRow{}
+	for rows.Next() {
+		var i ListRunningFlagExperimentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.Key,
+			&i.FlagKey,
+			&i.RuleID,
+			&i.Control,
+			&i.MetricEvent,
+			&i.MetricKind,
+			&i.Status,
+			&i.MixingLift,
+			&i.Weights,
+			&i.MinPValues,
+			&i.TelemetryCursor,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.StoppedAt,
+			&i.EnvironmentSlug,
+			&i.Plan,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockFlagEventUsage = `-- name: LockFlagEventUsage :one
 SELECT accepted, dropped FROM flag_event_usage
 WHERE account_id = $1::uuid AND month = $2::date
@@ -263,5 +674,131 @@ func (q *Queries) LockFlagEventUsage(ctx context.Context, db DBTX, arg LockFlagE
 	row := db.QueryRow(ctx, lockFlagEventUsage, arg.AccountID, arg.Month)
 	var i LockFlagEventUsageRow
 	err := row.Scan(&i.Accepted, &i.Dropped)
+	return i, err
+}
+
+const markFlagExperimentConversions = `-- name: MarkFlagExperimentConversions :execrows
+UPDATE flag_experiment_units u
+SET converted_at = GREATEST(c.first_at, u.first_exposed_at)
+FROM flag_conversion_daily c
+WHERE u.experiment_id = $1::uuid
+  AND u.converted_at IS NULL
+  AND c.environment_id = $2::uuid
+  AND c.event_name = $3::text
+  AND c.customer_id = u.customer_id
+  AND c.day >= $4::date
+  AND c.last_at >= u.first_exposed_at
+`
+
+type MarkFlagExperimentConversionsParams struct {
+	ExperimentID  pgtype.UUID
+	EnvironmentID pgtype.UUID
+	EventName     string
+	SinceDay      pgtype.Date
+}
+
+// A unit converts when the metric event was sent on or after its first
+// exposure.
+func (q *Queries) MarkFlagExperimentConversions(ctx context.Context, db DBTX, arg MarkFlagExperimentConversionsParams) (int64, error) {
+	result, err := db.Exec(ctx, markFlagExperimentConversions,
+		arg.ExperimentID,
+		arg.EnvironmentID,
+		arg.EventName,
+		arg.SinceDay,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const startFlagExperiment = `-- name: StartFlagExperiment :one
+UPDATE flag_experiments x
+SET status = 'running', started_at = $1::timestamptz, telemetry_cursor = $1::timestamptz,
+    weights = $2::jsonb
+WHERE x.environment_id = $3::uuid AND x.key = $4::text AND x.status = 'draft'
+  AND (SELECT count(*) FROM flag_experiments r WHERE r.environment_id = $3::uuid AND r.status = 'running') < $5::bigint
+RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at
+`
+
+type StartFlagExperimentParams struct {
+	Now           pgtype.Timestamptz
+	Weights       []byte
+	EnvironmentID pgtype.UUID
+	Key           string
+	MaxRunning    int64
+}
+
+// Starts a draft while the environment runs fewer than max_running.
+func (q *Queries) StartFlagExperiment(ctx context.Context, db DBTX, arg StartFlagExperimentParams) (FlagExperiment, error) {
+	row := db.QueryRow(ctx, startFlagExperiment,
+		arg.Now,
+		arg.Weights,
+		arg.EnvironmentID,
+		arg.Key,
+		arg.MaxRunning,
+	)
+	var i FlagExperiment
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Key,
+		&i.FlagKey,
+		&i.RuleID,
+		&i.Control,
+		&i.MetricEvent,
+		&i.MetricKind,
+		&i.Status,
+		&i.MixingLift,
+		&i.Weights,
+		&i.MinPValues,
+		&i.TelemetryCursor,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.StoppedAt,
+	)
+	return i, err
+}
+
+const stopFlagExperiment = `-- name: StopFlagExperiment :one
+UPDATE flag_experiments
+SET status = 'stopped', stopped_at = $1::timestamptz
+WHERE environment_id = $2::uuid AND key = $3::text AND status = 'running'
+RETURNING id, account_id, project_id, environment_id, key, flag_key, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, min_p_values, telemetry_cursor, created_by, created_at, started_at, stopped_at
+`
+
+type StopFlagExperimentParams struct {
+	Now           pgtype.Timestamptz
+	EnvironmentID pgtype.UUID
+	Key           string
+}
+
+func (q *Queries) StopFlagExperiment(ctx context.Context, db DBTX, arg StopFlagExperimentParams) (FlagExperiment, error) {
+	row := db.QueryRow(ctx, stopFlagExperiment, arg.Now, arg.EnvironmentID, arg.Key)
+	var i FlagExperiment
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.Key,
+		&i.FlagKey,
+		&i.RuleID,
+		&i.Control,
+		&i.MetricEvent,
+		&i.MetricKind,
+		&i.Status,
+		&i.MixingLift,
+		&i.Weights,
+		&i.MinPValues,
+		&i.TelemetryCursor,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.StartedAt,
+		&i.StoppedAt,
+	)
 	return i, err
 }

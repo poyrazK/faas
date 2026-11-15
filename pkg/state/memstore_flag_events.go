@@ -11,6 +11,9 @@ type memFlagEvents struct {
 	usage map[string][2]int64        // account|month -> accepted, dropped
 	names map[string]map[string]bool // environment -> names
 	daily map[flagConversionKeyMem]*FlagConversionDay
+	// experiments by ID, and units by experiment ID then customer.
+	experiments map[string]*FlagExperiment
+	units       map[string]map[string]*memFlagExperimentUnit
 }
 
 type flagConversionKeyMem struct {
