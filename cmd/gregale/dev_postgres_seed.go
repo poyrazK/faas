@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -42,6 +43,7 @@ type devSeedOps struct {
 	getBinding     func(context.Context, string) (api.ManagedPostgresBinding, error)
 	createTask     func(context.Context, string, api.CreateAppTaskRequest) (api.AppTaskResponse, error)
 	getTask        func(context.Context, string, string) (api.AppTaskResponse, error)
+	cancelTask     func(context.Context, string, string) (api.AppTaskResponse, error)
 	pollInterval   time.Duration
 	bindingTimeout time.Duration
 	taskTimeout    time.Duration
@@ -52,6 +54,7 @@ func clientDevSeedOps(client *Client) devSeedOps {
 		getBinding:     client.GetManagedPostgresBinding,
 		createTask:     client.CreateAppTask,
 		getTask:        client.GetAppTask,
+		cancelTask:     client.CancelAppTask,
 		pollInterval:   devSeedPollInterval,
 		bindingTimeout: devSeedBindingTimeout,
 		taskTimeout:    devSeedTaskTimeout,
@@ -197,10 +200,13 @@ func runDevPostgresSeed(ctx context.Context, ops devSeedOps, slug string, postgr
 	for !task.Status.Terminal() {
 		select {
 		case <-waitCtx.Done():
+			// Never leave a seed running that this CLI no longer tracks: the
+			// retry after the next live sync would run beside it.
+			cancelDevSeedTask(ops, slug, task.ID)
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return task, ctx.Err()
 			}
-			return task, fmt.Errorf("database seed task %s is still running after %s; the seed will be retried after the next live sync", task.ID, ops.taskTimeout)
+			return task, fmt.Errorf("database seed task %s did not finish within %s and was cancelled; the seed will be retried after the next live sync", task.ID, ops.taskTimeout)
 		case <-time.After(ops.pollInterval):
 		}
 		next, getErr := ops.getTask(waitCtx, slug, task.ID)
@@ -216,6 +222,54 @@ func runDevPostgresSeed(ctx context.Context, ops devSeedOps, slug string, postgr
 		return task, devSeedTaskError(task)
 	}
 	return task, nil
+}
+
+// devSeedRunner tracks whether the session still owes a seed. It lets one
+// seed run at a time and is safe to use from the background seed goroutine.
+type devSeedRunner struct {
+	mu      sync.Mutex
+	pending bool
+	force   bool
+	running bool
+}
+
+func newDevSeedRunner(pending, force bool) *devSeedRunner {
+	return &devSeedRunner{pending: pending, force: force}
+}
+
+// start claims the next seed run and returns whether it must ignore the
+// local marker (--reseed). ok is false when no seed is owed or one is running.
+func (r *devSeedRunner) start() (force, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.pending || r.running {
+		return false, false
+	}
+	r.running = true
+	return r.force, true
+}
+
+// finish records a run's outcome: done settles the seed for this session,
+// failed leaves it owed for the next live sync.
+func (r *devSeedRunner) finish(outcome devSeedOutcome) devSeedOutcome {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.running = false
+	if outcome == devSeedOutcomeDone {
+		r.pending, r.force = false, false
+	}
+	return outcome
+}
+
+// cancelDevSeedTask stops a seed task best effort, outside the caller's
+// (already finished) context.
+func cancelDevSeedTask(ops devSeedOps, slug, taskID string) {
+	if ops.cancelTask == nil || taskID == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, _ = ops.cancelTask(ctx, slug, taskID)
 }
 
 func devSeedTaskError(task api.AppTaskResponse) error {
