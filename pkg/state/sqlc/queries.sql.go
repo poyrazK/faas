@@ -4319,9 +4319,9 @@ func (q *Queries) CheckExclusiveWorkRuntime(ctx context.Context, db DBTX, arg Ch
 const checkedRollbackCurrentMatches = `-- name: CheckedRollbackCurrentMatches :one
 SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=$1 AND d.app_id=$2
  AND d.deleted_at IS NULL
- AND d.scope=$3 AND d.status='live' AND d.traffic_percent=100
+ AND d.scope=ANY($3::text[]) AND d.status='live' AND d.traffic_percent=100
  AND (d.canary_total_steps=0 OR d.canary_step>=d.canary_total_steps) AND d.rollout_state NOT IN ('pending','rolling_out'))
- AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=$2 AND d.scope=$3
+ AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=$2 AND d.scope=ANY($3::text[])
  AND d.status='live' AND d.id<>$1 AND d.id<>$4
  AND (d.traffic_percent>0 OR d.rollout_state IN ('pending','rolling_out')))
 `
@@ -4329,7 +4329,7 @@ SELECT EXISTS(SELECT 1 FROM deployments d WHERE d.id=$1 AND d.app_id=$2
 type CheckedRollbackCurrentMatchesParams struct {
 	CurrentID pgtype.UUID
 	AppID     pgtype.UUID
-	Scope     string
+	Scopes    []string
 	TargetID  pgtype.UUID
 }
 
@@ -4337,7 +4337,7 @@ func (q *Queries) CheckedRollbackCurrentMatches(ctx context.Context, db DBTX, ar
 	row := db.QueryRow(ctx, checkedRollbackCurrentMatches,
 		arg.CurrentID,
 		arg.AppID,
-		arg.Scope,
+		arg.Scopes,
 		arg.TargetID,
 	)
 	var column_1 pgtype.Bool
@@ -60144,16 +60144,16 @@ func (q *Queries) LockCheckedRollbackApp(ctx context.Context, db DBTX, arg LockC
 }
 
 const lockCheckedRollbackScope = `-- name: LockCheckedRollbackScope :many
-SELECT id FROM deployments WHERE app_id=$1 AND scope=$2 ORDER BY id FOR UPDATE
+SELECT id FROM deployments WHERE app_id=$1 AND scope=ANY($2::text[]) ORDER BY id FOR UPDATE
 `
 
 type LockCheckedRollbackScopeParams struct {
-	AppID pgtype.UUID
-	Scope string
+	AppID  pgtype.UUID
+	Scopes []string
 }
 
 func (q *Queries) LockCheckedRollbackScope(ctx context.Context, db DBTX, arg LockCheckedRollbackScopeParams) ([]pgtype.UUID, error) {
-	rows, err := db.Query(ctx, lockCheckedRollbackScope, arg.AppID, arg.Scope)
+	rows, err := db.Query(ctx, lockCheckedRollbackScope, arg.AppID, arg.Scopes)
 	if err != nil {
 		return nil, err
 	}
@@ -104524,17 +104524,17 @@ UPDATE deployments d SET traffic_percent=0,status=CASE WHEN EXISTS(SELECT 1 FROM
  JOIN project_release_sets rs ON rs.id=rm.release_id WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>clock_timestamp()))
  OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
  THEN 'live' ELSE 'superseded' END
- WHERE d.app_id=$1 AND d.scope=$2 AND d.status='live' AND d.id<>$3
+ WHERE d.app_id=$1 AND d.scope=ANY($2::text[]) AND d.status='live' AND d.id<>$3
 `
 
 type RetireCheckedRollbackSiblingsParams struct {
 	AppID    pgtype.UUID
-	Scope    string
+	Scopes   []string
 	TargetID pgtype.UUID
 }
 
 func (q *Queries) RetireCheckedRollbackSiblings(ctx context.Context, db DBTX, arg RetireCheckedRollbackSiblingsParams) error {
-	_, err := db.Exec(ctx, retireCheckedRollbackSiblings, arg.AppID, arg.Scope, arg.TargetID)
+	_, err := db.Exec(ctx, retireCheckedRollbackSiblings, arg.AppID, arg.Scopes, arg.TargetID)
 	return err
 }
 
