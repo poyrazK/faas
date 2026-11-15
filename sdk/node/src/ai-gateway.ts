@@ -150,3 +150,95 @@ export async function aiGatewayFeedback(feedback: AIGatewayFeedback): Promise<vo
   });
   if (!response.ok) throw new AIGatewayError(`feedback was refused with status ${response.status}`);
 }
+
+/** Response header naming the managed prompt version that served a call (ADR 20261114180740). */
+export const AI_PROMPT_VERSION_HEADER = 'X-Gregale-AI-Prompt-Version';
+
+const AI_PROMPT_NAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/** Options of one managed prompt call. */
+export interface AIPromptRunOptions {
+  /** OpenAI chat messages appended after the template's, such as the conversation so far. */
+  messages?: unknown[];
+  /** Pin a version instead of the live one (or the canary's share of calls). */
+  version?: number;
+  /** The end user, conversation, tags and trace of the call. */
+  caller?: AIGatewayCaller;
+  /** Environment to read GREGALE_OUTBOUND_URL from; defaults to process.env. */
+  env?: Record<string, string | undefined>;
+  fetch?: typeof fetch;
+}
+
+/** The answer of a managed prompt call. */
+export interface AIPromptResult {
+  /** The OpenAI chat completions response. */
+  completion: unknown;
+  /** The first choice's message text, or '' when it has none. */
+  text: string;
+  /** The version that served the call. */
+  version: number;
+  /** The call's ID, which aiGatewayFeedback names. */
+  callId: string | null;
+}
+
+/** A managed prompt the app calls by name at `$GREGALE_OUTBOUND_URL/p/{name}` (ADR 20261114180740). */
+export interface AIPrompt {
+  /** Render the prompt with these variables and return the model's answer. */
+  run(variables?: Record<string, string>, options?: AIPromptRunOptions): Promise<AIPromptResult>;
+  /** The same call with `stream: true`; the response body is OpenAI chat completions SSE. */
+  stream(variables?: Record<string, string>, options?: AIPromptRunOptions): Promise<Response>;
+}
+
+async function callAIPrompt(
+  name: string,
+  variables: Record<string, string> | undefined,
+  options: AIPromptRunOptions,
+  stream: boolean,
+): Promise<Response> {
+  const base = (options.env ?? process.env).GREGALE_OUTBOUND_URL;
+  if (!base) throw new AIGatewayError('GREGALE_OUTBOUND_URL is not set; the outbound relay is only available inside Gregale apps');
+  if (options.version !== undefined && (!Number.isInteger(options.version) || options.version < 1)) {
+    throw new AIGatewayError('version must be a positive integer');
+  }
+  const body: Record<string, unknown> = {};
+  if (variables !== undefined && Object.keys(variables).length > 0) body.variables = variables;
+  if (options.messages !== undefined && options.messages.length > 0) body.messages = options.messages;
+  if (options.version !== undefined) body.version = options.version;
+  if (stream) body.stream = true;
+  const headers = { 'Content-Type': 'application/json', ...aiGatewayHeaders(options.caller ?? {}) };
+  const response = await (options.fetch ?? fetch)(`${base.replace(/\/+$/, '')}/p/${name}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (response.ok) return response;
+  let code = '';
+  try {
+    const problem = (await response.json()) as { code?: unknown };
+    if (typeof problem.code === 'string') code = ` (${problem.code})`;
+  } catch {
+    // Not a problem document.
+  }
+  throw new AIGatewayError(`prompt call was refused with status ${response.status}${code}`);
+}
+
+/** A managed prompt by name, such as `aiPrompt('support-reply').run({ question })`. */
+export function aiPrompt(name: string): AIPrompt {
+  if (!AI_PROMPT_NAME_PATTERN.test(name)) throw new AIGatewayError('a prompt name is a DNS label: lowercase letters, digits and -');
+  return {
+    async run(variables, options = {}) {
+      const response = await callAIPrompt(name, variables, options, false);
+      const completion = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
+      const content = completion?.choices?.[0]?.message?.content;
+      return {
+        completion,
+        text: typeof content === 'string' ? content : '',
+        version: Number(response.headers.get(AI_PROMPT_VERSION_HEADER) ?? 0),
+        callId: response.headers.get(AI_CALL_HEADER),
+      };
+    },
+    stream(variables, options = {}) {
+      return callAIPrompt(name, variables, options, true);
+    },
+  };
+}

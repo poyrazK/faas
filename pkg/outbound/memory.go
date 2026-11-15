@@ -123,6 +123,8 @@ type MemoryBackend struct {
 	// and log drains (ADR-1340), bounded like the request log.
 	routeAttempts []AIRouteAttemptRecord
 	logExports    []AILogExport
+	// promptAttempts keep prompt call attempts (ADR 20261114180740).
+	promptAttempts []AIPromptAttemptRecord
 	// promptPrefixes are shared prompt-prefix sightings (ADR 20261019132139).
 	promptPrefixes map[memoryPromptPrefixKey]time.Time
 }
@@ -743,6 +745,9 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 	if record.Route != nil && len(b.routeAttempts) < memoryAIRequestLogMax {
 		b.routeAttempts = append(b.routeAttempts, *record.Route)
 	}
+	if record.Prompt != nil && len(b.promptAttempts) < memoryAIRequestLogMax {
+		b.promptAttempts = append(b.promptAttempts, *record.Prompt)
+	}
 	if record.Export != nil && len(b.logExports) < memoryAIRequestLogMax {
 		b.logExports = append(b.logExports, *record.Export)
 	}
@@ -800,6 +805,14 @@ func (s *memoryState) recordTrace(record AIUsageRecord, today string) {
 		s.traces[record.TraceID] = trace
 	}
 	trace.add(record)
+}
+
+// AIPromptAttempts reports the prompt call attempts settled so far, for
+// tests.
+func (b *MemoryBackend) AIPromptAttempts() []AIPromptAttemptRecord {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]AIPromptAttemptRecord(nil), b.promptAttempts...)
 }
 
 // AIRouteAttempts reports the canary-tracked route attempts settled so far,

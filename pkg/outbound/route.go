@@ -188,6 +188,12 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusServiceUnavailable, "outbound_route_unavailable", "AI route is temporarily unavailable", "1")
 		return
 	}
+	h.serveResolvedRoute(w, r, route, providerPath)
+}
+
+// serveResolvedRoute serves a call through a route the caller may use: a
+// stored route, or a managed prompt's one-target route (ADR 20261114180740).
+func (h *Handler) serveResolvedRoute(w http.ResponseWriter, r *http.Request, route AIRoute, providerPath string) {
 	body, replayable, err := bufferRouteBody(r)
 	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "outbound_request_unreadable", "Outbound request body could not be read", "")

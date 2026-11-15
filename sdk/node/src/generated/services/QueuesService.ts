@@ -15,7 +15,9 @@ import type { DeadLetterEventsResponse } from '../models/DeadLetterEventsRespons
 import type { DeadLetterPurgeResponse } from '../models/DeadLetterPurgeResponse.js';
 import type { DeadLetterReplayAllResponse } from '../models/DeadLetterReplayAllResponse.js';
 import type { OrgQueueUsageResponse } from '../models/OrgQueueUsageResponse.js';
+import type { PostgresChangesResponse } from '../models/PostgresChangesResponse.js';
 import type { Problem } from '../models/Problem.js';
+import type { PutPostgresChangesRequest } from '../models/PutPostgresChangesRequest.js';
 import type { QueueBindingResponse } from '../models/QueueBindingResponse.js';
 import type { QueueBindingStatusResponse } from '../models/QueueBindingStatusResponse.js';
 import type { QueueDeadLetterResponse } from '../models/QueueDeadLetterResponse.js';
@@ -292,6 +294,165 @@ export class QueuesService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show the app's Postgres change capture and its relay health.
+   * @returns PostgresChangesResponse The app's Postgres change capture.
+   * @throws ApiError
+   */
+  public static getPostgresChanges({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<PostgresChangesResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/postgres-changes',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Capture Postgres row changes into one of the app's queues.
+   * Declares which table columns are captured and the queue that receives each change. For a managed database Gregale installs capture and connects at once; for a database you run, finish with `gregale postgres-changes install`.
+   * @returns PostgresChangesResponse Capture declared; for a managed database, installed and connected.
+   * @throws ApiError
+   */
+  public static putPostgresChanges({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: PutPostgresChangesRequest,
+  }): CancelablePromise<PostgresChangesResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/postgres-changes',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Stop capturing Postgres changes for the app.
+   * Pauses delivery. On a managed database the capture triggers and the relay login are removed; on a database you run, use `gregale postgres-changes uninstall`.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deletePostgresChanges({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/postgres-changes',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Store the relay login for a database you run; credentials are never returned.
+   * The URL must log in as the relay role the install created and verify TLS. Owner credentials are refused.
+   * @returns void
+   * @throws ApiError
+   */
+  public static putPostgresChangesConnection({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: {
+      connection_url: string;
+    },
+  }): CancelablePromise<void> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/postgres-changes/connection',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
