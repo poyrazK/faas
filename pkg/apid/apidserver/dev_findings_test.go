@@ -14,7 +14,7 @@ import (
 
 const devFindingsWorkspace = "0123456789abcdef0123456789abcdef"
 
-func createDevSessionForTest(t *testing.T, e *apidserver.TestEnv, project string) api.DevSessionResponse {
+func createDevSessionForTest(t *testing.T, e apidserver.TestEnv, project string) api.DevSessionResponse {
 	t.Helper()
 	rec := e.Do(t, "PUT", "/v1/dev/sessions/"+project, api.UpsertDevSessionRequest{WorkspaceID: devFindingsWorkspace}, nil)
 	if rec.Code != http.StatusCreated {
