@@ -119,10 +119,32 @@ func (j *hostedMCPJourney) agentKeySession(t *testing.T) {
 	}
 }
 
+// listsAccountApps pages through gregale_list_apps: the tool returns one
+// bounded page sorted by slug, and a busy account's probe can sit past the
+// first (the 2026-11-15 run's account held 95 apps).
 func (j *hostedMCPJourney) listsAccountApps(t *testing.T) {
-	if text := j.session.callTool(t, "gregale_list_apps", map[string]any{}); !strings.Contains(text, j.probe) {
-		t.Fatalf("gregale_list_apps does not name the probe app %s: %s", j.probe, tail(text, 400))
+	var last string
+	for offset, pages := 0, 0; pages < 50; pages++ {
+		result := j.session.call(t, "tools/call", map[string]any{"name": "gregale_list_apps", "arguments": map[string]any{"offset": offset}})
+		var text strings.Builder
+		for _, c := range asList(result["content"]) {
+			text.WriteString(str(c, "text"))
+		}
+		if field(result, "isError") == true {
+			t.Fatalf("gregale_list_apps failed: %s", tail(text.String(), 400))
+		}
+		page, _ := json.Marshal(result["structuredContent"])
+		last = text.String() + string(page)
+		if strings.Contains(last, j.probe) {
+			return
+		}
+		next, ok := field(result, "structuredContent.next_offset").(float64)
+		if !ok || int(next) <= offset {
+			break
+		}
+		offset = int(next)
 	}
+	t.Fatalf("gregale_list_apps does not name the probe app %s on any page: %s", j.probe, tail(last, 400))
 }
 
 // nonAgentKeyRefused: a key without the agent scope is refused with a
