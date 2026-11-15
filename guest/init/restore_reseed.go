@@ -78,11 +78,14 @@ var restoreReseedThread atomic.Bool
 // agent (ADR-20261110150000). A workload may
 // opt out with GREGALE_RESTORE_RESEED=off, which the docs flag as unsafe for
 // any snapshot-restored app that generates secrets or nonces.
-func StampRestoreReseedEnv(env []string) []string {
+//
+// commands are the workload's argv; a JVM named there is checked
+// for libinstrument along with JAVA_HOME, PATH and the usual install paths.
+func StampRestoreReseedEnv(env []string, commands ...string) []string {
 	if !restoreReseedEnabled.Load() {
 		return env
 	}
-	env = stampRestoreReseedEnv(env, RestoreReseedAssetDir, RestoreReseedSocketPath)
+	env = stampRestoreReseedEnv(env, RestoreReseedAssetDir, RestoreReseedSocketPath, commands...)
 	if restoreReseedThread.Load() {
 		env = stampRestoreReseedMode(env, restoreReseedThreadMode)
 	}
@@ -98,7 +101,7 @@ func stampRestoreReseedMode(env []string, mode string) []string {
 	return setEnvValue(env, restoreReseedModeEnv, mode)
 }
 
-func stampRestoreReseedEnv(env []string, assetDir, socketPath string) []string {
+func stampRestoreReseedEnv(env []string, assetDir, socketPath string, commands ...string) []string {
 	if strings.EqualFold(envValue(env, restoreReseedOptOutEnv), "off") {
 		return env
 	}
@@ -116,15 +119,23 @@ func stampRestoreReseedEnv(env []string, assetDir, socketPath string) []string {
 			pythonPath = pythonDir + string(os.PathListSeparator) + pythonPath
 		}
 	}
-	// Every JVM loads the agent from JAVA_TOOL_OPTIONS (ADR-20261110150000).
-	javaAgent := "-javaagent:" + filepath.Join(assetDir, restoreReseedJavaAgent)
-	javaOptions := envValue(env, "JAVA_TOOL_OPTIONS")
-	if !strings.Contains(javaOptions, javaAgent) {
-		javaOptions = strings.TrimSpace(javaOptions + " " + javaAgent)
-	}
+	// Every JVM loads the agent from JAVA_TOOL_OPTIONS (ADR-20261110150000),
+	// unless the image has a JVM that cannot load any agent: a jlink runtime
+	// without java.instrument refuses to start when one is named. Such a JVM
+	// runs unreseeded, and the coverage report names it on every wake.
 	env = setEnvValue(env, "NODE_OPTIONS", nodeOptions)
 	env = setEnvValue(env, "PYTHONPATH", pythonPath)
-	env = setEnvValue(env, "JAVA_TOOL_OPTIONS", javaOptions)
+	if java := javaWithoutInstrument(restoreReseedImageRoot, env, commands); java != "" {
+		slog.Warn("restore reseed: java agent left out; this JVM has no java.instrument module and would not start with it",
+			"java", java, "adr", "ADR-20261110150000")
+	} else {
+		javaAgent := "-javaagent:" + filepath.Join(assetDir, restoreReseedJavaAgent)
+		javaOptions := envValue(env, "JAVA_TOOL_OPTIONS")
+		if !strings.Contains(javaOptions, javaAgent) {
+			javaOptions = strings.TrimSpace(javaOptions + " " + javaAgent)
+		}
+		env = setEnvValue(env, "JAVA_TOOL_OPTIONS", javaOptions)
+	}
 	return setEnvValue(env, restoreReseedSocketEnv, socketPath)
 }
 

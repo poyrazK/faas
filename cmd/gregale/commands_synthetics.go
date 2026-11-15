@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const syntheticsUsage = "usage: gregale alert check <list|create|status|pause|resume|rm> --app <slug>"
+const syntheticsUsage = "usage: gregale alert check <list|create|status|pause|resume|rm> [--app <slug>]"
 
 // cmdSynthetics implements `gregale synthetics` (ADR-748): scheduled HTTP
 // checks against an app's own hostname.
@@ -43,12 +43,13 @@ func cmdSynthetics(args []string) int {
 
 func cmdSyntheticsList(args []string) int {
 	fs := newFlagSet("synthetics list", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale alert check list --app <slug>", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check list [--app <slug>]", "synthetics")
 		return 1
 	}
 	client, err := authedClient()
@@ -90,7 +91,7 @@ func describeExpected(status int) string {
 
 func cmdSyntheticsCreate(args []string) int {
 	fs := newFlagSet("synthetics create", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	name := fs.String("name", "", "check name (required)")
 	path := fs.String("path", "/", "path on the app, e.g. /healthz")
 	method := fs.String("method", "GET", "GET or HEAD")
@@ -100,8 +101,9 @@ func cmdSyntheticsCreate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || *name == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale alert check create --app <slug> --name <name> [--path /healthz] [--method GET|HEAD] [--expect-status N] [--timeout-ms N] [--every-minutes 5|15|60]", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check create [--app <slug>] --name <name> [--path /healthz] [--method GET|HEAD] [--expect-status N] [--timeout-ms N] [--every-minutes 5|15|60]", "synthetics")
 		return 1
 	}
 	// The API's check names interval_seconds and [300 900 3600], which
@@ -132,18 +134,22 @@ func cmdSyntheticsCreate(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Created check %s (%s): %s %s every %d minutes, expecting %s\n", check.Name, check.ID, check.Method, check.URL, check.IntervalSeconds/60, describeExpected(check.ExpectedStatus))
 	_, _ = fmt.Fprintln(osStdout, "Each probe is a normal request; one that wakes a parked app is billed like any other.")
+	if check.Warning != "" {
+		PrintWarn(os.Stderr, "%s", check.Warning)
+	}
 	return 0
 }
 
 func cmdSyntheticsSetEnabled(args []string, enabled bool) int {
 	verb := map[bool]string{true: "resume", false: "pause"}[enabled]
 	fs := newFlagSet("synthetics "+verb, flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert check "+verb+" --app <slug> <check-id|name>", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check "+verb+" [--app <slug>] <check-id|name>", "synthetics")
 		return 1
 	}
 	client, err := authedClient()
@@ -167,14 +173,15 @@ func cmdSyntheticsSetEnabled(args []string, enabled bool) int {
 
 func cmdSyntheticsRm(args []string) int {
 	fs := newFlagSet("synthetics rm", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	// rm never prompts; --yes is accepted like webhooks rm (Hunt 12 H12-37).
 	fs.Bool("yes", false, "accepted for consistency; rm does not prompt")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert check delete --app <slug> <check-id|name> [--yes]", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check delete [--app <slug>] <check-id|name> [--yes]", "synthetics")
 		return 1
 	}
 	client, err := authedClient()

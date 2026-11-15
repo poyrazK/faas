@@ -2211,10 +2211,17 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
+	if app.Status == state.AppDeleted {
+		// The configuration read below excludes deleted apps; answer the
+		// final state instead of a 503 that a deploy wait retries forever.
+		api.WriteProblem(w, api.ErrAppDeleted(app.Slug))
+		return
+	}
 	response := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
 	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
 		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
 		if err != nil {
+			s.log.Error("read deployment configuration status", "deployment_id", d.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
 			return
 		}

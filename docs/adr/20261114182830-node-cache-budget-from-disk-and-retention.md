@@ -95,3 +95,26 @@ not the budget.
   keeps them longest without making them unevictable.
 - **Keep the budget, raise it by hand per node.** It drifts from the disk the
   node has, which is how a 100 GB disk ended up evicting at 48 GiB.
+
+## Amendment 2026-11-15: a capture is one eviction unit; live layers go last
+
+With the budget from the disk (cap removed on production-us at 09:35-09:40
+UTC), snapshot fan-out retired 93 live replicas in the next three hours,
+almost none in the day before. The cache was under budget; eviction ran when
+free space touched the floor, and it removed the wrong files:
+
+- **Single files of a capture.** Eviction went oldest-first by file. A
+  restore refreshes the memory file's mtime but not the vmstate's, so the
+  14 KB vmstate was always oldest: on one node 38 of 46 retired replicas still
+  had their 1 GiB memory file and no vmstate. That frees nothing and leaves
+  the capture unusable; fan-out retires the replica and the next wake on that
+  node downloads the whole snapshot (3-9 s instead of ~0.5 s).
+- **The layers live captures need.** App layers were in the normal tier, ahead
+  of live captures, but fan-out retires a replica whose layer is gone (about
+  16 of the 93).
+
+Decision: the files of one capture (`snap/<deployment>/captures/<id>/...`)
+form one eviction unit, aged by the newest of them, evicted whole and only
+whole; a pinned or protected member keeps the whole capture. The app and
+sidecar layers of deployments with a non-stale snapshot (keyed as fan-out
+claims them) join the live captures in the last tier and are never swept.

@@ -233,6 +233,15 @@ service Vmmd {
   // is not frozen is a successful no-op.
   rpc ThawInstance(ThawInstanceRequest) returns (ThawInstanceResponse);
 
+  // PrimeInstance (ADR-20261114153000) sends a short burst of GET requests
+  // to a live instance's own HTTP port before schedd captures its first
+  // init snapshot, so the snapshot holds code paths that already ran once
+  // (JIT-compiled methods, loaded classes and modules, warmed pools). It
+  // changes no lifecycle state; schedd captures the snapshot whatever the
+  // result. An older vmmd answers Unimplemented and the snapshot is captured
+  // unprimed.
+  rpc PrimeInstance(PrimeInstanceRequest) returns (PrimeInstanceResponse);
+
   // WaitBuilderReady blocks until a KeepWarm builder writes its durable
   // build-done marker and emits the guest-stage build-ready line. A builder
   // that exits before that handoff returns ready=false with its exit code.
@@ -3303,6 +3312,27 @@ message ResumeWarmInstanceResponse {
 message FreezeInstanceRequest {
   string instance = 1;
   bool reclaim = 2;
+}
+
+// PrimeInstanceRequest (ADR-20261114153000) names the instance and the HTTP
+// path to GET. path must start with "/". requests is the most GETs vmmd sends
+// (in order, one at a time); budget_millis bounds the whole burst. vmmd caps
+// both at its own limits.
+message PrimeInstanceRequest {
+  string instance = 1;
+  string path = 2;
+  int32 requests = 3;
+  int64 budget_millis = 4;
+}
+
+// PrimeInstanceResponse reports one priming burst. sent counts GETs that got
+// an HTTP response or a transport error; ok counts 2xx responses. A burst the
+// budget cut short reports what completed.
+message PrimeInstanceResponse {
+  string instance = 1;
+  int32 sent = 2;
+  int32 ok = 3;
+  int64 duration_micros = 4;
 }
 
 // FreezeInstanceResponse (ADR-1151) reports one freeze. Resident bytes are the

@@ -170,6 +170,7 @@ func deploymentCheckWorkloads(root, secretsFile string, limits func() api.Limits
 	if envErr != nil {
 		composeEnv = reposcan.ComposeEnv{}
 	}
+	composeEnv = composeEnv.WithMeshServices(scan.Workloads)
 	var importLimits api.Limits
 	if composeEnv.ImportsAny() {
 		importLimits = limits()

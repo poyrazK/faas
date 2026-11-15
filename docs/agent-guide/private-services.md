@@ -15,5 +15,5 @@ Apps in your account reach each other privately; a port declared :internal never
 
 Notes:
 - A caller that lists the service in depends_on gets $GREGALE_SERVICE_<NAME>_HOST (raw TCP, any declared port) and $GREGALE_SERVICE_<NAME>_URL (HTTP).
-- HTTP calls can also use http://<name>.internal:10081.
+- http://<name>.internal:10081 resolves only for a service the caller lists in depends_on, or a sibling in its project under the project policy; apps deployed one by one call each other at http://<app>.svc.gregale:10081.
 - A private service parks when idle and wakes on a connection; keep one running with `gregale app <app> --min 1`.

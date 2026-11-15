@@ -68,14 +68,14 @@ func TestUnsealIdentities(t *testing.T) {
 		return true
 	}
 
-	gotHost, gotRegistry, err := unsealIdentities(ids(runtime), ids(build), ids(fleet, host), false, false)
+	gotHost, gotRegistry, err := unsealIdentities(ids(runtime), ids(build), ids(fleet, host), false, false, false)
 	if err != nil || !same(gotHost, ids(runtime, fleet, host)) || !same(gotRegistry, ids(build, fleet, host)) {
 		t.Fatalf("uncontracted = %v, %v, %v; want each domain then fleet and host", gotHost, gotRegistry, err)
 	}
-	if gotHost, gotRegistry, err := unsealIdentities(nil, nil, ids(fleet, host), false, false); err != nil || !same(gotHost, ids(fleet, host)) || !same(gotRegistry, ids(fleet, host)) {
+	if gotHost, gotRegistry, err := unsealIdentities(nil, nil, ids(fleet, host), false, false, false); err != nil || !same(gotHost, ids(fleet, host)) || !same(gotRegistry, ids(fleet, host)) {
 		t.Fatalf("no domain staged = %v, %v, %v; want the legacy identities", gotHost, gotRegistry, err)
 	}
-	gotHost, gotRegistry, err = unsealIdentities(ids(runtime), ids(build), nil, true, false)
+	gotHost, gotRegistry, err = unsealIdentities(ids(runtime), ids(build), nil, true, false, false)
 	if err != nil || !same(gotHost, ids(runtime)) || !same(gotRegistry, ids(build)) {
 		t.Fatalf("contracted = %v, %v, %v; want each domain alone", gotHost, gotRegistry, err)
 	}
@@ -83,17 +83,95 @@ func TestUnsealIdentities(t *testing.T) {
 		"no runtime domain": {nil, ids(build)},
 		"no build domain":   {ids(runtime), nil},
 	} {
-		if _, _, err := unsealIdentities(staged[0], staged[1], nil, true, false); err == nil {
+		if _, _, err := unsealIdentities(staged[0], staged[1], nil, true, false, false); err == nil {
 			t.Errorf("contracted with %s started", name)
 		}
 	}
 	// ADR-20261110210000 slice 3e: a retired node needs only the build domain.
-	gotHost, gotRegistry, err = unsealIdentities(nil, ids(build), nil, true, true)
+	gotHost, gotRegistry, err = unsealIdentities(nil, ids(build), nil, true, true, false)
 	if err != nil || len(gotHost) != 0 || !same(gotRegistry, ids(build)) {
 		t.Fatalf("retired = %v, %v, %v; want no runtime identities and the build domain", gotHost, gotRegistry, err)
 	}
-	if _, _, err := unsealIdentities(nil, nil, nil, true, true); err == nil {
+	if _, _, err := unsealIdentities(nil, nil, nil, true, true, false); err == nil {
 		t.Error("retired without the build domain started")
+	}
+	// Slice 3g-3: a node whose build identity is retired opens no registry
+	// password, and one retired from both opens nothing locally.
+	gotHost, gotRegistry, err = unsealIdentities(ids(runtime), nil, nil, true, false, true)
+	if err != nil || !same(gotHost, ids(runtime)) || len(gotRegistry) != 0 {
+		t.Fatalf("build retired = %v, %v, %v; want the runtime domain and no registry identities", gotHost, gotRegistry, err)
+	}
+	if _, _, err := unsealIdentities(nil, nil, nil, true, false, true); err == nil || !strings.Contains(err.Error(), "needs domains/runtime.age staged") {
+		t.Errorf("build retired without the runtime domain = %v; want it refused", err)
+	}
+	if gotHost, gotRegistry, err := unsealIdentities(nil, nil, nil, true, true, true); err != nil || len(gotHost) != 0 || len(gotRegistry) != 0 {
+		t.Fatalf("both retired = %v, %v, %v; want no identities", gotHost, gotRegistry, err)
+	}
+}
+
+// ADR-20261110210000 slice 3g-3: a node whose build identity is retired is
+// contracted, pulls builder registries through the secretd mirror, and has
+// no build identity left on disk.
+func TestCheckBuildRetired(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name       string
+		files      []string
+		contracted bool
+		mirror     string
+		want       string
+	}{
+		{name: "retired", files: []string{"build.age.pub", "runtime.age"}, contracted: true, mirror: "secretd"},
+		{name: "not contracted", contracted: false, mirror: "secretd", want: "CONTRACTED"},
+		{name: "no mirror", contracted: true, mirror: "", want: "FAAS_VMMD_BUILD_REGISTRY_MIRROR=secretd"},
+		{name: "mirror off", contracted: true, mirror: "off", want: "FAAS_VMMD_BUILD_REGISTRY_MIRROR=secretd"},
+		{name: "identity left", files: []string{"build.age"}, contracted: true, mirror: "secretd", want: "still on this host"},
+		{name: "previous left", files: []string{"build.age.previous"}, contracted: true, mirror: "secretd", want: "still on this host"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			domains := filepath.Join(dir, "domains")
+			if err := os.MkdirAll(domains, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range tc.files {
+				if err := os.WriteFile(filepath.Join(domains, f), []byte(id.String()), 0o400); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := checkBuildRetired(dir, tc.contracted, tc.mirror)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_BuildSealDomainRetiredSwitch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.toml")
+	for env, want := range map[string]bool{"": false, "false": false, "true": true} {
+		t.Run("env="+env, func(t *testing.T) {
+			if env != "" {
+				t.Setenv("FAAS_SEAL_DOMAIN_BUILD_RETIRED", env)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil || cfg.BuildSealDomainRetired != want {
+				t.Fatalf("BuildSealDomainRetired = %v, %v; want %v", cfg != nil && cfg.BuildSealDomainRetired, err, want)
+			}
+		})
+	}
+	t.Setenv("FAAS_SEAL_DOMAIN_BUILD_RETIRED", "yes please")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_SEAL_DOMAIN_BUILD_RETIRED") {
+		t.Fatalf("invalid switch = %v; want a named validation error", err)
 	}
 }
 

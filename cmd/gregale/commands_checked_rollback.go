@@ -59,7 +59,20 @@ func pollRollbackOperation(ctx context.Context, client rollbackOperationClient, 
 	for {
 		got, err := client.GetRollbackOperation(ctx, slug, pin.ID)
 		if err != nil {
-			return last, err
+			// A rollback outlives one status read: while waiting, a dropped
+			// connection or a transient 5xx only delays the next poll, and
+			// the --timeout deadline still bounds the wait.
+			if !wait || !api.TransientReadError(err) || ctx.Err() != nil {
+				return last, err
+			}
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return last, err
+			case <-timer.C:
+			}
+			continue
 		}
 		if !rollbackReceiptMatches(got, pin) {
 			return last, fmt.Errorf("server returned a different rollback operation or deployment pair")

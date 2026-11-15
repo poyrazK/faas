@@ -1146,6 +1146,7 @@ func copySourceLifecycleFields(dst *state.AppManifest, src state.AppManifest) {
 	dst.RestartPolicy = src.RestartPolicy
 	dst.AfterRestore = src.AfterRestore
 	dst.BeforeCheckpoint = src.BeforeCheckpoint
+	dst.Warmup = src.Warmup
 	dst.Pause = src.Pause
 	dst.Profiling = src.Profiling
 	dst.Tracing = src.Tracing

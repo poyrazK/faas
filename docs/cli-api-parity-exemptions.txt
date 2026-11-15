@@ -1,0 +1,20 @@
+# Customer settings the API accepts but the CLI and gregale.yaml cannot set
+# (ADR-20261112223000 §3). Coding agents only use the CLI, so each line is a
+# setting they cannot reach.
+#
+# This list is frozen: it may only shrink. A new API-only field fails
+# TestCLIAPIParityExemptionsAreFrozen (cmd/gregale) instead of joining it.
+# To close a gap, give the field a CLI flag or gregale.yaml key, map it in
+# cmd/gregale/{app_update,deploy_request}_cli_surface.go, delete its line here
+# and lower parityExemptionCeiling.
+#
+# Format: <Request>.<json_field> <reason>
+
+CreateDeploymentOverrides.liveness_probe API-only on purpose (#7221): strict liveness checks cause restart loops; the default probe is tolerant
+CreateDeploymentOverrides.env_secrets gregale env set seals values on the app instead
+CreateDeploymentRequest.expected_review set by the dashboard's reviewed deploy
+CreateDeploymentRequest.native_rollout API-only today
+CreateDeploymentRequest.sidecars legacy list; gregale deploy sends companions
+CreateDeploymentRequest.full_rootfs_allow_auto API-only today
+CreateDeploymentRequest.full_rootfs_override API-only today
+UpdateAppRequest.declared_routes app route declarations; API-only today

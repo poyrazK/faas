@@ -162,6 +162,11 @@ func cmdDevSetup(args []string) int {
 			return printErr("Invalid flags", errors.New("--postgres cannot be combined with DATABASE_URL in --service-override-file"))
 		}
 	}
+	if *withPostgres && envFilePath != "" {
+		if pairs, _, readErr := readDevEnvFileEntries(envFilePath); readErr == nil && serviceOverrideContainsKey(pairs, "DATABASE_URL") {
+			return printErr("Invalid flags", fmt.Errorf("--postgres provides DATABASE_URL; remove it from --env-file %s, or drop --postgres to use your own database", filepath.Base(envFilePath)))
+		}
+	}
 
 	project := *name
 	if project == "" {

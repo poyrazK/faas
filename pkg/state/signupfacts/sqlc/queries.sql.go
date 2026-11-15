@@ -52,6 +52,47 @@ func (q *Queries) GetSignupFacts(ctx context.Context, db DBTX, accountID pgtype.
 	return i, err
 }
 
+const heldLinksForAccount = `-- name: HeldLinksForAccount :many
+SELECT held_account_id, held_org_id, held_reason, signal, detected_at
+FROM account_held_links
+WHERE account_id = $1::uuid
+ORDER BY detected_at, held_account_id, signal
+`
+
+type HeldLinksForAccountRow struct {
+	HeldAccountID pgtype.UUID
+	HeldOrgID     pgtype.UUID
+	HeldReason    string
+	Signal        string
+	DetectedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) HeldLinksForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]HeldLinksForAccountRow, error) {
+	rows, err := db.Query(ctx, heldLinksForAccount, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HeldLinksForAccountRow
+	for rows.Next() {
+		var i HeldLinksForAccountRow
+		if err := rows.Scan(
+			&i.HeldAccountID,
+			&i.HeldOrgID,
+			&i.HeldReason,
+			&i.Signal,
+			&i.DetectedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertSignupFacts = `-- name: InsertSignupFacts :exec
 INSERT INTO account_signup_facts (
   account_id, method, signup_ip, user_agent, country, asn, asn_org,
@@ -93,6 +134,102 @@ func (q *Queries) InsertSignupFacts(ctx context.Context, db DBTX, arg InsertSign
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const linkHeldAccounts = `-- name: LinkHeldAccounts :many
+WITH me AS (
+  SELECT f.signup_ip, f.email_domain
+  FROM account_signup_facts f
+  WHERE f.account_id = $1::uuid
+),
+net AS (
+  SELECT network(set_masklen(me.signup_ip, CASE family(me.signup_ip) WHEN 4 THEN 24 ELSE 48 END)) AS cidr
+  FROM me WHERE me.signup_ip IS NOT NULL
+),
+held AS (
+  SELECT a.id AS held_account_id, NULL::uuid AS held_org_id, a.abuse_hold_reason AS held_reason
+  FROM accounts a
+  WHERE a.abuse_hold_at IS NOT NULL AND a.id <> $1::uuid
+  UNION ALL
+  SELECT m.account_id, o.id, o.abuse_hold_reason
+  FROM orgs o
+  JOIN org_memberships m ON m.org_id = o.id AND m.role = 'owner' AND m.removed_at IS NULL
+  WHERE o.abuse_hold_at IS NOT NULL AND NOT o.personal_org AND m.account_id <> $1::uuid
+),
+matches AS (
+  SELECT h.held_account_id, h.held_org_id, h.held_reason, 'signup_network'::text AS signal
+  FROM held h, net
+  WHERE EXISTS (SELECT 1 FROM account_signup_facts f
+                WHERE f.account_id = h.held_account_id AND f.signup_ip <<= net.cidr)
+     OR EXISTS (SELECT 1 FROM sessions s
+                WHERE s.account_id = h.held_account_id AND s.issued_at >= $3::timestamptz
+                  AND s.issued_ip <<= net.cidr)
+  UNION ALL
+  SELECT h.held_account_id, h.held_org_id, h.held_reason, 'email_domain'::text
+  FROM held h
+  JOIN accounts a ON a.id = h.held_account_id
+  CROSS JOIN me
+  WHERE $4::boolean AND me.email_domain <> ''
+    AND lower(split_part(a.email, '@', 2)) = me.email_domain
+)
+INSERT INTO account_held_links (account_id, held_account_id, held_org_id, held_reason, signal, detected_at)
+SELECT DISTINCT ON (held_account_id, signal)
+       $1::uuid, held_account_id, held_org_id, held_reason, signal, $2::timestamptz
+FROM matches
+WHERE held_reason IS NOT NULL
+ORDER BY held_account_id, signal
+LIMIT 50
+ON CONFLICT DO NOTHING
+RETURNING held_account_id, held_org_id, held_reason, signal
+`
+
+type LinkHeldAccountsParams struct {
+	AccountID      pgtype.UUID
+	DetectedAt     pgtype.Timestamptz
+	Since          pgtype.Timestamptz
+	DomainLinkable bool
+}
+
+type LinkHeldAccountsRow struct {
+	HeldAccountID pgtype.UUID
+	HeldOrgID     pgtype.UUID
+	HeldReason    string
+	Signal        string
+}
+
+// ADR-20261114174600: links a new account to every abuse-held account (or
+// held organization's owner) whose sign-up address or recent sign-in
+// addresses share its /24 (IPv4) or /48 (IPv6) network, or whose email domain
+// equals its own when the caller marks the domain linkable (not a public
+// provider, not disposable). Reads the new account's own sign-up record.
+func (q *Queries) LinkHeldAccounts(ctx context.Context, db DBTX, arg LinkHeldAccountsParams) ([]LinkHeldAccountsRow, error) {
+	rows, err := db.Query(ctx, linkHeldAccounts,
+		arg.AccountID,
+		arg.DetectedAt,
+		arg.Since,
+		arg.DomainLinkable,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LinkHeldAccountsRow
+	for rows.Next() {
+		var i LinkHeldAccountsRow
+		if err := rows.Scan(
+			&i.HeldAccountID,
+			&i.HeldOrgID,
+			&i.HeldReason,
+			&i.Signal,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const reduceSignupFacts = `-- name: ReduceSignupFacts :execrows

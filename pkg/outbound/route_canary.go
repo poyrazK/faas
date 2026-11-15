@@ -124,7 +124,10 @@ type AIRouteCanaryStore interface {
 // Every outboundd replica may run it: a rollback applies only to a canary
 // that is still active.
 type AIRouteCanaryEvaluator struct {
-	Store    AIRouteCanaryStore
+	Store AIRouteCanaryStore
+	// Prompts, when set, judges prompt canaries on the same interval
+	// (ADR 20261114180740).
+	Prompts  AIPromptCanaryStore
 	Metrics  *Metrics
 	Interval time.Duration
 	Log      *slog.Logger
@@ -174,6 +177,10 @@ func (e *AIRouteCanaryEvaluator) EvaluateOnce(ctx context.Context) (int, error) 
 				e.Log.Info("outboundd: AI route canary rolled back", "route_id", judgement.RouteID, "position", judgement.Position, "reason", reason)
 			}
 		}
+	}
+	if e.Prompts != nil {
+		prompts, err := e.evaluatePromptCanaries(ctx)
+		return rolledBack + prompts, err
 	}
 	return rolledBack, nil
 }

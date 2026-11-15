@@ -11,7 +11,7 @@ import (
 )
 
 // TestCLIRoughEdgesH14_63 covers what the rc.294 re-test found after H14-42
-// and H14-51: an unknown `env` verb and `flags list` named no verb, `flags
+// and H14-51: an unknown `env` or `flags` verb named no verb, `flags
 // apply` without --file named nothing missing, and `jobs list --app`
 // answered only "unknown flag --app". `env list` itself now lists variables
 // (ADR-20261026145832).
@@ -23,7 +23,7 @@ func TestCLIRoughEdgesH14_63(t *testing.T) {
 		// clone-status stays hidden until full environment clones are on
 		// (ADR-20261023091049).
 		{[]string{"env", "bogus"}, []string{`unknown subcommand "bogus"`, "Subcommands: create, pull, push, diff, history, rollback"}},
-		{[]string{"flags", "list", "--project", "shop"}, []string{`gregale flags: unknown subcommand "list"`, "Subcommands: get, apply"}},
+		{[]string{"flags", "bogus", "--project", "shop"}, []string{`gregale flags: unknown subcommand "bogus"`, "Subcommands: list, create"}},
 		{[]string{"flags", "apply", "--project", "shop"}, []string{"gregale flag apply needs --file"}},
 		{[]string{"jobs", "list", "--app", "shop"}, []string{"lists every job in the account; it has no --app filter"}},
 	} {
