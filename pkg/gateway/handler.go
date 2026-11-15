@@ -9401,7 +9401,7 @@ type statusRecorder struct {
 	headCachePrivate bool
 
 	// responseTruncated is set when the body passed the plan's cap after
-	// the status went out (response_truncated.go).
+	// the status went out (truncated_response_telemetry.go).
 	responseTruncated bool
 
 	// Capture the final rebound request context when the response commits.

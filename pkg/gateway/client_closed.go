@@ -24,7 +24,7 @@ func observedStatus(r *http.Request, status int) int {
 	rec, _ := r.Context().Value(responseRecorderKey{}).(*statusRecorder)
 	if rec != nil && rec.responseTruncated {
 		// The body was cut at the cap after the status went out
-		// (response_truncated.go): the client never got this response.
+		// (truncated_response_telemetry.go): the client never got this response.
 		return http.StatusBadGateway
 	}
 	if rec == nil || rec.wroteHeader {
