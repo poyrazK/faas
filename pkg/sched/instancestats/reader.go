@@ -177,6 +177,11 @@ type InstanceStat struct {
 	// RX is the validity of RXBytes. Mirrors TX semantics:
 	// Unknown on first sample / regression / cache miss.
 	RX Validity
+	// InternalTXBytes (billing review R8-2) is the cumulative part of
+	// TXBytes the guest sent to internal destinations, read by vmmd's
+	// per-namespace poll. InternalTXValid is false until vmmd reports it.
+	InternalTXBytes uint64
+	InternalTXValid bool
 	// DiskUsedBytes and DiskCapacityBytes are the latest guest writable-root
 	// filesystem sample. DiskValid is false until both values arrive.
 	DiskUsedBytes     int64
