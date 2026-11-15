@@ -6214,6 +6214,37 @@ func (c *Client) ListEgressFlows(ctx context.Context, q EgressFlowQuery) (Egress
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetAccountRisk reads an account's abuse risk via
+// GET /v1/admin/accounts/{id}/risk (ADR-20261115090000). includePII adds
+// email, sign-up address and user agent and is audited. Operator-only.
+func (c *Client) GetAccountRisk(ctx context.Context, accountID string, includePII bool) (AccountRiskResponse, error) {
+	path := "/v1/admin/accounts/" + url.PathEscape(accountID) + "/risk"
+	if includePII {
+		path += "?include_pii=1"
+	}
+	var out AccountRiskResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListHeldLinks lists links to abuse-held accounts detected in the last
+// since via GET /v1/admin/held-links (ADR-20261114174600). since and limit
+// default to 24h and 200 when zero. Operator-only.
+func (c *Client) ListHeldLinks(ctx context.Context, since time.Duration, limit int) (HeldLinksResponse, error) {
+	v := url.Values{}
+	if since > 0 {
+		v.Set("since", since.String())
+	}
+	if limit > 0 {
+		v.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/admin/held-links"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out HeldLinksResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
 // PlaceAccountAbuseHold places an ADR-361 account abuse hold via
 // POST /v1/admin/accounts/{id}/abuse-hold. note is the operator's audit note
 // (3..500 chars). Operator-only, like credits.
