@@ -233,6 +233,11 @@ type JailerVMM struct {
 	// chroot are on different filesystems (the production jail is tmpfs).
 	// The source mode is restored after the VM exits.
 	bindMounts map[string][]ephemeralBind
+	// driveBaseKeys is the storage key of the app layer each instance's
+	// private drive started from, recorded at boot and restore. A park
+	// uploads the drive as a delta against it (ADR-20261115120000). Guarded
+	// by mu; an adopted instance has none and uploads its whole drive.
+	driveBaseKeys map[string]string
 	// bindSourceModes reference-counts temporary source permission widening
 	// when multiple VMs bind the same shared base image concurrently. It is
 	// keyed by path and inode: the artifact cache can rename a refreshed file
@@ -1325,6 +1330,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	// field with the staged tmp path so BuildColdBootConfig's
 	// PathOnHost reads point at the chroot-basename tmp files.
 	if len(spec.Workloads) == 0 {
+		v.setDriveBaseKey(l.Instance, spec.LayerKey)
 		layerSrc, layerTiming, mErr := v.resolveColdBootArtifact(ctx, l.Instance, "main", spec.LayerKey)
 		if mErr != nil {
 			return fmt.Errorf("vmm: stage layer: %w", mErr)
@@ -1332,6 +1338,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 		breakdown.ResolveArtifacts = append(breakdown.ResolveArtifacts, layerTiming)
 		spec.LayerKey = layerSrc
 	} else {
+		v.setDriveBaseKey(l.Instance, spec.Workloads[0].StorageKey)
 		for i := range spec.Workloads {
 			artifact := "main"
 			if i > 0 {
@@ -2181,6 +2188,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		{artifact: "base", key: spec.BaseKey, errorContext: "vmm: stage base"},
 	}
 	snapshotDriveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: spec.StorageKey})
+	// The drive restores from the snapshot's drive, but its base for the
+	// next park's delta stays the app layer, so deltas never chain.
+	if len(spec.Workloads) == 0 {
+		v.setDriveBaseKey(l.Instance, spec.LayerKey)
+	} else {
+		v.setDriveBaseKey(l.Instance, spec.Workloads[0].StorageKey)
+	}
 	restoreDriveKey := snapshotDriveKey
 	if sealedDrive != "" {
 		restoreDriveKey = sealedDrive
@@ -3955,7 +3969,7 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		if oerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("vmm: open snapshot private drive for publish: %w", oerr)
 		}
-		if perr := store.Put(ctx, driveKey, f); perr != nil {
+		if perr := store.Put(ctx, driveKey, storage.WithDriveDeltaBase(f, v.driveBaseKey(l.Instance))); perr != nil {
 			_ = f.Close()
 			return SnapshotInfo{}, fmt.Errorf("vmm: publish snapshot private drive: %w", perr)
 		}
@@ -6633,8 +6647,30 @@ func (v *JailerVMM) unmountBindMounts(instance string) error {
 	}
 	v.mu.Lock()
 	delete(v.bindMounts, instance)
+	delete(v.driveBaseKeys, instance)
 	v.mu.Unlock()
 	return nil
+}
+
+// setDriveBaseKey records the layer key instance's private drive started
+// from; an empty key clears it.
+func (v *JailerVMM) setDriveBaseKey(instance, key string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if key == "" {
+		delete(v.driveBaseKeys, instance)
+		return
+	}
+	if v.driveBaseKeys == nil {
+		v.driveBaseKeys = make(map[string]string)
+	}
+	v.driveBaseKeys[instance] = key
+}
+
+func (v *JailerVMM) driveBaseKey(instance string) string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.driveBaseKeys[instance]
 }
 
 func hostMountPresent(path string) (bool, error) {
