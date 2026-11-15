@@ -145,6 +145,10 @@ type InternalReverseProxy struct {
 	Logger              *slog.Logger
 	DialTimeout         time.Duration
 	TrustedIngressCIDRs []netip.Prefix
+	// AllowForwardedHTTP serves app requests a trusted ingress received over
+	// plain http instead of redirecting them to https
+	// (FAAS_GATEWAY_ALLOW_PLAIN_HTTP; see redirectForwardedHTTP).
+	AllowForwardedHTTP bool
 	// Drain (issue #587 / PR-A) is the per-request WaitGroup-backed
 	// drain tracker shared with Handler + TraceHandler + the
 	// control mux. nil = drain disabled. Wired via WithInFlightTracker
@@ -566,6 +570,9 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	defer done()
 
+	if p.redirectForwardedHTTP(w, r) {
+		return
+	}
 	if p.Dialer == nil || p.Target == nil {
 		// Wiring bug — log at ERROR because the customer sees the
 		// failure on the public listener.
@@ -1237,6 +1244,31 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 		}
 	}
 	return clientIP.String(), proto
+}
+
+// redirectForwardedHTTP sends a 308 to https when a trusted ingress says the
+// client spoke plain http, as the platform hosts and custom domains already
+// do: an app must not evaluate credentials sent in cleartext or serve its
+// pages over http. It acts only on an explicit forwarded "http" from a
+// trusted peer, so probes and internal callers without forwarding headers
+// are served as before.
+func (p *InternalReverseProxy) redirectForwardedHTTP(w http.ResponseWriter, r *http.Request) bool {
+	// The forwarded scheme decides, not r.TLS: Cloudflare reaches a compute
+	// edge over mTLS even when the visitor used plain http.
+	if p.AllowForwardedHTTP || !TrustedIngressPeer(r, p.TrustedIngressCIDRs) {
+		return false
+	}
+	values := r.Header.Values("X-Forwarded-Proto")
+	if len(values) != 1 || !strings.EqualFold(strings.TrimSpace(values[0]), "http") || strings.HasPrefix(r.URL.Path, acmeChallengePrefix) {
+		return false
+	}
+	host := hostname(r.Host)
+	if host == "" {
+		return false
+	}
+	w.Header().Set("Location", "https://"+host+r.URL.RequestURI())
+	w.WriteHeader(http.StatusPermanentRedirect)
+	return true
 }
 
 // TrustedIngressPeer reports whether r's direct peer is a configured ingress
