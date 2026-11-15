@@ -100697,6 +100697,9 @@ components:
         interval_seconds: { type: integer, enum: [300, 900, 3600] }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
+        warning:
+          type: string
+          description: Why the check cannot pass as configured, e.g. the app's platform auth refuses the credential-less probe.
         results:
           $ref: '#/components/schemas/SyntheticCheckResults'
     SyntheticCheckResults:
