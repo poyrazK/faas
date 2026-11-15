@@ -21,19 +21,20 @@ func cmdMCPToolPublication(args []string) int {
 	}
 	verb := args[0]
 	fs := newFlagSet("mcp-tool-publication-"+verb, flag.ContinueOnError)
-	var id, digest, ref string
+	var id, digest, ref, connection string
 	fs.StringVar(&id, "id", "", "exact publication identity")
 	if verb == "approve" || verb == "revoke" {
 		fs.StringVar(&digest, "request-sha256", "", "reviewed candidate verification request digest")
 	}
 	if verb == "approve" {
 		fs.StringVar(&ref, "credential-secret-ref", "", "owner-selected secret:MCP_* test token; never a token value")
+		fs.StringVar(&connection, "credential-connection-id", "", "owner-approved execution OAuth connection UUID; exclusive with secret reference")
 	}
 	if fs.Parse(args[1:]) != nil {
 		return 1
 	}
-	if fs.NArg() != 0 || !toolpublication.ValidID(id) || verb != "get" && verb != "approve" && verb != "revoke" || verb != "get" && !toolpublication.ValidID(digest) || verb == "approve" && !toolgrant.ValidCredentialRef(ref) {
-		return printErr("MCP publication", errors.New("use get, approve or revoke with an exact --id, reviewed --request-sha256 and test-secret reference for approval"))
+	if fs.NArg() != 0 || !toolpublication.ValidID(id) || verb != "get" && verb != "approve" && verb != "revoke" || verb != "get" && !toolpublication.ValidID(digest) || verb == "approve" && (ref == "") == (connection == "") || ref != "" && !toolgrant.ValidCredentialRef(ref) || connection != "" && !toolgrant.ValidID(connection) {
+		return printErr("MCP publication", errors.New("use get, approve or revoke with an exact --id, reviewed --request-sha256 and exactly one test-secret reference or OAuth connection for approval"))
 	}
 	c, err := authedClient()
 	if err != nil {
@@ -46,7 +47,7 @@ func cmdMCPToolPublication(args []string) int {
 		}
 		return jsonOut(writeJSON(out))
 	}
-	out, err := c.DecideToolPublicationVerification(context.Background(), id, api.ToolPublicationVerificationDecision{RequestSHA256: digest, CredentialSecretRef: ref, Revoke: verb == "revoke"})
+	out, err := c.DecideToolPublicationVerification(context.Background(), id, api.ToolPublicationVerificationDecision{RequestSHA256: digest, CredentialSecretRef: ref, CredentialConnectionID: connection, Revoke: verb == "revoke"})
 	if err != nil {
 		return printErr("MCP publication decision", err)
 	}
@@ -105,6 +106,9 @@ func waitPrivatePublicationVerification(ctx context.Context, c *Client, publicat
 				notified = true
 			}
 		default:
+			if v.Outcome != nil && v.Outcome.Code == "reconnect_required" {
+				return v, errors.New("private candidate verification requires reconnecting OAuth and a new owner-approved publication; inspect its retained receipt")
+			}
 			return v, errors.New("private candidate verification stopped; inspect its retained receipt before creating another publication")
 		}
 		if err := waitPrivatePublicationPoll(ctx); err != nil {

@@ -49,9 +49,10 @@ type ToolPublicationVerificationOutcome struct {
 // Only an unscoped personal administrator may choose a test credential. This
 // reference is never part of a publisher-facing record or worker response.
 type ToolPublicationVerificationDecision struct {
-	RequestSHA256       string `json:"request_sha256"`
-	CredentialSecretRef string `json:"credential_secret_ref,omitempty"`
-	Revoke              bool   `json:"revoke,omitempty"`
+	RequestSHA256          string `json:"request_sha256"`
+	CredentialSecretRef    string `json:"credential_secret_ref,omitempty"`
+	CredentialConnectionID string `json:"credential_connection_id,omitempty"`
+	Revoke                 bool   `json:"revoke,omitempty"`
 }
 
 func (c *Client) VerifyToolPublication(ctx context.Context, id string, in ToolPublicationVerificationRequest) (ToolPublicationVerification, error) {

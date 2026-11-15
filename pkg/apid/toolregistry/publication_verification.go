@@ -1,7 +1,6 @@
 package toolregistry
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,7 +12,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
-	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/toolgrant"
 	"github.com/onebox-faas/faas/pkg/toolpublication"
@@ -76,7 +74,7 @@ func (e *PrivateExecutor) decidePublicationVerification(w http.ResponseWriter, r
 		return
 	}
 	var in api.ToolPublicationVerificationDecision
-	if !toolpublication.ValidID(r.PathValue("id")) || httpkit.DecodeJSONSized(r, &in, api.ToolPublicationIntentMaxBytes) != nil || !toolpublication.ValidID(in.RequestSHA256) || in.Revoke && in.CredentialSecretRef != "" {
+	if !toolpublication.ValidID(r.PathValue("id")) || httpkit.DecodeJSONSized(r, &in, api.ToolPublicationIntentMaxBytes) != nil || !toolpublication.ValidID(in.RequestSHA256) || in.Revoke && (in.CredentialSecretRef != "" || in.CredentialConnectionID != "") {
 		respond(w, nil, state.ErrInvalidArgument)
 		return
 	}
@@ -85,6 +83,10 @@ func (e *PrivateExecutor) decidePublicationVerification(w http.ResponseWriter, r
 		action = "revoke"
 	}
 	out, err := e.publicationChange(r.Context(), acct.ID, r.PathValue("id"), "", action, state.ToolPublicationVerificationChange{Decision: &in})
+	if errors.Is(err, state.ErrToolOAuthBusy) || errors.Is(err, state.ErrToolOAuthReconnect) {
+		connectionRespond(w, nil, err)
+		return
+	}
 	if err == nil && e.opts.Audit != nil {
 		e.opts.Audit(r.Context(), "tool_publication.verification."+action, acct.ID, map[string]any{"publication_id": r.PathValue("id"), "request_sha256": in.RequestSHA256, "deployment_id": out.Verification.DeploymentID})
 	}
@@ -199,14 +201,18 @@ func (e *PrivateExecutor) runPublicationVerification(ctx context.Context, accoun
 		defer cancel()
 		_, _ = e.publicationChange(persist, account, p.ID, v.KeyID, "finish", state.ToolPublicationVerificationChange{Outcome: &outcome})
 	}()
-	authority, err := e.publicationChange(ctx, account, p.ID, v.KeyID, "dispatch", state.ToolPublicationVerificationChange{})
-	if err != nil || authority.Secret == nil {
+	access, sensitive, err := e.publicationCredential(ctx, account, v)
+	if err != nil {
+		if errors.Is(err, state.ErrToolOAuthReconnect) {
+			outcome.Code = "reconnect_required"
+		}
 		return
 	}
-	values, err := secretbox.OpenMulti(e.opts.Identities(ctx), authority.Secret.Ciphertext)
-	token := values[authority.Secret.Key]
-	if err != nil || !executionToken(token) || !api.ValidMCPProbeToken(token) {
-		return
+	token := access.token
+	if access.expiresAt != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, *access.expiresAt)
+		defer cancel()
 	}
 	outcome.Code = "candidate_unavailable"
 	app, err := e.store.AppByID(ctx, v.AppID)
@@ -257,8 +263,7 @@ func (e *PrivateExecutor) runPublicationVerification(ctx context.Context, accoun
 		return
 	}
 	catalog, err := mcphosting.MarshalContract(contract)
-	escaped, _ := json.Marshal(token)
-	if err != nil || bytes.Contains(catalog, []byte(token)) || len(escaped) > 2 && bytes.Contains(catalog, escaped[1:len(escaped)-1]) {
+	if err != nil || publicationCatalogSensitive(catalog, sensitive) {
 		return
 	}
 	if len(catalog) > api.ToolPublicationCatalogMaxBytes || !publicationVerificationFits(p, v, catalog) {

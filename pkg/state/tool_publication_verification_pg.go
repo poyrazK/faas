@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -32,7 +33,7 @@ func (s *PgStore) ChangeToolPublicationVerification(ctx context.Context, account
 	if v == nil {
 		v = in.Review
 	}
-	if action == "approve" || action == "begin" || action == "dispatch" || action == "review" && p.Verification == nil {
+	if action == "approve" || action == "begin" || action == "dispatch" || action == "renew" || action == "renew_dispatch" || action == "review" && p.Verification == nil {
 		if !validVerificationTarget(v) {
 			return out, ErrInvalidArgument
 		}
@@ -42,26 +43,67 @@ func (s *PgStore) ChangeToolPublicationVerification(ctx context.Context, account
 		}
 	}
 	ref := ""
+	connectionID := ""
 	if p.TestCredential != nil {
 		ref = p.TestCredential.Ref
+		connectionID = p.TestCredential.ConnectionID
 	}
 	if action == "approve" && in.Decision != nil {
 		ref = in.Decision.CredentialSecretRef
+		connectionID = in.Decision.CredentialConnectionID
 	}
 	var secret *AppSecret
-	if action == "approve" || action == "dispatch" {
-		if v == nil || !toolgrant.ValidCredentialRef(ref) {
-			return out, ErrInvalidArgument
+	var connection *ToolOAuthConnection
+	if action == "approve" || action == "dispatch" || action == "renew" || action == "renew_dispatch" {
+		if connectionID != "" {
+			if !toolgrant.ValidID(connectionID) {
+				return out, ErrInvalidArgument
+			}
+			params := toolpublicationdb.ShareToolOAuthConnectionParams{AccountID: mustPgUUID(account), ID: mustPgUUID(connectionID)}
+			var row toolpublicationdb.ToolOauthConnection
+			if action == "renew" {
+				row, err = q.LockToolOAuthConnection(ctx, tx, toolpublicationdb.LockToolOAuthConnectionParams(params))
+			} else {
+				row, err = q.ShareToolOAuthConnection(ctx, tx, params)
+			}
+			if err != nil {
+				return out, mapErr(err)
+			}
+			c, err := toolOAuthRow(row)
+			if err != nil {
+				return out, err
+			}
+			if err = lockToolOAuthAuthority(ctx, q, tx, c.Record); err != nil {
+				return out, err
+			}
+			connection = &c
+		} else {
+			if v == nil || !toolgrant.ValidCredentialRef(ref) {
+				return out, ErrInvalidArgument
+			}
+			ciphertext, err := q.LockToolGrantCredential(ctx, tx, toolpublicationdb.LockToolGrantCredentialParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(v.AppID), Scope: api.DefaultEnvScope, Key: strings.TrimPrefix(ref, api.SecretRefPrefix)})
+			if err != nil {
+				return out, mapErr(err)
+			}
+			secret = &AppSecret{AccountID: account, AppID: v.AppID, Scope: api.DefaultEnvScope, Key: strings.TrimPrefix(ref, api.SecretRefPrefix), Ciphertext: ciphertext}
 		}
-		ciphertext, err := q.LockToolGrantCredential(ctx, tx, toolpublicationdb.LockToolGrantCredentialParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(v.AppID), Scope: api.DefaultEnvScope, Key: strings.TrimPrefix(ref, api.SecretRefPrefix)})
-		if err != nil {
-			return out, mapErr(err)
-		}
-		secret = &AppSecret{AccountID: account, AppID: v.AppID, Scope: api.DefaultEnvScope, Key: strings.TrimPrefix(ref, api.SecretRefPrefix), Ciphertext: ciphertext}
 	}
-	out, err = changeToolVerification(&p, key, action, in, secret)
+	out, err = changeToolVerification(&p, key, action, in, secret, connection)
 	if err != nil {
 		return out, err
+	}
+	if action == "renew" && connection != nil {
+		claim, claimErr := claimToolOAuth(*connection, time.Now().UTC())
+		if claim.Connection.Record.ID != "" {
+			if err = updateToolOAuth(ctx, q, tx, claim.Connection); err != nil {
+				return out, err
+			}
+			if err = tx.Commit(ctx); err != nil {
+				return out, err
+			}
+		}
+		out.Connection, out.RenewalFresh = &claim.Connection, claim.Fresh
+		return out, claimErr
 	}
 	data, err = json.Marshal(p)
 	if err != nil {

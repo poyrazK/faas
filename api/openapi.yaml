@@ -3238,7 +3238,7 @@ paths:
     put:
       operationId: decideToolPublicationVerification
       summary: Approve or revoke private candidate test authority as the personal administrator
-      description: Requires unscoped personal administrator authority and MFA policy. Approval selects an existing ordinary secret:MCP_* test token on the candidate app's default environment. The exact request digest and sealed credential source are immutable. Revocation blocks subsequent credential dispatches; an accepted HTTP request may finish. Completed test evidence is consumed and cannot be reauthorized or revoked. This grants no invocation access.
+      description: Requires unscoped personal administrator authority and MFA policy. Approval selects exactly one existing ordinary secret:MCP_* test token or managed execution OAuth connection on the candidate app's default environment. The exact request digest and credential authorization binding are immutable. Managed connections must match the reviewed issuer and resource and cover all reviewed scopes. Approval performs no provider request. Revocation blocks subsequent credential dispatches; an accepted HTTP request may finish. Completed test evidence is consumed and cannot be reauthorized or revoked. This grants no invocation access.
       requestBody:
         required: true
         content:
@@ -3254,7 +3254,7 @@ paths:
         '403': {description: Personal administrator or MFA requirement not satisfied}
         '404': {description: Candidate or ordinary app credential unavailable}
         '409': {description: 'Review changed, expired or consumed'}
-        '503': {description: Owner candidate-test approval is disabled by the operator}
+        '503': {description: Owner candidate-test approval is disabled or the OAuth connection needs reconnection}
   /v1/tool-oauth-connections:
     get:
       operationId: listToolOAuthConnections
@@ -75676,12 +75676,13 @@ components:
         fixtures_json: {type: string, maxLength: 65536, description: Exact reviewed fixture bytes; SHA-256 must match the publication intent}
     ToolPublicationVerificationDecision:
       type: object
-      description: Owner approval selecting an existing sealed test credential or revoking unconsumed candidate-test authority.
+      description: Owner approval selecting one sealed test token or managed OAuth connection, or revoking unconsumed candidate-test authority.
       additionalProperties: false
       required: [request_sha256]
       properties:
         request_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
-        credential_secret_ref: {type: string, description: Existing ordinary secret:MCP_* app test-token reference; required for approval and forbidden for revocation}
+        credential_secret_ref: {type: string, description: Existing ordinary secret:MCP_* app test-token reference; exclusive with credential_connection_id and forbidden for revocation}
+        credential_connection_id: {type: string, format: uuid, description: Existing owner-approved execution OAuth connection; exclusive with credential_secret_ref and forbidden for revocation}
         revoke: {type: boolean, default: false}
     ToolPublicationVerification:
       type: object

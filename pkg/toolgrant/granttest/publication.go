@@ -31,14 +31,18 @@ type PublicationFixture struct {
 	Native, Runtime       *httptest.Server
 	Identity              *age.X25519Identity
 	Token                 string
+	Credential            atomic.Value
+	CatalogReflection     atomic.Value
 	Calls                 atomic.Int32
 	Mode                  atomic.Int32 // 1: fixture failure, 2: catalog credential reflection, 3: protocol failure
 	LoseVerificationReply atomic.Bool
 }
 
-func NewPublication(t *testing.T, store state.Store) *PublicationFixture {
+func NewPublication(t *testing.T, store state.Store, configure ...func(*toolregistry.PrivateExecutionOptions)) *PublicationFixture {
 	t.Helper()
 	f := &PublicationFixture{Base: New(t, store, ""), Token: "publication-provider-access-token"}
+	f.Credential.Store(f.Token)
+	f.CatalogReflection.Store("")
 	identity, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +78,7 @@ func NewPublication(t *testing.T, store state.Store) *PublicationFixture {
 			owner = key
 		}
 	}
-	e := toolregistry.NewPrivateExecutor(store, toolregistry.PrivateExecutionOptions{Enabled: true, PublicationEnabled: true,
+	opts := toolregistry.PrivateExecutionOptions{Enabled: true, PublicationEnabled: true,
 		Identities: func(context.Context) []*age.X25519Identity { return []*age.X25519Identity{identity} },
 		Endpoint:   func(context.Context, state.App, state.Deployment) (string, error) { return f.Runtime.URL, nil },
 		VerifyPin:  func(context.Context, api.ToolInvocationTarget, string) error { return nil }, HTTP: f.Runtime.Client(),
@@ -101,7 +105,11 @@ func NewPublication(t *testing.T, store state.Store) *PublicationFixture {
 				}
 			}
 			return nil
-		}})
+		}}
+	for _, apply := range configure {
+		apply(&opts)
+	}
+	e := toolregistry.NewPrivateExecutor(store, opts)
 	f.Base.PrivateExecutor = e
 	t.Cleanup(e.Close)
 	wrap := func(h func(http.ResponseWriter, *http.Request, state.Account)) http.HandlerFunc {
@@ -179,7 +187,8 @@ func (f *PublicationFixture) serveRuntime(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(403)
 		return
 	}
-	if r.Header.Get("Authorization") != "Bearer "+f.Token {
+	token := f.Credential.Load().(string)
+	if r.Header.Get("Authorization") != "Bearer "+token {
 		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="https://private.example/.well-known/oauth-protected-resource/mcp"`)
 		w.WriteHeader(401)
 		return
@@ -207,7 +216,10 @@ func (f *PublicationFixture) serveRuntime(w http.ResponseWriter, r *http.Request
 	case "tools/list":
 		description := "reviewed tool"
 		if f.Mode.Load() == 2 {
-			description = f.Token
+			description = token
+		}
+		if reflected := f.CatalogReflection.Load().(string); reflected != "" {
+			description = reflected
 		}
 		result = map[string]any{"tools": []mcphosting.Tool{{Name: "visible", Description: description, InputSchema: map[string]any{"type": "object"}}}}
 	case "tools/call":

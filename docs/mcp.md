@@ -1016,7 +1016,36 @@ gregale mcp server tool-publication approve \
   --credential-secret-ref secret:MCP_PUBLICATION_TEST
 ```
 
-The selected credential must already be an ordinary sealed `MCP_*` app test
+Alternatively, select an existing managed execution OAuth connection:
+
+```bash
+gregale mcp server tool-publication approve \
+  --id <PUBLICATION_ID> --request-sha256 <REVIEWED_REQUEST_SHA256> \
+  --credential-connection-id <OWNER_APPROVED_CONNECTION_UUID>
+```
+
+Choose exactly one credential source. A managed connection must belong to the
+candidate app and current project, use the default environment, match the reviewed
+issuer and resource, and cover the reviewed global and tool scopes. Guided OAuth
+must already be connected by the owner. Approval does not refresh or test a token.
+Connection identifiers and provider credential metadata stay out of agent receipts.
+
+The verification worker renews an expired or expiring access token through the
+existing durable connection lease. Concurrent consumers reuse the saved token.
+Each provider request rechecks the exact publication approval and lease; no
+invocation grant is created. Each application request rechecks current authority.
+A successful accepted refresh is saved even if publication approval is revoked
+while the provider responds, preserving the rotating refresh token. Further
+application requests remain blocked. Connection revocation also blocks installing
+the response.
+
+Lost refresh replies, rejected grants or changed scopes retain a
+`reconnect_required` failure. Reconnect OAuth with a new connection identity and
+review a new publication attempt; repeated requests never replay the exchange or
+fixtures. Verification stops at its execution deadline or the selected token's
+expiry. It never renews a token mid-fixture or repeats a fixture after expiry.
+
+The static credential option must already be an ordinary sealed `MCP_*` app test
 token in the candidate app's default environment. It must authorize the reviewed
 OAuth resource and scopes. Native Gregale API tokens and managed infrastructure
 credentials cannot be used as test tokens. Setup and approval require personal
@@ -1055,9 +1084,9 @@ and restarts only read retained evidence. A closed parent cannot start remaining
 tests. Failed or uncertain fixtures can have external effects: inspect the native
 record and candidate before submitting another publication.
 
-This preview uses ordinary sealed test tokens and the existing four-worker pool
-and publication retention bounds. Managed OAuth renewal for candidate tests,
-durable Tasks and configured platform readiness roles remain separate work;
+This preview supports ordinary sealed test tokens and owner-approved managed
+execution OAuth connections within the existing four-worker pool and publication
+retention bounds. Durable Tasks and configured platform readiness roles remain separate work;
 private hosted publication refuses configured readiness roles. Live staging
 acceptance remains skipped.
 
