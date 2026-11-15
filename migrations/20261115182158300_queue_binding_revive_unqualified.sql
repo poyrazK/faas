@@ -1,4 +1,4 @@
--- filename: 20261115162412300_queue_binding_revive_unqualified.sql
+-- filename: 20261115182158300_queue_binding_revive_unqualified.sql
 -- migration-compat: expand
 -- ADR-20261113180000: 20261112193138262 replaced
 -- public.guard_queue_binding_retirement, which is the live function in a

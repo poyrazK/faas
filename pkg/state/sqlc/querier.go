@@ -1082,6 +1082,9 @@ type Querier interface {
 	// a denial may carry a note for the agent (ADR-20261107140000 §6). It returns
 	// the decided request for its webhook event (§4).
 	DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAgentApprovalParams) (AgentApprovalRequest, error)
+	// Records an outcome for the request that was checked; a newer request for
+	// the key (a later requested_at) stays requested.
+	DecideStorageObjectDeletion(ctx context.Context, db DBTX, arg DecideStorageObjectDeletionParams) (int64, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
 	// separate method because every decrement site is a terminal event
@@ -1324,6 +1327,7 @@ type Querier interface {
 	DueAlertChannelStandDowns(ctx context.Context, db DBTX, arg DueAlertChannelStandDownsParams) ([]DueAlertChannelStandDownsRow, error)
 	DueManagedPostgresCutoverSourceFences(ctx context.Context, db DBTX, arg DueManagedPostgresCutoverSourceFencesParams) ([]ManagedPostgresCutover, error)
 	DueManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, arg DueManagedPostgresLifecycleDatabasesParams) ([]ManagedPostgresDatabase, error)
+	DueStorageObjectDeletions(ctx context.Context, db DBTX, arg DueStorageObjectDeletionsParams) ([]DueStorageObjectDeletionsRow, error)
 	// The customer's override wins over the default.
 	EffectiveOperationConcurrencyLimit(ctx context.Context, db DBTX, arg EffectiveOperationConcurrencyLimitParams) (int32, error)
 	EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg EffectiveWorkflowDefinitionsParams) ([]byte, error)
@@ -7384,6 +7388,10 @@ type Querier interface {
 	// vsock listener that accepted the request. Same rules as the 5xx trigger:
 	// opt-in, a running non-fork instance, nothing in flight, cooldown passed.
 	RequestSDKCrashCapture(ctx context.Context, db DBTX, arg RequestSDKCrashCaptureParams) (CrashCapture, error)
+	// ADR-20261115180000: object deletion moves to the control plane.
+	// A fresh request, whatever the row held before; the trigger stamps a
+	// per-node login's node.
+	RequestStorageObjectDeletion(ctx context.Context, db DBTX, arg RequestStorageObjectDeletionParams) error
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.
 	// The window total is computed before LIMIT so the handler can allocate the
@@ -7642,6 +7650,7 @@ type Querier interface {
 	// settled again, and the code reported the old expiry on a later success.
 	RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, arg RetryQueueDeadLetterInvocationParams) (Invocation, error)
 	RetryQueueLeaseInvocation(ctx context.Context, db DBTX, arg RetryQueueLeaseInvocationParams) (int64, error)
+	RetryStorageObjectDeletion(ctx context.Context, db DBTX, arg RetryStorageObjectDeletionParams) (int64, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)
 	// Operator revert of the last confirmed email change (ADR 20261110100000).
 	// Applies only while the account still has the address that change moved it
@@ -8138,6 +8147,9 @@ type Querier interface {
 	// billing rows DeleteAccount removes, that is apps with no org or a personal
 	// org. Billing rows outlive instance rows, so they cover parked history.
 	SnapshotLogArchiveErasureInstances(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	// Whether a live row names the object: the exact key, the memory key of
+	// its capture, or (for a v2 capture) any object of the capture directory.
+	SnapshotObjectReferenced(ctx context.Context, db DBTX, arg SnapshotObjectReferencedParams) (pgtype.Bool, error)
 	SnapshotPublicationRuntimeChangedAt(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
 	SnapshotPublicationSource(ctx context.Context, db DBTX, instanceID pgtype.UUID) (SnapshotPublicationSourceRow, error)
 	SnapshotRecoveryAdmissionValid(ctx context.Context, db DBTX, arg SnapshotRecoveryAdmissionValidParams) (bool, error)

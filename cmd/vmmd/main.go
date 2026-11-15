@@ -58,6 +58,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/mcpprotocol"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/nodereport"
+	"github.com/onebox-faas/faas/pkg/objectgc"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
@@ -910,6 +911,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
 	default:
 		log.Info("vmmd: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"))
+	}
+	// ADR-20261115180000: in defer mode the shared store's deletes become
+	// requests the control plane's object GC decides.
+	var deleteRequests state.StorageObjectDeletionRequester
+	if r, ok := store.(state.StorageObjectDeletionRequester); ok && store != nil {
+		deleteRequests = r
+	}
+	if deferred, err := objectgc.DeferFromEnv(os.Getenv, storageBackend, deleteRequests, "vmmd"); err != nil {
+		return fmt.Errorf("vmmd: %w", err)
+	} else if deferred {
+		log.Info("vmmd: shared-store deletes deferred to the control plane")
 	}
 	// issue #517 / PR-C / ADR-064 — Ops constructed ABOVE the
 	// Manager wiring so the wake-timeline fan-out (vmmd's canonical
