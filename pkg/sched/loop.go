@@ -3246,6 +3246,10 @@ func (l *Loop) drainSupersededDeployment(ctx context.Context, deploymentID strin
 // instances that serve nothing now and reports how many still have requests
 // in flight. It reports none, so the caller drains at once, when the app is
 // at its concurrency cap: waiting would refuse the new release's wakes.
+// The cap includes the rollout overlap (ADR-199): the superseded release
+// draining beside the new one is that overlap, and without it an app at the
+// default max_concurrency of 1 (old + new = 2) never got the grace, so every
+// deploy still cut its in-flight requests (prod test 2026-11-15).
 func (l *Loop) parkIdleSupersededInstances(ctx context.Context, deploymentID string) int {
 	e := l.engine
 	dep, err := e.store.DeploymentByID(ctx, deploymentID)
@@ -3253,7 +3257,7 @@ func (l *Loop) parkIdleSupersededInstances(ctx context.Context, deploymentID str
 		return 0
 	}
 	app, err := e.store.AppByID(ctx, dep.AppID)
-	if err != nil || e.ledger.Concurrency(app.ID) >= max(app.MaxConcurrency, 1) {
+	if err != nil || e.ledger.Concurrency(app.ID) >= max(app.MaxConcurrency, 1)+api.RolloutConcurrencyGrant {
 		return 0
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)

@@ -331,13 +331,13 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 			if proof == "" && resp.StatusCode >= http.StatusBadRequest {
 				code = SmokeErrorGatewayUnavailable
 			}
-			unavailable, err := unavailableSmoke(result, code, nil)
-			if problem := problemCode(resp.Header.Get("Content-Type"), body); code == SmokeErrorGatewayUnavailable && problem != "" {
+			problem := ""
+			if code == SmokeErrorGatewayUnavailable {
 				// A bounded problem identifier is diagnostic only. An app can
 				// imitate this body; only the proof establishes its origin.
-				unavailable.Error += " (" + problem + ")"
+				problem = problemCode(resp.Header.Get("Content-Type"), body)
 			}
-			return unavailable, err
+			return unavailableSmokeProblem(result, code, problem)
 		}
 	}
 	// Only authenticated candidate responses can establish an app verdict.
