@@ -115,6 +115,13 @@ var longWaitRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/v1/orgs/*/apps/*/queues/*/leases"},
 	{http.MethodGet, "/v1/apps/*/policy/status"},
 	{http.MethodPost, "/v1/projects/scan/source-ref"},
+	// The multipart project scan carries the whole source tarball: a
+	// 714-file repository's upload took ~6.7 s on prod and every `deploy
+	// --project` of it failed when the 5 s default ran out (2026-11-15).
+	{http.MethodPost, "/v1/projects/scan"},
+	{http.MethodPost, "/v1/orgs/*/projects/scan"},
+	{http.MethodPost, "/v1/orgs/*/projects/*/scan"},
+	{http.MethodPost, "/v1/orgs/*/projects/scan/source-ref"},
 	{http.MethodPost, "/v1/apps/*/deployments/dev-source"},
 
 	{http.MethodPost, "/v1/notification-channels/*/test"},
