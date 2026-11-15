@@ -165,7 +165,7 @@ func cmdFlagsEdit(verb string, args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"version": version, "summary": summary}))
 	}
-	fmt.Fprintf(osStdout, "%s (version %d)\n", summary, version)
+	_, _ = fmt.Fprintf(osStdout, "%s (version %d)\n", summary, version)
 	return 0
 }
 
@@ -421,11 +421,11 @@ func printFlagsLifecycle(raw json.RawMessage, all bool) int {
 		rows = slices.DeleteFunc(slices.Clone(rows), func(f flags.FlagLifecycle) bool { return len(f.Attention) == 0 })
 	}
 	if len(rows) == 0 {
-		fmt.Fprintf(osStdout, "No flag needs attention (version %d).\n", report.ConfigVersion)
+		_, _ = fmt.Fprintf(osStdout, "No flag needs attention (version %d).\n", report.ConfigVersion)
 		return 0
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "KEY\tOWNER\tEXPIRES\tLAST CHANGED\tREQUESTS (7D)\tATTENTION")
+	_, _ = fmt.Fprintln(tw, "KEY\tOWNER\tEXPIRES\tLAST CHANGED\tREQUESTS (7D)\tATTENTION")
 	for _, f := range rows {
 		requests := "-"
 		if f.EvaluatedRequests != nil {
@@ -435,7 +435,7 @@ func printFlagsLifecycle(raw json.RawMessage, all bool) int {
 		if len(changed) >= 10 {
 			changed = changed[:10]
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s (v%d)\t%s\t%s\n", f.Key, dashIfEmpty(f.Owner), dashIfEmpty(f.ExpiresAt), changed, f.LastChangedVersion, requests, dashIfEmpty(strings.Join(f.Attention, ", ")))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s (v%d)\t%s\t%s\n", f.Key, dashIfEmpty(f.Owner), dashIfEmpty(f.ExpiresAt), changed, f.LastChangedVersion, requests, dashIfEmpty(strings.Join(f.Attention, ", ")))
 	}
 	if err := tw.Flush(); err != nil {
 		return 1
@@ -664,21 +664,21 @@ func printFlagsList(snap flagsSnapshot) int {
 		return jsonOut(writeJSON(snap))
 	}
 	if len(snap.Flags) == 0 {
-		fmt.Fprintf(osStdout, "No flags (version %d). Create one with gregale flag create KEY --project ...\n", snap.Version)
+		_, _ = fmt.Fprintf(osStdout, "No flags (version %d). Create one with gregale flag create KEY --project ...\n", snap.Version)
 		return 0
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "KEY\tTYPE\tSTATE\tDEFAULT\tRULES\tOWNER\tEXPIRES")
+	_, _ = fmt.Fprintln(tw, "KEY\tTYPE\tSTATE\tDEFAULT\tRULES\tOWNER\tEXPIRES")
 	for _, f := range snap.Flags {
 		typ := f.Type
 		if typ == "" {
 			typ = "boolean"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%d\t%s\t%s\n", f.Key, typ, flagState(f), f.Default, len(f.Rules), dashIfEmpty(f.Owner), dashIfEmpty(f.ExpiresAt))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%v\t%d\t%s\t%s\n", f.Key, typ, flagState(f), f.Default, len(f.Rules), dashIfEmpty(f.Owner), dashIfEmpty(f.ExpiresAt))
 	}
 	if err := tw.Flush(); err != nil {
 		return 1
 	}
-	fmt.Fprintf(osStdout, "version %d\n", snap.Version)
+	_, _ = fmt.Fprintf(osStdout, "version %d\n", snap.Version)
 	return 0
 }

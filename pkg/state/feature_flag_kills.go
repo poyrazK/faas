@@ -71,9 +71,11 @@ type FeatureFlagEnvironmentLister interface {
 // FeatureFlagKillsForDeployment returns the sorted killed flag keys of the
 // deployment's project environment, or none.
 func (s *PgStore) FeatureFlagKillsForDeployment(ctx context.Context, deploymentID string) ([]string, error) {
-	id, err := uuid.Parse(deploymentID)
-	if err != nil {
-		return nil, nil
+	id, parseErr := uuid.Parse(deploymentID)
+	if parseErr != nil {
+		// A target without a deployment UUID has no project environment,
+		// so it has no kills; the gateway must not fail the request.
+		return nil, nil //nolint:nilerr // an unparseable id means no kills
 	}
 	var raw []byte
 	if err := s.pool.QueryRow(ctx, featureFlagKillsForDeploymentSQL, id).Scan(&raw); err != nil {
