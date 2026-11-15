@@ -14176,6 +14176,11 @@ const (
 	ObsServingProbePairsMax     = 1000
 	ObsServingProbeNodeMaxBytes = 128
 	ObsServingProbeURLMaxBytes  = 2048
+	// Two fixed notification channels per expected node; summaries cover all
+	// channels while the preview keeps CLI and deployment reports bounded.
+	ObsServingProbeNotificationNodeChannelsMax = 2
+	ObsServingProbeNotificationChannelsMax     = ObsServingProbeNotificationNodeChannelsMax * ObsServingProbePairsMax
+	ObsServingProbeNotificationItemsMax        = 32
 
 	// Post-deployment verification is a bounded read-only wait, not a rollout
 	// controller. Automatic timing follows probe age policy plus evaluation lag.
@@ -14185,6 +14190,32 @@ const (
 	ObsPostDeployPollMax       = time.Minute
 	ObsPostDeployHTTPTimeout   = 10 * time.Second
 	ObsPostDeployTokenMaxBytes = 4096
+	// Keep the latest check transitions; summaries survive history truncation.
+	ObsPostDeployTransitionsMax = 256
+	// Detailed fault history shares a report-wide count and serialized-byte
+	// budget; it never repeats every source payload for every transition.
+	ObsPostDeployProbeEvidencePerTransitionMax = 4
+	ObsPostDeployProbeEvidenceItemsMax         = 64
+	ObsPostDeployProbeEvidenceBytesMax         = 64 << 10
+	// Primary notification fault details have independent retention; they do
+	// not consume serving fault budgets or the advisory direct-channel history.
+	ObsPostDeployNotificationEvidencePerTransitionMax = 4
+	ObsPostDeployNotificationEvidenceItemsMax         = 16
+	ObsPostDeployNotificationEvidenceBytesMax         = 8 << 10
+	// Advisory direct-notification history has independent retention so it
+	// cannot evict health-check transitions or retained serving fault details.
+	ObsPostDeployNotificationEventsMax       = 3 * ObsServingProbeNotificationItemsMax
+	ObsPostDeployNotificationHistoryBytesMax = 48 << 10
+	// Stability waits and the latest reset each expose a bounded source preview.
+	// The byte budget includes conservatively indented serialized item arrays.
+	ObsPostDeployStabilityItemsMax = 4
+	ObsPostDeployStabilityBytesMax = 4 << 10
+	// Each qualification check retains one current or last-readable preview.
+	ObsPostDeployEvidenceItemsMax = 4
+	ObsPostDeployEvidenceBytesMax = 4 << 10
+	// Qualification changes share a separate report-wide history budget.
+	ObsPostDeployEvidenceEventsMax       = 16
+	ObsPostDeployEvidenceHistoryBytesMax = 16 << 10
 
 	// Rule diagnostics assess the full bounded Prometheus rule snapshot and
 	// expose only a bounded, unhealthy-first metadata preview.
@@ -17314,10 +17345,15 @@ const (
 	RealtimeConsumerGroupLeaseDefaultSeconds   = 30
 	RealtimeConsumerGroupLeaseMaxSeconds       = 300
 	RealtimeConsumerGroupAttemptsDefault       = 5
-	RealtimeConsumerGroupAttemptsMax           = 10
-	RealtimeConsumerGroupRetryMaxSeconds       = 300
-	RealtimeConsumerGroupFailureMaxBytes       = 64
-	RealtimeConsumerGroupBodyMaxBytes          = 4096
+	// RealtimeConsumerGroupReleasesMax: a release hands its attempt back,
+	// so a worker that always releases would loop on one message forever;
+	// at this many releases the message dead-letters as release_limit
+	// (event-driven hunt #7).
+	RealtimeConsumerGroupReleasesMax     = 100
+	RealtimeConsumerGroupAttemptsMax     = 10
+	RealtimeConsumerGroupRetryMaxSeconds = 300
+	RealtimeConsumerGroupFailureMaxBytes = 64
+	RealtimeConsumerGroupBodyMaxBytes    = 4096
 
 	// RealtimeConsumerGroupWaitersPerAccount is one account's share of an
 	// apid's RealtimeConsumerGroupWaitersMax long-poll claims. SDK workers

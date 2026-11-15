@@ -52,6 +52,18 @@ func TestRuntimeConnectionReportsRemainWorkloadOnly(t *testing.T) {
 	}
 }
 
+func TestNodeProbeNotificationsRemainOperatorOnly(t *testing.T) {
+	const operatorPath = "/v1/admin/obs/nodes/{name}/probe-notifications"
+	const accountPath = "/v1/account/health"
+	spec := map[string]map[string]any{operatorPath: {"get": true}, accountPath: {"get": true}}
+	if report := analyze(spec, map[string]bool{}); len(report.missing) != 1 || !strings.Contains(report.missing[0], accountPath) {
+		t.Fatalf("operator-only evidence must not weaken account SDK coverage: %v", report.missing)
+	}
+	if report := analyze(spec, map[string]bool{"GetAccountHealth": true}); !report.ok() {
+		t.Fatalf("operator evidence should not require a tenant SDK method: %v", report.missing)
+	}
+}
+
 func TestRecoveryRoutesHaveTypedClientCoverage(t *testing.T) {
 	root, err := findRepoRoot()
 	if err != nil {

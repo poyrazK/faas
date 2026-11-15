@@ -86,6 +86,17 @@ def _load_canonicalise_to_head():
     return mod._canonicalise_to_head
 
 
+@pytest.mark.parametrize("barrel", ["__init__.py", "preview/__init__.py"])
+def test_authored_barrel_exports_are_not_removed_as_cosmetic_drift(tmp_path, barrel):
+    relative = f"sdk/python/faas_sdk/{barrel}"
+    repo = _build_hermetic_repo(tmp_path, files={relative: "from .old import Existing\n"}, tracked=[relative])
+    output = repo / relative
+    exported = "from .old import Existing\nfrom .new import RequestOptions\n"
+    output.write_text(exported)
+    assert _load_canonicalise_to_head()(repo / "sdk/python/faas_sdk", repo) == 0
+    assert output.read_text() == exported
+
+
 def test_cosmetic_only_drift_is_reconciled(tmp_path: Path) -> None:
     """Import-only divergence (e.g. opc 0.29.x template drift that
     reorders imports) is reconciled — the regen file is restored to

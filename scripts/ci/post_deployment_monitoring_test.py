@@ -4,17 +4,16 @@
 import datetime as dt
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/ci/post_deployment_monitoring.py"
 RELEASE = "a" * 40
-AFTER = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+AFTER = (dt.datetime.now(dt.UTC) - dt.timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
 CHECKS = ("serving_probes", "notification_pipeline", "notification_receivers")
 
 
@@ -128,6 +127,159 @@ raise SystemExit(int(os.environ.get('SSH_CODE', '255')))
                 process, report = self.invoke()
                 self.assertEqual(process.returncode, 3)
                 self.assertEqual(report["reason"], "invalid_verification_report")
+
+    def test_optional_timeline_survives_transport_for_every_exit_state(self):
+        # Old v1 responses without this field are covered above. A newer CLI
+        # must retain its historical fault evidence even when the final poll
+        # passes, or when verification ends degraded/unknown.
+        for state, code in (("passed", 0), ("degraded", 1), ("unknown", 3)):
+            with self.subTest(state=state):
+                response = self.response(state)
+                response["had_confirmed_faults"] = True
+                response["timeline"] = {
+                    "transition_limit": 256, "dropped_transitions": 0, "truncated": False,
+                    "transitions": [{"at": AFTER, "attempt": 1, "check": "serving_probes",
+                                     "state": "degraded", "reason": "serving_probe_fault"}],
+                    "checks": [{"name": "serving_probes", "first_fault_at": AFTER,
+                                "first_fault_reason": "serving_probe_fault",
+                                "observed_fault_seconds": 1, "unrecovered_fault": state != "passed"}],
+                }
+                self.env.update(SSH_CODE=str(code), RESPONSE=json.dumps(response))
+                process, report = self.invoke()
+                self.assertEqual(process.returncode, code)
+                self.assertEqual(report["timeline"], response["timeline"])
+                self.assertTrue(report["had_confirmed_faults"])
+                self.assertIn("Confirmed faults were observed during verification.", (self.root / "summary").read_text())
+
+    def test_fault_histories_survive_recovery_and_lost_current_evidence(self):
+        capture = {
+            "cause_sha256": "c" * 64, "total": 1, "omitted": 0, "truncated": False,
+            "items": [{"node": "fsn-2", "url_id": "b" * 64, "state": "failing", "reason": "probe_failing",
+                       "evaluated_at": AFTER, "last_run_at": AFTER,
+                       "diagnostics": {"state": "available", "evaluated_at": AFTER, "failure_code": "tls",
+                                       "first_failure_code": "tls", "attempts": 2, "http_status": 0,
+                                       "recovered_on_retry": False}}],
+        }
+        notification_capture = {
+            "cause_sha256": "d" * 64, "total": 1, "omitted": 0, "truncated": False,
+            "items": [{"kind": "receiver", "receiver": "faas-page", "integration": "slack",
+                       "reason": "requests_failing", "expected": True,
+                       "signals": [{"name": "failures", "state": "healthy", "value": 1.5,
+                                    "observed_at": AFTER, "window_seconds": 600, "max_age_seconds": 120}]}],
+        }
+        for state, code in (("passed", 0), ("unknown", 3)):
+            with self.subTest(state=state):
+                response = self.response(state)
+                response["had_confirmed_faults"] = True
+                response["timeline"] = {
+                    "transition_limit": 256, "dropped_transitions": 0, "truncated": False,
+                    "transitions": [{"at": AFTER, "attempt": 1, "check": "serving_probes",
+                                     "state": "degraded", "reason": "serving_probe_fault", "probe_failures": capture},
+                                    {"at": AFTER, "attempt": 1, "check": "notification_receivers",
+                                     "state": "degraded", "reason": "receiver_requests_failing",
+                                     "notification_failures": notification_capture}],
+                    "checks": [],
+                    "probe_evidence": {"per_transition_limit": 4, "item_limit": 64, "byte_limit": 65536,
+                                       "retained_items": 1, "retained_bytes": 1200, "dropped_items": 0,
+                                       "dropped_snapshots": 0, "truncated": False},
+                    "notification_evidence": {"per_transition_limit": 4, "item_limit": 16, "byte_limit": 8192,
+                                              "retained_items": 1, "retained_bytes": 650, "dropped_items": 0,
+                                              "dropped_snapshots": 0, "truncated": False},
+                }
+                self.env.update(SSH_CODE=str(code), RESPONSE=json.dumps(response))
+                process, report = self.invoke()
+                self.assertEqual(process.returncode, code)
+                self.assertEqual(report["timeline"], response["timeline"])
+
+
+    def test_source_read_history_survives_recovery_and_unknown_evidence(self):
+        for state, code in (("passed", 0), ("unknown", 3)):
+            with self.subTest(state=state):
+                response = self.response(state)
+                response["sources"] = {
+                    "serving_health": {"state": "succeeded", "http_status": 200, "reads": 2,
+                                       "failed_reads": 0, "cancelled_reads": 0, "last_success_at": AFTER},
+                    "notification_health": {
+                        "state": "succeeded" if code == 0 else "failed",
+                        "reason": "" if code == 0 else "server_error",
+                        "http_status": 200 if code == 0 else 503,
+                        "reads": 2, "failed_reads": 1 if code == 0 else 2, "cancelled_reads": 0,
+                        "consecutive_failures": 0 if code == 0 else 2,
+                        "first_failure_at": AFTER, "last_read_at": AFTER,
+                        "last_success_at": AFTER if code == 0 else None,
+                        "last_recovery_at": AFTER if code == 0 else None,
+                        "last_failure": {"at": AFTER, "reason": "forbidden" if code == 0 else "server_error",
+                                         "http_status": 403 if code == 0 else 503},
+                        "last_read_seconds": 0.01,
+                    },
+                }
+                response["timeline"] = {
+                    "transition_limit": 256, "dropped_transitions": 0, "truncated": False,
+                    "transitions": [{"at": AFTER, "attempt": 1, "check": "notification_pipeline",
+                                     "state": "unknown", "reason": "source_forbidden", "source_http_status": 403}],
+                    "checks": [],
+                }
+                self.env.update(SSH_CODE=str(code), RESPONSE=json.dumps(response))
+                process, report = self.invoke()
+                self.assertEqual(process.returncode, code)
+                self.assertEqual(report["sources"], response["sources"])
+                self.assertEqual(report["timeline"], response["timeline"])
+
+
+    def test_qualification_blockers_survive_recovery_and_unavailable_reads(self):
+        preview = {
+            "total": 1, "omitted": 0, "truncated": False, "item_limit": 4,
+            "byte_limit": 4096, "retained_bytes": 600,
+            "items": [{"kind": "probe_evaluation", "node": "fsn-2", "url_id": "b" * 64,
+                       "reason": "missing_timestamp", "source_state": "unknown", "source_reason": "query_failed",
+                       "observed_at": None, "age_seconds": None, "max_age_seconds": 120,
+                       "allowed_clock_skew_seconds": 30}],
+        }
+        for state, code in (("passed", 0), ("unknown", 3)):
+            with self.subTest(state=state):
+                response = self.response(state)
+                response["qualification_evidence"] = {
+                    "observed_at": AFTER,
+                    "checks": [{"name": "serving_probes", "state": "passed" if code == 0 else "unavailable",
+                                "last_blocked": {"at": AFTER, "blockers": preview}},
+                               {"name": "notification_pipeline", "state": "passed"},
+                               {"name": "notification_receivers", "state": "passed"}],
+                }
+                self.env.update(SSH_CODE=str(code), RESPONSE=json.dumps(response))
+                process, report = self.invoke()
+                self.assertEqual(process.returncode, code)
+                self.assertEqual(report["qualification_evidence"], response["qualification_evidence"])
+                self.assertFalse(report["had_confirmed_faults"])
+
+
+    def test_qualification_progress_and_truncated_history_survive_transport(self):
+        for state, code in (("passed", 0), ("unknown", 3)):
+            with self.subTest(state=state):
+                response = self.response(state)
+                preview = {"total": 1, "omitted": 0, "truncated": False, "item_limit": 4,
+                           "byte_limit": 4096, "retained_bytes": 300,
+                           "items": [{"kind": "pipeline_signal", "name": "prometheus_queue_length",
+                                      "reason": "missing_samples", "observed_at": None, "age_seconds": None}]}
+                response["qualification_evidence"] = {
+                    "observed_at": AFTER,
+                    "checks": [{"name": "notification_pipeline", "state": "passed" if code == 0 else "unavailable",
+                                "progress": {"first_observed_at": AFTER, "first_blocked_at": AFTER,
+                                             "first_passed_at": AFTER if code == 0 else None, "state_since": AFTER,
+                                             "blockers_since": None, "observed_blocked_seconds": 42,
+                                             "observed_unavailable_seconds": 20}}],
+                    "history": {"event_limit": 16, "byte_limit": 16384, "total_events": 20,
+                                "retained_events": 2, "retained_bytes": 1000, "dropped_events": 16,
+                                "envelope_omitted_events": 2, "truncated": True,
+                                "events": [{"at": AFTER, "check": "notification_pipeline", "state": "blocked",
+                                            "cause_sha256": "a" * 64, "blockers": preview},
+                                           {"at": AFTER, "check": "notification_pipeline",
+                                            "state": "passed" if code == 0 else "unavailable"}]},
+                }
+                self.env.update(SSH_CODE=str(code), RESPONSE=json.dumps(response))
+                process, report = self.invoke()
+                self.assertEqual(process.returncode, code)
+                self.assertEqual(report["qualification_evidence"], response["qualification_evidence"])
+                self.assertFalse(report["had_confirmed_faults"])
 
 
 class WorkflowContractTest(unittest.TestCase):
