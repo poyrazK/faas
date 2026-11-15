@@ -1462,8 +1462,14 @@ type SnapshotRef struct {
 	// encrypted twins. vmmd opens sealed_key with its fleet identity (bound to
 	// capture_id), decrypts the objects into this instance's staging and
 	// restores from there. Empty for every ordinary snapshot.
-	CaptureId     string `protobuf:"bytes,9,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
-	SealedKey     []byte `protobuf:"bytes,10,opt,name=sealed_key,json=sealedKey,proto3" json:"sealed_key,omitempty"`
+	CaptureId string `protobuf:"bytes,9,opt,name=capture_id,json=captureId,proto3" json:"capture_id,omitempty"`
+	SealedKey []byte `protobuf:"bytes,10,opt,name=sealed_key,json=sealedKey,proto3" json:"sealed_key,omitempty"`
+	// ADR-20261110210000 slice 3d-3: the sealed object is a park or warm
+	// snapshot, not a crash capture. It is cache (ADR-005): a key vmmd cannot
+	// open, an unverified backing or a failed restore cold boots instead of
+	// failing the wake. A vmmd that predates the field treats it as a crash
+	// capture, so sealing stays off until every vmmd has it.
+	SealedCache   bool `protobuf:"varint,11,opt,name=sealed_cache,json=sealedCache,proto3" json:"sealed_cache,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1559,6 +1565,13 @@ func (x *SnapshotRef) GetSealedKey() []byte {
 		return x.SealedKey
 	}
 	return nil
+}
+
+func (x *SnapshotRef) GetSealedCache() bool {
+	if x != nil {
+		return x.SealedCache
+	}
+	return false
 }
 
 // WakeResponse is the common return shape of CreateFromSnapshot and
@@ -3920,8 +3933,15 @@ type PauseAndSnapshotRequest struct {
 	// Run the configured guest callback before this terminal init capture.
 	// A failed callback aborts snapshot publication.
 	BeforeCheckpoint bool `protobuf:"varint,6,opt,name=before_checkpoint,json=beforeCheckpoint,proto3" json:"before_checkpoint,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// ADR-20261110210000 slice 3d-3: encrypt this park capture at the source,
+	// as WarmSnapshotRequest.seal_capture_id does (ADR-733). vmmd publishes
+	// only encrypted twins (key + ".age") and returns the per-capture key
+	// sealed to its capture recipient in SnapshotResponse.sealed_key; a vmmd
+	// that cannot seal refuses rather than publish plaintext. The id is the
+	// capture token of storage_key.
+	SealCaptureId string `protobuf:"bytes,7,opt,name=seal_capture_id,json=sealCaptureId,proto3" json:"seal_capture_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PauseAndSnapshotRequest) Reset() {
@@ -3987,6 +4007,13 @@ func (x *PauseAndSnapshotRequest) GetBeforeCheckpoint() bool {
 		return x.BeforeCheckpoint
 	}
 	return false
+}
+
+func (x *PauseAndSnapshotRequest) GetSealCaptureId() string {
+	if x != nil {
+		return x.SealCaptureId
+	}
+	return ""
 }
 
 type SnapshotResponse struct {
@@ -22019,7 +22046,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"F\n" +
 	"\x12WorkloadDependency\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
-	"\tcondition\x18\x02 \x01(\tR\tcondition\"\xc8\x02\n" +
+	"\tcondition\x18\x02 \x01(\tR\tcondition\"\xeb\x02\n" +
 	"\vSnapshotRef\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12!\n" +
 	"\fvmstate_path\x18\x03 \x01(\tR\vvmstatePath\x12\x1d\n" +
@@ -22034,7 +22061,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"capture_id\x18\t \x01(\tR\tcaptureId\x12\x1d\n" +
 	"\n" +
 	"sealed_key\x18\n" +
-	" \x01(\fR\tsealedKeyJ\x04\b\x02\x10\x03\"\xe7\a\n" +
+	" \x01(\fR\tsealedKey\x12!\n" +
+	"\fsealed_cache\x18\v \x01(\bR\vsealedCacheJ\x04\b\x02\x10\x03\"\xe7\a\n" +
 	"\fWakeResponse\x12(\n" +
 	"\x10rehearsal_run_id\x18\x13 \x01(\tR\x0erehearsalRunId\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
@@ -22262,14 +22290,15 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x17BuildRegistryCredential\x12\x1a\n" +
 	"\bregistry\x18\x01 \x01(\tR\bregistry\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12'\n" +
-	"\x0fpassword_sealed\x18\x03 \x01(\fR\x0epasswordSealed\"\xdc\x01\n" +
+	"\x0fpassword_sealed\x18\x03 \x01(\fR\x0epasswordSealed\"\x84\x02\n" +
 	"\x17PauseAndSnapshotRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12!\n" +
 	"\fvmstate_path\x18\x03 \x01(\tR\vvmstatePath\x12\x1f\n" +
 	"\vstorage_key\x18\x04 \x01(\tR\n" +
 	"storageKey\x12.\n" +
 	"\x13vmstate_storage_key\x18\x05 \x01(\tR\x11vmstateStorageKey\x12+\n" +
-	"\x11before_checkpoint\x18\x06 \x01(\bR\x10beforeCheckpointJ\x04\b\x02\x10\x03\"\x9d\x02\n" +
+	"\x11before_checkpoint\x18\x06 \x01(\bR\x10beforeCheckpoint\x12&\n" +
+	"\x0fseal_capture_id\x18\a \x01(\tR\rsealCaptureIdJ\x04\b\x02\x10\x03\"\x9d\x02\n" +
 	"\x10SnapshotResponse\x12\x1b\n" +
 	"\tmem_bytes\x18\x01 \x01(\x03R\bmemBytes\x12#\n" +
 	"\rvmstate_bytes\x18\x02 \x01(\x03R\fvmstateBytes\x12!\n" +

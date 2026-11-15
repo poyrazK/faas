@@ -19908,12 +19908,16 @@ func createSnapshotWithQuerier(ctx context.Context, q sqlc.DBTX, snap Snapshot) 
 			return Snapshot{}, ErrInvalidArgument
 		}
 	}
+	if err := validSnapshotSeal(snap); err != nil {
+		return Snapshot{}, err
+	}
 	row, err := sqlc.New().CreateSnapshot(ctx, q, sqlc.CreateSnapshotParams{
 		RecoveryGeneration: snap.RecoveryGeneration,
 		DeploymentID:       mustPgUUID(snap.DeploymentID), FcVersion: snap.FCVersion, BaseImageVersion: snap.BaseImageVersion,
 		MemBytes: snap.MemBytes, DiskBytes: snap.DiskBytes, StoredBytes: snap.StoredBytes, StorageKey: snap.StorageKey,
 		Stale: snap.Stale, Tier: tier, ApplicationStandardCaptureToken: mustPgUUID(snap.ApplicationStandardCaptureToken),
 		CpuTemplate: snap.CPUTemplate, CpuModel: snap.CPUModel,
+		SealedKey: snap.SealedKey, SealedCaptureID: mustPgUUID(snap.SealedCaptureID),
 	})
 	if err != nil {
 		return Snapshot{}, mapErr(err)
@@ -27909,6 +27913,8 @@ func snapshotFromSQLC(row sqlc.Snapshot) Snapshot {
 		RecoveryGeneration:              row.RecoveryGeneration,
 		CPUTemplate:                     row.CpuTemplate,
 		CPUModel:                        row.CpuModel,
+		SealedKey:                       row.SealedKey,
+		SealedCaptureID:                 pgUUIDString(row.SealedCaptureID),
 	}
 }
 

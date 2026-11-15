@@ -370,4 +370,22 @@ func TestReferenceLookupsOnPostgres(t *testing.T) {
 	if _, _, err := store.CaptureKey(ctx, "not-a-uuid"); !errors.Is(err, secretd.ErrUnknownCapture) {
 		t.Fatalf("bad capture id = %v", err)
 	}
+	// Slice 3d-3: a sealed park snapshot's key resolves through its
+	// deployment's app; a delete-pending one does not.
+	snapToken := uuid.NewString()
+	snap, err := st.CreateSnapshot(ctx, state.Snapshot{DeploymentID: scopedDep.ID, FCVersion: "fc-1", MemBytes: 1, DiskBytes: 1,
+		StorageKey: state.SnapshotCaptureMemKey(scopedDep.ID, state.SnapshotTierInit, snapToken), Tier: state.SnapshotTierInit,
+		SealedKey: []byte{7}, SealedCaptureID: snapToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app, sealed, err := store.CaptureKey(ctx, snapToken); err != nil || app != appA.ID || len(sealed) != 1 || sealed[0] != 7 {
+		t.Fatalf("snapshot capture key = %s %x %v", app, sealed, err)
+	}
+	if _, err := pool.Exec(ctx, `update snapshots set delete_pending = true where id = $1`, snap.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.CaptureKey(ctx, snapToken); !errors.Is(err, secretd.ErrUnknownCapture) {
+		t.Fatalf("delete-pending snapshot capture key = %v", err)
+	}
 }

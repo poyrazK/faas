@@ -18028,6 +18028,10 @@ func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
 		// SnapshotTierWarm explicitly.
 		snap.Tier = SnapshotTierInit
 	}
+	if err := validSnapshotSeal(snap); err != nil {
+		return Snapshot{}, err
+	}
+	snap.SealedKey = append([]byte(nil), snap.SealedKey...)
 	if err := m.guardStandardSnapshotPublicationLocked(snap); err != nil {
 		return Snapshot{}, err
 	}

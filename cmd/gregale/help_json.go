@@ -26,6 +26,7 @@ type jsonHelpDocument struct {
 	SubcommandsAfterPositionals bool                 `json:"subcommands_after_positionals"`
 	FlagsAfterPositionals       bool                 `json:"flags_after_positionals"`
 	Output                      *cliOutputContract   `json:"output,omitempty"`
+	FlagRules                   []cliFlagRule        `json:"flag_rules,omitempty"`
 }
 
 type jsonHelpFlag struct {
@@ -151,8 +152,9 @@ func jsonHelpLookup(commands []cliCommand, words []string) (jsonHelpDocument, bo
 func jsonHelpNode(path, description, topic string, node cliSub) jsonHelpDocument {
 	document := jsonHelpDocument{
 		SchemaVersion: 1, Command: path, RequestedCommand: path, Description: description,
-		Output:  jsonHelpOutput(node),
-		DocsURL: docsURLForTopic(topic), Aliases: []string{},
+		Output:    jsonHelpOutput(node),
+		FlagRules: jsonHelpFlagRules(node),
+		DocsURL:   docsURLForTopic(topic), Aliases: []string{},
 		Positionals: append([]string{}, node.Positionals...), PositionalChoices: []string{},
 		Flags: []jsonHelpFlag{}, Examples: append([]string{}, node.Examples...), Notes: append([]string{}, node.Notes...),
 		GlobalFlags: jsonGlobalFlagHelp(),
