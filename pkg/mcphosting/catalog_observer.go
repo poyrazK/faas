@@ -16,7 +16,7 @@ func ObserveCatalog(ctx context.Context, endpoint, token, version string, httpCl
 	if httpClient != nil {
 		client.HTTP = httpClient
 	}
-	if err = client.InitializeStateless(ctx); err != nil {
+	if err = client.OpenStateless(ctx); err != nil {
 		return nil, err
 	}
 	catalog, exchange, err := client.DiscoverCatalog(ctx)

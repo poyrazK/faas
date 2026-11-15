@@ -242,6 +242,22 @@ plane: watch its network and `faas_secretd_opens_total{rpc="RegistryFetch"}`.
    Known limit: secretd finds a credential by the registry URL's exact host,
    so a Docker Hub credential stored as `docker.io` is not used for
    `registry-1.docker.io` pulls (as for imaged's pulls, 3j-2).
+4. **Builds pull only what their Dockerfiles name (slice 3j-4).** When apid
+   accepts a source deploy it records, in `deployments.build_registry_scope`,
+   the image repositories every Dockerfile in the source names (`FROM`,
+   `COPY --from`, `RUN --mount from=`, ARG defaults and Compose build args
+   expanded). The column never changes, and a per-node compute login cannot
+   record one. secretd checks each build pull against it per
+   `faas_secretd_build_registry_scope`: `observe` (the default) counts
+   `faas_secretd_build_registry_scope_total{result}` and logs `build registry
+   pull outside its deployment's scope`, refusing nothing; `enforce` refuses
+   (`faas_secretd_refusals_total{reason="out_of_scope"}`). Watch observe for a
+   few days: `out_of_scope` means a build pulled a repository its Dockerfiles
+   do not name (an ARG the parser could not resolve, a Dockerfile under an
+   unusual name); `unrecorded` means a deployment created without apid's
+   source path (GitOps candidates, older rows). Turn on enforce once both stay
+   at 0 for real builds; a node that claims another app's build then gets at
+   most that build's own base images. Back out by setting `observe` again.
 
 ## Take the edge and delivery identities off compute
 
@@ -317,6 +333,35 @@ secretd.
 Back out a node by setting its switch to false and converging: the role
 stages the identity again; restart vmmd to load it. With the CD variable on,
 unset it first.
+
+## Internal-service tokens from secretd (slice 3k)
+
+Compute schedds normally sign the internal-service tokens they attach for
+internal_only apps (ADR-119) with the cluster key, which every compute node
+can open. With slice 3k they ask secretd instead, for each app they own or
+hold a grant for, and need no cluster key.
+
+1. **Control plane.** The control domain identity must be staged on the
+   control plane (`/etc/faas/secrets/domains/control.age`, which the CP
+   schedd already reads). Converge secretd_service. The unit gains
+   `FAAS_SECRETD_CONTROL_IDENTITY`, and after a restart secretd mints. Check:
+   from a compute node, a dispatch to an internal_only app still succeeds
+   after step 2, and
+   `faas_secretd_opens_total{rpc="MintInternalServiceToken"}` rises.
+2. **One compute node.** Set `FAAS_SCHEDD_INTERNAL_SVC_MINTER=secretd` for
+   its schedd. It needs `FAAS_SCHEDD_SECRETD_TARGET`. Workflow outbound
+   (`FAAS_WORKFLOW_OUTBOUND_ENABLED=1`) refuses to start on such a schedd.
+   Restart schedd. Check:
+   - The journal shows `schedd: internal-service tokens minted by secretd`.
+   - Internal_only cron and trigger dispatches still pass.
+   - `faas_secretd_refusals_total{rpc="MintInternalServiceToken"}` stays
+     flat. A rise means the node dispatches for an app it neither owns nor
+     holds a grant for.
+3. **Gateways.** From this release on, both internal-only gates refuse a
+   token minted for another app, with audit reason `app_mismatch`. A legacy
+   token without an `app_id` passes as before.
+
+Back out a node by unsetting the variable and restarting schedd.
 
 ## Rotation
 

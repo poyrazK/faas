@@ -53,6 +53,9 @@ class DatabaseSwitch:
     switches."""
     from_revision: int | Unset = UNSET
     target_revision: int | Unset = UNSET
+    keeps_release: bool | Unset = UNSET
+    """True for a restore that moves the app to the copy without changing its code; the target deployment is the
+    release that served when it was requested."""
     source_database_name: str | Unset = UNSET
     target_database_id: UUID | Unset = UNSET
     """The restored copy, once its restore has started."""
@@ -107,6 +110,8 @@ class DatabaseSwitch:
         from_revision = self.from_revision
 
         target_revision = self.target_revision
+
+        keeps_release = self.keeps_release
 
         source_database_name = self.source_database_name
 
@@ -167,6 +172,8 @@ class DatabaseSwitch:
             field_dict["from_revision"] = from_revision
         if target_revision is not UNSET:
             field_dict["target_revision"] = target_revision
+        if keeps_release is not UNSET:
+            field_dict["keeps_release"] = keeps_release
         if source_database_name is not UNSET:
             field_dict["source_database_name"] = source_database_name
         if target_database_id is not UNSET:
@@ -239,6 +246,8 @@ class DatabaseSwitch:
 
         target_revision = d.pop("target_revision", UNSET)
 
+        keeps_release = d.pop("keeps_release", UNSET)
+
         source_database_name = d.pop("source_database_name", UNSET)
 
         _target_database_id = d.pop("target_database_id", UNSET)
@@ -308,6 +317,7 @@ class DatabaseSwitch:
             from_deployment_id=from_deployment_id,
             from_revision=from_revision,
             target_revision=target_revision,
+            keeps_release=keeps_release,
             source_database_name=source_database_name,
             target_database_id=target_database_id,
             failure_code=failure_code,

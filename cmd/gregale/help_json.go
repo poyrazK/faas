@@ -10,20 +10,22 @@ import (
 // defaults. Version 1 keeps absent collections as arrays and lists immediate
 // children; callers request a child's command to discover its full contract.
 type jsonHelpDocument struct {
-	SchemaVersion               int               `json:"schema_version"`
-	Command                     string            `json:"command"`
-	RequestedCommand            string            `json:"requested_command"`
-	Description                 string            `json:"description"`
-	DocsURL                     string            `json:"docs_url"`
-	Aliases                     []string          `json:"aliases"`
-	Positionals                 []string          `json:"positionals"`
-	PositionalChoices           []string          `json:"positional_choices"`
-	Flags                       []jsonHelpFlag    `json:"flags"`
-	Examples                    []string          `json:"examples"`
-	Notes                       []string          `json:"notes"`
-	Subcommands                 []jsonHelpCommand `json:"subcommands"`
-	SubcommandsAfterPositionals bool              `json:"subcommands_after_positionals"`
-	FlagsAfterPositionals       bool              `json:"flags_after_positionals"`
+	SchemaVersion               int                  `json:"schema_version"`
+	Command                     string               `json:"command"`
+	RequestedCommand            string               `json:"requested_command"`
+	Description                 string               `json:"description"`
+	DocsURL                     string               `json:"docs_url"`
+	Aliases                     []string             `json:"aliases"`
+	Positionals                 []string             `json:"positionals"`
+	PositionalChoices           []string             `json:"positional_choices"`
+	Flags                       []jsonHelpFlag       `json:"flags"`
+	GlobalFlags                 []jsonHelpGlobalFlag `json:"global_flags"`
+	Examples                    []string             `json:"examples"`
+	Notes                       []string             `json:"notes"`
+	Subcommands                 []jsonHelpCommand    `json:"subcommands"`
+	SubcommandsAfterPositionals bool                 `json:"subcommands_after_positionals"`
+	FlagsAfterPositionals       bool                 `json:"flags_after_positionals"`
+	Output                      *cliOutputContract   `json:"output,omitempty"`
 }
 
 type jsonHelpFlag struct {
@@ -149,9 +151,11 @@ func jsonHelpLookup(commands []cliCommand, words []string) (jsonHelpDocument, bo
 func jsonHelpNode(path, description, topic string, node cliSub) jsonHelpDocument {
 	document := jsonHelpDocument{
 		SchemaVersion: 1, Command: path, RequestedCommand: path, Description: description,
+		Output:  jsonHelpOutput(node),
 		DocsURL: docsURLForTopic(topic), Aliases: []string{},
 		Positionals: append([]string{}, node.Positionals...), PositionalChoices: []string{},
 		Flags: []jsonHelpFlag{}, Examples: append([]string{}, node.Examples...), Notes: append([]string{}, node.Notes...),
+		GlobalFlags: jsonGlobalFlagHelp(),
 		Subcommands: []jsonHelpCommand{}, SubcommandsAfterPositionals: node.SubcommandsAfterPositionals,
 		FlagsAfterPositionals: node.FlagsAfterPositionals,
 	}
@@ -223,4 +227,15 @@ func jsonHelpSubAliases(commands []cliCommand, path []string, add func(string)) 
 		}
 		return
 	}
+}
+
+func jsonHelpOutput(node cliSub) *cliOutputContract {
+	if node.output == 0 {
+		return nil
+	}
+	flags := make([]string, 0, len(node.Flags))
+	for _, flag := range node.Flags {
+		flags = append(flags, flag.Name)
+	}
+	return newCLIOutputContract(node.output, flags)
 }

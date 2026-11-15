@@ -24,7 +24,7 @@ func VerifyRecords(ctx context.Context, store state.Store, acct state.Account, p
 			return fmt.Errorf("workload %q is no longer in the project", workload.WorkloadSlug)
 		}
 		source, err := store.DeploymentByID(ctx, workload.SourceDeploymentID)
-		if err != nil || source.AppID != app.ID || source.Scope != promotion.FromEnvironment {
+		if err != nil || source.AppID != app.ID || !state.EnvironmentOwnsScope(promotion.FromEnvironment, source.Scope) {
 			return fmt.Errorf("workload %q has no source deployment", workload.WorkloadSlug)
 		}
 		if workload.TargetDeploymentID == "" {
@@ -34,7 +34,7 @@ func VerifyRecords(ctx context.Context, store state.Store, acct state.Account, p
 		if err != nil {
 			return fmt.Errorf("could not load target deployment for workload %q: %w", workload.WorkloadSlug, err)
 		}
-		if target.AppID != app.ID || target.Scope != promotion.ToEnvironment || target.Status != state.DeployLive {
+		if target.AppID != app.ID || !state.EnvironmentOwnsScope(promotion.ToEnvironment, target.Scope) || target.Status != state.DeployLive {
 			return fmt.Errorf("workload %q target deployment is not live in %s", workload.WorkloadSlug, promotion.ToEnvironment)
 		}
 		if workload.Status == "promoted" && target.Reason != "environment promotion/"+promotion.ID {
@@ -126,6 +126,13 @@ func ReleaseSetMatchesMembers(release state.ProjectReleaseSet, members []state.P
 
 func SelectedDeployment(ctx context.Context, store state.Store, app state.App, environment string, release *state.ProjectReleaseSet) (state.Deployment, error) {
 	if release == nil {
+		if environment == "production" {
+			// Production serves from one of two scope names; the deployment
+			// actually serving it is the promotion's previous target. An
+			// exact "production" lookup found nothing for a project deployed
+			// to the default scope, so a rollback had no target to restore.
+			return state.ResolveProductionDeployment(ctx, store, app.ID)
+		}
 		return store.LiveDeploymentForScope(ctx, app.ID, environment)
 	}
 	for _, member := range release.Members {
@@ -136,7 +143,7 @@ func SelectedDeployment(ctx context.Context, store state.Store, app state.App, e
 		if err != nil {
 			return state.Deployment{}, err
 		}
-		if deployment.AppID != app.ID || deployment.Scope != environment || deployment.Status != state.DeployLive {
+		if deployment.AppID != app.ID || !state.EnvironmentOwnsScope(environment, deployment.Scope) || deployment.Status != state.DeployLive {
 			return state.Deployment{}, state.ErrConflict
 		}
 		return deployment, nil
