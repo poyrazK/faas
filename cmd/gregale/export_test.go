@@ -958,6 +958,7 @@ var CmdMCPAccess = cmdMCPAccess
 var CmdMCPCatalogMonitor = cmdMCPCatalogMonitor
 var CmdMCPDeploy = cmdMCPDeploy
 var CmdMCPInit = cmdMCPInit
+var CmdMCPImportOpenAPI = cmdMCPImportOpenAPI
 var CmdMCPReadiness = cmdMCPReadiness
 var CmdMCPReadinessAttention = cmdMCPReadinessAttention
 var CmdMCPReadinessFallback = cmdMCPReadinessFallback

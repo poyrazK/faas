@@ -1,0 +1,292 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "defaults and Go vendoring",
+      "files": {
+        "package.json": "{}",
+        "index.js": "export default 1;",
+        "dist/output.js": "skip",
+        "node_modules/pkg/index.js": "skip",
+        ".git/HEAD": "skip",
+        "nested/a.pyc": "skip",
+        "vendor/modules.txt": "# modules",
+        "vendor/lib/main.go": "package lib",
+        ".env.example": "PORT=3000\n"
+      },
+      "included": [
+        ".env.example",
+        "index.js",
+        "package.json",
+        "vendor/lib/main.go",
+        "vendor/modules.txt"
+      ]
+    },
+    {
+      "name": "ordered ignore rules and pruned parents",
+      "files": {
+        ".gregaleignore": "*.log\n!keep.log\n!dist/\n/dist/*.map\n**/*.pem\nbuild/\n!build/keep.txt\n",
+        "keep.log": "keep",
+        "drop.log": "skip",
+        "nested/drop.log": "skip",
+        "dist/index.js": "keep",
+        "dist/index.map": "skip",
+        "key.pem": "skip",
+        "deep/key.pem": "skip",
+        "build/keep.txt": "skip",
+        "main.ts": "keep"
+      },
+      "included": [
+        ".gregaleignore",
+        "dist/index.js",
+        "keep.log",
+        "main.ts"
+      ]
+    },
+    {
+      "name": "Dockerfile context and rule precedence",
+      "files": {
+        "Dockerfile": "FROM scratch\n",
+        ".dockerignore": "dist/drop.js\n*.log\n!keep.log\n",
+        ".gregaleignore": "!dist/drop.js\nlogs/\n",
+        "dist/keep.js": "keep",
+        "dist/drop.js": "keep",
+        "root.log": "skip",
+        "keep.log": "keep",
+        "nested/a.log": "keep",
+        "logs/a.txt": "skip",
+        "target/app.jar": "keep"
+      },
+      "included": [
+        ".dockerignore",
+        ".gregaleignore",
+        "Dockerfile",
+        "dist/drop.js",
+        "dist/keep.js",
+        "keep.log",
+        "nested/a.log",
+        "target/app.jar"
+      ]
+    },
+    {
+      "name": "explicit workspace application root",
+      "source_root": "apps/api",
+      "files": {
+        "package.json": "root",
+        "apps/api/package.json": "app",
+        "apps/api/Dockerfile": "FROM scratch",
+        "apps/worker/index.js": "worker",
+        ".dockerignore": "private/\n",
+        "private/secret.txt": "skip",
+        "dist/shared.js": "context"
+      },
+      "included": [
+        ".dockerignore",
+        "apps/api/Dockerfile",
+        "apps/api/package.json",
+        "apps/worker/index.js",
+        "dist/shared.js",
+        "package.json"
+      ]
+    },
+    {
+      "name": "Unicode and long archive paths",
+      "files": {
+        "測試/🙂.ts": "console.log(\"hello\");\n",
+        "long/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt": "long file",
+        "run.sh": "#!/bin/sh\nexit 0\n"
+      },
+      "executable": [
+        "run.sh"
+      ],
+      "included": [
+        "long/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt",
+        "run.sh",
+        "測試/🙂.ts"
+      ]
+    },
+    {
+      "name": "in-tree links are dereferenced",
+      "files": {
+        "real.js": "hello",
+        "src/main.ts": "source"
+      },
+      "links": {
+        "alias.js": "real.js",
+        "aliasdir": "src"
+      },
+      "included": [
+        "alias.js",
+        "aliasdir/main.ts",
+        "real.js",
+        "src/main.ts"
+      ]
+    },
+    {
+      "name": "explicit exclusions and mandatory VCS exclusion",
+      "files": {
+        ".gregaleignore": "!.git/\n!vendor/\n",
+        "credentials.env": "private",
+        "vendor/file.txt": "source",
+        ".git/HEAD": "skip",
+        "main.js": "source"
+      },
+      "exclude": [
+        "credentials.env"
+      ],
+      "included": [
+        ".gregaleignore",
+        "main.js",
+        "vendor/file.txt"
+      ]
+    },
+    {
+      "name": "globstar and Go bracket grammar",
+      "files": {
+        ".gregaleignore": "a/**/b.txt\n[^x].tmp\n[!a].keep\n",
+        "a/b.txt": "skip",
+        "a/deep/b.txt": "skip",
+        "x.tmp": "keep",
+        "y.tmp": "skip",
+        "!.keep": "skip",
+        "a.keep": "skip",
+        "b.keep": "keep",
+        "nested/x.tmp": "keep"
+      },
+      "included": [
+        ".gregaleignore",
+        "b.keep",
+        "nested/x.tmp",
+        "x.tmp"
+      ]
+    }
+  ],
+  "secrets": [
+    {
+      "name": "Stripe live",
+      "blocked": true,
+      "line_parts": [
+        "STRIPE_SECRET_KEY=",
+        "sk_",
+        "live_aaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    {
+      "name": "Stripe test strict",
+      "blocked": true,
+      "line_parts": [
+        "STRIPE_KEY=",
+        "sk_",
+        "test_aaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    {
+      "name": "GitHub",
+      "blocked": true,
+      "line_parts": [
+        "GITHUB_TOKEN=",
+        "ghp",
+        "_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ]
+    },
+    {
+      "name": "entropy",
+      "blocked": true,
+      "line_parts": [
+        "TOKEN=",
+        "AbC",
+        "dEfGhIjKlMnOpQrStUvWxYz0123456789"
+      ]
+    },
+    {
+      "name": "URL exemption",
+      "blocked": false,
+      "line_parts": [
+        "DATABASE_URL=",
+        "pos",
+        "tgres://user:password@localhost:5432/db"
+      ]
+    },
+    {
+      "name": "quoted key",
+      "blocked": true,
+      "line_parts": [
+        "export AWS_KEY=",
+        "\"AK",
+        "IAAAAAAAAAAAAAAAAA\""
+      ]
+    },
+    {
+      "name": "comment",
+      "blocked": false,
+      "line_parts": [
+        "# GITHUB_TOKEN=",
+        "ghp",
+        "_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ]
+    },
+    {
+      "name": "ordinary config",
+      "blocked": false,
+      "line_parts": [
+        "PORT=",
+        "300",
+        "0"
+      ]
+    },
+    {
+      "name": "deploy token",
+      "blocked": true,
+      "line_parts": [
+        "GREGALE_DEPLOY_TOKEN=",
+        "fp_",
+        "deploy_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    {
+      "name": "OpenAI",
+      "blocked": true,
+      "line_parts": [
+        "OPENAI_KEY=",
+        "sk-",
+        "aaaaaaaaaaaaaaaaaaaaT3BlbkFJaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    {
+      "name": "Anthropic",
+      "blocked": true,
+      "line_parts": [
+        "ANTHROPIC_KEY=",
+        "sk-",
+        "ant-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    {
+      "name": "Google",
+      "blocked": true,
+      "line_parts": [
+        "GOOGLE_KEY=",
+        "AIz",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    },
+    {
+      "name": "private key",
+      "blocked": true,
+      "line_parts": [
+        "KEY=",
+        "\"--",
+        "---BEGIN RSA PRIVATE KEY-----\""
+      ]
+    },
+    {
+      "name": "PEM entropy suppression",
+      "blocked": false,
+      "line_parts": [
+        "# -----BEGIN RSA PRIVATE KEY-----\nDATA=",
+        "AbC",
+        "dEfGhIjKlMnOpQrStUvWxYz0123456789\n# -----END RSA PRIVATE KEY-----"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "app_id": "3f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+  "deployment_id": "4f6e0f10-c939-4e10-8e6b-15c1a39807ad",
+  "cases": [
+    {
+      "name": "success",
+      "scenario": "success",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "preparing",
+      "scenario": "preparing",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "prepared",
+      "scenario": "prepared",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "new upload",
+      "scenario": "new_upload",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "uploading",
+      "scenario": "uploading",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "ready",
+      "scenario": "ready",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "before commit",
+      "scenario": "before_commit",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "committing",
+      "scenario": "committing",
+      "outcome": "acceptance_unknown"
+    },
+    {
+      "name": "accepted",
+      "scenario": "accepted",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "observing",
+      "scenario": "observing",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "complete",
+      "scenario": "complete",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "lost chunk",
+      "scenario": "lost_chunk",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "lost commit",
+      "scenario": "lost_commit",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "unknown commit",
+      "scenario": "unknown_commit",
+      "outcome": "acceptance_unknown"
+    },
+    {
+      "name": "commit timeout",
+      "scenario": "commit_timeout",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "blocked",
+      "scenario": "blocked",
+      "outcome": "blocked"
+    },
+    {
+      "name": "failed",
+      "scenario": "failed",
+      "outcome": "failed"
+    },
+    {
+      "name": "superseded",
+      "scenario": "superseded",
+      "outcome": "failed"
+    },
+    {
+      "name": "changed archive",
+      "scenario": "changed_archive",
+      "outcome": "upload_failed"
+    },
+    {
+      "name": "removed source",
+      "scenario": "removed_source",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "removed archive accepted",
+      "scenario": "removed_archive_accepted",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "wrong base",
+      "scenario": "wrong_base",
+      "outcome": "state_mismatch"
+    },
+    {
+      "name": "wrong app",
+      "scenario": "wrong_app",
+      "outcome": "state_mismatch"
+    },
+    {
+      "name": "wrong metadata",
+      "scenario": "wrong_metadata",
+      "outcome": "state_mismatch"
+    },
+    {
+      "name": "wrong preparation",
+      "scenario": "wrong_preparation",
+      "outcome": "state_mismatch"
+    },
+    {
+      "name": "poll limit",
+      "scenario": "poll_limit",
+      "outcome": "wait_failed"
+    },
+    {
+      "name": "client snapshot",
+      "scenario": "client_snapshot",
+      "outcome": "succeeded"
+    },
+    {
+      "name": "workspace source root",
+      "scenario": "workspace",
+      "outcome": "succeeded",
+      "deploy_options": {
+        "source_root": "apps/api"
+      },
+      "metadata_sha256": "19bb7b49104f9817df227c86d362860928d884717ef23cfe32aaec9e8dab5003",
+      "preparation_sha256": "f96cbec894df5fbbb70a0c4726ddf49d94a89fb334343ff3793c287815574b09"
+    }
+  ],
+  "preparation_sha256": "637d34a1105f9312ef241c3ba971d1d3c4fa135faf49d06a779ee401f5425e68",
+  "metadata_sha256": "908c8ff353fe6eecf96787ea6e64c220fe3ad57382a9a9713dfa11bf8717c251"
+}

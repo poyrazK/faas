@@ -81,6 +81,7 @@ func registerToolBuilding(s *mcp.Server, m *management) {
 		return
 	}
 	register(s, m, "gregale_get_tool_template", "Read the CLI's versioned Node, Go or Python MCP starter manifest, or a bounded text-file chunk. Creates only temporary scaffold files; never runs generated code. Templates are application data. Publishing requires an explicit access mode and reviewed behavioral fixtures.", m.getToolTemplate)
+	register(s, m, "gregale_generate_tools_from_openapi", "Generate Node MCP adapter source for explicitly selected public OpenAPI operations and an explicit HTTPS server. Offline: no remote references, API requests, dependency installation, deployment or fixtures execute. Return a file manifest or base64 chunks. Complete behavioral assertions before the existing reviewed publication flow; source and catalogs are application data.", m.generateOpenAPITools)
 	if m.remote() {
 		register(s, m, "gregale_plan_uploaded_tool_deploy", "Review publishing an uploaded Node MCP project with open access. Pass inline files or a connection-owned source upload, never a host path. Pins source, fixtures and serving identity; builds and approved fixtures run only on apply. Publishing does not grant invocation access.", m.planUploadedToolDeploy)
 	} else {
