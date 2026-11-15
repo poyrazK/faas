@@ -53,6 +53,8 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(sourceSdk.createLiveJob,undefined);assert.equal(publicBrowser.createLiveJob,undefined);
     assert.equal(typeof previewSdk.createLiveJobBridge,'function');assert.equal(fileBrowser.createLiveJobBridge,undefined);
     assert.equal(fileBrowser.createLiveJob,previewSdk.createLiveJob);assert.equal(typeof fileBrowser.realtimeLiveJobSource,'function');
+    assert.equal(typeof previewSdk.defineJobPipeline,'function');assert.equal(typeof previewSdk.createJobPipelineClient,'function');assert.equal(typeof previewSdk.jobPipelineLiveSnapshot,'function');
+    assert.equal(sourceSdk.defineJobPipeline,undefined);assert.equal(fileBrowser.defineJobPipeline,undefined);
     const sourceOptions = {timeoutMs:10000,onCheckpoint:value => sourceSdk.saveSourceUploadCheckpoint('source-state.json',value)};
     const staged = await sourceClient.uploads.uploadSource({path:'source.tar.gz',appSlug:'api'},sourceOptions);
     assert.equal(staged.stage,'ready');
@@ -315,6 +317,23 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     type Hook = typeof import('@gregale/sdk-node/preview/react').useLiveJob;
     const view: import('@gregale/sdk-node/preview').LiveJobView = live.getView();
     void updates;void view;
+    declare const pipelineStore: import('@gregale/sdk-node/preview').PipelineJobStore;
+    declare const pipelineScope: import('@gregale/sdk-node/preview').PipelineScope;
+    const {defineJobPipeline,createJobPipelineClient}=await import('@gregale/sdk-node/preview');
+    const jobPipeline=defineJobPipeline(jobContract,{scope:pipelineScope,store:pipelineStore,jobs:{work:{contract:jobContract,job:client.jobs.defineJob(jobContract)}}},async(input,wf)=>{
+      const result=await wf.job('work',[{id:'one',value:input}]);
+      const number:number=result.results[0]!.result;
+      // @ts-expect-error registered stages remain checked
+      await wf.job('unknown',[{id:'one',value:input}]);
+      // @ts-expect-error step input is generated as string
+      await wf.job('work',[{id:'one',value:42}]);
+      return number;
+    });
+    const pipelineClient=createJobPipelineClient({baseURL:'https://api.test',token:'backend',scope:pipelineScope,ownerId:'alice',contract:jobContract});
+    const pipelineRun=await pipelineClient.start('input',{timeoutMs:1000,idempotencyKey:'one'});
+    const pipelineOutput:Promise<number>=pipelineRun.result({timeoutMs:1000});void pipelineOutput;void jobPipeline;
+    // @ts-expect-error job pipelines remain preview-only
+    type PublicJobPipeline=import('@gregale/sdk-node').JobPipeline;
     // @ts-expect-error live jobs remain preview-only
     type PublicLiveJob = import('@gregale/sdk-node').LiveJob;
     // @ts-expect-error pipeline execution requires a total budget

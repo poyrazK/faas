@@ -186,6 +186,7 @@ class JobSubmitOptions(JobRunOptions):
     idempotency_key: str
     expected_account_id: str | None = None
     expected_base_url: str | None = None
+    expected_contract_sha256: str | None = None
     parallelism: int | None = None
     retry_max: int | None = None
     failure_policy: Literal["continue", "fail_fast"] | None = None
@@ -197,6 +198,8 @@ class JobSubmitOptions(JobRunOptions):
             raise JobError('invalid_input')
         if self.expected_base_url is not None:
             _base(self.expected_base_url)
+        if self.expected_contract_sha256 is not None and not _hash(self.expected_contract_sha256):
+            raise JobError('invalid_input')
         if (
             any(v is not None and not _nonnegative(v) for v in (self.parallelism, self.retry_max))
             or self.parallelism == 0
@@ -687,6 +690,8 @@ class TypedJob(Generic[Input, Output]):
             raise JobError("invalid_input")
         base = _base(str(self._owner.async_httpx_client.base_url))
         if options.expected_base_url is not None and base != _base(options.expected_base_url):
+            raise JobError('invalid_receipt')
+        if options.expected_contract_sha256 is not None and options.expected_contract_sha256 != self._contract.sha256:
             raise JobError('invalid_receipt')
 
         async def work(op: _Operation) -> TypedJobRun[Input, Output]:

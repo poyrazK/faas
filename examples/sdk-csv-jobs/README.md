@@ -231,3 +231,81 @@ saved manifest/account/endpoint/contract. It never resubmits. Retain ledger rows
 while old notifications can replay. The demo's private upload records need a
 shared state directory; replicated products should move ownership records into
 their application database too.
+
+## Durable three-stage pipeline (preview)
+
+The optional pipeline mode composes three native Jobs under the existing
+code-first workflow runtime: **validate CSV → import rows → write rejection
+report**. `pipeline.mjs` and `pipeline_driver.py` define the same typed stages.
+Their generated contracts cover the source file, row inputs, and final report.
+Existing upload/file-triggered routes retain their behavior.
+Use a separate `pipelines/` source prefix for this mode so the existing
+`imports/` storage trigger does not also launch the single-job path.
+
+Initialize the application receipt table explicitly:
+
+```sh
+psql "$DATABASE_URL" -f sdk/request-contracts/job-pipelines.sql
+```
+
+Configure native Job templates named `csv-validate`, `csv-import`, and
+`csv-report`. Each task image runs `pipeline-worker.mjs` or `pipeline-worker.py`
+with `GREGALE_CSV_PIPELINE_STAGE=validate|import|report`, the matching JSON
+contract, database access for import, and the managed-file environment above.
+These workers verify file hashes, preserve stable row identities and write the
+report under a fixed import key. Report retries first check for exact existing
+bytes before attempting a create-only write.
+
+`pipeline-api.mjs` serves the protected workflow entry. Configure the owning
+app's code workflow with `code: {path: /csv-pipeline, timeout: 30s}` and a
+`csv-pipeline` workflow name. Set a scope bound to this app/account:
+
+```sh
+export GREGALE_PIPELINE_SCOPE='{"base_url":"https://your-api","account_id":"ACCOUNT_UUID","app_id":"APP_UUID","app_slug":"imports"}'
+node examples/sdk-csv-jobs/pipeline-api.mjs
+```
+
+The backend token needs Jobs, workflow, account/app read and managed-file access.
+Expose the process through Gregale's trusted gateway using `HOST=0.0.0.0` in a
+deployed image. `serveWorkflows` retains its native source validation. Do not
+expose the local protocol drivers as public endpoints.
+
+After authenticating the application user, look up their owned uploaded file
+and start using `createJobPipelineClient`/`JobPipelineClient`. The input is
+`{import_id, source}` where source is a credential-free artifact descriptor:
+`{version:1, scope:{base_url,app_slug,bucket}, owner_id, key, size_bytes, sha256}`.
+Include `version_id` when available. SHA-256 here hashes the **whole file**;
+the resumable-upload checkpoint's fixed-block `source_digest` is different.
+Compute/retain this artifact descriptor on the trusted application backend.
+Never accept a caller-selected key or owner without checking its owned record.
+
+Save the returned pipeline checkpoint or workflow run ID. Either SDK can attach
+and inspect the same run after the agent exits. `pipeline.inspectJob` /
+`pipeline.inspect_job` supplies stage receipts and confirmed Job progress.
+`jobPipelineLiveSnapshot` / `job_pipeline_live_snapshot` combines these with
+native workflow status for the existing private live-view/React transport; a
+report-ready callback reads and verifies the report before enabling download.
+Final output contains `{report, saved, rejected}`. Download the report through
+an authenticated app route using `readPipelineArtifact` / `read_pipeline_artifact`.
+
+Start and cancellation have bounded request deadlines. Native cancellation
+stops orchestration; already accepted Jobs continue until separately cancelled.
+Failed native code workflows cannot currently be continued. Attach-by-ID is
+read-only recovery; starting a new run is an explicit choice with new step
+identities. Retain receipt rows for the workflow's possible replay lifetime.
+The default 64 KiB recorded-value budget can be reached before the CSV's file or
+1,000-row cap; use small demonstration files or artifact-shaped stage results.
+See [typed pipeline usage and recovery](../../docs/sdk-job-pipelines.md).
+
+Run the local pipeline journey with the same SDK/dependency setup as above:
+
+```sh
+node --test examples/sdk-csv-jobs/pipeline-local.test.mjs
+```
+
+It uses real PostgreSQL and alternating Node/Python drivers and task workers,
+with durable journals/receipts, dropped journal responses, owned source/report
+files, live readiness, account/user isolation and cancellation. Workflow timers,
+scheduling and storage are local protocol fixtures; deployed acceptance remains
+separate. Regenerate each `*-generated.ts` / `*_generated.py` with the existing
+job type generator when changing the corresponding `*-contract.json`.

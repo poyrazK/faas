@@ -4891,3 +4891,19 @@ viewer leases are active. Replace the live controller on session changes and
 revoke native tickets when revoking application access. See
 [the complete contract and examples](../../docs/sdk-live-jobs.md) and
 [the live CSV dashboard](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview).
+
+## Durable typed job pipelines (preview)
+
+`defineJobPipeline` composes typed Jobs using the existing workflow journal and
+durable sleeps. `createJobPipelineClient` provides isolated typed start,
+attach-by-ID, inspect, result and native cancellation. Durable application-owned
+submission receipts prevent duplicate Jobs after driver crashes or uncertain
+acceptance. Both SDKs share receipts and journal values. Verified artifact
+handoffs and `jobPipelineLiveSnapshot` integrate with managed files and the
+existing private live views.
+
+Existing callers keep their APIs. Failed native code workflows cannot currently
+be continued; attach-by-ID reconnects for reading. Cancelling orchestration leaves
+accepted Jobs running until separately cancelled. See
+[usage, limits and recovery](../../docs/sdk-job-pipelines.md) and the
+[three-stage CSV example](../../examples/sdk-csv-jobs/README.md#durable-three-stage-pipeline-preview).

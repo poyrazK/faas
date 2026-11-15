@@ -43,6 +43,8 @@ export interface JobSubmitOptions extends JobRunOptions {
     /** Optional guards for composed workflows; checked before preparing inputs or POST. */
     readonly expectedAccountId?: string;
     readonly expectedBaseURL?: string;
+    /** Composition guard: reject a job handle defined with another contract. */
+    readonly expectedContractSha256?: string;
     readonly parallelism?: number;
     readonly retryMax?: number;
     readonly failurePolicy?: 'continue' | 'fail_fast';
@@ -351,6 +353,8 @@ export function bindTypedJobs(getConfig: () => ClientConfig): TypedJobs {
                     const config = getConfig(), idem = key(options.idempotencyKey), captured = inputs.map(i => ({ id: i.id, value: contract.input(i.value) }));
                     if(options.expectedAccountId!==undefined&&!uuid(options.expectedAccountId))throw new JobError('invalid_input');
                     if(options.expectedBaseURL!==undefined&&endpoint(config.BASE)!==endpoint(options.expectedBaseURL))throw new JobError('invalid_receipt');
+                    if(options.expectedContractSha256!==undefined&&!hash(options.expectedContractSha256))throw new JobError('invalid_input');
+                    if(options.expectedContractSha256!==undefined&&options.expectedContractSha256!==contract.sha256)throw new JobError('invalid_receipt');
                     if (!captured.length || captured.length > 10000 || new Set(captured.map(i => i.id)).size !== captured.length || captured.some(i => !jobInputId(i.id)))
                         throw new JobError('invalid_input');
                     for (const n of [options.parallelism, options.retryMax])

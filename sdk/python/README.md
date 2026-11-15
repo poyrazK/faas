@@ -3823,3 +3823,19 @@ iteration early. Remote Jobs continue independently. Create a fresh iterator
 for the current application session. Existing Jobs/file callers keep their APIs.
 See [the contract and Node/Python examples](../../docs/sdk-live-jobs.md) and
 [the CSV dashboard](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview).
+
+## Durable typed job pipelines (preview)
+
+`faas_sdk.preview.JobPipeline`, `PipelineJob` and `JobPipelineContext` compose
+native typed Jobs with the existing workflow journal and durable sleeps.
+`JobPipelineClient` exposes typed start, attach-by-ID, inspect, result and cancel.
+`PostgresPipelineJobStore` retains durable submission intent and accepted
+checkpoints; uncertain acceptance never automatically submits another Job.
+Node/Python share receipts and journal results. `read_pipeline_artifact` checks
+owned file handoffs, and `job_pipeline_live_snapshot` supports private live views.
+
+Durations are seconds. Close `JobPipelineClient` with `async with`; cancel the
+consuming task to stop local requests. Native orchestration cancellation leaves
+accepted Jobs running. Attach-by-ID does not continue failed native code
+workflows. See [usage and recovery](../../docs/sdk-job-pipelines.md) and the
+[CSV pipeline](../../examples/sdk-csv-jobs/README.md#durable-three-stage-pipeline-preview).

@@ -42,6 +42,8 @@ async def test_optional_submit_scope_guards_stop_before_post():
         job=client.define_job(CONTRACT,store=h)
         with pytest.raises(JobError,match='invalid_receipt'):
             job.submit(INPUTS,options=JobSubmitOptions(timeout=2,idempotency_key='guard-base',expected_base_url='https://other.test'))
+        with pytest.raises(JobError,match='invalid_receipt'):
+            job.submit(INPUTS,options=JobSubmitOptions(timeout=2,idempotency_key='guard-contract',expected_contract_sha256='0'*64))
         with pytest.raises(JobError,match='invalid_response'):
             await job.submit(INPUTS,options=JobSubmitOptions(timeout=2,idempotency_key='guard-account',expected_account_id='99999999-9999-4999-8999-999999999999'))
         assert h.posts==0
