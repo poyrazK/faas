@@ -95,6 +95,39 @@ func scopeFromQuery(r *http.Request, allowAll bool) (scope string, isAll bool, p
 	return raw, false, nil
 }
 
+// appScopeFromQuery is scopeFromQuery for an app's variables and secrets. A
+// project app's "production" names its environment, not a literal scope:
+// production is served from one of two scope names (the legacy default lane
+// or the named production lane), and runtime values are read by the serving
+// deployment's exact scope. A write to the literal "production" scope for an
+// app served from the default lane was stored but never delivered (prod CLI
+// e2e 2026-11-14: `env set --scope production`, `secrets set --scope
+// production` and `add postgres --env production` all missing after a fresh
+// boot). It resolves to the lane production is served from, the rule a clone
+// follows (state.ProjectEnvironmentCloneValueScope). Any other scope, and an
+// app outside a project, is unchanged.
+func (s *server) appScopeFromQuery(r *http.Request, app state.App, allowAll bool) (scope string, isAll bool, prob *api.Problem) {
+	scope, isAll, prob = scopeFromQuery(r, allowAll)
+	if prob != nil || isAll {
+		return scope, isAll, prob
+	}
+	scope, prob = s.appValueScope(r.Context(), app, scope)
+	return scope, false, prob
+}
+
+// appValueScope resolves a value scope named by a request (query or body)
+// the way appScopeFromQuery does.
+func (s *server) appValueScope(ctx context.Context, app state.App, scope string) (string, *api.Problem) {
+	if app.ProjectID == "" || scope != "production" {
+		return scope, nil
+	}
+	resolved, err := state.ProjectEnvironmentCloneValueScope(ctx, s.store, app.AccountID, app.ID, scope)
+	if err != nil {
+		return "", api.ErrCapacity("could not resolve the production environment's scope")
+	}
+	return resolved, nil
+}
+
 // deploymentScopeFromQuery resolves the optional `?deployment_scope=`
 // query param (ADR-098 amendment, issue #954). Empty string is the
 // "no filter; return all deployments" form — same wire shape as the
@@ -151,7 +184,7 @@ func (s *server) listEnv(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !ok {
 		return
 	}
-	scope, isAll, prob := scopeFromQuery(r, true /* allowAll */)
+	scope, isAll, prob := s.appScopeFromQuery(r, app, true /* allowAll */)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -269,7 +302,7 @@ func (s *server) setEnv(w http.ResponseWriter, r *http.Request, acct state.Accou
 	if !ok {
 		return
 	}
-	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
+	scope, _, prob := s.appScopeFromQuery(r, app, false /* allowAll */)
 	if prob == nil {
 		prob = protectedEnvironmentConfigProblem(r.Context(), s.store, app.AccountID, app.ProjectID, scope)
 	}
@@ -510,7 +543,7 @@ func (s *server) deleteEnv(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
-	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
+	scope, _, prob := s.appScopeFromQuery(r, app, false /* allowAll */)
 	if prob == nil {
 		prob = protectedEnvironmentConfigProblem(r.Context(), s.store, app.AccountID, app.ProjectID, scope)
 	}
