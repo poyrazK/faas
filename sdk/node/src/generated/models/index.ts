@@ -2341,6 +2341,8 @@ export type { PlatformTenantUsageBucketResponse } from './PlatformTenantUsageBuc
 export type { PlatformTenantUsageResponse } from './PlatformTenantUsageResponse.js';
 export type { PlatformTenantWebhookListResponse } from './PlatformTenantWebhookListResponse.js';
 export type { PlatformTenantWebhookResponse } from './PlatformTenantWebhookResponse.js';
+export type { PostgresChangeFeed } from './PostgresChangeFeed.js';
+export type { PostgresChangesResponse } from './PostgresChangesResponse.js';
 export type { PreAuthEnforcementSuggestion } from './PreAuthEnforcementSuggestion.js';
 export type { PreAuthFailedResponseLimit } from './PreAuthFailedResponseLimit.js';
 export type { PreAuthObservationsResponse } from './PreAuthObservationsResponse.js';
@@ -2613,6 +2615,7 @@ export type { PutOutboundCredentialRequest } from './PutOutboundCredentialReques
 export type { PutOutboundDailyRequestBudgetRequest } from './PutOutboundDailyRequestBudgetRequest.js';
 export type { PutOutboundRequestPolicyRequest } from './PutOutboundRequestPolicyRequest.js';
 export type { PutOutboundRunsBindingRequest } from './PutOutboundRunsBindingRequest.js';
+export type { PutPostgresChangesRequest } from './PutPostgresChangesRequest.js';
 export type { PutWebhookWorkflowBindingRequest } from './PutWebhookWorkflowBindingRequest.js';
 export type { QueueBindingCanary } from './QueueBindingCanary.js';
 export type { QueueBindingResponse } from './QueueBindingResponse.js';
@@ -3197,6 +3200,11 @@ export type { TCPListenerResponse } from './TCPListenerResponse.js';
 export type { TCPListenerTLSCertificateStatus } from './TCPListenerTLSCertificateStatus.js';
 export type { TCPListenerTLSConfig } from './TCPListenerTLSConfig.js';
 export type { TCPListenerTLSStatusResponse } from './TCPListenerTLSStatusResponse.js';
+export type { TaskToolReleaseApp } from './TaskToolReleaseApp.js';
+export type { TaskToolReleaseIntent } from './TaskToolReleaseIntent.js';
+export type { TaskToolReleaseIntentCheck } from './TaskToolReleaseIntentCheck.js';
+export type { TaskToolReleaseIntentDecision } from './TaskToolReleaseIntentDecision.js';
+export type { TaskToolReleaseIntentRecord } from './TaskToolReleaseIntentRecord.js';
 export type { TemplateView } from './TemplateView.js';
 export type { TenantHostnameResponse } from './TenantHostnameResponse.js';
 export type { TenantSurfaceResponse } from './TenantSurfaceResponse.js';

@@ -39,6 +39,10 @@ const (
 // credentials. The deadline fences abandoned publishers; it never grants a retry.
 const (
 	ToolPublicationIntentMaxBytes              = 64 << 10
+	TaskToolReleaseIntentMaxBytes              = 64 << 10
+	TaskToolReleaseIntentsPerAccount           = 256
+	TaskToolReleaseAppsMax                     = 35
+	TaskToolReleaseApprovalTTL                 = 15 * time.Minute
 	ToolPublicationOutcomeMaxBytes             = 512 << 10
 	ToolPublicationCatalogMaxBytes             = 256 << 10
 	ToolPublicationMaxTools                    = 64

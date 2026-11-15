@@ -2383,3 +2383,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261114232023: Reviewed project workflows in Node and Python](20261114232023-sdk-reviewed-project-workflows.md) — accepted; server previews, exact-source cached apply, durable submission receipts and per-service outcomes compose complete local projects.
 
 - [ADR-20261115072125: Read-only agent review of MCP Task releases](20261115072125-agent-task-release-review.md) — accepted; offline local stack review reuses native release parsing and fingerprints, reports credential-free roles and limits, and preserves the separate owner-operated release flow.
+- [ADR-20261115082509: Durable Task stack release intents and owner review](20261115082509-task-tool-release-intents.md) — accepted; immutable native stack reviews, separate owner decisions, fixed expiry and source/app drift invalidation grant no execution authority.

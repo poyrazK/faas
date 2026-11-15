@@ -1705,6 +1705,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "mcp_convergence.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_monitor.go"),
 		filepath.Join(root, "pkg", "api", "tool_publications.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_releases.go"),
 		filepath.Join(root, "pkg", "api", "tool_publication_verification.go"),
 		filepath.Join(root, "pkg", "api", "tool_publication_readiness.go"),
 		filepath.Join(root, "pkg", "api", "tool_invocations.go"),

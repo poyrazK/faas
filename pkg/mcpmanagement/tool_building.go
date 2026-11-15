@@ -92,10 +92,15 @@ func registerToolBuilding(s *mcp.Server, m *management) {
 		register(s, m, "gregale_plan_tool_deploy", "Review publishing a local MCP project: explicit access mode, content digest, tool allowlist, behavioral fixture summaries, account/app identity and serving baseline. No build, tool execution or deployment. Source and tests must remain unchanged. Local account connection only.", m.planToolDeploy)
 	}
 	register(s, m, "gregale_get_tool_deploy", "Read a publication receipt, recovering started attempts from the account's durable native journal after reconnect or process restart. Never repeats deployments or fixtures. Abandoned attempts become outcome_unknown after their deadline.", m.getToolDeploy)
+	if !m.remote() {
+		register(s, m, "gregale_get_task_tool_deploy", "Read a durable Task release intent after reconnect. Returns its pinned review and last observed approval status; source and native app drift need gregale_check_task_tool_deploy. Approval records never authorize deployment, migrations, or invocation.", m.getTaskReleaseIntent)
+	}
 	if !m.opts.AllowWrites {
 		return
 	}
 	if !m.remote() {
+		registerTool(s, m, "gregale_prepare_task_tool_deploy", "Save an immutable, expiring Task stack review in the native journal. Reuse intent_id after uncertain errors. Pins source and exact web, worker, observer and previous-worker app reviews. Requires a separate owner decision in the CLI; no credentials, execution, migrations or deployments.", false, m.prepareTaskReleaseIntent)
+		registerTool(s, m, "gregale_check_task_tool_deploy", "Re-review a local Task plan and check its durable intent against current native app reviews. Observed changes permanently invalidate approval. Updates review metadata only; never deploys, invokes tools, runs migrations or renews approval.", false, m.checkTaskReleaseIntent)
 		registerTool(s, m, "gregale_test_tool", "Execute explicitly approved behavioral smoke fixtures once on an exact live zero-traffic MCP candidate. Tools may have external side effects. No arbitrary URL or serving-release execution; credentials are named MCP_* environment references, never values. Calls are not automatically retried.", false, m.testTool)
 	}
 	registerTool(s, m, "gregale_apply_tool_deploy", "Start asynchronous build, catalog pinning, protocol/behavior checks and guarded promotion for the reviewed source plan. Poll gregale_get_tool_deploy. Repeating apply only returns its receipt; failed/uncertain attempts never rerun fixtures automatically. Native build/runtime costs and API policies apply.", false, m.applyToolDeploy)

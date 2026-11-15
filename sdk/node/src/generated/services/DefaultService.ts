@@ -52,6 +52,10 @@ import type { MCPReadinessSnapshot } from '../models/MCPReadinessSnapshot.js';
 import type { PrivateToolInvocationRequest } from '../models/PrivateToolInvocationRequest.js';
 import type { RestoreMCPReadinessPolicyRequest } from '../models/RestoreMCPReadinessPolicyRequest.js';
 import type { SetMCPReadinessPolicyRequest } from '../models/SetMCPReadinessPolicyRequest.js';
+import type { TaskToolReleaseIntent } from '../models/TaskToolReleaseIntent.js';
+import type { TaskToolReleaseIntentCheck } from '../models/TaskToolReleaseIntentCheck.js';
+import type { TaskToolReleaseIntentDecision } from '../models/TaskToolReleaseIntentDecision.js';
+import type { TaskToolReleaseIntentRecord } from '../models/TaskToolReleaseIntentRecord.js';
 import type { ToolGrantIntent } from '../models/ToolGrantIntent.js';
 import type { ToolGrantPage } from '../models/ToolGrantPage.js';
 import type { ToolGrantRecord } from '../models/ToolGrantRecord.js';
@@ -78,6 +82,134 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DefaultService {
   protected static readonly clientConfig?: typeof OpenAPI;
+  /**
+   * Read the retained Task review and last observed approval; requires account-wide read scope
+   * Personal account, default environment and Node workers only. Review approval grants no deployment, migration, credential or invocation authority. App and serving snapshots must match. Approval expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns retained metadata and performs no local source observation. Owner decisions are excluded from agent and MCP-login credentials. No credentials or local paths are accepted or returned.
+   * @returns TaskToolReleaseIntentRecord Durable review journal; Cache-Control is no-store
+   * @throws ApiError
+   */
+  public static getTaskToolReleaseIntent({
+    id,
+  }: {
+    /**
+     * Stable caller-chosen intent identity; repeat it after uncertain replies
+     */
+    id: string,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/task-tool-release-intents/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        400: `Invalid, oversized or unsupported review`,
+        403: `Personal account or owner authority required`,
+        404: `Intent unavailable to this principal`,
+        409: `Immutable review, app snapshot or decision changed`,
+        429: `Retained Task intent quota reached`,
+      },
+    });
+  }
+  /**
+   * Save an immutable Task stack review; requires deploy-write scope and MFA policy
+   * Personal account, default environment and Node workers only. Review approval grants no deployment, migration, credential or invocation authority. App and serving snapshots must match. Approval expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns retained metadata and performs no local source observation. Owner decisions are excluded from agent and MCP-login credentials. No credentials or local paths are accepted or returned.
+   * @returns TaskToolReleaseIntentRecord Durable review journal; Cache-Control is no-store
+   * @throws ApiError
+   */
+  public static prepareTaskToolReleaseIntent({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Stable caller-chosen intent identity; repeat it after uncertain replies
+     */
+    id: string,
+    requestBody: TaskToolReleaseIntent,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/task-tool-release-intents/{id}',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid, oversized or unsupported review`,
+        403: `Personal account or owner authority required`,
+        404: `Intent unavailable to this principal`,
+        409: `Immutable review, app snapshot or decision changed`,
+        429: `Retained Task intent quota reached`,
+      },
+    });
+  }
+  /**
+   * Revalidate source fingerprint and native app reviews; requires deploy-write scope and MFA policy
+   * Personal account, default environment and Node workers only. Review approval grants no deployment, migration, credential or invocation authority. App and serving snapshots must match. Approval expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns retained metadata and performs no local source observation. Owner decisions are excluded from agent and MCP-login credentials. No credentials or local paths are accepted or returned.
+   * @returns TaskToolReleaseIntentRecord Durable review journal; Cache-Control is no-store
+   * @throws ApiError
+   */
+  public static checkTaskToolReleaseIntent({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Stable caller-chosen intent identity; repeat it after uncertain replies
+     */
+    id: string,
+    requestBody: TaskToolReleaseIntentCheck,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/task-tool-release-intents/{id}/check',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid, oversized or unsupported review`,
+        403: `Personal account or owner authority required`,
+        404: `Intent unavailable to this principal`,
+        409: `Immutable review, app snapshot or decision changed`,
+        429: `Retained Task intent quota reached`,
+      },
+    });
+  }
+  /**
+   * Record an exact-digest owner decision; requires personal non-agent administrator and MFA policy
+   * Personal account, default environment and Node workers only. Review approval grants no deployment, migration, credential or invocation authority. App and serving snapshots must match. Approval expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns retained metadata and performs no local source observation. Owner decisions are excluded from agent and MCP-login credentials. No credentials or local paths are accepted or returned.
+   * @returns TaskToolReleaseIntentRecord Durable review journal; Cache-Control is no-store
+   * @throws ApiError
+   */
+  public static decideTaskToolReleaseIntent({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Stable caller-chosen intent identity; repeat it after uncertain replies
+     */
+    id: string,
+    requestBody: TaskToolReleaseIntentDecision,
+  }): CancelablePromise<TaskToolReleaseIntentRecord> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/task-tool-release-intents/{id}/decision',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid, oversized or unsupported review`,
+        403: `Personal account or owner authority required`,
+        404: `Intent unavailable to this principal`,
+        409: `Immutable review, app snapshot or decision changed`,
+        429: `Retained Task intent quota reached`,
+      },
+    });
+  }
   /**
    * List readiness incident events and notification status
    * Newest logical events first, independently of notification success. Retries update delivery status without adding timeline rows. Omitting scope lists every environment.

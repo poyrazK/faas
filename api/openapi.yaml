@@ -340,6 +340,158 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/task-tool-release-intents/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Stable caller-chosen intent identity; repeat it after uncertain replies
+    get:
+      operationId: getTaskToolReleaseIntent
+      summary: Read the retained Task review and last observed approval; requires account-wide
+        read scope
+      description: Personal account, default environment and Node workers only. Review approval
+        grants no deployment, migration, credential or invocation authority. App and serving snapshots
+        must match. Approval expires after 15 minutes. Check permanently invalidates observed
+        source or native drift. GET returns retained metadata and performs no local source observation.
+        Owner decisions are excluded from agent and MCP-login credentials. No credentials or local
+        paths are accepted or returned.
+      responses:
+        '200':
+          description: Durable review journal; Cache-Control is no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Invalid, oversized or unsupported review
+        '403':
+          description: Personal account or owner authority required
+        '404':
+          description: Intent unavailable to this principal
+        '409':
+          description: Immutable review, app snapshot or decision changed
+        '429':
+          description: Retained Task intent quota reached
+    put:
+      operationId: prepareTaskToolReleaseIntent
+      summary: Save an immutable Task stack review; requires deploy-write scope and MFA policy
+      description: Personal account, default environment and Node workers only. Review approval
+        grants no deployment, migration, credential or invocation authority. App and serving snapshots
+        must match. Approval expires after 15 minutes. Check permanently invalidates observed
+        source or native drift. GET returns retained metadata and performs no local source observation.
+        Owner decisions are excluded from agent and MCP-login credentials. No credentials or local
+        paths are accepted or returned.
+      responses:
+        '200':
+          description: Durable review journal; Cache-Control is no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Invalid, oversized or unsupported review
+        '403':
+          description: Personal account or owner authority required
+        '404':
+          description: Intent unavailable to this principal
+        '409':
+          description: Immutable review, app snapshot or decision changed
+        '429':
+          description: Retained Task intent quota reached
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskToolReleaseIntent'
+  /v1/task-tool-release-intents/{id}/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Stable caller-chosen intent identity; repeat it after uncertain replies
+    post:
+      operationId: checkTaskToolReleaseIntent
+      summary: Revalidate source fingerprint and native app reviews; requires deploy-write scope
+        and MFA policy
+      description: Personal account, default environment and Node workers only. Review approval
+        grants no deployment, migration, credential or invocation authority. App and serving snapshots
+        must match. Approval expires after 15 minutes. Check permanently invalidates observed
+        source or native drift. GET returns retained metadata and performs no local source observation.
+        Owner decisions are excluded from agent and MCP-login credentials. No credentials or local
+        paths are accepted or returned.
+      responses:
+        '200':
+          description: Durable review journal; Cache-Control is no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Invalid, oversized or unsupported review
+        '403':
+          description: Personal account or owner authority required
+        '404':
+          description: Intent unavailable to this principal
+        '409':
+          description: Immutable review, app snapshot or decision changed
+        '429':
+          description: Retained Task intent quota reached
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskToolReleaseIntentCheck'
+  /v1/task-tool-release-intents/{id}/decision:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Stable caller-chosen intent identity; repeat it after uncertain replies
+    put:
+      operationId: decideTaskToolReleaseIntent
+      summary: Record an exact-digest owner decision; requires personal non-agent administrator
+        and MFA policy
+      description: Personal account, default environment and Node workers only. Review approval
+        grants no deployment, migration, credential or invocation authority. App and serving snapshots
+        must match. Approval expires after 15 minutes. Check permanently invalidates observed
+        source or native drift. GET returns retained metadata and performs no local source observation.
+        Owner decisions are excluded from agent and MCP-login credentials. No credentials or local
+        paths are accepted or returned.
+      responses:
+        '200':
+          description: Durable review journal; Cache-Control is no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToolReleaseIntentRecord'
+        '400':
+          description: Invalid, oversized or unsupported review
+        '403':
+          description: Personal account or owner authority required
+        '404':
+          description: Intent unavailable to this principal
+        '409':
+          description: Immutable review, app snapshot or decision changed
+        '429':
+          description: Retained Task intent quota reached
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskToolReleaseIntentDecision'
   /v1/support/notifications:
     get:
       tags:
@@ -73576,6 +73728,176 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    TaskToolReleaseApp:
+      type: object
+      additionalProperties: false
+      required:
+      - role
+      - app
+      - review
+      properties:
+        role:
+          type: string
+          enum:
+          - web
+          - worker
+          - observer
+          - previous_worker
+        app:
+          type: string
+        review:
+          $ref: '#/components/schemas/AppReleaseReview'
+    TaskToolReleaseIntent:
+      type: object
+      additionalProperties: false
+      description: Immutable review metadata bounded to 64 KiB. Required setup remains unverified.
+        No source paths, executable arguments, database URLs, credentials or credential references.
+      required:
+      - release_fingerprint
+      - worker_runtime
+      - protocol
+      - observer_metric_app
+      - endpoint
+      - access_mode
+      - tool_scopes
+      - apps
+      - required_setup
+      - reason
+      properties:
+        release_fingerprint:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        worker_runtime:
+          type: string
+          enum:
+          - node
+        protocol:
+          type: string
+          enum:
+          - '2026-07-28'
+        observer_metric_app:
+          type: string
+        endpoint:
+          type: string
+          maxLength: 512
+        access_mode:
+          type: string
+          enum:
+          - open
+          - external-oauth
+        tool_scopes:
+          type: object
+          minProperties: 1
+          maxProperties: 64
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        apps:
+          type: array
+          minItems: 3
+          maxItems: 35
+          items:
+            $ref: '#/components/schemas/TaskToolReleaseApp'
+        required_setup:
+          type: array
+          items:
+            type: string
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 280
+    TaskToolReleaseIntentRecord:
+      type: object
+      additionalProperties: false
+      description: An owner-approved source and native app review. Approval covers only this immutable
+        intent; every execution capability remains unavailable in this milestone.
+      required:
+      - version
+      - id
+      - account_id
+      - requester_key_id
+      - intent_sha256
+      - intent
+      - status
+      - created_at
+      - expires_at
+      - bindings_verified
+      - ready_to_apply
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        id:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        account_id:
+          type: string
+          format: uuid
+        requester_key_id:
+          type: string
+          format: uuid
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        intent:
+          $ref: '#/components/schemas/TaskToolReleaseIntent'
+        status:
+          type: string
+          enum:
+          - pending
+          - approved
+          - rejected
+          - revoked
+          - expired
+          - stale
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        decided_at:
+          type: string
+          format: date-time
+        bindings_verified:
+          type: boolean
+          enum:
+          - false
+        ready_to_apply:
+          type: boolean
+          enum:
+          - false
+    TaskToolReleaseIntentCheck:
+      type: object
+      additionalProperties: false
+      required:
+      - release_fingerprint
+      properties:
+        release_fingerprint:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+    TaskToolReleaseIntentDecision:
+      type: object
+      additionalProperties: false
+      required:
+      - intent_sha256
+      - release_fingerprint
+      - decision
+      properties:
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        release_fingerprint:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        decision:
+          type: string
+          enum:
+          - approve
+          - reject
+          - revoke
     DataPipelineFreshness:
       type: object
       additionalProperties: false
@@ -87993,7 +88315,7 @@ components:
       properties:
         source_id: { type: string, format: uuid }
         queue_name: { type: string }
-        database: { type: string, description: The managed database name, when managed. }
+        database: { type: string, description: "The managed database name, when managed." }
         managed: { type: boolean }
         poll_interval_seconds: { type: integer }
         feeds:

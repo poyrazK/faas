@@ -152,6 +152,7 @@ type jobRegistryCredentialKey struct {
 type MemStore struct {
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
+	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
 	toolGrants                     map[string]api.ToolGrantRecord
 	toolOAuthConnections           map[string]ToolOAuthConnection
@@ -25193,6 +25194,11 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, record := range m.toolPublications {
 		if record.AccountID == id {
 			delete(m.toolPublications, key)
+		}
+	}
+	for key, record := range m.taskToolReleaseIntents {
+		if record.AccountID == id {
+			delete(m.taskToolReleaseIntents, key)
 		}
 	}
 	for key, record := range m.toolInvocations {

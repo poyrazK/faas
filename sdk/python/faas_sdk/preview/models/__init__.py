@@ -4500,6 +4500,9 @@ from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_otlp_metrics_json_body import PostOTLPMetricsJsonBody
 from .post_otlp_metrics_response_200 import PostOTLPMetricsResponse200
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .postgres_change_feed import PostgresChangeFeed
+from .postgres_change_feed_operations_item import PostgresChangeFeedOperationsItem
+from .postgres_changes_response import PostgresChangesResponse
 from .pre_auth_enforcement_suggestion import PreAuthEnforcementSuggestion
 from .pre_auth_enforcement_suggestion_status import PreAuthEnforcementSuggestionStatus
 from .pre_auth_failed_response_limit import PreAuthFailedResponseLimit
@@ -5002,6 +5005,8 @@ from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
+from .put_postgres_changes_connection_body import PutPostgresChangesConnectionBody
+from .put_postgres_changes_request import PutPostgresChangesRequest
 from .put_webhook_workflow_binding_request import PutWebhookWorkflowBindingRequest
 from .put_webhook_workflow_binding_request_filter import PutWebhookWorkflowBindingRequestFilter
 from .queue_binding_canary import QueueBindingCanary
@@ -6097,6 +6102,19 @@ from .synthetic_check_response_method import SyntheticCheckResponseMethod
 from .synthetic_check_results import SyntheticCheckResults
 from .synthetic_check_run import SyntheticCheckRun
 from .synthetic_check_run_error_class import SyntheticCheckRunErrorClass
+from .task_tool_release_app import TaskToolReleaseApp
+from .task_tool_release_app_role import TaskToolReleaseAppRole
+from .task_tool_release_intent import TaskToolReleaseIntent
+from .task_tool_release_intent_access_mode import TaskToolReleaseIntentAccessMode
+from .task_tool_release_intent_check import TaskToolReleaseIntentCheck
+from .task_tool_release_intent_decision import TaskToolReleaseIntentDecision
+from .task_tool_release_intent_decision_decision import TaskToolReleaseIntentDecisionDecision
+from .task_tool_release_intent_protocol import TaskToolReleaseIntentProtocol
+from .task_tool_release_intent_record import TaskToolReleaseIntentRecord
+from .task_tool_release_intent_record_status import TaskToolReleaseIntentRecordStatus
+from .task_tool_release_intent_record_version import TaskToolReleaseIntentRecordVersion
+from .task_tool_release_intent_tool_scopes import TaskToolReleaseIntentToolScopes
+from .task_tool_release_intent_worker_runtime import TaskToolReleaseIntentWorkerRuntime
 from .tcp_listener_response import TCPListenerResponse
 from .tcp_listener_response_protocol import TCPListenerResponseProtocol
 from .tcp_listener_tls_certificate_status import TCPListenerTLSCertificateStatus
@@ -10863,6 +10881,9 @@ __all__ = (
     "PostForceColdBootAppConfirm",
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
+    "PostgresChangeFeed",
+    "PostgresChangeFeedOperationsItem",
+    "PostgresChangesResponse",
     "PostOTLPMetricsJsonBody",
     "PostOTLPMetricsResponse200",
     "PostSweepStuckBuildsConfirm",
@@ -11334,6 +11355,8 @@ __all__ = (
     "PutOutboundDailyRequestBudgetRequest",
     "PutOutboundRequestPolicyRequest",
     "PutOutboundRunsBindingRequest",
+    "PutPostgresChangesConnectionBody",
+    "PutPostgresChangesRequest",
     "PutWebhookWorkflowBindingRequest",
     "PutWebhookWorkflowBindingRequestFilter",
     "QueueBindingCanary",
@@ -12397,6 +12420,19 @@ __all__ = (
     "SyntheticCheckResults",
     "SyntheticCheckRun",
     "SyntheticCheckRunErrorClass",
+    "TaskToolReleaseApp",
+    "TaskToolReleaseAppRole",
+    "TaskToolReleaseIntent",
+    "TaskToolReleaseIntentAccessMode",
+    "TaskToolReleaseIntentCheck",
+    "TaskToolReleaseIntentDecision",
+    "TaskToolReleaseIntentDecisionDecision",
+    "TaskToolReleaseIntentProtocol",
+    "TaskToolReleaseIntentRecord",
+    "TaskToolReleaseIntentRecordStatus",
+    "TaskToolReleaseIntentRecordVersion",
+    "TaskToolReleaseIntentToolScopes",
+    "TaskToolReleaseIntentWorkerRuntime",
     "TCPListenerResponse",
     "TCPListenerResponseProtocol",
     "TCPListenerTLSCertificateStatus",

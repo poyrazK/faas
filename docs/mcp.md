@@ -556,6 +556,9 @@ gregale mcp serve --transport stdio --tools core,build-tools --allow-writes
 | `gregale_test_tool` | Execute the project's declared behavioral smoke fixtures once against an exact app/deployment's live zero-traffic preview. Requires writes and `allow_tool_execution: true`; no arbitrary endpoint or serving-release target is accepted. |
 | `gregale_plan_tool_deploy` | Read-only review of source bytes, access policy, fixture summaries and account/app/serving identities. Requires explicit approval of the fixture execution that apply will perform. Creates no deployment and executes no tool. |
 | `gregale_plan_task_tool_deploy` | Offline review of an existing native Task stack release plan using the local CLI. Returns app roles, tool permissions, configured Task limits, source fingerprint and required setup. Creates no executable publication plan. Node workers only. |
+| `gregale_prepare_task_tool_deploy` | Save an immutable, expiring native Task stack review under a stable caller-chosen intent ID. Requires write consent; creates no deployment. |
+| `gregale_get_task_tool_deploy` | Read a retained Task review and its last observed approval status after reconnect. |
+| `gregale_check_task_tool_deploy` | Re-review source and native app/key snapshots. Observed drift permanently invalidates approval. Requires write consent for journal updates. |
 | `gregale_apply_tool_deploy` | Start one asynchronous publication attempt from the unchanged reviewed project, using a private source snapshot. Repeated calls return the same receipt without repeating builds or fixtures. |
 | `gregale_get_tool_deploy` | Inspect that attempt's retained receipt and, when its deployment ID is known and bound, fresh native deployment status. Never invokes fixtures or promotes. |
 
@@ -966,7 +969,57 @@ still rejects Task-enabled projects. Hosted, organization and app-scoped
 connections cannot inspect local Task plan paths. See
 [ADR 20261115072125](adr/20261115072125-agent-task-release-review.md).
 
+### Durable Task release intents
+
+Local `build-tools` connections can save the reviewed Task stack before an owner
+decides whether to approve its exact intent. The native journal survives a client
+reconnect or management-server restart. Apps must already exist, be active and
+belong to the same personal account in the default environment. Node workers
+remain the supported automated-release runtime.
+
+Use `gregale_prepare_task_tool_deploy` with an absolute `plan_path`, a stable
+caller-chosen 64-character lowercase hex `intent_id` and a reviewable `reason`.
+Reuse the ID after an uncertain reply. The same ID and review retrieve its
+original record; changed reviews conflict. The record includes exact app IDs,
+configuration hashes, latest/serving revisions, the source/policy fingerprint,
+permission policy and required owner setup. It contains no paths or credentials.
+
+`gregale_get_task_tool_deploy` reads retained metadata without write consent.
+`gregale_check_task_tool_deploy` re-reviews `plan_path` and checks native app/key
+identity and configuration. Preparing and checking require write consent for
+journal updates. Observed source or native drift permanently changes the status
+to `stale`. Native GET alone reports the last recorded observation; the API does
+not watch local files. Each review expires 15 minutes after preparation, including
+an approved review. Decisions and retries never extend that deadline. The journal
+retains at most 256 IDs per account, including terminal records.
+
+The owner uses a personal non-agent administrator connection and the complete
+`intent_sha256` from the reviewed record:
+
+```sh
+gregale mcp server tasks intent prepare --plan release.json --id "$INTENT_ID" --reason 'Review reports worker upgrade'
+gregale mcp server tasks intent get --plan release.json --id "$INTENT_ID"
+gregale mcp server tasks intent approve --plan release.json --id "$INTENT_ID" --intent-sha256 "$INTENT_SHA256"
+gregale mcp server tasks intent revoke --plan release.json --id "$INTENT_ID" --intent-sha256 "$INTENT_SHA256"
+```
+
+The owner can also `reject` a pending review. Agents and MCP-login credentials
+cannot approve, reject or revoke; no owner-decision tool is in the agent catalog.
+Another publisher cannot read or invalidate the requesting key's intent. Hosted,
+organization and app-scoped management connections cannot use these local tools.
+
+Approval is a review decision. `ready_to_apply` and `bindings_verified` remain
+false. Runtime and schema-owner database bindings, retained keys, observer and
+metrics authority still need owner setup and live verification. These tools run
+no customer code, Node, fixtures, migrations, deployment or traffic changes. They
+do not register a published tool version or grant invocation access. Continue with
+the existing owner-operated native Task release workflow; a future agent executor
+must enforce fresh source, native identity, binding and readiness checks itself.
+See [ADR 20261115082509](adr/20261115082509-task-tool-release-intents.md).
+
+
 ## Hosted tool publishing (preview)
+
 
 Operators enable `mcp-bridged --allow-tool-publishing --tools core,build-tools,registry`
 after updating the native API and trusted CLI. The flag defaults off. The bridge

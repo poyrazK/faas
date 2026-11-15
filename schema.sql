@@ -60823,6 +60823,20 @@ CREATE TABLE public.tool_oauth_connections (
 
 
 --
+-- Name: task_tool_release_intents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_tool_release_intents (
+    account_id uuid NOT NULL REFERENCES public.accounts(id) ON DELETE CASCADE,
+    id text NOT NULL CHECK (id ~ '^[0-9a-f]{64}$'),
+    status text NOT NULL CHECK (status IN ('pending','approved','rejected','revoked','expired','stale')),
+    payload jsonb NOT NULL CHECK (jsonb_typeof(payload) = 'object' AND octet_length(payload::text) <= 131072),
+    PRIMARY KEY (account_id,id),
+    CHECK ((payload->>'id'=id AND payload->>'account_id'=account_id::text AND payload->>'status'=status) IS TRUE),
+    CHECK (payload @> '{"ready_to_apply":false,"bindings_verified":false}'::jsonb)
+);
+
+--
 -- Name: tool_publications; Type: TABLE; Schema: public; Owner: -
 --
 

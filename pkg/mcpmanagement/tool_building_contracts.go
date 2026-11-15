@@ -9,6 +9,8 @@ func toolBuildingOutputSchema(name string) map[string]any {
 		}
 	}
 	switch name {
+	case "gregale_prepare_task_tool_deploy", "gregale_check_task_tool_deploy", "gregale_get_task_tool_deploy":
+		return taskIntentOutputSchema()
 	case "gregale_plan_task_tool_deploy":
 		return taskToolReviewOutputSchema()
 	case "gregale_generate_tools_from_openapi":

@@ -20,6 +20,10 @@ class QueueSendBatchMessage:
     """One message of a batch send."""
 
     payload: QueueSendBatchMessagePayload | Unset = UNSET
+    group_key: str | Unset = UNSET
+    """Ordering key for this message: it is delivered after earlier messages with the same group_key, from this
+    batch or any send, and before later ones. Preview: refused with queue_groups_unavailable until released to the
+    account."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -27,11 +31,15 @@ class QueueSendBatchMessage:
         if not isinstance(self.payload, Unset):
             payload = self.payload.to_dict()
 
+        group_key = self.group_key
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
         if payload is not UNSET:
             field_dict["payload"] = payload
+        if group_key is not UNSET:
+            field_dict["group_key"] = group_key
 
         return field_dict
 
@@ -47,8 +55,11 @@ class QueueSendBatchMessage:
         else:
             payload = QueueSendBatchMessagePayload.from_dict(_payload)
 
+        group_key = d.pop("group_key", UNSET)
+
         queue_send_batch_message = cls(
             payload=payload,
+            group_key=group_key,
         )
 
         queue_send_batch_message.additional_properties = d
