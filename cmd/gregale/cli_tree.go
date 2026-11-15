@@ -54,7 +54,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
 	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
-	{"export", "Verify saved JSON Lines exports offline", "Data"},
+	{"export", "Verify and compare saved JSON Lines exports offline", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
 	{"data-api", "Generate an API from a PostgreSQL schema", "Data"},
 	{"ai", "Configure the AI gateway", "Data"},

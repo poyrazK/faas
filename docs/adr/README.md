@@ -20,6 +20,8 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261115163305: Offline comparison of CLI export inventories](20261115163305-cli-offline-export-diff.md) — accepted; deterministic keyed JSON comparisons, exact decimal values and opt-in CI failures without API reads.
+
 - [ADR-20261115153114: Offline verification of CLI list exports](20261115153114-cli-offline-export-verification.md) — accepted; exact bytes, SHA-256 and record counts checked against saved receipts without API access.
 
 - [ADR-20261115110124: gRPC steps in `gregale test` scenarios](20261115110124-test-grpc-steps.md) — accepted; a request or check may carry a `grpc:` call (definitions from `.proto` files compiled with protocompile and/or server reflection; unary and all streaming shapes; status, protobuf-JSON pointers, message count, header and trailer metadata); `local` dials plaintext HTTP/2, `real-vm` the deployed app over TLS; load mode stays HTTP-only
