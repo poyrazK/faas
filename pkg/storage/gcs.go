@@ -41,6 +41,9 @@ type GCSStorageBackend struct {
 	// sparseExtents writes compressed artifacts handed over as files in the
 	// extent encoding (ADR-1135). Readers accept it either way.
 	sparseExtents bool
+	// deferDelete, when set, records deletes instead of performing them
+	// (ADR-20261115180000, DeferDeletes).
+	deferDelete DeleteDeferrer
 }
 
 type gcsArtifact struct {
@@ -212,6 +215,9 @@ func (g *GCSStorageBackend) Delete(ctx context.Context, key string) error {
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("storage: gcs delete %q: %w", key, err)
+	}
+	if g.deferDelete != nil {
+		return g.deferDelete.DeferDelete(ctx, key)
 	}
 	if err := g.store.Delete(ctx, g.bucket, key); err != nil && !errors.Is(err, gcs.ErrObjectNotExist) {
 		return fmt.Errorf("storage: gcs delete %q: %w", key, normalizeGCSError(err))

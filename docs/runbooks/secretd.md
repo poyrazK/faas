@@ -367,6 +367,34 @@ nor rewrite it undetected. A snapshot that cannot be opened cold boots
 
 Turn it off by unsetting the variable: new captures are plaintext again and
 sealed rows still restore while the runtime recipient's identity is served.
+## Internal-service tokens from secretd (slice 3k)
+
+Compute schedds normally sign the internal-service tokens they attach for
+internal_only apps (ADR-119) with the cluster key, which every compute node
+can open. With slice 3k they ask secretd instead, for each app they own or
+hold a grant for, and need no cluster key.
+
+1. **Control plane.** The control domain identity must be staged on the
+   control plane (`/etc/faas/secrets/domains/control.age`, which the CP
+   schedd already reads). Converge secretd_service. The unit gains
+   `FAAS_SECRETD_CONTROL_IDENTITY`, and after a restart secretd mints. Check:
+   from a compute node, a dispatch to an internal_only app still succeeds
+   after step 2, and
+   `faas_secretd_opens_total{rpc="MintInternalServiceToken"}` rises.
+2. **One compute node.** Set `FAAS_SCHEDD_INTERNAL_SVC_MINTER=secretd` for
+   its schedd. It needs `FAAS_SCHEDD_SECRETD_TARGET`. Workflow outbound
+   (`FAAS_WORKFLOW_OUTBOUND_ENABLED=1`) refuses to start on such a schedd.
+   Restart schedd. Check:
+   - The journal shows `schedd: internal-service tokens minted by secretd`.
+   - Internal_only cron and trigger dispatches still pass.
+   - `faas_secretd_refusals_total{rpc="MintInternalServiceToken"}` stays
+     flat. A rise means the node dispatches for an app it neither owns nor
+     holds a grant for.
+3. **Gateways.** From this release on, both internal-only gates refuse a
+   token minted for another app, with audit reason `app_mismatch`. A legacy
+   token without an `app_id` passes as before.
+
+Back out a node by unsetting the variable and restarting schedd.
 
 ## Rotation
 

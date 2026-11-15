@@ -7803,6 +7803,9 @@ haveApp:
 			r = r.WithContext(withWakePhaseTrace(r.Context(), platformWakeTrace))
 		}
 		if err != nil {
+			if h.clientLeftDuringWake(r, app) {
+				return
+			}
 			if showWakePage && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
 				// still alive. Record the visit and let the page's fetch/meta
