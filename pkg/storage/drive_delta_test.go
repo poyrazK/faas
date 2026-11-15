@@ -96,9 +96,9 @@ func TestDriveDeltaRoundTrip(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			layerPath, drivePath := layerAndDrive(t, dir, tc.size)
-			layer, _ := os.Open(layerPath)
+			layer, _ := os.Open(layerPath) //nolint:forbidigo // test fixture.
 			defer func() { _ = layer.Close() }()
-			drive, _ := os.Open(drivePath)
+			drive, _ := os.Open(drivePath) //nolint:forbidigo // test fixture.
 			defer func() { _ = drive.Close() }()
 
 			var payload bytes.Buffer
@@ -153,7 +153,7 @@ func TestDriveDataDigestIgnoresLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := func(p string) [32]byte {
-		f, _ := os.Open(p)
+		f, _ := os.Open(p) //nolint:forbidigo // test fixture.
 		defer func() { _ = f.Close() }()
 		d, err := driveDataDigest(context.Background(), f, 64*driveDeltaBlock)
 		if err != nil {

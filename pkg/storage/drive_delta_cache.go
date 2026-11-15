@@ -101,7 +101,7 @@ func (c *LocalCacheBackend) fetchedDrive(ctx context.Context, key string, body i
 	if err != nil || string(magic) != driveDeltaMagic {
 		// A short or unreadable head is not a delta; the normal fill
 		// reports any read error.
-		return br, func() {}, nil
+		return br, func() {}, nil //nolint:nilerr // the fill reads br again and reports it.
 	}
 	rebuilt, err := c.rebuildDriveDelta(ctx, key, br)
 	if err != nil {

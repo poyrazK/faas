@@ -223,8 +223,11 @@ func readDriveDeltaHeader(r *bufio.Reader) (driveDeltaHeader, error) {
 		return h, fmt.Errorf("storage: drive delta version %d unsupported", version)
 	}
 	keyLen, err := binary.ReadUvarint(r)
-	if err != nil || keyLen == 0 || keyLen > driveDeltaMaxKey {
-		return h, fmt.Errorf("storage: drive delta header: base key length %d: %v", keyLen, err)
+	if err != nil {
+		return h, fmt.Errorf("storage: drive delta header: base key length: %w", err)
+	}
+	if keyLen == 0 || keyLen > driveDeltaMaxKey {
+		return h, fmt.Errorf("storage: drive delta header: base key length %d out of range", keyLen)
 	}
 	key := make([]byte, keyLen)
 	if _, err := io.ReadFull(r, key); err != nil {
@@ -235,16 +238,22 @@ func readDriveDeltaHeader(r *bufio.Reader) (driveDeltaHeader, error) {
 		return h, fmt.Errorf("storage: drive delta header: base key: %w", err)
 	}
 	baseSize, err := binary.ReadUvarint(r)
-	if err != nil || baseSize > 1<<50 {
-		return h, fmt.Errorf("storage: drive delta header: base size: %v", err)
+	if err != nil {
+		return h, fmt.Errorf("storage: drive delta header: base size: %w", err)
+	}
+	if baseSize > 1<<50 {
+		return h, fmt.Errorf("storage: drive delta header: base size %d out of range", baseSize)
 	}
 	h.baseSize = int64(baseSize)
 	if _, err := io.ReadFull(r, h.baseDigest[:]); err != nil {
 		return h, fmt.Errorf("storage: drive delta header: %w", err)
 	}
 	size, err := binary.ReadUvarint(r)
-	if err != nil || size > 1<<50 {
-		return h, fmt.Errorf("storage: drive delta header: size: %v", err)
+	if err != nil {
+		return h, fmt.Errorf("storage: drive delta header: size: %w", err)
+	}
+	if size > 1<<50 {
+		return h, fmt.Errorf("storage: drive delta header: size %d out of range", size)
 	}
 	h.size = int64(size)
 	return h, nil
