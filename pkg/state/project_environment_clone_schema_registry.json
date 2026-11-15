@@ -19504,6 +19504,18 @@
     "kind": "operational"
   },
   {
+    "table": "secret_verification_audit",
+    "columns": [
+      "account_id",
+      "app_id",
+      "credential_id",
+      "cutover_id",
+      "id",
+      "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "service_caller_key_history",
     "columns": [
       "key_id",

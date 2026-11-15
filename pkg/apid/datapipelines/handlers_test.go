@@ -49,6 +49,8 @@ func TestPipelineHTTPJourneyAndSecretRedaction(t *testing.T) {
 	mux.HandleFunc("GET /v1/data/pipelines/{id}", wrap(h.Get))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/control", wrap(h.Control))
 	mux.HandleFunc("POST /v1/data/pipelines/{id}/tenant-readers", wrap(h.TenantReaders))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/evolution", wrap(h.Evolve))
+	mux.HandleFunc("POST /v1/data/pipelines/{id}/schema-approval", wrap(h.ApproveSchema))
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	client := api.NewClient(server.URL, "owner")
@@ -126,6 +128,41 @@ func TestPipelineHTTPJourneyAndSecretRedaction(t *testing.T) {
 	approved, err := client.ChangeDataPipelineTenantReaders(ctx, tenant.ID, api.DataPipelineTenantReadersRequest{ExpectedRevision: preview.Revision, Action: "approve", ChangeID: preview.TenantChange.ID})
 	if err != nil || approved.TenantChange.State != "approved" {
 		t.Fatal("HTTP approval failed", approved, err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE data_pipelines SET initialized=true,state='live',desired_state='running',observed_revision=revision,observed_at=clock_timestamp() WHERE id=$1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	current, err := client.GetDataPipeline(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evolution := api.DataPipelineEvolutionRequest{ExpectedRevision: current.Revision, Action: "preview", Kind: "relationships", Relationships: []api.DataPipelineRelationship{{Name: "self_order", SourceTable: "orders", TargetTable: "orders", SourceColumns: []string{"id"}, TargetColumns: []string{"id"}}}}
+	if _, err = other.EvolveDataPipeline(ctx, p.ID, evolution); err == nil {
+		t.Fatal("foreign account changed serving contract")
+	}
+	previewEvolution, err := client.EvolveDataPipeline(ctx, p.ID, evolution)
+	if err != nil || previewEvolution.Evolution == nil || previewEvolution.Serving != nil {
+		t.Fatal("HTTP preview mutated serving", previewEvolution, err)
+	}
+	approvedEvolution, err := client.EvolveDataPipeline(ctx, p.ID, api.DataPipelineEvolutionRequest{ExpectedRevision: previewEvolution.Revision, Action: "approve", ChangeID: previewEvolution.Evolution.ID})
+	if err != nil || approvedEvolution.Serving.Version != 2 {
+		t.Fatal("frozen evolution HTTP approval", approvedEvolution, err)
+	}
+	change := strings.Repeat("a", 64)
+	metadata, _ := json.Marshal(map[string]any{"ID": change, "State": "pending", "Supported": true, "Changes": []map[string]any{{"Table": "orders", "Column": "total", "Kind": "added", "AfterType": "integer", "Reason": "Backfill actual values", "Safe": true}}})
+	if _, err = pool.Exec(ctx, `UPDATE data_pipelines SET state='blocked',reason='schema_change_pending',schema_change=$2,observed_revision=revision,observed_at=clock_timestamp() WHERE id=$1`, p.ID, metadata); err != nil {
+		t.Fatal(err)
+	}
+	current, err = client.GetDataPipeline(ctx, p.ID)
+	if err != nil || current.SchemaReview == nil || len(current.SchemaReview.Changes) != 1 || current.SchemaReview.Changes[0].AfterType != "integer" {
+		t.Fatal("schema review metadata missing", current, err)
+	}
+	schemaRequest := api.DataPipelineSchemaApprovalRequest{ExpectedRevision: current.Revision, ChangeID: change}
+	if _, err = other.ApproveDataPipelineSchema(ctx, p.ID, schemaRequest); err == nil {
+		t.Fatal("foreign schema approval accepted")
+	}
+	if _, err = client.ApproveDataPipelineSchema(ctx, p.ID, schemaRequest); err != nil {
+		t.Fatal("exact schema HTTP approval", err)
 	}
 }
 

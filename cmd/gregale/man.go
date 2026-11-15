@@ -455,6 +455,14 @@ func escapeRoff(s string) string {
 // the common typos (`aps`, `appss`, `appsss`) without suggesting
 // across unrelated commands (`apps` → `mfa` is distance 4).
 func suggestCommand(query string) (string, bool) {
+	if query == "" {
+		return "", false
+	}
+	return suggestCommandFrom(query, completionCliCommands(), discoverableCliCommands())
+}
+
+// Accept prefiltered manifests so offline discovery never refreshes capabilities.
+func suggestCommandFrom(query string, completion, discoverable []cliCommand) (string, bool) {
 	const maxDist = 2
 	if query == "" {
 		return "", false
@@ -465,10 +473,10 @@ func suggestCommand(query string) (string, bool) {
 	// The command tree's names and the operator commands; an earlier name is
 	// never suggested (ADR-20261026145832).
 	var names []string
-	for _, c := range completionCliCommands() {
+	for _, c := range completion {
 		names = append(names, c.Name)
 	}
-	for _, c := range discoverableCliCommands() {
+	for _, c := range discoverable {
 		if c.Audience != cliAudienceCustomer && cliCommandAvailable(c.Name) {
 			names = append(names, c.Name)
 		}

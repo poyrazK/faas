@@ -3,13 +3,17 @@ package mcpmanagement
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
+	"os"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/markers"
 )
 
 type planUploadedToolArgs struct {
 	App                string       `json:"app"`
 	Reason             string       `json:"reason"`
+	Runtime            string       `json:"runtime,omitempty" jsonschema:"node (default), go or python; must match the uploaded project's native build markers"`
 	UploadID           string       `json:"upload_id,omitempty"`
 	Files              []inlineFile `json:"files,omitempty"`
 	Fixtures           string       `json:"fixtures,omitempty"`
@@ -27,6 +31,12 @@ func (m *management) planUploadedToolDeploy(ctx context.Context, a planUploadedT
 	if err := validateReason(a.App, a.Reason); err != nil {
 		return nil, err
 	}
+	if a.Runtime == "" {
+		a.Runtime = "node"
+	}
+	if a.Runtime != "node" && a.Runtime != "go" && a.Runtime != "python" {
+		return nil, invalid("invalid_argument", "runtime must be node, go or python")
+	}
 	account, err := m.client.Whoami(ctx)
 	if err != nil {
 		return nil, err
@@ -38,7 +48,11 @@ func (m *management) planUploadedToolDeploy(ctx context.Context, a planUploadedT
 	if err != nil {
 		return nil, err
 	}
-	if err = validateHostedNodeProject(dir); err != nil {
+	return m.planHostedToolProject(ctx, dir, a)
+}
+
+func (m *management) planHostedToolProject(ctx context.Context, dir string, a planUploadedToolArgs) (any, error) {
+	if err := validateHostedToolProject(dir, a.Runtime); err != nil {
 		m.opts.uploads.removeDir(dir)
 		return nil, err
 	}
@@ -51,12 +65,37 @@ func (m *management) planUploadedToolDeploy(ctx context.Context, a planUploadedT
 	m.mu.Lock()
 	m.toolPublications[id].Uploaded = true
 	m.mu.Unlock()
+	// Runtime is derived from the reviewed source, not an independent deploy
+	// override. The source digest and frozen apply snapshot bind its markers.
+	out["runtime"] = a.Runtime
 	return out, nil
 }
 
-// This preview accepts Node application projects, not shell commands or a
-// host-side dependency installer. Build scripts execute in normal builder VMs.
-func validateHostedNodeProject(dir string) error {
+// Use the same marker precedence as the CLI and native builder. Dependencies
+// and customer build commands execute only in normal builder VMs on apply.
+func validateHostedToolProject(dir, runtime string) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	family, err := markers.DetectFromFS(root.FS())
+	if err != nil || string(family) != runtime {
+		return invalid("unsupported_project", "runtime must match native project detection; hosted publication supports Node, Go and Python application projects")
+	}
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		marker := markers.MarkerFor(entry.Name())
+		if !entry.IsDir() && marker != markers.FrameworkUnknown && marker != family {
+			return invalid("unsupported_project", "hosted publication requires root build markers from a single runtime family")
+		}
+	}
+	if family != markers.FrameworkNode {
+		return nil
+	}
 	data, err := readToolProjectFile(dir, "package.json", maxInlineBytes)
 	var pkg struct {
 		Scripts map[string]string `json:"scripts"`
