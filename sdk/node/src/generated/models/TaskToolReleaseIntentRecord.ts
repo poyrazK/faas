@@ -2,9 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TaskToolReleaseExecution } from './TaskToolReleaseExecution.js';
 import type { TaskToolReleaseIntent } from './TaskToolReleaseIntent.js';
 /**
- * An owner-approved source and native app review. Approval covers only this immutable intent; every execution capability remains unavailable in this milestone.
+ * Immutable source and native app review with optional separate owner authorization for a single local Task adapter execution. Root readiness flags never grant authority.
  */
 export type TaskToolReleaseIntentRecord = {
   version: 1;
@@ -19,5 +20,6 @@ export type TaskToolReleaseIntentRecord = {
   decided_at?: string;
   bindings_verified: boolean;
   ready_to_apply: boolean;
+  execution?: TaskToolReleaseExecution;
 };
 

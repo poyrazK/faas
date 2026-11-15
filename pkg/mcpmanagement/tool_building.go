@@ -94,11 +94,13 @@ func registerToolBuilding(s *mcp.Server, m *management) {
 	register(s, m, "gregale_get_tool_deploy", "Read a publication receipt, recovering started attempts from the account's durable native journal after reconnect or process restart. Never repeats deployments or fixtures. Abandoned attempts become outcome_unknown after their deadline.", m.getToolDeploy)
 	if !m.remote() {
 		register(s, m, "gregale_get_task_tool_deploy", "Read a durable Task release intent after reconnect. Returns its pinned review and last observed approval status; source and native app drift need gregale_check_task_tool_deploy. Approval records never authorize deployment, migrations, or invocation.", m.getTaskReleaseIntent)
+		register(s, m, "gregale_get_task_tool_operation", "Inspect a native Task execution claim after reconnect. Running or reconcile_required operations must never be blindly repeated; local binding profiles and credentials are excluded.", m.getTaskExecution)
 	}
 	if !m.opts.AllowWrites {
 		return
 	}
 	if !m.remote() {
+		registerTool(s, m, "gregale_apply_task_tool_deploy", "Start one separately owner-authorized local Node Task release. Requires explicit execution consent and the owner's immutable private binding profile. Rechecks authority, source and app configuration before native effects, preserving existing migration/readiness/traffic/drain gates. Poll gregale_get_task_tool_operation; duplicate or interrupted claims never restart automatically.", false, m.applyTaskExecution)
 		registerTool(s, m, "gregale_prepare_task_tool_deploy", "Save an immutable, expiring Task stack review in the native journal. Reuse intent_id after uncertain errors. Pins source and exact web, worker, observer and previous-worker app reviews. Requires a separate owner decision in the CLI; no credentials, execution, migrations or deployments.", false, m.prepareTaskReleaseIntent)
 		registerTool(s, m, "gregale_check_task_tool_deploy", "Re-review a local Task plan and check its durable intent against current native app reviews. Observed changes permanently invalidate approval. Updates review metadata only; never deploys, invokes tools, runs migrations or renews approval.", false, m.checkTaskReleaseIntent)
 		registerTool(s, m, "gregale_test_tool", "Execute explicitly approved behavioral smoke fixtures once on an exact live zero-traffic MCP candidate. Tools may have external side effects. No arbitrary URL or serving-release execution; credentials are named MCP_* environment references, never values. Calls are not automatically retried.", false, m.testTool)

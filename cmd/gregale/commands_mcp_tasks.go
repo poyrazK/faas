@@ -29,6 +29,8 @@ func cmdMCPTasks(args []string) int {
 		return 0
 	}
 	switch args[0] {
+	case "execution":
+		return cmdMCPTaskExecution(args[1:])
 	case "intent":
 		return cmdMCPTaskIntent(args[1:])
 	case "configure":

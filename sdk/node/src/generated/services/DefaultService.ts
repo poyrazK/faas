@@ -145,7 +145,7 @@ export class DefaultService {
   }
   /**
    * Revalidate source fingerprint and native app reviews; requires deploy-write scope and MFA policy
-   * Compare a freshly computed local release fingerprint with the retained Task intent and revalidate native app and requesting-key facts. Observed mismatches permanently mark pending or approved reviews stale. Restoring previous source bytes does not revive approval. This journal update executes no tool, migration, deployment or customer code.
+   * Compare a freshly computed local release fingerprint with the retained Task intent and revalidate native app and requesting-key facts. Observed mismatches permanently mark pending or approved reviews stale. Restoring previous source bytes does not revive approval. An execution request atomically claims or guards a separately owner-authorized local operation; only its requesting key may transition it. Guard checks retain app configuration pins while allowing deployment revisions made by the native adapter. Existing native traffic/readiness fences remain mandatory. This endpoint only changes journal metadata and never executes customer code itself.
    * @returns TaskToolReleaseIntentRecord Task source and native snapshot revalidation result
    * @throws ApiError
    */
@@ -177,7 +177,7 @@ export class DefaultService {
   }
   /**
    * Record an exact-digest owner decision; requires personal non-agent administrator and MFA policy
-   * An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app and key facts. Owner cancellation uses the retained review even after source files or requesting-key authority disappear. Decisions never renew the fifteen-minute deadline or grant deployment, migration or invocation authority.
+   * An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app and key facts. Owner cancellation uses the retained review even after source files or requesting-key authority disappear. Decisions never renew the fifteen-minute deadline. A separate authorize decision from a non-agent admin API key can bind one local Task execution identity to a salted private binding digest. It requires an approved fresh review and cannot replace or renew an existing execution claim.
    * @returns TaskToolReleaseIntentRecord Retained owner verdict with its original review expiry
    * @throws ApiError
    */

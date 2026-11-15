@@ -250,6 +250,14 @@ func mcpCLICommand() cliCommand {
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
 		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{
+			{Name: "execution", Short: "Authorize or inspect one guarded Task release operation", Positionals: []string{"<authorize|apply|get|guard>"}, Notes: []string{"Execution authority is separate from review approval. Only the requesting key can apply. An existing claim never automatically restarts; reconcile interruptions through the owner-operated native workflow."}, Flags: []cliFlag{
+				{Name: "id", Short: "exact reviewed intent identity", Value: "ID", Req: true},
+				{Name: "operation-id", Short: "immutable owner-selected execution identity", Value: "ID"},
+				{Name: "plan", Short: "owner-reviewed plan, authorize only", Value: "PATH"},
+				{Name: "bindings-file", Short: "private owner binding JSON, authorize only", Value: "PATH"},
+				{Name: "intent-sha256", Short: "owner-reviewed digest, authorize only", Value: "SHA256"},
+				{Name: "allow-tool-execution", Short: "explicit consent to reviewed code, migrations and release effects", Bool: true},
+			}},
 			{Name: "intent", Short: "Prepare and inspect a durable Task stack review, or record an owner decision", Positionals: []string{"<prepare|get|approve|reject|revoke>"}, Notes: []string{"Approval covers the pinned review only and grants no execution authority. Prepare, get and approve re-review --plan; get invalidates observed drift. Reject/revoke use the retained review and need no source files."}, Flags: []cliFlag{
 				{Name: "plan", Short: "local native plan required by prepare/get/approve", Value: "PATH"},
 				{Name: "id", Short: "stable intent ID; generated on prepare if omitted", Value: "ID"},

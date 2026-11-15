@@ -86,6 +86,12 @@ func validateTaskIntentReceipt(record api.TaskToolReleaseIntentRecord, id string
 		record.ReadyToApply || record.BindingsVerified || record.CreatedAt.IsZero() || !record.ExpiresAt.Equal(expected.ExpiresAt) {
 		return api.TaskToolReleaseIntentRecord{}, invalid("invalid_response", "Task intent receipt differs from its reviewed identity")
 	}
+	if e := record.Execution; e != nil {
+		if !toolpublication.ValidID(e.OperationID) || !toolpublication.ValidID(e.BindingsSHA256) || e.AuthorizerKeyID == "" || e.AuthorizedAt.Before(record.CreatedAt) || !e.AuthorizedAt.Before(record.ExpiresAt) ||
+			(e.State != "authorized" && e.State != "running" && e.State != "reconcile_required" && e.State != "completed") || e.ClaimSHA256 != "" && !toolpublication.ValidID(e.ClaimSHA256) {
+			return api.TaskToolReleaseIntentRecord{}, invalid("invalid_response", "invalid Task execution receipt")
+		}
+	}
 	switch record.Status {
 	case "pending", "approved", "rejected", "revoked", "expired", "stale":
 		return tasktoolrelease.View(record, time.Now()), nil
@@ -98,6 +104,7 @@ func taskIntentOutputSchema() map[string]any {
 	props := map[string]any{"version": map[string]any{"type": "integer", "const": 1}, "intent": map[string]any{"type": "object"},
 		"ready_to_apply": map[string]any{"type": "boolean", "const": false}, "bindings_verified": map[string]any{"type": "boolean", "const": false},
 		"status": map[string]any{"type": "string", "enum": []string{"pending", "approved", "rejected", "revoked", "expired", "stale"}}}
+	props["execution"] = map[string]any{"type": "object"}
 	for _, name := range []string{"id", "account_id", "requester_key_id", "intent_sha256", "created_at", "expires_at", "decided_at"} {
 		props[name] = map[string]any{"type": "string"}
 	}

@@ -53,6 +53,8 @@ var toolsetOf = map[string]string{
 	"gregale_prepare_task_tool_deploy":       ToolsetBuildTools,
 	"gregale_check_task_tool_deploy":         ToolsetBuildTools,
 	"gregale_get_task_tool_deploy":           ToolsetBuildTools,
+	"gregale_get_task_tool_operation":        ToolsetBuildTools,
+	"gregale_apply_task_tool_deploy":         ToolsetBuildTools,
 	"gregale_plan_tool_deploy":               ToolsetBuildTools,
 	"gregale_plan_uploaded_tool_deploy":      ToolsetBuildTools,
 	"gregale_apply_tool_deploy":              ToolsetBuildTools,

@@ -2,10 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TaskToolReleaseExecutionRequest } from './TaskToolReleaseExecutionRequest.js';
 /**
- * Freshly computed local Task fingerprint supplied for permanent native drift detection.
+ * Fresh local fingerprint for drift detection or a separately authorized adapter claim transition.
  */
 export type TaskToolReleaseIntentCheck = {
   release_fingerprint: string;
+  execution?: TaskToolReleaseExecutionRequest;
 };
 

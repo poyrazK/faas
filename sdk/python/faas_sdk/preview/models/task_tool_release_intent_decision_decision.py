@@ -1,9 +1,10 @@
 from typing import Literal
 
-TaskToolReleaseIntentDecisionDecision = Literal["approve", "reject", "revoke"]
+TaskToolReleaseIntentDecisionDecision = Literal["approve", "authorize", "reject", "revoke"]
 
 TASK_TOOL_RELEASE_INTENT_DECISION_DECISION_VALUES: set[TaskToolReleaseIntentDecisionDecision] = {
     "approve",
+    "authorize",
     "reject",
     "revoke",
 }

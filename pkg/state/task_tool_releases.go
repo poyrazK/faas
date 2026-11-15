@@ -31,6 +31,13 @@ func cloneTaskToolRelease(in api.TaskToolReleaseIntentRecord) api.TaskToolReleas
 }
 
 func changeTaskToolRelease(record api.TaskToolReleaseIntentRecord, action string, in api.TaskToolReleaseIntentDecision, fresh bool) (api.TaskToolReleaseIntentRecord, error) {
+	if action == "execution" || action == "decide" && in.Decision == "authorize" {
+		out, err := tasktoolrelease.Execution(record, in, fresh, time.Now())
+		if err != nil {
+			return record, ErrConflict
+		}
+		return out, nil
+	}
 	if (action != "check" && action != "decide") || !toolpublication.ValidID(in.ReleaseFingerprint) {
 		return record, ErrInvalidArgument
 	}
@@ -72,7 +79,7 @@ func (m *MemStore) taskToolReleaseKeyFreshLocked(account, key string) bool {
 	return true
 }
 
-func (m *MemStore) taskToolReleaseFreshLocked(account, key string, intent api.TaskToolReleaseIntent) bool {
+func (m *MemStore) taskToolReleaseFreshLocked(account, key string, intent api.TaskToolReleaseIntent, configurationOnly bool) bool {
 	if !m.taskToolReleaseKeyFreshLocked(account, key) {
 		return false
 	}
@@ -88,6 +95,10 @@ func (m *MemStore) taskToolReleaseFreshLocked(account, key string, intent api.Ta
 			}
 		}
 		current, err := m.releaseReviewLocked(app.ID, api.DefaultEnvScope)
+		if configurationOnly {
+			current.LatestDeploymentID = pin.Review.LatestDeploymentID
+			current.ServingDeploymentIDs = pin.Review.ServingDeploymentIDs
+		}
 		if err != nil || checkReleaseReview(pin.Review, current) != nil {
 			return false
 		}
@@ -108,7 +119,7 @@ func (m *MemStore) PrepareTaskToolReleaseIntent(_ context.Context, account, key,
 		}
 		return tasktoolrelease.View(cloneTaskToolRelease(old), time.Now()), nil
 	}
-	if !m.taskToolReleaseFreshLocked(account, key, intent) {
+	if !m.taskToolReleaseFreshLocked(account, key, intent, false) {
 		return record, ErrConflict
 	}
 	count := 0
@@ -144,7 +155,18 @@ func (m *MemStore) ChangeTaskToolReleaseIntent(_ context.Context, account, id, a
 	if !ok {
 		return record, ErrNotFound
 	}
-	out, err := changeTaskToolRelease(record, action, in, m.taskToolReleaseFreshLocked(account, record.RequesterKeyID, record.Intent))
+	configurationOnly := action == "execution" && in.Execution != nil && in.Execution.Action != "claim"
+	fresh := m.taskToolReleaseFreshLocked(account, record.RequesterKeyID, record.Intent, configurationOnly)
+	if action == "execution" || in.Decision == "authorize" {
+		owner := in.AuthorizerKeyID
+		if action == "execution" && record.Execution != nil {
+			owner = record.Execution.AuthorizerKeyID
+		}
+		k, ok := m.keys[owner]
+		fresh = fresh && ok && m.taskToolReleaseKeyFreshLocked(account, owner) && slices.Contains(k.Scopes, api.ScopeAdmin) &&
+			!slices.Contains(k.Scopes, api.ScopeAgent) && k.Label != api.MCPLoginKeyLabel
+	}
+	out, err := changeTaskToolRelease(record, action, in, fresh)
 	if err == nil {
 		m.taskToolReleaseIntents[account+":"+id] = cloneTaskToolRelease(out)
 	}

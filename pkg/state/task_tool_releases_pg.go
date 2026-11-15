@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/tasktoolrelease"
 )
 
-func taskToolReleaseFresh(ctx context.Context, tx pgx.Tx, account, key string, intent api.TaskToolReleaseIntent) (bool, error) {
+func taskToolReleaseFresh(ctx context.Context, tx pgx.Tx, account, key string, intent api.TaskToolReleaseIntent, configurationOnly bool) (bool, error) {
 	_, err := toolpublicationdb.New().LockTaskToolReleaseKey(ctx, tx, toolpublicationdb.LockTaskToolReleaseKeyParams{AccountID: mustPgUUID(account), ID: mustPgUUID(key)})
 	if errors.Is(mapErr(err), ErrNotFound) {
 		return false, nil
@@ -40,6 +40,10 @@ func taskToolReleaseFresh(ctx context.Context, tx pgx.Tx, account, key string, i
 		}
 		if err != nil {
 			return false, err
+		}
+		if configurationOnly {
+			current.LatestDeploymentID = app.Review.LatestDeploymentID
+			current.ServingDeploymentIDs = app.Review.ServingDeploymentIDs
 		}
 		if checkReleaseReview(app.Review, current) != nil {
 			return false, nil
@@ -79,7 +83,7 @@ func (s *PgStore) PrepareTaskToolReleaseIntent(ctx context.Context, account, key
 }
 
 func insertTaskToolRelease(ctx context.Context, tx pgx.Tx, account string, record api.TaskToolReleaseIntentRecord) (api.TaskToolReleaseIntentRecord, error) {
-	fresh, err := taskToolReleaseFresh(ctx, tx, account, record.RequesterKeyID, record.Intent)
+	fresh, err := taskToolReleaseFresh(ctx, tx, account, record.RequesterKeyID, record.Intent, false)
 	if err != nil {
 		return record, err
 	}
@@ -130,9 +134,24 @@ func (s *PgStore) ChangeTaskToolReleaseIntent(ctx context.Context, account, id, 
 	if err := json.Unmarshal(body, &record); err != nil {
 		return record, err
 	}
-	fresh, err := taskToolReleaseFresh(ctx, tx, account, record.RequesterKeyID, record.Intent)
+	configurationOnly := action == "execution" && in.Execution != nil && in.Execution.Action != "claim"
+	fresh, err := taskToolReleaseFresh(ctx, tx, account, record.RequesterKeyID, record.Intent, configurationOnly)
 	if err != nil {
 		return record, err
+	}
+	if action == "execution" || in.Decision == "authorize" {
+		owner := in.AuthorizerKeyID
+		if action == "execution" && record.Execution != nil {
+			owner = record.Execution.AuthorizerKeyID
+		}
+		if owner == "" {
+			return record, ErrConflict
+		}
+		_, ownerErr := q.LockTaskToolExecutionOwnerKey(ctx, tx, toolpublicationdb.LockTaskToolExecutionOwnerKeyParams{AccountID: mustPgUUID(account), ID: mustPgUUID(owner)})
+		if ownerErr != nil && !errors.Is(mapErr(ownerErr), ErrNotFound) {
+			return record, ownerErr
+		}
+		fresh = fresh && ownerErr == nil
 	}
 	record, err = changeTaskToolRelease(record, action, in, fresh)
 	if err != nil {

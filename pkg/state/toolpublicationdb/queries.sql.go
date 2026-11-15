@@ -503,6 +503,28 @@ func (q *Queries) LockPublicationReadinessEvidence(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const lockTaskToolExecutionOwnerKey = `-- name: LockTaskToolExecutionOwnerKey :one
+SELECT k.id FROM api_keys k WHERE k.account_id=$1 AND k.id=$2 AND k.status IN ('active','grace')
+AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>now())
+AND k.scopes @> ARRAY['admin']::text[] AND NOT k.scopes @> ARRAY['agent']::text[]
+AND k.label IS DISTINCT FROM 'mcp-login'
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)) FOR SHARE OF k
+`
+
+type LockTaskToolExecutionOwnerKeyParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+// Owner authority is checked again under lock for every adapter transition.
+func (q *Queries) LockTaskToolExecutionOwnerKey(ctx context.Context, db DBTX, arg LockTaskToolExecutionOwnerKeyParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockTaskToolExecutionOwnerKey, arg.AccountID, arg.ID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockTaskToolReleaseApp = `-- name: LockTaskToolReleaseApp :one
 SELECT a.id FROM apps a WHERE a.account_id=$1 AND a.id=$2 AND a.slug=$3
 AND a.status='active' AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id)) FOR SHARE OF a

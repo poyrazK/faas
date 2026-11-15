@@ -2,12 +2,14 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { TaskToolReleaseExecutionRequest } from './TaskToolReleaseExecutionRequest.js';
 /**
  * Owner verdict bound to an immutable Task intent digest and its retained source fingerprint.
  */
 export type TaskToolReleaseIntentDecision = {
   intent_sha256: string;
   release_fingerprint: string;
-  decision: 'approve' | 'reject' | 'revoke';
+  decision: 'approve' | 'reject' | 'revoke' | 'authorize';
+  execution?: TaskToolReleaseExecutionRequest;
 };
 

@@ -85,8 +85,10 @@ def sync_detailed(
      An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained
     release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app
     and key facts. Owner cancellation uses the retained review even after source files or requesting-key
-    authority disappear. Decisions never renew the fifteen-minute deadline or grant deployment,
-    migration or invocation authority.
+    authority disappear. Decisions never renew the fifteen-minute deadline. A separate authorize
+    decision from a non-agent admin API key can bind one local Task execution identity to a salted
+    private binding digest. It requires an approved fresh review and cannot replace or renew an existing
+    execution claim.
 
     Args:
         id (str):
@@ -124,8 +126,10 @@ def sync(
      An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained
     release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app
     and key facts. Owner cancellation uses the retained review even after source files or requesting-key
-    authority disappear. Decisions never renew the fifteen-minute deadline or grant deployment,
-    migration or invocation authority.
+    authority disappear. Decisions never renew the fifteen-minute deadline. A separate authorize
+    decision from a non-agent admin API key can bind one local Task execution identity to a salted
+    private binding digest. It requires an approved fresh review and cannot replace or renew an existing
+    execution claim.
 
     Args:
         id (str):
@@ -158,8 +162,10 @@ async def asyncio_detailed(
      An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained
     release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app
     and key facts. Owner cancellation uses the retained review even after source files or requesting-key
-    authority disappear. Decisions never renew the fifteen-minute deadline or grant deployment,
-    migration or invocation authority.
+    authority disappear. Decisions never renew the fifteen-minute deadline. A separate authorize
+    decision from a non-agent admin API key can bind one local Task execution identity to a salted
+    private binding digest. It requires an approved fresh review and cannot replace or renew an existing
+    execution claim.
 
     Args:
         id (str):
@@ -195,8 +201,10 @@ async def asyncio(
      An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained
     release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app
     and key facts. Owner cancellation uses the retained review even after source files or requesting-key
-    authority disappear. Decisions never renew the fifteen-minute deadline or grant deployment,
-    migration or invocation authority.
+    authority disappear. Decisions never renew the fifteen-minute deadline. A separate authorize
+    decision from a non-agent admin API key can bind one local Task execution identity to a salted
+    private binding digest. It requires an approved fresh review and cannot replace or renew an existing
+    execution claim.
 
     Args:
         id (str):

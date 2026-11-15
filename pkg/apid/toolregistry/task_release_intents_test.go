@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tasktoolrelease"
+	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
 func TestMCPTaskReleaseIntentsMemory(t *testing.T) {
@@ -137,6 +138,68 @@ func exerciseTaskIntents(t *testing.T, s state.Store, reopen func() state.Store)
 			t.Fatal(err)
 		}
 		in.Apps[i].Review = current
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		id := fmt.Sprintf("%064x", 10+attempt)
+		pending := decode(call("PUT", id, "", in, publisher), "pending")
+		d := api.TaskToolReleaseIntentDecision{Decision: "approve", IntentSHA256: pending.IntentSHA256, ReleaseFingerprint: in.ReleaseFingerprint}
+		decode(call("PUT", id, "/decision", d, owner), "approved")
+		executionOwner := key(fmt.Sprintf("execution owner %d", attempt), api.ScopeAdmin)
+		r := &api.TaskToolReleaseExecutionRequest{Action: "authorize", OperationID: fmt.Sprintf("%064x", 20+attempt), BindingsSHA256: strings.Repeat("b", 64)}
+		d.Decision, d.Execution = "authorize", r
+		if w := call("PUT", id, "/decision", d, publisher); w.Code == 200 {
+			t.Fatal("requester authorized execution")
+		}
+		authorized := decode(call("PUT", id, "/decision", d, executionOwner), "approved")
+		if authorized.Execution == nil || authorized.Execution.State != "authorized" || authorized.Execution.AuthorizerKeyID != executionOwner.ID {
+			t.Fatal("missing separate execution authority", authorized)
+		}
+		r.Action, r.ClaimToken = "claim", strings.Repeat("c", 64)
+		check := api.TaskToolReleaseIntentCheck{ReleaseFingerprint: in.ReleaseFingerprint, Execution: r}
+		running := decode(call("POST", id, "/check", check, publisher), "approved")
+		if running.Execution.State != "running" || running.Execution.ClaimSHA256 != toolpublication.Digest([]byte(r.ClaimToken)) {
+			t.Fatal("claim not committed", running)
+		}
+		r.ClaimToken = strings.Repeat("d", 64)
+		duplicate := decode(call("POST", id, "/check", check, publisher), "approved")
+		if duplicate.Execution.ClaimSHA256 != running.Execution.ClaimSHA256 {
+			t.Fatal("duplicate obtained a new lease")
+		}
+		r.Action = "guard"
+		if w := call("POST", id, "/check", check, publisher); w.Code != 409 {
+			t.Fatal("wrong claim guarded execution", w.Code)
+		}
+		r.ClaimToken = strings.Repeat("c", 64)
+		if attempt == 0 {
+			_, err := s.CreateDeployment(ctx, state.Deployment{AppID: in.Apps[0].Review.AppID, Kind: state.DeploymentKindTarball, Status: state.DeployBuilding, SourceSHA256: strings.Repeat("e", 64), SourcePath: "/fixture/next.tar.gz", SourceBytes: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			stillRunning := decode(call("POST", id, "/check", check, publisher), "approved")
+			if stillRunning.Execution.State != "running" {
+				t.Fatal("own deployment invalidated stable configuration")
+			}
+			r.Action = "complete"
+			completed := decode(call("POST", id, "/check", check, publisher), "approved")
+			if completed.Execution.State != "completed" {
+				t.Fatal("completion not durable")
+			}
+			for i := range in.Apps {
+				current, e := s.(state.ReleaseReviewStore).ReadReleaseReview(ctx, in.Apps[i].Review.AppID, api.DefaultEnvScope)
+				if e != nil {
+					t.Fatal(e)
+				}
+				in.Apps[i].Review = current
+			}
+		} else {
+			if _, err := s.MarkAPIKeyRevoked(ctx, account.ID, executionOwner.ID); err != nil {
+				t.Fatal(err)
+			}
+			stopped := decode(call("POST", id, "/check", check, publisher), "stale")
+			if stopped.Execution.State != "reconcile_required" {
+				t.Fatal("revoked owner authority did not stop executor")
+			}
+		}
 	}
 	revokedID := fmt.Sprintf("%064x", 4)
 	pending := decode(call("PUT", revokedID, "", in, publisher), "pending")

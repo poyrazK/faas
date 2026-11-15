@@ -40,6 +40,9 @@ type mcpNativeReleasePlan struct {
 	TimeoutSeconds     int                    `json:"timeout_seconds"`
 }
 type mcpNativeReleaseState struct {
+	TaskIntentID            string `json:"task_intent_id,omitempty"`
+	TaskOperationID         string `json:"task_operation_id,omitempty"`
+	quiet                   bool
 	AccessPolicyExpectation *api.MCPAccessPolicyExpectation `json:"-"`
 	Revision                uint64                          `json:"revision,omitempty"`
 	journalExists           bool
@@ -321,10 +324,14 @@ func cmdMCPTaskRelease(args []string) int {
 	return jsonOut(writeJSON(map[string]any{"workerIDs": s.WorkerIDs, "stage": s.Stage}))
 }
 func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state, plan string) int {
+	quiet := s.quiet
 	if s.Stage == "restore_pending" || s.Stage == "web_restored" || s.Stage == "quarantined" || s.Stage == "retirement_pending" || s.Stage == "worker_retired" {
 		return printErr("MCP release", errors.New("recovery or retirement started; resume that operation or create a new release instead"))
 	}
 	if s.Stage == "complete" {
+		if quiet {
+			return 0
+		}
 		return jsonOut(writeJSON(s))
 	}
 	if err := requireMCPNativeNodeWorker(p.WorkerPath); err != nil {
@@ -359,6 +366,9 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 		return printErr("MCP release", err)
 	}
 	gatePlan := map[string]any{"timeoutMs": p.TimeoutSeconds * 1000, "releaseId": s.Fingerprint, "checkpointPath": state + ".gate", "start": []string{binary, "--json", "mcp", "tasks", "release", "start", "--plan", plan, "--state", state}, "drain": []string{binary, "--json", "mcp", "tasks", "release", "drain", "--plan", plan, "--state", state}}
+	if s.TaskIntentID != "" {
+		gatePlan["authorize"] = []string{binary, "--json", "mcp", "tasks", "execution", "guard", "--id", s.TaskIntentID, "--operation-id", s.TaskOperationID}
+	}
 	b, _ := json.Marshal(gatePlan)
 	f, err := os.CreateTemp("", "gregale-native-release-*.json")
 	if err != nil {
@@ -377,6 +387,21 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 	defer cancel()
 	command := exec.CommandContext(ctx, "node", "tasks-release.js", f.Name())
 	command.Dir = p.WorkerPath
+	if s.TaskIntentID != "" {
+		c, err := authedClient()
+		if err != nil {
+			return printErr("Task execution", err)
+		}
+		record, err := c.GetTaskToolReleaseIntent(ctx, s.TaskIntentID)
+		if err != nil {
+			return printErr("Task execution", err)
+		}
+		profile, _, err := loadMCPTaskExecutionProfile(record)
+		if err != nil {
+			return printErr("Task execution", err)
+		}
+		command.Env = append(environWithout(mcpTaskExecutionChildEnv(profile, true), "FAAS_TOKEN", "FAAS_API"), "FAAS_TOKEN="+c.Token(), "FAAS_API="+profile.APIBase)
+	}
 	output, runErr := command.Output()
 	var report struct {
 		OK     bool   `json:"ok"`
@@ -399,7 +424,12 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 			return printErr("MCP release journal", err)
 		}
 	}
-	if code := jsonOut(writeJSON(report)); code != 0 {
+	if code := func() int {
+		if quiet {
+			return 0
+		}
+		return jsonOut(writeJSON(report))
+	}(); code != 0 {
 		return code
 	}
 	if runErr != nil || !report.OK {
@@ -528,6 +558,9 @@ func reconcileMCPNativeSubmission(ctx context.Context, c *Client, p mcpNativeRel
 }
 
 func mcpNativeDeploy(ctx context.Context, c *Client, path, app string, web bool, s *mcpNativeReleaseState, state string) error {
+	if err := guardMCPNativeTaskExecution(ctx, c, s); err != nil {
+		return err
+	}
 	id := s.WorkerDeployment
 	kind := "worker"
 	if web {
@@ -976,6 +1009,9 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 		if err := mcpNativeWebTaskBindings(ctx, c, p); err != nil {
 			return err
 		}
+		if err := guardMCPNativeTaskExecution(ctx, c, s); err != nil {
+			return err
+		}
 		_, err := c.PatchDeploymentTrafficIfServingWithMCPAccess(ctx, s.WebDeployment, 100, s.ServingDeployment, s.AccessPolicyExpectation)
 		if err != nil {
 			var apiErr *api.APIError
@@ -1024,6 +1060,9 @@ func drainMCPNativeRelease(ctx context.Context, c *Client, p mcpNativeReleasePla
 			return err
 		}
 		if _, err := mcpNativeDrainableWorkerIDs(ctx, c, app, slug, dep.ID, true); err != nil {
+			return err
+		}
+		if err := guardMCPNativeTaskExecution(ctx, c, s); err != nil {
 			return err
 		}
 		if err := c.ParkIfDeployment(ctx, slug, s.PreviousDeployments[slug]); err != nil {
