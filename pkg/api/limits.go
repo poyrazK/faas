@@ -212,6 +212,12 @@ const (
 	// signal.
 	AttentionJobFailures = 3
 	AttentionJobWindow   = 7 * 24 * time.Hour
+	// The last AttentionCronFailures finished runs of one enabled HTTP cron,
+	// all failed or timed out, the newest within AttentionCronWindow, open a
+	// crons_failing signal (prod 2026-11-15: a cron 404'd every 15 minutes
+	// for days and nothing told the customer).
+	AttentionCronFailures = 5
+	AttentionCronWindow   = 24 * time.Hour
 	// A payment failure within AttentionPaymentWindow with no recovery
 	// since opens a payment_failing signal.
 	AttentionPaymentWindow = 14 * 24 * time.Hour

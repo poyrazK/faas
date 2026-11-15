@@ -22,6 +22,7 @@ func TestForCustomerWordsOnlyCustomerKinds(t *testing.T) {
 		open(api.AttentionKindDeployFailing, "shop", 3),
 		open(api.AttentionKindAppOOM, "api", 1),
 		open(api.AttentionKindJobsFailing, "nightly", 3),
+		open(api.AttentionKindCronsFailing, "shop /sync", 5),
 		open(api.AttentionKindLimitPressure, "plan_limit_apps", 4),
 		open(api.AttentionKindRefusedBurst, "unauthorized", 20),
 		open(api.AttentionKindDomainStuck, "www.shop.example", 1),
@@ -30,13 +31,14 @@ func TestForCustomerWordsOnlyCustomerKinds(t *testing.T) {
 		open(api.AttentionKindDeployFailing, "", 3),
 		dismissed,
 	})
-	if len(got) != 4 {
-		t.Fatalf("got %d customer signals, want 4: %+v", len(got), got)
+	if len(got) != 5 {
+		t.Fatalf("got %d customer signals, want 5: %+v", len(got), got)
 	}
 	want := []struct{ kind, title, detail, url string }{
 		{api.AttentionKindDeployFailing, "Deployments of shop keep failing", "3 deployments failed in the last 24 hours", "/dashboard/apps/shop"},
 		{api.AttentionKindAppOOM, "api keeps running out of memory", "exceeding its memory limit once in the last 24 hours", "/dashboard/billing"},
 		{api.AttentionKindJobsFailing, "Scheduled job nightly keeps failing", "Its last 3 scheduled runs failed. Run gregale jobs runs nightly", ""},
+		{api.AttentionKindCronsFailing, "Cron /sync on shop keeps failing", "Its last 5 runs failed", "/dashboard/apps/shop"},
 		{api.AttentionKindLimitPressure, "You keep reaching a plan limit", "refused with plan_limit_apps on 4 days of the last 7 days", "/dashboard/billing"},
 	}
 	for i, w := range want {
@@ -52,7 +54,7 @@ func TestForCustomerWordsOnlyCustomerKinds(t *testing.T) {
 		}
 	}
 	if !slices.Equal(CustomerKinds(), []string{api.AttentionKindDeployFailing, api.AttentionKindAppOOM,
-		api.AttentionKindJobsFailing, api.AttentionKindLimitPressure}) {
+		api.AttentionKindJobsFailing, api.AttentionKindCronsFailing, api.AttentionKindLimitPressure}) {
 		t.Fatalf("customer kinds = %v", CustomerKinds())
 	}
 	if appURL("../admin") != "/dashboard/apps" {

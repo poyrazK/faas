@@ -289,6 +289,23 @@ func rules(now time.Time) []rule {
 		HAVING count(*) = $2 AND bool_and(x.aggregate_status IN ('failed', 'dead_letter'))
 		LIMIT 1000`,
 			[]any{now.Add(-api.AttentionJobWindow), api.AttentionJobFailures}},
+		// The newest finished runs of each enabled HTTP cron; a success
+		// breaks the streak. Driven from crons through invocations_cron_idx.
+		{api.AttentionKindCronsFailing, `
+		SELECT a.account_id::text, $3::text, a.slug || ' ' || c.path,
+		       'last ' || r.n || ' runs of ' || c.schedule || ' ' || c.path || ' failed (' || r.outcomes || ')', r.n
+		FROM crons c JOIN apps a ON a.id = c.app_id
+		CROSS JOIN LATERAL (
+			SELECT count(*) AS n, max(x.completed_at) AS last_at,
+			       bool_and(x.outcome IN ('failed', 'timeout', 'dead_letter')) AS all_failed,
+			       string_agg(DISTINCT x.outcome, ', ' ORDER BY x.outcome) AS outcomes
+			FROM (SELECT i.outcome, i.completed_at FROM invocations i
+			      WHERE i.cron_id = c.id AND i.source = 'cron' AND i.state IN ('completed', 'failed', 'dead_letter')
+			      ORDER BY i.created_at DESC LIMIT $2) x) r
+		WHERE c.enabled AND cardinality(c.command) = 0 AND a.status <> 'deleted'
+		  AND r.n = $2 AND r.all_failed AND r.last_at >= $1
+		LIMIT 1000`,
+			[]any{now.Add(-api.AttentionCronWindow), api.AttentionCronFailures}},
 		{api.AttentionKindPaymentFailing, `
 		SELECT f.account_id::text, $2::text, 'billing',
 		       'payment failed (' || (array_agg(f.event_type ORDER BY f.processed_at DESC))[1] || ') and has not recovered', count(*)

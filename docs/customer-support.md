@@ -215,9 +215,9 @@ either:
 Both need a fresh step-up. A signal that clears with no action is marked
 `resolved_on_own`.
 
-Customers see their own open signals of four kinds on their account health page
+Customers see their own open signals of five kinds on their account health page
 and in `GET /v1/account/health`, under "Keeps going wrong" (ADR-20261114190002):
-`deploy_failing`, `app_oom`, `jobs_failing` and `limit_pressure`, each with
+`deploy_failing`, `app_oom`, `jobs_failing`, `crons_failing` and `limit_pressure`, each with
 customer wording and a next step. The wording is built from the signal's subject
 and count, never from the staff detail. The other kinds stay staff-only: domain,
 refused-request and payment problems already have their own sections on that
