@@ -411,7 +411,13 @@ type AdmissionSpec struct {
 	// grant authorizes it instead of an app binding, so a customer
 	// integration admits it without a BindingAppID; the integration's own
 	// limits still apply, and the run's spend cap holds its cost.
-	AgentRun                       bool
+	AgentRun bool
+	// GatewayOwn admits the gateway's own in-process call (a moderation
+	// check, evaluation, judge, semantic-cache embedding or batch read) or a
+	// replay. The handler has already checked that the integration is the
+	// account's own customer AI integration, so it needs no BindingAppID;
+	// the integration's limits still apply (ADR 20261114180740).
+	GatewayOwn                     bool
 	CircuitBreakerFailureThreshold int
 	CircuitBreakerOpenSeconds      int
 	RetryBudgetPerMinute           int

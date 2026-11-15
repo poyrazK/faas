@@ -904,7 +904,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RESTORE_CLOCK_REALTIME` | vmmd | `default` |  |  | `` | optional boolean kill switch for advancing a restored guest's monotonic clock by its parked time (ADR-20261109120000); production default is enabled on Firecracker 1.16+ hosts with a tsc clocksource |
 | `FAAS_RESTORE_CONCURRENCY` | vmmd, shared | `default` |  |  | `` | optional snapshot-restore concurrency override (1–64); production default is 3; "shared" covers pkg/e2etest forwarding it |
 | `FAAS_RESTORE_PREFETCH` | vmmd, shared | `default` |  |  | `` | optional boolean kill switch for the ADR-225 restore working-set prefetch; production default is enabled; "shared" covers pkg/e2etest forwarding it |
-| `FAAS_RESTORE_RESEED_THREAD` | vmmd | `default` |  |  | `` | optional boolean switch booting app VMs whose Node processes answer the restore reseed barrier from a native thread (ADR-20261024105607); production default is off |
+| `FAAS_RESTORE_RESEED_THREAD` | vmmd | `dropin` |  |  | `` | boolean switch booting app VMs whose Node processes answer the restore reseed barrier from a native thread (ADR-20261024105607); code default off; ansible vmmd_restore_reseed_thread (group_vars/compute_nodes, true) renders zz-faas-restore-speedups.conf in node_join.yml |
 | `FAAS_RETENTION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROUTE_PROBE_URL` | apid | `dropin` |  |  | `url` | public origin for ADR-847 synthetic route probes; unset disables probes |
@@ -1159,7 +1159,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_RAW_BRIDGE_PATH` | shared | `default` |  |  | `` |  |
 | `FAAS_VMMD_RESOURCE_JOURNAL_DIR` | vmmd, shared | `default` |  |  | `` | optional absolute override of vmmd's resource journal directory; set only by acceptance harnesses so several vmmd builds on one shared host keep private journals (pkg/e2etest forwards it) |
 | `FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR` | vmmd | `default` |  |  | `` | optional absolute tmpfs directory for vmmd's journal record copies (ADR-20261026113920); empty disables them; defaults to /run/faas/vmmd-resources, or to none when FAAS_VMMD_RESOURCE_JOURNAL_DIR is set |
-| `FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES` | vmmd | `default` |  |  | `` | optional boolean switch: volatile resource journal commits go only to the tmpfs copies and skip the disk fsync (ADR-20261026113920); enable only where the rollback target is this release or later |
+| `FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES` | vmmd | `dropin` |  |  | `` | boolean switch: volatile resource journal commits go only to the tmpfs copies and skip the disk fsync (ADR-20261026113920); code default off; ansible vmmd_resource_journal_volatile_writes (group_vars/compute_nodes, true) renders zz-faas-restore-speedups.conf in node_join.yml; enable only where the rollback target is this release or later |
 | `FAAS_VMMD_ROLE` | vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_SCHEDD_TARGET` | vmmd | `dropin` |  |  | `` |  |
 | `FAAS_VMMD_SPANS_WRITER_TARGET` | vmmd | `dropin` |  |  | `` | split-box apid private mTLS listener for guest trace exports; empty uses the single-box socket (ADR-958) |

@@ -74,11 +74,8 @@ func TestDurableReadinessServerProbe(t *testing.T) {
 				w.Header().Set("MCP-Protocol-Version", api.MCPProtocolVersion)
 				result := `{}`
 				switch msg.Method {
-				case "initialize":
-					result = fmt.Sprintf(`{"protocolVersion":%q,"capabilities":{"tools":{}}}`, api.MCPProtocolVersion)
-				case "notifications/initialized":
-					w.WriteHeader(202)
-					return
+				case "server/discover":
+					result = fmt.Sprintf(`{"supportedVersions":[%q],"capabilities":{"tools":{}}}`, api.MCPProtocolVersion)
 				case "ping":
 				case "tools/list":
 					result = `{"tools":[{"name":"add","inputSchema":{"type":"object"}}]}`
