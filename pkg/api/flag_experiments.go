@@ -50,6 +50,76 @@ type FlagEventsMonth struct {
 	Dropped  int64 `json:"dropped"`
 }
 
+// FlagExperimentCreateRequest creates an experiment on a variant flag's
+// weighted rule (ADR 20261115163113 §1). Start starts it at once.
+type FlagExperimentCreateRequest struct {
+	Key         string   `json:"key"`
+	Flag        string   `json:"flag"`
+	RuleID      string   `json:"rule_id"`
+	Control     string   `json:"control"`
+	MetricEvent string   `json:"metric_event"`
+	MixingLift  *float64 `json:"mixing_lift,omitempty"`
+	Start       bool     `json:"start,omitempty"`
+}
+
+// FlagExperiment is an experiment as the API reports it.
+type FlagExperiment struct {
+	Key         string         `json:"key"`
+	Flag        string         `json:"flag"`
+	RuleID      string         `json:"rule_id"`
+	Control     string         `json:"control"`
+	MetricEvent string         `json:"metric_event"`
+	MetricKind  string         `json:"metric_kind"`
+	Status      string         `json:"status"`
+	MixingLift  float64        `json:"mixing_lift"`
+	Weights     map[string]int `json:"weights"`
+	CreatedBy   string         `json:"created_by"`
+	CreatedAt   time.Time      `json:"created_at"`
+	StartedAt   *time.Time     `json:"started_at,omitempty"`
+	StoppedAt   *time.Time     `json:"stopped_at,omitempty"`
+	// AnalyzedUntil is the end of the request telemetry the results cover.
+	AnalyzedUntil *time.Time `json:"analyzed_until,omitempty"`
+}
+
+// FlagExperimentList is the experiments of an environment.
+type FlagExperimentList struct {
+	Experiments []FlagExperiment `json:"experiments"`
+}
+
+// FlagExperimentArm is one variant's exposed and converted customers.
+type FlagExperimentArm struct {
+	Variant   string  `json:"variant"`
+	Exposed   int64   `json:"exposed"`
+	Converted int64   `json:"converted"`
+	Rate      float64 `json:"rate"`
+}
+
+// FlagExperimentVariantResult compares one variant with control. Lift is an
+// absolute difference in conversion rate; Low and High bound it with a 95%
+// confidence sequence, valid however often the results are read.
+type FlagExperimentVariantResult struct {
+	FlagExperimentArm
+	Lift         *float64 `json:"lift,omitempty"`
+	RelativeLift *float64 `json:"relative_lift,omitempty"`
+	Low          *float64 `json:"low,omitempty"`
+	High         *float64 `json:"high,omitempty"`
+	PValue       *float64 `json:"p_value,omitempty"`
+	// Status is significant, not_significant, insufficient_data or
+	// sample_ratio_mismatch.
+	Status string `json:"status"`
+}
+
+// FlagExperimentResults is GET .../experiments/{key}/results.
+type FlagExperimentResults struct {
+	Experiment          FlagExperiment                `json:"experiment"`
+	Control             FlagExperimentArm             `json:"control"`
+	Variants            []FlagExperimentVariantResult `json:"variants"`
+	SampleRatioPValue   float64                       `json:"sample_ratio_p_value"`
+	SampleRatioMismatch bool                          `json:"sample_ratio_mismatch"`
+	// CrossedUnits saw more than one variant and are left out.
+	CrossedUnits int64 `json:"crossed_units"`
+}
+
 // FlagEventsResponse answers a runtime event batch.
 type FlagEventsResponse struct {
 	Accepted int               `json:"accepted"`

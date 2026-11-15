@@ -2251,6 +2251,16 @@ from .flag_events_response_dropped import FlagEventsResponseDropped
 from .flag_events_response_month import FlagEventsResponseMonth
 from .flag_evidence import FlagEvidence
 from .flag_evidence_page import FlagEvidencePage
+from .flag_experiment import FlagExperiment
+from .flag_experiment_arm import FlagExperimentArm
+from .flag_experiment_create_request import FlagExperimentCreateRequest
+from .flag_experiment_list import FlagExperimentList
+from .flag_experiment_metric_kind import FlagExperimentMetricKind
+from .flag_experiment_results import FlagExperimentResults
+from .flag_experiment_status import FlagExperimentStatus
+from .flag_experiment_variant_result import FlagExperimentVariantResult
+from .flag_experiment_variant_result_status import FlagExperimentVariantResultStatus
+from .flag_experiment_weights import FlagExperimentWeights
 from .flag_lifecycle import FlagLifecycle
 from .flag_lifecycle_attention_item import FlagLifecycleAttentionItem
 from .flag_lifecycle_evidence import FlagLifecycleEvidence
@@ -8876,6 +8886,16 @@ __all__ = (
     "FlagEventsResponseMonth",
     "FlagEvidence",
     "FlagEvidencePage",
+    "FlagExperiment",
+    "FlagExperimentArm",
+    "FlagExperimentCreateRequest",
+    "FlagExperimentList",
+    "FlagExperimentMetricKind",
+    "FlagExperimentResults",
+    "FlagExperimentStatus",
+    "FlagExperimentVariantResult",
+    "FlagExperimentVariantResultStatus",
+    "FlagExperimentWeights",
     "FlagLifecycle",
     "FlagLifecycleAttentionItem",
     "FlagLifecycleEvidence",

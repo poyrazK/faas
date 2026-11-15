@@ -70,6 +70,9 @@ Three choices were made by the owner before this record:
 customer. The SDK never accepts a customer from the caller: the unit is the
 one the gateway attached to the request, as for evaluation. An event outside
 a request with a verified customer is dropped and counted by the SDK.
+Because the SDK runs in the builder's own code, apid keeps an event only when
+its customer is an active platform tenant of the workload's account; an app
+can skew only its own experiments, never reach another account.
 
 The SDK batches events (at most 100 per call, at least every 5 s) to
 `POST /v1/runtime/flags/events` with the same workload identity token as
@@ -135,10 +138,13 @@ mismatch say so and are not called significant.
 
 ### 6. Surfaces
 
-- API under `/v1/projects/{project}/environments/{environment}/flags/experiments`:
-  list, create, get, stop, delete, results.
-- CLI: `gregale flag experiment create|list|get|stop|delete|results`.
-- Audit events `flags.experiment_created`, `flags.experiment_stopped`.
+- API under `/v1/projects/{project}/environments/{environment}/experiments`:
+  list, create, get, start, stop, delete, results. Not under `/flags/`, where
+  `/flags/{key}/...` routes already take the segment after `flags`.
+- CLI: `gregale flag experiment create|list|get|start|stop|delete` and
+  `gregale flag experiment result get`.
+- Audit events `flags.experiment_created`, `flags.experiment_started`,
+  `flags.experiment_stopped`.
 - Everything stays behind `customer_flags` (ADR-1700).
 
 ## Consequences

@@ -1012,6 +1012,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		startFeatureFlagLifecycleReconciler(ctx, srv, log)
+		startFlagExperimentReconciler(ctx, srv, log) // ADR 20261115163113
 		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)

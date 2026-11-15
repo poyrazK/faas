@@ -27,6 +27,20 @@ var eventNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_.-]{0,63}$`)
 // ValidEventName reports whether name is a conversion event name.
 func ValidEventName(name string) bool { return eventNamePattern.MatchString(name) }
 
+var experimentKeyPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
+
+// ValidExperimentKey reports whether key names an experiment.
+func ValidExperimentKey(key string) bool { return experimentKeyPattern.MatchString(key) }
+
+// ExperimentWeights are the variant weights of a flag an experiment reads.
+func ExperimentWeights(f Flag) map[string]int {
+	out := make(map[string]int, len(f.Variants))
+	for _, v := range f.Variants {
+		out[v.Key] = v.Weight
+	}
+	return out
+}
+
 // ExperimentRule returns the rule an experiment reads and checks that it can
 // carry one: a weighted rule of an enabled variant flag that allocates by
 // customer, with control among the flag's variants.
