@@ -2211,9 +2211,21 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
+	// A soft-deleted app's deployments are gone for the customer. Answering
+	// them with a retryable 503 kept `gregale deploy` polling for ever after
+	// the app was deleted mid-rollout (prod 2026-11-15: 17 min at "Snapshot
+	// prepared"); a 404 ends the wait.
+	if app.DeletedAt != nil {
+		s.notFound(w, "no such deployment: its app was deleted")
+		return
+	}
 	response := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
 	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
 		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such deployment")
+			return
+		}
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
 			return
