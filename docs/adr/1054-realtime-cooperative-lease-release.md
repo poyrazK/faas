@@ -47,3 +47,15 @@ refunded attempt count on downgrade.
 
 Build, SDK generation, SQLC/spec parity and static checks only. Runtime tests and
 migration execution are deferred by request.
+
+## Amendment 2026-11-14: a release limit (event-driven hunt #7)
+
+A release refunds the attempt, so a worker that always releases looped on one
+message forever and the message never reached its dead letter. The
+`api.RealtimeConsumerGroupReleasesMax`-th release (100) of a message
+dead-letters it with failure code `release_limit` instead of returning it to
+ready; the settlement answers `dead`. It is replayable like any dead letter.
+A hundred releases is far past any cooperative shutdown pattern.
+A dead-letter replay resets the message's release count with its attempts. The
+release-limit dead counts as a dead letter in the group metrics and, like a
+retry to dead, as a handler failure for the circuit breaker.
