@@ -2221,6 +2221,7 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
 		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
 		if err != nil {
+			s.log.Error("read deployment configuration status", "deployment_id", d.ID, "err", err)
 			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
 			return
 		}
