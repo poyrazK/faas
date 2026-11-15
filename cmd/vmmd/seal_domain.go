@@ -45,16 +45,51 @@ func loadSealDomain(secretsDir string, domain sealdomain.Domain) ([]*age.X25519I
 // domains, since nothing else would open what was re-sealed to them.
 //
 // A node whose runtime identity is retired (ADR-20261110210000 slice 3e)
-// opens runtime secrets through secretd and holds no runtime identity, so it
-// needs only the build domain.
-func unsealIdentities(runtime, build, legacy []*age.X25519Identity, contracted, runtimeRetired bool) (host, registry []*age.X25519Identity, err error) {
-	if contracted && runtimeRetired && len(build) == 0 {
-		return nil, nil, errors.New("vmmd: FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED needs domains/build.age staged next to host.age")
-	}
-	if contracted && !runtimeRetired && (len(runtime) == 0 || len(build) == 0) {
-		return nil, nil, errors.New("vmmd: FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED needs domains/runtime.age and domains/build.age staged next to host.age")
+// opens runtime secrets through secretd and holds no runtime identity; one
+// whose build identity is retired (slice 3g-3) pulls builder registries
+// through secretd and holds no build identity. Neither needs its retired
+// domain.
+func unsealIdentities(runtime, build, legacy []*age.X25519Identity, contracted, runtimeRetired, buildRetired bool) (host, registry []*age.X25519Identity, err error) {
+	if contracted {
+		var missing []string
+		if !runtimeRetired && len(runtime) == 0 {
+			missing = append(missing, "domains/runtime.age")
+		}
+		if !buildRetired && len(build) == 0 {
+			missing = append(missing, "domains/build.age")
+		}
+		if len(missing) > 0 {
+			return nil, nil, fmt.Errorf("vmmd: FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED needs %s staged next to host.age", strings.Join(missing, " and "))
+		}
 	}
 	return slices.Concat(runtime, legacy), slices.Concat(build, legacy), nil
+}
+
+// checkBuildRetired checks a node whose build identity is retired
+// (ADR-20261110210000 slice 3g-3). Such a node must hold no private key that
+// opens an app's registry password: it is contracted (no fleet or host
+// identity), builder VMs pull through the secretd-backed vsock mirror, and
+// no build identity is left on disk; any leftover refuses the start rather
+// than run with it.
+func checkBuildRetired(secretsDir string, contracted bool, mirrorMode string) error {
+	if !contracted {
+		return errors.New("vmmd: FAAS_SEAL_DOMAIN_BUILD_RETIRED needs FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED: the fleet identity also opens registry passwords")
+	}
+	if mirrorMode != "secretd" {
+		return errors.New("vmmd: FAAS_SEAL_DOMAIN_BUILD_RETIRED needs FAAS_VMMD_BUILD_REGISTRY_MIRROR=secretd: nothing else would give builder VMs their app's private registries")
+	}
+	dir := filepath.Join(secretsDir, "domains")
+	for _, leftover := range []string{
+		sealdomain.IdentityPath(dir, sealdomain.Build),
+		sealdomain.PreviousIdentityPath(dir, sealdomain.Build),
+	} {
+		if _, err := os.Lstat(leftover); err == nil {
+			return fmt.Errorf("vmmd: FAAS_SEAL_DOMAIN_BUILD_RETIRED but %s is still on this host: remove it (seal_domains role, faas_seal_domain_build_retired_on_compute) before starting", leftover)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("vmmd: check for a retired build identity: %w", err)
+		}
+	}
+	return nil
 }
 
 // runtimeRetiredRecipient checks a node whose runtime identity is retired

@@ -236,9 +236,8 @@ plane: watch its network and `faas_secretd_opens_total{rpc="RegistryFetch"}`.
    `not_authorized` refusal for a build means the claim recorded no node
    (builderd logs `record the build's node`). Then the rest of compute. Once
    every node runs it, no compute daemon opens a registry password, and the
-   build identity can leave compute (`docs/runbooks/secretd.md`, "Take the
-   edge and delivery identities off compute", extended to build). Job images
-   pull through secretd with imaged's switch (3j-2b).
+   build identity can leave compute ("Take the build identity off compute"
+   below). Job images pull through secretd with imaged's switch (3j-2b).
 
    Known limit: secretd finds a credential by the registry URL's exact host,
    so a Docker Hub credential stored as `docker.io` is not used for
@@ -247,9 +246,7 @@ plane: watch its network and `faas_secretd_opens_total{rpc="RegistryFetch"}`.
 ## Take the edge and delivery identities off compute
 
 Once slices 3f–3i run on every compute node, nothing on compute needs the
-edge or delivery identity. The build identity stays until builder VMs pull
-through the control plane (slice 3j-3): vmmd still opens builder registry
-passwords with it.
+edge or delivery identity. The build identity has its own section below.
 
 **Edge, per node.** Prerequisites: `faas_seal_domain_edge_contracted: true`
 (the fleet identity also opens edge values), `faas_gateway_secretd_log_drains:
@@ -286,6 +283,40 @@ including nodes that join later, as retired. The control plane keeps both.
 Back out a node by setting its switch to false and converging: the role
 stages the identity again and the daemon restarts with it. With the CD
 variable on, unset it first.
+
+## Take the build identity off compute (slice 3g-3)
+
+Once imaged (3j-2) and builder VMs (3j-3) pull private registries through
+secretd on every compute node, nothing on compute needs the build identity.
+
+**Per node.** Prerequisites: `faas_seal_domain_build_contracted: true` and
+`faas_seal_domain_runtime_contracted: true` (imaged and vmmd without the
+fleet and host identities, which also open registry passwords),
+`faas_imaged_secretd_registry_pulls: true`,
+`faas_vmmd_build_registry_mirror: true`, `faas_secretd_target`, and
+`SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true`, so secretd holds the identity. Set
+`faas_seal_domain_build_retired_on_compute: true` for the node and converge
+(`--limit`). The role removes `build.age` and `build.age.previous`, stops
+publishing the build probe from the node, gives imaged
+`FAAS_SEAL_DOMAIN_BUILD_RETIRED=true` (and restarts it without any build,
+fleet or host credential) and gives vmmd the same switch. vmmd still holds
+the identity it loaded, so **drain the node and restart vmmd**. Check:
+imaged logs `build identity retired on this node` and the converge proves its
+credentials hold no build, fleet or host identity; vmmd logs `vmmd: build
+identity retired`; either refuses to start if its secretd path is off or a
+build identity is back. A private-image deploy and a Dockerfile build `FROM`
+a private base image both still succeed on the node.
+
+**Fleet-wide (CD).** Once every compute node is retired, set the GitHub
+environment variable `SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE=true` (needs
+`SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true`). cd-compute is then not handed the
+build identity, does not fetch it from the escrow, and marks every node,
+including nodes that join later, as retired. The control plane keeps it for
+secretd.
+
+Back out a node by setting its switch to false and converging: the role
+stages the identity again; restart vmmd to load it. With the CD variable on,
+unset it first.
 
 ## Rotation
 
