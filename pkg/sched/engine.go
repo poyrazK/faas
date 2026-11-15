@@ -3880,7 +3880,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	e.emitInstanceChanged(ctx, ins.ID, appID, initState, wakeID)
 
-	if err := e.ledger.Admit(Request{
+	if err := e.admitWithStaleRepair(ctx, appID, Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		EnvironmentKey:        environmentKey,
 		ProductionEnvironment: productionEnvironment,
@@ -7586,6 +7586,32 @@ func (e *Engine) ParkWithReason(ctx context.Context, instanceID, reason string) 
 // states. It is app-scoped and is called only on a would-be concurrency
 // rejection. Terminal rows release their reservation; snapshotting and
 // migrating rows keep RAM but no longer consume an app serving slot.
+// admitWithStaleRepair is ledger.Admit that, when the ledger refuses at the
+// app's concurrency cap, releases the app's stale reservations (rows no
+// longer resident) and tries once more. The request gates do this before
+// their cap decision, but explicit-deployment admissions bypass the gates,
+// so a reservation left behind by a stopped instance refused them until
+// schedd restarted (prod test 2026-11-15: every immediate-rollout
+// verification of an app with one leaked slot got 429 and the deploy
+// failed deployment_verification_unavailable, while ordinary wakes worked).
+func (e *Engine) admitWithStaleRepair(ctx context.Context, appID string, req Request) error {
+	err := e.ledger.Admit(req)
+	var prob *api.Problem
+	if err == nil || !errors.As(err, &prob) || prob.Code != api.CodePlanLimitConcur {
+		return err
+	}
+	repaired, reconcileErr := e.reconcileAppAdmission(ctx, appID)
+	if reconcileErr != nil {
+		e.log.Warn("sched: reconcile stale admission after cap refusal", "app", logsanitize.Field(appID), "err", reconcileErr)
+		return err
+	}
+	if repaired == 0 {
+		return err
+	}
+	e.log.Info("sched: released stale admission after cap refusal", "app", logsanitize.Field(appID), "instances", repaired)
+	return e.ledger.Admit(req)
+}
+
 func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, error) {
 	instances, err := e.admissionRepairRows(ctx, appID)
 	if err != nil {
