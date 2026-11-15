@@ -230,6 +230,14 @@ const guestStallWarningArgs = "rcupdate.rcu_cpu_stall_suppress=1 workqueue.watch
 // process (prod 2026-11-15). The sysctl. prefix (Linux 5.8+) applies it.
 const guestHungTaskArgs = "sysctl.kernel.hung_task_timeout_secs=0 "
 
+// guestPortArgs lets the app's unprivileged user bind ports below 1024, as
+// Docker does by default in every container (ip_unprivileged_port_start=0).
+// Source builds run as the platform app user (ADR-1239 §2), so a Dockerfile
+// app without USER that listens on :80, as the official nginx and many
+// Express examples do, failed with EACCES (prod 2026-11-15). The guest is
+// the isolation boundary; the port is reachable only through the gateway.
+const guestPortArgs = "sysctl.net.ipv4.ip_unprivileged_port_start=0 "
+
 // guestBootCPUArgs switches off guest kernel work that the Firecracker 1.17
 // guest config builds in and Gregale does not use (ADR-983): boot-time crypto
 // self-tests over ~65 built-in algorithms, SELinux and audit. The guest kernel
@@ -254,7 +262,7 @@ const guestPageReportingArgs = "page_reporting.page_reporting_order=5 "
 var guestTimerProfile = guestTimerArgs
 
 const coldBootArgs = guestBootConsoleArgs + "reboot=k panic=1 pci=off " +
-	"nmi_watchdog=0 " + guestHungTaskArgs + guestStallWarningArgs + guestBootCPUArgs + guestPageReportingArgs +
+	"nmi_watchdog=0 " + guestHungTaskArgs + guestPortArgs + guestStallWarningArgs + guestBootCPUArgs + guestPageReportingArgs +
 	// BuildKit generates a per-VM proxy CA during worker startup. The
 	// Firecracker guest has no boot-time user input, so explicitly allow the
 	// kernel CPU RNG and give virtio-rng maximum credit; otherwise getrandom(2)
