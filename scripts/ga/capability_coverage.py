@@ -356,6 +356,9 @@ RULES = [
     (r"affected|deploydiff|^diff$|^scan$", "Affected-workload preview"),
     (r"stateless|source-review|unreviewed", "Stateless-contract checks"),
     (r"registry", "Private registry credentials"),
+    # ADR-20261110210000 slice 3j-4: the Dockerfile reader that scopes a
+    # build's private-registry pulls.
+    (r"^dockerfilebase$", "Private registry credentials"),
     (r"trusted-signer|signer|require-signed|signature-enforcement|fleet-signing", "Signed deploys"),
     (r"deploy-token", "Per-app deploy tokens"),
     (r"source-ref", "Source-ref deploys"),

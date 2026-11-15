@@ -254,7 +254,7 @@ def _events(lines):
 
 def _metrics(cost) -> dict:
     return {"completed": False, "turns": 0, "cost_usd": cost, "input_tokens": 0, "output_tokens": 0,
-            "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": {}, "commands": [], "written_paths": [], "answer": "", "error": "", "session_id": ""}
+            "cache_read_tokens": 0, "cache_write_tokens": 0, "tool_calls": {}, "commands": [], "written_paths": [], "tool_inputs": [], "answer": "", "error": "", "session_id": ""}
 
 
 def merge_metrics(first: dict, second: dict) -> dict:
@@ -269,6 +269,7 @@ def merge_metrics(first: dict, second: dict) -> dict:
         merged["tool_calls"][name] = merged["tool_calls"].get(name, 0) + count
     merged["commands"] = list(first.get("commands") or []) + list(second.get("commands") or [])
     merged["written_paths"] = list(first.get("written_paths") or []) + list(second.get("written_paths") or [])
+    merged["tool_inputs"] = list(first.get("tool_inputs") or []) + list(second.get("tool_inputs") or [])
     merged["first_answer"] = first.get("answer", "")
     return merged
 
@@ -279,6 +280,10 @@ def _count(metrics: dict, name: str) -> None:
 
 # Claude tools that write a file; their paths are checked against the run directory.
 FILE_WRITE_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
+
+# Each agent's own config and memory; its writes there are not the task's.
+AGENT_OWN_DIRS = {"claude": (Path.home() / ".claude",), "codex": (Path.home() / ".codex",),
+                  "gemini": (Path.home() / ".gemini",), "cursor": (Path.home() / ".cursor",)}
 
 
 def parse_claude(lines) -> dict:
@@ -293,6 +298,7 @@ def parse_claude(lines) -> dict:
                 if block.get("type") == "tool_use":
                     name = block.get("name", "?")
                     _count(metrics, name)
+                    metrics["tool_inputs"].append(json.dumps(block.get("input") or {}))
                     command = (block.get("input") or {}).get("command")
                     if name == "Bash" and command:
                         metrics["commands"].append(command)
@@ -477,11 +483,11 @@ class CliGregale(Gregale):
     """The caller's own logged-in CLI profile (`--cli-login`).
 
     Reads go through `gregale --json` with the caller's credentials. The account
-    may hold other apps, so an app is the run's when it is new or got a release
-    after the run started; cleanup deletes only the apps and projects that are
-    new (see deletable), never one that was there before the run. Apps another
-    session creates at the same time are attributed to the run too; run when the
-    account is quiet."""
+    may hold other apps, and other sessions may create apps while the run is
+    going, so an app is the run's only when it is new or got a release after the
+    run started AND the agent named it: in a command, a tool call or a file of
+    the project (see attribute). Cleanup deletes only the run's apps and
+    projects that did not exist before the run (see deletable)."""
 
     ROUTES = (
         (re.compile(r"^/v1/apps$"), lambda m: ["app", "list"]),
@@ -527,15 +533,60 @@ def created_since(before: dict, after: dict) -> dict:
     return {kind: sorted(after.get(kind, set()) - before.get(kind, set())) for kind in ("apps", "projects")}
 
 
-def deletable(gregale: "Gregale", before: dict | None, created: dict, slug: str | None) -> tuple[dict, str | None]:
+# Project files read for the names of the apps a run deploys (Compose service
+# names, gregale.yaml), bounded so a large checkout stays cheap.
+EVIDENCE_FILE_GLOBS = ("*.yml", "*.yaml", "*.toml", "*.json")
+EVIDENCE_MAX_FILES, EVIDENCE_MAX_BYTES = 200, 256 * 1024
+
+
+def run_evidence(metrics: dict, project: Path) -> str:
+    """Text the run's own apps are named in: the agent's commands and tool
+    inputs, and the project's config files. Tool results are left out: an
+    agent that lists the account sees every other app's name there."""
+    parts = list(metrics.get("commands") or []) + list(metrics.get("tool_inputs") or [])
+    files = 0
+    for pattern in EVIDENCE_FILE_GLOBS:
+        for path in sorted(project.rglob(pattern)) if project.is_dir() else []:
+            if files >= EVIDENCE_MAX_FILES or ".git" in path.parts or "node_modules" in path.parts:
+                continue
+            try:
+                if path.is_file() and path.stat().st_size <= EVIDENCE_MAX_BYTES:
+                    parts.append(path.read_text(errors="replace"))
+                    files += 1
+            except OSError:
+                continue
+    return "\n".join(parts)
+
+
+def _named(slug: str, evidence: str) -> bool:
+    return re.search(rf"(?<![a-z0-9-]){re.escape(slug)}(?![a-z0-9-])", evidence) is not None
+
+
+def attribute(gregale: "Gregale", touched: dict, evidence: str, slug: str | None = None) -> tuple[dict, dict]:
+    """Split what changed in the account into the run's and the rest. A
+    dedicated eval account has only the run in it; the caller's own account
+    (--cli-login) is shared with other sessions, so there an app or project is
+    the run's only if the agent named it (or it is the harness's own slug)."""
+    if not isinstance(gregale, CliGregale):
+        return touched, {"apps": [], "projects": []}
+    mine: dict = {"apps": [], "projects": []}
+    others: dict = {"apps": [], "projects": []}
+    for kind in ("apps", "projects"):
+        for name in touched.get(kind, []):
+            (mine if name == slug or _named(name, evidence) else others)[kind].append(name)
+    return mine, others
+
+
+def deletable(gregale: "Gregale", before: dict | None, created: dict, slug: str | None, evidence: str = "") -> tuple[dict, str | None]:
     """What cleanup may delete. A dedicated eval account loses everything the
-    run touched; the caller's own account (--cli-login) loses only apps and
-    projects that did not exist before the run, never one it redeployed."""
+    run touched; the caller's own account (--cli-login) loses only the run's
+    apps and projects (see attribute) that did not exist before the run, never
+    one it redeployed and never another session's."""
     if not isinstance(gregale, CliGregale):
         return created, slug
     if before is None:
         return {"apps": [], "projects": []}, None
-    new = created_since(before, gregale.inventory())
+    new, _ = attribute(gregale, created_since(before, gregale.inventory()), evidence, slug)
     return new, slug if slug in new["apps"] else None
 
 
@@ -580,14 +631,18 @@ def home_writes(home: Path, since: float, run_dir: Path, max_depth: int = 2, lim
     return sorted(found)
 
 
-def writes_outside(paths: list[str], run_dir: Path, project: Path) -> list[str]:
-    """File-tool writes that landed outside the run directory."""
+def writes_outside(paths: list[str], run_dir: Path, project: Path, ignore: tuple = ()) -> list[str]:
+    """File-tool writes that landed outside the run directory. Paths under
+    ignore (the agent's own config, such as Claude's auto memory in ~/.claude)
+    don't count."""
     run_dir = run_dir.resolve()
+    ignore = tuple(Path(i).resolve() for i in ignore)
     outside = []
     for raw in paths:
         path = Path(raw)
         path = (path if path.is_absolute() else project / path).resolve()
-        if path != run_dir and run_dir not in path.parents:
+        inside = [run_dir, *ignore]
+        if not any(path == root or root in path.parents for root in inside):
             outside.append(str(path))
     return sorted(set(outside))
 
@@ -782,7 +837,7 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
     project = run_dir / "project"
     record = {"task": task["id"], "agent": agent, "toolset": toolset, "app": slug, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     created: dict = {"apps": [], "projects": []}
-    before = None
+    before, evidence = None, ""
     try:
         before = gregale.inventory()
         if task.get("repo"):
@@ -816,7 +871,8 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         lines = invoke(command, project, env, task["timeout_s"], record)
         (run_dir / f"{agent}.jsonl").write_text("\n".join(lines))
         metrics = PARSERS[agent](lines)
-        created = gregale.touched_since(before, record["started_at"])
+        evidence = run_evidence(metrics, project)
+        created, record["not_attributed"] = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
         if needs_follow_up(task, metrics, record, slug, project, gregale, created):
             # The agent stopped short (often to ask a question); answer once, as the person would.
             if agent in FOLLOW_UP_AGENTS and metrics.get("session_id"):
@@ -827,17 +883,18 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
                 (run_dir / f"{agent}-follow-up.jsonl").write_text("\n".join(more))
                 metrics = merge_metrics(metrics, PARSERS[agent](more))
                 record["follow_ups"] = 1
-                created = gregale.touched_since(before, record["started_at"])
+                evidence = run_evidence(metrics, project)
+                created, record["not_attributed"] = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
             else:
                 record["follow_ups"] = "unsupported"
         record["duration_s"] = round(time.monotonic() - started, 1)
-        record.update(metrics)
+        record.update({k: v for k, v in metrics.items() if k != "tool_inputs"})
         record["created"] = created
         record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"])
         record["success"] = all(check["ok"] for check in record["checks"])
         record.update(grade_features(task, metrics["commands"], project, created))
         record["anti_patterns"] = grade_anti_patterns(metrics["commands"])
-        record["wrote_outside_run"] = writes_outside(metrics.get("written_paths") or [], run_dir, project)
+        record["wrote_outside_run"] = writes_outside(metrics.get("written_paths") or [], run_dir, project, AGENT_OWN_DIRS[agent])
         if record["wrote_outside_run"]:
             record["anti_patterns"].append("wrote_outside_run")
         record["home_writes"] = home_writes(Path.home(), wall_started, run_dir)
@@ -848,8 +905,8 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         if not options.keep_apps:
             try:
                 if before is not None and not created.get("apps") and not created.get("projects"):
-                    created = gregale.touched_since(before, record["started_at"])
-                doomed, doomed_slug = deletable(gregale, before, created, slug)
+                    created, _ = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
+                doomed, doomed_slug = deletable(gregale, before, created, slug, evidence)
                 record["left_behind"] = cleanup(gregale, doomed, doomed_slug)
             except (OSError, ValueError, urllib.error.URLError) as error:
                 record["left_behind"] = [f"cleanup: {error}"]
