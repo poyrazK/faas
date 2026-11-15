@@ -1,0 +1,9 @@
+{
+  "name": "gregale-e2e-workflow-functions-orders",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@gregale/sdk-node": "file:./sdk-node"
+  }
+}
