@@ -335,6 +335,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 		if code != 0 {
 			return code
 		}
+		linkInitDeploy(absDest, deploySlug, stderr)
 		return writeInitJSON(stdout, initReceipt{Template: tpl, Path: absDest, Status: "created", Deployed: true, MCPConfig: mcpConfig})
 	}
 
@@ -374,7 +375,22 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	if secretsFile != "" {
 		deployArgs = append(deployArgs, "--secrets-file", secretsFile)
 	}
-	return cmdDeployTarball(deployArgs)
+	code := cmdDeployTarball(deployArgs)
+	if code == 0 {
+		linkInitDeploy(absDest, slug, stderr)
+	}
+	return code
+}
+
+// linkInitDeploy saves the app `init --deploy` just deployed as the new
+// directory's standalone context, so a later plain `gregale deploy` there
+// updates that app. Without it the next deploy derived the slug from the
+// directory name and created a second app (prod 2026-11-14: init --deploy
+// --name e2ecc-web, then deploy from ./web created "web").
+func linkInitDeploy(dest, slug string, stderr io.Writer) {
+	if _, err := saveProjectContext(dest, localProjectContext{Version: standaloneContextVersion, App: slug}); err != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: deployed %s but could not link %s to it (%v); run `gregale link --app %s` there\n", slug, dest, err, slug)
+	}
 }
 
 func docsURLForTemplate(name string) string {
