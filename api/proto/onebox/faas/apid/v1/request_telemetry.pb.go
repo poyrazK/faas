@@ -498,9 +498,14 @@ type ConsumerUsageEvent struct {
 	// Units the app reported for a billable consumer request in its
 	// Gregale-Usage header or trailer, by meter (ADR-1318). Empty from older
 	// gateways.
-	MeterUnits    map[string]int64 `protobuf:"bytes,18,rep,name=meter_units,json=meterUnits,proto3" json:"meter_units,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	MeterUnits map[string]int64 `protobuf:"bytes,18,rep,name=meter_units,json=meterUnits,proto3" json:"meter_units,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
+	// The deployment that served the request with discovered_route. A stage
+	// deployment's routes go to that environment's own inventory and events
+	// (ADR-20261104120000). Empty from older gateways, which count as
+	// production.
+	DiscoveredDeploymentId string `protobuf:"bytes,19,opt,name=discovered_deployment_id,json=discoveredDeploymentId,proto3" json:"discovered_deployment_id,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageEvent) Reset() {
@@ -657,6 +662,13 @@ func (x *ConsumerUsageEvent) GetMeterUnits() map[string]int64 {
 		return x.MeterUnits
 	}
 	return nil
+}
+
+func (x *ConsumerUsageEvent) GetDiscoveredDeploymentId() string {
+	if x != nil {
+		return x.DiscoveredDeploymentId
+	}
+	return ""
 }
 
 type ConsumerUsageReceipt struct {
@@ -2055,7 +2067,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"#RecordRequestIDJournalBatchResponse\x12\x1a\n" +
 	"\brecorded\x18\x01 \x01(\x05R\brecorded\x12!\n" +
 	"\fnot_entitled\x18\x02 \x01(\x05R\vnotEntitled\x12\x1a\n" +
-	"\brejected\x18\x03 \x01(\x05R\brejected\"\x8b\a\n" +
+	"\brejected\x18\x03 \x01(\x05R\brejected\"\xc5\a\n" +
 	"\x12ConsumerUsageEvent\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
@@ -2080,7 +2092,8 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"compute_ms\x18\x10 \x01(\x03R\tcomputeMs\x12%\n" +
 	"\x0eresponse_bytes\x18\x11 \x01(\x03R\rresponseBytes\x12X\n" +
 	"\vmeter_units\x18\x12 \x03(\v27.onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntryR\n" +
-	"meterUnits\x1a=\n" +
+	"meterUnits\x128\n" +
+	"\x18discovered_deployment_id\x18\x13 \x01(\tR\x16discoveredDeploymentId\x1a=\n" +
 	"\x0fMeterUnitsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\xfd\x02\n" +
