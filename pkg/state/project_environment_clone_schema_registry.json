@@ -38,6 +38,18 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_held_links",
+    "columns": [
+      "account_id",
+      "detected_at",
+      "held_account_id",
+      "held_org_id",
+      "held_reason",
+      "signal"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "account_billing_connections",
     "columns": [
       "account_id",
@@ -5894,6 +5906,7 @@
       "app_id",
       "before_checkpoint_hook",
       "build_id",
+      "build_registry_scope",
       "canary_preset",
       "canary_stages",
       "canary_step",
@@ -14537,6 +14550,8 @@
       "model",
       "outcome",
       "output_tokens",
+      "prompt_id",
+      "prompt_version",
       "quality_flags",
       "route_id",
       "status",
@@ -14612,6 +14627,130 @@
       "owner": "account",
       "strategy": "shared"
     }
+  },
+  {
+    "table": "outbound_ai_prompts",
+    "columns": [
+      "account_id",
+      "created_at",
+      "description",
+      "id",
+      "latest_version",
+      "live_version",
+      "name",
+      "previous_live_version",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "outbound_ai_prompt_versions",
+    "columns": [
+      "created_at",
+      "defaults",
+      "integration_id",
+      "messages",
+      "model",
+      "note",
+      "params",
+      "prompt_id",
+      "route_id",
+      "version"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "outbound_ai_prompt_canaries",
+    "columns": [
+      "decided_at",
+      "max_error_rate_increase",
+      "max_latency_increase_percent",
+      "min_calls",
+      "percent",
+      "prompt_id",
+      "reason",
+      "started_at",
+      "state",
+      "version",
+      "window_minutes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_prompt_version_minutes",
+    "columns": [
+      "calls",
+      "cost_millicents",
+      "errors",
+      "minute",
+      "prompt_id",
+      "ttfb_calls",
+      "ttfb_ms_total",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_prompt_evaluations",
+    "columns": [
+      "account_id",
+      "baseline_cost_millicents",
+      "baseline_ttfb_calls",
+      "baseline_ttfb_ms_total",
+      "baseline_version",
+      "canary",
+      "canary_started",
+      "candidate_cost_millicents",
+      "candidate_errors",
+      "candidate_ttfb_calls",
+      "candidate_ttfb_ms_total",
+      "candidate_version",
+      "case_count",
+      "cases",
+      "created_at",
+      "error_code",
+      "finished_at",
+      "id",
+      "judge_errors",
+      "judge_integration_id",
+      "judge_model",
+      "losses",
+      "max_loss_rate",
+      "prompt_id",
+      "started_at",
+      "state",
+      "ties",
+      "verdict",
+      "wins"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_prompt_evaluation_items",
+    "columns": [
+      "baseline_cost_millicents",
+      "baseline_output_text",
+      "baseline_status",
+      "baseline_ttfb_ms",
+      "candidate_cost_millicents",
+      "candidate_output_text",
+      "candidate_status",
+      "candidate_ttfb_ms",
+      "case_index",
+      "evaluation_id",
+      "verdict"
+    ],
+    "kind": "operational"
   },
   {
     "table": "outbound_ai_settlements",
@@ -20153,6 +20292,21 @@
     "kind": "operational"
   },
   {
+    "table": "storage_object_deletions",
+    "columns": [
+      "attempts",
+      "decided_at",
+      "last_error",
+      "next_attempt_at",
+      "reason",
+      "requested_at",
+      "requested_by",
+      "state",
+      "storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "stored_workflows",
     "columns": [
       "app_id",
@@ -21689,6 +21843,17 @@
       "invocation_id",
       "sender_app_id",
       "on_complete_app_id",
+      "created_at",
+      "workflow_run_id",
+      "workflow_op"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_run_starts",
+    "columns": [
+      "run_id",
+      "starter_app_id",
       "created_at"
     ],
     "kind": "operational"

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
 
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.inspect_feature_flag_request_attributes import InspectFeatureFlagRequestAttributes
+
 
 T = TypeVar("T", bound="InspectFeatureFlagRequest")
 
@@ -25,6 +29,8 @@ class InspectFeatureFlagRequest:
     fallback: bool | Unset = False
     fallback_variant: str | Unset = UNSET
     """Fallback variant for an absent flag; configured variant flags use their own default."""
+    attributes: InspectFeatureFlagRequestAttributes | Unset = UNSET
+    """Simulated request attributes (gregale.country, gregale.ua_family, app.<name>) for attribute-targeted rules."""
 
     def to_dict(self) -> dict[str, Any]:
         customer_id: str | Unset = UNSET
@@ -39,6 +45,10 @@ class InspectFeatureFlagRequest:
 
         fallback_variant = self.fallback_variant
 
+        attributes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.attributes, Unset):
+            attributes = self.attributes.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
@@ -52,11 +62,15 @@ class InspectFeatureFlagRequest:
             field_dict["fallback"] = fallback
         if fallback_variant is not UNSET:
             field_dict["fallback_variant"] = fallback_variant
+        if attributes is not UNSET:
+            field_dict["attributes"] = attributes
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.inspect_feature_flag_request_attributes import InspectFeatureFlagRequestAttributes
+
         d = dict(src_dict)
         _customer_id = d.pop("customer_id", UNSET)
         customer_id: UUID | Unset
@@ -73,12 +87,20 @@ class InspectFeatureFlagRequest:
 
         fallback_variant = d.pop("fallback_variant", UNSET)
 
+        _attributes = d.pop("attributes", UNSET)
+        attributes: InspectFeatureFlagRequestAttributes | Unset
+        if isinstance(_attributes, Unset):
+            attributes = UNSET
+        else:
+            attributes = InspectFeatureFlagRequestAttributes.from_dict(_attributes)
+
         inspect_feature_flag_request = cls(
             customer_id=customer_id,
             subject_id=subject_id,
             version=version,
             fallback=fallback,
             fallback_variant=fallback_variant,
+            attributes=attributes,
         )
 
         return inspect_feature_flag_request

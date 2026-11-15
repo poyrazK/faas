@@ -236,19 +236,27 @@ func (w *AIEvaluationWorker) evaluateSample(ctx context.Context, job AIEvaluatio
 // judge asks the judge model which answer is better, with the answers in a
 // random order, and returns the candidate's verdict.
 func (w *AIEvaluationWorker) judge(ctx context.Context, job AIEvaluationJob, judge Integration, request, baseline, candidate string) string {
+	return judgeAnswers(ctx, w.Handler, job.AccountID, judge, job.JudgeModel, request, baseline, candidate, w.CandidateFirst)
+}
+
+// judgeAnswers asks the judge model which answer is better, with the
+// answers in a random order (or as order decides), and returns the
+// candidate's verdict. Route and prompt evaluations share it.
+func judgeAnswers(ctx context.Context, h *Handler, accountID string, judge Integration, model, request, baseline, candidate string,
+	order func() bool) string {
 	candidateFirst := rand.IntN(2) == 0 //nolint:gosec // answer order needs no cryptographic randomness.
-	if w.CandidateFirst != nil {
-		candidateFirst = w.CandidateFirst()
+	if order != nil {
+		candidateFirst = order()
 	}
 	first, second := baseline, candidate
 	if candidateFirst {
 		first, second = candidate, baseline
 	}
-	attempt, err := buildJudgeAttempt(judge, job.JudgeModel, request, first, second)
+	attempt, err := buildJudgeAttempt(judge, model, request, first, second)
 	if err != nil {
 		return api.OutboundAIEvaluationItemJudgeError
 	}
-	call := w.Handler.internalCall(ctx, internalPrincipal{accountID: job.AccountID, caller: AIUsageCallerEvaluation},
+	call := h.internalCall(ctx, internalPrincipal{accountID: accountID, caller: AIUsageCallerEvaluation},
 		judge.ID, attempt, api.OutboundAIEvaluationCallTimeoutSeconds*time.Second)
 	if !call.succeeded() {
 		return api.OutboundAIEvaluationItemJudgeError

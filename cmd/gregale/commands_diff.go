@@ -44,7 +44,10 @@ import (
 // into cmdDiff. Kept small so the diff path doesn't grow a
 // second flag-set surface.
 type diffCLIOptions struct {
-	Preview             *cliPreviewSummary
+	Preview *cliPreviewSummary
+	// TargetLinked: the source directory is linked to Slug, so replacing an
+	// existing app of that name is expected (deploy_existing_target.go).
+	TargetLinked        bool
 	QueueCanaryBindings []string
 	Slug                string
 	AppShape            shape
@@ -256,6 +259,11 @@ func runDiff(ctx context.Context, client *api.Client, opts diffCLIOptions) int {
 	}
 	if baselineErr != nil && !opts.Lenient {
 		return printErr("Could not read baseline", baselineErr)
+	}
+	if baselineErr == nil && opts.Preview != nil {
+		preview := *opts.Preview
+		preview.Target = deployTargetSummary(baseline.App != nil, opts.TargetLinked)
+		opts.Preview = &preview
 	}
 	if baselineErr != nil && opts.Preview != nil {
 		preview := *opts.Preview

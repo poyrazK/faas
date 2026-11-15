@@ -24,3 +24,19 @@ func TestPgQueueSuspendedOwnerMessagesDoNotExpire(t *testing.T) {
 	store, _, _ := pgWithPool(t)
 	testQueueSuspendedOwnerMessagesDoNotExpire(t, store)
 }
+
+// adr: 20261113180000
+func TestPgQueueReplayClearsDeadLetterHorizon(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testQueueReplayClearsDeadLetterHorizon(t, store)
+}
+
+func TestPgQueueHeldPushMessagesKeepRetention(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testQueueHeldPushMessagesKeepRetention(t, store)
+}
+
+func TestPgQueueBindingRecreateUnderNewQueueName(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testQueueBindingRecreateUnderNewQueueName(t, store)
+}

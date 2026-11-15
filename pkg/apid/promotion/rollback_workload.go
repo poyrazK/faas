@@ -29,7 +29,7 @@ func FallbackMatches(ctx context.Context, store state.Store, appsBySlug map[stri
 		}
 		var weighted []state.Deployment
 		for _, deployment := range deployments {
-			if deployment.Scope == environment && deployment.Status == state.DeployLive && deployment.TrafficPercent > 0 {
+			if state.EnvironmentOwnsScope(environment, deployment.Scope) && deployment.Status == state.DeployLive && deployment.TrafficPercent > 0 {
 				weighted = append(weighted, deployment)
 			}
 		}
@@ -52,7 +52,7 @@ func RollbackWorkload(ctx context.Context, store state.Store, promotion state.Pr
 	}
 	var current state.Deployment
 	for _, deployment := range deployments {
-		if deployment.Scope != promotion.ToEnvironment || deployment.TrafficPercent <= 0 {
+		if !state.EnvironmentOwnsScope(promotion.ToEnvironment, deployment.Scope) || deployment.TrafficPercent <= 0 {
 			continue
 		}
 		if current.ID != "" || deployment.TrafficPercent != 100 {
@@ -70,7 +70,7 @@ func RollbackWorkload(ctx context.Context, store state.Store, promotion state.Pr
 		if currentErr != nil {
 			return "", "", fmt.Errorf("could not load promotion deployment: %w", currentErr)
 		}
-		if candidate.AppID != appID || candidate.Scope != promotion.ToEnvironment || candidate.Reason != marker {
+		if candidate.AppID != appID || !state.EnvironmentOwnsScope(promotion.ToEnvironment, candidate.Scope) || candidate.Reason != marker {
 			return "", "", fmt.Errorf("%w: recorded deployment is not owned by this promotion", state.ErrConflict)
 		}
 	} else if hasCurrent && current.Reason == marker {
@@ -82,7 +82,7 @@ func RollbackWorkload(ctx context.Context, store state.Store, promotion state.Pr
 		if err != nil {
 			return "", "", fmt.Errorf("could not load previous target deployment: %w", err)
 		}
-		if previous.AppID != appID || previous.Scope != promotion.ToEnvironment || previous.DeletedAt != nil {
+		if previous.AppID != appID || !state.EnvironmentOwnsScope(promotion.ToEnvironment, previous.Scope) || previous.DeletedAt != nil {
 			return "", "", fmt.Errorf("%w: previous target deployment is not a restorable target", state.ErrConflict)
 		}
 		if hasCurrent && current.ID == previous.ID {
@@ -124,7 +124,7 @@ func RollbackWorkload(ctx context.Context, store state.Store, promotion state.Pr
 	}
 	if !hasCurrent {
 		for _, deployment := range deployments {
-			if deployment.Scope == promotion.ToEnvironment && deployment.ID != candidate.ID {
+			if state.EnvironmentOwnsScope(promotion.ToEnvironment, deployment.Scope) && deployment.ID != candidate.ID {
 				// Failing the candidate can rebalance traffic onto another
 				// dark revision. Leave an operator's staged release alone.
 				return "", "", fmt.Errorf("%w: target changed after promotion; refusing to clear it", state.ErrConflict)

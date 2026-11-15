@@ -66,6 +66,7 @@ const (
 	Vmmd_RehearseSuspendResume_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/RehearseSuspendResume"
 	Vmmd_FreezeInstance_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/FreezeInstance"
 	Vmmd_ThawInstance_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/ThawInstance"
+	Vmmd_PrimeInstance_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/PrimeInstance"
 	Vmmd_WaitBuilderReady_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/WaitBuilderReady"
 	Vmmd_DeleteWarmSnapshot_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
 	Vmmd_SnapshotBackingCurrent_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/SnapshotBackingCurrent"
@@ -331,6 +332,14 @@ type VmmdClient interface {
 	// its probes. schedd admits the thaw first. Thawing a live instance that
 	// is not frozen is a successful no-op.
 	ThawInstance(ctx context.Context, in *ThawInstanceRequest, opts ...grpc.CallOption) (*ThawInstanceResponse, error)
+	// PrimeInstance (ADR-20261114153000) sends a short burst of GET requests
+	// to a live instance's own HTTP port before schedd captures its first
+	// init snapshot, so the snapshot holds code paths that already ran once
+	// (JIT-compiled methods, loaded classes and modules, warmed pools). It
+	// changes no lifecycle state; schedd captures the snapshot whatever the
+	// result. An older vmmd answers Unimplemented and the snapshot is captured
+	// unprimed.
+	PrimeInstance(ctx context.Context, in *PrimeInstanceRequest, opts ...grpc.CallOption) (*PrimeInstanceResponse, error)
 	// WaitBuilderReady blocks until a KeepWarm builder writes its durable
 	// build-done marker and emits the guest-stage build-ready line. A builder
 	// that exits before that handoff returns ready=false with its exit code.
@@ -1260,6 +1269,16 @@ func (c *vmmdClient) ThawInstance(ctx context.Context, in *ThawInstanceRequest, 
 	return out, nil
 }
 
+func (c *vmmdClient) PrimeInstance(ctx context.Context, in *PrimeInstanceRequest, opts ...grpc.CallOption) (*PrimeInstanceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PrimeInstanceResponse)
+	err := c.cc.Invoke(ctx, Vmmd_PrimeInstance_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) WaitBuilderReady(ctx context.Context, in *WaitBuilderReadyRequest, opts ...grpc.CallOption) (*WaitBuilderReadyResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WaitBuilderReadyResponse)
@@ -2147,6 +2166,14 @@ type VmmdServer interface {
 	// its probes. schedd admits the thaw first. Thawing a live instance that
 	// is not frozen is a successful no-op.
 	ThawInstance(context.Context, *ThawInstanceRequest) (*ThawInstanceResponse, error)
+	// PrimeInstance (ADR-20261114153000) sends a short burst of GET requests
+	// to a live instance's own HTTP port before schedd captures its first
+	// init snapshot, so the snapshot holds code paths that already ran once
+	// (JIT-compiled methods, loaded classes and modules, warmed pools). It
+	// changes no lifecycle state; schedd captures the snapshot whatever the
+	// result. An older vmmd answers Unimplemented and the snapshot is captured
+	// unprimed.
+	PrimeInstance(context.Context, *PrimeInstanceRequest) (*PrimeInstanceResponse, error)
 	// WaitBuilderReady blocks until a KeepWarm builder writes its durable
 	// build-done marker and emits the guest-stage build-ready line. A builder
 	// that exits before that handoff returns ready=false with its exit code.
@@ -2745,6 +2772,9 @@ func (UnimplementedVmmdServer) FreezeInstance(context.Context, *FreezeInstanceRe
 }
 func (UnimplementedVmmdServer) ThawInstance(context.Context, *ThawInstanceRequest) (*ThawInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ThawInstance not implemented")
+}
+func (UnimplementedVmmdServer) PrimeInstance(context.Context, *PrimeInstanceRequest) (*PrimeInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PrimeInstance not implemented")
 }
 func (UnimplementedVmmdServer) WaitBuilderReady(context.Context, *WaitBuilderReadyRequest) (*WaitBuilderReadyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method WaitBuilderReady not implemented")
@@ -3634,6 +3664,24 @@ func _Vmmd_ThawInstance_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).ThawInstance(ctx, req.(*ThawInstanceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_PrimeInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PrimeInstanceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).PrimeInstance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_PrimeInstance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).PrimeInstance(ctx, req.(*PrimeInstanceRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -4859,6 +4907,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ThawInstance",
 			Handler:    _Vmmd_ThawInstance_Handler,
+		},
+		{
+			MethodName: "PrimeInstance",
+			Handler:    _Vmmd_PrimeInstance_Handler,
 		},
 		{
 			MethodName: "WaitBuilderReady",

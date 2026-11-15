@@ -159,7 +159,11 @@ When a request needs approval, Gregale answers `428 approval_required` with
 a review link. The agent shows you the link; you open it signed in to the
 dashboard and approve or deny. Only the member who connected the agent, or an
 owner or admin of its organization, can decide, and only from a signed-in
-session, never with an API key. After you approve, the agent repeats exactly
+session, never with an API key. Approving a delete, production, credentials
+or billing request also needs a sign-in from the last 15 minutes (with
+two-factor authentication on, a code from the last 15 minutes); an older
+session signs in again and comes back to the same request. Denying never
+does. After you approve, the agent repeats exactly
 the same request once. A request expires 30 minutes after it was made.
 
 Attaching a debugger to a developer environment (`gregale dev --debug`) is

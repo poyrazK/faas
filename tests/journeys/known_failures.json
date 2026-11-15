@@ -45,6 +45,11 @@
     "since": "2026-11-05"
   },
   {
+    "step": "TestAIManagedPrompts/prompts_enabled",
+    "bug": "managed prompts are part of the AI gateway preview (GA row 114): gregale feature list reports ai-prompts disabled until the AI gateway is released to the e2e account, and the journey's other steps report blocked; remove once the owner releases it",
+    "since": "2026-11-14"
+  },
+  {
     "step": "TestOutboundIntegrations/outbound_enabled",
     "bug": "outbound integrations are still preview (GA row 115): gregale feature list reports outbound-integrations disabled until it is released to the e2e account, and the journey's other steps report blocked; remove once the owner releases it",
     "since": "2026-11-05"
@@ -63,6 +68,31 @@
     "step": "TestDataAPI/data_api_enabled",
     "bug": "managed PostgreSQL and the Data API (GA rows 109 and 110) are preview and not released to production accounts: production provisioning waits on the operator approval pin (ADR-20261028103115), and the later steps report blocked; remove once the e2e account is released",
     "since": "2026-10-31"
+  },
+  {
+    "step": "TestProfileCaptures/capture_listed",
+    "bug": "on-demand profiling is not enabled on production: gregale debug captures answers 'on-demand profiling is not enabled on this installation', and the pprof_download and delete steps then hit no such API route; remove once the owner enables it",
+    "since": "2026-11-15"
+  },
+  {
+    "step": "TestManagedPostgres/create_database",
+    "bug": "postgres create answers managed_postgres_usage_stale while another journey's deleted database still owes its final hour of usage (parallel Postgres journeys block each other); fixed by ADR-20261115190000 (#7392), known until that is released",
+    "since": "2026-11-15"
+  },
+  {
+    "step": "TestManagedPostgresRollbackRestore/create_database",
+    "bug": "same as TestManagedPostgres/create_database: managed_postgres_usage_stale after a parallel journey's delete; known until #7392 is released",
+    "since": "2026-11-15"
+  },
+  {
+    "step": "TestManagedPostgresRollbackCancelled/create_database",
+    "bug": "same as TestManagedPostgres/create_database: managed_postgres_usage_stale after a parallel journey's delete; known until #7392 is released",
+    "since": "2026-11-15"
+  },
+  {
+    "step": "TestEnvironmentBranchData/create_database",
+    "bug": "same as TestManagedPostgres/create_database: managed_postgres_usage_stale after a parallel journey's delete; known until #7392 is released",
+    "since": "2026-11-15"
   },
   {
     "step": "TestDebugger/regression_detected",

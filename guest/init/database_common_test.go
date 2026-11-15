@@ -174,7 +174,7 @@ func TestPostmasterReady(t *testing.T) {
 }
 
 func TestLookupPasswdUser(t *testing.T) {
-	passwd := []byte("root:x:0:0:root:/root:/bin/bash\npostgres:x:999:999::/var/lib/postgresql:/bin/bash\nbad:x:a:b::/:/bin/sh\n")
+	passwd := []byte("root:x:0:0:root:/root:/bin/bash\npostgres:x:999:999::/var/lib/postgresql:/bin/bash\nbad:x:a:b::/:/bin/sh\nwide:x:4294967297:999::/:/bin/sh\nneg:x:-1:999::/:/bin/sh\n")
 	if uid, gid, ok := lookupPasswdUser(passwd, "postgres"); !ok || uid != 999 || gid != 999 {
 		t.Fatalf("postgres = %d:%d ok=%v", uid, gid, ok)
 	}
@@ -183,6 +183,12 @@ func TestLookupPasswdUser(t *testing.T) {
 	}
 	if _, _, ok := lookupPasswdUser(passwd, "bad"); ok {
 		t.Fatal("non-numeric ids accepted")
+	}
+	// 4294967297 used to wrap to uid 1 at the uint32 conversion.
+	for _, name := range []string{"wide", "neg"} {
+		if uid, _, ok := lookupPasswdUser(passwd, name); ok {
+			t.Fatalf("%s: uid %d accepted", name, uid)
+		}
 	}
 	if _, _, ok := lookupPasswdUser(passwd, "missing"); ok {
 		t.Fatal("missing user found")

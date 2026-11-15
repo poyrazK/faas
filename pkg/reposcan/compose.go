@@ -66,6 +66,11 @@ type composeCandidate struct {
 	AllowedServiceCallers     *[]string                               `yaml:"x-gregale-allow-callers"`
 	AllowedServiceCallScopes  *api.ServiceCallerScopes                `yaml:"x-gregale-allow-call-scopes"`
 	PlatformTenantRequired    *bool                                   `yaml:"x-gregale-platform-tenant-required"`
+	// Streaming and WakeAhead set the app's response streaming and
+	// service wake-ahead from the Compose file, as `gregale app <slug>
+	// --streaming-enabled` and `gregale app wake-ahead <slug> on` do.
+	Streaming *bool `yaml:"x-gregale-streaming"`
+	WakeAhead *bool `yaml:"x-gregale-wake-ahead"`
 	// RenamedFrom names the service this one was called before, so a
 	// rename keeps its app (ADR-20261029090000).
 	RenamedFrom string `yaml:"x-gregale-renamed-from"`
@@ -314,6 +319,12 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasWorkload && s.PlatformTenantRequired != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-platform-tenant-required requires a deployable workload", src, name)
 		}
+		if !hasWorkload && s.Streaming != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-streaming requires a deployable workload", src, name)
+		}
+		if !hasWorkload && s.WakeAhead != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-wake-ahead requires a deployable workload", src, name)
+		}
 		conditions, dependencyErr := composeDependencyConditions(s.DependsOn)
 		if dependencyErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, dependencyErr)
@@ -448,6 +459,8 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			allowedServiceCallers:     allowedCallers,
 			allowedServiceCallScopes:  allowedCallScopes,
 			platformTenantRequired:    s.PlatformTenantRequired,
+			streaming:                 s.Streaming,
+			wakeAhead:                 s.WakeAhead,
 			renamedFrom:               renamedFrom,
 
 			ports:         ports,

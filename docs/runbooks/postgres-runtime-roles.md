@@ -222,3 +222,27 @@ sudo -u postgres psql -d postgres -c "SELECT r.rolname, count(*) AS statements, 
 ```
 
 This is the input to the per-daemon grant sets (ADR step 3).
+
+`gregalectl audit db-grants` turns it into a per-role table: for each login
+role, the tables its statements read and wrote, next to the privileges it holds
+today. It is read-only. Run it as a role that can read other roles'
+statements (`postgres`, or a member of `pg_read_all_stats`):
+
+```sh
+sudo -u postgres gregalectl audit db-grants \
+  --pg-dsn 'host=/var/run/postgresql dbname=faas' > /tmp/db-grants.txt
+sudo -u postgres gregalectl --json audit db-grants \
+  --pg-dsn 'host=/var/run/postgresql dbname=faas' > /tmp/db-grants.json
+```
+
+`pg_stat_statements` is read from the `postgres` database unless
+`--stats-dsn` names another; `--role faas_vmmd,faas_imaged` limits the report.
+Per role it shows *unused grants* (held, never observed: what narrowing would
+remove) and *ungranted uses* (observed without a grant: should be zero).
+
+Read the caveats it prints before narrowing anything. The view keeps only its
+most frequent statements, writes inside functions and triggers are invisible,
+and sequences are not listed. The ADR therefore unions this report with the
+tables each binary's queries name, and narrowed grants ship behind their own
+switch. Collect it after the roles have run for at least a week, since
+`pg_stat_statements_reset()` or a restart empties the view.

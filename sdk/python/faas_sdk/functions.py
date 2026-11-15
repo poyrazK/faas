@@ -44,6 +44,7 @@ FUNCTION_CONFIG_KEYS = frozenset(
         "input",
         "output",
         "calls",
+        "workflow",
         "queue_bindings",
         "event_triggers",
     }

@@ -288,6 +288,7 @@ sql:
       - "pkg/state/github_connection_queries.sql"
       - "pkg/state/audit_anchor_queries.sql"
       - "pkg/state/audit_outbox_delivery_queries.sql"
+      - "pkg/state/storage_object_deletion_queries.sql"
       - "pkg/state/stored_workflow_live_queries.sql"
       - "pkg/state/billing_run_product_queries.sql"
       - "pkg/state/binding_verification_run_queries.sql"
@@ -648,6 +649,16 @@ sql:
       go:
         package: sqlc
         out: pkg/state/resourceownership/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+  - engine: postgresql
+    queries: pkg/state/accountrisk/queries.sql
+    schema: pkg/state/accountrisk/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/accountrisk/sqlc
         sql_package: pgx/v5
         emit_methods_with_db_argument: true
         omit_unused_structs: true

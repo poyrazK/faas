@@ -111,7 +111,7 @@ func (s *server) listSecrets(w http.ResponseWriter, r *http.Request, acct state.
 	if !ok {
 		return
 	}
-	scope, isAll, prob := scopeFromQuery(r, true /* allowAll */)
+	scope, isAll, prob := s.appScopeFromQuery(r, app, true /* allowAll */)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -305,7 +305,7 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
-	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
+	scope, _, prob := s.appScopeFromQuery(r, app, false /* allowAll */)
 	if prob == nil {
 		prob = protectedEnvironmentConfigProblem(r.Context(), s.store, app.AccountID, app.ProjectID, scope)
 	}
@@ -541,7 +541,7 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 	safeAppSlug := logsanitize.Field(app.Slug)
 	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\n", "")
 	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\r", "")
-	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
+	scope, _, prob := s.appScopeFromQuery(r, app, false /* allowAll */)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
