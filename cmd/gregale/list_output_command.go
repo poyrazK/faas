@@ -109,7 +109,7 @@ func renderListExportReceipt(receipt *listOutputReceipt, outputPath string) int 
 	if receipt.Path != "" {
 		path = fmt.Sprintf("%q", receipt.Path)
 	}
-	_, err = fmt.Fprintf(osStdout, "Exported %d items from %d pages to %s (%d bytes; SHA-256 %s)\n",
+	_, err := fmt.Fprintf(osStdout, "Exported %d items from %d pages to %s (%d bytes; SHA-256 %s)\n",
 		receipt.ItemsEmitted, receipt.PagesCompleted, path, receipt.BytesWritten, receipt.SHA256)
 	if err != nil {
 		return printErr("Could not write export receipt", err)
