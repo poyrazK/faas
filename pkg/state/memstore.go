@@ -167,7 +167,7 @@ type MemStore struct {
 	trafficAppsSuffix           string
 	// abuseStrikes is each resource owner's abuse recycle times inside the
 	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
-	abuseStrikes map[string][]time.Time
+	abuseStrikes map[string][]AccountAbuseStrike
 	// signupFacts is each account's sign-up record (ADR-20261113160000).
 	signupFacts map[string]AccountSignupFacts
 	// heldLinks is each account's links to abuse-held accounts
@@ -532,6 +532,9 @@ type MemStore struct {
 	outboundAIRequestContent      map[string]OutboundAIRequestContent
 	outboundAIReplays             map[string]OutboundAIReplay
 	outboundAIEvaluations         map[string]OutboundAIEvaluation
+	outboundAIPrompts             map[string]OutboundAIPrompt
+	outboundAIPromptVersions      map[string][]OutboundAIPromptVersion
+	outboundAIPromptEvaluations   map[string]OutboundAIPromptEvaluation
 	outboundAIUserUsage           map[string][]OutboundAIUserUsageItem
 	outboundAITagUsage            map[string][]OutboundAITagUsageItem
 	outboundAITagLimits           map[string][]api.OutboundAITagLimit
@@ -853,6 +856,7 @@ type MemStore struct {
 	appWebhooks                 map[string]AppWebhook
 	appWebhookDeliveries        map[string]AppWebhookDelivery
 	invocationSends             map[string]InvocationSend
+	workflowRunStarts           map[string]string
 	appWebhookDeliverySources   map[string]string
 	entityOutboxAcceptances     map[string]string
 	appWebhookDeliveryAttempts  map[string][]AppWebhookDeliveryAttempt

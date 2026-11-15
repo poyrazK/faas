@@ -1170,6 +1170,24 @@ var cliCommands = []cliCommand{
 				{Name: "no-wait", Short: "print the evaluation without waiting for its verdict", Bool: true},
 				{Name: "timeout", Short: "how long to wait for the verdict (default 30m)", Value: "duration"},
 			}},
+			{Name: "prompts", Short: "Manage versioned prompts that apps call by name", Notes: []string{"Push a prompt file, diff and render versions, make one live, roll back, canary or evaluate a version."}, Positionals: []string{"<list|get|push|diff|render|promote|rollback|canary|stats|evaluate|rm>", "[<name>|<file>]", "[<version>]"}, Flags: []cliFlag{
+				{Name: "version", Short: "get or render: this version instead of the live one", Value: "N"},
+				{Name: "live", Short: "push: make the pushed version live", Bool: true},
+				{Name: "name", Short: "push: prompt name (default: the file's name field)", Value: "NAME"},
+				{Name: "var", Short: "render: a variable as key=value (repeat)", Value: "KEY=VALUE"},
+				{Name: "percent", Short: "canary: share of unpinned calls the version serves, 1 to 50", Value: "N"},
+				{Name: "max-error-increase", Short: "canary: roll back past this many error-rate points worse (default 5)", Value: "N"},
+				{Name: "max-latency-increase", Short: "canary: roll back past this many percent slower time to first byte", Value: "N"},
+				{Name: "min-calls", Short: "canary: calls needed before judging (default 50)", Value: "N"},
+				{Name: "window", Short: "canary: minutes of calls to judge (default 30)", Value: "N"},
+				{Name: "cases", Short: "evaluate: a JSON array, or JSON lines, of variable sets", Value: "FILE"},
+				{Name: "judge", Short: "evaluate: the AI integration whose model judges the answers", Value: "INTEGRATION"},
+				{Name: "judge-model", Short: "evaluate: the judge model", Value: "MODEL"},
+				{Name: "max-loss-rate", Short: "evaluate: pass when losses and errors are at most this percent (default 20)", Value: "N"},
+				{Name: "canary-percent", Short: "evaluate: start a canary with this share of calls when it passes", Value: "N"},
+				{Name: "no-wait", Short: "evaluate: print the evaluation without waiting for its verdict", Bool: true},
+				{Name: "timeout", Short: "evaluate: how long to wait for the verdict (default 30m)", Value: "duration"},
+			}},
 			{Name: "tokens", Short: "Manage tokens that let dev, CI or notebooks call the AI gateway", Notes: []string{"List, create or revoke tokens; a token acts as the app."}, Positionals: []string{"<list|create|revoke>", "[<token-id>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "the app the token acts as", Value: "SLUG"},
 				{Name: "name", Short: "token name for create", Value: "NAME"},
@@ -1245,11 +1263,11 @@ var cliCommands = []cliCommand{
 		Short:   "Define SLOs and track their error budgets",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List the app's SLOs, with the measured panel for a window", Examples: []string{"gregale alert slo list --app my-api", "gregale alert slo list --app my-api --window 24h"}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "window", Short: "also show the measured SLO panel for this window", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 			}},
 			{Name: "create", Short: "Define an availability or latency SLO", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "name", Short: "SLO name, unique per app", Req: true, Value: "NAME"},
 				{Name: "objective", Short: "objective percentage, 90 to 99.99", Req: true, Value: "PCT"},
 				{Name: "sli", Short: "service level indicator", Value: "SLI", ClosedSet: []string{"availability", "latency"}},
@@ -1257,10 +1275,10 @@ var cliCommands = []cliCommand{
 				{Name: "window-days", Short: "rolling window", Value: "DAYS", ClosedSet: []string{"7", "30"}},
 			}},
 			{Name: "status", Short: "Show an SLO's attainment, budget remaining and burn rate", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}, Positionals: []string{"<slo-id>"}},
 			{Name: "rm", Short: "Delete one SLO", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "yes", Short: "accepted for consistency; rm does not prompt", Bool: true},
 			}, Positionals: []string{"<slo-id>"}},
 		},
@@ -1271,10 +1289,10 @@ var cliCommands = []cliCommand{
 		Short:   "Schedule HTTP checks against an app",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List the app's synthetic checks", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}},
 			{Name: "create", Short: "Schedule a GET or HEAD check on a path", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "name", Short: "check name, unique per app", Req: true, Value: "NAME"},
 				{Name: "path", Short: "path on the app (default /)", Value: "PATH"},
 				{Name: "method", Short: "HTTP method", Value: "METHOD", ClosedSet: []string{"GET", "HEAD"}},
@@ -1283,16 +1301,16 @@ var cliCommands = []cliCommand{
 				{Name: "every-minutes", Short: "interval", Value: "MIN", ClosedSet: []string{"5", "15", "60"}},
 			}},
 			{Name: "status", Short: "Show a check's uptime, latency and recent runs", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}, Positionals: []string{"<check-id>"}},
 			{Name: "pause", Short: "Stop running a check", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}, Positionals: []string{"<check-id>"}},
 			{Name: "resume", Short: "Resume a paused check", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}, Positionals: []string{"<check-id>"}},
 			{Name: "rm", Short: "Delete a check and its history", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "yes", Short: "accepted for consistency; rm does not prompt", Bool: true},
 			}, Positionals: []string{"<check-id>"}},
 		},
@@ -1823,6 +1841,7 @@ var cliCommands = []cliCommand{
 				{Name: "unset", Short: "Remove labels", Positionals: []string{"<app>", "KEY..."}},
 			}},
 			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app health my-api --wait --timeout 2m"}, Flags: []cliFlag{
+				{Name: "project", Short: "check every app of this project instead of one", Value: "PROJECT"},
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},
 				{Name: "wait", Short: "wait for a fresh healthy default-scope assessment", Bool: true},
 				{Name: "timeout", Short: "maximum wait (default 2m; requires --wait)", Value: "DURATION"},
@@ -1870,6 +1889,7 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"gregale app costs my-api", "gregale app costs my-api --month 2026-10 --json"}},
 			{Name: "rename", Short: "Rename an app; the old hostname stops routing", Positionals: []string{"<new-slug>"}, Examples: []string{"gregale app rename my-api my-api-v2"}},
 			{Name: "restart", Common: true, Short: "Restart from a snapshot or fresh configuration", Flags: []cliFlag{
+				{Name: "project", Short: "restart every app of this project instead of one", Value: "PROJECT"},
 				{Name: "fresh", Short: "cold-boot replacements with current runtime configuration"},
 				{Name: "wait", Short: "wait for processing; requires --fresh"},
 				{Name: "timeout", Short: "client deadline (default 10m)", Value: "DURATION"},
@@ -1980,6 +2000,20 @@ var cliCommands = []cliCommand{
 			{Name: "health-path", Group: "Wake behavior", Short: "set the monitor-facing health path", Value: "PATH"},
 			{Name: "health-path-wakes", Group: "Wake behavior", Short: "allow health probes to wake the app"},
 			{Name: "no-health-path-wakes", Group: "Wake behavior", Short: "answer health probes without waking the app"},
+			{Name: "request-rate-limit-rps", Group: "Request handling", Short: "app-wide request rate limit per second; 0 restores the plan default", Value: "N"},
+			{Name: "request-rate-limit-burst", Group: "Request handling", Short: "app-wide request burst; 0 restores the plan default", Value: "N"},
+			{Name: "cors-default", Group: "Request handling", Short: "answer CORS for --cors-default-origins when no CORS edge rule matches", Bool: true},
+			{Name: "no-cors-default", Group: "Request handling", Short: "turn the default CORS answer off", Bool: true},
+			{Name: "cors-default-origins", Group: "Request handling", Short: "comma-separated origins for the default CORS answer; empty clears", Value: "ORIGINS"},
+			{Name: "session-affinity", Group: "Request handling", Short: "route a client to the same running instance (best effort)", Bool: true},
+			{Name: "no-session-affinity", Group: "Request handling", Short: "turn session affinity off", Bool: true},
+			{Name: "version-affinity-cookie", Group: "Request handling", Short: "cookie that pins a client to a release; empty turns it off", Value: "NAME"},
+			{Name: "version-affinity-managed-cookie", Group: "Request handling", Short: "let Gregale set the version-affinity cookie", Bool: true},
+			{Name: "no-version-affinity-managed-cookie", Group: "Request handling", Short: "stop Gregale setting the version-affinity cookie", Bool: true},
+			{Name: "robots-txt-file", Group: "Wake behavior", Short: "serve this file as /robots.txt at the edge", Value: "PATH"},
+			{Name: "default-robots-txt", Group: "Wake behavior", Short: "restore the platform's allow-all /robots.txt", Bool: true},
+			{Name: "favicon-file", Group: "Wake behavior", Short: "serve this icon as /favicon.ico at the edge", Value: "PATH"},
+			{Name: "no-favicon", Group: "Wake behavior", Short: "remove the app's edge favicon", Bool: true},
 			{Name: "app-protocol", Group: "Request handling", Short: "set the wire-protocol selector", Value: "http1|http2|grpc", ClosedSet: []string{"http1", "http2", "grpc"}},
 			{Name: "public-auth", Group: "Access and security", Short: "set public URL authentication; internal_only admits Gregale internal services, ip_allowlist is Pro+", Value: "open|bearer|basic|ip_allowlist|internal_only", ClosedSet: []string{"open", "bearer", "basic", "ip_allowlist", "internal_only"}},
 			{Name: "ip-allowlist", Group: "Access and security", Short: "allow a CIDR through the public URL; repeat for multiple ranges; requires --public-auth ip_allowlist", Value: "CIDR", Repeatable: true},
@@ -2219,6 +2253,7 @@ var cliCommands = []cliCommand{
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
+				{Name: "stream", Short: "emit JSON Lines as pages arrive; requires --json --all", Bool: true},
 			}},
 			{Name: "provenance", Short: "Show the build provenance attestation", Positionals: []string{"<id>"}},
 			{Name: "sbom", Short: "Show the build SBOM", Positionals: []string{"<id>"}},
@@ -3296,7 +3331,11 @@ var cliCommands = []cliCommand{
 			{Name: "env-file", Short: "KEY=VALUE file (default: dev.env_file; local process settings or remote developer secrets)", Value: "PATH"},
 			{Name: "service-override-file", Short: "sync validated service URLs as developer secrets", Value: "PATH"},
 			{Name: "once", Short: "deploy once and exit"},
-			{Name: "stop", Short: "tear down the developer environment"},
+			{Name: "stop", Short: "tear down the developer environment (asks before deleting its database and buckets)"},
+			{Name: "app", Short: "with --stop, the dev-* app to stop, as shown by gregale dev list", Value: "SLUG"},
+			{Name: "yes", Short: "with --stop, do not ask before deleting the database and buckets"},
+			{Name: "proxy-port", Short: "local browser address for an authenticated environment (default 8788)", Value: "N"},
+			{Name: "no-proxy", Short: "do not serve the authenticated environment on localhost"},
 			{Name: "no-logs", Short: "do not attach the live runtime log stream"},
 			{Name: "open", Short: "open the developer environment URL after the first live sync"},
 			{Name: "bucket", Short: "provision a private workspace bucket; repeatable", Value: "NAME"},
@@ -3310,6 +3349,7 @@ var cliCommands = []cliCommand{
 		},
 		Subcommands: []cliSub{
 			{Name: "status", Short: "show developer-environment quota usage"},
+			{Name: "list", Short: "list the account's developer environments, wherever they were started"},
 			{Name: "bridge", Short: "run an HTTP service locally in a remote development environment", Flags: []cliFlag{
 				{Name: "environment", Short: "named development environment", Value: "ENV"},
 				{Name: "local-port", Short: "local HTTP service port", Value: "PORT"},
@@ -3417,7 +3457,7 @@ var cliCommands = []cliCommand{
 		}}, {Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
-			{Name: "source", Short: "application source directory, relative to the manifest (default: the workload holding --from, else .)", Value: "DIR"},
+			{Name: "source", Short: "application source directory, relative to the manifest (default: the workload holding --from; at a Compose root, the one service publishing ports; else .)", Value: "DIR"},
 			{Name: "scenario", Short: "scenario name", Value: "NAME"},
 			{Name: "output", Short: "new manifest path", Value: "PATH"},
 		}}, {Name: "recovery-trend", Short: "Render recovery performance trends from campaign reports", Notes: []string{"Works offline on ordered reports."}, Flags: []cliFlag{
@@ -3493,7 +3533,7 @@ var cliCommands = []cliCommand{
 			{Name: "validate", Short: "validate local scenario sources without a platform login"},
 			{Name: "preflight", Short: "check account entitlements and developer app capacity"},
 			{Name: "engine", Short: "execution engine (default real-vm)", Value: "ENGINE", ClosedSet: []string{"real-vm", "local", "simulated"}},
-			{Name: "base-url", Short: "HTTP loopback origin (optional with local.command)", Value: "URL"},
+			{Name: "base-url", Short: "loopback origin or https://<app>.gregale.dev (optional with local.command)", Value: "URL"},
 			{Name: "data", Short: "JSON or CSV case data for the local engine", Value: "PATH"},
 			{Name: "load", Short: "repeat native HTTP journeys concurrently with the local engine"},
 			{Name: "vus", Short: "concurrent users or arrival-rate concurrency cap (1..50, default 1)", Value: "N"},
@@ -4939,6 +4979,7 @@ var cliCommands = []cliCommand{
 				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
+				{Name: "stream", Short: "emit JSON Lines as pages arrive; requires --json --all", Bool: true},
 			}},
 			{Name: "get", Short: "Show or recover one invocation", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "replay", Short: "re-issue failed unkeyed work"},

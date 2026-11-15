@@ -19,8 +19,13 @@ const requiredSecretPreflightTimeout = 10 * time.Second
 // then failed its startup as app_startup_crash (deploy-path review P10).
 // It only warns: a value can also reach the app another way (a binding or
 // the image's own env), and a failed read never blocks the deploy.
-func warnMissingRequiredSecrets(ctx context.Context, client *Client, slug, scope string) {
-	file, err := discoverRequiredSecretFile()
+//
+// The deploy calls it once the app exists and --secrets-file values are
+// sealed, for a first deploy too (that is when a name is most often missing),
+// and reads the declaration of the deployed source directory, not the shell's
+// (prod test 2026-11-15: it ran only for `gregale dev` and helper deploys).
+func warnMissingRequiredSecrets(ctx context.Context, client *Client, slug, scope, sourceDir string) {
+	file, err := requiredSecretFileForSource(sourceDir)
 	if err != nil || file == "" {
 		return
 	}

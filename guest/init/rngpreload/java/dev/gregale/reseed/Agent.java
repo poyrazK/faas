@@ -189,7 +189,7 @@ public final class Agent {
                 seeder.set(mix.next());
             }
             if (threadSeed != null) {
-                for (Thread thread : Thread.getAllStackTraces().keySet()) {
+                for (Thread thread : liveThreads()) {
                     // A probe of 0 marks a thread that never used
                     // ThreadLocalRandom; it seeds itself from the seeder.
                     if (threadProbe.getInt(thread) != 0) {
@@ -199,6 +199,27 @@ public final class Agent {
             }
             return "ok";
         }
+    }
+
+    // liveThreads lists every live platform thread from the root thread group.
+    // Thread.getAllStackTraces() returns the same threads but stops the JVM at
+    // a safepoint and walks every stack: right after a restore, with the
+    // stacks' pages not yet faulted back in, that took 180-305 ms on a
+    // 74-thread app against 1-3 ms for this enumeration, and it ran inside
+    // the resume hook. Virtual threads are in neither list.
+    static Thread[] liveThreads() {
+        ThreadGroup root = Thread.currentThread().getThreadGroup();
+        while (root.getParent() != null) {
+            root = root.getParent();
+        }
+        Thread[] threads = new Thread[root.activeCount() + 16];
+        int n;
+        while ((n = root.enumerate(threads, true)) == threads.length) {
+            threads = new Thread[threads.length * 2];
+        }
+        Thread[] live = new Thread[n];
+        System.arraycopy(threads, 0, live, 0, n);
+        return live;
     }
 
     private static Field field(String className, String name) throws Exception {

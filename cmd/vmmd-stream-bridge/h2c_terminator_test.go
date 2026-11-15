@@ -622,3 +622,40 @@ func TestHandleH2CStream_DeferRecoversPanicOnCallerGoroutine(t *testing.T) {
 		t.Fatalf("transport.RoundTrip(outboundReq) not found within 150 lines after defer h2cRecoverPanic (line %d) — defer order is wrong", deferLine)
 	}
 }
+
+// TestHandleH2CStream_GRPCRequestCarriesTETrailers pins the gRPC request
+// contract on the guest leg. TE is hop-by-hop, so every hop before the bridge
+// drops it, and x/net/http2 never adds it. grpcio's C-core server answers a
+// request without `te: trailers` with an error instead of the call, while
+// Go, Node, .NET and Java servers tolerate the omission.
+func TestHandleH2CStream_GRPCRequestCarriesTETrailers(t *testing.T) {
+	t.Setenv("FAAS_BRIDGE_PROTOCOL", "h2c")
+	for _, tc := range []struct {
+		contentType string
+		want        string
+	}{
+		{"application/grpc", "trailers"},
+		{"application/grpc+proto", "trailers"},
+		{"application/json", ""},
+	} {
+		t.Run(tc.contentType, func(t *testing.T) {
+			rt, obs := newHandlerH2CGuest(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+			req, err := http.NewRequest("POST", "http://test.invalid/hipstershop.RecommendationService/ListRecommendations", strings.NewReader("x"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", tc.contentType)
+			resp, err := rt.RoundTrip(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if got := obs.headers.Get("Te"); got != tc.want {
+				t.Fatalf("guest saw te=%q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -14,12 +14,14 @@ import (
 var snapshotRefreshKeys = []string{
 	runtimeconfig.KeySnapshotRefresh,
 	runtimeconfig.KeySnapshotRefreshWindowHours,
+	runtimeconfig.KeySnapshotCleanRecapture,
 }
 
 // snapshotRefreshTarget is the part of the refresher the keys set.
 type snapshotRefreshTarget interface {
 	SetMode(string) error
 	SetWindowHours(int) error
+	SetCleanRecapture(string) error
 }
 
 // applySnapshotRefreshConfig installs one key's value. handled is false for a
@@ -33,6 +35,12 @@ func applySnapshotRefreshConfig(r snapshotRefreshTarget, key string, value json.
 			return true, fmt.Errorf("%s must be a string: %w", key, err)
 		}
 		return true, r.SetMode(mode)
+	case runtimeconfig.KeySnapshotCleanRecapture:
+		mode, err := runtimeconfig.String(value)
+		if err != nil {
+			return true, fmt.Errorf("%s must be a string: %w", key, err)
+		}
+		return true, r.SetCleanRecapture(mode)
 	case runtimeconfig.KeySnapshotRefreshWindowHours:
 		hours, err := runtimeconfig.Int(value)
 		if err != nil {

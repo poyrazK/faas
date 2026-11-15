@@ -28,7 +28,7 @@ func ValidateWatch(watch *api.DevWatch) (*api.DevWatch, *api.Problem) {
 // function, too little RAM, or an app reachable without authentication.
 // Development servers expose source maps, error overlays and reload
 // endpoints, so they only run behind the developer app's access check.
-func WatchUnsupported(app state.App, watch *api.DevWatch) *api.Problem {
+func WatchUnsupported(app state.App, plan api.Plan, watch *api.DevWatch) *api.Problem {
 	if watch == nil {
 		return nil
 	}
@@ -40,9 +40,12 @@ func WatchUnsupported(app state.App, watch *api.DevWatch) *api.Problem {
 		return api.ErrDevWatchRAM(app.RAMMB)
 	}
 	if !app.RequireAuthn && (app.PublicAuthMode == "" || app.PublicAuthMode == api.AppPublicAuthModeOpen) {
+		detail := "a development server exposes source maps and error overlays, so it only runs behind authentication; require authentication on this developer environment, then retry"
+		if !plan.RequireAuthnAllowed() {
+			detail = "a development server exposes source maps and error overlays, so it only runs behind authentication, which your plan does not include; a production-shaped developer build (gregale dev --watch=false) works on every plan"
+		}
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeDevWatchUnsupported,
-			"Watch mode needs an authenticated environment",
-			"a development server exposes source maps and error overlays; require authentication on this developer environment, then retry")
+			"Watch mode needs an authenticated environment", detail)
 	}
 	return nil
 }

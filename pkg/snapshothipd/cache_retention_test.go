@@ -37,6 +37,7 @@ const (
 	unknownRelease = "base/releases/runner-node22-amd64-unknown.ext4"
 	legacyMem      = "snap/dep-f/mem"
 	layer          = "layers/dep-a.ext4"
+	liveLayer      = "apps/web/dep-live.ext4"
 )
 
 func testRetention(now time.Time) state.NodeCacheRetention {
@@ -52,6 +53,7 @@ func testRetention(now time.Time) state.NodeCacheRetention {
 			unusedRelease: {CreatedAt: old},
 			newRelease:    {CreatedAt: now.Add(-time.Hour)},
 		},
+		LiveLayers: map[string]bool{liveLayer: true},
 	}
 }
 
@@ -83,6 +85,9 @@ func TestCacheRetentionDecisions(t *testing.T) {
 		{unknownRelease, now.Add(-time.Hour), storage.EvictNormal, false},
 		{legacyMem, old, storage.EvictNormal, false},
 		{layer, old, storage.EvictNormal, false},
+		// Fan-out retires a replica whose layer is gone: a live snapshot's
+		// layer goes last, with its capture, and is never swept.
+		{liveLayer, old, storage.EvictLast, false},
 	} {
 		if got := d.tier(tc.key); got != tc.tier {
 			t.Errorf("tier(%s) = %d, want %d", tc.key, got, tc.tier)

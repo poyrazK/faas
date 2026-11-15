@@ -149,6 +149,10 @@ func (r *SnapshotRefresher) admitRefresh(ctx context.Context, nodeID string, t r
 	// stale one is retired once the refresh is admitted, as a wake whose
 	// restore fell back retires it. A refresh that is deferred keeps it, so
 	// the next pass finds it again.
+	// A clean recapture (ADR-20261115113000) has no row to retire.
+	if t.snap.ID == "" {
+		return ins, placement, ""
+	}
 	if err := e.store.MarkSnapshotStale(ctx, t.snap.ID); err != nil {
 		e.rollbackAdmittedInstance(ctx, ins.ID, t.app.ID, "snapshot_refresh_retire_failed")
 		return state.Instance{}, Placement{}, SnapshotRefreshFailed

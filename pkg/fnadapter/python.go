@@ -255,7 +255,7 @@ def _gregale_context(request):
     if enter is None or not isinstance(headers, dict):
         return contextlib.nullcontext()
     return enter(headers)
-` + PythonInputSchema + `
+` + PythonInputSchema + PythonWorkflow + `
 def _serve_lines():
     for line in sys.stdin:
         if not line.strip():
@@ -276,6 +276,14 @@ def _serve_lines():
             problem = _input_problem(request)
             if problem is not None:
                 real_stdout.write(json.dumps(problem) + "\n")
+                real_stdout.flush()
+                continue
+            # A workflow function runs under the SDK's code-workflow
+            # protocol (ADR-20261113120824 section 1).
+            if _is_workflow_call(request):
+                with _gregale_context(request):
+                    envelope = loop.run_until_complete(_workflow_envelope(request))
+                real_stdout.write(json.dumps(envelope) + "\n")
                 real_stdout.flush()
                 continue
             with _gregale_context(request):
@@ -324,6 +332,10 @@ async def _serve_one(request, rid, cancelled):
     if problem is not None:
         emit(problem)
         return
+    if _is_workflow_call(request):
+        with _gregale_context(request):
+            emit(await _workflow_envelope(request))
+        return
     invocation_id = ""
     streaming = False
     try:
@@ -362,6 +374,9 @@ def _serve_sync(request, rid, cancelled):
     problem = _input_problem(request)
     if problem is not None:
         emit(problem)
+        return
+    if _is_workflow_call(request):
+        emit(asyncio.run_coroutine_threadsafe(_await(_workflow_envelope(request), request), loop).result())
         return
     invocation_id = ""
     streaming = False

@@ -1008,6 +1008,13 @@ func (s *server) handleDevSourceDeploy(w http.ResponseWriter, r *http.Request, a
 		s.notFound(w, "no such developer environment")
 		return
 	}
+	// A sync must not build into an environment the janitor or --stop has
+	// claimed for teardown; the CLI renews the session first and gets the
+	// same answer there.
+	if app.PreviewPrState == state.PreviewPrStateTearingDown || app.PreviewPrState == state.PreviewPrStateTornDown {
+		api.WriteProblem(w, api.ErrDevSessionTearingDown())
+		return
+	}
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 		api.WriteProblem(w, api.ErrValidation("developer source sync requires multipart/form-data"))
 		return

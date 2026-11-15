@@ -71,6 +71,9 @@ func wireLocalFunctionCalls(m *gregalemanifest.Manifest, projectDir string, fns 
 	for _, fn := range fns {
 		fn.Calls = graph[fn.Name].Names
 		fn.InputSchema = byName[fn.Name].Spec.InputSchema
+		if spec, ok, err := byName[fn.Name].Spec.WorkflowSpec(); err == nil && ok {
+			fn.Workflow = &spec
+		}
 	}
 	return resolved
 }
@@ -103,6 +106,10 @@ func (fn *localFunction) callEnvironment(local map[string]bool) []string {
 // routes: it reports whether path was one.
 func (s *devLocalServer) serveFunctionCall(w http.ResponseWriter, r *http.Request) bool {
 	if rest, ok := strings.CutPrefix(r.URL.Path, devLocalPlatformPrefix); ok {
+		if callerName, route, _ := strings.Cut(rest, "/"); strings.HasPrefix(route, "v1/workflow-runs") {
+			s.serveWorkflowRuns(w, r, callerName, strings.TrimPrefix(strings.TrimPrefix(route, "v1/workflow-runs"), "/"))
+			return true
+		}
 		s.serveInvocationRead(w, r, rest)
 		return true
 	}
