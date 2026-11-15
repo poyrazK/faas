@@ -64,10 +64,24 @@ func TestResourcePaginationExcludesUnconsentedScopes(t *testing.T) {
 func TestResourceChangesRecheckReviewedConfiguration(t *testing.T) {
 	f := newLocalFixture(t, true, "release-base")
 	var mu sync.Mutex
-	cron := api.CronResponse{ID: "cron-one", AppID: f.app.ID, Schedule: "*/15 * * * *", Path: "/tick", Enabled: true, Timezone: "UTC"}
+	cron := api.CronResponse{ID: "cron-one", AppID: f.app.ID, Schedule: "*/15 * * * *", Path: "/tick", Enabled: true, Timezone: "UTC", ReviewToken: strings.Repeat("a", 64)}
 	domain := api.CustomDomainResponse{Domain: "api.example.com", AppID: f.app.ID}
 	writes := 0
 	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/apps/alpha/cron-deletions" {
+			mu.Lock()
+			defer mu.Unlock()
+			var req api.CronMutationRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.ExpectedState != cron.ReviewToken {
+				api.WriteProblem(w, api.NewProblem(409, "cron_review_conflict", "changed", "review changed"))
+				return
+			}
+			writes++
+			now := time.Now().UTC()
+			_ = json.NewEncoder(w).Encode(api.CronMutationReceipt{SchemaVersion: 1, RequestID: req.RequestID, AppID: req.AppID, CronID: req.CronID, Delete: true, Status: "completed", Phase: "complete", AcceptedAt: now, UpdatedAt: now, ExpiresAt: req.ExpiresAt, RetainedUntil: now.Add(time.Hour)})
+			return
+		}
 		if r.URL.Path != "/v1/crons/cron-one" && r.URL.Path != "/v1/domains/api.example.com" {
 			f.serveHTTP(w, r)
 			return
@@ -98,6 +112,7 @@ func TestResourceChangesRecheckReviewedConfiguration(t *testing.T) {
 	}
 	mu.Lock()
 	cron.Schedule, domain.AppID = "0 0 * * *", "another-app"
+	cron.ReviewToken = strings.Repeat("b", 64)
 	mu.Unlock()
 	for _, p := range []any{cronPlan, domainPlan} {
 		if _, err := m.applyOperation(t.Context(), applyArgs{PlanID: p.(releasePlan).ID}); err == nil {
@@ -131,9 +146,13 @@ func TestResourceChangesRecheckReviewedConfiguration(t *testing.T) {
 
 func TestMissingCronDoesNotProveThisPlanDeletedIt(t *testing.T) {
 	f := newLocalFixture(t, true, "release-base")
-	cron := api.CronResponse{ID: "cron-one", AppID: f.app.ID, Schedule: "*/15 * * * *", Path: "/tick", Enabled: true, Timezone: "UTC"}
+	cron := api.CronResponse{ID: "cron-one", AppID: f.app.ID, Schedule: "*/15 * * * *", Path: "/tick", Enabled: true, Timezone: "UTC", ReviewToken: strings.Repeat("a", 64)}
 	var missing atomic.Bool
 	b := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/apps/alpha/cron-deletions" {
+			api.WriteProblem(w, api.NewProblem(409, "cron_review_conflict", "changed", "target is absent"))
+			return
+		}
 		if r.URL.Path != "/v1/crons/cron-one" {
 			f.serveHTTP(w, r)
 			return
@@ -158,7 +177,7 @@ func TestMissingCronDoesNotProveThisPlanDeletedIt(t *testing.T) {
 	if _, err := m.applyOperation(t.Context(), applyArgs{PlanID: p.ID}); err == nil {
 		t.Fatal("missing cron was attributed to this plan")
 	}
-	if p.localReceipt != nil || p.failure == nil || p.failure.Status != "outcome_unknown" {
+	if p.localReceipt != nil || p.failure == nil || p.failure.Status != "refused" {
 		t.Fatalf("missing cron produced a completion receipt: %+v", p.failure)
 	}
 	for _, kind := range []string{"cron_update", "cron_delete"} {
@@ -168,7 +187,7 @@ func TestMissingCronDoesNotProveThisPlanDeletedIt(t *testing.T) {
 	}
 }
 
-func TestAmbiguousCronWriteCannotBeReplayed(t *testing.T) {
+func TestAmbiguousLegacyCronWriteCannotBeReplayed(t *testing.T) {
 	for _, deletion := range []bool{false, true} {
 		t.Run(map[bool]string{false: "update", true: "delete"}[deletion], func(t *testing.T) {
 			f := newLocalFixture(t, true, "release-base")
@@ -198,11 +217,31 @@ func TestAmbiguousCronWriteCannotBeReplayed(t *testing.T) {
 			if !deletion {
 				args.Path = &path
 			}
-			value, err := m.planCronChange(t.Context(), args)
+			kind := "cron_update"
+			if deletion {
+				kind = "cron_delete"
+			}
+			legacy, err := m.operationBase(t.Context(), operationArgs{App: args.App, Reason: args.Reason}, kind, api.UpdateCronRequest{Path: args.Path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			legacy.Operation.ResourceID = cron.ID
+			value, err := m.savePlan(legacy)
 			if err != nil {
 				t.Fatal(err)
 			}
 			id := value.(releasePlan).ID
+			m.plans[id].attempted = true
+			if err := m.persistPlans(); err != nil {
+				t.Fatal(err)
+			}
+			// The old bridge sent this unguarded write before it lost the reply.
+			if deletion {
+				_, _ = m.client.GetCron(t.Context(), cron.ID)
+				_ = m.client.DeleteCron(t.Context(), cron.ID)
+			} else {
+				_, _ = m.client.UpdateCron(t.Context(), cron.ID, api.UpdateCronRequest{Path: args.Path})
+			}
 			for range 2 {
 				if _, err := m.applyOperation(t.Context(), applyArgs{PlanID: id}); err == nil {
 					t.Fatal("ambiguous attempt reported success")

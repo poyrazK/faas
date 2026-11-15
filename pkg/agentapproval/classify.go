@@ -267,6 +267,11 @@ func RecordedRead(pattern string) bool {
 // the request needs no approval.
 func Classify(pattern string) (Rule, bool) {
 	key := Normalize(pattern)
+	// One exact reviewed deletion may need several bounded native requests.
+	// The approval binds its complete body, including attempt, target and expiry.
+	if key == "POST /v1/apps/{}/cron-deletions" {
+		return Rule{Category: api.AgentApprovalDelete, Window: api.CronMutationReviewMaxAge}, true
+	}
 	if rule, ok := gatedReads[key]; ok {
 		return rule, true
 	}

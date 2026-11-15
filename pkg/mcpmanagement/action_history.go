@@ -116,7 +116,7 @@ func (m *management) guardActionHistory(value any, args appArgs, target actionRe
 }
 
 func (m *management) actionHistoryMetadata(now time.Time) actionHistoryMetadata {
-	return actionHistoryMetadata{ObservedAt: now, Durable: m.opts.planStore != nil, Coverage: "bounded_connection_history_not_account_audit", SupportedActions: []string{"deploy", "rollback", "regression_action", "workload_rollout", "service_abort", "route_budgets", "operation_scale", "operation_env", "operation_config_rollback_guarded", "operation_cron_update", "operation_cron_delete"}, RetentionSeconds: int64(api.ManagementMCPActionHistoryRetention / time.Second), Capacity: api.ManagementMCPActionHistoryMax, CapacityScope: "all_connection_action_history", NativeCompletion: "not_observed"}
+	return actionHistoryMetadata{ObservedAt: now, Durable: m.opts.planStore != nil, Coverage: "bounded_connection_history_not_account_audit", SupportedActions: []string{"deploy", "rollback", "regression_action", "workload_rollout", "service_abort", "route_budgets", "operation_scale", "operation_env", "operation_config_rollback_guarded", "operation_cron_update", "operation_cron_delete", "operation_cron_update_guarded", "operation_cron_delete_guarded"}, RetentionSeconds: int64(api.ManagementMCPActionHistoryRetention / time.Second), Capacity: api.ManagementMCPActionHistoryMax, CapacityScope: "all_connection_action_history", NativeCompletion: "not_observed"}
 }
 
 func (m *management) listActions(ctx context.Context, args listActionsArgs) (any, error) {

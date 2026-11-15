@@ -100,6 +100,11 @@ func (m *management) outcomeRecoveryReference(entry actionRecord, now time.Time)
 		return nil
 	}
 	switch {
+	case guardedCronAction(entry.Action):
+		ref, found := m.cronOutcomes[entry.PlanID]
+		if !found || !validCronLookup(ref) || ref.Binding != actionOutcomeBinding(entry) {
+			return nil
+		}
 	case entry.Action == "operation_config_rollback_guarded":
 		ref, found := m.configRollbacks[entry.PlanID]
 		if !found || !validConfigRollbackLookup(ref) || ref.Binding != actionOutcomeBinding(entry) {

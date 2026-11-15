@@ -69,7 +69,19 @@ func TestCronActionHistoryAfterRestartAndExpiry(t *testing.T) {
 			if !tc.deletion {
 				args.Path = &nextPath
 			}
-			value, err := m.planCronChange(t.Context(), args)
+			// Seed a historical plan produced by the old unguarded bridge.
+			// New planning no longer creates this format, and apply refuses it.
+			kind := "cron_update"
+			if tc.deletion {
+				kind = "cron_delete"
+			}
+			legacyPlan, err := m.operationBase(t.Context(), operationArgs{App: "alpha", Reason: args.Reason}, kind, api.UpdateCronRequest{Path: args.Path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			legacyPlan.Operation.ResourceID, legacyPlan.Operation.ResourceHash = cron.ID, resourceFingerprint(cron)
+			legacyPlan.Operation.CronHistorySafe = true
+			value, err := m.savePlan(legacyPlan)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -78,7 +90,24 @@ func TestCronActionHistoryAfterRestartAndExpiry(t *testing.T) {
 			if tc.legacy {
 				m.plans[planID].Operation.CronHistorySafe = false
 			}
-			_, err = m.applyOperation(t.Context(), applyArgs{PlanID: planID})
+			p := m.plans[planID]
+			p.attempted = true
+			if err := m.persistPlans(); err != nil {
+				t.Fatal(err)
+			}
+			var result any
+			if tc.deletion {
+				err = m.client.DeleteCron(t.Context(), cron.ID)
+				result = map[string]any{"deleted": err == nil}
+			} else {
+				result, err = m.client.UpdateCron(t.Context(), cron.ID, api.UpdateCronRequest{Path: args.Path})
+			}
+			if err == nil {
+				p.localReceipt = map[string]any{"plan_id": p.ID, "app": p.App, "scope": p.Scope, "kind": kind, "result": result}
+			}
+			if saveErr := m.persistPlans(); saveErr != nil {
+				t.Fatal(saveErr)
+			}
 			if (err != nil) != tc.lost {
 				t.Fatalf("apply error=%v", err)
 			}

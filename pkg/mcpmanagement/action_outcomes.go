@@ -9,21 +9,22 @@ import (
 )
 
 type actionOutcome struct {
-	RolloutObservation *savedPlanReference `json:"rollout_observation,omitempty"`
-	HealthObservation  *savedPlanReference `json:"health_observation,omitempty"`
-	Phase              string              `json:"phase"`
-	Observation        *savedPlanReference `json:"observation,omitempty"`
-	PlanID             string              `json:"plan_id"`
-	Action             string              `json:"action"`
-	ObservedAt         time.Time           `json:"observed_at"`
-	Outcome            string              `json:"outcome"`
-	Reason             string              `json:"reason,omitempty"`
-	Receipt            *actionReceipt      `json:"receipt,omitempty"`
-	NativeCompletion   string              `json:"native_completion"`
-	Instruction        string              `json:"instruction"`
-	RestartRequested   *bool               `json:"restart_requested,omitempty"`
-	RestartStatus      string              `json:"restart_status,omitempty"`
-	ConfigChanged      *bool               `json:"config_changed,omitempty"`
+	CronMutation       *api.CronMutationReceipt `json:"cron_mutation,omitempty"`
+	RolloutObservation *savedPlanReference      `json:"rollout_observation,omitempty"`
+	HealthObservation  *savedPlanReference      `json:"health_observation,omitempty"`
+	Phase              string                   `json:"phase"`
+	Observation        *savedPlanReference      `json:"observation,omitempty"`
+	PlanID             string                   `json:"plan_id"`
+	Action             string                   `json:"action"`
+	ObservedAt         time.Time                `json:"observed_at"`
+	Outcome            string                   `json:"outcome"`
+	Reason             string                   `json:"reason,omitempty"`
+	Receipt            *actionReceipt           `json:"receipt,omitempty"`
+	NativeCompletion   string                   `json:"native_completion"`
+	Instruction        string                   `json:"instruction"`
+	RestartRequested   *bool                    `json:"restart_requested,omitempty"`
+	RestartStatus      string                   `json:"restart_status,omitempty"`
+	ConfigChanged      *bool                    `json:"config_changed,omitempty"`
 }
 
 type actionOutcomeArgs struct {
@@ -59,6 +60,7 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 	scalingLookup, scalingFound := m.scalingOutcomes[args.PlanID]
 	configLookup, configFound := m.configOutcomes[args.PlanID]
 	configRollbackLookup, configRollbackFound := m.configRollbacks[args.PlanID]
+	cronLookup, cronFound := m.cronOutcomes[args.PlanID]
 	deploymentLookup, deploymentFound := m.deploymentOutcomes[args.PlanID]
 	promotionLookup, promotionFound := m.promotionOutcomes[args.PlanID]
 	rollbackLookup, rollbackFound := m.rollbackOutcomes[args.PlanID]
@@ -86,6 +88,16 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 			return nil, invalid("state_unavailable", "promotion outcome reference is invalid")
 		default:
 			m.readPromotionOutcome(ctx, entry, promotionLookup, &out)
+		}
+	case guardedCronAction(entry.Action):
+		if entry.Apply.State == "not_attempted" {
+			out.Reason = "no_recorded_attempt"
+		} else if !cronFound {
+			out.Reason = "lookup_unavailable"
+		} else if !validCronLookup(cronLookup) || cronLookup.Binding != actionOutcomeBinding(entry) {
+			return nil, invalid("state_unavailable", "cron mutation outcome reference is invalid")
+		} else {
+			m.readCronOutcome(ctx, entry, cronLookup, &out)
 		}
 	case entry.Action == "operation_config_rollback_guarded":
 		if entry.Apply.State == "not_attempted" {
@@ -184,6 +196,9 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 		}
 		if configRollbackFound && m.configRollbacks[entry.PlanID] != configRollbackLookup {
 			return invalid("state_unavailable", "original configuration rollback reference changed during read")
+		}
+		if cronFound && m.cronOutcomes[entry.PlanID] != cronLookup {
+			return invalid("state_unavailable", "original cron recovery reference changed during read")
 		}
 		if deploymentFound && m.deploymentOutcomes[entry.PlanID] != deploymentLookup {
 			return invalid("state_unavailable", "original deployment reference changed during read")

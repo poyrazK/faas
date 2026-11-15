@@ -1,7 +1,7 @@
 # ADR-20261105161908: Reviewed cron mutation recovery
 
 Date: 2026-11-05
-Status: Proposed
+Status: Accepted
 Related: ADR-20261103155008, ADR-20261103193000
 
 ## Problem
@@ -17,7 +17,9 @@ batches, and then deletes the cron. A single conditional final DELETE would not
 protect the earlier side effects. Moving all history into one large transaction
 would reintroduce the production timeout that batching was designed to avoid.
 
-## Current mitigation
+## Prior mitigation
+
+The following describes the bridge before the implementation below.
 
 The MCP does not treat an absent cron as proof that the reviewed plan deleted it.
 An attempted cron update or deletion without a recorded result cannot be
@@ -34,7 +36,43 @@ safeguard cannot be promoted to accepted from their saved local receipt.
 History contains no cron configuration and provides no automatic replay or
 native receipt lookup.
 
-## Proposed implementation
+## Implementation (2026-11-15)
+
+`GET /v1/crons/{id}` includes a native `review_token`, a fingerprint of all
+execution-relevant state including identity, configuration, scheduling policy,
+suspension, anchor and environment. `last_fired_at` is excluded. The new reviewed
+update and deletion routes are separate from legacy writes, so an older control
+plane rejects them without performing an unguarded mutation.
+
+`POST /v1/apps/{slug}/cron-mutations` updates the four management-editable fields;
+`POST /v1/apps/{slug}/cron-deletions` accepts or advances bounded cleanup. Each
+transaction locks the namespace, current app and cron in native lock order,
+checks the token/owner and journals the step's value-free receipt atomically.
+The first deletion call records intent before side effects. Subsequent calls
+cancel at most 100 pending invocations or detach at most 1,000 history rows.
+Pending invocations are never detached before cancellation. The final locked
+reference check and deletion commit with the completion receipt. A changed
+cron or superseding reviewed intent leaves old progress terminally conflicting.
+
+Write requests retain an exact UUID, private proof, body and original deadline.
+Continuation requires current write authorization and an unexpired 15-minute
+review, even after restart. Pending work after expiry requires a fresh explicit
+review; neither polling nor recovery renews authority. The deletion POST retains
+the existing agent delete category; approval binds the complete original request
+for at most its review window. The update route rejects destructive bodies.
+
+`GET /v1/apps/{slug}/cron-mutations/{request_id}` requires current app read access
+and `X-Gregale-Cron-Receipt-Proof`. It is passive and survives cron deletion and
+plan expiry for 24 hours from acceptance. Proofs and mutation inputs remain in
+encrypted grant-local MCP state; native receipts keep only hashes and value-free
+progress. Retention is bounded to 1,024 native receipts per app. MCP uses distinct
+`cron_update_guarded`/`cron_delete_guarded` plan kinds and refuses legacy applies.
+`gregale_get_action_outcome` recovers retained attempts without replaying writes.
+
+The deployed agent journey remains a release qualification requirement; portable
+and PostgreSQL tests do not claim that a staging deployment passed.
+
+## Design requirements
 
 Introduce a native reviewed cron mutation contract, with immutable account,
 app and cron identities, an execution-relevant reviewed state token, a stable

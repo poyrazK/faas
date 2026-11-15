@@ -112230,6 +112230,20 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 ALTER TABLE ONLY public.workflow_webhook_receipts
     ADD CONSTRAINT workflow_webhook_receipts_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
 
+CREATE TABLE public.cron_mutation_receipts (
+    app_id uuid NOT NULL REFERENCES public.apps(id) ON DELETE CASCADE,
+    account_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    cron_id uuid NOT NULL,
+    status text NOT NULL CHECK (status IN ('accepted','partial','completed','conflict')),
+    record jsonb NOT NULL CHECK (jsonb_typeof(record) = 'object'),
+    retained_until timestamptz NOT NULL,
+    PRIMARY KEY (app_id, request_id),
+    CHECK (record->'receipt'->>'status' = status),
+    CHECK (record->'receipt'->>'phase' IN ('cancel_pending','detach_invocations','detach_tasks','delete','complete'))
+);
+CREATE INDEX cron_mutation_receipts_target ON public.cron_mutation_receipts(app_id, cron_id);
+
 
 --
 --

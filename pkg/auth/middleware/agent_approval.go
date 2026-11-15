@@ -141,6 +141,10 @@ func (m *Middleware) gateAgentRequest(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeBadRequest, "Unreadable request body", "the request body could not be read"))
 		return true
 	}
+	if !windowedMutationBound(rule, binding) {
+		api.WriteProblem(w, api.ErrValidation("a windowed mutation approval requires a complete bounded request body"))
+		return true
+	}
 	reason := api.SanitizeAgentReason(r.Header.Get(api.AgentReasonHeader))
 	var decision AgentGateDecision
 	if m.RemoteAgentGate != nil {
@@ -203,6 +207,9 @@ func (m *Middleware) DecideAgentRequest(ctx context.Context, acct state.Account,
 	if !agentapproval.Asks(categories, rule) {
 		return AgentGateDecision{Allow: true}, nil
 	}
+	if !windowedMutationBound(rule, binding) {
+		return AgentGateDecision{Problem: api.ErrValidation("a windowed mutation approval requires a complete bounded request body")}, nil
+	}
 	if windows, ok := m.Authn.(AgentApprovalWindowGate); ok && rule.Window > 0 {
 		approvalID, open, err := windows.AgentApprovalUsedWithin(ctx, binding, rule.Window)
 		if err != nil {
@@ -225,6 +232,10 @@ func (m *Middleware) DecideAgentRequest(ctx context.Context, acct state.Account,
 		return AgentGateDecision{Problem: m.approvalOutcomeProblem(acct, key, outcome)}, nil
 	}
 	return m.requestApproval(ctx, gate, acct, key, rule, binding, reason, 0, "")
+}
+
+func windowedMutationBound(rule agentapproval.Rule, binding state.AgentApprovalBinding) bool {
+	return rule.Window <= 0 || !agentWrite(binding.Method) || len(binding.BodySHA256) == sha256.Size
 }
 
 // requestApproval records a new request for a person to decide, or finds

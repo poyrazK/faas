@@ -226,6 +226,12 @@ const (
 
 // Management MCP history is connection-local metadata, not an account audit log.
 const (
+	CronMutationReviewMaxAge     = 15 * time.Minute
+	CronMutationReceiptRetention = 24 * time.Hour
+	CronMutationReceiptMax       = 1024
+)
+
+const (
 	ManagementMCPActionHistoryMax       = 256
 	ManagementMCPActionHistoryPageMax   = 50
 	ManagementMCPActionHistoryRetention = 24 * time.Hour
