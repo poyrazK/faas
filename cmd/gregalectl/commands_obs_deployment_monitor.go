@@ -87,8 +87,16 @@ func runObsDeploymentVerification(ctx context.Context, opts obsDeploymentOptions
 		if ctx.Err() != nil {
 			return cancelObsDeploymentReport(report, now(), save)
 		}
-		deadline := started.Add(budget)
-		readCtx, readCancel := context.WithDeadline(ctx, deadline)
+		// The last poll lands on the deadline itself. Bounding reads by the
+		// deadline gave that read an expired context, so every source failed
+		// and the report replaced the evidence observed so far with
+		// source_unavailable. Each read keeps a full HTTP timeout instead; a
+		// result that arrives after the deadline is handled below.
+		readDeadline := started.Add(budget)
+		if floor := now().Add(api.ObsPostDeployHTTPTimeout); floor.After(readDeadline) {
+			readDeadline = floor
+		}
+		readCtx, readCancel := context.WithDeadline(ctx, readDeadline)
 		snapshot := fetch(readCtx)
 		readCancel()
 		report.Attempts++
