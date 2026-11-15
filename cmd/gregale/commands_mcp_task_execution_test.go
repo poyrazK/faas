@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,9 @@ import (
 )
 
 func TestMCPTaskExecutionCLIInterruptedClaimNeverRepeats(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("private Task execution profiles require POSIX file permissions")
+	}
 	_, plan := taskReviewFixture(t)
 	account, key, owner := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	id, operation := strings.Repeat("8", 64), strings.Repeat("9", 64)
@@ -92,6 +96,7 @@ func TestMCPTaskExecutionCLIInterruptedClaimNeverRepeats(t *testing.T) {
 	}))
 	defer backend.Close()
 	configDir := t.TempDir()
+	t.Setenv("HOME", configDir)
 	t.Setenv("XDG_CONFIG_HOME", configDir)
 	t.Setenv("FAAS_API", backend.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_fixture")
@@ -122,7 +127,11 @@ func TestMCPTaskExecutionCLIInterruptedClaimNeverRepeats(t *testing.T) {
 	if saved.Execution == nil || saved.Execution.State != "authorized" {
 		t.Fatal("no separate authority", saved)
 	}
-	profiles, err := filepath.Glob(filepath.Join(configDir, "gregale", "task-executions", "*", id, "profile.json"))
+	configBase, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := filepath.Glob(filepath.Join(configBase, "gregale", "task-executions", "*", id, "profile.json"))
 	if err != nil || len(profiles) != 1 {
 		t.Fatal("private profile missing", err)
 	}

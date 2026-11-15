@@ -1076,6 +1076,7 @@ cleanup is inferred from failure. The owner can revoke the review to stop future
 guards, independently of local source availability.
 
 Only local personal-account default-environment Node releases are supported.
+Private binding profiles require POSIX file permissions.
 Task execution does not register tool versions or grant invocation authority.
 Root `bindings_verified` and `ready_to_apply` remain false; the nested execution
 record represents a separate bounded permission, not complete stack readiness.
