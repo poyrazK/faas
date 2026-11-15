@@ -125,8 +125,19 @@ all visible commands. A topic includes its immediate `subcommands`, positional
 argument markers, examples, notes, docs URL, and every visible local flag.
 Flags describe accepted spellings, whether they take a value, required and
 repeatable markers, and any documented closed choices. Collections are arrays,
-including when empty. Global prefix options retain their existing placement;
-the topic's `flags` describe its local options.
+including when empty. Every document also includes `global_flags`, separately
+from the topic's command-local `flags`. Each global option reports `name`,
+`spellings`, `description`, `takes_value`, `value` and `placement`. A value
+marker such as `NAME` or `DURATION` describes the argument, not a saved value.
+
+`before_command` means the option must precede the command. `before_separator`
+means JSON selection is accepted in CLI arguments before `--`; forwarded
+application arguments retain their existing boundaries. For example, global
+`--profile NAME` selects a connection before the command, while a command-local
+`--profile SIZE` retains its resource meaning. `--json` also advertises `-j`.
+No parser rule, output preference, connection setting or approval changes
+when help is requested. Global descriptions come from the same static registry
+as human root help and never include credentials or supplied option values.
 
 JSON help uses the same command manifest and canonical names as completion and
 the reference. It describes documented argument contracts, without inferring

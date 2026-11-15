@@ -80,6 +80,10 @@ API failures with progress/correlation, and SIGINT cancelling the active read.
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
+`TestJSONHelpGlobalFlagsIsolatedCLI` extends row 156: it discovers global
+connection/automation options without API requests, then constructs and runs a
+profile-scoped, read-only invocation list from another working directory.
+
 `invoke --async --wait` is covered by `TestInvokeAsyncWaitLiveAPI` (one
 health request through the durable queue, compared with its stored record) and
 `TestInvokeAsyncWaitIsolatedAPI` / `TestInvokeAsyncWaitInterrupt` (terminal
