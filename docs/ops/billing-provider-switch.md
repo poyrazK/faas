@@ -221,7 +221,7 @@ meterd billing provider loaded provider=polar
 The admin catalog endpoint retains its historical path,
 `/v1/admin/billing-paddle-catalog`, but is provider-neutral at runtime. It
 returns Polar product IDs after the successful catalog preflight, so
-`gregale billing status` and `gregale billing price-catalog sync` work with Polar as
+`gregale billing status` and `gregalectl billing price-catalog sync` work with Polar as
 well as Paddle. A provider without this operator surface returns 501.
 
 Monitor these metrics and logs:

@@ -587,7 +587,7 @@ FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 
 -- Preserve UpdateAccountStatus's recovery behavior and personal-org mirror.
 -- name: RestorePaymentAccount :execrows
 UPDATE accounts SET status='active',past_due_at=NULL,deletion_requested_at=NULL,suspended_reason=NULL
-WHERE id=$1 AND (status='past_due' OR (status IN ('suspended','deleted_pending') AND past_due_at IS NOT NULL));
+WHERE id=$1 AND (status='past_due' OR (status IN ('active','suspended','deleted_pending') AND past_due_at IS NOT NULL));
 
 -- name: RestorePaymentPersonalOrg :exec
 UPDATE orgs SET status='active',updated_at=now() WHERE personal_org=true AND personal_owner_account_id=$1;

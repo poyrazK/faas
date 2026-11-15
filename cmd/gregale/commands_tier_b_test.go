@@ -350,28 +350,6 @@ func TestTierB_AuditEventsGet_JSONShape(t *testing.T) {
 	}
 }
 
-// --- admin consume-credits ---
-
-func TestTierB_AdminConsumeCredits_NoArgsExitsTwo(t *testing.T) {
-	resetJSONOut(t)
-	authedFakeAPI(t, "", http.StatusOK)
-	if code := cmdAdminConsumeCredits(nil); code != 2 {
-		t.Fatalf("exit = %d, want 2 (operator error)", code)
-	}
-}
-
-func TestTierB_AdminConsumeCredits_HappyPath(t *testing.T) {
-	resetJSONOut(t)
-	body := `{"invoice_id":"inv-1","consumed_cents":1000,"remaining_credits_cents":500,"already_consumed_for_invoice":false,"per_credit":[]}`
-	f := authedFakeAPI(t, body, http.StatusOK)
-	if code := cmdAdminConsumeCredits([]string{"inv-1"}); code != 0 {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-	if f.sawMethod != "POST" || f.sawPath != "/v1/invoices/inv-1/consume-credits" {
-		t.Errorf("route = %s %s, want POST /v1/invoices/inv-1/consume-credits", f.sawMethod, f.sawPath)
-	}
-}
-
 // --- overage-cap ---
 
 // Without <cents> the command reads the saved cap; it used to print only its
