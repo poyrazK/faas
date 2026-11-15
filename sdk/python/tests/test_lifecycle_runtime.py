@@ -3,7 +3,6 @@ import threading
 import time
 
 import pytest
-
 from faas_sdk.lifecycle_runtime import (
     DEFAULT_AFTER_RESTORE_PATH,
     DEFAULT_BEFORE_CHECKPOINT_PATH,
@@ -21,8 +20,13 @@ def asgi_call(app, path, method="POST", headers=(), client=("127.0.0.1", 5000)):
     async def send(message):
         sent.append(message)
 
-    scope = {"type": "http", "path": path, "method": method, "client": client,
-             "headers": [(k.encode(), v.encode()) for k, v in headers]}
+    scope = {
+        "type": "http",
+        "path": path,
+        "method": method,
+        "client": client,
+        "headers": [(k.encode(), v.encode()) for k, v in headers],
+    }
     asyncio.run(app(scope, receive, send))
     return sent[0]["status"] if sent else None
 
@@ -102,8 +106,10 @@ def test_wsgi_and_shared_sync_runs():
     app = hooks.wsgi(lambda environ, start: (start("418 Teapot", []), [b""])[1])
     marker = {"HTTP_X_FAAS_AFTER_RESTORE": "1"}
     results = []
-    threads = [threading.Thread(target=lambda: results.append(wsgi_call(app, DEFAULT_AFTER_RESTORE_PATH, headers=marker)))
-               for _ in range(3)]
+    threads = [
+        threading.Thread(target=lambda: results.append(wsgi_call(app, DEFAULT_AFTER_RESTORE_PATH, headers=marker)))
+        for _ in range(3)
+    ]
     for thread in threads:
         thread.start()
     time.sleep(0.05)

@@ -5,7 +5,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-
 from faas_sdk.preview import (
     GREGALE_FLAG_CONTEXT_HEADER,
     GREGALE_FLAG_EVIDENCE_HEADER,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import httpx
 import pytest
-
 from faas_sdk.preview import FaaSClient, awatch_execution
 
 _EXECUTION_ID = "01234567-89ab-cdef-0123-456789abcdef"

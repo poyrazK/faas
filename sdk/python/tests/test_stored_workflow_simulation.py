@@ -2,12 +2,12 @@ import json
 
 import httpx
 import pytest
-
-from faas_sdk import AuthenticatedClient
 from faas_sdk.preview.api.workflows import simulate_stored_workflow
-from faas_sdk.preview.models.stored_workflow_simulation_step import StoredWorkflowSimulationStep
 from faas_sdk.preview.models.simulate_stored_workflow_request import SimulateStoredWorkflowRequest
 from faas_sdk.preview.models.simulate_stored_workflow_response import SimulateStoredWorkflowResponse
+from faas_sdk.preview.models.stored_workflow_simulation_step import StoredWorkflowSimulationStep
+
+from faas_sdk import AuthenticatedClient
 from faas_sdk.types import UNSET
 
 REQUEST = {

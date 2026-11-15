@@ -479,6 +479,7 @@ export type { CreateCorsPresetRequest } from './models/CreateCorsPresetRequest.j
 export type { CreateCronRequest } from './models/CreateCronRequest.js';
 export type { CreateCustomDomainRequest } from './models/CreateCustomDomainRequest.js';
 export type { CreateDataAPIContractTaskRequest } from './models/CreateDataAPIContractTaskRequest.js';
+export type { CreateDatabaseSwitchRequest } from './models/CreateDatabaseSwitchRequest.js';
 export type { CreateDataConnectionRequest } from './models/CreateDataConnectionRequest.js';
 export type { CreateDataPipelineRequest } from './models/CreateDataPipelineRequest.js';
 export type { CreateDeploymentOverrides } from './models/CreateDeploymentOverrides.js';

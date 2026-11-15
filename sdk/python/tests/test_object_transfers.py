@@ -2,10 +2,10 @@
 
 import httpx
 import pytest
-
 from faas_sdk.preview.api.storage import list_object_buckets
-from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models import ObjectBucketList
+
+from faas_sdk.client import AuthenticatedClient
 from faas_sdk.types import UNSET
 
 

@@ -2,8 +2,6 @@ import json
 
 import httpx
 import pytest
-
-from faas_sdk import AuthenticatedClient
 from faas_sdk.preview.api.inbound_webhooks import (
     delete_webhook_workflow_binding,
     get_webhook_workflow_binding,
@@ -16,6 +14,8 @@ from faas_sdk.preview.models.inbound_webhook_receipt_response import InboundWebh
 from faas_sdk.preview.models.put_webhook_workflow_binding_request import PutWebhookWorkflowBindingRequest
 from faas_sdk.preview.models.webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
 from faas_sdk.preview.models.workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
+
+from faas_sdk import AuthenticatedClient
 
 
 def test_inbound_webhook_sdk_accepts_generic_hmac_provider():

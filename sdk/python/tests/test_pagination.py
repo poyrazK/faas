@@ -11,6 +11,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+from faas_sdk.preview import FaaSClient as PreviewClient
+from faas_sdk.preview.api.deployments import list_app_deployments as preview_list_app
+from faas_sdk.preview.api.deployments import list_deployments as preview_list_account
 
 from faas_sdk import (
     ErrNotFound,
@@ -27,9 +30,6 @@ from faas_sdk.api.deployments import list_app_deployments, list_deployments
 from faas_sdk.models.build_response import BuildResponse
 from faas_sdk.models.deployment_list_response import DeploymentListResponse
 from faas_sdk.models.deployment_response import DeploymentResponse
-from faas_sdk.preview import FaaSClient as PreviewClient
-from faas_sdk.preview.api.deployments import list_app_deployments as preview_list_app
-from faas_sdk.preview.api.deployments import list_deployments as preview_list_account
 
 SDK = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = SDK / "request-contracts/pagination.json"

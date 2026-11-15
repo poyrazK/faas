@@ -6,7 +6,9 @@ from faas_sdk.preview.api.projects import (
     resume_project_binding_verification_run,
     review_project_binding_verification,
 )
-from faas_sdk.preview.models.create_project_binding_verification_run_request import CreateProjectBindingVerificationRunRequest
+from faas_sdk.preview.models.create_project_binding_verification_run_request import (
+    CreateProjectBindingVerificationRunRequest,
+)
 
 
 def test_graph_run_frozen_review_and_routes():
@@ -46,7 +48,9 @@ def test_graph_run_frozen_review_and_routes():
 
 
 def test_graph_review_request_preserves_consent_and_manifest():
-    from faas_sdk.preview.models.review_project_binding_verification_request import ReviewProjectBindingVerificationRequest
+    from faas_sdk.preview.models.review_project_binding_verification_request import (
+        ReviewProjectBindingVerificationRequest,
+    )
 
     manifest = {
         "project": "project",

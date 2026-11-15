@@ -21,6 +21,7 @@
 # Architecture Decision Records
 
 - [ADR-20261115105130: Opt-in streamed list output](20261115105130-cli-streamed-list-output.md)
+- [ADR-20261115121720: Atomic CLI list exports](20261115121720-cli-atomic-list-exports.md) — accepted; private JSON Lines staging, no-overwrite publication and completion integrity receipts.
 - [ADR-20261115090000: Operator account risk view](20261115090000-account-risk-view.md) — accepted; `gregalectl accounts risk` and `held-links` show an account's hold, sign-up record, held-account links, strikes and abuse events; PII only with `--include-pii`
 - [ADR-20261114180740: AI gateway managed prompts](20261114180740-ai-gateway-managed-prompts.md) — accepted; named, immutable prompt versions (messages with plain-text `{{variable}}` substitution, route or integration target, sampling params) called at `$GREGALE_OUTBOUND_URL/p/{name}` through the ordinary route path; live/previous-live pointers, canaries with route-canary rollback, per-version minute stats and feedback, evaluations on supplied variable sets; plan limits 25/100/500 prompts (Hobby/Pro/Scale)
 - [ADR-20261114174600: Flag new accounts that resemble abuse-held ones](20261114174600-held-account-links.md) — accepted; a sign-up sharing a /24 or /48 or a private email domain with an abuse-held account is stored in `account_held_links`, audited and counted; flag only

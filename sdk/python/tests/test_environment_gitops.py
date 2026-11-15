@@ -5,8 +5,6 @@ from typing import cast
 
 import httpx
 import pytest
-
-from faas_sdk import FaaSClient
 from faas_sdk.preview.api.projects import (
     approve_environment_git_revision,
     get_environment_git_ops,
@@ -26,6 +24,8 @@ from faas_sdk.preview.models import (
     RemoveEnvironmentGitOpsOverrideRequest,
 )
 from faas_sdk.preview.models.service_binding_transport import ServiceBindingTransport
+
+from faas_sdk import FaaSClient
 
 
 def test_gitops_evidence_commit_is_optional_and_independent_of_ref() -> None:

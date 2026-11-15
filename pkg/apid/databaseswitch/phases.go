@@ -23,12 +23,12 @@ func (w *Worker) restore(ctx context.Context, sw state.DatabaseSwitch) state.Dat
 		switch {
 		case err == nil:
 			if !target.RestoreSlotUntil.IsZero() {
-				return w.beginAbort(sw, codeDatabaseLimit, "The restored copy is temporary and cannot become the app's live database. Free room under the plan's database limit, then retry the rollback.")
+				return w.beginAbort(sw, codeDatabaseLimit, "The restored copy is temporary and cannot become the app's live database. Free room under the plan's database limit, then try again.")
 			}
 			sw.TargetDatabaseID = target.ID
 		case errors.Is(err, managedpostgres.ErrQuotaExceeded):
 			return w.beginAbort(sw, codeDatabaseLimit, "The restored copy does not fit inside the plan's database limit, and a switch's copy cannot use the restore slot because it becomes the app's database. "+
-				"Delete a database you no longer need or upgrade the plan, then roll back again.")
+				"Delete a database you no longer need or upgrade the plan, then try again.")
 		case errors.Is(err, managedpostgres.ErrProvisioningClosed):
 			return w.beginAbort(sw, codeProvisioningClosed, "Managed PostgreSQL provisioning is not open for this account.")
 		case errors.Is(err, managedpostgres.ErrInvalid):
@@ -48,7 +48,7 @@ func (w *Worker) restore(ctx context.Context, sw state.DatabaseSwitch) state.Dat
 		return w.retry(sw, errorCode(err))
 	}
 	if !target.RestoreSlotUntil.IsZero() {
-		return w.beginAbort(sw, codeDatabaseLimit, "The restored copy is temporary and cannot become the app's live database. Free room under the plan's database limit, then retry the rollback.")
+		return w.beginAbort(sw, codeDatabaseLimit, "The restored copy is temporary and cannot become the app's live database. Free room under the plan's database limit, then try again.")
 	}
 	switch target.State {
 	case managedpostgres.StateReady:
@@ -284,7 +284,8 @@ func (w *Worker) activated(sw state.DatabaseSwitch) state.DatabaseSwitch {
 }
 
 // switchRelease makes the target live while the app is fenced. It checks
-// that the release recorded at request time still serves.
+// that the release recorded at request time still serves. A switch that
+// keeps its release targets that release, so it only checks.
 func (w *Worker) switchRelease(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
 	live, err := w.Releases.LiveDeploymentForScope(ctx, sw.AppID, sw.Scope)
 	if err != nil && !errors.Is(err, state.ErrNotFound) {
@@ -381,7 +382,9 @@ func (w *Worker) abort(ctx context.Context, sw state.DatabaseSwitch) state.Datab
 	// A promotion can commit before its reply (or our progress save) is
 	// lost. Once we fenced the app, reconcile traffic rather than using the
 	// checkpoint as proof that the code change did not happen.
-	if sw.FencedAt != nil && sw.FromDeploymentID != "" {
+	// A switch that keeps its release never changed the code, so there is
+	// no release to put back (ADR-20261023181931 amendment 3).
+	if sw.FencedAt != nil && sw.FromDeploymentID != "" && !sw.KeepsRelease() {
 		live, err := w.Releases.LiveDeploymentForScope(ctx, sw.AppID, sw.Scope)
 		if err != nil && !errors.Is(err, state.ErrNotFound) {
 			return w.retry(sw, errorCode(err))
@@ -414,7 +417,7 @@ func (w *Worker) abort(ctx context.Context, sw state.DatabaseSwitch) state.Datab
 // rolled the release back before it saw the activation commit. Activation
 // leaves the fence in place, so no instance served the previous release.
 func (w *Worker) restoreTarget(ctx context.Context, sw state.DatabaseSwitch) error {
-	if sw.FencedAt == nil || sw.FromDeploymentID == "" {
+	if sw.FencedAt == nil || sw.FromDeploymentID == "" || sw.KeepsRelease() {
 		return nil
 	}
 	live, err := w.Releases.LiveDeploymentForScope(ctx, sw.AppID, sw.Scope)

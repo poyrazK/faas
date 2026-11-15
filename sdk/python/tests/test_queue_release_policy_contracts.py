@@ -2,10 +2,10 @@ import json
 import unittest
 
 import httpx
-
 from faas_sdk.preview.api.apps import set_queue_binding_release_policy
-from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models.set_queue_binding_release_policy_request import SetQueueBindingReleasePolicyRequest
+
+from faas_sdk.client import AuthenticatedClient
 
 
 class QueueReleasePolicyContracts(unittest.TestCase):

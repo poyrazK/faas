@@ -3,7 +3,6 @@ import base64
 
 import httpx
 import pytest
-
 from faas_sdk.preview import (
     DEV_BRIDGE_CONTEXT_HEADER,
     AsyncDevBridgeTransport,

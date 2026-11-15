@@ -2,10 +2,10 @@
 
 import httpx
 import pytest
-
 from faas_sdk.preview.api.billing import export_focus_invoices
-from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models.problem import Problem
+
+from faas_sdk.client import AuthenticatedClient
 from faas_sdk.types import File
 
 

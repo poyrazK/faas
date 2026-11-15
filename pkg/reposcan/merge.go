@@ -107,6 +107,8 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		allowedServiceCallers     *[]string
 		allowedServiceCallScopes  *api.ServiceCallerScopes
 		platformTenantRequired    *bool
+		streaming                 *bool
+		wakeAhead                 *bool
 		renamedFrom               string
 
 		schedules     []CronSchedule
@@ -259,6 +261,14 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			value := *s.platformTenantRequired
 			b.platformTenantRequired = &value
 		}
+		if b.streaming == nil && s.streaming != nil {
+			value := *s.streaming
+			b.streaming = &value
+		}
+		if b.wakeAhead == nil && s.wakeAhead != nil {
+			value := *s.wakeAhead
+			b.wakeAhead = &value
+		}
 		if b.renamedFrom == "" {
 			b.renamedFrom = s.renamedFrom
 		}
@@ -338,6 +348,8 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
+			Streaming:                 b.streaming,
+			WakeAhead:                 b.wakeAhead,
 			RenamedFrom:               b.renamedFrom,
 			Unpublished:               b.det == detCompose && (len(b.ports) == 0 || b.portsLoopback),
 			InternalPorts:             b.internalPorts,

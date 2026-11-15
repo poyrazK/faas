@@ -563,12 +563,23 @@ func cmdPostgresRestore(args []string) int {
 	fs := newFlagSet("postgres restore", flag.ContinueOnError)
 	name := fs.String("name", "", "name for the restored database (required)")
 	pointInTime := fs.String("point-in-time", "", "RFC3339 restore timestamp (required)")
+	switchApp := fs.String("switch", "", "move this app to the restored copy, keeping its code")
+	scope := fs.String("env", "", "with --switch: the environment whose bindings move (default default)")
+	confirmed := fs.Bool("yes", false, "with --switch: switch without prompting")
+	noWait := fs.Bool("no-wait", false, "with --switch: return once the switch starts")
+	timeout := fs.Duration("timeout", databaseSwitchDefaultTimeout, "with --switch: wait deadline")
+	interval := fs.Duration("poll-interval", 2*time.Second, "with --switch: poll interval")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || *name == "" || *pointInTime == "" {
-		PrintUsage(os.Stderr, "usage: gregale postgres restore DATABASE_ID --name NAME --point-in-time RFC3339", "postgres")
+	const usage = "usage: gregale postgres restore DATABASE_ID --name NAME --point-in-time RFC3339 [--switch APP [--env SCOPE] [--yes] [--no-wait]]"
+	if fs.NArg() != 1 || *name == "" || *pointInTime == "" || *timeout <= 0 || *interval <= 0 || (*switchApp == "" && (*scope != "" || *confirmed || *noWait)) {
+		PrintUsage(os.Stderr, usage, "postgres")
 		return 1
+	}
+	if *switchApp != "" {
+		return cmdPostgresRestoreSwitch(postgresRestoreSwitch{database: fs.Arg(0), name: *name, pointInTime: *pointInTime, app: *switchApp,
+			scope: *scope, confirmed: *confirmed, noWait: *noWait, timeout: *timeout, interval: *interval})
 	}
 	client, err := authedClient()
 	if err != nil {

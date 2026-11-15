@@ -299,9 +299,9 @@ func (s *server) databaseSwitchRoom(ctx context.Context, acct state.Account) *ap
 		return nil
 	}
 	return api.NewProblem(http.StatusForbidden, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded",
-		fmt.Sprintf("A rollback that restores the database needs room for the restored copy, which becomes the app's database and so cannot use the restore slot; the account has %d of %d databases.", used, limit)).
+		fmt.Sprintf("A database switch needs room for the restored copy, which becomes the app's database and so cannot use the restore slot; the account has %d of %d databases.", used, limit)).
 		WithLimit(int64(limit), used).
-		WithHint("Delete a database you no longer need or upgrade the plan, then roll back again; or restore the database with gregale postgres restore and roll back with acknowledge_releases.").
+		WithHint("Delete a database you no longer need or upgrade the plan, then try again; or restore the database with gregale postgres restore and attach the copy yourself.").
 		WithDocs("https://gregale.dev/docs/plans")
 }
 

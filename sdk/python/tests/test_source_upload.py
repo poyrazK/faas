@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from faas_sdk.preview import FaaSClient as PreviewClient
 
 from faas_sdk import (
     FaaSClient,
@@ -20,7 +21,6 @@ from faas_sdk import (
     save_source_upload_checkpoint,
 )
 from faas_sdk.models.upload_deploy_options import UploadDeployOptions
-from faas_sdk.preview import FaaSClient as PreviewClient
 
 SDK = Path(__file__).resolve().parents[1]
 CONTRACT = SDK / "request-contracts/source-uploads.json"
@@ -499,8 +499,9 @@ async def test_native_http_concurrent_accounts_and_checkpoint_ownership(tmp_path
 async def test_generated_binary_append_preserves_wire_bytes_and_header(preview, kind):
     from io import BytesIO
 
-    from faas_sdk.api.uploads import append_upload
     from faas_sdk.preview.api.uploads import append_upload as preview_append
+
+    from faas_sdk.api.uploads import append_upload
     from faas_sdk.types import File
 
     module = preview_append if preview else append_upload

@@ -25,16 +25,6 @@ from typing import Any
 import httpx
 import pytest
 from _constants import STABLE_IDEMPOTENCY_KEY
-
-from faas_sdk import (
-    ErrCapacity,
-    ErrNotFound,
-    ErrRateLimited,
-    ErrUnauthorized,
-    FaasProblemError,
-    Problem,
-    is_faas_error,
-)
 from faas_sdk._rfc7807 import parse_problem
 from faas_sdk._transport import (
     MUTATING_METHODS,
@@ -55,6 +45,16 @@ from faas_sdk.idempotency import (
     current_idempotency_key,
     mint_idempotency_key,
     with_idempotency_key,
+)
+
+from faas_sdk import (
+    ErrCapacity,
+    ErrNotFound,
+    ErrRateLimited,
+    ErrUnauthorized,
+    FaasProblemError,
+    Problem,
+    is_faas_error,
 )
 
 _UUID4 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
@@ -618,9 +618,12 @@ def test_retry_limits_attempts_and_backoff(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_low_level_clients_have_timeout_by_default() -> None:
-    from faas_sdk.client import Client, AuthenticatedClient
+    from faas_sdk.client import AuthenticatedClient, Client
 
-    for client in (Client(base_url="https://api.example.com"), AuthenticatedClient(base_url="https://api.example.com", token="fixture")):
+    for client in (
+        Client(base_url="https://api.example.com"),
+        AuthenticatedClient(base_url="https://api.example.com", token="fixture"),
+    ):
         with client.get_httpx_client() as http:
             assert http.timeout.connect == 30.0
             assert http.timeout.read == 30.0
@@ -650,6 +653,7 @@ async def test_async_retry_closes_real_async_stream(monkeypatch: pytest.MonkeyPa
         assert delay > 0
 
     import asyncio
+
     monkeypatch.setattr(asyncio, "sleep", no_sleep)
     transport = AsyncRetryTransport(httpx.MockTransport(handler), max_attempts=1, backoff=0)
     response = await transport.handle_async_request(httpx.Request("GET", "https://api.example.com/v1/x"))

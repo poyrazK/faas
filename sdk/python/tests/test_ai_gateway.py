@@ -3,7 +3,6 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
-
 from faas_sdk.preview import (
     AI_CALL_HEADER,
     AI_PROMPT_VERSION_HEADER,

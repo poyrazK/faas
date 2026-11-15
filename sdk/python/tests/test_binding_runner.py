@@ -7,7 +7,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-
 from faas_sdk.preview import (
     BindingVerificationRecoveryError,
     arun_binding_verification,
@@ -15,6 +14,7 @@ from faas_sdk.preview import (
     run_binding_verification,
     run_project_binding_verification,
 )
+
 from faas_sdk.client import Client
 
 SCENARIOS = json.loads((Path(__file__).resolve().parents[2] / "binding-runner-tests/contracts.json").read_text())[

@@ -9,9 +9,13 @@ from faas_sdk.preview.models.update_issue_compound_alert_policy_request import U
 
 def test_compound_policy_and_preview_keep_both_thresholds_and_one_window():
     rule = {
-        "key": "payments", "enabled": True, "environment": "production",
-        "minimum_events": 20, "minimum_customers": 3,
-        "window_seconds": 600, "cooldown_seconds": 1800,
+        "key": "payments",
+        "enabled": True,
+        "environment": "production",
+        "minimum_events": 20,
+        "minimum_customers": 3,
+        "window_seconds": 600,
+        "cooldown_seconds": 1800,
     }
     payload = {"expected_revision": 2, "rules": [rule]}
     request = UpdateIssueCompoundAlertPolicyRequest.from_dict(payload)
