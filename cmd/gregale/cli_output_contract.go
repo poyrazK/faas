@@ -19,11 +19,23 @@ type cliOutputContract struct {
 }
 
 type cliOutputMode struct {
-	Name   string               `json:"name"`
-	When   map[string]bool      `json:"when"`
-	Stdout cliOutputStdout      `json:"stdout"`
-	Errors cliOutputModeErrors  `json:"errors"`
-	File   *cliOutputFileFormat `json:"file,omitempty"`
+	Name     string               `json:"name"`
+	When     map[string]bool      `json:"when"`
+	Stdout   cliOutputStdout      `json:"stdout"`
+	Errors   cliOutputModeErrors  `json:"errors"`
+	File     *cliOutputFileFormat `json:"file,omitempty"`
+	Progress *cliOutputProgress   `json:"progress,omitempty"`
+}
+
+type cliOutputProgress struct {
+	Flag                string   `json:"flag"`
+	Stream              string   `json:"stream"`
+	Default             string   `json:"default"`
+	NDJSONType          string   `json:"ndjson_type"`
+	SchemaVersion       int      `json:"schema_version"`
+	Events              []string `json:"events"`
+	MinUpdateIntervalMS int64    `json:"min_update_interval_ms"`
+	BestEffort          bool     `json:"best_effort"`
 }
 
 type cliOutputStdout struct {
@@ -105,6 +117,10 @@ func newCLIOutputContract(kind cliOutputKind, available []string) *cliOutputCont
 			}
 		}
 		if visible {
+			if mode.File != nil && slices.Contains(available, "progress") {
+				mode.Progress = &cliOutputProgress{Flag: "progress", Stream: "stderr", Default: string(listExportProgressOff), NDJSONType: "list_export_progress", SchemaVersion: 1,
+					Events: []string{"start", "update", "stopped", "published"}, MinUpdateIntervalMS: listExportProgressInterval.Milliseconds(), BestEffort: true}
+			}
 			contract.Modes = append(contract.Modes, mode)
 		}
 	}

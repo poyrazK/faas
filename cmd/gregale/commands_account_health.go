@@ -111,7 +111,9 @@ func renderAccountHealth(w io.Writer, h api.AccountHealth, dashboard string) {
 			}
 			p("  %s\n", stamp(d.CreatedAt))
 			if d.Error != "" {
-				p("    %s\n", d.Error)
+				// The error carries the app's last output lines; print them as
+				// lines, not as one run joined by literal \x0a escapes.
+				_ = printTerminalSafeLines(w, "    ", d.Error)
 			}
 			if d.Hint != "" {
 				p("    How to fix: %s\n", d.Hint)

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -482,6 +483,16 @@ func IsValidScope(s string) bool {
 	return ok
 }
 
+// ValidScopeNames lists every API key scope, sorted.
+func ValidScopeNames() []string {
+	out := make([]string, 0, len(validScopes))
+	for s := range validScopes {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // NormalizeCreateKeyScopes validates + defaults + dedupes the requested
 // scopes for POST /v1/keys and the CLI exchange path.
 //
@@ -503,7 +514,9 @@ func NormalizeCreateKeyScopes(requested []string) ([]string, error) {
 	out := make([]string, 0, len(requested))
 	for _, s := range requested {
 		if !IsValidScope(s) {
-			return nil, fmt.Errorf("unknown scope %q", s)
+			// Name the valid scopes: "unknown scope \"invoke\"" left the
+			// caller guessing (prod 2026-11-15).
+			return nil, fmt.Errorf("unknown scope %q; valid scopes: %s", s, strings.Join(ValidScopeNames(), ", "))
 		}
 		if _, dup := seen[s]; dup {
 			continue

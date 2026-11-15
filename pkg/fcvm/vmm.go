@@ -235,7 +235,7 @@ type JailerVMM struct {
 	bindMounts map[string][]ephemeralBind
 	// driveBaseKeys is the storage key of the app layer each instance's
 	// private drive started from, recorded at boot and restore. A park
-	// uploads the drive as a delta against it (ADR-20261115204045). Guarded
+	// uploads the drive as a delta against it (ADR-20261115213230). Guarded
 	// by mu; an adopted instance has none and uploads its whole drive.
 	driveBaseKeys map[string]string
 	// bindSourceModes reference-counts temporary source permission widening
