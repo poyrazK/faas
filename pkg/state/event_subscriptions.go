@@ -34,8 +34,12 @@ type EventSubscription struct {
 	// for any other environment (ADR-20261104120000).
 	DeploymentScope string
 	EnvironmentID   string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// ClonePaused marks a copy a full environment clone made disabled from
+	// an enabled source subscription; resuming the stage's automation enables
+	// it, and any explicit enable or disable clears it.
+	ClonePaused bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // EventSubscriptionScopeStore installs a subscription into one environment
@@ -127,6 +131,7 @@ func eventSubscriptionFromSQL(row sqlc.EventSubscription) EventSubscription {
 
 		DeploymentScope: row.DeploymentScope,
 		EnvironmentID:   uuidString(row.EnvironmentID),
+		ClonePaused:     row.ClonePaused,
 	}
 }
 
@@ -421,7 +426,7 @@ func (m *MemStore) UpsertEventSubscriptionInScope(_ context.Context, accountID, 
 	}
 	if existing, ok := m.eventSubscriptions[mapKey]; ok {
 		if !existing.Enabled {
-			existing.Enabled = true
+			existing.Enabled, existing.ClonePaused = true, false
 			existing.UpdatedAt = time.Now().UTC()
 			m.eventSubscriptions[mapKey] = existing
 		}
