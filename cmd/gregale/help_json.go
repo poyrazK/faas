@@ -64,7 +64,13 @@ func runJSONHelp(args []string) int {
 		document, ok = jsonHelpLookup(commands, canonical)
 	}
 	if !ok {
-		return printErr("Unknown help topic", fmt.Errorf("gregale: unknown help topic %q; run 'gregale --json help' for commands", strings.Join(words, " ")))
+		message := fmt.Sprintf("gregale: unknown help topic %q; run 'gregale --json help' for commands", strings.Join(words, " "))
+		if len(words) == 1 {
+			if suggestion, ok := suggestCommand(words[0]); ok {
+				message += fmt.Sprintf("; did you mean 'gregale help %s'?", suggestion)
+			}
+		}
+		return printErr("Unknown help topic", fmt.Errorf("%s", message))
 	}
 	document.RequestedCommand = "gregale " + strings.Join(words, " ")
 	document.Aliases = jsonHelpAliases(commands, document.Command)

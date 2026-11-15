@@ -35,7 +35,7 @@ type githubRecoveryRetryOutput struct {
 
 func cmdGithubDispatch(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl github: missing subcommand; want status|retry-delivery|retry-check")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl github: missing subcommand; want status|retry-delivery|retry-check|webhook-secret")
 		return 2
 	}
 	switch args[0] {
@@ -43,6 +43,8 @@ func cmdGithubDispatch(args []string) int {
 		return cmdGithubStatus(args[1:])
 	case "retry-delivery", "retry-check":
 		return cmdGithubRetry(args[0], args[1:])
+	case "webhook-secret":
+		return cmdGithubWebhookSecret(args[1:])
 	default:
 		_, _ = fmt.Fprintf(osStderr, "gregalectl github: unknown subcommand %q\n", args[0])
 		return 2

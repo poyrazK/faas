@@ -14,6 +14,11 @@ live provider account, production deployment or feature gate was changed.
 
 ## Results
 
+- Merge qualification separates the existing expand migrations into PR #7316.
+  The feature branch uses its canonical schema and regenerated SQLC queries;
+  the public SDK specification stays unchanged. Preview SDKs were regenerated
+  after integrating current main. PIPE-020 records the JSON-help recovery fix
+  found by the subsequent full CLI run; final hosted checks must pass.
 - Complete native acceptance passed with `-race`: pipeline/catalog, HTTP domain,
   source gateway, dashboard, managed-database setup/capacity, bounded Neon
   credentials and pipeline CLI suites. The final pipeline run completed in

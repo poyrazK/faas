@@ -37,7 +37,7 @@ func holdTelemetryReader(t *testing.T, pool *pgxpool.Pool) (release func()) {
 // not lock at all; with one missing it must give up at its lock timeout.
 func TestEnsureRequestTelemetryPartitionsNeverQueuesBehindAReader(t *testing.T) {
 	ctx := t.Context()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t) // a private clone: no CREATE INDEX CONCURRENTLY waits on other packages' transactions
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}

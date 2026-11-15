@@ -408,6 +408,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/wakes/{wake_id}":                              true, // private one-wake event timeline (gregalectl obs wake)
 	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
 	"GET /v1/admin/obs/serving-health":                               true, // private serving-probe coverage evidence
+	"GET /v1/admin/obs/nodes/{name}/probe-notifications":             true, // private node notification submission evidence
 	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
 	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
 	"GET /v1/admin/obs/rule-coverage":                                true, // private explicitly selected rule coverage

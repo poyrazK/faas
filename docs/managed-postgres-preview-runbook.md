@@ -240,7 +240,7 @@ follow the fleet ceilings; see
   usage API and the usage collector logs, then wait for a complete window. Do
   not bypass the gate by raising a plan limit. Deleting a database also holds
   the gate for its account until the final usage correction lands (the final
-  window end plus three collection windows); `gregale postgres diagnostics`
+  window end plus three collection windows); `gregalectl billing postgres diagnostics`
   shows the deleted database's `final_correction` time. Requests for a region
   without a backend or an unsupported major fail as
   `managed_postgres_unsupported` before this gate.
@@ -368,9 +368,9 @@ that gap before enabling further reservations.
 
 For `legacy_identity_unknown` diagnostics on deleted rows, retain and verify
 resource ownership, the exact backend fingerprint, branch lineage, and actual
-provider shutdown evidence. Preview with `gregale postgres reconcile ACCOUNT_ID
+provider shutdown evidence. Preview with `gregalectl billing postgres reconcile --account-id ACCOUNT_ID
 --file retained-shutdown.json --json`, review the boundary, then apply with its
-`expected_revision` and a recently stepped-up operator session file. See the
+`expected_revision`, `--apply` and a recently stepped-up `gregalectl auth` session. See the
 [input format and evidence requirements](managed-postgres.md). Missing lookup
 results and old logical deletion timestamps are insufficient.
 

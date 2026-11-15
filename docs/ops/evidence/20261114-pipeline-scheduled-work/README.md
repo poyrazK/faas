@@ -91,3 +91,12 @@ That commit also passed all six required ci-light checks and
 The subsequent main integration replays the async-backlog migration and carries
 the regenerated environment-branch preview SDK models. Its final commit still
 requires fresh CI before merge.
+
+The next integration separates the byte-identical expand migrations into
+PR #7316 and uses its canonical schema in both feature branches. All six
+required checks and native pipeline acceptance passed on
+`7ac3626229dd8e8c91e538119c9402585136a01b`; its full CLI run exposed the
+JSON-help typo-recovery regression tracked as PIPE-020. The parent feature
+branch fixes it using the existing filtered suggestion helper. This branch
+inherits that fix, regenerates SQLC and preview SDKs against current main,
+and requires a fresh complete hosted acceptance run before merge.
