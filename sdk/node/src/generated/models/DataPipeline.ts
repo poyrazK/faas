@@ -3,7 +3,13 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DataPipelineCapacity } from './DataPipelineCapacity.js';
+import type { DataPipelineEvolution } from './DataPipelineEvolution.js';
+import type { DataPipelineFreshness } from './DataPipelineFreshness.js';
 import type { DataPipelineHealth } from './DataPipelineHealth.js';
+import type { DataPipelineIndexAdvice } from './DataPipelineIndexAdvice.js';
+import type { DataPipelineOperations } from './DataPipelineOperations.js';
+import type { DataPipelineOperationsStatus } from './DataPipelineOperationsStatus.js';
+import type { DataPipelineSchemaReview } from './DataPipelineSchemaReview.js';
 import type { DataPipelineServing } from './DataPipelineServing.js';
 import type { DataPipelineTenantChange } from './DataPipelineTenantChange.js';
 import type { DataPipelineWALRetention } from './DataPipelineWALRetention.js';
@@ -11,6 +17,16 @@ import type { DataPipelineWALRetention } from './DataPipelineWALRetention.js';
  * Managed replication intent with bounded, revision-specific worker observations.
  */
 export type DataPipeline = {
+  operations?: DataPipelineOperations;
+  operations_status?: DataPipelineOperationsStatus;
+  schema_review?: DataPipelineSchemaReview;
+  evolution?: DataPipelineEvolution;
+  /**
+   * Current owner-configured checkpoint confirmation target; zero means disabled and enabled targets range from 15 to 86400 seconds.
+   */
+  freshness_target_seconds?: number;
+  freshness?: DataPipelineFreshness;
+  index_advice?: DataPipelineIndexAdvice;
   serving?: DataPipelineServing;
   tenant_change?: DataPipelineTenantChange;
   wal_retention?: DataPipelineWALRetention;

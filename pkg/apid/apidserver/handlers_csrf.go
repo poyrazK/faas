@@ -26,6 +26,7 @@ var csrfActions = map[string]struct{}{
 	"mfa_disable":               {},
 	"mfa_disable_email":         {},
 	"mfa_disable_email_confirm": {},
+	"mfa_disable_email_cancel":  {},
 	csrfActionMFARecoveryCodes:  {},
 	dashboardEmailChangeAct:     {},
 	csrfActionSignInUnlink:      {},

@@ -921,6 +921,14 @@ func (c *Client) PostAccountMfaDisableEmail(ctx context.Context, req MFADisableE
 	return out, c.do(ctx, "POST", "/v1/account/mfa/disable-email", req, &out)
 }
 
+// PostAccountMfaDisableEmailCancel cancels every pending email-assisted MFA
+// disable on the account. It needs a session that passed the second factor
+// (or a full-access key); a session from a password reset alone cannot.
+func (c *Client) PostAccountMfaDisableEmailCancel(ctx context.Context, req MFADisableEmailCancelRequest) (MFADisableEmailCancelResponse, error) {
+	var out MFADisableEmailCancelResponse
+	return out, c.do(ctx, "POST", "/v1/account/mfa/disable-email-cancel", req, &out)
+}
+
 // PostAccountMfaDisableEmailConfirm consumes the emailed token after the
 // mandatory cooldown and clears the account's MFA state.
 func (c *Client) PostAccountMfaDisableEmailConfirm(ctx context.Context, req MFADisableEmailConfirmRequest) (MFADisableEmailConfirmResponse, error) {
@@ -4708,6 +4716,14 @@ func (c *Client) DeleteKey(ctx context.Context, id string) error {
 func (c *Client) RotateKey(ctx context.Context, id string) (RotateKeyResponse, error) {
 	var out RotateKeyResponse
 	return out, c.do(ctx, "POST", "/v1/keys/"+id+"/rotate", nil, &out)
+}
+
+// RotateKeyWithGrace rotates a key and sets, for this rotation only, how
+// many days the old key keeps working. 0 revokes the old key at once; use
+// it when the key leaked.
+func (c *Client) RotateKeyWithGrace(ctx context.Context, id string, graceWindowDays int) (RotateKeyResponse, error) {
+	var out RotateKeyResponse
+	return out, c.do(ctx, "POST", "/v1/keys/"+id+"/rotate", RotateKeyRequest{GraceWindowDays: &graceWindowDays}, &out)
 }
 
 // GetGraceWindow returns the customer's per-account rotation

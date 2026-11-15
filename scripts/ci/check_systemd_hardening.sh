@@ -131,6 +131,14 @@ for rel in "${units[@]}"; do
     echo "systemd-hardening-check: ${rel}: User must be non-root" >&2
     errors=$((errors + 1))
   fi
+  # systemd refuses user names longer than 31 characters: the unit never
+  # starts ("Failed to spawn 'start' task: Invalid argument"). The 34-character
+  # faas-notification-receiver-metrics user failed every start on
+  # gregale-cp after rc.344.
+  if (( ${#user} > 31 )); then
+    echo "systemd-hardening-check: ${rel}: User=${user} is ${#user} characters; systemd allows at most 31" >&2
+    errors=$((errors + 1))
+  fi
   unit_required=("${required[@]}")
   if [[ "$rel" != vmmd_service/files/faas-vmmd.service ]]; then
     unit_required+=(ProtectKernelTunables=yes ProtectControlGroups=yes)

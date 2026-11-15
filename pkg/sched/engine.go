@@ -8894,6 +8894,12 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 		return nil
 	}
 
+	if !allowReuse && !frozenFunction {
+		// ADR-20261114153000: the deployment's first init snapshot holds
+		// code paths that already ran once. Never fails the capture.
+		e.primeInitSnapshot(ctx, ins, dep, app)
+	}
+
 	storageKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierInit, uuid.NewString())
 	vmstateKey := state.SnapshotVMStateKey(state.Snapshot{StorageKey: storageKey})
 	vmstate := filepath.Join(SnapDir(), strings.TrimPrefix(vmstateKey, "snap/"))

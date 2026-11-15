@@ -724,7 +724,6 @@ var CmdAccountStatus = cmdAccountStatus
 var CmdAdd = cmdAdd
 var CmdAddBucket = cmdAddBucket
 var CmdAddPostgres = cmdAddPostgres
-var CmdAdmin = cmdAdmin
 var CmdAppCopy = cmdAppCopy
 var CmdAlertActions = cmdAlertActions
 var CmdAlertAdd = cmdAlertAdd
@@ -781,7 +780,6 @@ var CmdBillingExport = cmdBillingExport
 var CmdBillingFinancial = cmdBillingFinancial
 var CmdBillingPaymentMethod = cmdBillingPaymentMethod
 var CmdBillingPortal = cmdBillingPortal
-var CmdBillingReconcilePaddleOverage = cmdBillingReconcilePaddleOverage
 var CmdBillingRefreshInvoice = cmdBillingRefreshInvoice
 var CmdBillingRetry = cmdBillingRetry
 var CmdBillingStatus = cmdBillingStatus
@@ -933,7 +931,6 @@ var CmdEventsSubscriptions = cmdEventsSubscriptions
 var CmdEventsWorkflowBackfill = cmdEventsWorkflowBackfill
 var CmdEventsWorkflowReplayPreview = cmdEventsWorkflowReplayPreview
 var CmdFlags = cmdFlags
-var CmdGithubWebhookSecret = cmdGithubWebhookSecret
 var CmdInit = cmdInit
 var CmdInspect = cmdInspect
 var CmdInvitations = cmdInvitations
@@ -961,6 +958,7 @@ var CmdMCPAccess = cmdMCPAccess
 var CmdMCPCatalogMonitor = cmdMCPCatalogMonitor
 var CmdMCPDeploy = cmdMCPDeploy
 var CmdMCPInit = cmdMCPInit
+var CmdMCPImportOpenAPI = cmdMCPImportOpenAPI
 var CmdMCPReadiness = cmdMCPReadiness
 var CmdMCPReadinessAttention = cmdMCPReadinessAttention
 var CmdMCPReadinessFallback = cmdMCPReadinessFallback
@@ -1027,15 +1025,12 @@ var CmdPostgresBindingsRotate = cmdPostgresBindingsRotate
 var CmdPostgresCreate = cmdPostgresCreate
 var CmdPostgresCutover = cmdPostgresCutover
 var CmdPostgresDelete = cmdPostgresDelete
-var CmdPostgresDiagnostics = cmdPostgresDiagnostics
 var CmdPostgresGet = cmdPostgresGet
 var CmdPostgresList = cmdPostgresList
 var CmdPostgresUndelete = cmdPostgresUndelete
-var CmdPostgresReconcile = cmdPostgresReconcile
 var CmdPostgresResize = cmdPostgresResize
 var CmdPostgresUsage = cmdPostgresUsage
 var CmdPostgresOverage = cmdPostgresOverage
-var CmdPostgresUsageImport = cmdPostgresUsageImport
 var CmdPreview = cmdPreview
 var CmdPreviewCustomers = cmdPreviewCustomers
 var CmdPreviewDestroy = cmdPreviewDestroy
@@ -1403,7 +1398,6 @@ var GeneratedTestCIVMRunCommand = generatedTestCIVMRunCommand
 var GitArchiveHEAD = gitArchiveHEAD
 var GithubSetupCheckWaitFor = githubSetupCheckWaitFor
 var GithubTarballURL = githubTarballURL
-var GithubWebhookSecretSet = githubWebhookSecretSet
 var GroupDigits = groupDigits
 var HostingLocalConfig = hostingLocalConfig
 var HostingLocalRead = hostingLocalRead
@@ -2167,6 +2161,7 @@ var WarnRootOnlyProtectiveRule = warnRootOnlyProtectiveRule
 var WarnSingleHostProtectiveRule = warnSingleHostProtectiveRule
 var WarnTemplatedEdgeRulePaths = warnTemplatedEdgeRulePaths
 var WatchDevPatch = watchDevPatch
+var FinishDeferredDevSync = finishDeferredDevSync
 var WithBindingProgress = withBindingProgress
 var WithBindingVerificationBudget = withBindingVerificationBudget
 var WithBindingVerificationSlot = withBindingVerificationSlot
@@ -2903,3 +2898,7 @@ func DeployRequestCLISurfaces() map[string]UpdateAppCLISurface { return deployRe
 
 // DeployOverridesCLISurfaces returns the deploy overrides' CLI surfaces.
 func DeployOverridesCLISurfaces() map[string]UpdateAppCLISurface { return deployOverridesCLISurfaces }
+
+func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, id string, in api.ToolPublicationVerificationRequest) (api.ToolPublicationVerification, error) {
+	return waitPrivatePublicationVerification(ctx, c, id, in)
+}

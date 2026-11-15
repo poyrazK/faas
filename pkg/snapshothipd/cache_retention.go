@@ -1,6 +1,6 @@
 package snapshothipd
 
-// adr: 20261114120000
+// adr: 20261114182830
 //
 // Node cache retention. imaged deletes a snapshot's row and its shared-storage
 // objects, but every compute node that cached the capture kept its copy until

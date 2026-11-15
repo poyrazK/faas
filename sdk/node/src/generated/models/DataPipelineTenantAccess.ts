@@ -7,6 +7,10 @@ import type { DataPipelineTenantMembership } from './DataPipelineTenantMembershi
  * Row access through a text, varchar or UUID column present on every selected table. Memberships match verified JWT sub values exactly. Empty memberships revoke every reader.
  */
 export type DataPipelineTenantAccess = {
+  /**
+   * Worker-maintained expiry of the last authoritative Auth membership proof. Expired policies deny SQL reads and return HTTP 503.
+   */
+  readonly valid_until?: string;
   column: string;
   /**
    * At most 128 distinct subjects. Tenant and subject values are bounded to 256 UTF-8 bytes.

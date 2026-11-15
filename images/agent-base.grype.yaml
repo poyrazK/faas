@@ -1,0 +1,32 @@
+# Accepted npm findings for agent-base (ADR 20261024132405).
+#
+# scan-oci-image.sh applies this file to the publication gate pass and
+# scan-published-images.sh to the nightly CVE monitor (ADR-131); the full
+# image report stays unfiltered. agent-base keeps npm so agents can install
+# and test projects; these packages are npm's own bundled dependencies.
+#
+# Reviewed 2026-11-14 for npm 11.21.2, which bundles fixed releases of every
+# other flagged package. No npm release bundles glob >= 14.0.2 or
+# minimatch >= 11.0.1 yet (npm 12.2.2 still ships glob 13.0.6 and
+# minimatch 10.2.5), so a base or npm refresh cannot clear these. Each rule
+# pins the exact bundled version and lapses when npm moves past it.
+ignore:
+  - vulnerability: GHSA-3g3m-2fjr-6pw4
+    reason: >-
+      An aborted async glob walk keeps reading directories after its
+      AbortSignal fires. npm does not bound glob walks with an AbortSignal,
+      and the extra reads stay inside the agent's own microVM.
+    package:
+      name: glob
+      version: 13.0.6
+      type: npm
+  - vulnerability: GHSA-g3hv-75wg-m249
+    reason: >-
+      Attacker-controlled patterns can amplify minimatch's globParts at
+      optimizationLevel >= 2. npm matches patterns from the project the
+      agent itself is working on, inside its own microVM; a slow match
+      costs only that run's CPU, which the run's timeout bounds.
+    package:
+      name: minimatch
+      version: 10.2.5
+      type: npm

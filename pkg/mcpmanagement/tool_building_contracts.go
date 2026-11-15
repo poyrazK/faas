@@ -9,6 +9,13 @@ func toolBuildingOutputSchema(name string) map[string]any {
 		}
 	}
 	switch name {
+	case "gregale_generate_tools_from_openapi":
+		required = append(required, "runtime", "document_sha256", "project_sha256", "server_url", "operation_ids", "fixtures_require_review")
+		add("string", "runtime", "document_sha256", "project_sha256", "server_url", "file", "content", "encoding")
+		add("integer", "offset", "next_offset")
+		add("boolean", "fixtures_require_review")
+		props["files"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
+		props["operation_ids"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	case "gregale_get_tool_template":
 		required = append(required, "runtime", "template_sha256")
 		add("string", "runtime", "template_sha256", "file", "content", "encoding")
@@ -22,6 +29,7 @@ func toolBuildingOutputSchema(name string) map[string]any {
 	default:
 		required = append(required, "plan_id", "action", "account_id", "app", "status", "recovery")
 		add("string", "plan_id", "action", "account_id", "app", "app_id", "expected_serving_deployment_id")
+		props["runtime"] = map[string]any{"type": "string", "enum": []string{"node", "go", "python"}}
 		props["status"] = map[string]any{"type": "string", "enum": []string{"planned", "running", "completed", "failed", "outcome_unknown"}}
 		props["expires_at"] = map[string]any{"type": "string", "format": "date-time"}
 		props["recovery"] = map[string]any{"$ref": "#/$defs/recovery"}

@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "20d40cf0c3aec2008bcb640f26b262d3f0f0de517af822adda73b3691dbc446c",
+      "revision": "7b5c2f9a7eabdbaa25855d558e27680738d1205dae85a640bfbe6998dd5631b5",
       "files": [
         "faas.rules.yml"
       ],
@@ -2636,6 +2636,19 @@
           }
         },
         {
+          "id": "5433e5a0eb2a0e2a2a991b04d30fa3a619700c7cfc231025f30d2544e3c800f6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_serving_probe_coverage",
+          "rule_name": "FaasServingProbeNotificationFailed",
+          "definition": {
+            "expression_hash": "a91b5056ea071c47f8a094cfa83ce79399ec070691980b11dfb643cb19a86728",
+            "labels_hash": "d1564f526ddc1d99db45208653d88f696d7c9e32b35ab4187deb6e9136b45d8a",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "43207de09c0258bb1c70d48e06ad782050dda9992cf43d9cf53e1cd5812f111d"
+          }
+        },
+        {
           "id": "54bf86bf041f9319d69202fb95777d2a120daa6bbfb312d28c919330b11d7a2a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_udp_ingress",
@@ -4115,6 +4128,19 @@
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
             "fingerprint": "fea249b6589559f220c0ff2489545af686f104dd3c04f951c684bd263ba352a0"
+          }
+        },
+        {
+          "id": "8c172a24530735c5a3722e82983a7dbee7d5621957fe909d6d6ddd996660a996",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_serving_probe_coverage",
+          "rule_name": "FaasServingProbeNotificationTelemetryDegraded",
+          "definition": {
+            "expression_hash": "55a7f99eceb4d662e8f8d3e6b96e87fb30e723fda5644e9ce5047d97b02d7d64",
+            "labels_hash": "d1564f526ddc1d99db45208653d88f696d7c9e32b35ab4187deb6e9136b45d8a",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "adcd50453dd97b90c6f0c0f5db179b9ba98ebc9ed7710eebec2ce5d5217a4a62"
           }
         },
         {
@@ -7384,7 +7410,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "b1ab154a6291d20c061c54cf2d4d106ef4511b2cbfa62e963a2cb4dce8c2f09f",
+      "revision": "652f3bb1302950df58687e66a1593e65e99791523b49da7d47a32977360ac60a",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -10124,6 +10150,19 @@
           }
         },
         {
+          "id": "5433e5a0eb2a0e2a2a991b04d30fa3a619700c7cfc231025f30d2544e3c800f6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_serving_probe_coverage",
+          "rule_name": "FaasServingProbeNotificationFailed",
+          "definition": {
+            "expression_hash": "a91b5056ea071c47f8a094cfa83ce79399ec070691980b11dfb643cb19a86728",
+            "labels_hash": "d1564f526ddc1d99db45208653d88f696d7c9e32b35ab4187deb6e9136b45d8a",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "43207de09c0258bb1c70d48e06ad782050dda9992cf43d9cf53e1cd5812f111d"
+          }
+        },
+        {
           "id": "54bf86bf041f9319d69202fb95777d2a120daa6bbfb312d28c919330b11d7a2a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_udp_ingress",
@@ -11694,6 +11733,19 @@
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
             "fingerprint": "fea249b6589559f220c0ff2489545af686f104dd3c04f951c684bd263ba352a0"
+          }
+        },
+        {
+          "id": "8c172a24530735c5a3722e82983a7dbee7d5621957fe909d6d6ddd996660a996",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_serving_probe_coverage",
+          "rule_name": "FaasServingProbeNotificationTelemetryDegraded",
+          "definition": {
+            "expression_hash": "55a7f99eceb4d662e8f8d3e6b96e87fb30e723fda5644e9ce5047d97b02d7d64",
+            "labels_hash": "d1564f526ddc1d99db45208653d88f696d7c9e32b35ab4187deb6e9136b45d8a",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "adcd50453dd97b90c6f0c0f5db179b9ba98ebc9ed7710eebec2ce5d5217a4a62"
           }
         },
         {

@@ -32,6 +32,8 @@ type Connection struct {
 	Identity   string
 }
 type Pipeline struct {
+	IndexWorkBlocked     bool
+	IndexChange          *IndexChange
 	ServingInvalid       bool
 	WALSample            *walRetentionSample
 	ReaderChange         *ReaderChange
@@ -47,6 +49,10 @@ type Pipeline struct {
 	SourceRevision  int64
 }
 type Observation struct {
+	OperationsStatus            *api.DataPipelineOperationsStatus
+	EvolutionApplied            bool
+	IndexOnly                   bool
+	IndexChange                 *IndexChange
 	WALSample                   *walRetentionSample
 	ReaderOnly                  bool
 	ReaderChange                *ReaderChange
@@ -61,6 +67,19 @@ type Observation struct {
 }
 
 func ValidateCreate(r api.CreateDataPipelineRequest) error {
+	if !validOperations(normalizedOperations(r.Operations), r.Tables) || r.Operations != nil && r.Operations.Snapshot != nil && r.FreshnessTargetSeconds != 0 {
+		return ErrInvalid
+	}
+	// Evolution requires an initialized mirror and owner approval.
+	if r.Serving != nil && (r.Serving.Version > 1 || r.Serving.AuthOrganizations != nil || len(r.Serving.Relationships) > 0) {
+		return ErrInvalid
+	}
+	if r.Serving != nil && r.Serving.TenantAccess != nil && r.Serving.TenantAccess.ValidUntil != "" {
+		return ErrInvalid
+	}
+	if !validFreshnessTarget(r.FreshnessTargetSeconds) {
+		return ErrInvalid
+	}
 	if r.Serving != nil && r.Serving.TenantAccess != nil {
 		if len(r.ReadSubjects) != 0 {
 			return ErrInvalid
@@ -133,6 +152,7 @@ func normalize(r api.CreateDataPipelineRequest) api.CreateDataPipelineRequest {
 	r.Tables = slices.Clone(r.Tables)
 	r.ReadSubjects = slices.Clone(r.ReadSubjects)
 	r.Serving = normalizeServing(r.Serving)
+	r.Operations = normalizedOperations(r.Operations)
 	if r.Serving != nil && r.Serving.TenantAccess != nil {
 		r.ReadSubjects = membershipSubjects(r.Serving.TenantAccess.Memberships)
 	}

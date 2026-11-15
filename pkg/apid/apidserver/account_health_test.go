@@ -108,7 +108,7 @@ func TestAccountHealthAPIAndDashboard(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &health); err != nil {
 		t.Fatal(err)
 	}
-	// ADR-20261114090000: without an evaluator the signal list is empty,
+	// ADR-20261114190002: without an evaluator the signal list is empty,
 	// not null.
 	if !strings.Contains(rec.Body.String(), `"signals":[]`) {
 		t.Fatalf("signals missing or null: %s", rec.Body.String())

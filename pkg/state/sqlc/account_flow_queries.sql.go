@@ -424,7 +424,7 @@ SELECT org_id, require_mfa, updated_by_account_id, updated_at
 FROM org_security_policies WHERE org_id = $1
 `
 
-// Organization security policy (ADR 20261113180000).
+// Organization security policy (ADR 20261114170352).
 func (q *Queries) OrgSecurityPolicy(ctx context.Context, db DBTX, orgID pgtype.UUID) (OrgSecurityPolicy, error) {
 	row := db.QueryRow(ctx, orgSecurityPolicy, orgID)
 	var i OrgSecurityPolicy

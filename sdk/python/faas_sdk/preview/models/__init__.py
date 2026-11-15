@@ -1144,6 +1144,7 @@ from .data_api_usage_report_version import DataAPIUsageReportVersion
 from .data_api_user_auth import DataAPIUserAuth
 from .data_connection import DataConnection
 from .data_connection_check import DataConnectionCheck
+from .data_connection_check_mode import DataConnectionCheckMode
 from .data_connection_check_state import DataConnectionCheckState
 from .data_connection_issue import DataConnectionIssue
 from .data_connection_issue_state import DataConnectionIssueState
@@ -1152,16 +1153,57 @@ from .data_endpoint_capacity import DataEndpointCapacity
 from .data_endpoint_capacity_limiting_resource import DataEndpointCapacityLimitingResource
 from .data_endpoint_capacity_state import DataEndpointCapacityState
 from .data_pipeline import DataPipeline
+from .data_pipeline_auth_organizations import DataPipelineAuthOrganizations
 from .data_pipeline_capacity import DataPipelineCapacity
 from .data_pipeline_capacity_state import DataPipelineCapacityState
 from .data_pipeline_desired_state import DataPipelineDesiredState
+from .data_pipeline_evolution import DataPipelineEvolution
+from .data_pipeline_evolution_kind import DataPipelineEvolutionKind
+from .data_pipeline_evolution_request import DataPipelineEvolutionRequest
+from .data_pipeline_evolution_request_action import DataPipelineEvolutionRequestAction
+from .data_pipeline_evolution_request_columns import DataPipelineEvolutionRequestColumns
+from .data_pipeline_evolution_request_kind import DataPipelineEvolutionRequestKind
+from .data_pipeline_evolution_state import DataPipelineEvolutionState
+from .data_pipeline_freshness import DataPipelineFreshness
+from .data_pipeline_freshness_request import DataPipelineFreshnessRequest
 from .data_pipeline_health import DataPipelineHealth
 from .data_pipeline_health_action import DataPipelineHealthAction
 from .data_pipeline_health_state import DataPipelineHealthState
+from .data_pipeline_index_advice import DataPipelineIndexAdvice
+from .data_pipeline_index_key import DataPipelineIndexKey
+from .data_pipeline_index_order import DataPipelineIndexOrder
+from .data_pipeline_index_request import DataPipelineIndexRequest
+from .data_pipeline_index_request_action import DataPipelineIndexRequestAction
 from .data_pipeline_list import DataPipelineList
+from .data_pipeline_operations import DataPipelineOperations
+from .data_pipeline_operations_request import DataPipelineOperationsRequest
+from .data_pipeline_operations_request_action import DataPipelineOperationsRequestAction
+from .data_pipeline_operations_status import DataPipelineOperationsStatus
+from .data_pipeline_operations_version import DataPipelineOperationsVersion
+from .data_pipeline_organization_tenant import DataPipelineOrganizationTenant
+from .data_pipeline_quality_result import DataPipelineQualityResult
+from .data_pipeline_quality_result_state import DataPipelineQualityResultState
+from .data_pipeline_quality_rule import DataPipelineQualityRule
+from .data_pipeline_quality_rule_kind import DataPipelineQualityRuleKind
+from .data_pipeline_quality_schedule import DataPipelineQualitySchedule
+from .data_pipeline_quality_status import DataPipelineQualityStatus
+from .data_pipeline_quality_status_state import DataPipelineQualityStatusState
+from .data_pipeline_relationship import DataPipelineRelationship
+from .data_pipeline_schema_approval_request import DataPipelineSchemaApprovalRequest
+from .data_pipeline_schema_column_change import DataPipelineSchemaColumnChange
+from .data_pipeline_schema_review import DataPipelineSchemaReview
 from .data_pipeline_serving import DataPipelineServing
 from .data_pipeline_serving_columns import DataPipelineServingColumns
 from .data_pipeline_serving_version import DataPipelineServingVersion
+from .data_pipeline_setup import DataPipelineSetup
+from .data_pipeline_setup_control_request import DataPipelineSetupControlRequest
+from .data_pipeline_setup_control_request_action import DataPipelineSetupControlRequestAction
+from .data_pipeline_setup_list import DataPipelineSetupList
+from .data_pipeline_setup_plan import DataPipelineSetupPlan
+from .data_pipeline_setup_request import DataPipelineSetupRequest
+from .data_pipeline_snapshot_schedule import DataPipelineSnapshotSchedule
+from .data_pipeline_snapshot_status import DataPipelineSnapshotStatus
+from .data_pipeline_snapshot_status_state import DataPipelineSnapshotStatusState
 from .data_pipeline_state import DataPipelineState
 from .data_pipeline_tenant_access import DataPipelineTenantAccess
 from .data_pipeline_tenant_change import DataPipelineTenantChange
@@ -1171,6 +1213,8 @@ from .data_pipeline_tenant_readers_request import DataPipelineTenantReadersReque
 from .data_pipeline_tenant_readers_request_action import DataPipelineTenantReadersRequestAction
 from .data_pipeline_verification import DataPipelineVerification
 from .data_pipeline_wal_retention import DataPipelineWALRetention
+from .data_pipeline_work_window import DataPipelineWorkWindow
+from .data_pipeline_workload import DataPipelineWorkload
 from .data_repair_health import DataRepairHealth
 from .data_repair_health_item import DataRepairHealthItem
 from .data_repair_health_item_node_status import DataRepairHealthItemNodeStatus
@@ -2967,6 +3011,8 @@ from .mcp_readiness_destination_queue_failure_kind import MCPReadinessDestinatio
 from .mcp_readiness_destination_queue_provider import MCPReadinessDestinationQueueProvider
 from .mcp_readiness_destination_queue_state import MCPReadinessDestinationQueueState
 from .mcp_readiness_evidence import MCPReadinessEvidence
+from .mcp_readiness_expectation import MCPReadinessExpectation
+from .mcp_readiness_expectation_evidence_ids import MCPReadinessExpectationEvidenceIds
 from .mcp_readiness_fallback_policy import MCPReadinessFallbackPolicy
 from .mcp_readiness_fallback_policy_integration_key_masked import MCPReadinessFallbackPolicyIntegrationKeyMasked
 from .mcp_readiness_fallback_policy_provider import MCPReadinessFallbackPolicyProvider
@@ -3054,6 +3100,8 @@ from .mcpo_auth_retirements_response import MCPOAuthRetirementsResponse
 from .member_list_response import MemberListResponse
 from .mfa_confirm_request import MFAConfirmRequest
 from .mfa_confirm_response import MFAConfirmResponse
+from .mfa_disable_email_cancel_request import MFADisableEmailCancelRequest
+from .mfa_disable_email_cancel_response import MFADisableEmailCancelResponse
 from .mfa_disable_email_confirm_request import MFADisableEmailConfirmRequest
 from .mfa_disable_email_confirm_response import MFADisableEmailConfirmResponse
 from .mfa_disable_email_request import MFADisableEmailRequest
@@ -3339,6 +3387,9 @@ from .obs_input_targets import ObsInputTargets
 from .obs_input_targets_reason import ObsInputTargetsReason
 from .obs_input_targets_state import ObsInputTargetsState
 from .obs_node_operation_preflight import ObsNodeOperationPreflight
+from .obs_node_probe_notifications import ObsNodeProbeNotifications
+from .obs_node_probe_notifications_reason import ObsNodeProbeNotificationsReason
+from .obs_node_probe_notifications_state import ObsNodeProbeNotificationsState
 from .obs_notification_api_status import ObsNotificationAPIStatus
 from .obs_notification_api_status_state import ObsNotificationAPIStatusState
 from .obs_notification_health import ObsNotificationHealth
@@ -3389,8 +3440,23 @@ from .obs_serving_health import ObsServingHealth
 from .obs_serving_health_state import ObsServingHealthState
 from .obs_serving_probe import ObsServingProbe
 from .obs_serving_probe_counts import ObsServingProbeCounts
+from .obs_serving_probe_diagnostics import ObsServingProbeDiagnostics
+from .obs_serving_probe_diagnostics_failure_code import ObsServingProbeDiagnosticsFailureCode
+from .obs_serving_probe_diagnostics_first_failure_code import ObsServingProbeDiagnosticsFirstFailureCode
+from .obs_serving_probe_diagnostics_reason import ObsServingProbeDiagnosticsReason
+from .obs_serving_probe_diagnostics_state import ObsServingProbeDiagnosticsState
 from .obs_serving_probe_inventory import ObsServingProbeInventory
 from .obs_serving_probe_inventory_state import ObsServingProbeInventoryState
+from .obs_serving_probe_notification import ObsServingProbeNotification
+from .obs_serving_probe_notification_channel import ObsServingProbeNotificationChannel
+from .obs_serving_probe_notification_counts import ObsServingProbeNotificationCounts
+from .obs_serving_probe_notification_evidence_reason import ObsServingProbeNotificationEvidenceReason
+from .obs_serving_probe_notification_failure_code import ObsServingProbeNotificationFailureCode
+from .obs_serving_probe_notification_health import ObsServingProbeNotificationHealth
+from .obs_serving_probe_notification_health_reason import ObsServingProbeNotificationHealthReason
+from .obs_serving_probe_notification_health_state import ObsServingProbeNotificationHealthState
+from .obs_serving_probe_notification_reason import ObsServingProbeNotificationReason
+from .obs_serving_probe_notification_state import ObsServingProbeNotificationState
 from .obs_serving_probe_state import ObsServingProbeState
 from .obs_wake_event import ObsWakeEvent
 from .obs_wake_event_data import ObsWakeEventData
@@ -4638,6 +4704,8 @@ from .project_environment_binding_change_response_change import ProjectEnvironme
 from .project_environment_binding_change_response_kind import ProjectEnvironmentBindingChangeResponseKind
 from .project_environment_binding_response import ProjectEnvironmentBindingResponse
 from .project_environment_binding_response_kind import ProjectEnvironmentBindingResponseKind
+from .project_environment_branch_bucket import ProjectEnvironmentBranchBucket
+from .project_environment_branch_bucket_consistency import ProjectEnvironmentBranchBucketConsistency
 from .project_environment_branch_database import ProjectEnvironmentBranchDatabase
 from .project_environment_branch_list_response import ProjectEnvironmentBranchListResponse
 from .project_environment_branch_response import ProjectEnvironmentBranchResponse
@@ -5200,6 +5268,7 @@ from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseri
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
 from .request_data_connection_check import RequestDataConnectionCheck
+from .request_data_connection_check_mode import RequestDataConnectionCheckMode
 from .request_event_execution_lineage_case_backfill_request import RequestEventExecutionLineageCaseBackfillRequest
 from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
@@ -5267,6 +5336,7 @@ from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
 from .rotate_data_connection_request import RotateDataConnectionRequest
 from .rotate_deploy_token_request import RotateDeployTokenRequest
 from .rotate_deploy_token_response import RotateDeployTokenResponse
+from .rotate_key_request import RotateKeyRequest
 from .rotate_key_response import RotateKeyResponse
 from .rotate_managed_realtime_auth_request import RotateManagedRealtimeAuthRequest
 from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResponse
@@ -6074,6 +6144,7 @@ from .tool_o_auth_authorization_response_state import ToolOAuthAuthorizationResp
 from .tool_o_auth_connection_status import ToolOAuthConnectionStatus
 from .tool_o_auth_connection_status_recovery_action import ToolOAuthConnectionStatusRecoveryAction
 from .tool_o_auth_connection_status_state import ToolOAuthConnectionStatusState
+from .tool_publication_auth import ToolPublicationAuth
 from .tool_publication_check import ToolPublicationCheck
 from .tool_publication_check_status import ToolPublicationCheckStatus
 from .tool_publication_intent import ToolPublicationIntent
@@ -6081,9 +6152,21 @@ from .tool_publication_intent_access_mode import ToolPublicationIntentAccessMode
 from .tool_publication_intent_tool_scopes import ToolPublicationIntentToolScopes
 from .tool_publication_outcome import ToolPublicationOutcome
 from .tool_publication_outcome_status import ToolPublicationOutcomeStatus
+from .tool_publication_readiness import ToolPublicationReadiness
+from .tool_publication_readiness_role import ToolPublicationReadinessRole
+from .tool_publication_readiness_role_catalog_format import ToolPublicationReadinessRoleCatalogFormat
+from .tool_publication_readiness_role_protocol_version import ToolPublicationReadinessRoleProtocolVersion
 from .tool_publication_record import ToolPublicationRecord
 from .tool_publication_record_evidence_origin import ToolPublicationRecordEvidenceOrigin
 from .tool_publication_record_status import ToolPublicationRecordStatus
+from .tool_publication_role_result import ToolPublicationRoleResult
+from .tool_publication_verification import ToolPublicationVerification
+from .tool_publication_verification_decision import ToolPublicationVerificationDecision
+from .tool_publication_verification_outcome import ToolPublicationVerificationOutcome
+from .tool_publication_verification_outcome_checks_item import ToolPublicationVerificationOutcomeChecksItem
+from .tool_publication_verification_outcome_checks_item_status import ToolPublicationVerificationOutcomeChecksItemStatus
+from .tool_publication_verification_request import ToolPublicationVerificationRequest
+from .tool_publication_verification_status import ToolPublicationVerificationStatus
 from .tool_registry_page import ToolRegistryPage
 from .tool_registry_tool import ToolRegistryTool
 from .tool_registry_tool_access_mode import ToolRegistryToolAccessMode
@@ -6302,6 +6385,7 @@ from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClas
 from .wake_timeline_page import WakeTimelinePage
 from .wake_timeline_page_mode import WakeTimelinePageMode
 from .wake_timeline_response import WakeTimelineResponse
+from .warmup_hook import WarmupHook
 from .webhook_workflow_binding_response import WebhookWorkflowBindingResponse
 from .webhook_workflow_binding_response_filter import WebhookWorkflowBindingResponseFilter
 from .webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
@@ -7667,6 +7751,7 @@ __all__ = (
     "DatabaseSwitchPhase",
     "DataConnection",
     "DataConnectionCheck",
+    "DataConnectionCheckMode",
     "DataConnectionCheckState",
     "DataConnectionIssue",
     "DataConnectionIssueState",
@@ -7675,16 +7760,57 @@ __all__ = (
     "DataEndpointCapacityLimitingResource",
     "DataEndpointCapacityState",
     "DataPipeline",
+    "DataPipelineAuthOrganizations",
     "DataPipelineCapacity",
     "DataPipelineCapacityState",
     "DataPipelineDesiredState",
+    "DataPipelineEvolution",
+    "DataPipelineEvolutionKind",
+    "DataPipelineEvolutionRequest",
+    "DataPipelineEvolutionRequestAction",
+    "DataPipelineEvolutionRequestColumns",
+    "DataPipelineEvolutionRequestKind",
+    "DataPipelineEvolutionState",
+    "DataPipelineFreshness",
+    "DataPipelineFreshnessRequest",
     "DataPipelineHealth",
     "DataPipelineHealthAction",
     "DataPipelineHealthState",
+    "DataPipelineIndexAdvice",
+    "DataPipelineIndexKey",
+    "DataPipelineIndexOrder",
+    "DataPipelineIndexRequest",
+    "DataPipelineIndexRequestAction",
     "DataPipelineList",
+    "DataPipelineOperations",
+    "DataPipelineOperationsRequest",
+    "DataPipelineOperationsRequestAction",
+    "DataPipelineOperationsStatus",
+    "DataPipelineOperationsVersion",
+    "DataPipelineOrganizationTenant",
+    "DataPipelineQualityResult",
+    "DataPipelineQualityResultState",
+    "DataPipelineQualityRule",
+    "DataPipelineQualityRuleKind",
+    "DataPipelineQualitySchedule",
+    "DataPipelineQualityStatus",
+    "DataPipelineQualityStatusState",
+    "DataPipelineRelationship",
+    "DataPipelineSchemaApprovalRequest",
+    "DataPipelineSchemaColumnChange",
+    "DataPipelineSchemaReview",
     "DataPipelineServing",
     "DataPipelineServingColumns",
     "DataPipelineServingVersion",
+    "DataPipelineSetup",
+    "DataPipelineSetupControlRequest",
+    "DataPipelineSetupControlRequestAction",
+    "DataPipelineSetupList",
+    "DataPipelineSetupPlan",
+    "DataPipelineSetupRequest",
+    "DataPipelineSnapshotSchedule",
+    "DataPipelineSnapshotStatus",
+    "DataPipelineSnapshotStatusState",
     "DataPipelineState",
     "DataPipelineTenantAccess",
     "DataPipelineTenantChange",
@@ -7694,6 +7820,8 @@ __all__ = (
     "DataPipelineTenantReadersRequestAction",
     "DataPipelineVerification",
     "DataPipelineWALRetention",
+    "DataPipelineWorkload",
+    "DataPipelineWorkWindow",
     "DataRepairHealth",
     "DataRepairHealthItem",
     "DataRepairHealthItemNodeStatus",
@@ -9394,6 +9522,8 @@ __all__ = (
     "MCPReadinessDestinationQueueProvider",
     "MCPReadinessDestinationQueueState",
     "MCPReadinessEvidence",
+    "MCPReadinessExpectation",
+    "MCPReadinessExpectationEvidenceIds",
     "MCPReadinessFallbackPolicy",
     "MCPReadinessFallbackPolicyIntegrationKeyMasked",
     "MCPReadinessFallbackPolicyProvider",
@@ -9467,6 +9597,8 @@ __all__ = (
     "MemberListResponse",
     "MFAConfirmRequest",
     "MFAConfirmResponse",
+    "MFADisableEmailCancelRequest",
+    "MFADisableEmailCancelResponse",
     "MFADisableEmailConfirmRequest",
     "MFADisableEmailConfirmResponse",
     "MFADisableEmailRequest",
@@ -9750,6 +9882,9 @@ __all__ = (
     "ObsInputTargetsReason",
     "ObsInputTargetsState",
     "ObsNodeOperationPreflight",
+    "ObsNodeProbeNotifications",
+    "ObsNodeProbeNotificationsReason",
+    "ObsNodeProbeNotificationsState",
     "ObsNotificationAPIStatus",
     "ObsNotificationAPIStatusState",
     "ObsNotificationHealth",
@@ -9800,8 +9935,23 @@ __all__ = (
     "ObsServingHealthState",
     "ObsServingProbe",
     "ObsServingProbeCounts",
+    "ObsServingProbeDiagnostics",
+    "ObsServingProbeDiagnosticsFailureCode",
+    "ObsServingProbeDiagnosticsFirstFailureCode",
+    "ObsServingProbeDiagnosticsReason",
+    "ObsServingProbeDiagnosticsState",
     "ObsServingProbeInventory",
     "ObsServingProbeInventoryState",
+    "ObsServingProbeNotification",
+    "ObsServingProbeNotificationChannel",
+    "ObsServingProbeNotificationCounts",
+    "ObsServingProbeNotificationEvidenceReason",
+    "ObsServingProbeNotificationFailureCode",
+    "ObsServingProbeNotificationHealth",
+    "ObsServingProbeNotificationHealthReason",
+    "ObsServingProbeNotificationHealthState",
+    "ObsServingProbeNotificationReason",
+    "ObsServingProbeNotificationState",
     "ObsServingProbeState",
     "ObsWakeEvent",
     "ObsWakeEventData",
@@ -10917,6 +11067,8 @@ __all__ = (
     "ProjectEnvironmentBindingChangeResponseKind",
     "ProjectEnvironmentBindingResponse",
     "ProjectEnvironmentBindingResponseKind",
+    "ProjectEnvironmentBranchBucket",
+    "ProjectEnvironmentBranchBucketConsistency",
     "ProjectEnvironmentBranchDatabase",
     "ProjectEnvironmentBranchListResponse",
     "ProjectEnvironmentBranchResponse",
@@ -11443,6 +11595,7 @@ __all__ = (
     "RequestAuditListResponse",
     "RequestAuditRecord",
     "RequestDataConnectionCheck",
+    "RequestDataConnectionCheckMode",
     "RequestEventExecutionLineageCaseBackfillRequest",
     "ResizeManagedPostgresDatabaseRequest",
     "ResizeManagedPostgresDatabaseRequestServiceClass",
@@ -11504,6 +11657,7 @@ __all__ = (
     "RotateDataConnectionRequest",
     "RotateDeployTokenRequest",
     "RotateDeployTokenResponse",
+    "RotateKeyRequest",
     "RotateKeyResponse",
     "RotateManagedRealtimeAuthRequest",
     "RotateManagedRealtimeAuthResponse",
@@ -12291,6 +12445,7 @@ __all__ = (
     "ToolOAuthConnectionStatus",
     "ToolOAuthConnectionStatusRecoveryAction",
     "ToolOAuthConnectionStatusState",
+    "ToolPublicationAuth",
     "ToolPublicationCheck",
     "ToolPublicationCheckStatus",
     "ToolPublicationIntent",
@@ -12298,9 +12453,21 @@ __all__ = (
     "ToolPublicationIntentToolScopes",
     "ToolPublicationOutcome",
     "ToolPublicationOutcomeStatus",
+    "ToolPublicationReadiness",
+    "ToolPublicationReadinessRole",
+    "ToolPublicationReadinessRoleCatalogFormat",
+    "ToolPublicationReadinessRoleProtocolVersion",
     "ToolPublicationRecord",
     "ToolPublicationRecordEvidenceOrigin",
     "ToolPublicationRecordStatus",
+    "ToolPublicationRoleResult",
+    "ToolPublicationVerification",
+    "ToolPublicationVerificationDecision",
+    "ToolPublicationVerificationOutcome",
+    "ToolPublicationVerificationOutcomeChecksItem",
+    "ToolPublicationVerificationOutcomeChecksItemStatus",
+    "ToolPublicationVerificationRequest",
+    "ToolPublicationVerificationStatus",
     "ToolRegistryPage",
     "ToolRegistryTool",
     "ToolRegistryToolAccessMode",
@@ -12499,6 +12666,7 @@ __all__ = (
     "WakeTimelinePage",
     "WakeTimelinePageMode",
     "WakeTimelineResponse",
+    "WarmupHook",
     "WebhookWorkflowBindingResponse",
     "WebhookWorkflowBindingResponseFilter",
     "WebhookWorkflowReceiptResponse",

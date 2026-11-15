@@ -1,0 +1,11 @@
+# Managed by vmmd_service (ADR-20261110210000 slice 3j-3): builder VMs pull
+# their app's private registries through a mirror vmmd serves on the VM's
+# vsock. Each request goes to the control plane's secretd by build id, with
+# this node's identity leaf; secretd admits only the node that claimed the
+# running build. vmmd opens no registry password and the guest gets none.
+[Service]
+Environment=FAAS_VMMD_BUILD_REGISTRY_MIRROR=secretd
+Environment=FAAS_SECRETD_TARGET={{ faas_secretd_target }}
+Environment=FAAS_SECRETD_TLS_CERT_PATH=/etc/faas/tls/secretd-client/vmmd.crt
+Environment=FAAS_SECRETD_TLS_KEY_PATH=/etc/faas/tls/secretd-client/vmmd.key
+Environment=FAAS_SECRETD_TLS_CA_PATH=/etc/faas/tls/ca/ca.crt
