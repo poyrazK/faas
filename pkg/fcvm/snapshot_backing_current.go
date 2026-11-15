@@ -45,6 +45,12 @@ func (m *Manager) CheckSnapshotBackingCurrent(ctx context.Context, snap *Snapsho
 	if snap.FCVersion != "" && snap.FCVersion != m.fcVersion {
 		return SnapshotBackingStale, fmt.Errorf("%w: captured by Firecracker %s, this node runs %s", ErrSnapshotBackingChanged, snap.FCVersion, m.fcVersion)
 	}
+	if len(snap.SealedKey) > 0 {
+		// A sealed snapshot's backing identity is encrypted with it
+		// (ADR-20261110210000 slice 3d-3), and opening its key here would
+		// spend a secretd open on a probe: the wake that restores it checks.
+		return SnapshotBackingUnknown, errors.New("fcvm: a sealed snapshot's backing is checked when it restores")
+	}
 	_, err := m.checkSnapshotBacking(ctx, snap, baseKey)
 	switch {
 	case err == nil:

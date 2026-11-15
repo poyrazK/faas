@@ -555,6 +555,7 @@ gregale mcp serve --transport stdio --tools core,build-tools --allow-writes
 | `gregale_generate_tools_from_openapi` | Generate a Node adapter for explicitly selected public OpenAPI operations and an explicit HTTPS server. Returns project/document digests and a file manifest or base64 file chunks. Makes no calls to the described API and executes no generated code. Behavioral assertions must be completed before publication. |
 | `gregale_test_tool` | Execute the project's declared behavioral smoke fixtures once against an exact app/deployment's live zero-traffic preview. Requires writes and `allow_tool_execution: true`; no arbitrary endpoint or serving-release target is accepted. |
 | `gregale_plan_tool_deploy` | Read-only review of source bytes, access policy, fixture summaries and account/app/serving identities. Requires explicit approval of the fixture execution that apply will perform. Creates no deployment and executes no tool. |
+| `gregale_plan_task_tool_deploy` | Offline review of an existing native Task stack release plan using the local CLI. Returns app roles, tool permissions, configured Task limits, source fingerprint and required setup. Creates no executable publication plan. Node workers only. |
 | `gregale_apply_tool_deploy` | Start one asynchronous publication attempt from the unchanged reviewed project, using a private source snapshot. Repeated calls return the same receipt without repeating builds or fixtures. |
 | `gregale_get_tool_deploy` | Inspect that attempt's retained receipt and, when its deployment ID is known and bound, fresh native deployment status. Never invokes fixtures or promotes. |
 
@@ -578,7 +579,7 @@ and behavioral fixtures:
 `access_mode` must match `gregale-mcp.json`. Open access requires no token
 reference. External OAuth requires `token_env`, naming an existing `MCP_*`
 client-token variable in the local CLI environment. Tokens are never accepted
-as tool arguments or inferred from the account's `FAAS_TOKEN`. This slice
+as tool arguments or inferred from the account's `FAAS_TOKEN`. Ordinary publication
 excludes durable MCP Tasks, which retain their dedicated stack release flow.
 The explicit access declaration is required because the built-in example
 starters initially use open access.
@@ -925,6 +926,45 @@ envelopes are bounded to 16 KiB and authorization requests to 24 KiB. The existi
 connection quotas bound retained attempts. No authorization command is exposed
 through agent MCP tools. Local provider tests do not certify a real provider or
 deployed staging acceptance.
+
+## Review a durable Task tool stack
+
+Local account connections with `build-tools` can review a native Task stack
+release plan before an owner performs the existing release workflow. Read-only
+connections can call:
+
+```json
+{"plan_path":"/workspace/reports/release.json"}
+```
+
+through `gregale_plan_task_tool_deploy`, or use the same review directly:
+
+```sh
+gregale mcp server tasks deploy plan --plan ./release.json --json
+```
+
+Source paths resolve relative to the plan file. The existing native plan names
+the web, candidate worker, observer and metrics apps and previous workers. This
+first review supports Node worker projects containing `tasks-release.js`; both
+web and worker sources must enable Tasks and declare their hosting contract.
+
+The review returns the native release fingerprint, tool scope policy, readiness
+role names and explicitly configured Task limit overrides. Omitted limits retain
+starter defaults. Source and policy changes alter the fingerprint. The report
+lists the runtime PostgreSQL binding, separate schema-owner migration binding,
+shared namespace and retained payload keys, read-only observer and scoped metrics
+authority that an owner must prepare. It does not load token variables or
+database credentials, execute source, invoke Node, run migrations, make API
+requests, create a release journal or change traffic. It returns no credential
+references, values or executable publication plan ID.
+
+`bindings_verified` and `ready_to_apply` remain false. The review has no deployed
+app identity, serving baseline or live worker/readiness evidence; it cannot be
+passed to `gregale_apply_tool_deploy`. Continue with the owner-operated native
+Task release workflow after setup and live qualification. Ordinary publication
+still rejects Task-enabled projects. Hosted, organization and app-scoped
+connections cannot inspect local Task plan paths. See
+[ADR 20261115072125](adr/20261115072125-agent-task-release-review.md).
 
 ## Hosted tool publishing (preview)
 
@@ -4017,8 +4057,10 @@ The server is the `mcp-bridged` daemon:
 - **Failover:** after a control-plane takeover, the standby's bootstrap and
   deploy start the server again. Connected agents keep their grants; open
   streams reconnect.
-- **Clients:** the unit allows Claude's and ChatGPT's published OAuth
-  callbacks plus loopback clients. Override `ExecStart` in a drop-in to
+- **Clients:** the unit allows Claude's, ChatGPT's and Google Antigravity's published OAuth
+  callbacks plus loopback clients. Antigravity publishes its client at
+  `https://antigravity.google/oauth/client-metadata.json` and uses the exact
+  callback `https://antigravity.google/oauth-callback`. Override `ExecStart` in a drop-in to
   change the list.
 - **Client identity:** a client either registers (Dynamic Client
   Registration) or names a Client ID Metadata Document URL as its

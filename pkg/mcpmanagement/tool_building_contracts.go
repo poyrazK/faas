@@ -9,6 +9,8 @@ func toolBuildingOutputSchema(name string) map[string]any {
 		}
 	}
 	switch name {
+	case "gregale_plan_task_tool_deploy":
+		return taskToolReviewOutputSchema()
 	case "gregale_generate_tools_from_openapi":
 		required = append(required, "runtime", "document_sha256", "project_sha256", "server_url", "operation_ids", "fixtures_require_review")
 		add("string", "runtime", "document_sha256", "project_sha256", "server_url", "file", "content", "encoding")
