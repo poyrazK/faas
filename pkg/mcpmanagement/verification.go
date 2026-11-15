@@ -261,6 +261,9 @@ func (m *management) verifyRelease(ctx context.Context, t verificationTarget, v 
 func (m *management) addToolVerification(name string, args any, data json.RawMessage) (json.RawMessage, error) {
 	// Task execution retains its native intent/operation receipt; generic plan
 	// verification cannot describe or certify that separate execution authority.
+	if name == "gregale_apply_task_tool_restore" {
+		return bindTaskRestoreReceipt(args, data)
+	}
 	if name == "gregale_apply_task_tool_deploy" {
 		return bindTaskExecutionReceipt(args, data)
 	}

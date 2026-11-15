@@ -6397,6 +6397,9 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, err := m.prepareTaskRecoveryTrafficLocked(ctx, id, newPercent, expectedServingID); err != nil {
+		return Deployment{}, err
+	}
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return Deployment{}, err
 	}
@@ -6567,6 +6570,10 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		applyScheduledStart(&d, start)
 		m.finishScheduledStartLocked(start)
 	}
+	recovery, err := m.prepareTaskRecoveryTrafficLocked(ctx, id, newPercent, expectedServingID)
+	if err != nil {
+		return Deployment{}, err
+	}
 	promotedAt := time.Now().UTC()
 	if newPercent == 100 && priorPercent < 100 {
 		m.markDeploymentPromotedLocked(id, promotedAt)
@@ -6587,6 +6594,10 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 			m.deploymentPromotionReceipts = map[string]api.DeploymentPromotionReceipt{}
 		}
 		m.deploymentPromotionReceipts[submissionKey(d.AppID, promotionReceipt.AttemptID)] = *promotionReceipt
+	}
+	if recovery != nil {
+		g := taskRecoveryTrafficFrom(ctx)
+		m.taskToolReleaseIntents[g.account+":"+g.intent] = cloneTaskToolRelease(*recovery)
 	}
 	return d, nil
 }

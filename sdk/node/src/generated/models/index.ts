@@ -1360,6 +1360,7 @@ export type { LogSearchStatus } from './LogSearchStatus.js';
 export type { LogSearchText } from './LogSearchText.js';
 export type { LogSearchTrace } from './LogSearchTrace.js';
 export type { LogSearchUntil } from './LogSearchUntil.js';
+export type { MCPAccessPolicyExpectation } from './MCPAccessPolicyExpectation.js';
 export type { MCPAdmissionEvidence } from './MCPAdmissionEvidence.js';
 export type { MCPAdmissionGateway } from './MCPAdmissionGateway.js';
 export type { MCPAdmissionHistoryResponse } from './MCPAdmissionHistoryResponse.js';
@@ -3203,6 +3204,8 @@ export type { TCPListenerTLSStatusResponse } from './TCPListenerTLSStatusRespons
 export type { TaskToolRecoveryHandover } from './TaskToolRecoveryHandover.js';
 export type { TaskToolRecoveryQualification } from './TaskToolRecoveryQualification.js';
 export type { TaskToolRecoveryRequest } from './TaskToolRecoveryRequest.js';
+export type { TaskToolRecoveryRestoreRequest } from './TaskToolRecoveryRestoreRequest.js';
+export type { TaskToolRecoveryResult } from './TaskToolRecoveryResult.js';
 export type { TaskToolReleaseApp } from './TaskToolReleaseApp.js';
 export type { TaskToolReleaseExecution } from './TaskToolReleaseExecution.js';
 export type { TaskToolReleaseExecutionRequest } from './TaskToolReleaseExecutionRequest.js';

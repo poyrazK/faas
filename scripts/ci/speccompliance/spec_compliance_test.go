@@ -1700,6 +1700,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "deployment_response_check.go"),
 		filepath.Join(root, "pkg", "api", devBucketsFile),
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
+		filepath.Join(root, "pkg", "api", "mcp_access_fingerprint.go"),
 		filepath.Join(root, "pkg", "api", "mcp_admission.go"),
 		filepath.Join(root, "pkg", "api", "mcp_admission_history.go"),
 		filepath.Join(root, "pkg", "api", "mcp_convergence.go"),

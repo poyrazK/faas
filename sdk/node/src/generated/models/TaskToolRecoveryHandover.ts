@@ -3,10 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { TaskToolRecoveryQualification } from './TaskToolRecoveryQualification.js';
+import type { TaskToolRecoveryResult } from './TaskToolRecoveryResult.js';
 /**
  * Permanent executor fence and separate owner recovery authority. Settlement requires an exit acknowledgement and the native mutation barrier. No recovery apply API consumes this approval yet.
  */
 export type TaskToolRecoveryHandover = {
+  result?: TaskToolRecoveryResult;
   id: string;
   operation_id: string;
   revision: number;
