@@ -85,3 +85,15 @@ is not a rollback.
   permanent and drop events.
 - **Hold already-admitted event invocations.** It needs every invocation
   tagged as event-delivered and adds a check to the drain's hot path.
+
+## Amendment 2026-11-13: held deliveries expire
+
+A delivery held because events or workflows are off for its app, or because
+its plan no longer includes workflows, waited forever: it was claimed and
+re-held every minute and its outbox row was never pruned (event-driven hunt
+#15). It now moves to the dead-letter queue as `delivery_held_expired` once it
+has been held `api.EventDeliveryHoldMax` (7 days) from platform acceptance,
+and is checked again after a tenth of its wait, between one minute and one
+hour, meanwhile. A replay after events are back on routes it normally; a
+replay while still held dead-letters it again at the next check. The owner
+chose 7 days over the plan's settled window.
