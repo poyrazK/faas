@@ -124,6 +124,73 @@ func TestControlPlaneEnvironmentHashCoversInventoryAndVarsOnly(t *testing.T) {
 	}
 }
 
+// CD stages the seal-domain keys beside the vars file and names them by
+// absolute path. Two runners (/opt/actions-runner, /opt/actions-runner-2)
+// and two work directories (cp-converge, host-config) must not move the
+// contract or the environment: on rc.343 and rc.344 they did, and every
+// full release converged every control-plane role.
+func TestControlPlaneHashesIgnoreTheVarsDirectory(t *testing.T) {
+	root := t.TempDir()
+	inventoryRoot := filepath.Join(root, "inventory-root")
+	inventory := []manifestAnsibleFile{{Path: filepath.Join(inventoryRoot, "inventory", "hosts.ini"), Body: []byte("[control_plane]\ncp\n")}}
+	ansibleDir := filepath.Join(root, "ansible")
+	writeContractTree(t, ansibleDir, map[string]string{
+		"bootstrap.yml":                 "- name: cp\n  hosts: control_plane\n  roles:\n    - role: postgres\n",
+		"control_plane_converge.yml":    "- import_playbook: bootstrap.yml\n",
+		"roles/postgres/tasks/main.yml": "- debug: {}\n",
+	})
+	stage := func(work, recipient string) string {
+		vars := filepath.Join(work, "vars.yml")
+		body := "faas_seal_domains_managed: true\n" +
+			"faas_seal_domain_outbound_identity_src: \"" + filepath.Join(work, "seal-domains", "outbound.age") + "\"\n" +
+			"# outbound recipient: " + recipient + "\n"
+		if err := os.MkdirAll(work, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(vars, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return vars
+	}
+	hashes := func(vars string) (string, string) {
+		t.Helper()
+		contract, err := controlPlaneBootstrapContractHash(ansibleDir, inventoryRoot, inventory, vars)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env, err := controlPlaneEnvironmentHash(inventoryRoot, inventory, vars)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return contract, env
+	}
+	c1, e1 := hashes(stage(filepath.Join(root, "actions-runner", "_work", "_temp", "cp-converge"), "age1aaa"))
+	c2, e2 := hashes(stage(filepath.Join(root, "actions-runner-2", "_work", "_temp", "host-config"), "age1aaa"))
+	if c1 != c2 {
+		t.Errorf("contract depends on the vars directory: %s != %s", c1, c2)
+	}
+	if e1 != e2 {
+		t.Errorf("environment depends on the vars directory: %s != %s", e1, e2)
+	}
+	// A rotated key still reaches both hashes through its recipient.
+	c3, e3 := hashes(stage(filepath.Join(root, "actions-runner", "_work", "_temp", "cp-converge"), "age1bbb"))
+	if c3 == c1 || e3 == e1 {
+		t.Errorf("a rotated recipient must change the contract and the environment")
+	}
+	// A path outside the vars directory is content, and stays in the hash.
+	vars := stage(filepath.Join(root, "w"), "age1aaa")
+	if err := os.WriteFile(vars, []byte("x_src: \"/etc/faas/other.age\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, ea := hashes(vars)
+	if err := os.WriteFile(vars, []byte("x_src: \"/etc/faas/moved.age\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, eb := hashes(vars); ea == eb {
+		t.Errorf("a path outside the vars directory must stay an input")
+	}
+}
+
 // Every control-plane role entry carries the selection condition, so a
 // --roles convergence skips exactly the roles it did not name; the compute
 // play, which node_join imports, carries none.
