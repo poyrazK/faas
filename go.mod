@@ -23,6 +23,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kms v1.61.6
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.5
 	github.com/aws/smithy-go v1.28.6
+	github.com/bufbuild/protocompile v0.14.1
 	github.com/caddyserver/certmagic v0.25.6
 	github.com/cloudevents/sdk-go/v2 v2.16.2
 	github.com/corazawaf/coraza-coreruleset/v4 v4.25.0
