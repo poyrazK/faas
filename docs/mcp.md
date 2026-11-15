@@ -4384,8 +4384,10 @@ The server is the `mcp-bridged` daemon:
 - **Failover:** after a control-plane takeover, the standby's bootstrap and
   deploy start the server again. Connected agents keep their grants; open
   streams reconnect.
-- **Clients:** the unit allows Claude's and ChatGPT's published OAuth
-  callbacks plus loopback clients. Override `ExecStart` in a drop-in to
+- **Clients:** the unit allows Claude's, ChatGPT's and Google Antigravity's published OAuth
+  callbacks plus loopback clients. Antigravity publishes its client at
+  `https://antigravity.google/oauth/client-metadata.json` and uses the exact
+  callback `https://antigravity.google/oauth-callback`. Override `ExecStart` in a drop-in to
   change the list.
 - **Client identity:** a client either registers (Dynamic Client
   Registration) or names a Client ID Metadata Document URL as its
