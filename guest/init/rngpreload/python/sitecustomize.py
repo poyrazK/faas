@@ -109,8 +109,89 @@ def _chain_customer_sitecustomize():
     spec.loader.exec_module(module)
 
 
+# A gunicorn master kills any worker whose heartbeat file is older than
+# --timeout (30 s by default), measured on time.monotonic(). A restore advances
+# the guest's monotonic clock by the time the snapshot spent parked
+# (ADR-20261109120000), so on resume the master's 1 s select returns at once
+# and murder_workers sees every worker silent for the whole park: it kills one
+# ("WORKER TIMEOUT") and boots a replacement on every wake, and the
+# replacement's imports compete with the resume hook for the guest's vCPUs.
+#
+# The master checks its workers about once a second. When more than
+# _GUNICORN_FROZEN_GAP seconds pass between two checks the master itself did
+# not run, so the gap says nothing about its workers: refresh every worker's
+# heartbeat and skip that one check. A worker that is really stuck is still
+# killed --timeout seconds later.
+_GUNICORN_FROZEN_GAP = 5.0
+
+
+def _patch_gunicorn_arbiter(module):
+    arbiter = getattr(module, "Arbiter", None)
+    original = getattr(arbiter, "murder_workers", None)
+    if original is None or getattr(original, "_gregale_freeze_guard", False):
+        return
+    import time
+
+    def murder_workers(self, *args, **kwargs):
+        now = time.monotonic()
+        last = getattr(self, "_gregale_last_worker_check", None)
+        self._gregale_last_worker_check = now
+        if last is not None and now - last > _GUNICORN_FROZEN_GAP:
+            for worker in list(getattr(self, "WORKERS", {}).values()):
+                try:
+                    worker.tmp.notify()
+                except Exception:  # noqa: BLE001 - a worker that just exited
+                    pass
+            return None
+        return original(self, *args, **kwargs)
+
+    murder_workers._gregale_freeze_guard = True
+    arbiter.murder_workers = murder_workers
+
+
+def _gregale_gunicorn_freeze_guard():
+    if os.environ.get("GREGALE_GUNICORN_FREEZE_GUARD", "").lower() == "off":
+        return
+    module = sys.modules.get("gunicorn.arbiter")
+    if module is not None:
+        _patch_gunicorn_arbiter(module)
+        return
+    import importlib.abc
+    import importlib.machinery
+
+    class _Loader(importlib.abc.Loader):
+        def __init__(self, inner):
+            self._inner = inner
+
+        def create_module(self, spec):
+            return self._inner.create_module(spec)
+
+        def exec_module(self, module):
+            self._inner.exec_module(module)
+            try:
+                _patch_gunicorn_arbiter(module)
+            except Exception:  # noqa: BLE001 - a gunicorn this does not know
+                pass
+
+    class _Finder(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path, target=None):
+            if fullname != "gunicorn.arbiter":
+                return None
+            spec = importlib.machinery.PathFinder.find_spec(fullname, path)
+            if spec is None or spec.loader is None or not hasattr(spec.loader, "exec_module"):
+                return spec
+            spec.loader = _Loader(spec.loader)
+            return spec
+
+    sys.meta_path.insert(0, _Finder())
+
+
 try:
     _gregale_restore_reseed()
+except Exception:  # noqa: BLE001 - the preload must never stop the app starting
+    pass
+try:
+    _gregale_gunicorn_freeze_guard()
 except Exception:  # noqa: BLE001 - the preload must never stop the app starting
     pass
 _chain_customer_sitecustomize()

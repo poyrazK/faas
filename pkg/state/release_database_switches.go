@@ -55,8 +55,10 @@ type DatabaseSwitchDrain struct {
 }
 
 // DatabaseSwitch is a rollback that restores the app's managed PostgreSQL
-// database with the code (ADR-20261023181931). UndoneDeploymentIDs are the
-// deployments whose release commands the restore undoes.
+// database with the code (ADR-20261023181931), or a restore that moves the
+// app to the copy and keeps its code (amendment 3, KeepsRelease).
+// UndoneDeploymentIDs are the deployments whose release commands the
+// restore undoes; none when the switch keeps the release.
 type DatabaseSwitch struct {
 	ID                  string
 	AccountID           string
@@ -138,8 +140,21 @@ func validNewDatabaseSwitch(sw DatabaseSwitch) bool {
 			return false
 		}
 	}
-	return len(sw.UndoneDeploymentIDs) > 0 && sw.TargetName != "" && len(sw.TargetName) <= 63 &&
+	// A switch that undoes no release keeps the release it was requested
+	// on (ADR-20261023181931 amendment 3).
+	if len(sw.UndoneDeploymentIDs) == 0 && (sw.FromDeploymentID == "" || sw.FromDeploymentID != sw.TargetDeploymentID) {
+		return false
+	}
+	return len(sw.UndoneDeploymentIDs) <= 64 && sw.TargetName != "" && len(sw.TargetName) <= 63 &&
 		!sw.RestorePoint.IsZero() && normalizedDeploymentScope(sw.Scope) != ""
+}
+
+// KeepsRelease reports whether the switch moves the app to the restored
+// copy without changing its code: `gregale postgres restore --switch`
+// (ADR-20261023181931 amendment 3). It undoes no release, and its target
+// deployment is the one that served when it was requested.
+func (sw DatabaseSwitch) KeepsRelease() bool {
+	return len(sw.UndoneDeploymentIDs) == 0
 }
 
 func (m *MemStore) CreateDatabaseSwitch(_ context.Context, sw DatabaseSwitch) (DatabaseSwitch, error) {

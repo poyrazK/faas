@@ -147,13 +147,13 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 				"Developer session shape changed", "run 'gregale dev --stop' once, then start the session again"))
 			return
 		}
-		if prob := devloop.WatchUnsupported(existing, watch); prob != nil {
+		if prob := devloop.WatchUnsupported(existing, acct.Plan, watch); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
 		refreshed, refreshErr := s.store.RefreshDevSession(r.Context(), existing.ID, expiresAt)
 		if refreshErr != nil {
-			api.WriteProblem(w, api.ErrCapacity("refresh developer session"))
+			s.writeDevSessionRefreshError(w, existing, refreshErr)
 			return
 		}
 		s.audit.Emit(r.Context(), "dev_session.refreshed", &acct.ID, map[string]any{
@@ -162,11 +162,11 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 		s.writeDevSession(w, r, acct, refreshed, req, http.StatusOK)
 		return
 	} else if !errors.Is(err, state.ErrNotFound) {
-		api.WriteProblem(w, api.ErrCapacity("load developer session"))
+		s.writeDevSessionStoreError(w, "load developer session", slug, err)
 		return
 	}
 
-	if prob := devloop.WatchUnsupported(app, watch); prob != nil {
+	if prob := devloop.WatchUnsupported(app, acct.Plan, watch); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -184,7 +184,7 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 			if revived, ok := s.reviveDevSession(r, acct, slug, project, app, limits); ok {
 				refreshed, refreshErr := s.store.RefreshDevSession(r.Context(), revived.ID, expiresAt)
 				if refreshErr != nil {
-					api.WriteProblem(w, api.ErrCapacity("refresh developer session"))
+					s.writeDevSessionRefreshError(w, revived, refreshErr)
 					return
 				}
 				s.audit.Emit(r.Context(), "dev_session.revived", &acct.ID, map[string]any{
@@ -205,7 +205,7 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 			}
 			refreshed, refreshErr := s.store.RefreshDevSession(r.Context(), existing.ID, expiresAt)
 			if refreshErr != nil {
-				api.WriteProblem(w, api.ErrCapacity("refresh developer session"))
+				s.writeDevSessionRefreshError(w, existing, refreshErr)
 				return
 			}
 			s.audit.Emit(r.Context(), "dev_session.refreshed", &acct.ID, map[string]any{
@@ -214,7 +214,7 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 			s.writeDevSession(w, r, acct, refreshed, req, http.StatusOK)
 			return
 		default:
-			api.WriteProblem(w, api.ErrCapacity("create developer session"))
+			s.writeDevSessionStoreError(w, "create developer session", slug, err)
 		}
 		return
 	}
@@ -225,6 +225,29 @@ func (s *server) upsertDevSession(w http.ResponseWriter, r *http.Request, acct s
 	s.log.Info("developer session created", "app", created.ID,
 		"slug", logsanitize.Field(created.Slug), "account", acct.ID)
 	s.writeDevSession(w, r, acct, created, req, http.StatusCreated)
+}
+
+// writeDevSessionRefreshError explains a failed lease renewal. The renewal
+// matches no row once the janitor or `gregale dev --stop` has claimed the
+// environment for teardown, which is a state the developer can act on, not a
+// capacity problem. Anything else is logged with its cause before the
+// generic retry answer, so a "briefly at capacity" reply is traceable.
+func (s *server) writeDevSessionRefreshError(w http.ResponseWriter, app state.App, err error) {
+	if errors.Is(err, state.ErrNotFound) {
+		s.log.Info("developer session renewal refused: teardown in progress",
+			"app", app.ID, "slug", logsanitize.Field(app.Slug), "preview_state", app.PreviewPrState)
+		api.WriteProblem(w, api.ErrDevSessionTearingDown())
+		return
+	}
+	s.writeDevSessionStoreError(w, "refresh developer session", app.Slug, err)
+}
+
+// writeDevSessionStoreError logs an unexpected store failure and answers the
+// retryable capacity problem.
+func (s *server) writeDevSessionStoreError(w http.ResponseWriter, operation, slug string, err error) {
+	s.log.Error("developer session store error", "operation", operation,
+		"slug", logsanitize.Field(slug), "err", err)
+	api.WriteProblem(w, api.ErrCapacity(operation))
 }
 
 // reviveDevSession restores the caller's own deleted developer session when
@@ -269,18 +292,53 @@ func (s *server) destroyDevSession(w http.ResponseWriter, r *http.Request, acct 
 		s.notFound(w, "no such developer session")
 		return
 	}
-	workspaceID := r.URL.Query().Get("workspace_id")
-	if !validDevWorkspaceID(workspaceID) {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid workspace ID", "workspace_id must be 32 lowercase hexadecimal characters"))
-		return
+	// A developer environment is normally selected by the workspace that made
+	// it. ?app=<dev slug> selects it by its backing app instead, so an
+	// environment left behind by a moved, renamed or deleted checkout can be
+	// stopped from anywhere (`gregale dev list`, `gregale dev --stop --app`).
+	slug := r.URL.Query().Get("app")
+	if slug == "" {
+		workspaceID := r.URL.Query().Get("workspace_id")
+		if !validDevWorkspaceID(workspaceID) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid workspace ID", "workspace_id must be 32 lowercase hexadecimal characters"))
+			return
+		}
+		slug = devSessionSlug(acct.ID, project, workspaceID)
 	}
-	app, err := s.store.AppBySlug(r.Context(), devSessionSlug(acct.ID, project, workspaceID))
-	if err != nil || app.AccountID != acct.ID || app.PreviewOfSlug != project || app.PreviewPrNumber != 0 {
+	app, err := s.store.AppBySlug(r.Context(), slug)
+	if err != nil || app.AccountID != acct.ID || app.PreviewOfSlug != project || !state.IsDeveloperApp(app) {
 		s.notFound(w, "no such developer session")
 		return
 	}
 	s.destroyPreviewApp(w, r, acct, app, "dev_session.destroyed")
+}
+
+// listDevSessions lists the account's developer environments, wherever they
+// were started, so an environment whose checkout moved can still be found
+// and stopped. It never renews a lease.
+func (s *server) listDevSessions(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	rows, err := s.store.ListPreviewsForAccount(r.Context(), acct.ID)
+	if err != nil {
+		s.writeDevSessionStoreError(w, "list developer sessions", "", err)
+		return
+	}
+	out := api.DevSessionListResponse{Sessions: []api.DevSessionSummary{}}
+	for _, app := range rows {
+		if app.AccountID != acct.ID || !state.IsDeveloperApp(app) {
+			continue
+		}
+		item := api.DevSessionSummary{
+			Project: app.PreviewOfSlug, App: app.Slug, URL: appURLForDomain(app.Slug, s.domain),
+			State: app.PreviewPrState,
+		}
+		if app.PreviewExpiresAt != nil {
+			item.ExpiresAt = app.PreviewExpiresAt.UTC()
+		}
+		out.Sessions = append(out.Sessions, item)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, out)
 }
 
 // getDevSession reports the developer environment selected by the account,
@@ -306,7 +364,7 @@ func (s *server) getDevSession(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	postgres, err := s.describeDevPostgres(r.Context(), app)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("load developer PostgreSQL"))
+		s.writeDevSessionStoreError(w, "load developer PostgreSQL", app.Slug, err)
 		return
 	}
 	buckets, err := s.object.DescribeDevBuckets(r, app)
@@ -321,7 +379,8 @@ func (s *server) getDevSession(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	writeJSON(w, http.StatusOK, api.DevSessionResponse{
 		App: s.appResponseWithContext(r.Context(), app, acct.Plan), ExpiresAt: expiresAt, Postgres: postgres, Buckets: buckets,
-		Watch: devloop.LoadWatch(r.Context(), s.store, app.ID),
+		Watch:       devloop.LoadWatch(r.Context(), s.store, app.ID),
+		LivePatches: devLivePatches(),
 	})
 }
 
@@ -499,13 +558,17 @@ func (s *server) recordDevSync(w http.ResponseWriter, r *http.Request, acct stat
 		safePhases[i].Reason = ""
 	}
 	phases, _ := json.Marshal(safePhases)
+	// The target and the verdict are the platform's, not the client's: an old
+	// or modified CLI must not move the fleet edit-to-live SLO.
+	req.SLOTargetMS = api.DevEditToLiveTarget.Milliseconds()
+	req.WithinSLO = req.Status == "live" && req.EditToLiveMS <= req.SLOTargetMS
 	row, err := history.RecordDevSyncHistory(r.Context(), state.DevSyncHistory{
 		AppID: app.ID, DeploymentID: req.DeploymentID, Status: req.Status,
 		EditToLiveMS: req.EditToLiveMS, SLOTargetMS: req.SLOTargetMS,
 		WithinSLO: req.WithinSLO, Phases: phases,
 	})
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("record developer sync history"))
+		s.writeDevSessionStoreError(w, "record developer sync history", app.Slug, err)
 		return
 	}
 	s.devLoopMetrics.ObserveSync(req, devloop.LoadWatch(r.Context(), s.store, app.ID) != nil)
@@ -543,7 +606,7 @@ func (s *server) listDevSyncHistory(w http.ResponseWriter, r *http.Request, acct
 	}
 	rows, err := history.ListDevSyncHistory(r.Context(), app.ID, limit)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("load developer sync history"))
+		s.writeDevSessionStoreError(w, "load developer sync history", app.Slug, err)
 		return
 	}
 	items := make([]api.DevSyncHistoryItem, 0, len(rows))

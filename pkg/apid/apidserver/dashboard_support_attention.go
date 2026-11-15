@@ -1,7 +1,7 @@
 package apidserver
 
 // Staff inbox page for customer attention signals (ADR-20261113123000,
-// contact and outcomes ADR-20261113180000):
+// contact and outcomes ADR-20261115175928):
 //
 //	GET  /dashboard/admin/support/attention             — customers who may be stuck
 //	GET  /dashboard/admin/support/attention?contact=ID  — the contact form for one signal
@@ -14,6 +14,7 @@ package apidserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -202,22 +203,31 @@ func (s *server) supportAttentionWrite(w http.ResponseWriter, r *http.Request, a
 
 func (s *server) attentionDismissWrite(id int64, outcome, note string) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, staff state.Account) {
-		signal, err := s.attention.Get(r.Context(), id)
-		if err == nil {
-			err = s.attention.Dismiss(r.Context(), id, staff.ID, outcome, note)
+		if problem := s.dismissAttention(r.Context(), id, staff.ID, outcome, note); problem != nil {
+			api.WriteProblem(w, problem)
+			return
 		}
-		switch {
-		case errors.Is(err, attention.ErrNotFound):
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Signal not open", "This signal was already handled or resolved."))
-		case errors.Is(err, attention.ErrInvalid):
-			api.WriteProblem(w, api.ErrValidation("Pick an outcome and keep the note under "+strconv.Itoa(api.AttentionDismissReasonMax)+" characters."))
-		case err != nil:
-			api.WriteProblem(w, api.ErrCapacity("could not dismiss the signal"))
-		default:
-			s.countAttentionOutcome(signal.Kind, outcome)
-			w.WriteHeader(http.StatusNoContent)
-		}
+		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// dismissAttention dismisses an open signal with an outcome, for the staff
+// page and the operator console (ADR-20261115175927).
+func (s *server) dismissAttention(ctx context.Context, id int64, staffID, outcome, note string) *api.Problem {
+	signal, err := s.attention.Get(ctx, id)
+	if err == nil {
+		err = s.attention.Dismiss(ctx, id, staffID, outcome, note)
+	}
+	switch {
+	case errors.Is(err, attention.ErrNotFound):
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Signal not open", "This signal was already handled or resolved.")
+	case errors.Is(err, attention.ErrInvalid):
+		return api.ErrValidation("Pick an outcome and keep the note under " + strconv.Itoa(api.AttentionDismissReasonMax) + " characters.")
+	case err != nil:
+		return api.ErrCapacity("could not dismiss the signal")
+	}
+	s.countAttentionOutcome(signal.Kind, outcome)
+	return nil
 }
 
 // attentionContactWrite opens the support ticket, then links it to the
@@ -225,33 +235,42 @@ func (s *server) attentionDismissWrite(id int64, outcome, note string) accountHa
 // links it again, so a failure between the two steps heals on resubmit.
 func (s *server) attentionContactWrite(signal api.ObsAttentionSignal, form *SupportAttentionContact) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, staff state.Account) {
-		if signal.State != api.AttentionStateOpen && signal.Outcome != api.AttentionOutcomeContacted {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Signal not open", "This signal was already handled or resolved."))
-			return
-		}
-		out, err := s.customerSupport.ContactCustomer(r.Context(), support.Actor{ID: staff.ID, Session: true}, form.Key, support.ContactRequest{
-			AccountID: signal.AccountID, Subject: form.Subject, Category: form.Category, Body: form.Body, SignalID: signal.ID})
-		var problem *api.Problem
-		if errors.As(err, &problem) {
+		if _, problem := s.contactAttention(r.Context(), signal, staff.ID, form.Key, api.ObsAttentionContactRequest{
+			Subject: form.Subject, Category: form.Category, Body: form.Body}); problem != nil {
 			api.WriteProblem(w, problem)
 			return
 		}
-		if err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not open the support ticket"))
-			return
-		}
-		switch err := s.attention.Contacted(r.Context(), signal.ID, staff.ID, out.TicketID); {
-		case errors.Is(err, attention.ErrNotFound):
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Signal not open", "The ticket was opened, but the signal was already handled; see ticket "+out.TicketID+"."))
-		case err != nil:
-			api.WriteProblem(w, api.ErrCapacity("the ticket was opened; submit again to link it to the signal"))
-		default:
-			if signal.State == api.AttentionStateOpen {
-				s.countAttentionOutcome(signal.Kind, api.AttentionOutcomeContacted)
-			}
-			w.WriteHeader(http.StatusNoContent)
-		}
+		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// contactAttention opens the support ticket, then links it to the signal,
+// for the staff page and the operator console (ADR-20261115175927). A retry
+// with the same idempotency key replays the ticket and links it again, so a
+// failure between the two steps heals on resubmit.
+func (s *server) contactAttention(ctx context.Context, signal api.ObsAttentionSignal, staffID, key string, in api.ObsAttentionContactRequest) (string, *api.Problem) {
+	if signal.State != api.AttentionStateOpen && signal.Outcome != api.AttentionOutcomeContacted {
+		return "", api.NewProblem(http.StatusConflict, api.CodeConflict, "Signal not open", "This signal was already handled or resolved.")
+	}
+	out, err := s.customerSupport.ContactCustomer(ctx, support.Actor{ID: staffID, Session: true}, key, support.ContactRequest{
+		AccountID: signal.AccountID, Subject: in.Subject, Category: in.Category, Body: in.Body, SignalID: signal.ID})
+	var problem *api.Problem
+	if errors.As(err, &problem) {
+		return "", problem
+	}
+	if err != nil {
+		return "", api.ErrCapacity("could not open the support ticket")
+	}
+	switch err := s.attention.Contacted(ctx, signal.ID, staffID, out.TicketID); {
+	case errors.Is(err, attention.ErrNotFound):
+		return out.TicketID, api.NewProblem(http.StatusConflict, api.CodeConflict, "Signal not open", "The ticket was opened, but the signal was already handled; see ticket "+out.TicketID+".")
+	case err != nil:
+		return out.TicketID, api.ErrCapacity("the ticket was opened; submit again to link it to the signal")
+	}
+	if signal.State == api.AttentionStateOpen {
+		s.countAttentionOutcome(signal.Kind, api.AttentionOutcomeContacted)
+	}
+	return out.TicketID, nil
 }
 
 // attentionWriteResponse buffers a gated write so the page can show its problem.

@@ -1196,6 +1196,21 @@ func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, w
 	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
+// DestroyDevSessionByApp stops a developer environment selected by its
+// backing dev-* app slug instead of the local workspace, for environments
+// whose checkout moved (DELETE /v1/dev/sessions/{project}?app=).
+func (c *Client) DestroyDevSessionByApp(ctx context.Context, project, appSlug string) error {
+	path := "/v1/dev/sessions/" + project + "?" + url.Values{"app": {appSlug}}.Encode()
+	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
+// GetDevSessions is the path-shaped SDK method for GET /v1/dev/sessions: the
+// account's developer environments, wherever they were started.
+func (c *Client) GetDevSessions(ctx context.Context) (DevSessionListResponse, error) {
+	var out DevSessionListResponse
+	return out, c.do(ctx, "GET", "/v1/dev/sessions", nil, &out)
+}
+
 // RegisterScenarioTest gives a run's developer sessions a private service
 // namespace before source deployment. Registration is create-only.
 func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req RegisterScenarioTestRequest) error {
@@ -1715,7 +1730,17 @@ func (c *Client) DeployDevSource(ctx context.Context, slug string, source io.Rea
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("Idempotency-Key", newUUIDv4())
+	// Like DeployTarball: a caller-supplied key and attempt identity let a
+	// retried or timed-out sync replay or recover the same deployment
+	// instead of starting a second build nobody can cancel.
+	idempotencyKey := IdempotencyKeyFromContext(ctx)
+	if idempotencyKey == "" {
+		idempotencyKey = newUUIDv4()
+	}
+	req.Header.Set("Idempotency-Key", idempotencyKey)
+	for key, values := range deploymentAttemptHeaders(ctx) {
+		req.Header[key] = values
+	}
 	var out DeploymentResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
@@ -5010,16 +5035,40 @@ func (c *Client) ListAuditLogAllPage(ctx context.Context, before, accountID, sin
 // MintCliAuthCode anonymously mints a fresh login code bound to a device
 // code; ExchangeCliAuthLogin exchanges it.
 func (c *Client) MintCliAuthCode(ctx context.Context) (CliAuthCodeResponse, error) {
-	var out CliAuthCodeResponse
-	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true}, &out)
+	return c.mintCliAuthLoginCode(ctx, CliAuthCodeRequest{Device: true})
 }
 
 // MintCliAuthLoopbackCode mints a one-click login code whose approval is
 // sent to 127.0.0.1:port (ADR-20261111170000). The response's Loopback is
 // false when the server kept the typed-code flow.
 func (c *Client) MintCliAuthLoopbackCode(ctx context.Context, port int) (CliAuthCodeResponse, error) {
+	return c.mintCliAuthLoginCode(ctx, CliAuthCodeRequest{Device: true, LoopbackPort: port})
+}
+
+// mintCliAuthLoginCode mints a login code bound to a fresh verifier, whose
+// SHA-256 goes as the code challenge and which only the exchange sees, so a
+// device code that leaks on its way back (browser history, a local server's
+// log) is useless alone. A server that predates code challenges refuses the
+// unknown field with 400; the request is then sent once without it.
+func (c *Client) mintCliAuthLoginCode(ctx context.Context, req CliAuthCodeRequest) (CliAuthCodeResponse, error) {
+	verifier, challenge, err := NewCliAuthVerifier()
+	if err != nil {
+		return CliAuthCodeResponse{}, err
+	}
+	withChallenge := req
+	withChallenge.CodeChallenge = challenge
 	var out CliAuthCodeResponse
-	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true, LoopbackPort: port}, &out)
+	err = c.do(ctx, "POST", "/v1/cli-auth/code", withChallenge, &out)
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Problem.Status == http.StatusBadRequest {
+		out = CliAuthCodeResponse{}
+		return out, c.do(ctx, "POST", "/v1/cli-auth/code", req, &out)
+	}
+	if err != nil {
+		return out, err
+	}
+	out.Verifier = verifier
+	return out, nil
 }
 
 // ExchangeCliAuthLogin polls for a minted code's approval: with its device
@@ -5030,7 +5079,7 @@ func (c *Client) ExchangeCliAuthLogin(ctx context.Context, minted CliAuthCodeRes
 	}
 	var out CliAuthExchangeResponse
 	return out, c.do(ctx, "POST", "/v1/cli-auth/exchange",
-		CliAuthExchangeRequest{DeviceCode: minted.DeviceCode}, &out)
+		CliAuthExchangeRequest{DeviceCode: minted.DeviceCode, CodeVerifier: minted.Verifier}, &out)
 }
 
 // ExchangeCliAuthCode polls the server for the user's approval.
@@ -6211,6 +6260,37 @@ func (c *Client) ListEgressFlows(ctx context.Context, q EgressFlowQuery) (Egress
 		path += "?" + encoded
 	}
 	var out EgressFlowLogResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAccountRisk reads an account's abuse risk via
+// GET /v1/admin/accounts/{id}/risk (ADR-20261115090000). includePII adds
+// email, sign-up address and user agent and is audited. Operator-only.
+func (c *Client) GetAccountRisk(ctx context.Context, accountID string, includePII bool) (AccountRiskResponse, error) {
+	path := "/v1/admin/accounts/" + url.PathEscape(accountID) + "/risk"
+	if includePII {
+		path += "?include_pii=1"
+	}
+	var out AccountRiskResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ListHeldLinks lists links to abuse-held accounts detected in the last
+// since via GET /v1/admin/held-links (ADR-20261114174600). since and limit
+// default to 24h and 200 when zero. Operator-only.
+func (c *Client) ListHeldLinks(ctx context.Context, since time.Duration, limit int) (HeldLinksResponse, error) {
+	v := url.Values{}
+	if since > 0 {
+		v.Set("since", since.String())
+	}
+	if limit > 0 {
+		v.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/admin/held-links"
+	if encoded := v.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out HeldLinksResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 

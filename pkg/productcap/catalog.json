@@ -1368,8 +1368,8 @@
       "id": "database-rollbacks",
       "name": "Rollbacks that restore the database",
       "category": "data",
-      "description": "Roll an app back with its managed databases restored to that release's point in time.",
-      "maturity": "preview",
+      "description": "Roll an app back with its managed databases restored to that release's point in time, or restore a database and move the app to the copy without changing its code.",
+      "maturity": "ga",
       "plans": [
         "hobby",
         "pro",

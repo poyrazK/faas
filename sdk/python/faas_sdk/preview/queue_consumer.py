@@ -41,6 +41,7 @@ _TOKEN_REFRESH_MARGIN_SECONDS = 60
 _MAX_BACKOFF_SECONDS = 30.0
 # A call may not outlive its server-side wait by more than this.
 _CALL_SLACK_SECONDS = 10.0
+_SETTLE_RETRY_DELAYS_SECONDS = (0.5, 2.0)
 # Acks and lease extensions that come due within this window share one call of
 # up to _MAX_BATCH receipts, so a busy consumer makes far fewer requests.
 _SETTLE_BATCH_WINDOW_SECONDS = 0.02
@@ -273,24 +274,44 @@ class QueueConsumer:
         if lost.is_set():
             return  # the message belongs to its next delivery now
         try:
-            if failure is None:
-                held = await self._acks.add(receipt)
-            else:
-                held = await self._settle(
-                    ":nack", receipt, {"error": _error_text(failure), "delay_seconds": self._retry_delay}
-                )
+            # A transient settle failure is retried: otherwise the handled
+            # message was redelivered after its timeout (ADR-20261113180000).
+            for delay in (*_SETTLE_RETRY_DELAYS_SECONDS, None):
+                try:
+                    if failure is None:
+                        held = await self._acks.add(receipt)
+                    else:
+                        held = await self._settle(
+                            ":nack", receipt, {"error": _error_text(failure), "delay_seconds": self._retry_delay}
+                        )
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    if delay is None or self._stopping.is_set():
+                        raise
+                    await asyncio.sleep(delay)
             if not held:
                 self._report(RuntimeError(f"Queue lease for message {message.id} expired before it was settled"))
         except Exception as error:  # redelivered after the timeout
             self._report(error)
 
     async def _extend_until_done(self, receipt: str, lost: asyncio.Event) -> None:
+        # Extend every third of the visibility timeout, so one failed extend
+        # still leaves a retry before the lease runs out; once none has held
+        # for a whole timeout the lease has lapsed and the message is being
+        # redelivered, so the handler is told (ADR-20261113180000, R6-2).
+        held_at = time.monotonic()
         while True:
-            await asyncio.sleep(self._visibility / 2)
+            await asyncio.sleep(self._visibility / 3)
+            if time.monotonic() - held_at >= self._visibility:
+                lost.set()
+                return
             try:
                 if not await self._extensions.add(receipt):
                     lost.set()
                     return
+                held_at = time.monotonic()
             except asyncio.CancelledError:
                 raise
             except Exception as error:  # the next tick retries

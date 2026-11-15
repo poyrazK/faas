@@ -11,6 +11,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const listLiveSnapshotLayerKeys = `-- name: ListLiveSnapshotLayerKeys :many
+SELECT DISTINCT (CASE WHEN d.rootfs_key <> '' THEN d.rootfs_key
+                      ELSE 'layers/' || d.id::text || '.ext4' END)::text AS key
+  FROM snapshots sn
+  JOIN deployments d ON d.id = sn.deployment_id
+ WHERE NOT sn.stale
+UNION
+SELECT dsl.storage_key::text
+  FROM deployment_sidecar_layers dsl
+  JOIN snapshots sn ON sn.deployment_id = dsl.deployment_id
+ WHERE NOT sn.stale
+   AND dsl.storage_key <> ''
+`
+
+// The app and sidecar layers of deployments with a non-stale snapshot, keyed
+// as ClaimSnapshotReplica keys them. Snapshot fan-out keeps a replica only
+// while its layers are cached too, so these share the live captures' last
+// eviction tier.
+func (q *Queries) ListLiveSnapshotLayerKeys(ctx context.Context, db DBTX) ([]string, error) {
+	rows, err := db.Query(ctx, listLiveSnapshotLayerKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		items = append(items, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listReferencedSnapshotCaptureKeys = `-- name: ListReferencedSnapshotCaptureKeys :many
 SELECT storage_key::text AS key, (CASE WHEN stale THEN 'stale' ELSE 'live' END)::text AS use
   FROM snapshots

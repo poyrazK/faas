@@ -91,10 +91,12 @@ CREATE TABLE deployment_image_preparations (
 );
 
 -- Projection of deployments: which app a deployment belongs to
--- (ADR-20261110210000 slice 3j-2).
+-- (ADR-20261110210000 slice 3j-2), and the registry repositories its builds
+-- may pull (slice 3j-4).
 CREATE TABLE deployments (
-    id     uuid NOT NULL PRIMARY KEY,
-    app_id uuid NOT NULL
+    id                   uuid NOT NULL PRIMARY KEY,
+    app_id               uuid NOT NULL,
+    build_registry_scope text[]
 );
 
 -- Projections of job_registry_credentials and jobs: a job's registry
