@@ -2373,6 +2373,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261114182830: Node cache disk budget and reference-based retention](20261114182830-node-cache-budget-from-disk-and-retention.md) — accepted; filesystem-sized budget, unreferenced capture/base retention and live snapshots evicted last. Renumbered from the startup-window identifier collision.
 
 - [ADR-20261114190002: Customers see their own attention signals; sign-in refusals are recorded](20261114190002-customer-signal-hints-and-credential-refusals.md)
+
+- [ADR-20261114191709: Read-only recovery for CLI app health waits](20261114191709-cli-app-health-wait-recovery.md) — accepted; scoped inspection and continuation, preserved evidence, timing and exit contracts.
 - [ADR-20261114193000: Local source preparation in the Node and Python SDKs](20261114193000-sdk-local-source-preparation.md) — accepted; inspectable worktree plans, CLI selection contracts, reproducible streaming archives, filesystem checks, deadlines and cancellation.
 - [ADR-20261114201959: Resumable source deployment workflows in the SDKs](20261114201959-sdk-resumable-source-deployment-workflows.md) — accepted; local journals compose preparation, checkpointed uploads, receipt recovery and release observation with one deadline and typed outcomes.
 - [ADR-20261114220642: Typed project inspection in Node and Python](20261114220642-sdk-typed-project-inspection.md) — accepted; immutable discovery plans resolve manifest/workspace intent and bind configuration fingerprints to resumable deployments without rewriting source.

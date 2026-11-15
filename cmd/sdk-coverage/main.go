@@ -1598,6 +1598,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/account/egress-overage":                             "SetEgressOverage",
 	"POST /v1/account/mfa/disable-email":                         "PostAccountMfaDisableEmail",
 	"POST /v1/account/mfa/disable-email/confirm":                 "PostAccountMfaDisableEmailConfirm",
+	"POST /v1/account/mfa/disable-email-cancel":                  "PostAccountMfaDisableEmailCancel", // literal hyphen; operationId mfaDisableEmailCancel (ADR-20261115100000)
 	// ADR-20261107103000 account flow routes.
 	"PATCH /v1/account":                              "SetDisplayName",
 	"GET /v1/account/sign-in-methods":                "SignInMethods",

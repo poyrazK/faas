@@ -30,6 +30,33 @@ func (q *Queries) AppSecretCiphertext(ctx context.Context, db DBTX, arg AppSecre
 	return ciphertext, err
 }
 
+const buildRunner = `-- name: BuildRunner :one
+SELECT d.app_id, b.status, coalesce(b.started_at, '-infinity'::timestamptz)::timestamptz AS started_at,
+       coalesce(b.builder_node_name, '')::text AS builder_node_name
+  FROM builds b JOIN deployments d ON d.id = b.deployment_id
+ WHERE b.id = $1::uuid
+`
+
+type BuildRunnerRow struct {
+	AppID           pgtype.UUID
+	Status          string
+	StartedAt       pgtype.Timestamptz
+	BuilderNodeName string
+}
+
+// The build's app, status, start and claiming node (slice 3j-3).
+func (q *Queries) BuildRunner(ctx context.Context, db DBTX, id pgtype.UUID) (BuildRunnerRow, error) {
+	row := db.QueryRow(ctx, buildRunner, id)
+	var i BuildRunnerRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Status,
+		&i.StartedAt,
+		&i.BuilderNodeName,
+	)
+	return i, err
+}
+
 const crashCaptureSealedKey = `-- name: CrashCaptureSealedKey :one
 SELECT app_id, sealed_key FROM crash_captures
  WHERE id = $1::uuid AND status <> 'expired' AND sealed_key IS NOT NULL

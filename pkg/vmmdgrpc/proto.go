@@ -662,6 +662,9 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// credentials, for the builder's FROM pulls.
 		BuildRegistryCredentials: buildRegistryCredentialsFromProto(req.GetBuild()),
 		BuildKitSeedDrive:        seedDrive,
+		// ADR-20261110210000 slice 3j-3: the build a registry mirror pulls
+		// for through secretd.
+		BuildID: req.GetBuild().GetBuildId(),
 	}, nil
 }
 
