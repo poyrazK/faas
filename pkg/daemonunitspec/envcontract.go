@@ -1148,7 +1148,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_STREAM_BRIDGE_GOGC", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional integer: GOGC for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gogc in vmmd.toml)"},
 	{Name: "FAAS_STREAM_BRIDGE_GOMAXPROCS", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional integer: GOMAXPROCS for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gomaxprocs in vmmd.toml)"},
 	{Name: "FAAS_STREAM_BRIDGE_PERSISTENT", Owners: []string{"shared"}, Source: EnvSourceDefault},
-	{Name: "FAAS_STREAM_BRIDGE_VERSION", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "rollback lever, see docs/ops/h2c-rollback.md"},
+	{Name: "FAAS_STREAM_BRIDGE_VERSION", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "v1 is ignored since bug hunt B23; roll back by installing the previous bridge binary, see docs/ops/h2c-rollback.md"},
 	{Name: "FAAS_STRIPE_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_SUPPORT_WEBHOOK_SECRET", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "optional support webhook signing secret of at least 32 bytes delivered by /etc/faas/sealed.env; configure together with FAAS_SUPPORT_WEBHOOK_URL; unset keeps delivery disabled"},
 	{Name: "FAAS_SUPPORT_WEBHOOK_URL", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "optional HTTPS support webhook destination; configure together with FAAS_SUPPORT_WEBHOOK_SECRET; unset keeps delivery disabled"},
