@@ -7138,6 +7138,22 @@ $$;
 
 
 --
+-- Name: clear_event_subscription_clone_pause(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.clear_event_subscription_clone_pause() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.enabled IS DISTINCT FROM OLD.enabled THEN
+    NEW.clone_paused := false;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: clone_checkpoint_admission_snapshot_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -39666,6 +39682,24 @@ CREATE TABLE public.entity_outbox_acceptances (
 
 
 --
+-- Name: environment_api_routes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_api_routes (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    route_template text NOT NULL,
+    first_seen timestamp with time zone NOT NULL,
+    last_seen timestamp with time zone NOT NULL,
+    request_count bigint NOT NULL,
+    CONSTRAINT environment_api_routes_check CHECK ((last_seen >= first_seen)),
+    CONSTRAINT environment_api_routes_request_count_check CHECK ((request_count > 0)),
+    CONSTRAINT environment_api_routes_route_template_check CHECK (((length(route_template) >= 1) AND (length(route_template) <= 256)))
+);
+
+
+--
 -- Name: environment_binding_release_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -41755,6 +41789,7 @@ CREATE TABLE public.event_subscriptions (
     acknowledgment_lease_seconds integer DEFAULT 0 NOT NULL,
     deployment_scope text DEFAULT ''::text NOT NULL,
     environment_id uuid,
+    clone_paused boolean DEFAULT false NOT NULL,
     CONSTRAINT event_subscriptions_acknowledgment_lease_seconds_check CHECK (((acknowledgment_lease_seconds >= 0) AND (acknowledgment_lease_seconds <= 300))),
     CONSTRAINT event_subscriptions_filter_object_chk CHECK ((jsonb_typeof(filter) = 'object'::text)),
     CONSTRAINT event_subscriptions_routing_retry_policy_check CHECK (public.valid_event_routing_retry_policy(routing_retry_policy)),
@@ -66568,6 +66603,14 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 
 --
+-- Name: environment_api_routes environment_api_routes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_api_routes
+    ADD CONSTRAINT environment_api_routes_pkey PRIMARY KEY (environment_id, app_id, route_template);
+
+
+--
 -- Name: environment_binding_release_receipts environment_binding_release_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80201,6 +80244,20 @@ CREATE INDEX email_verification_tokens_account_idx ON public.email_verification_
 
 
 --
+-- Name: environment_api_routes_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_api_routes_account_idx ON public.environment_api_routes USING btree (account_id);
+
+
+--
+-- Name: environment_api_routes_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_api_routes_app_idx ON public.environment_api_routes USING btree (app_id);
+
+
+--
 -- Name: environment_branch_capture_objects_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -90072,6 +90129,13 @@ CREATE TRIGGER checked_rollback_traffic BEFORE UPDATE OF status, traffic_percent
 --
 
 CREATE TRIGGER clear_cron_clone_pause BEFORE UPDATE OF enabled ON public.crons FOR EACH ROW EXECUTE FUNCTION public.clear_cron_clone_pause();
+
+
+--
+-- Name: event_subscriptions clear_event_subscription_clone_pause; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER clear_event_subscription_clone_pause BEFORE UPDATE OF enabled ON public.event_subscriptions FOR EACH ROW EXECUTE FUNCTION public.clear_event_subscription_clone_pause();
 
 
 --
@@ -100971,6 +101035,30 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 ALTER TABLE ONLY public.entity_outbox_acceptances
     ADD CONSTRAINT entity_outbox_acceptances_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_api_routes environment_api_routes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_api_routes
+    ADD CONSTRAINT environment_api_routes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_api_routes environment_api_routes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_api_routes
+    ADD CONSTRAINT environment_api_routes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_api_routes environment_api_routes_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_api_routes
+    ADD CONSTRAINT environment_api_routes_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --

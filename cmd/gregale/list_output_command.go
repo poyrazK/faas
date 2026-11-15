@@ -68,10 +68,11 @@ func (o *preparedListOutput) validateParent() error {
 	return nil
 }
 
-func runListFileExport[T any](title, cursor string, output *preparedListOutput, fetch func(context.Context, string) ([]T, string, error)) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+func runListFileExport[T any](parent context.Context, title, cursor string, output *preparedListOutput, fetch func(context.Context, string) ([]T, string, error)) int {
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	progress, err := streamListPages(ctx, output.file, cursor, fetch)
+	err = listReadError(ctx, err)
 	if err == nil {
 		err = output.validateParent()
 	}
