@@ -423,6 +423,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAYD_OBJECT_RELAY_UPSTREAM` | gatewayd-internal | `default` |  |  | `` | loopback s3-gatewayd address the contained-branch object relay forwards to; empty disables the relay (ADR-20261031193635 slice 6c) |
 | `FAAS_GATEWAYD_PUBLIC_ROLE` | gatewayd-public, shared | `dropin` |  |  | `` |  |
 | `FAAS_GATEWAYD_ROLE` | gatewayd-internal, shared | `dropin` |  |  | `` |  |
+| `FAAS_GATEWAY_ALLOW_PLAIN_HTTP` | gatewayd-public | `default` |  | 0 | `` | 1 serves app requests a trusted ingress received over plain http (X-Forwarded-Proto: http) instead of 308-redirecting them to https; default off |
 | `FAAS_GATEWAY_BASIC_AUTH` | gatewayd-internal | `dropin` |  | sealed | `` | ADR-20261110210000 slice 3h: sealed opens app basic-auth credentials with the edge identity; verifier checks apid's argon2id verifier (app_basic_auth_verifiers, keyed by the sealed blob's SHA-256) and opens only a credential without one; verifier-only never opens it and refuses a credential without a verifier. gatewayd_internal_service renders it from faas_gateway_basic_auth |
 | `FAAS_GATEWAY_CIRCUIT_BREAKER` | gatewayd-internal | `dropin` |  |  | `` | ADR-201 §2; on (the drop-in default since H4-68) shares one instance-health breaker between the public path and the service proxy, tuned per app by kind=circuit_breaker rules; off installs the legacy fixed-TTL quarantine and leaves the public path unbroken |
 | `FAAS_GATEWAY_CONTROL_LISTEN` | gatewayd-internal | `default` |  |  | `` |  |
