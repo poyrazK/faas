@@ -538,6 +538,9 @@ func boot() error {
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: app restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
+	supRef.OnCleanExit = func() {
+		fmt.Fprintf(os.Stderr, "guest-init: app exited cleanly (status 0, policy=%s); a clean exit is not restarted\n", policy)
+	}
 	// ADR-051 Phase 4: characterize the workload by observing the
 	// first cold boot. Runs in parallel with sup.Run() so the
 	// PID-fd walk finds the customer's listener without blocking
