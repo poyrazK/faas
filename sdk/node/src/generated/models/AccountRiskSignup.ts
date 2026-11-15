@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * The account's sign-up record (ADR-20261113160000). signup_ip and user_agent only with include_pii, and only for 90 days.
+ * The account's sign-up record. signup_ip and user_agent only with include_pii, and only for 90 days.
  */
 export type AccountRiskSignup = {
   method: string;

@@ -15,7 +15,7 @@ T = TypeVar("T", bound="AccountRiskLink")
 
 @_attrs_define
 class AccountRiskLink:
-    """A new account linked to an abuse-held account (ADR-20261114174600)."""
+    """A new account linked to an abuse-held account."""
 
     account_id: str
     held_account_id: str

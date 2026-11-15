@@ -14,10 +14,7 @@ T = TypeVar("T", bound="AccountRiskSignup")
 
 @_attrs_define
 class AccountRiskSignup:
-    """The account's sign-up record (ADR-20261113160000). signup_ip and user_agent only with include_pii, and only for 90
-    days.
-
-    """
+    """The account's sign-up record. signup_ip and user_agent only with include_pii, and only for 90 days."""
 
     method: str
     email_domain: str

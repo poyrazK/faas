@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A new account linked to an abuse-held account (ADR-20261114174600).
+ * A new account linked to an abuse-held account.
  */
 export type AccountRiskLink = {
   account_id: string;

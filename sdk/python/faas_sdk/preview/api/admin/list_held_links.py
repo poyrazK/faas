@@ -81,7 +81,7 @@ def sync_detailed(
 ) -> Response[HeldLinksResponse | Problem]:
     """New accounts linked to abuse-held accounts (operator-only).
 
-     Links detected in the last `since` (ADR-20261114174600), newest
+     Links detected in the last `since`, newest
     first, with the new account's sign-up country and email domain.
     Defaults to the last 24 hours and 200 rows.
 
@@ -117,7 +117,7 @@ def sync(
 ) -> HeldLinksResponse | Problem | None:
     """New accounts linked to abuse-held accounts (operator-only).
 
-     Links detected in the last `since` (ADR-20261114174600), newest
+     Links detected in the last `since`, newest
     first, with the new account's sign-up country and email domain.
     Defaults to the last 24 hours and 200 rows.
 
@@ -148,7 +148,7 @@ async def asyncio_detailed(
 ) -> Response[HeldLinksResponse | Problem]:
     """New accounts linked to abuse-held accounts (operator-only).
 
-     Links detected in the last `since` (ADR-20261114174600), newest
+     Links detected in the last `since`, newest
     first, with the new account's sign-up country and email domain.
     Defaults to the last 24 hours and 200 rows.
 
@@ -182,7 +182,7 @@ async def asyncio(
 ) -> HeldLinksResponse | Problem | None:
     """New accounts linked to abuse-held accounts (operator-only).
 
-     Links detected in the last `since` (ADR-20261114174600), newest
+     Links detected in the last `since`, newest
     first, with the new account's sign-up country and email domain.
     Defaults to the last 24 hours and 200 rows.
 

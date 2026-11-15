@@ -21,7 +21,7 @@ T = TypeVar("T", bound="AccountRiskResponse")
 
 @_attrs_define
 class AccountRiskResponse:
-    """An account's abuse risk (ADR-20261115090000). email only with include_pii."""
+    """An account's abuse risk. email only with include_pii."""
 
     account_id: str
     status: str
@@ -35,8 +35,7 @@ class AccountRiskResponse:
     abuse_hold_at: datetime.datetime | Unset = UNSET
     abuse_hold_reason: str | Unset = UNSET
     signup: AccountRiskSignup | Unset = UNSET
-    """The account's sign-up record (ADR-20261113160000). signup_ip and user_agent only with include_pii, and only
-    for 90 days."""
+    """The account's sign-up record. signup_ip and user_agent only with include_pii, and only for 90 days."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

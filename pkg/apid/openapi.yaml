@@ -59191,7 +59191,7 @@ paths:
       operationId: listHeldLinks
       summary: New accounts linked to abuse-held accounts (operator-only).
       description: |
-        Links detected in the last `since` (ADR-20261114174600), newest
+        Links detected in the last `since`, newest
         first, with the new account's sign-up country and email domain.
         Defaults to the last 24 hours and 200 rows.
       parameters:
@@ -93270,7 +93270,7 @@ components:
         truncated: { type: boolean }
 
     AccountRiskLink:
-      description: "A new account linked to an abuse-held account (ADR-20261114174600)."
+      description: "A new account linked to an abuse-held account."
       type: object
       required: [account_id, held_account_id, held_reason, signal, detected_at]
       properties:
@@ -93282,7 +93282,7 @@ components:
         detected_at: { type: string, format: date-time }
 
     AccountRiskSignup:
-      description: "The account's sign-up record (ADR-20261113160000). signup_ip and user_agent only with include_pii, and only for 90 days."
+      description: "The account's sign-up record. signup_ip and user_agent only with include_pii, and only for 90 days."
       type: object
       required: [method, email_domain, disposable_email, created_at]
       properties:
@@ -93318,7 +93318,7 @@ components:
         data: { type: object, additionalProperties: true }
 
     AccountRiskResponse:
-      description: "An account's abuse risk (ADR-20261115090000). email only with include_pii."
+      description: "An account's abuse risk. email only with include_pii."
       type: object
       required: [account_id, status, plan, created_at, links_to_held, linked_accounts, strikes, abuse_events]
       properties:

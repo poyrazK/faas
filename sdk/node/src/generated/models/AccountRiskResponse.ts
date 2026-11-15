@@ -7,7 +7,7 @@ import type { AccountRiskLink } from './AccountRiskLink.js';
 import type { AccountRiskSignup } from './AccountRiskSignup.js';
 import type { AccountRiskStrike } from './AccountRiskStrike.js';
 /**
- * An account's abuse risk (ADR-20261115090000). email only with include_pii.
+ * An account's abuse risk. email only with include_pii.
  */
 export type AccountRiskResponse = {
   account_id: string;

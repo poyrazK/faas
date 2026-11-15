@@ -518,7 +518,7 @@ export class AdminService {
   }
   /**
    * New accounts linked to abuse-held accounts (operator-only).
-   * Links detected in the last `since` (ADR-20261114174600), newest
+   * Links detected in the last `since`, newest
    * first, with the new account's sign-up country and email domain.
    * Defaults to the last 24 hours and 200 rows.
    *
