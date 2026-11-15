@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tasktoolrelease"
+	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
 type taskRestoreFixture struct {
@@ -86,7 +87,7 @@ func newTaskRestoreFixture(t *testing.T, s state.Store) *taskRestoreFixture {
 	}
 	in.ObserverMetricApp = f.apps["observer"].Slug
 	j := s.(state.TaskToolReleaseIntentStore)
-	r, err := j.PrepareTaskToolReleaseIntent(ctx, f.account.ID, f.caller.ID, strings.Repeat(suffix[:1], 64), in)
+	r, err := j.PrepareTaskToolReleaseIntent(ctx, f.account.ID, f.caller.ID, toolpublication.Digest([]byte("restore-fixture:"+suffix)), in)
 	// Use a guaranteed hexadecimal identity regardless of the UUID's first digit.
 	if err != nil {
 		t.Fatal(err)

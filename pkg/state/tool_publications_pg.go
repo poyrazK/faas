@@ -32,13 +32,16 @@ func (s *PgStore) BeginToolPublication(ctx context.Context, account, id string, 
 	}
 	old, err := q.GetToolPublication(ctx, tx, toolpublicationdb.GetToolPublicationParams{AccountID: mustPgUUID(account), ID: id})
 	if err == nil {
-		if err = json.Unmarshal(old, &record); err != nil {
+		// Decode into fresh storage: the provisional record shares the caller's
+		// maps and slices, which concurrent idempotent begins may still read.
+		var retained api.ToolPublicationRecord
+		if err = json.Unmarshal(old, &retained); err != nil {
 			return api.BeginToolPublicationResponse{}, err
 		}
-		if !reflect.DeepEqual(record.Intent, in) {
+		if !reflect.DeepEqual(retained.Intent, in) {
 			return api.BeginToolPublicationResponse{}, ErrConflict
 		}
-		return api.BeginToolPublicationResponse{Record: toolpublication.View(record, time.Now())}, nil
+		return api.BeginToolPublicationResponse{Record: toolpublication.View(retained, time.Now())}, nil
 	}
 	if !errors.Is(mapErr(err), ErrNotFound) {
 		return api.BeginToolPublicationResponse{}, mapErr(err)
