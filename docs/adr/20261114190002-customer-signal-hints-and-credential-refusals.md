@@ -6,11 +6,11 @@ company-project manifest decision; the accepted behavior is unchanged.
 Status: Accepted
 
 Extends ADR-20261112170000, ADR-20261112210000, ADR-20261113123000 and
-ADR-20261113180000.
+ADR-20261115175928.
 
 ## Context
 
-Attention signals (ADR-20261113123000, ADR-20261113180000) tell staff that a
+Attention signals (ADR-20261113123000, ADR-20261115175928) tell staff that a
 customer is probably stuck. The customer is not told: their account health page
 lists restrictions, failed deployments, domain problems and refused requests,
 but not "your deploys keep failing" or "your app keeps running out of memory".
@@ -82,7 +82,7 @@ layers outside it.
 ## Consequences
 
 - A customer sees why something keeps going wrong without waiting for staff.
-  Staff wording rules from ADR-20261113180000 ("write only what the customer
+  Staff wording rules from ADR-20261115175928 ("write only what the customer
   can see") now hold automatically for the four kinds.
 - Revoked and expired credentials, suspended-account refusals and project
   limits show up in the customer's refused requests, the 360 diagnosis and the
