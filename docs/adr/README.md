@@ -1,3 +1,4 @@
+- [ADR-20261115090000: Off-platform status page](20261115090000-off-platform-status-page.md) — accepted; apid mirrors /v1/status to R2 every minute, a Cloudflare cron probes Gregale from outside, operators post incidents without apid, and status.gregale.dev treats a stale copy as an outage signal; free-plan Cloudflare.
 - [ADR-20261114120000: Per-plan startup window on every cold boot](20261114120000-per-plan-startup-window.md) — accepted; amends ADR-138 (2026-10-22): `startup_deadline_s` may reach the plan window (Free/Hobby 30 s, Pro 60 s, Scale 120 s; defaults unchanged) and every cold boot, not only the deploy prime, gets it in its RPC budget and watchdog reprieve; `wake_max_queue_wait_seconds` may reach 120 s (deploy-path review P1)
 
 - [ADR-20261114090001 · Deployment qualification changes and wait timing](20261114090001-deployment-qualification-progress.md) — monitoring implementation; production convergence separate

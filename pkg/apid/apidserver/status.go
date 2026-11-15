@@ -572,31 +572,36 @@ var publicStatusComponentNames = map[publicstatus.Component]string{
 
 func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=15, stale-while-revalidate=45")
+	writeJSON(w, http.StatusOK, s.publicStatusOverview(r.Context()))
+}
+
+// publicStatusOverview builds the /v1/status document. The off-platform
+// mirror (ADR-20261115090000) publishes the same value, so the two can never
+// disagree about status, coverage or events.
+func (s *server) publicStatusOverview(ctx context.Context) api.PublicStatusOverview {
 	now := time.Now().UTC()
 	if s.statusCache != nil {
 		if cached, ok := s.statusCache.getFreshPublic(now); ok {
-			writeJSON(w, http.StatusOK, cached)
-			return
+			return cached
 		}
 	}
 	evaluation := unavailableStatusEvaluation()
 	if s.statusCache != nil {
-		if current, err := s.statusCache.getEvaluation(r.Context()); err == nil {
+		if current, err := s.statusCache.getEvaluation(ctx); err == nil {
 			evaluation = current
 		}
 	}
 	active, upcoming, resolved := []state.StatusIncident{}, []state.StatusIncident{}, []state.StatusIncident{}
 	eventsAvailable := true
 	if s.store != nil {
-		events, err := s.store.ListPublicStatusEvents(r.Context(), state.StatusEventListOptions{Limit: 200})
+		events, err := s.store.ListPublicStatusEvents(ctx, state.StatusEventListOptions{Limit: 200})
 		if err != nil {
 			eventsAvailable = false
 			s.log.Warn("status: event history unavailable", "err", err)
 			if s.statusCache != nil {
 				if cached, ok := s.statusCache.getPublic(); ok {
 					cached.DataStatus = "stale"
-					writeJSON(w, http.StatusOK, cached)
-					return
+					return cached
 				}
 			}
 		}
@@ -631,7 +636,7 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 	startDay := utcDay(now).AddDate(0, 0, -29)
 	if s.store != nil {
 		var err error
-		buckets, err = s.store.ListStatusBuckets(r.Context(), startDay, utcDay(now).Add(24*time.Hour))
+		buckets, err = s.store.ListStatusBuckets(ctx, startDay, utcDay(now).Add(24*time.Hour))
 		if err != nil {
 			s.log.Warn("status: daily history unavailable", "err", err)
 		}
@@ -692,7 +697,7 @@ func (s *server) publicStatusOverviewHandler(w http.ResponseWriter, r *http.Requ
 	if s.statusCache != nil {
 		s.statusCache.setPublic(response, now)
 	}
-	writeJSON(w, http.StatusOK, response)
+	return response
 }
 
 func (s *server) publicStatusIncidentHandler(w http.ResponseWriter, r *http.Request) {

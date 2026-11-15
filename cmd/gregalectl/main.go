@@ -76,7 +76,7 @@ Commands:
   obs           Operator incidents, evidence, context, health, fleet overview, and capacity (obs incidents|evidence|context|health|overview|capacity)
   debug         Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)
   github        GitHub delivery + Check Run recovery and legacy webhook secrets (status|retry-delivery|retry-check|webhook-secret)
-  status        Publish incidents and maintenance (status incident|maintenance ...)
+  status        Publish incidents and maintenance (status incident|maintenance|offline ...)
   release-acceptance  Mint and revoke short-lived production acceptance credentials
   promotion-rollout  Inspect readiness and manage signed promotion rollout approvals
   version      Print the CLI version

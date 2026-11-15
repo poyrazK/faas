@@ -4,7 +4,11 @@
 >
 > **Compatibility endpoint:** `GET /status/slo.json`
 >
-> **Alert:** `FaasPublicStatusEvaluationStalled`
+> **Alerts:** `FaasPublicStatusEvaluationStalled`, `FaasStatusMirrorPushFailing`
+>
+> **Off-platform page:** `https://status.gregale.dev` reads
+> `https://status-data.gregale.dev/v1/{status,probe,notices}.json`
+> (ADR-20261115090000, `deploy/cloudflare/status-worker/`)
 > **Storage:** `status_incidents`, `status_incident_updates`, `status_observation_buckets`
 
 ## Symptoms
@@ -90,6 +94,39 @@ gregalectl status incident resolve \
 
 An incident may move between investigating, identified, and monitoring before
 resolution. Resolution is terminal; create a new incident if impact returns.
+
+## Publish while Gregale's API is down
+
+`status.gregale.dev` runs on Cloudflare, not Gregale. When apid stops pushing
+for three minutes it marks the platform report stale, and if its outside probe
+also fails it shows a major outage on its own. To add a human explanation
+without apid, write straight to the mirror bucket with an operator R2 token
+(Object Read & Write on the `gregale-status` bucket only):
+
+```sh
+export FAAS_STATUS_MIRROR_R2_ENDPOINT=https://ACCOUNT_ID.r2.cloudflarestorage.com
+export FAAS_STATUS_MIRROR_R2_BUCKET=gregale-status
+export FAAS_STATUS_MIRROR_R2_ACCESS_KEY=...   # operator token, not apid's
+export FAAS_STATUS_MIRROR_R2_SECRET_KEY=...
+
+gregalectl status offline post \
+  --title "API unreachable" --impact major_outage \
+  --components api_console,app_execution \
+  --message "We are investigating. Running apps may be affected."
+gregalectl status offline update --id NOTICE_ID --state identified --message "..."
+gregalectl status offline resolve --id NOTICE_ID --message "Service has recovered."
+gregalectl status offline list
+```
+
+Offline notices only appear on `status.gregale.dev`, not in `/v1/status`.
+Once apid is back, create the incident through `gregalectl status incident
+create` so it enters the permanent history, then resolve the offline notice.
+Resolved notices stay visible for seven days.
+
+If `FaasStatusMirrorPushFailing` fires, apid's R2 token or the bucket is
+broken: check `status: mirror push failed` in apid logs and
+`apid_status_mirror_publishes_total`. The page will already be showing the
+platform report as stale.
 
 ## Schedule maintenance
 

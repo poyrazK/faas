@@ -389,6 +389,11 @@ jobs:
       - name: installer edge worker
         run: node --test deploy/cloudflare/get-gregale-dev/worker.test.mjs
 
+      # status.gregale.dev must report an outage when Gregale stops reporting,
+      # never keep showing the last green state (ADR-20261115090000).
+      - name: off-platform status page worker
+        run: node --test deploy/cloudflare/status-worker/worker.test.mjs deploy/cloudflare/status-worker/view.test.mjs
+
       # Keep the credential-free CLI scenario path executable on every PR.
       # The simulation starts the app and sink over local HTTP, including a
       # planned failed delivery and retry. Run both scenarios through the suite
