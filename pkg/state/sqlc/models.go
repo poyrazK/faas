@@ -3088,15 +3088,17 @@ type CiWorkerHealth struct {
 }
 
 type CliAuthCode struct {
-	TokenHash  []byte
-	AccountID  pgtype.UUID
-	Status     string
-	ExpiresAt  pgtype.Timestamptz
-	ConsumedAt pgtype.Timestamptz
-	CreatedAt  pgtype.Timestamptz
-	DeviceHash []byte
-	OrgID      pgtype.UUID
-	ProjectIds []pgtype.UUID
+	TokenHash    []byte
+	AccountID    pgtype.UUID
+	Status       string
+	ExpiresAt    pgtype.Timestamptz
+	ConsumedAt   pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	DeviceHash   []byte
+	OrgID        pgtype.UUID
+	ProjectIds   []pgtype.UUID
+	VerifierHash []byte
+	RequesterIp  pgtype.Text
 }
 
 type CloneCheckpointAdmissionGuard struct {
