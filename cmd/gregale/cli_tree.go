@@ -638,11 +638,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"admin product", "product"},
 	{"admin tenant-surfaces", "tenant-surfaces"},
 	{"admin rollouts", "rollouts"},
-	{"admin github-webhook-secret", "github-webhook-secret"},
 	{"admin mail", "mail"},
-	{"admin postgres reconcile", "postgres reconcile"},
-	{"admin postgres usage-import", "postgres usage-import"},
-	{"admin postgres diagnostics", "postgres diagnostics"},
 	// Sealed live queries stay an operator preview (ADR-20261016151947);
 	// customers read live through `data-api live`.
 	{"admin postgres live", "postgres live"},

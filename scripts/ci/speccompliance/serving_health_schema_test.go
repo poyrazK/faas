@@ -14,9 +14,19 @@ func TestSpecComplianceServingHealthSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"ObsServingHealth", "ObsServingProbeInventory", "ObsServingProbeCounts", "ObsServingProbe"} {
+	for _, item := range []struct{ name, file string }{
+		{"ObsServingHealth", "obs_serving_health.go"},
+		{"ObsServingProbeInventory", "obs_serving_health.go"},
+		{"ObsServingProbeCounts", "obs_serving_health.go"},
+		{"ObsServingProbe", "obs_serving_health.go"},
+		{"ObsServingProbeNotificationHealth", "obs_serving_probe_notifications.go"},
+		{"ObsServingProbeNotificationCounts", "obs_serving_probe_notifications.go"},
+		{"ObsServingProbeNotification", "obs_serving_probe_notifications.go"},
+		{"ObsNodeProbeNotifications", "obs_serving_probe_notifications.go"},
+	} {
+		name := item.name
 		t.Run(name, func(t *testing.T) {
-			fields, err := scanStructJSONFields(filepath.Join(root, "pkg", "api", "obs_serving_health.go"), name)
+			fields, err := scanStructJSONFields(filepath.Join(root, "pkg", "api", item.file), name)
 			if err != nil {
 				t.Fatal(err)
 			}

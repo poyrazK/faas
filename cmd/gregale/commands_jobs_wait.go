@@ -166,10 +166,14 @@ func cmdJobsWait(args []string) int {
 			receipt.Run = &result
 		}
 		if waitErr != nil {
-			receipt.Error = waitErr.Error()
+			receipt.Error = redactErrorText(waitErr.Error())
+			receipt.ResumeCommand = redactErrorText(receipt.ResumeCommand)
 		}
 		if outputCode := jsonOut(writeJSONSingle(receipt)); outputCode != 0 {
 			return outputCode
+		}
+		if waitErr != nil {
+			return renderJobWaitError(waitErr, code, job.Name, run.ID, *timeout, *interval)
 		}
 	} else if waitErr != nil {
 		printErr("Job wait ended", waitErr)

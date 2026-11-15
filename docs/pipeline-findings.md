@@ -630,6 +630,18 @@ approval regression runs both spellings and verifies the frozen change ID and
 revision without replacing saved intent. The scheduled-work branch adds the
 operations manifest and canonical alias using the same checks.
 
+## PIPE-020 — JSON help drops the existing typo recovery hint
+
+**Status:** fixed during merge qualification; final hosted acceptance remains the gate.
+
+[Data API acceptance run 43659327843](https://github.com/poyrazK/faas/actions/runs/43659327843)
+passed the native Data API checks but failed the complete CLI suite's existing
+`TestUnknownCommandSuggestionKeepsJSONErrorParseable` regression. The JSON-help
+path omitted the unique `gregale help deploy` suggestion for `help deply --json`,
+while human help already provided it. Structured help now uses the same
+capability-filtered suggestion helper and keeps the error as one JSON document.
+Ambiguous or multiword unknown topics retain the existing discovery fallback.
+
 ## Customer roadmap
 
 Reviewed 2026-11-13 against the operability branch. CUST-007–009 are now the

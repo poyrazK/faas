@@ -196,6 +196,9 @@ func run(args []string) (status int) {
 		}
 		return printErr("Invalid app target", err)
 	}
+	if code, moved := movedOperatorCommand(args); moved {
+		return code
+	}
 	if slices.Equal(typed, args) {
 		printCliTreeHint(osStderr, typed)
 	}
@@ -695,17 +698,13 @@ func run(args []string) (status int) {
 		// every leaf calls authedClient() and hits apid. The
 		// operator-only surfaces (sign-keys, node-key, pki,
 		// host-age, manifest, release, backup) moved to
-		// `gregalectl` in PR-6.5 — this is the only operator verb
-		// that stayed in `gregale` because it's a customer/admin
-		// API surface.
+		// `gregalectl` in PR-6.5, and admin credit/refund/abuse-hold,
+		// github-webhook-secret and the Postgres accounting verbs
+		// followed (commands_moved_operator.go). This one stays: its
+		// routes check the customer's own account-admin scope.
 		return cmdTrustedPublishers(args[1:])
 	case "secrets":
 		return cmdSecrets(args[1:])
-	case "github-webhook-secret":
-		// PR-D / ADR-012 §7 amendment. Distinct top-level
-		// command; dispatches to a single verb (set) for the
-		// per-tenant webhook secret rotation.
-		return cmdGithubWebhookSecret(args[1:])
 	case "account":
 		return cmdAccount(args[1:])
 	case "channels":
@@ -811,8 +810,6 @@ func run(args []string) (status int) {
 		// button has a CLI twin. Subcommands live in
 		// commands_billing.go.
 		return cmdBilling(args[1:])
-	case "admin":
-		return cmdAdmin(args[1:])
 	case "logs":
 		return cmdLogs(args[1:])
 	case "tail":

@@ -38,7 +38,9 @@ func TestRolloutAvailabilitySeparatesStatusAndCustomerPaths(t *testing.T) {
 		{name: "three API timeouts in a row gate", failures: "api:3:28,api:4:28,api:5:28", wantExit: 1,
 			wantText: "api: gate failed: 3 consecutive failed samples (budget 2)."},
 		{name: "API timeouts over the budget gate", failures: "api:2:28,api:3:28,api:5:28,api:6:28", wantExit: 1,
-			wantText: "api: gate failed: 4 timed-out samples (budget 3)."},
+			// Scheduling can make the last timeout also be the final sample,
+			// adding another valid reason after this cause in the same sentence.
+			wantText: "api: gate failed: 4 timed-out samples (budget 3)"},
 		{name: "one API HTTP error still gates", failures: "api:3:503", wantExit: 1,
 			wantText: "api: gate failed: 1 failure(s) other than a timeout."},
 		{name: "timed-out final API sample gates", finalFailTarget: "api", wantExit: 1, wantText: "the final sample failed"},

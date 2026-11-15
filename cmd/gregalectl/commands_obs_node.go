@@ -1,11 +1,12 @@
 // commands_obs_node.go — `gregalectl obs node <name>`.
 //
-// One support page for one compute node, from three existing admin reads:
+// One support page for one compute node, from bounded admin reads:
 // GET /v1/admin/obs/nodes/{name}/detail (capacity, admitted RAM against the
 // ceiling, apps, instances, drain safety), .../heartbeats (freshness and
 // gaps) and /v1/admin/obs/nodes/wake-latency (this node's wake quantiles
 // against the fleet p95). Heartbeats and wake latency are best effort: the
-// page still prints when one of them is unavailable.
+// page still prints when one of them is unavailable. Direct notification
+// submissions use a separate node lookup that can reach outside fleet previews.
 package main
 
 import (
@@ -32,13 +33,15 @@ var obsNodeNameRE = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]{0,61}[a-z0-9])?$`
 
 // obsNodePage is what `obs node --json` emits.
 type obsNodePage struct {
-	Detail         api.ObsNodeDetailResponse     `json:"detail"`
-	Heartbeats     *api.ObsHeartbeatListResponse `json:"heartbeats,omitempty"`
-	HeartbeatsNote string                        `json:"heartbeats_note,omitempty"`
-	WakeLatency    *api.ObsWakeLatencyQuantile   `json:"wake_latency,omitempty"`
-	FleetWakeP95MS float64                       `json:"fleet_wake_p95_ms,omitempty"`
-	WakeWindow     string                        `json:"wake_window,omitempty"`
-	WakeNote       string                        `json:"wake_note,omitempty"`
+	Detail                 api.ObsNodeDetailResponse      `json:"detail"`
+	Heartbeats             *api.ObsHeartbeatListResponse  `json:"heartbeats,omitempty"`
+	HeartbeatsNote         string                         `json:"heartbeats_note,omitempty"`
+	WakeLatency            *api.ObsWakeLatencyQuantile    `json:"wake_latency,omitempty"`
+	FleetWakeP95MS         float64                        `json:"fleet_wake_p95_ms,omitempty"`
+	WakeWindow             string                         `json:"wake_window,omitempty"`
+	WakeNote               string                         `json:"wake_note,omitempty"`
+	ProbeNotifications     *api.ObsNodeProbeNotifications `json:"probe_notifications,omitempty"`
+	ProbeNotificationsNote string                         `json:"probe_notifications_note,omitempty"`
 }
 
 func cmdObsNode(args []string) int {
@@ -94,6 +97,7 @@ func cmdObsNode(args []string) int {
 			page.WakeNote = "Prometheus is not available to apid"
 		}
 	}
+	page.ProbeNotifications, page.ProbeNotificationsNote = fetchObsNodeProbeNotifications(ctx, client, base, name, cred)
 	if *jsonOut || jsonOutput || jsonFlagEnabled(args) {
 		return emitOperatorJSON(page)
 	}
@@ -126,6 +130,7 @@ func writeObsNode(w io.Writer, p obsNodePage, now time.Time, instances int) {
 	}
 	writeObsNodeHeartbeats(w, p, now)
 	writeObsNodeWakes(w, p)
+	writeObsNodeProbeNotifications(w, p)
 	d := p.Detail.Drain
 	if d.DrainSafe {
 		_, _ = fmt.Fprintln(w, "drain  safe: no running, waking or cold-booting instances")

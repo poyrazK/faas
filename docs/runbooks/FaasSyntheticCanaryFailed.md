@@ -48,6 +48,39 @@ The annotation carries a `run_url`. Open it — the failing step's log is the
 tail that was also embedded in the alert description, and it names which phase
 failed.
 
+The SSH preflight runs before any deployment probe. Failure at this stage
+means customer deployment health was **not tested**. The workflow prints fixed
+`canary-ssh` codes without host addresses, keys or raw connection errors:
+
+| Code | Meaning |
+|---|---|
+| `ssh_configuration_missing` / `ssh_host_invalid` | Missing control-plane host/key, or an invalid host value. |
+| `ssh_host_pins_missing` | No operator-provided `COMPUTE_KNOWN_HOSTS` pins. |
+| `ssh_host_keys_unavailable` / `ssh_host_scan_timeout` | No keys were obtained, or the whole scan timed out. Check reachability before concluding a key changed. |
+| `ssh_host_key_untrusted` | A presented key did not match the pins, or strict verification failed during authentication. Independently verify the host identity before updating pins. |
+| `ssh_authentication_failed` | The pinned host rejected authentication. |
+| `ssh_preflight_failed` / `ssh_preflight_timeout` | The authenticated no-op did not complete. Review control-plane connectivity and SSH service health. |
+
+The scan has a 15-second deadline and authentication a 20-second deadline,
+each with at most five more seconds before forced termination. Subsequent
+connections use batch authentication, one connection attempt, a ten-second
+connection timeout and SSH keepalives. Keys and readiness are kept in a private
+runner-local directory; failed setup clears earlier readiness.
+
+If setup failed, notification skips SSH and tries the independent
+`CANARY_FALLBACK_WEBHOOK_URL` immediately. Otherwise the complete Alertmanager
+submission attempt has a 120-second deadline plus at most five seconds before
+forced termination, then fallback has a three-second connection timeout and
+15-second total limit. The failure-notification step has a three-minute budget.
+The original job remains failed even if notification submission succeeds.
+
+`notification_submitted_alertmanager` and `notification_submitted_fallback`
+mean only that the submission returned success, not that the operator received
+it. Missing fallback configuration reports `fallback_unconfigured`; transport
+errors or non-2xx responses (including redirects) report
+`fallback_submission_failed`. Raw webhook URLs, errors and responses are not
+printed. Both submission paths still require the existing delivery qualification.
+
 If the heartbeat step failed, use the
 [missing-run monitor procedure](../ops/synthetic-canary-heartbeat.md). Its
 fixed error code identifies missing configuration, an invalid URL or failed
