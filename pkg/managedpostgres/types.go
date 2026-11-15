@@ -139,11 +139,11 @@ const (
 	UnavailableDetail        = "The managed PostgreSQL provider is temporarily unavailable. Existing databases keep running; retry later or contact support."
 )
 
-// UsageStaleDetail is the customer-facing explanation for ErrUsageStale. A
-// deleted database holds the gate until the hour it was deleted in has been
-// collected, so without it a timed wait reads like an outage (production-us
-// hunt #9, H9-P101; ADR-20261104143000).
-const UsageStaleDetail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. After a database is deleted this lasts until the hour it was deleted in has closed and its usage is collected, usually under an hour. Existing databases keep running; retry later."
+// UsageStaleDetail is the customer-facing explanation for ErrUsageStale.
+// Without a timed hint the wait reads like an outage (production-us hunt #9,
+// H9-P101; ADR-20261104143000). A deleted database's final hour holds the gate
+// only for an account near a monthly ceiling (ADR-20261115190000).
+const UsageStaleDetail = "Usage collection for this account has not caught up, so new databases, restores and resizes are paused. Near a monthly usage limit, a recently deleted database also holds this until the hour it was deleted in has closed and its usage is collected, usually under an hour. Existing databases keep running; retry later."
 
 type State string
 
@@ -885,15 +885,45 @@ func (s UsageSnapshot) Stale(policy UsagePolicy, now time.Time) bool {
 	if len(s.Databases) > 0 && len(s.Databases) < s.ReadyDatabases {
 		return true
 	}
+	finalWindowPending := false
 	for _, progress := range s.Databases {
-		if progress.blockingIssues(policy, now) != 0 {
+		issues := progress.blockingIssues(policy, now)
+		if issues.hard() {
 			return true
 		}
+		finalWindowPending = finalWindowPending || issues != 0
+	}
+	// A deleted database's final window adds at most one window of one
+	// stopped database's usage. Admit through it only while the recorded
+	// month leaves headroom under every ceiling (ADR-20261115190000).
+	if finalWindowPending && !s.hasHeadroom(policy) {
+		return true
 	}
 	if len(s.Databases) > 0 || s.ReadyDatabases == 0 {
 		return false
 	}
 	return s.LastObservedAt.IsZero() || now.Sub(s.LastObservedAt) > policy.StaleAfter
+}
+
+// finalWindowHeadroomPercent is the share of each monthly ceiling an account
+// may have recorded and still be admitted while a deleted database's final
+// window is uncollected (ADR-20261115190000).
+const finalWindowHeadroomPercent = 90
+
+// hasHeadroom reports recorded usage below finalWindowHeadroomPercent of every
+// configured ceiling. A ceiling Exceeds would treat as reached leaves none.
+func (s UsageSnapshot) hasHeadroom(policy UsagePolicy) bool {
+	below := func(used, ceiling int64) bool {
+		const spare = 100 - finalWindowHeadroomPercent
+		// ceiling*spare/100 without overflowing near MaxInt64.
+		margin := ceiling/100*spare + ceiling%100*spare/100
+		return ceiling > 0 && used < ceiling-margin
+	}
+	return below(s.CostMillicents, policy.MaxMonthlyCostMillicents) &&
+		below(s.ComputeUnitSeconds, policy.MaxMonthlyComputeUnitSeconds) &&
+		below(s.StorageByteSeconds, policy.MaxMonthlyStorageByteSeconds) &&
+		(policy.MaxMonthlyHistoryByteSeconds <= 0 || below(s.HistoryByteSeconds, policy.MaxMonthlyHistoryByteSeconds)) &&
+		below(s.EgressBytes, policy.MaxMonthlyEgressBytes)
 }
 
 func (s UsageSnapshot) Exceeds(policy UsagePolicy) bool {
