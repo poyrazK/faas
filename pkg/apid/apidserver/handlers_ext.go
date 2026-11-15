@@ -2211,21 +2211,9 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
-	// A deployment of a deleted app is final. Its configuration read finds
-	// no app and used to answer 503 capacity, which the CLI retries, so a
-	// `deploy --wait` whose app was deleted mid-deploy waited forever
-	// (prod 2026-11-15, findings #6).
-	if app.Status == state.AppDeleted || app.DeletedAt != nil {
-		s.notFound(w, "the deployment's app was deleted")
-		return
-	}
 	response := s.withRolloutHold(r.Context(), s.deploymentResponseWithBuild(r.Context(), d, app))
 	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
 		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
-		if errors.Is(err, state.ErrNotFound) {
-			s.notFound(w, "no such deployment")
-			return
-		}
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
 			return
