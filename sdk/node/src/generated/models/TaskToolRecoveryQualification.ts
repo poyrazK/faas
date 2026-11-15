@@ -10,7 +10,7 @@ export type TaskToolRecoveryQualification = {
   handover_id: string;
   operation_id: string;
   revision: number;
-  action: 'restore';
+  action: 'restore' | 'quarantine';
   target_deployment_id: string;
   expected_serving_deployment_id: string;
   bindings_sha256: string;

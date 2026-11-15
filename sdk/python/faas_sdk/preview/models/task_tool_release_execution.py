@@ -55,7 +55,7 @@ class TaskToolReleaseExecution:
     executor_exited_at: datetime.datetime | Unset = UNSET
     recovery: TaskToolRecoveryHandover | Unset = UNSET
     """Permanent executor fence and separate owner recovery authority. Settlement requires an exit acknowledgement
-    and the native mutation barrier. No recovery apply API consumes this approval yet."""
+    and the native mutation barrier. Restore and quarantine have separate authority and retained results."""
 
     def to_dict(self) -> dict[str, Any]:
         operation_id = self.operation_id

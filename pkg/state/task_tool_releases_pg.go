@@ -130,6 +130,9 @@ func (s *PgStore) ChangeTaskToolReleaseIntent(ctx context.Context, account, id, 
 	if err := json.Unmarshal(body, &record); err != nil {
 		return record, err
 	}
+	if tasktoolrelease.IsQuarantineChange(action, in) {
+		return s.changeTaskQuarantineTx(ctx, tx, account, record, in)
+	}
 	configurationOnly := tasktoolrelease.IsRecoveryDecision(in.Decision) || action == "execution" && in.Execution != nil && in.Execution.Action != "claim"
 	freshKey := record.RequesterKeyID
 	if tasktoolrelease.IsRecoveryDecision(in.Decision) {

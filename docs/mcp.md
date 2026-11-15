@@ -561,6 +561,7 @@ gregale mcp serve --transport stdio --tools core,build-tools --allow-writes
 | `gregale_check_task_tool_deploy` | Re-review source and native app/key snapshots. Observed drift permanently invalidates approval. Requires write consent for journal updates. |
 | `gregale_apply_task_tool_deploy` | Start one separately owner-authorized local Node Task release with explicit execution consent. Uses the owner's private binding profile and preserves native release gates; duplicates never restart a claimed operation. |
 | `gregale_apply_task_tool_restore` | Restore the captured web deployment once using a settled, separately owner-approved recovery. Resolves credentials locally, rechecks live gates and atomically consumes approval with traffic CAS; poll the native operation after uncertain replies. |
+| `gregale_apply_task_tool_quarantine` | With separate owner approval, fence the recorded candidate Task workers after a native web restore. Active leases finish normally. Pending repeats inspect fences without repeating SQL; completion is a historical observation. Local write-enabled connection only. |
 | `gregale_get_task_tool_operation` | Inspect the retained execution state and last guarded stage after reconnect, without paths or credentials. Interrupted claims require owner reconciliation. |
 | `gregale_inspect_task_tool_recovery` | Compare durable Task checkpoints with fresh native deployment, serving, instance and observer observations. GET only; needs no local files, bindings or executable CLI. |
 | `gregale_plan_task_tool_recovery` | Produce a hashed, expiring read-only plan listing blockers and required owner checks for resume, restore and candidate retirement. Grants no recovery execution or claim takeover. |
@@ -6705,6 +6706,64 @@ and journal for future deployment. Do not restart the old release or reuse its
 remains recorded so restoration can be retried without repeating the traffic
 switch. Recovery requires the updated starter's restore and readiness scripts;
 keep the sources pinned and do not modify a running release's journal or sources.
+
+### Agent quarantine after an approved native web restore
+
+After the one-time agent restore has a native result, an owner can separately
+qualify and approve quarantine of the original checkpoint's candidate worker IDs:
+
+```sh
+gregale mcp server tasks execution quarantine-qualify \
+  --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
+  --handover-id "$HANDOVER_ID" --allow-local-checks
+# Review the returned qualification_sha256 before issuing the owner verdict.
+gregale mcp server tasks execution quarantine-approve \
+  --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
+  --handover-id "$HANDOVER_ID" --qualification-sha256 "$QUARANTINE_SHA256"
+```
+
+Qualification rechecks the private source/dependency and role bindings, startup
+claim-fence attestations, running previous workers, observer and restored MCP
+endpoint. Native app snapshots must still match when approval is recorded and
+when the attempt is admitted. At least one previous worker app must cover the
+retained and admitted handler inventory. The fixed qualification deadline is one
+minute; neither approval nor retry extends it. Restore approval grants no
+quarantine authority.
+
+A local agent with `build-tools`, write consent and the original owner profile
+can call `gregale_apply_task_tool_quarantine` with `intent_id`, `operation_id`,
+`handover_id`, the new `qualification_sha256`, and `allow_tool_execution=true`.
+The CLI equivalent is:
+
+```sh
+gregale mcp server tasks execution quarantine \
+  --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
+  --handover-id "$HANDOVER_ID" --qualification-sha256 "$QUARANTINE_SHA256" \
+  --allow-tool-execution
+```
+
+The native journal records `qualified`, then consumes the approval once as
+`applying`. Only the process that receives confirmed fresh admission attempts the
+SQL fence. The Task release lock protects compatibility checks; the existing
+claim transaction lock fences the captured IDs. Active leases retain their
+normal tokens and deadlines. No worker is parked and no web traffic changes.
+
+The two databases do not commit atomically. Native authority and runtime facts
+are checked at admission, while later changes can still occur. A lost reply or
+partial failure leaves `applying` until the observer sees all recorded IDs
+fenced. Repeating the same tool/CLI operation only inspects those fences; it
+never retries the SQL write. Missing evidence or private attempt files requires
+owner reconciliation, not a replacement claim or substituted worker IDs.
+`quarantined` records a historical observation of those exact IDs, not current
+health, later processes or completed shutdown.
+
+An owner can use `quarantine-revoke` with the same identities and digest to block
+an unclaimed approval, including after source drift or expiry. Revocation does
+not undo fences or cancel an already admitted SQL attempt. Read-only observation
+of an admitted attempt remains possible afterward. The original executor stays
+permanently fenced. Use `gregale_get_task_tool_operation` to inspect durable
+results; completed results need no local private files. Retirement remains a
+separate owner-approved milestone. Live staging acceptance remains skipped.
 
 ### Quarantining and retiring recovered candidate workers
 

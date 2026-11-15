@@ -12,6 +12,7 @@ from ..models.task_tool_release_intent_decision_decision import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.task_tool_quarantine_request import TaskToolQuarantineRequest
     from ..models.task_tool_recovery_request import TaskToolRecoveryRequest
     from ..models.task_tool_release_execution_request import TaskToolReleaseExecutionRequest
 
@@ -26,6 +27,10 @@ class TaskToolReleaseIntentDecision:
     intent_sha256: str
     release_fingerprint: str
     decision: TaskToolReleaseIntentDecisionDecision
+    quarantine: TaskToolQuarantineRequest | Unset = UNSET
+    """Private trusted CLI qualification or attempt metadata on existing journal routes. Agent tools accept public
+    identities only. A claim is never automatically retried; observe records read-only fence evidence after an
+    admitted attempt."""
     execution: TaskToolReleaseExecutionRequest | Unset = UNSET
     """Exact local execution identity and bounded transition. Private claim material is submitted by the trusted
     CLI and is never returned in API receipts."""
@@ -39,6 +44,10 @@ class TaskToolReleaseIntentDecision:
         release_fingerprint = self.release_fingerprint
 
         decision: str = self.decision
+
+        quarantine: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.quarantine, Unset):
+            quarantine = self.quarantine.to_dict()
 
         execution: dict[str, Any] | Unset = UNSET
         if not isinstance(self.execution, Unset):
@@ -57,6 +66,8 @@ class TaskToolReleaseIntentDecision:
                 "decision": decision,
             }
         )
+        if quarantine is not UNSET:
+            field_dict["quarantine"] = quarantine
         if execution is not UNSET:
             field_dict["execution"] = execution
         if recovery is not UNSET:
@@ -66,6 +77,7 @@ class TaskToolReleaseIntentDecision:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.task_tool_quarantine_request import TaskToolQuarantineRequest
         from ..models.task_tool_recovery_request import TaskToolRecoveryRequest
         from ..models.task_tool_release_execution_request import TaskToolReleaseExecutionRequest
 
@@ -75,6 +87,13 @@ class TaskToolReleaseIntentDecision:
         release_fingerprint = d.pop("release_fingerprint")
 
         decision = check_task_tool_release_intent_decision_decision(d.pop("decision"))
+
+        _quarantine = d.pop("quarantine", UNSET)
+        quarantine: TaskToolQuarantineRequest | Unset
+        if isinstance(_quarantine, Unset):
+            quarantine = UNSET
+        else:
+            quarantine = TaskToolQuarantineRequest.from_dict(_quarantine)
 
         _execution = d.pop("execution", UNSET)
         execution: TaskToolReleaseExecutionRequest | Unset
@@ -94,6 +113,7 @@ class TaskToolReleaseIntentDecision:
             intent_sha256=intent_sha256,
             release_fingerprint=release_fingerprint,
             decision=decision,
+            quarantine=quarantine,
             execution=execution,
             recovery=recovery,
         )

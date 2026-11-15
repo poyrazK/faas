@@ -18,6 +18,7 @@ from ..models.task_tool_recovery_handover_state import (
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.task_tool_quarantine import TaskToolQuarantine
     from ..models.task_tool_recovery_qualification import TaskToolRecoveryQualification
     from ..models.task_tool_recovery_result import TaskToolRecoveryResult
 
@@ -28,7 +29,7 @@ T = TypeVar("T", bound="TaskToolRecoveryHandover")
 @_attrs_define
 class TaskToolRecoveryHandover:
     """Permanent executor fence and separate owner recovery authority. Settlement requires an exit acknowledgement and the
-    native mutation barrier. No recovery apply API consumes this approval yet.
+    native mutation barrier. Restore and quarantine have separate authority and retained results.
 
     """
 
@@ -37,6 +38,9 @@ class TaskToolRecoveryHandover:
     revision: int
     state: TaskToolRecoveryHandoverState
     requested_at: datetime.datetime
+    quarantine: TaskToolQuarantine | Unset = UNSET
+    """Separate fixed owner approval and one admitted candidate claim-fence attempt. Applying is uncertain until
+    read-only Task-database evidence is observed. It cannot renew or reuse restore authority."""
     result: TaskToolRecoveryResult | Unset = UNSET
     """Durable atomic traffic-commit receipt. It binds the consumed owner approval to the exact deployments and
     evidence, and remains inspectable after deadline expiry or revocation. It never authorizes another write or
@@ -60,6 +64,10 @@ class TaskToolRecoveryHandover:
         state: str = self.state
 
         requested_at = self.requested_at.isoformat()
+
+        quarantine: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.quarantine, Unset):
+            quarantine = self.quarantine.to_dict()
 
         result: dict[str, Any] | Unset = UNSET
         if not isinstance(self.result, Unset):
@@ -96,6 +104,8 @@ class TaskToolRecoveryHandover:
                 "requested_at": requested_at,
             }
         )
+        if quarantine is not UNSET:
+            field_dict["quarantine"] = quarantine
         if result is not UNSET:
             field_dict["result"] = result
         if settled_at is not UNSET:
@@ -113,6 +123,7 @@ class TaskToolRecoveryHandover:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.task_tool_quarantine import TaskToolQuarantine
         from ..models.task_tool_recovery_qualification import TaskToolRecoveryQualification
         from ..models.task_tool_recovery_result import TaskToolRecoveryResult
 
@@ -126,6 +137,13 @@ class TaskToolRecoveryHandover:
         state = check_task_tool_recovery_handover_state(d.pop("state"))
 
         requested_at = datetime.datetime.fromisoformat(d.pop("requested_at"))
+
+        _quarantine = d.pop("quarantine", UNSET)
+        quarantine: TaskToolQuarantine | Unset
+        if isinstance(_quarantine, Unset):
+            quarantine = UNSET
+        else:
+            quarantine = TaskToolQuarantine.from_dict(_quarantine)
 
         _result = d.pop("result", UNSET)
         result: TaskToolRecoveryResult | Unset
@@ -175,6 +193,7 @@ class TaskToolRecoveryHandover:
             revision=revision,
             state=state,
             requested_at=requested_at,
+            quarantine=quarantine,
             result=result,
             settled_at=settled_at,
             qualification=qualification,

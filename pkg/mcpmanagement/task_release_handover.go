@@ -18,7 +18,7 @@ func taskHandoverOutputSchema() map[string]any {
 	}}
 	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"id", "operation_id", "revision", "state", "requested_at"}, "properties": map[string]any{
 		"id": id, "operation_id": id, "revision": revision, "state": map[string]any{"type": "string", "enum": []string{"stopping", "settled"}}, "requested_at": date, "settled_at": date,
-		"qualification": q, "result": taskRecoveryResultSchema(), "decision": map[string]any{"type": "string", "enum": []string{"approved", "revoked"}}, "authorizer_key_id": map[string]any{"type": "string", "format": "uuid"}, "decided_at": date,
+		"qualification": q, "quarantine": taskQuarantineOutputSchema(q), "result": taskRecoveryResultSchema(), "decision": map[string]any{"type": "string", "enum": []string{"approved", "revoked"}}, "authorizer_key_id": map[string]any{"type": "string", "format": "uuid"}, "decided_at": date,
 	}}
 }
 
