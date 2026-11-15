@@ -13729,6 +13729,83 @@ type EgressFlowLogResponse struct {
 	Truncated bool                 `json:"truncated"`
 }
 
+// AccountRiskResponse is GET /v1/admin/accounts/{id}/risk
+// (ADR-20261115090000): what an operator needs to judge an account's abuse
+// risk. Email, sign-up address and user agent are present only with
+// ?include_pii=1, which is audited.
+type AccountRiskResponse struct {
+	AccountID       string              `json:"account_id"`
+	Email           string              `json:"email,omitempty"`
+	Status          string              `json:"status"`
+	Plan            string              `json:"plan"`
+	CreatedAt       time.Time           `json:"created_at"`
+	AbuseHoldAt     *time.Time          `json:"abuse_hold_at,omitempty"`
+	AbuseHoldReason string              `json:"abuse_hold_reason,omitempty"`
+	Signup          *AccountRiskSignup  `json:"signup,omitempty"`
+	LinksToHeld     []AccountRiskLink   `json:"links_to_held"`
+	LinkedAccounts  []AccountRiskLink   `json:"linked_accounts"`
+	Strikes         []AccountRiskStrike `json:"strikes"`
+	AbuseEvents     []AccountRiskEvent  `json:"abuse_events"`
+}
+
+// AccountRiskSignup is the account's sign-up record (ADR-20261113160000).
+type AccountRiskSignup struct {
+	Method          string     `json:"method"`
+	SignupIP        string     `json:"signup_ip,omitempty"`
+	UserAgent       string     `json:"user_agent,omitempty"`
+	Country         string     `json:"country,omitempty"`
+	ASN             uint32     `json:"asn,omitempty"`
+	ASNOrg          string     `json:"asn_org,omitempty"`
+	EmailDomain     string     `json:"email_domain"`
+	DisposableEmail bool       `json:"disposable_email"`
+	CreatedAt       time.Time  `json:"created_at"`
+	ReducedAt       *time.Time `json:"reduced_at,omitempty"`
+}
+
+// AccountRiskLink is a link between a new account and an abuse-held one
+// (ADR-20261114174600).
+type AccountRiskLink struct {
+	AccountID     string    `json:"account_id"`
+	HeldAccountID string    `json:"held_account_id"`
+	HeldOrgID     string    `json:"held_org_id,omitempty"`
+	HeldReason    string    `json:"held_reason"`
+	Signal        string    `json:"signal"`
+	DetectedAt    time.Time `json:"detected_at"`
+}
+
+// AccountRiskStrike is an abuse recycle inside the hold window.
+type AccountRiskStrike struct {
+	Reason   string    `json:"reason"`
+	AppID    string    `json:"app_id,omitempty"`
+	StruckAt time.Time `json:"struck_at"`
+}
+
+// AccountRiskEvent is an abuse event about the account, one of its apps,
+// deployments or instances.
+type AccountRiskEvent struct {
+	At      time.Time       `json:"at"`
+	Kind    string          `json:"kind"`
+	Actor   string          `json:"actor"`
+	Subject string          `json:"subject"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+// HeldLinksResponse is GET /v1/admin/held-links: links detected since a
+// time, newest first, for the daily review.
+type HeldLinksResponse struct {
+	Links     []HeldLinkReview `json:"links"`
+	Truncated bool             `json:"truncated"`
+}
+
+// HeldLinkReview is a link with the new account's sign-up country and email
+// domain.
+type HeldLinkReview struct {
+	AccountRiskLink
+	Country         string `json:"country,omitempty"`
+	EmailDomain     string `json:"email_domain,omitempty"`
+	DisposableEmail bool   `json:"disposable_email"`
+}
+
 // EventReceiptPageMax bounds recipient pages on the event receipt read surface.
 const EventReceiptPageMax = 200
 
