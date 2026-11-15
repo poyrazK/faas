@@ -16310,6 +16310,18 @@ type StatusObservationBucket struct {
 	HasTelemetry bool
 }
 
+type StorageObjectDeletion struct {
+	StorageKey    string
+	Reason        string
+	RequestedBy   string
+	RequestedAt   pgtype.Timestamptz
+	State         string
+	NextAttemptAt pgtype.Timestamptz
+	Attempts      int32
+	LastError     string
+	DecidedAt     pgtype.Timestamptz
+}
+
 type StoredWorkflow struct {
 	AppID            pgtype.UUID
 	Name             string

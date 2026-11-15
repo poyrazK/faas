@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
+	"github.com/onebox-faas/faas/pkg/objectgc"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -1740,6 +1741,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if cfg.Role == role.RoleControlPlane && store != nil {
 		go runOwnerAuthorityMetrics(ctx, ops.Registry(), store, time.Minute, log)
+	}
+	if os.Getenv("FAAS_SCHEDD_OBJECT_GC") == "1" {
+		// ADR-20261115180000: the control plane deletes shared-store objects
+		// compute nodes asked to delete (FAAS_STORAGE_DELETE_MODE=defer),
+		// once nothing references them. Only a control plane holds the
+		// delete-capable credentials.
+		if cfg.Role == role.RoleComputeOnly {
+			return fmt.Errorf("schedd: FAAS_SCHEDD_OBJECT_GC runs on the control plane, not a compute node")
+		}
+		go objectgc.NewWorker(store, storageBackend, ops.Registry(), log).Run(ctx)
+		log.Info("schedd: object GC enabled")
 	}
 	if ownerNodeID != "" && owners.recoversOntoOwnNode(cfg.Role) {
 		reb := sched.NewRebalancer(engine.RebalanceOrphanedApps, log)
