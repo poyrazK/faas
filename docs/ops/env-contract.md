@@ -967,6 +967,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_NODE_INVENTORY_ENFORCE` | schedd, shared | `dropin` |  | 0 | `` | ADR-419; control-plane and compute-only roles deliver the signed process-inventory canary switch; enable only after native recovery qualification |
 | `FAAS_SCHEDD_NODE_LEASE` | schedd | `default` |  |  | `` | ADR-1344 §4 P3 phase 1: the node-local schedd renews its node's liveness lease; off by default and observe-only |
 | `FAAS_SCHEDD_NODE_LEASE_GUARD` | schedd | `default` |  |  | `` | ADR-1344 §4 P3 phase 2: the stale-peer observer and dead-node sweep leave a node alone while its lease is live; turn on only once every node renews; off by default |
+| `FAAS_SCHEDD_OBJECT_GC` | schedd | `default` |  |  | `` | ADR-20261115180000: 1 runs the object GC on a control-plane schedd: it decides the shared-store deletions compute nodes request in FAAS_STORAGE_DELETE_MODE=defer and deletes an object only once no live row references it (retried with backoff, refused after 7 days), with this host's delete-capable storage credentials; refused on a compute-only schedd; unset decides nothing |
 | `FAAS_SCHEDD_RECONCILE_ENFORCE` | schedd, shared | `default` |  |  | `` | ADR-191; "1" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row |
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SANDBOXES` | schedd | `default` |  |  | `` | ADR-20261027090013 sandbox sessions: 1, with FAAS_SCHEDD_AGENT_RUNS=1, serves the RunSandbox RPC and admits sessions on the agent pool; unset refuses them |
@@ -1060,6 +1061,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_CACHE_MAX_BYTES` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_REFRESH` | shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_SERVE_STALE` | shared | `envfile` |  |  | `` |  |
+| `FAAS_STORAGE_DELETE_MODE` | imaged, vmmd, shared | `default` |  |  | `` | ADR-20261115180000: direct (default) deletes shared-store objects; defer records each delete in storage_object_deletions for the control plane's object GC (FAAS_SCHEDD_OBJECT_GC) instead, so the node's store credentials can drop the delete right; refuses to start without a shared store or a database; node-local caches and prefix routes still delete |
 | `FAAS_STORAGE_FALLBACK_BACKEND` | imaged, vmmd, shared | `envfile` |  |  | `` | optional `oci` read/delete fallback during GCS migration; writes remain GCS-only |
 | `FAAS_STORAGE_LOCAL_PREFIXES` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
