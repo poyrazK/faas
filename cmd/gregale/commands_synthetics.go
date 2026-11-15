@@ -132,6 +132,9 @@ func cmdSyntheticsCreate(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Created check %s (%s): %s %s every %d minutes, expecting %s\n", check.Name, check.ID, check.Method, check.URL, check.IntervalSeconds/60, describeExpected(check.ExpectedStatus))
 	_, _ = fmt.Fprintln(osStdout, "Each probe is a normal request; one that wakes a parked app is billed like any other.")
+	if check.Warning != "" {
+		PrintWarn(os.Stderr, "%s", check.Warning)
+	}
 	return 0
 }
 

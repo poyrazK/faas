@@ -7319,7 +7319,7 @@ func (v *JailerVMM) guestStopped(l Lease, detail string) error {
 	// and exited. Without it the guest itself failed (overlay, pivot, init),
 	// which stays a platform failure (production-us hunt #9, H9-106).
 	if supervisedWorkloadExited(lines) {
-		return startupCrashProblem(strings.Join(lines, "\n"), detail)
+		return startupCrashProblem(strings.Join(lines, "\n"), detail+cleanExitHint(lines))
 	}
 	return errors.New(detail)
 }
@@ -7345,6 +7345,24 @@ var supervisedWorkloadMarkers = []string{
 	"app restart budget exhausted",
 	// A companion's restarts: "guest-init: sidecar echo crashed (restart 1/3): …".
 	" crashed (restart ",
+	// A workload that exited 0 and was not restarted (deploy-path review P4;
+	// prod test 2026-11-15: an app that exits without listening failed its
+	// deploy as internal). guest/init main_linux.go, workload_linux.go.
+	guestCleanExitMarker,
+}
+
+// guestCleanExitMarker is the shared tail of guest-init's clean-exit lines
+// ("guest-init: app exited cleanly (status 0, policy=on-failure); …").
+const guestCleanExitMarker = " exited cleanly (status 0, policy="
+
+// cleanExitHint explains a workload that ended on its own with status 0.
+func cleanExitHint(lines []string) string {
+	for _, line := range lines {
+		if strings.Contains(line, guestCleanExitMarker) {
+			return "; the app's process exited with status 0 (a clean exit is not restarted). Keep the server process running in the foreground and listening on $PORT"
+		}
+	}
+	return ""
 }
 
 func supervisedWorkloadExited(lines []string) bool {

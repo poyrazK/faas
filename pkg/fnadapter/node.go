@@ -76,7 +76,7 @@ const output = (id) => {
   };
   return out;
 };
-` + NodeBackground + NodeInputSchema + `
+` + NodeBackground + NodeInputSchema + NodeWorkflow + `
 const toBuffer = (piece) => Buffer.isBuffer(piece) ? piece
   : piece instanceof Uint8Array ? Buffer.from(piece.buffer, piece.byteOffset, piece.byteLength)
   : Buffer.from(String(piece));
@@ -186,6 +186,12 @@ async function handleOne(input, out) {
   const inputProblem = functionInputProblem(env, env.headers);
   if (inputProblem) {
     emitInputProblem(out, inputProblem);
+    return;
+  }
+  // A workflow function's handler takes (input, wf) and runs under the SDK's
+  // code-workflow protocol (ADR-20261113120824 §1).
+  if (isWorkflowCall(env.headers)) {
+    await serveWorkflowCall(env, out);
     return;
   }
   setupBackground(env, out);

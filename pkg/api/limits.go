@@ -3674,6 +3674,11 @@ const (
 	// inside DevSourceCacheTTL, so the patch a cold boot replays never
 	// expires before the build that replaces it.
 	DevBuildCoalesceWindow = 3 * time.Minute
+	// DevEditToLiveTarget is the cached-edit target for `gregale dev`: the
+	// time from a saved edit until it serves. The CLI reports it and apid
+	// derives within_slo from the reported edit-to-live time against it, so
+	// the fleet SLO does not depend on the client's own verdict.
+	DevEditToLiveTarget = 15 * time.Second
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
@@ -4090,6 +4095,29 @@ const (
 	// by a scheduler that stopped mid-refresh and is retired.
 	SnapshotRefreshMaxRuntime = 10 * time.Minute
 )
+
+// Clean init snapshot recapture (ADR-20261115113000). schedd's
+// `snapshot_clean_recapture` runtime config is on (a park that finds no init
+// snapshot on its node destroys the used instance and queues a clean boot,
+// prime and capture on that node) or off (that park captures the used
+// instance, as before).
+const (
+	SnapshotCleanRecaptureOff = "off"
+	SnapshotCleanRecaptureOn  = "on"
+	// DefaultSnapshotCleanRecapture is the compiled
+	// `snapshot_clean_recapture`.
+	DefaultSnapshotCleanRecapture = SnapshotCleanRecaptureOn
+	// SnapshotCleanRecaptureMaxAttempts is how many failed clean boots one
+	// queued recapture gets (after 1, 5 and 15 minutes) before it is
+	// dropped; the app's next park queues it again.
+	SnapshotCleanRecaptureMaxAttempts = 3
+)
+
+// ValidSnapshotCleanRecapture reports whether v is a valid
+// `snapshot_clean_recapture`.
+func ValidSnapshotCleanRecapture(v string) bool {
+	return v == SnapshotCleanRecaptureOff || v == SnapshotCleanRecaptureOn
+}
 
 // ValidSnapshotRefresh reports whether v is a valid `snapshot_refresh`.
 func ValidSnapshotRefresh(v string) bool {
