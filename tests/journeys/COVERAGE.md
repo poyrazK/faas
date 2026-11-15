@@ -19,6 +19,15 @@ expiry, rotation, catalog drift and revocation. See the
 It does not certify external OAuth provider login/refresh or API/bridge restart
 recovery; local preparation checks do not establish deployed acceptance.
 
+Gregale Flags (inventory row 154, internal behind `customer_flags`) has
+`TestFeatureFlagsJourney`: a project app evaluating flags with the Node
+runtime SDK, a customer rule served to one verified customer (API key),
+an `app.plan` attribute rule, a kill delivered by the gateway's
+`X-Faas-Flag-Kills` header and undone, and the lifecycle report. It skips
+while Flags are off for the account and needs `sdk/node/dist/flags.js` built.
+Not covered: gateway-verified attributes (`gregale.country`,
+`gregale.ua_family`), variants and progression plans.
+
 | # | GA capability | Journeys and steps | Not covered |
 |---|---|---|---|
 | 1 | Apps: create, update, rename, delete, restore | `TestAppSettingsAndRename` (update, rename), `TestDeleteAndRestore`, every `deployProbe` | — |
