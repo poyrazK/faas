@@ -13,6 +13,7 @@ import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { TracingConfig } from './TracingConfig.js';
+import type { WarmupHook } from './WarmupHook.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
@@ -88,6 +89,7 @@ export type CreateAppRequest = {
   restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
   after_restore?: AfterRestoreHook;
   before_checkpoint?: BeforeCheckpointHook;
+  warmup?: WarmupHook;
   /**
    * When the platform may pause the app's VM: between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never.
    */

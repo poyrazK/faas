@@ -65,6 +65,12 @@ type CredentialVerifier interface {
 	VerifyCredential(context.Context, Binding, SealedCredential, Database) error
 }
 
+// CutoverCredentialVerifier delegates exact staged-envelope verification using
+// its durable lease, without exposing a runtime-domain private key to apid.
+type CutoverCredentialVerifier interface {
+	VerifyCutoverCredential(context.Context, Cutover, CutoverCredential, Database) error
+}
+
 const CutoverVerificationMaxAge = 5 * time.Minute
 
 // VerificationFresh describes control-plane SQL evidence, not application

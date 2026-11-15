@@ -108,7 +108,7 @@ func runProjectEnvironmentCloneWorker(ctx context.Context, log *slog.Logger) (er
 	if err := srv.configureDurableEntities(ctx, os.Getenv); err != nil {
 		return fmt.Errorf("clone worker: durable entities configuration: %w", err)
 	}
-	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(pool, os.Getenv, log, nil)
+	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(ctx, pool, os.Getenv, log, nil)
 	if err != nil {
 		return errors.New("clone worker: PostgreSQL provider configuration unavailable")
 	}

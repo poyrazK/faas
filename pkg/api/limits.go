@@ -38,53 +38,58 @@ const (
 // Private tool publication journals retain bounded metadata, never source or
 // credentials. The deadline fences abandoned publishers; it never grants a retry.
 const (
-	ToolPublicationIntentMaxBytes            = 64 << 10
-	ToolPublicationOutcomeMaxBytes           = 512 << 10
-	ToolPublicationCatalogMaxBytes           = 256 << 10
-	ToolPublicationMaxTools                  = 64
-	ToolPublicationMaxCases                  = 64
-	ToolPublicationsPerAccount               = 256
-	ToolPublicationDeadline                  = 35 * time.Minute
-	ToolRegistryPageMax                      = 20
-	ToolRegistryQueryMaxBytes                = 128
-	ToolPrivateInvocationWorkers             = 4
-	ToolPrivateInvocationRequestMaxBytes     = 256 << 10 // bounded JSON escaping of 32-KiB canonical arguments
-	ToolInvocationArgsMaxBytes               = 32 << 10
-	ToolInvocationResultMaxBytes             = 64 << 10
-	ToolInvocationRequestMaxBytes            = 4 << 10
-	ToolInvocationOutcomeMaxBytes            = 128 << 10
-	ToolInvocationEndpointMaxBytes           = 512
-	ToolInvocationsPerAccount                = 1024
-	ToolInvocationsActiveMax                 = 4
-	ToolInvocationDefaultTimeout             = 60
-	ToolInvocationMaxTimeout                 = 600
-	ToolInvocationReportGrace                = 30 * time.Second
-	ToolInvocationCancelPoll                 = time.Second
-	ToolGrantIntentMaxBytes                  = 4 << 10
-	ToolGrantsPerAccount                     = 1024
-	ToolGrantsPerKey                         = 64
-	ToolGrantPageMax                         = 20
-	ToolGrantMaxLifetime                     = 30 * 24 * time.Hour
-	ToolOAuthConnectionIntentMaxBytes        = 8 << 10
-	ToolOAuthConnectionRecordMaxBytes        = 16 << 10
-	ToolOAuthConnectionsPerAccount           = 128
-	ToolOAuthConnectionsPerApp               = 32
-	ToolOAuthConnectionPageMax               = 20
-	ToolOAuthURLMaxBytes                     = 2048
-	ToolOAuthClientIDMaxBytes                = 512
-	ToolOAuthScopesMax                       = 64
-	ToolOAuthScopeMaxBytes                   = 128
-	ToolOAuthRefreshTimeout                  = 15 * time.Second
-	ToolOAuthPersistTimeout                  = 5 * time.Second
-	ToolOAuthRenewalLease                    = 45 * time.Second
-	ToolOAuthRefreshSkew                     = 30 * time.Second
-	ToolOAuthProviderResponseMaxBytes        = 64 << 10
-	ToolOAuthCiphertextMaxBytes              = 128 << 10
-	ToolOAuthMaxTokenLifetimeSeconds         = 365 * 24 * 60 * 60
-	ToolOAuthAuthorizationLifetime           = 5 * time.Minute
-	ToolOAuthAuthorizationRequestMaxBytes    = 24 << 10
-	ToolOAuthAuthorizationCiphertextMaxBytes = 16 << 10
-	ToolOAuthCallbackTimeout                 = 5 * time.Second
+	ToolPublicationIntentMaxBytes              = 64 << 10
+	ToolPublicationOutcomeMaxBytes             = 512 << 10
+	ToolPublicationCatalogMaxBytes             = 256 << 10
+	ToolPublicationMaxTools                    = 64
+	ToolPublicationMaxCases                    = 64
+	ToolPublicationsPerAccount                 = 256
+	ToolPublicationDeadline                    = 35 * time.Minute
+	ToolRegistryPageMax                        = 20
+	ToolRegistryQueryMaxBytes                  = 128
+	ToolPrivateInvocationWorkers               = 4
+	ToolPublicationVerificationTimeout         = 90 * time.Second
+	ToolPublicationReadinessMaxRoles           = 32
+	ToolPublicationReadinessRoleTimeout        = 30 * time.Second
+	ToolPublicationVerificationRequestMaxBytes = 256 << 10
+	ToolPublicationFixturesMaxBytes            = 64 << 10
+	ToolPrivateInvocationRequestMaxBytes       = 256 << 10 // bounded JSON escaping of 32-KiB canonical arguments
+	ToolInvocationArgsMaxBytes                 = 32 << 10
+	ToolInvocationResultMaxBytes               = 64 << 10
+	ToolInvocationRequestMaxBytes              = 4 << 10
+	ToolInvocationOutcomeMaxBytes              = 128 << 10
+	ToolInvocationEndpointMaxBytes             = 512
+	ToolInvocationsPerAccount                  = 1024
+	ToolInvocationsActiveMax                   = 4
+	ToolInvocationDefaultTimeout               = 60
+	ToolInvocationMaxTimeout                   = 600
+	ToolInvocationReportGrace                  = 30 * time.Second
+	ToolInvocationCancelPoll                   = time.Second
+	ToolGrantIntentMaxBytes                    = 4 << 10
+	ToolGrantsPerAccount                       = 1024
+	ToolGrantsPerKey                           = 64
+	ToolGrantPageMax                           = 20
+	ToolGrantMaxLifetime                       = 30 * 24 * time.Hour
+	ToolOAuthConnectionIntentMaxBytes          = 8 << 10
+	ToolOAuthConnectionRecordMaxBytes          = 16 << 10
+	ToolOAuthConnectionsPerAccount             = 128
+	ToolOAuthConnectionsPerApp                 = 32
+	ToolOAuthConnectionPageMax                 = 20
+	ToolOAuthURLMaxBytes                       = 2048
+	ToolOAuthClientIDMaxBytes                  = 512
+	ToolOAuthScopesMax                         = 64
+	ToolOAuthScopeMaxBytes                     = 128
+	ToolOAuthRefreshTimeout                    = 15 * time.Second
+	ToolOAuthPersistTimeout                    = 5 * time.Second
+	ToolOAuthRenewalLease                      = 45 * time.Second
+	ToolOAuthRefreshSkew                       = 30 * time.Second
+	ToolOAuthProviderResponseMaxBytes          = 64 << 10
+	ToolOAuthCiphertextMaxBytes                = 128 << 10
+	ToolOAuthMaxTokenLifetimeSeconds           = 365 * 24 * 60 * 60
+	ToolOAuthAuthorizationLifetime             = 5 * time.Minute
+	ToolOAuthAuthorizationRequestMaxBytes      = 24 << 10
+	ToolOAuthAuthorizationCiphertextMaxBytes   = 16 << 10
+	ToolOAuthCallbackTimeout                   = 5 * time.Second
 )
 
 // Referral program bounds. Rewards are estimates only; payout execution is
@@ -2225,6 +2230,10 @@ const (
 	QueueSendBatchMaxMessages = 100
 	QueueSendBatchMaxBytes    = 8 << 20
 )
+
+// QueueGroupKeyMaxBytes bounds a queue message's group_key
+// (ADR-20261112193306).
+const QueueGroupKeyMaxBytes = 128
 
 // Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
 // takes at most QueueLeaseMaxReceipts receipts. A lease without an explicit
@@ -17036,6 +17045,18 @@ const EventCircuitEvaluationInterval = time.Second
 // Maximum wall-clock age before application event routing admission.
 const EventDeliveryAgeMaxMS int64 = 30 * 24 * 60 * 60 * 1000
 
+// EventDeliveryHoldMax is how long an event delivery may be held because
+// events or workflows are switched off for its app, or its plan lost
+// workflows, before it moves to the dead-letter queue as
+// delivery_held_expired. While held it is re-checked every
+// EventDeliveryHoldRecheckMin, backing off to EventDeliveryHoldRecheckMax
+// (ADR-20261027125625 amendment 2026-11-13).
+const (
+	EventDeliveryHoldMax        = 7 * 24 * time.Hour
+	EventDeliveryHoldRecheckMin = time.Minute
+	EventDeliveryHoldRecheckMax = time.Hour
+)
+
 // Maximum explicit schema versions selected by one event subscription.
 const EventSubscriptionSchemaVersionsMax = 16
 
@@ -19438,3 +19459,25 @@ const (
 // MaxObjectKeyScopeBytes bounds a bucket binding's key_prefix
 // (ADR-20261106114500); the catalog CHECK enforces the same bound.
 const MaxObjectKeyScopeBytes = 512
+
+const (
+	DataPipelineRelationshipsMax        = 16
+	DataPipelineRelationshipKeysMax     = 4
+	DataPipelineOrganizationMappingsMax = 32
+	DataPipelineAuthSnapshotTTL         = time.Minute
+	DataPipelineAuthQueryTimeout        = 5 * time.Second
+)
+
+// Scheduled pipeline work remains bounded independently of owner-selected budgets.
+const (
+	DataPipelineScheduleMinSeconds       = int64(3600)
+	DataPipelineScheduleMaxSeconds       = int64(86400)
+	DataPipelineSnapshotRowsMax          = int64(100000)
+	DataPipelineSnapshotBytesMax         = int64(64 << 20)
+	DataPipelineSnapshotOperationTimeout = 45 * time.Second
+	DataPipelineQualityRulesMax          = 16
+	DataPipelineQualityBoundBytesMax     = 64
+	DataPipelineQualityScanRowsMax       = int64(10000)
+	DataPipelineWorkQueryMinMillis       = int64(50)
+	DataPipelineMinutesPerDay            = 24 * 60
+)

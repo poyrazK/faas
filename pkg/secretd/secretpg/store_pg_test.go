@@ -303,6 +303,33 @@ func TestReferenceLookupsOnPostgres(t *testing.T) {
 		node.ID, appA.ID, jobID); err == nil {
 		t.Fatal("an audit row naming both an app and a job was accepted")
 	}
+	// Builds (slice 3j-3): the build's app, state and recorded node.
+	buildDep, err := st.CreateDeployment(ctx, state.Deployment{AppID: appA.ID, Kind: state.DeploymentKindTarball, Status: state.DeployPending, SourcePath: "/spool/b.tar.gz"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := st.CreateBuild(ctx, buildDep.ID, state.DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run, err := store.BuildRunner(ctx, b.ID); err != nil || run.AppID != appA.ID || run.Running || run.Node != "" {
+		t.Fatalf("queued build = %+v, %v", run, err)
+	}
+	if _, err := st.ClaimQueuedBuild(ctx, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RecordBuildNode(ctx, b.ID, "compute-7"); err != nil {
+		t.Fatal(err)
+	}
+	if run, err := store.BuildRunner(ctx, b.ID); err != nil || run.AppID != appA.ID || !run.Running || run.Node != "compute-7" ||
+		time.Since(run.StartedAt) > time.Minute {
+		t.Fatalf("running build = %+v, %v", run, err)
+	}
+	for _, id := range []string{uuid.NewString(), "not-a-uuid"} {
+		if _, err := store.BuildRunner(ctx, id); !errors.Is(err, secretd.ErrUnknownBuild) {
+			t.Errorf("build %q = %v, want ErrUnknownBuild", id, err)
+		}
+	}
 	if sealed, err := store.EdgeHeaderSecret(ctx, appA.ID, referenced); err != nil || len(sealed) != 1 || sealed[0] != 2 {
 		t.Fatalf("referenced edge header value = %x, %v", sealed, err)
 	}

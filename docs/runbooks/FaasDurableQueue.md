@@ -8,6 +8,14 @@ The schedd publishes bounded per-app gauges for the durable queue:
 - `schedd_queue_dead_letter` is the terminal dead-letter count.
 - `schedd_queue_binding_worker_demand` is the uncapped worker demand for each
   queue binding before app and account caps are applied.
+  Messages waiting behind an earlier message of their `group_key` (or work
+  key) cannot run and earn no workers.
+- `schedd_queue_binding_blocked_lanes` counts a binding's ordered keys whose
+  first message has failed and holds later messages of the key;
+  `schedd_queue_binding_blocked_age_seconds` is the oldest such message's
+  age (ADR-20261112193306). A key stays blocked until its head succeeds or
+  dead-letters under the binding's retry policy; the customer sees the same
+  count as `blocked_groups` on the binding's status.
 
 schedd refreshes these every 30 seconds for every worker app and every app
 that scales on its queue. Binding counts stop at 100,000, so a larger backlog

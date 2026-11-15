@@ -114,6 +114,11 @@ func lookupPublicAddresses(ctx context.Context, resolver *net.Resolver, host str
 	return ips, nil
 }
 
+// IsPublic reports whether ip is a globally reachable unicast address: not
+// private, loopback, link-local, shared (CGNAT), documentation, NAT64, 6to4 or
+// otherwise reserved.
+func IsPublic(ip netip.Addr) bool { return isPublicDestination(ip.Unmap()) }
+
 func isPublicDestination(ip netip.Addr) bool {
 	if !ip.IsValid() || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() ||
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {

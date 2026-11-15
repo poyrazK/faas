@@ -112,6 +112,10 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	// the empty dimension for requests that have no version pin.
 	key := responseCacheKeyForRequest(r, app.ID, versionAffinityDeploymentForRequest(h.backend, app.ID, r), rule)
 	outcome, entry := h.responseCache.Get(key)
+	// Also refuse entries captured before this origin veto was introduced.
+	if entry != nil && responseForbidsSharedCaching(http.Header(entry.header)) {
+		return false, rule
+	}
 	switch outcome {
 	case "fresh":
 		// Hit. Replay the stored response verbatim.

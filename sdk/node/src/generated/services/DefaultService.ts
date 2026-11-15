@@ -68,6 +68,9 @@ import type { ToolOAuthConnectionStatus } from '../models/ToolOAuthConnectionSta
 import type { ToolPublicationIntent } from '../models/ToolPublicationIntent.js';
 import type { ToolPublicationOutcome } from '../models/ToolPublicationOutcome.js';
 import type { ToolPublicationRecord } from '../models/ToolPublicationRecord.js';
+import type { ToolPublicationVerification } from '../models/ToolPublicationVerification.js';
+import type { ToolPublicationVerificationDecision } from '../models/ToolPublicationVerificationDecision.js';
+import type { ToolPublicationVerificationRequest } from '../models/ToolPublicationVerificationRequest.js';
 import type { ToolRegistryPage } from '../models/ToolRegistryPage.js';
 import type { ToolRegistryTool } from '../models/ToolRegistryTool.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
@@ -958,7 +961,7 @@ export class DefaultService {
   }
   /**
    * Journal a reviewed publication before execution; requires deploy-write scope and MFA policy
-   * Only created=true authorizes the publisher to start once. Duplicate identities return created=false; changed reviews conflict. Local paths and credentials are excluded.
+   * Only created=true authorizes the publisher to start once. Duplicate identities return created=false; changed reviews conflict. Local paths and credentials are excluded. Hosted private reviews include platform_verification and the reviewed OAuth contract; their completed outcomes must match API-held candidate verification.
    * @returns BeginToolPublicationResponse Created flag and immutable journal record
    * @throws ApiError
    */
@@ -1017,6 +1020,73 @@ export class DefaultService {
         403: `Account authority or MFA requirement not satisfied`,
         404: `Publication or deployment unavailable to this account`,
         409: `Outcome immutable or publisher deadline elapsed`,
+      },
+    });
+  }
+  /**
+   * Request owner-approved platform verification of one private candidate
+   * Requires unscoped personal deploy-write authority and MFA policy. Returns a pending owner review binding the publishing key, native candidate/source, catalog pin and immutable publication review. Only an owner-approved fresh begin launches a bounded API-held credential worker. Repeats return retained status and never replay fixtures. Fixture bodies remain transient; credentials and secret names are never returned. Requires the private-publication operator gate.
+   * @returns ToolPublicationVerification Pending approval or retained verification receipt; Cache-Control is no-store
+   * @throws ApiError
+   */
+  public static verifyToolPublication({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Exact private publication identity
+     */
+    id: string,
+    requestBody: ToolPublicationVerificationRequest,
+  }): CancelablePromise<ToolPublicationVerification> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/tool-publications/{id}/verification',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid candidate or fixtures`,
+        403: `Publishing authority or MFA requirement not satisfied`,
+        404: `Current publisher or candidate authority unavailable`,
+        409: `Review differs or source/serving identity changed`,
+        429: `Verification workers busy; retry the same unstarted request`,
+        503: `Platform-held candidate verification is disabled by the operator`,
+      },
+    });
+  }
+  /**
+   * Approve or revoke private candidate test authority as the personal administrator
+   * Requires unscoped personal administrator authority and MFA policy. Approval selects exactly one existing ordinary secret:MCP_* test token or managed execution OAuth connection on the candidate app's default environment. The exact request digest and credential authorization binding are immutable. Managed connections must match the reviewed issuer and resource and cover all reviewed scopes. Approval performs no provider request. Candidates with readiness roles also require approve_readiness_roles acknowledgement bound to the reviewed policy and credential authority. Revocation blocks subsequent credential dispatches; an accepted HTTP request may finish. Completed test evidence is consumed and cannot be reauthorized or revoked. This grants no invocation access.
+   * @returns ToolPublicationVerification Public approval status without credential metadata
+   * @throws ApiError
+   */
+  public static decideToolPublicationVerification({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Exact private publication identity
+     */
+    id: string,
+    requestBody: ToolPublicationVerificationDecision,
+  }): CancelablePromise<ToolPublicationVerification> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'PUT',
+      url: '/v1/tool-publications/{id}/verification',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `Invalid decision or secret namespace`,
+        403: `Personal administrator or MFA requirement not satisfied`,
+        404: `Candidate or ordinary app credential unavailable`,
+        409: `Review changed, expired or consumed`,
+        503: `Owner candidate-test approval is disabled or the OAuth connection needs reconnection`,
       },
     });
   }

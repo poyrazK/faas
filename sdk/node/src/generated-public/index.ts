@@ -550,6 +550,7 @@ export type { ManagedPostgresRestoreRange } from './models/ManagedPostgresRestor
 export type { ManagedPostgresUsageResponse } from './models/ManagedPostgresUsageResponse.js';
 export type { ManagedServiceProbeSpec } from './models/ManagedServiceProbeSpec.js';
 export type { MCPPolicyConvergenceSnapshot } from './models/MCPPolicyConvergenceSnapshot.js';
+export type { MCPReadinessExpectation } from './models/MCPReadinessExpectation.js';
 export type { MCPResourcePolicy } from './models/MCPResourcePolicy.js';
 export type { MemberListResponse } from './models/MemberListResponse.js';
 export type { MFAConfirmRequest } from './models/MFAConfirmRequest.js';
@@ -1229,6 +1230,7 @@ export type { WakeTimelineEvent } from './models/WakeTimelineEvent.js';
 export type { WakeTimelineJSONRow } from './models/WakeTimelineJSONRow.js';
 export type { WakeTimelinePage } from './models/WakeTimelinePage.js';
 export type { WakeTimelineResponse } from './models/WakeTimelineResponse.js';
+export type { WarmupHook } from './models/WarmupHook.js';
 export type { WebhookWorkflowReceiptResponse } from './models/WebhookWorkflowReceiptResponse.js';
 export type { WorkDecision } from './models/WorkDecision.js';
 export type { WorkerRolloutObservation } from './models/WorkerRolloutObservation.js';

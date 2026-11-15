@@ -8,8 +8,9 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // credentials in a drop-in. It runs as its own OS user, faas-secretd, which
 // logs in to Postgres only as faas_secretd, and it reads the runtime seal
 // domain's identity and its TLS key through LoadCredential, so neither file
-// is readable by any other daemon user. It needs no object storage and no
-// tenant network: only Postgres and its mTLS listener.
+// is readable by any other daemon user. It needs metadata Postgres and its
+// mTLS listener, plus read-only TLS SQL
+// probes to managed databases when staged credential verification is configured.
 func UnitSecretd() daemonunit.Unit {
 	return daemonunit.Unit{
 		Description:           "Gregale secret opener (secretd): opens customer runtime secrets for the compute node that runs the app",

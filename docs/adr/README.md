@@ -20,10 +20,12 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261114174600: Flag new accounts that resemble abuse-held ones](20261114174600-held-account-links.md) — accepted; a sign-up sharing a /24 or /48 or a private email domain with an abuse-held account is stored in `account_held_links`, audited and counted; flag only
+- [ADR-20261112193306: Ordered message groups for worker queues](20261112193306-ordered-queue-message-groups.md) — accepted, built dark (`queue_message_groups`); builds on ADR-374 work-policy lanes: pull leases honour lanes (one running message per key, a retrying head blocks its key), a per-message `group_key` on the built-in `gregale-ordered` policy, Postgres change workers keyed by row with the relay keeping per-row order, and queue_depth scaling that leaves out messages waiting behind their key
+- [ADR-20261112140000: Workers consume Postgres row changes through the Commit outbox](20261112140000-postgres-change-workers.md) — accepted, built dark; table row triggers write allowlisted before/after images into Commit's `gregale_outbox`, the Commit relay enqueues them into the worker's named queue (pull leases, DLQ, queue_depth scaling); Gregale installs on managed Postgres via the owner path, customers install on BYO; least-privilege relay role; public-address policy for BYO; per-source poll interval so idle databases can suspend
 - [ADR-20261114141449: Offline OpenAPI tool generation](20261114141449-openapi-tool-generation.md) — accepted; explicit public API operation selection, offline Node adapter source, completed behavioral assertions before existing publication and exact grants
 - [ADR-20261114132157: Structured CLI help](20261114132157-cli-json-help.md) — accepted; versioned JSON discovery through existing help, canonical paths, local argument metadata and offline capability visibility.
 - [ADR-20261114143410: Structured recovery for CLI Job waits](20261114143410-cli-job-wait-recovery.md) — accepted; Problem diagnostics on stderr, compatible stdout receipts and exact-run, profile-preserving recovery.
-
 - [ADR-20261113160000: Record what an account looked like when it signed up](20261113160000-account-signup-facts.md) — accepted; each account keeps its sign-up method, address and user agent (90 days), country, network owner and email domain in `account_signup_facts`
 - [ADR-20261114181406: Resumable SDK source uploads and acceptance recovery](20261114181406-sdk-resumable-source-uploads.md) — accepted; bounded Node/Python archive streaming, durable portable checkpoints, offset reconciliation, and receipt-only recovery after uncertain deployment submission.
 
@@ -2362,11 +2364,19 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-20261113230000: Guided OAuth for execution connections](20261113230000-guided-tool-oauth.md) — accepted; owner-only browser PKCE, direct encrypted credentials, consumed authorization attempts and new identities for reconnects
 - [ADR-20261114100000: Bill only public-bound app egress](20261114100000-bill-only-public-app-egress.md) — proposed; per-netns nftables counters split internal from public egress, meterd bills a new public_tx_bytes column; the egress meter stays off/shadow until then (billing review R8-2)
+
+- [ADR-20261114162429: Hosted tool publication for Node, Go and Python](20261114162429-hosted-tool-runtime-selection.md) — accepted; source-derived runtime review using shared native markers, all three hosted starters and the existing verified publication workflow
+
+- [ADR-20261114173309: Hosted private tool publication with owner-approved candidate tests](20261114173309-hosted-private-tool-publication.md) — accepted; candidate/source-bound administrator approval, API-held test tokens, one-attempt verification receipts and exact-grant invocation
+
+- [ADR-20261114191145: Managed OAuth for private publication verification](20261114191145-publication-managed-oauth.md) — accepted; exact owner-approved connection bindings, shared durable renewal leases, per-purpose dispatch authority and credential-free publication receipts
 - [ADR-20261114170352: Organization ownership guards and a require-2FA policy](20261114170352-org-ownership-and-security-policy.md) — accepted; ownership eligibility, browser-only transfer/deletion, organization two-factor policy and owner recovery. Renumbered from the colliding customer-attention identifier.
 - [ADR-20261114164404: Structured recovery for CLI Workflow waits](20261114164404-cli-workflow-wait-recovery.md) — accepted; exact-run read-only inspection/resumption for wait and accepted run/resume/retry waits, preserved timing options, snapshots, polling and exit contracts.
 - [ADR-20261114182830: Node cache disk budget and reference-based retention](20261114182830-node-cache-budget-from-disk-and-retention.md) — accepted; filesystem-sized budget, unreferenced capture/base retention and live snapshots evicted last. Renumbered from the startup-window identifier collision.
 
 - [ADR-20261114190002: Customers see their own attention signals; sign-in refusals are recorded](20261114190002-customer-signal-hints-and-credential-refusals.md)
+
+- [ADR-20261114191709: Read-only recovery for CLI app health waits](20261114191709-cli-app-health-wait-recovery.md) — accepted; scoped inspection and continuation, preserved evidence, timing and exit contracts.
 - [ADR-20261114193000: Local source preparation in the Node and Python SDKs](20261114193000-sdk-local-source-preparation.md) — accepted; inspectable worktree plans, CLI selection contracts, reproducible streaming archives, filesystem checks, deadlines and cancellation.
 - [ADR-20261114201959: Resumable source deployment workflows in the SDKs](20261114201959-sdk-resumable-source-deployment-workflows.md) — accepted; local journals compose preparation, checkpointed uploads, receipt recovery and release observation with one deadline and typed outcomes.
 - [ADR-20261114220642: Typed project inspection in Node and Python](20261114220642-sdk-typed-project-inspection.md) — accepted; immutable discovery plans resolve manifest/workspace intent and bind configuration fingerprints to resumable deployments without rewriting source.
