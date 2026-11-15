@@ -37,6 +37,34 @@ var approvalCategoryLabels = map[string]string{
 	api.AgentApprovalUndo:        "Undo the agent's own changes",
 }
 
+// approvalNeedsFreshSignIn lists the categories whose approval, like a CLI
+// sign-in approval, needs a recent sign-in or two-factor code: a week-old
+// session must not approve an agent deleting, changing production, minting
+// credentials or changing billing (F12-2, ADR-20261115160000). Denying never
+// needs one.
+var approvalNeedsFreshSignIn = map[string]bool{
+	api.AgentApprovalDelete:      true,
+	api.AgentApprovalProduction:  true,
+	api.AgentApprovalCredentials: true,
+	api.AgentApprovalBilling:     true,
+}
+
+// staleApprover sends a session too old to approve approval to sign in again,
+// coming back to the same review page. It reports whether it answered.
+func (h *cliAuthHandlers) staleApprover(w http.ResponseWriter, r *http.Request, acct state.Account, approval state.AgentApproval) bool {
+	if !approvalNeedsFreshSignIn[approval.Category] || cliApprovalFresh(r, acct) {
+		return false
+	}
+	h.srv.audit.Emit(r.Context(), "auth.recent_sign_in_required", &acct.ID, map[string]any{
+		"action":     "agent_approval",
+		"category":   approval.Category,
+		"window_sec": int(api.RecentSignInWindow.Seconds()),
+	})
+	next := cliAuthPath + "?agent_approval=" + url.QueryEscape(approval.ID)
+	http.Redirect(w, r, loginPath+"?reauth=1&next="+url.QueryEscape(next), http.StatusSeeOther)
+	return true
+}
+
 // decidableApproval loads a request the signed-in person may decide.
 func (h *cliAuthHandlers) decidableApproval(r *http.Request, id string) (state.AgentApproval, state.Account, string) {
 	acct, ok := AccountFrom(r.Context())
@@ -67,6 +95,9 @@ func (h *cliAuthHandlers) renderAgentApprovalPage(w http.ResponseWriter, r *http
 	approval, acct, problem := h.decidableApproval(r, id)
 	if problem != "" {
 		h.renderAgentApproval(w, r, map[string]any{"Error": problem})
+		return
+	}
+	if h.staleApprover(w, r, acct, approval) {
 		return
 	}
 	csrf, err := middleware.IssueForAuthenticated(h.srv.sessions, agentApprovalPurpose, acct.ID+":"+approval.ID)
@@ -101,6 +132,9 @@ func (h *cliAuthHandlers) postAgentApprovalPage(w http.ResponseWriter, r *http.R
 		return
 	}
 	approve := r.PostForm.Get("decision") == "approve"
+	if approve && h.staleApprover(w, r, acct, approval) {
+		return
+	}
 	store := h.srv.store.(state.AgentApprovalStore)
 	note := r.PostForm.Get("note") // shown to the agent on a denial (ADR-20261107140000 §6)
 	if err := store.DecideAgentApproval(r.Context(), approval.ID, approve, acct.ID, note); err != nil {

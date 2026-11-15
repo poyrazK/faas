@@ -43,6 +43,10 @@ class QueueSendRequest:
     """
     work: InvokeWork | Unset = UNSET
     """Named policy and typed application key for one durable invocation."""
+    group_key: str | Unset = UNSET
+    """Messages with the same group_key are delivered one at a time, in send order, on push and pull consumers; a
+    message waiting to retry holds later ones with its key. Cannot be combined with work. Preview: refused with
+    queue_groups_unavailable until released to the account."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -64,6 +68,8 @@ class QueueSendRequest:
         if not isinstance(self.work, Unset):
             work = self.work.to_dict()
 
+        group_key = self.group_key
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -79,6 +85,8 @@ class QueueSendRequest:
             field_dict["retry_policy"] = retry_policy
         if work is not UNSET:
             field_dict["work"] = work
+        if group_key is not UNSET:
+            field_dict["group_key"] = group_key
 
         return field_dict
 
@@ -116,6 +124,8 @@ class QueueSendRequest:
         else:
             work = InvokeWork.from_dict(_work)
 
+        group_key = d.pop("group_key", UNSET)
+
         queue_send_request = cls(
             environment=environment,
             payload=payload,
@@ -123,6 +133,7 @@ class QueueSendRequest:
             queue_name=queue_name,
             retry_policy=retry_policy,
             work=work,
+            group_key=group_key,
         )
 
         queue_send_request.additional_properties = d
