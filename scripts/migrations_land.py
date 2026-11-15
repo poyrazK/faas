@@ -102,18 +102,34 @@ def main_migrations(ref: str) -> list[str]:
     return [n for n in out.split() if n.endswith(".sql")]
 
 
-def apply_renames(renames: dict[str, str]) -> None:
+def apply_renames(renames: dict[str, str], base: str) -> list[str]:
+    """Rename the files and rewrite the old versions everywhere the branch
+    refers to them: its migrations and any other file it changed (an ADR or
+    test naming a migration)."""
     old_versions = {old[:17]: new[:17] for old, new in renames.items()}
     for old, new in renames.items():
         git("mv", f"migrations/{old}", f"migrations/{new}")
-    for new in renames.values():
-        path = Path("migrations") / new
-        text = path.read_text()
+    changed = git("diff", "--name-only", "--diff-filter=AM", f"{base}...HEAD").split()
+    touched = []
+    renamed = {f"migrations/{new}" for new in renames.values()}
+    paths = renamed | {p for p in changed if not (p.startswith("migrations/") and p.endswith(".sql"))}
+    for p in sorted(paths):
+        path = Path(p)
+        try:
+            text = path.read_text()
+        except (FileNotFoundError, UnicodeDecodeError):
+            continue
+        updated = text
         for old_v, new_v in old_versions.items():
-            text = text.replace(old_v, new_v)
-        path.write_text(text)
+            updated = updated.replace(old_v, new_v)
+        if updated != text:
+            path.write_text(updated)
+            if p not in renamed:
+                touched.append(p)
+                print(f"migrations-land: updated references in {p}")
     for old, new in renames.items():
         print(f"migrations-land: renamed {old} -> {new}")
+    return touched
 
 
 def postgres_bin_dir() -> str | None:
@@ -201,11 +217,10 @@ def main() -> int:
         git("checkout", "--theirs", DIGEST)
 
     renames = plan_renames(branch_migrations(upstream), main_migrations(upstream), datetime.now(timezone.utc))
-    if renames:
-        apply_renames(renames)
+    touched = apply_renames(renames, upstream) if renames else []
 
     regenerate(os.environ.get("DATABASE_URL") or None)
-    git("add", "-A", "schema.sql", DIGEST, "pkg/state/sqlc", "migrations")
+    git("add", "-A", "schema.sql", DIGEST, "pkg/state/sqlc", "migrations", *touched)
     state = "merge is staged; commit it" if merge_in_progress() else "changes are staged"
     print(f"migrations-land: done; {state}, then push")
     return 0

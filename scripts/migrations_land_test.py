@@ -1,7 +1,11 @@
+import os
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 from datetime import datetime, timezone
 
-from migrations_land import plan_renames
+from migrations_land import apply_renames, plan_renames
 
 
 NOW = datetime(2026, 11, 15, 14, 0, 0, tzinfo=timezone.utc)
@@ -38,6 +42,33 @@ class PlanRenamesTest(unittest.TestCase):
 
     def test_non_migration_names_are_ignored(self):
         self.assertEqual(plan_renames(["README.md"], ["20261114000000000_x.sql"], NOW), {})
+
+
+class ApplyRenamesTest(unittest.TestCase):
+    def test_rewrites_references_in_files_the_branch_changed(self):
+        with tempfile.TemporaryDirectory() as d:
+            def git(*a):
+                subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=d, check=True, capture_output=True)
+            git("init", "-q", "-b", "main")
+            Path(d, "migrations").mkdir()
+            Path(d, "docs").mkdir()
+            Path(d, "docs/other.md").write_text("main doc 20261113000000100\n")
+            git("add", "-A"); git("commit", "-qm", "base")
+            git("checkout", "-qb", "feature")
+            Path(d, "migrations/20261113000000100_a.sql").write_text("-- filename: 20261113000000100_a.sql\n")
+            Path(d, "docs/adr.md").write_text("Migration 20261113000000100.\n")
+            git("add", "-A"); git("commit", "-qm", "feature")
+            cwd = os.getcwd()
+            os.chdir(d)
+            try:
+                touched = apply_renames({"20261113000000100_a.sql": "20261115140000100_a.sql"}, "main")
+            finally:
+                os.chdir(cwd)
+            self.assertEqual(touched, ["docs/adr.md"])
+            self.assertEqual(Path(d, "docs/adr.md").read_text(), "Migration 20261115140000100.\n")
+            self.assertEqual(Path(d, "migrations/20261115140000100_a.sql").read_text(), "-- filename: 20261115140000100_a.sql\n")
+            # A file the branch did not change is left alone.
+            self.assertEqual(Path(d, "docs/other.md").read_text(), "main doc 20261113000000100\n")
 
 
 if __name__ == "__main__":
