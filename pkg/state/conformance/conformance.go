@@ -153,6 +153,7 @@ func Run(t *testing.T, open Open) {
 		{"invoice_history_import_is_insert_only_and_atomic", testInvoiceHistoryImport},
 		{"invoice_detail_refresh_is_revision_fenced", testInvoiceDetailRefresh},
 		{"billing_usage_delivery_is_provider_qualified", testBillingUsageDelivery},
+		{"internal_egress_subtracts_once_and_carries", testInternalEgressSubtraction},
 		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"overage_cap_default_follows_the_plan", testOverageCapDefaultFollowsThePlan},
@@ -2163,6 +2164,75 @@ func testInvoiceDetailRefresh(t *testing.T, fx *Fixture) {
 	if _, err := fx.Store.RefreshInvoiceDetails(fx.Ctx, fx.Account.ID, stored.ID, stored.UpdatedAt, details); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("stale RefreshInvoiceDetails error = %v, want ErrConflict", err)
 	}
+}
+
+// Billing review R8-2: internal egress comes off billed net_tx_bytes once per
+// reading, never below zero, and what a minute could not absorb carries to
+// the next one.
+func testInternalEgressSubtraction(t *testing.T, fx *Fixture) {
+	observer, ok := fx.Store.(state.InternalEgressObserver)
+	if !ok {
+		t.Skip("store does not implement state.InternalEgressObserver")
+	}
+	instance, err := fx.Store.CreateInstance(fx.Ctx, fx.App.ID, fx.Deployment.ID,
+		string(state.StateRunning), 128, fx.Node.ID, uuid.NewString())
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	minute := time.Now().UTC().Truncate(time.Hour).Add(-50 * time.Minute)
+	before := monthlyNetTx(t, fx, minute)
+	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, minute, 1, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage: %v", err)
+	}
+	if got, err := observer.SubtractInternalEgress(fx.Ctx, fx.App.ID, instance.ID, minute, 50); err != nil || got != 0 {
+		t.Fatalf("SubtractInternalEgress before a checkpoint = (%d, %v), want (0, nil)", got, err)
+	}
+	if _, _, err := fx.Store.AppendNetworkUsageObservation(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, minute, 1000, true, 0, true); err != nil {
+		t.Fatalf("AppendNetworkUsageObservation: %v", err)
+	}
+	steps := []struct {
+		cumulative, want int64
+	}{
+		{400, 400},  // first reading: all of it
+		{400, 0},    // replay after commit: nothing twice
+		{1500, 600}, // +1100 against the 600 left: 500 carries
+	}
+	for i, step := range steps {
+		got, err := observer.SubtractInternalEgress(fx.Ctx, fx.App.ID, instance.ID, minute, step.cumulative)
+		if err != nil || got != step.want {
+			t.Fatalf("step %d: SubtractInternalEgress(%d) = (%d, %v), want %d", i, step.cumulative, got, err, step.want)
+		}
+	}
+	next := minute.Add(time.Minute)
+	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, next, 1, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatalf("AppendUsage(next): %v", err)
+	}
+	if _, _, err := fx.Store.AppendNetworkUsageObservation(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, next, 3000, true, 0, true); err != nil {
+		t.Fatalf("AppendNetworkUsageObservation(next): %v", err)
+	}
+	// The carried 500 plus a reset reading of 100 (the counter restarted).
+	if got, err := observer.SubtractInternalEgress(fx.Ctx, fx.App.ID, instance.ID, next, 100); err != nil || got != 600 {
+		t.Fatalf("SubtractInternalEgress after reset = (%d, %v), want (600, nil)", got, err)
+	}
+	// 3000 veth bytes less 1600 internal.
+	if got := monthlyNetTx(t, fx, minute) - before; got != 1400 {
+		t.Fatalf("monthly net_tx_bytes grew by %d, want the 1400 public bytes", got)
+	}
+}
+
+func monthlyNetTx(t *testing.T, fx *Fixture, month time.Time) int64 {
+	t.Helper()
+	rows, err := fx.Store.UsageByMonth(fx.Ctx, fx.Account.ID, month)
+	if err != nil {
+		t.Fatalf("UsageByMonth: %v", err)
+	}
+	var total int64
+	for _, row := range rows {
+		if row.AppID == fx.App.ID {
+			total += row.NetTxBytes
+		}
+	}
+	return total
 }
 
 func testBillingUsageDelivery(t *testing.T, fx *Fixture) {

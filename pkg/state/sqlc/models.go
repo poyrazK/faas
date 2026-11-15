@@ -10015,13 +10015,16 @@ type MeterGatewayUsageEvent struct {
 }
 
 type MeterNetworkCheckpoint struct {
-	InstanceID pgtype.UUID
-	NetTxBytes int64
-	NetRxBytes int64
-	NetTxValid bool
-	NetRxValid bool
-	ObservedAt pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
+	InstanceID        pgtype.UUID
+	NetTxBytes        int64
+	NetRxBytes        int64
+	NetTxValid        bool
+	NetRxValid        bool
+	ObservedAt        pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	InternalTxBytes   int64
+	InternalTxValid   bool
+	InternalTxPending int64
 }
 
 type MeterdTenantSurfaceCertExpiryState struct {

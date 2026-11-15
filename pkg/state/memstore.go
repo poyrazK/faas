@@ -112,6 +112,11 @@ type networkUsageCheckpoint struct {
 	netRx      int64
 	netTxValid bool
 	netRxValid bool
+	// Internal egress checkpoint (billing review R8-2), see
+	// SubtractInternalEgress.
+	internalTx        int64
+	internalTxValid   bool
+	internalTxPending int64
 }
 
 // auditEventOutboxRow is the in-memory mirror of audit_event_outbox. The

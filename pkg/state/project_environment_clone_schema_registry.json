@@ -12562,6 +12562,9 @@
     "table": "meter_network_checkpoints",
     "columns": [
       "instance_id",
+      "internal_tx_bytes",
+      "internal_tx_pending",
+      "internal_tx_valid",
       "net_rx_bytes",
       "net_rx_valid",
       "net_tx_bytes",

@@ -90,3 +90,32 @@ own interface and was never in the veth counter.
 - Slice 2 carries the total through schedd to a `usage_minutes` column and
   lets meterd subtract it behind a meter setting that stays off until
   `make test-metal` and `make leakcheck` pass on the native hosts.
+
+## Amendment 2026-11-15: slice 2 as built
+
+- schedd relays vmmd's reading unchanged: `InstanceTelemetry.internal_tx_bytes`
+  into its instance stats, and out to meterd as
+  `InstanceStatsRow.internal_tx_bytes` (field 14, unset when vmmd has no
+  reading, so older schedds and vmmds report nothing).
+- Instead of a new `public_tx_bytes` usage column, meterd subtracts the
+  internal bytes from `usage_minutes.net_tx_bytes` when it writes each minute.
+  Every reader of billed egress (the monthly totals trigger, the egress
+  allowance and ceiling, provider usage delivery, financial evidence) then
+  follows without its own change, and a node that does not report the counter
+  bills as before.
+- `meter_network_checkpoints` gains `internal_tx_bytes`, `internal_tx_valid`
+  and `internal_tx_pending` (expand-only migration). The checkpoint advances in
+  the same transaction as the subtraction, so a retried minute subtracts
+  nothing twice; a reading below the checkpoint is a counter reset and counts
+  in full, as for the veth counters.
+- The internal counter is polled every 15 s and the veth counter every
+  250 ms, so a minute's internal bytes can exceed what is left of its egress.
+  The excess carries to the next minute, at most one reading's worth; beyond
+  that it is dropped, which bills slightly more, never less, than public
+  egress. `net_tx_bytes` is never reduced below zero.
+- `[meter] internal_egress_unbilled` (default false) turns it on. It stays
+  off until `make test-metal` and `make leakcheck` pass on the native hosts
+  and every compute node runs the vmmd from slice 1 (launch checklist gate 5).
+  Once on, `net_tx_bytes` holds billed egress, and the raw veth total of a
+  minute is no longer stored; the checkpoint keeps each instance's cumulative
+  internal bytes for audit.

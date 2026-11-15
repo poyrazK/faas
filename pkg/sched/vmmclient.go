@@ -398,7 +398,11 @@ type VMInstanceStat struct {
 	// the vmmd side; today the field stays nil end-to-end
 	// (the poller stamps RX=Unknown, the meterd sampler
 	// writes 0 to net_rx_bytes — safe under additive-merge).
-	NetRxBytes       *int64
+	NetRxBytes *int64
+	// InternalTxBytes (billing review R8-2) is the cumulative part of
+	// NetTxBytes the guest sent to internal destinations; nil until vmmd's
+	// per-namespace poll has read the instance.
+	InternalTxBytes  *int64
 	InflightRequests int64
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
@@ -1912,6 +1916,10 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 	if v := in.GetNetRxBytes(); v != nil {
 		b := v.GetValue()
 		row.NetRxBytes = &b
+	}
+	if v := in.GetInternalTxBytes(); v != nil {
+		b := v.GetValue()
+		row.InternalTxBytes = &b
 	}
 	if v := in.GetRequestCountTotal(); v != nil {
 		c := v.GetValue()

@@ -258,6 +258,8 @@ func (a *scheddEgressAdapter) ReadUsageDeltas(instanceID string) (meter.UsageDel
 		NetworkCumulative: true,
 		NetTXValid:        row.TxValid == 0,
 		NetRXValid:        row.RxValid == 0,
+		InternalTXBytes:   row.InternalTxBytes,
+		InternalTXValid:   row.InternalTxValid,
 	}, true
 }
 
@@ -610,6 +612,8 @@ func (a *egressAggregator) ReadUsageDeltas(instanceID string) (meter.UsageDeltas
 		out.NetworkCumulative = schedd.NetworkCumulative
 		out.NetTXValid = schedd.NetTXValid
 		out.NetRXValid = schedd.NetRXValid
+		out.InternalTXBytes = schedd.InternalTXBytes
+		out.InternalTXValid = schedd.InternalTXValid
 	}
 	if a.gw != nil {
 		var gateway meter.UsageDeltas

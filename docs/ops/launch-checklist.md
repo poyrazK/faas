@@ -115,6 +115,11 @@ production deployment.
   until app egress excludes Gregale-internal traffic (R8-2; see
   ADR-20261114100000). Until then object-storage uploads, app-to-app calls,
   database traffic and realtime publishes are counted as app egress.
+- **Verify:** before turning R8-2 on, `make test-metal` and `make leakcheck`
+  pass on a native KVM host with the release that adds the per-instance
+  `faas_internal_tx` counter, every compute node runs that vmmd, and only
+  then `[meter] internal_egress_unbilled = true` is set on meterd. Replies a
+  called app sends to another app's service call stay billed until slice 3.
 - **Signed:** ____________________  date: _________
 
 ## Known limits at launch
@@ -129,6 +134,9 @@ production deployment.
   budgets leave out managed PostgreSQL and database egress. The API names them
   in `missing_bill_components` (CC-004); the invoice and the spend cap include
   them.
+- **Organization strict budgets (CC-003).** Strict budgets for organizations
+  are not released (the API answers 422 "not released"); the owner deferred
+  them until after launch. Organization spend follows the account spend cap.
 
 ## Legacy-provider compatibility
 

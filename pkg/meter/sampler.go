@@ -92,6 +92,12 @@ type UsageDeltas struct {
 	NetworkCumulative bool
 	NetTXValid        bool
 	NetRXValid        bool
+	// InternalTXBytes (billing review R8-2) is vmmd's cumulative count of
+	// the NetTXBytes the instance sent to internal destinations, valid only
+	// when InternalTXValid. The sampler subtracts it from billed egress
+	// when WithInternalEgressUnbilled is on.
+	InternalTXBytes uint64
+	InternalTXValid bool
 }
 
 type EgressSource interface {
@@ -245,6 +251,10 @@ type Sampler struct {
 	// quietRelease decides which accounts on mode applies to (the
 	// quiet_pause_unbilled platform flag); nil releases every account.
 	quietRelease func(platformflags.Subject) bool
+	// internalEgressUnbilled ([meter] internal_egress_unbilled, billing
+	// review R8-2) subtracts each instance's internal egress from
+	// usage_minutes.net_tx_bytes. Off by default.
+	internalEgressUnbilled bool
 }
 
 // cpuBaseline is the per-instance baseline the sampler retains
@@ -489,6 +499,15 @@ func (s *Sampler) UnrecordedMinutes() []time.Time {
 // at the boundary are seen (ADR-20261030120000).
 func (s *Sampler) WithRollSettle(settle time.Duration) *Sampler {
 	s.settle = settle
+	return s
+}
+
+// WithInternalEgressUnbilled makes billed egress leave out the bytes an
+// instance sent to internal destinations (ADR-20261114100000): after each
+// network checkpoint the sampler hands vmmd's cumulative internal reading to
+// a store implementing state.InternalEgressObserver.
+func (s *Sampler) WithInternalEgressUnbilled(on bool) *Sampler {
+	s.internalEgressUnbilled = on
 	return s
 }
 
@@ -1256,6 +1275,28 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 	}
 	row.NetTxBytes = deltaTx
 	row.NetRxBytes = deltaRx
+	return s.subtractInternalEgress(ctx, row, usage)
+}
+
+// subtractInternalEgress leaves the instance's internal egress out of the
+// row's billed bytes when WithInternalEgressUnbilled is on and vmmd reported
+// the counter (billing review R8-2).
+func (s *Sampler) subtractInternalEgress(ctx context.Context, row *RolledRow, usage UsageDeltas) error {
+	if !s.internalEgressUnbilled || !usage.InternalTXValid {
+		return nil
+	}
+	observer, ok := s.store.(state.InternalEgressObserver)
+	if !ok {
+		return nil
+	}
+	if usage.InternalTXBytes > math.MaxInt64 {
+		return fmt.Errorf("meter: internal egress counter exceeds int64 for instance %s", row.InstanceID)
+	}
+	subtracted, err := observer.SubtractInternalEgress(ctx, row.AppID, row.InstanceID, row.Minute, int64(usage.InternalTXBytes))
+	if err != nil {
+		return fmt.Errorf("meter: subtract internal egress for instance %s: %w", row.InstanceID, err)
+	}
+	row.NetTxBytes = max(row.NetTxBytes-subtracted, 0)
 	return nil
 }
 
