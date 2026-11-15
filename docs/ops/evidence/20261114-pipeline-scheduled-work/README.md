@@ -111,3 +111,9 @@ The parent fix now supplies the existing offline manifest to the shared
 suggestion algorithm. Focused JSON-help, typo/ambiguity and edit-distance tests
 passed locally in 5.748 seconds, including the explicit zero-request recovery
 hint regression. Final hosted acceptance remains required after restacking.
+
+The corrected parent subsequently passed all six required checks and every
+triggered acceptance, SDK and image workflow in
+[run 43671412819](https://github.com/poyrazK/faas/actions/runs/43671412819),
+then squash-merged as `10df47cfe18e85ca10d6351aa76f722385d552fd`.
+This branch retains that exact main ancestry for final qualification.
