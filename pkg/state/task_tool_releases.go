@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
-var ErrTaskToolReleaseLimit = errors.New("Task release intent journal is full")
+var ErrTaskToolReleaseLimit = errors.New("task release intent journal is full")
 
 // TaskToolReleaseIntentStore is the apid-owned review journal. It has no apply,
 // deployment, migration, credential retrieval, or registry publication method.

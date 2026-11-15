@@ -49,7 +49,8 @@ func TestTaskIntentManagementProtocols(t *testing.T) {
 			executor := func(_ context.Context, args []string, input []byte) (LocalCLIResult, error) {
 				calls++
 				if len(args) < 9 || strings.Join(args[:4], " ") != "mcp server tasks intent" || args[4] != "prepare" && args[4] != "get" || args[5] != "--id" || args[6] != record.ID || args[7] != "--plan" || args[8] != path || len(input) != 0 {
-					t.Fatal("Task intent dispatched unexpected execution", args)
+					t.Error("Task intent dispatched unexpected execution", args)
+					return LocalCLIResult{}, errors.New("unexpected intent command")
 				}
 				body, _ := json.Marshal(record)
 				return LocalCLIResult{Stdout: body}, nil
@@ -78,10 +79,17 @@ func TestTaskIntentManagementProtocols(t *testing.T) {
 
 func TestTaskIntentManagementRejectsUnsafeReceipts(t *testing.T) {
 	record := taskIntentReceipt(t)
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("receipt validation unexpectedly made a native API request")
+		w.WriteHeader(500)
+	}))
+	defer backend.Close()
 	for _, scenario := range []string{"CLI error", "execution authority", "changed digest", "extended expiry"} {
 		t.Run(scenario, func(t *testing.T) {
 			copy := record
+			calls := 0
 			executor := func(context.Context, []string, []byte) (LocalCLIResult, error) {
+				calls++
 				if scenario == "CLI error" {
 					return LocalCLIResult{}, errors.New("SECRET_SENTINEL")
 				}
@@ -96,12 +104,12 @@ func TestTaskIntentManagementRejectsUnsafeReceipts(t *testing.T) {
 				body, _ := json.Marshal(copy)
 				return LocalCLIResult{Stdout: body}, nil
 			}
-			_, m, err := newManagementServer(api.NewClient("http://invalid", testToken), Options{AllowWrites: true, LocalCLI: executor, Toolsets: []string{ToolsetBuildTools}})
+			_, m, err := newManagementServer(api.NewClient(backend.URL, testToken), Options{APIBase: backend.URL, AllowWrites: true, LocalCLI: executor, Toolsets: []string{ToolsetBuildTools}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			_, err = m.checkTaskReleaseIntent(t.Context(), checkTaskReleaseArgs{IntentID: record.ID, PlanPath: filepath.Join(t.TempDir(), "plan.json")})
-			if err == nil || strings.Contains(err.Error(), "SECRET_SENTINEL") {
+			if calls != 1 || err == nil || strings.Contains(err.Error(), "SECRET_SENTINEL") {
 				t.Fatal("unsafe review escaped validation", err)
 			}
 		})

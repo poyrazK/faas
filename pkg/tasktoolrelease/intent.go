@@ -17,7 +17,7 @@ import (
 )
 
 var ErrInvalid = errors.New("invalid Task release intent")
-var ErrChanged = errors.New("Task release intent or approval changed")
+var ErrChanged = errors.New("task release intent or approval changed")
 
 // RequiredSetup lists unverified owner setup, not resolved binding identities.
 func RequiredSetup() []string {
@@ -116,7 +116,7 @@ func Decide(in api.TaskToolReleaseIntentRecord, decision api.TaskToolReleaseInte
 	if in.Status == target {
 		return in, nil
 	}
-	if in.Status != "pending" && !(in.Status == "approved" && target == "revoked") {
+	if in.Status != "pending" && (in.Status != "approved" || target != "revoked") {
 		return in, ErrChanged
 	}
 	now = now.UTC()
