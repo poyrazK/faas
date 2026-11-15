@@ -476,6 +476,12 @@ func TestCatalogOutputContractsAndRetryHints(t *testing.T) {
 		if tool.OutputSchema == nil {
 			t.Errorf("%s lacks an output schema", tool.Name)
 		}
+		if tool.Name == "gregale_plan_task_tool_deploy" {
+			if !tool.Annotations.IdempotentHint {
+				t.Error("offline Task review must promise idempotency")
+			}
+			continue
+		}
 		if strings.HasPrefix(tool.Name, "gregale_plan_") || tool.Name == "gregale_request_secret" {
 			if tool.Annotations.IdempotentHint {
 				t.Errorf("%s incorrectly promises idempotency", tool.Name)

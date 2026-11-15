@@ -257,11 +257,11 @@ func mcpCLICommand() cliCommand {
 				{Name: "worker-app", Short: "metrics destination for worker or observer", Value: "SLUG"},
 				{Name: "apply", Short: "write the previewed non-secret settings", Bool: true},
 			}, Examples: []string{"gregale mcp server tasks configure --app reports-worker --role worker --namespace reports --worker-app reports-worker", "gregale mcp server tasks configure --app reports-observer --role observer --namespace reports --worker-app reports-worker --apply"}},
-			{Name: "release", Short: "Deploy and resume a gated web and worker release", Positionals: []string{"[run|status|recover|restore|quarantine|retire]"}, Flags: []cliFlag{
+			{Name: "release", Short: "Review, deploy and resume a gated web and worker release", Positionals: []string{"[plan|run|status|recover|restore|quarantine|retire]"}, Notes: []string{"plan performs offline source review without --state; all other actions require --state. Review does not run migrations, execute Task code or certify deployed bindings."}, Flags: []cliFlag{
 				{Name: "resume", Short: "resume a healthy failed rollout (recover only)"},
 				{Name: "plan", Short: "native deployment plan JSON", Value: "PATH", Req: true},
-				{Name: "state", Short: "persistent release journal outside source directories", Value: "PATH", Req: true},
-			}, Examples: []string{"gregale mcp server tasks deploy --plan release.json --state ./release-state.json", "gregale mcp server tasks deploy status --plan release.json --state ./release-state.json"}},
+				{Name: "state", Short: "persistent release journal outside source directories; required except for plan", Value: "PATH"},
+			}, Examples: []string{"gregale mcp server tasks deploy plan --plan release.json --json", "gregale mcp server tasks deploy --plan release.json --state ./release-state.json", "gregale mcp server tasks deploy status --plan release.json --state ./release-state.json"}},
 			{Name: "setup", Short: "Preview or apply the task-backlog scaling policy", Flags: []cliFlag{
 				{Name: "app", Short: "worker app slug (defaults to the linked project app)", Value: "SLUG"},
 				{Name: "min", Short: "minimum replicas (default 1; use 0 with an always-on observer)", Value: "N"},

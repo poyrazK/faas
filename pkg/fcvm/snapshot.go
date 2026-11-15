@@ -67,6 +67,10 @@ type Snapshot struct {
 	// Manager opens the key and sets Storage before restoring.
 	CaptureID string
 	SealedKey []byte
+	// SealedCache marks a sealed park or warm snapshot (ADR-20261110210000
+	// slice 3d-3) rather than a crash capture: it is cache, so a key that
+	// cannot be opened or a failed restore cold boots (ADR-005).
+	SealedCache bool
 	// Storage, when set, carries a sealed crash capture's objects
 	// (ADR-733): the backing identity is verified and the capture restored
 	// through it instead of the shared store.
