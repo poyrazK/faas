@@ -223,7 +223,7 @@ var supportStaffReads = map[string]bool{
 
 // supportRosterReads are support reads served outside the support handler
 // that check the roster themselves (support.Service.StaffRole), keyed to the
-// handler that does it (ADR-20261115183907).
+// handler that does it (ADR-20261115175927).
 var supportRosterReads = map[string]string{"GET /v1/admin/support/tickets/{ticket}/customer": "s.supportTicketCustomer"}
 
 // Every provider read picks a policy at the route table, so a new GET
