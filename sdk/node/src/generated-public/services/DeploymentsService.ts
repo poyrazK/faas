@@ -11,7 +11,10 @@ import type { BuildResponse } from '../models/BuildResponse.js';
 import type { CanaryAdvanceResponse } from '../models/CanaryAdvanceResponse.js';
 import type { CancelDeploymentRequest } from '../models/CancelDeploymentRequest.js';
 import type { ClearObsoleteReport } from '../models/ClearObsoleteReport.js';
+import type { CreateDatabaseSwitchRequest } from '../models/CreateDatabaseSwitchRequest.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
+import type { DatabaseSwitch } from '../models/DatabaseSwitch.js';
+import type { DatabaseSwitchList } from '../models/DatabaseSwitchList.js';
 import type { DeploymentAliasListResponse } from '../models/DeploymentAliasListResponse.js';
 import type { DeploymentAliasResponse } from '../models/DeploymentAliasResponse.js';
 import type { DeploymentListResponse } from '../models/DeploymentListResponse.js';
@@ -1022,6 +1025,179 @@ export class DeploymentsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List rollbacks that restore the database.
+   * An app's database switches, newest first.
+   * @returns DatabaseSwitchList The app's switches.
+   * @throws ApiError
+   */
+  public static listDatabaseSwitches({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<DatabaseSwitchList> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/database-switches',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Restore a database and move the app to the copy.
+   * Restores one of the app's managed PostgreSQL databases to point_in_time as a new database and moves the app's bindings in the scope to it, keeping the live release. The app stops serving from fencing until it resumes on the copy. Writes after point_in_time stay only in the source database, which keeps every write. Needs the postgres:manage scope and a verified email. Follow the returned switch with GET; cancel it before it starts switching.
+   * @returns DatabaseSwitch The switch was recorded and runs in the background.
+   * @throws ApiError
+   */
+  public static createDatabaseSwitch({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateDatabaseSwitchRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<DatabaseSwitch> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/database-switches',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read a rollback that restores the database.
+   * The switch's phase, restore point, databases, drain counts and outcome.
+   * @returns DatabaseSwitch The switch.
+   * @throws ApiError
+   */
+  public static getDatabaseSwitch({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Database switch UUID.
+     */
+    id: string,
+  }): CancelablePromise<DatabaseSwitch> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/database-switches/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Cancel a rollback that restores the database.
+   * Unwinds the switch; the app keeps its current release and database. Refused with database_switch_not_cancellable once the switch started switching the release and the bindings.
+   * @returns DatabaseSwitch Cancellation recorded; the worker unwinds the switch.
+   * @throws ApiError
+   */
+  public static cancelDatabaseSwitch({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * UUID of the database switch to cancel.
+     */
+    id: string,
+  }): CancelablePromise<DatabaseSwitch> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/database-switches/{id}/cancel',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
