@@ -31,12 +31,17 @@ CREATE TABLE job_runs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), job_id uui
   aggregate_status text NOT NULL, finished_at timestamptz);
 CREATE TABLE billing_payment_failure_receipts (account_id uuid NOT NULL, event_type text NOT NULL, processed_at timestamptz NOT NULL);
 CREATE TABLE billing_payment_recovery_receipts (account_id uuid NOT NULL, processed_at timestamptz NOT NULL);
+CREATE TABLE crons (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), app_id uuid NOT NULL, schedule text NOT NULL,
+  path text NOT NULL DEFAULT '/', enabled boolean NOT NULL DEFAULT true, command text[] NOT NULL DEFAULT '{}');
+CREATE TABLE invocations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), cron_id uuid, source text NOT NULL,
+  state text NOT NULL, outcome text, created_at timestamptz NOT NULL, completed_at timestamptz);
 `
 
 // attentionMigrations create and widen the signal table.
 var attentionMigrations = []string{
 	"../../../migrations/20261113122715352_customer_attention_signals.sql",
 	"../../../migrations/20261113152905644_customer_attention_outcomes.sql",
+	"../../../migrations/20261115191538100_attention_crons_failing.sql",
 }
 
 func pgEvaluator(t *testing.T) (*Evaluator, *pgxpool.Pool) {

@@ -156,6 +156,7 @@ const (
 	AttentionKindJobsFailing    = "jobs_failing"
 	AttentionKindPaymentFailing = "payment_failing"
 	AttentionKindLimitPressure  = "limit_pressure"
+	AttentionKindCronsFailing   = "crons_failing"
 
 	AttentionStateOpen      = "open"
 	AttentionStateDismissed = "dismissed"
@@ -174,7 +175,7 @@ const (
 
 // AttentionKinds lists every signal kind in display order.
 func AttentionKinds() []string {
-	return []string{AttentionKindDeployFailing, AttentionKindAppOOM, AttentionKindBootFailing, AttentionKindJobsFailing,
+	return []string{AttentionKindDeployFailing, AttentionKindAppOOM, AttentionKindBootFailing, AttentionKindJobsFailing, AttentionKindCronsFailing,
 		AttentionKindDomainStuck, AttentionKindRefusedBurst, AttentionKindLimitPressure, AttentionKindPaymentFailing}
 }
 

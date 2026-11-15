@@ -25,7 +25,7 @@ func publishMCPTaskReleaseReceipt(ctx context.Context, s *mcpNativeReleaseState)
 		return err
 	}
 	if record.Execution == nil || record.Execution.OperationID != s.TaskOperationID {
-		return errors.New("Task operation identity changed")
+		return errors.New("task operation identity changed")
 	}
 	p, dir, err := loadMCPTaskExecutionProfile(record)
 	if err != nil {
