@@ -1,0 +1,25 @@
+{
+  "fixed_block_digest": "324edc8229d6dafaa43df03eda240123fa0cf696e38ce78bbc46e5e6221e4ae8",
+  "checkpoint": {
+    "base_url": "https://files.test/prefix",
+    "app_slug": "imports",
+    "bucket": "22222222-2222-4222-8222-222222222222",
+    "key": "alice/rows.csv",
+    "version": 1,
+    "size_bytes": 44,
+    "source_digest": "a6aeec90ab2a86eca5bc04c97f2cafa8b9867dd45c654c6e718038543f0d2955",
+    "part_digests": [
+      "fea39b635512fd0c63395742fd4a572df7d7f03633f9626f0c5d600a52c10682",
+      "eab96c6290844a63e342318fa62914b49967629bf81b84c5ac82969df10c8a54",
+      "d90a2e2339fdb50ede6bd19a3f54e3c52478b9c2d4f1bbde0975d09a08753290",
+      "ae579a2bf8e10d6df482285234ead9ca9f759f1223f9a5017242608cb04529a6",
+      "71d47cda6551258f3085a1d01783a9a7cb5eb484ee385c55485f74c4f91f7354",
+      "f3309bfeb3ef4831be001ff9303aa8c69b616b99dc6682ce1a489df795c03b34"
+    ],
+    "upload_id": "33333333-3333-4333-8333-333333333333",
+    "part_size_bytes": 8,
+    "part_count": 6,
+    "content_type": "text/csv",
+    "parts": []
+  }
+}

@@ -1,0 +1,434 @@
+{
+  "root_contract": {
+    "version": 1,
+    "name": "csv-pipeline",
+    "input": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "child_contract": {
+    "version": 1,
+    "name": "child-pipeline",
+    "input": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "n"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "envelope": {
+    "version": 1,
+    "scope": {
+      "base_url": "https://pipeline.test",
+      "account_id": "11111111-1111-4111-8111-111111111111",
+      "app_id": "22222222-2222-4222-8222-222222222222",
+      "app_slug": "imports"
+    },
+    "owner_id": "alice",
+    "contract_sha256": "a119d556dd0d30edc13fa16508af2872ddf27f49f34cc256e2ea2e9baea62ee0",
+    "input": {
+      "n": 2
+    }
+  },
+  "receipt": {
+    "intent": {
+      "scope": {
+        "base_url": "https://pipeline.test",
+        "account_id": "11111111-1111-4111-8111-111111111111",
+        "app_id": "22222222-2222-4222-8222-222222222222",
+        "app_slug": "imports"
+      },
+      "parent_run_id": "33333333-3333-4333-8333-333333333333",
+      "owner_id": "alice",
+      "batch": "imports",
+      "parent_sha256": "a119d556dd0d30edc13fa16508af2872ddf27f49f34cc256e2ea2e9baea62ee0",
+      "parent_input_sha256": "3a45861783f7fb7e080bc4108f572553c4c3f6d1c74f1bddfa72c70900b8b0e3",
+      "child_sha256": "9ee5ebd8a5c257f9a2bdb802fa0a40febd6d684fb0d1b6109e8baa45368bec61",
+      "child_workflow": "child-pipeline",
+      "inputs": [
+        {
+          "id": "item-1",
+          "value": {
+            "n": 1
+          },
+          "input_sha256": "30a62a7f79d28640c62fec3869494167381ccf4bee89f5bf2773bc974a849cf4"
+        },
+        {
+          "id": "item-2",
+          "value": {
+            "n": 2
+          },
+          "input_sha256": "33195fcab0fe45f3a1a50b3586731fd1d7e9d8a8ea7758b799d828ff5aef2090"
+        },
+        {
+          "id": "item-3",
+          "value": {
+            "n": 3
+          },
+          "input_sha256": "0b8ab63d50408ba70bd297799d23390044e87a12dcf355fac3337a7a3f92981f"
+        }
+      ],
+      "concurrency": 2,
+      "timeout_ms": 60000,
+      "failure_policy": "collect",
+      "on_fail_fast": "leave_running",
+      "on_parent_stopped": "leave_running",
+      "on_deadline": "leave_running",
+      "version": 1,
+      "identity": "b1cc6e2698b2c12d9244426db8972a1e8d49246b361d33331d5e753e16aa81b8"
+    },
+    "state": {
+      "stop_reason": null,
+      "parent_stopped": false,
+      "children": [
+        {
+          "phase": "unstarted",
+          "checkpoint": null,
+          "cancel_requested": false
+        },
+        {
+          "phase": "unstarted",
+          "checkpoint": null,
+          "cancel_requested": false
+        },
+        {
+          "phase": "unstarted",
+          "checkpoint": null,
+          "cancel_requested": false
+        }
+      ]
+    },
+    "revision": 0,
+    "expires_at": "2026-11-15T18:01:00.000Z",
+    "expired": false
+  },
+  "final": {
+    "intent": {
+      "scope": {
+        "base_url": "https://pipeline.test",
+        "account_id": "11111111-1111-4111-8111-111111111111",
+        "app_id": "22222222-2222-4222-8222-222222222222",
+        "app_slug": "imports"
+      },
+      "parent_run_id": "33333333-3333-4333-8333-333333333333",
+      "owner_id": "alice",
+      "batch": "imports",
+      "parent_sha256": "a119d556dd0d30edc13fa16508af2872ddf27f49f34cc256e2ea2e9baea62ee0",
+      "parent_input_sha256": "3a45861783f7fb7e080bc4108f572553c4c3f6d1c74f1bddfa72c70900b8b0e3",
+      "child_sha256": "9ee5ebd8a5c257f9a2bdb802fa0a40febd6d684fb0d1b6109e8baa45368bec61",
+      "child_workflow": "child-pipeline",
+      "inputs": [
+        {
+          "id": "item-1",
+          "value": {
+            "n": 1
+          },
+          "input_sha256": "30a62a7f79d28640c62fec3869494167381ccf4bee89f5bf2773bc974a849cf4"
+        },
+        {
+          "id": "item-2",
+          "value": {
+            "n": 2
+          },
+          "input_sha256": "33195fcab0fe45f3a1a50b3586731fd1d7e9d8a8ea7758b799d828ff5aef2090"
+        },
+        {
+          "id": "item-3",
+          "value": {
+            "n": 3
+          },
+          "input_sha256": "0b8ab63d50408ba70bd297799d23390044e87a12dcf355fac3337a7a3f92981f"
+        }
+      ],
+      "concurrency": 2,
+      "timeout_ms": 60000,
+      "failure_policy": "collect",
+      "on_fail_fast": "leave_running",
+      "on_parent_stopped": "leave_running",
+      "on_deadline": "leave_running",
+      "version": 1,
+      "identity": "b1cc6e2698b2c12d9244426db8972a1e8d49246b361d33331d5e753e16aa81b8"
+    },
+    "state": {
+      "stop_reason": null,
+      "parent_stopped": false,
+      "children": [
+        {
+          "phase": "succeeded",
+          "checkpoint": {
+            "version": 1,
+            "run_id": "55555555-5555-4555-8555-555555555555",
+            "scope": {
+              "base_url": "https://pipeline.test",
+              "account_id": "11111111-1111-4111-8111-111111111111",
+              "app_id": "22222222-2222-4222-8222-222222222222",
+              "app_slug": "imports"
+            },
+            "owner_id": "alice",
+            "contract_sha256": "9ee5ebd8a5c257f9a2bdb802fa0a40febd6d684fb0d1b6109e8baa45368bec61",
+            "input_sha256": "30a62a7f79d28640c62fec3869494167381ccf4bee89f5bf2773bc974a849cf4"
+          },
+          "cancel_requested": false,
+          "native_status": "succeeded",
+          "output": {
+            "n": 2
+          }
+        },
+        {
+          "phase": "succeeded",
+          "checkpoint": {
+            "version": 1,
+            "run_id": "66666666-6666-4666-8666-666666666666",
+            "scope": {
+              "base_url": "https://pipeline.test",
+              "account_id": "11111111-1111-4111-8111-111111111111",
+              "app_id": "22222222-2222-4222-8222-222222222222",
+              "app_slug": "imports"
+            },
+            "owner_id": "alice",
+            "contract_sha256": "9ee5ebd8a5c257f9a2bdb802fa0a40febd6d684fb0d1b6109e8baa45368bec61",
+            "input_sha256": "33195fcab0fe45f3a1a50b3586731fd1d7e9d8a8ea7758b799d828ff5aef2090"
+          },
+          "cancel_requested": false,
+          "native_status": "succeeded",
+          "output": {
+            "n": 3
+          }
+        },
+        {
+          "phase": "succeeded",
+          "checkpoint": {
+            "version": 1,
+            "run_id": "77777777-7777-4777-8777-777777777777",
+            "scope": {
+              "base_url": "https://pipeline.test",
+              "account_id": "11111111-1111-4111-8111-111111111111",
+              "app_id": "22222222-2222-4222-8222-222222222222",
+              "app_slug": "imports"
+            },
+            "owner_id": "alice",
+            "contract_sha256": "9ee5ebd8a5c257f9a2bdb802fa0a40febd6d684fb0d1b6109e8baa45368bec61",
+            "input_sha256": "0b8ab63d50408ba70bd297799d23390044e87a12dcf355fac3337a7a3f92981f"
+          },
+          "cancel_requested": false,
+          "native_status": "succeeded",
+          "output": {
+            "n": 4
+          }
+        }
+      ]
+    },
+    "revision": 9,
+    "expires_at": "2026-11-15T18:01:00.000Z",
+    "expired": false
+  },
+  "result": {
+    "identity": "b1cc6e2698b2c12d9244426db8972a1e8d49246b361d33331d5e753e16aa81b8",
+    "parent_run_id": "33333333-3333-4333-8333-333333333333",
+    "batch": "imports",
+    "stop_reason": null,
+    "complete": true,
+    "children": [
+      {
+        "id": "item-1",
+        "phase": "succeeded",
+        "run_id": "55555555-5555-4555-8555-555555555555",
+        "cancel_requested": false,
+        "native_status": "succeeded",
+        "output": {
+          "n": 2
+        }
+      },
+      {
+        "id": "item-2",
+        "phase": "succeeded",
+        "run_id": "66666666-6666-4666-8666-666666666666",
+        "cancel_requested": false,
+        "native_status": "succeeded",
+        "output": {
+          "n": 3
+        }
+      },
+      {
+        "id": "item-3",
+        "phase": "succeeded",
+        "run_id": "77777777-7777-4777-8777-777777777777",
+        "cancel_requested": false,
+        "native_status": "succeeded",
+        "output": {
+          "n": 4
+        }
+      }
+    ]
+  },
+  "journal": [
+    {
+      "seq": 0,
+      "name": "pipeline-children/imports/open",
+      "kind": "step",
+      "status": "succeeded",
+      "attempt": 1,
+      "output": {
+        "identity": "b1cc6e2698b2c12d9244426db8972a1e8d49246b361d33331d5e753e16aa81b8",
+        "binding_sha256": "fbbc30ec44edc811f4b491057d6d5a36b1f692f2327d75d0cf50f1a26efbcd88"
+      }
+    },
+    {
+      "seq": 1,
+      "name": "pipeline-children/imports/round",
+      "kind": "step",
+      "status": "succeeded",
+      "attempt": 1,
+      "output": {
+        "identity": "b1cc6e2698b2c12d9244426db8972a1e8d49246b361d33331d5e753e16aa81b8",
+        "parent_run_id": "33333333-3333-4333-8333-333333333333",
+        "batch": "imports",
+        "stop_reason": null,
+        "complete": true,
+        "children": [
+          {
+            "id": "item-1",
+            "phase": "succeeded",
+            "run_id": "55555555-5555-4555-8555-555555555555",
+            "cancel_requested": false,
+            "native_status": "succeeded",
+            "output": {
+              "n": 2
+            }
+          },
+          {
+            "id": "item-2",
+            "phase": "succeeded",
+            "run_id": "66666666-6666-4666-8666-666666666666",
+            "cancel_requested": false,
+            "native_status": "succeeded",
+            "output": {
+              "n": 3
+            }
+          },
+          {
+            "id": "item-3",
+            "phase": "succeeded",
+            "run_id": "77777777-7777-4777-8777-777777777777",
+            "cancel_requested": false,
+            "native_status": "succeeded",
+            "output": {
+              "n": 4
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "input_envelopes": [
+    {
+      "version": 1,
+      "scope": {
+        "base_url": "https://pipeline.test",
+        "account_id": "11111111-1111-4111-8111-111111111111",
+        "app_id": "22222222-2222-4222-8222-222222222222",
+        "app_slug": "imports"
+      },
+      "owner_id": "alice",
+      "contract_sha256": "9ee5ebd8a5c257f9a2bdb802fa0a40febd6d684fb0d1b6109e8baa45368bec61",
+      "input": {
+        "n": 1
+      },
+      "lineage": {
+        "version": 1,
+        "parent_run_id": "33333333-3333-4333-8333-333333333333",
+        "batch_identity": "b1cc6e2698b2c12d9244426db8972a1e8d49246b361d33331d5e753e16aa81b8",
+        "item_id": "item-1"
+      }
+    },
+    {
+      "version": 1,
+      "scope": {
+        "base_url": "https://pipeline.test",
+        "account_id": "11111111-1111-4111-8111-111111111111",
+        "app_id": "22222222-2222-4222-8222-222222222222",
+        "app_slug": "imports"
+      },
+      "owner_id": "alice",
+      "contract_sha256": "9ee5ebd8a5c257f9a2bdb802fa0a40febd6d684fb0d1b6109e8baa45368bec61",
+      "input": {
+        "n": 2
+      },
+      "lineage": {
+        "version": 1,
+        "parent_run_id": "33333333-3333-4333-8333-333333333333",
+        "batch_identity": "b1cc6e2698b2c12d9244426db8972a1e8d49246b361d33331d5e753e16aa81b8",
+        "item_id": "item-2"
+      }
+    },
+    {
+      "version": 1,
+      "scope": {
+        "base_url": "https://pipeline.test",
+        "account_id": "11111111-1111-4111-8111-111111111111",
+        "app_id": "22222222-2222-4222-8222-222222222222",
+        "app_slug": "imports"
+      },
+      "owner_id": "alice",
+      "contract_sha256": "9ee5ebd8a5c257f9a2bdb802fa0a40febd6d684fb0d1b6109e8baa45368bec61",
+      "input": {
+        "n": 3
+      },
+      "lineage": {
+        "version": 1,
+        "parent_run_id": "33333333-3333-4333-8333-333333333333",
+        "batch_identity": "b1cc6e2698b2c12d9244426db8972a1e8d49246b361d33331d5e753e16aa81b8",
+        "item_id": "item-3"
+      }
+    }
+  ],
+  "queries": [
+    "INSERT INTO public.gregale_pipeline_children(identity,intent,state,expires_at) VALUES ($1,$2::jsonb,$3::jsonb,clock_timestamp()+($4::bigint*interval '1 millisecond')) ON CONFLICT (identity) DO NOTHING RETURNING jsonb_build_object('intent',intent,'state',state,'revision',revision,'expires_at',to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),'expired',expires_at<=clock_timestamp()) AS receipt",
+    "SELECT jsonb_build_object('intent',intent,'state',state,'revision',revision,'expires_at',to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),'expired',expires_at<=clock_timestamp()) AS receipt FROM public.gregale_pipeline_children WHERE identity=$1",
+    "UPDATE public.gregale_pipeline_children SET state=$4::jsonb,revision=revision+1 WHERE identity=$1 AND revision=$2 AND intent=$3::jsonb AND (NOT $5::boolean OR expires_at>clock_timestamp()) RETURNING jsonb_build_object('intent',intent,'state',state,'revision',revision,'expires_at',to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),'expired',expires_at<=clock_timestamp()) AS receipt",
+    "UPDATE public.gregale_pipeline_children SET checked_at=clock_timestamp() WHERE identity IN (SELECT identity FROM public.gregale_pipeline_children WHERE intent->'scope'=$1::jsonb AND intent->>'parent_sha256'=$2 AND EXISTS (SELECT 1 FROM jsonb_array_elements(state->'children') c WHERE c->>'phase' IN ('submission_unresolved','running') OR c->>'phase'='unstarted' AND state->>'stop_reason' IS NULL) ORDER BY checked_at,identity LIMIT $3 FOR UPDATE SKIP LOCKED) RETURNING jsonb_build_object('intent',intent,'state',state,'revision',revision,'expires_at',to_char(expires_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),'expired',expires_at<=clock_timestamp()) AS receipt"
+  ]
+}

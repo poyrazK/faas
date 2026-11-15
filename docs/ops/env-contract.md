@@ -1065,6 +1065,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_CACHE_REFRESH` | shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_SERVE_STALE` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_DELETE_MODE` | imaged, vmmd, shared | `default` |  |  | `` | ADR-20261115180000: direct (default) deletes shared-store objects; defer records each delete in storage_object_deletions for the control plane's object GC (FAAS_SCHEDD_OBJECT_GC) instead, so the node's store credentials can drop the delete right; refuses to start without a shared store or a database; node-local caches and prefix routes still delete |
+| `FAAS_STORAGE_DRIVE_DELTA` | shared | `envfile` |  |  | `` | node caches upload snapshot drives as deltas against their app layer; default off; enable only after every compute node runs a vmmd that decodes them (ADR-20261115120000) |
 | `FAAS_STORAGE_FALLBACK_BACKEND` | imaged, vmmd, shared | `envfile` |  |  | `` | optional `oci` read/delete fallback during GCS migration; writes remain GCS-only |
 | `FAAS_STORAGE_LOCAL_PREFIXES` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
