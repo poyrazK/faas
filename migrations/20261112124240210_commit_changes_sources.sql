@@ -19,15 +19,26 @@ ALTER TABLE commit_sources
     ADD COLUMN IF NOT EXISTS changes_feeds jsonb,
     ADD COLUMN IF NOT EXISTS managed_database_id uuid,
     ADD COLUMN IF NOT EXISTS poll_interval_ms integer NOT NULL DEFAULT 5000;
-ALTER TABLE commit_sources ADD CONSTRAINT commit_sources_poll_interval_check
-    CHECK (poll_interval_ms BETWEEN 1000 AND 600000) NOT VALID;
-ALTER TABLE commit_sources ADD CONSTRAINT commit_sources_changes_check CHECK (
-    (queue_name IS NULL AND changes_feeds IS NULL AND managed_database_id IS NULL AND poll_interval_ms = 5000)
-    OR (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'
-        AND jsonb_typeof(changes_feeds) = 'array'
-        AND jsonb_array_length(changes_feeds) BETWEEN 1 AND 20
-        AND destination = 'operation' AND contract_version = 1
-        AND operation_policy IS NULL AND NOT allow_tenant_selection)) NOT VALID;
+-- Guarded so a replay over existing objects is a no-op.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'commit_sources_poll_interval_check' AND conrelid = 'commit_sources'::regclass) THEN
+    ALTER TABLE commit_sources ADD CONSTRAINT commit_sources_poll_interval_check
+        CHECK (poll_interval_ms BETWEEN 1000 AND 600000) NOT VALID;
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                 WHERE conname = 'commit_sources_changes_check' AND conrelid = 'commit_sources'::regclass) THEN
+    ALTER TABLE commit_sources ADD CONSTRAINT commit_sources_changes_check CHECK (
+        (queue_name IS NULL AND changes_feeds IS NULL AND managed_database_id IS NULL AND poll_interval_ms = 5000)
+        OR (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'
+            AND jsonb_typeof(changes_feeds) = 'array'
+            AND jsonb_array_length(changes_feeds) BETWEEN 1 AND 20
+            AND destination = 'operation' AND contract_version = 1
+            AND operation_policy IS NULL AND NOT allow_tenant_selection)) NOT VALID;
+  END IF;
+END $$;
 -- +goose StatementEnd
 
 -- +goose Down
