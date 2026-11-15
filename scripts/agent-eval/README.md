@@ -119,3 +119,24 @@ agent ran (`commands`), which the graders read.
 
 `make agent-eval-test` runs the harness's unit tests. It uses recorded
 transcript shapes and starts no agent.
+
+## Project discovery
+
+`assess-compose-project` adds a fixed Compose fixture with public `web`, private
+`api`, and PostgreSQL to a fresh starter. It asks the agent to assess the source
+and identify the supported next workflow, without deployment. Its MCP server is
+always read-only. Run the built CLI with:
+
+```sh
+python3 scripts/agent-eval/agent_eval.py run --agents claude,codex --toolsets core \
+  --tasks assess-compose-project --gregale ./bin/gregale
+```
+
+The grade requires returned MCP assessment evidence for both workloads,
+PostgreSQL, private services and project releases, plus the project recipe's
+explicit CLI handoff. Tool names and an answer alone cannot pass. It also checks
+for unchanged files, no shell commands or observed mutation tools and no created
+apps/projects. Initial evidence parsing covers Claude Code and Codex result
+events; unsupported formats fail that evidence check. Unit tests use recorded
+result shapes and do not run a model. Live runs retain the existing dedicated
+evaluation account and model-budget requirements.

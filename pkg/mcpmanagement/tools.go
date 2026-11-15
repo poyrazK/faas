@@ -81,6 +81,7 @@ func (m *management) connection(ctx context.Context, _ noArgs) (any, error) {
 		"allowed_apps":            m.opts.AllowedApps,
 		"environment_access":      m.opts.Environments,
 		"request_access":          m.requestAccessMetadata(),
+		"workflows":               workflowIndex(),
 	}, nil
 }
 

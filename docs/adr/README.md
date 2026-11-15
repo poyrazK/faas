@@ -21,6 +21,8 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261115174236: Project assessment and task guidance in management MCP](20261115174236-management-mcp-project-assessment.md) — accepted; bounded read-only source assessment, consent-aware task recipes and a multi-service discovery eval
+
 - [ADR-20261115110124: gRPC steps in `gregale test` scenarios](20261115110124-test-grpc-steps.md) — accepted; a request or check may carry a `grpc:` call (definitions from `.proto` files compiled with protocompile and/or server reflection; unary and all streaming shapes; status, protobuf-JSON pointers, message count, header and trailer metadata); `local` dials plaintext HTTP/2, `real-vm` the deployed app over TLS; load mode stays HTTP-only
 - [ADR-20261115105130: Opt-in streamed list output](20261115105130-cli-streamed-list-output.md)
 - [ADR-20261115121720: Atomic CLI list exports](20261115121720-cli-atomic-list-exports.md) — accepted; private JSON Lines staging, no-overwrite publication and completion integrity receipts.

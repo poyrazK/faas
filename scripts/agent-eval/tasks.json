@@ -102,5 +102,30 @@
     "follow_up": "Yes, go ahead with what you recommend.",
     "budget_usd": 10.0,
     "timeout_s": 3600
+  },
+  {
+    "id": "assess-compose-project",
+    "title": "Discover a multi-service deployment workflow without writes",
+    "template": "hello-node",
+    "project_discovery": true,
+    "setup": [
+      {
+        "kind": "fixture",
+        "name": "compose-assessment"
+      }
+    ],
+    "prompt": "Assess the project in this directory for deployment to Gregale as {app}. Use only Gregale MCP tools. Explain the workloads, relevant Gregale features, dependencies and the supported next deployment workflow. Do not deploy, run shell commands, edit files or create resources.",
+    "checks": [
+      {
+        "kind": "answer",
+        "pattern": "(?is)(postgres|database)"
+      },
+      {
+        "kind": "answer",
+        "pattern": "(?is)(project|compose)"
+      }
+    ],
+    "budget_usd": 2.0,
+    "timeout_s": 600
   }
 ]
