@@ -34,6 +34,66 @@ Public surface:
   its handler (cron, queue, RAM, ...); `gregale deploy` reads it statically.
 """
 
+from ._async_request import RequestOptions, RequestTimeoutError, ResponseInfo, ResponseObserver, RetryPolicy
+from ._pagination import AsyncPagination, PaginationError, PaginationOptions, PaginationPage
+from ._project_inspection import (
+    ProjectBuild,
+    ProjectCandidate,
+    ProjectFramework,
+    ProjectGeneratedFile,
+    ProjectInput,
+    ProjectInspectionError,
+    ProjectInspectionOptions,
+    ProjectIssue,
+    ProjectIssueCode,
+    ProjectPlan,
+    ProjectSetting,
+    ProjectShape,
+    inspect_project,
+    validate_project_plan,
+)
+from ._project_workflows import (
+    ProjectApplicationResult as ProjectApplicationResult,
+)
+from ._project_workflows import (
+    ProjectApplicationState as ProjectApplicationState,
+)
+from ._project_workflows import (
+    ProjectApplyOptions as ProjectApplyOptions,
+)
+from ._project_workflows import (
+    ProjectArchive as ProjectArchive,
+)
+from ._project_workflows import (
+    ProjectPreviewOptions as ProjectPreviewOptions,
+)
+from ._project_workflows import (
+    ProjectWorkflowCode as ProjectWorkflowCode,
+)
+from ._project_workflows import (
+    ProjectWorkflowError as ProjectWorkflowError,
+)
+from ._project_workflows import (
+    ProjectWorkflowOptions as ProjectWorkflowOptions,
+)
+from ._project_workflows import (
+    ProjectWorkflowPhase as ProjectWorkflowPhase,
+)
+from ._project_workflows import (
+    ProjectWorkflowProgress as ProjectWorkflowProgress,
+)
+from ._project_workflows import (
+    ProjectWorkloadOutcome as ProjectWorkloadOutcome,
+)
+from ._project_workflows import (
+    ProjectWorkloadStatus as ProjectWorkloadStatus,
+)
+from ._project_workflows import (
+    ReviewedProjectPlan as ReviewedProjectPlan,
+)
+from ._project_workflows import (
+    load_project_application_state as load_project_application_state,
+)
 from ._rfc7807 import (
     ErrCapacity,
     ErrNotFound,
@@ -47,8 +107,55 @@ from ._rfc7807 import (
     parse_problem,
     raise_for_problem,
 )
+from ._source_deployment import (
+    SourceDeploymentArchive,
+    SourceDeploymentCancelledError,
+    SourceDeploymentCode,
+    SourceDeploymentError,
+    SourceDeploymentOptions,
+    SourceDeploymentPhase,
+    SourceDeploymentPreparationOptions,
+    SourceDeploymentProgress,
+    SourceDeploymentReleaseProgress,
+    SourceDeploymentResult,
+    SourceDeploymentState,
+    SourceDeploymentWaitOptions,
+    load_source_deployment_state,
+)
+from ._source_preparation import (
+    PreparedSource,
+    SourceEntry,
+    SourceIssue,
+    SourcePlan,
+    SourcePreparationCode,
+    SourcePreparationError,
+    SourcePreparationOptions,
+    SourcePreparationProgress,
+    inspect_source,
+    prepare_source,
+)
+from ._source_upload import (
+    SourceUploadCheckpoint,
+    SourceUploadCode,
+    SourceUploadError,
+    SourceUploadOptions,
+    SourceUploadProgress,
+    SourceUploadStage,
+    SourceUploadTimeoutError,
+    load_source_upload_checkpoint,
+    save_source_upload_checkpoint,
+)
 from ._sse import SseEvent, aiter_sse, iter_sse
 from ._transport import RetryOptions, WrapperOptions, install_chain
+from ._waiters import (
+    BuildWaitOptions,
+    DeploymentWaitOptions,
+    WaiterError,
+    WaiterFailureCode,
+    WaiterOptions,
+    WaiterProgress,
+    WaiterTimeoutError,
+)
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
 from .functions import FunctionHookContext, function
@@ -120,12 +227,91 @@ def __dir__() -> list[str]:
 
 
 __all__ = (
+    "ProjectArchive",
+    "ReviewedProjectPlan",
+    "ProjectWorkflowOptions",
+    "ProjectPreviewOptions",
+    "ProjectApplyOptions",
+    "ProjectApplicationState",
+    "ProjectWorkflowCode",
+    "ProjectWorkflowPhase",
+    "ProjectWorkflowProgress",
+    "ProjectWorkflowError",
+    "ProjectApplicationResult",
+    "ProjectWorkloadOutcome",
+    "ProjectWorkloadStatus",
+    "load_project_application_state",
     "function",
     "FunctionHookContext",
     "FaaSClient",
     "FaaSClientOptions",
     "Client",
     "AuthenticatedClient",
+    "AsyncPagination",
+    "PaginationError",
+    "PaginationOptions",
+    "PaginationPage",
+    "inspect_source",
+    "prepare_source",
+    "SourcePreparationError",
+    "SourcePreparationCode",
+    "SourcePreparationOptions",
+    "SourcePreparationProgress",
+    "SourceIssue",
+    "SourceEntry",
+    "SourcePlan",
+    "PreparedSource",
+    "inspect_project",
+    "validate_project_plan",
+    "ProjectPlan",
+    "ProjectInspectionOptions",
+    "ProjectInspectionError",
+    "ProjectShape",
+    "ProjectFramework",
+    "ProjectIssue",
+    "ProjectIssueCode",
+    "ProjectInput",
+    "ProjectSetting",
+    "ProjectCandidate",
+    "ProjectGeneratedFile",
+    "ProjectBuild",
+    "SourceDeploymentArchive",
+    "SourceDeploymentCode",
+    "SourceDeploymentPhase",
+    "SourceDeploymentState",
+    "SourceDeploymentPreparationOptions",
+    "SourceDeploymentWaitOptions",
+    "SourceDeploymentOptions",
+    "SourceDeploymentProgress",
+    "SourceDeploymentReleaseProgress",
+    "SourceDeploymentResult",
+    "SourceDeploymentError",
+    "SourceDeploymentCancelledError",
+    "load_source_deployment_state",
+
+    "SourceUploadCheckpoint",
+    "SourceUploadCode",
+    "SourceUploadError",
+    "SourceUploadOptions",
+    "SourceUploadProgress",
+    "SourceUploadStage",
+    "SourceUploadTimeoutError",
+    "load_source_upload_checkpoint",
+    "save_source_upload_checkpoint",
+
+    "BuildWaitOptions",
+    "DeploymentWaitOptions",
+    "WaiterError",
+    "WaiterFailureCode",
+    "WaiterOptions",
+    "WaiterProgress",
+    "WaiterTimeoutError",
+
+    "RequestOptions",
+    "RequestTimeoutError",
+    "ResponseInfo",
+    "ResponseObserver",
+    "RetryPolicy",
     "RetryOptions",
     "WrapperOptions",
     "install_chain",

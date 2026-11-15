@@ -69,6 +69,7 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.resetTOTPAttempts(r.Context(), acct.ID)
+	s.cancelPendingMFADisable(r.Context(), acct, "authenticator")
 	remember := r.PostFormValue("remember") == "1" && s.sessionMFAChallengePending(r, acct)
 	if err := s.reissueSessionCookieWithStepUp(w, r, acct, false, time.Now()); err != nil {
 		s.log.Error("dashboard.mfa.reissue_cookie", "err", err.Error())

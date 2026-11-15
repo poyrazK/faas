@@ -5,6 +5,7 @@
 import type { ObsServingProbe } from './ObsServingProbe.js';
 import type { ObsServingProbeCounts } from './ObsServingProbeCounts.js';
 import type { ObsServingProbeInventory } from './ObsServingProbeInventory.js';
+import type { ObsServingProbeNotificationHealth } from './ObsServingProbeNotificationHealth.js';
 /**
  * Coverage of expected serving probes from independent deployment intent and current coverage-rule evaluations. No direct probes are executed.
  */
@@ -20,6 +21,7 @@ export type ObsServingHealth = {
    */
   counts: (ObsServingProbeCounts | null);
   probes: Array<ObsServingProbe>;
+  probe_notifications?: ObsServingProbeNotificationHealth;
   limitations: Array<string>;
 };
 
