@@ -1,0 +1,294 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "app nanosecond cursor",
+      "route": "app",
+      "limit": 2,
+      "pages": [
+        {
+          "ids": [
+            "a",
+            "b"
+          ],
+          "next_before": "2026-11-14T00:00:00.123456789Z"
+        },
+        {
+          "ids": [
+            "c"
+          ]
+        }
+      ],
+      "ids": [
+        "a",
+        "b",
+        "c"
+      ],
+      "calls": 2,
+      "cursors": [
+        null,
+        "2026-11-14T00:00:00.123456789Z"
+      ],
+      "limits": [
+        2,
+        2
+      ]
+    },
+    {
+      "name": "account preserves initial offset and next cursor",
+      "route": "account",
+      "before": "2026-11-14T00:00:00.123456789+00:00",
+      "pages": [
+        {
+          "ids": [
+            "a"
+          ],
+          "next_before": "2026-11-14T00:00:00.123456789Z"
+        },
+        {
+          "ids": [
+            "b"
+          ]
+        }
+      ],
+      "ids": [
+        "a",
+        "b"
+      ],
+      "calls": 2,
+      "cursors": [
+        "2026-11-14T00:00:00.123456789+00:00",
+        "2026-11-14T00:00:00.123456789Z"
+      ]
+    },
+    {
+      "name": "build opaque cursor and filters",
+      "route": "builds",
+      "app": "my/app",
+      "status": "running",
+      "pages": [
+        {
+          "ids": [
+            "a"
+          ],
+          "next_before": "2026-11-14T00:00:00.123456789Z|build/+%?"
+        },
+        {
+          "ids": [
+            "b"
+          ],
+          "next_before": ""
+        }
+      ],
+      "ids": [
+        "a",
+        "b"
+      ],
+      "calls": 2,
+      "cursors": [
+        null,
+        "2026-11-14T00:00:00.123456789Z|build/+%?"
+      ]
+    },
+    {
+      "name": "empty nonterminal pages advance",
+      "route": "app",
+      "pages": [
+        {
+          "ids": [],
+          "next_before": "empty"
+        },
+        {
+          "ids": [
+            "a"
+          ],
+          "next_before": null
+        }
+      ],
+      "ids": [
+        "a"
+      ],
+      "calls": 2
+    },
+    {
+      "name": "page cap",
+      "route": "account",
+      "max_pages": 1,
+      "pages": [
+        {
+          "ids": [
+            "a"
+          ],
+          "next_before": "more"
+        }
+      ],
+      "ids": [
+        "a"
+      ],
+      "calls": 1
+    },
+    {
+      "name": "item cap lowers final request size",
+      "route": "builds",
+      "limit": 2,
+      "max_items": 3,
+      "pages": [
+        {
+          "ids": [
+            "a",
+            "b"
+          ],
+          "next_before": "one"
+        },
+        {
+          "ids": [
+            "c"
+          ],
+          "next_before": "two"
+        }
+      ],
+      "ids": [
+        "a",
+        "b",
+        "c"
+      ],
+      "calls": 2,
+      "limits": [
+        2,
+        1
+      ]
+    },
+    {
+      "name": "zero page budget",
+      "route": "app",
+      "max_pages": 0,
+      "pages": [],
+      "ids": [],
+      "calls": 0
+    },
+    {
+      "name": "zero item budget",
+      "route": "builds",
+      "max_items": 0,
+      "pages": [],
+      "ids": [],
+      "calls": 0
+    },
+    {
+      "name": "initial cursor repeats",
+      "route": "account",
+      "before": "private-cursor",
+      "pages": [
+        {
+          "ids": [
+            "a"
+          ],
+          "next_before": "private-cursor"
+        }
+      ],
+      "ids": [],
+      "calls": 1,
+      "outcome": "repeated_cursor"
+    },
+    {
+      "name": "longer cursor cycle",
+      "route": "builds",
+      "pages": [
+        {
+          "ids": [
+            "a"
+          ],
+          "next_before": "one"
+        },
+        {
+          "ids": [
+            "b"
+          ],
+          "next_before": "two"
+        },
+        {
+          "ids": [
+            "c"
+          ],
+          "next_before": "one"
+        }
+      ],
+      "ids": [
+        "a",
+        "b"
+      ],
+      "calls": 3,
+      "outcome": "repeated_cursor"
+    },
+    {
+      "name": "oversized page rejected",
+      "route": "app",
+      "limit": 1,
+      "pages": [
+        {
+          "ids": [
+            "a",
+            "b"
+          ],
+          "next_before": "private-cursor"
+        }
+      ],
+      "ids": [],
+      "calls": 1,
+      "outcome": "invalid_page"
+    },
+    {
+      "name": "numeric cursor rejected",
+      "route": "account",
+      "pages": [
+        {
+          "ids": [],
+          "next_before": 42
+        }
+      ],
+      "ids": [],
+      "calls": 1,
+      "outcome": "invalid_page"
+    },
+    {
+      "name": "stalled body deadline closes stream",
+      "route": "builds",
+      "phase": "body",
+      "timeout_ms": 20,
+      "pages": [],
+      "ids": [],
+      "calls": 1,
+      "outcome": "timeout",
+      "closed": 1
+    },
+    {
+      "name": "close interrupts pending headers",
+      "route": "app",
+      "phase": "headers",
+      "pages": [],
+      "ids": [],
+      "calls": 1,
+      "outcome": "cancelled"
+    },
+    {
+      "name": "deadline includes retry after",
+      "route": "account",
+      "phase": "retry",
+      "timeout_ms": 20,
+      "max_attempts": 2,
+      "pages": [],
+      "ids": [],
+      "calls": 1,
+      "outcome": "timeout"
+    },
+    {
+      "name": "HTTP failure preserves problem identity",
+      "route": "builds",
+      "phase": "not_found",
+      "pages": [],
+      "ids": [],
+      "calls": 1,
+      "outcome": "not_found"
+    }
+  ]
+}

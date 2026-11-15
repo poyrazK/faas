@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ObsServingProbeDiagnostics } from './ObsServingProbeDiagnostics.js';
 /**
  * One expected node/URL pair. Raw URL bytes remain private; url_id fingerprints exact URL bytes, including query parameters. Evaluation time describes the recording, and last_run_at is the probe loop clock.
  */
@@ -15,5 +16,6 @@ export type ObsServingProbe = {
   last_run_at: string | null;
   expected_first_byte_seconds: number;
   max_result_age_seconds: number;
+  diagnostics?: ObsServingProbeDiagnostics;
 };
 
