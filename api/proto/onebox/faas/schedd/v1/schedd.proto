@@ -1180,6 +1180,9 @@ message InstanceTelemetry {
   // and quiet for the ladder's freeze delay). 0 when off, running or not on
   // the ladder.
   int32 idle_ladder_level = 25;
+  // Billing review R8-2: vmmd's InstanceStats.internal_tx_bytes, the
+  // cumulative part of net_tx_bytes the guest sent to internal destinations.
+  google.protobuf.Int64Value internal_tx_bytes = 26;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"

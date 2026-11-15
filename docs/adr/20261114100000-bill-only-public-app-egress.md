@@ -62,3 +62,31 @@ telemetry.
   instance and hour is error-prone.
 - **Count at the edge (`gatewayd-public`).** That sees responses to inbound
   requests only, not outbound connections the app opens.
+
+## Amendment 2026-11-15: slice 1 as built
+
+The proposal's two counters became one, `faas_internal_tx`, on an
+`egress_account` filter chain at postrouting priority 300 in each instance's
+`ip faas` table. It counts packets that leave toward the veth in the
+conntrack **original** direction (connections the guest opened) for
+`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16` and `100.64.0.0/10`: the host
+bridge (service proxy, DNS, relays) and any provider-verified private
+destination. Running after the forward chain, it never counts a packet the
+egress filter dropped. Private-network side-link traffic leaves through its
+own interface and was never in the veth counter.
+
+- Billed public egress is `net_tx_bytes - internal_tx_bytes`. The counter
+  reads IP-layer bytes; vmmd adds 14 bytes of Ethernet framing per packet
+  so the two subtract like for like.
+- vmmd reads it in the existing 15 s per-namespace poll (no extra exec),
+  accumulates deltas per instance across counter resets, and reports the
+  cumulative total as `InstanceStats.internal_tx_bytes` and
+  `InstanceTelemetry.internal_tx_bytes`.
+- Replies to connections the guest accepted are not internal: an app's
+  responses to its users through the gateway are egress. The service proxy
+  and the public gateway both reach the guest from `gatewayd-internal`, so a
+  callee's replies to another app's service call stay billed until a later
+  slice attributes them on the gateway side (slice 3).
+- Slice 2 carries the total through schedd to a `usage_minutes` column and
+  lets meterd subtract it behind a meter setting that stays off until
+  `make test-metal` and `make leakcheck` pass on the native hosts.
