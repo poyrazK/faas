@@ -277,3 +277,34 @@ type ObsAttentionSummaryResponse struct {
 	WindowDays int                       `json:"window_days"`
 	Items      []ObsAttentionKindSummary `json:"items"`
 }
+
+// ObsSupportTicketSnapshot is the customer's own account-health view saved
+// when they opened a ticket (ADR-20261112210000), with the refused request
+// matching the request id they attached.
+type ObsSupportTicketSnapshot struct {
+	CapturedAt time.Time             `json:"captured_at"`
+	Plan       string                `json:"plan"`
+	Status     string                `json:"status"`
+	Health     AccountHealth         `json:"health"`
+	Request    *AccountHealthRequest `json:"request,omitempty"`
+	RequestID  string                `json:"request_id,omitempty"`
+}
+
+// ObsSupportTicketCustomer answers GET /v1/admin/support/tickets/{ticket}/customer:
+// the account behind a ticket, its live diagnosis, the snapshot taken when
+// the ticket was opened, and the restriction kinds lifted or added since
+// (ADR-20261115120000). Unavailable means the account could not be loaded;
+// only the ticket id is then meaningful.
+type ObsSupportTicketCustomer struct {
+	TicketID    string                    `json:"ticket_id"`
+	Unavailable bool                      `json:"unavailable,omitempty"`
+	AccountID   string                    `json:"account_id,omitempty"`
+	OrgSlug     string                    `json:"org_slug,omitempty"`
+	Plan        string                    `json:"plan,omitempty"`
+	Status      string                    `json:"status,omitempty"`
+	Apps        int                       `json:"apps"`
+	Diagnosis   *ObsTenantDiagnosis       `json:"diagnosis,omitempty"`
+	Snapshot    *ObsSupportTicketSnapshot `json:"snapshot,omitempty"`
+	Lifted      []string                  `json:"lifted,omitempty"`
+	Added       []string                  `json:"added,omitempty"`
+}

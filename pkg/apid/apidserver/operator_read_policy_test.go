@@ -211,7 +211,18 @@ var strictOperatorSessionReads = map[string]bool{"GET /v1/admin/status/incidents
 // (ADR-20261111130000), not the operator allowlist: they need a session
 // principal and the staff-mode support handler, which checks MFA and the
 // roster on every request.
-var supportStaffReads = map[string]bool{"GET /v1/admin/support/notifications": true}
+var supportStaffReads = map[string]bool{
+	"GET /v1/admin/support/notifications": true, "GET /v1/admin/support/tickets": true,
+	"GET /v1/admin/support/tickets/{ticket}": true, "GET /v1/admin/support/tickets/{ticket}/messages": true,
+	"GET /v1/admin/support/tickets/{ticket}/events": true, "GET /v1/admin/support/policies": true,
+	"GET /v1/admin/support/teams": true, "GET /v1/admin/support/staff": true, "GET /v1/admin/support/events": true,
+	"GET /v1/admin/support/report": true, "GET /v1/admin/support/tickets/{ticket}/engineering": true,
+}
+
+// supportRosterReads are support reads served outside the support handler
+// that check the roster themselves (support.Service.StaffRole), keyed to the
+// handler that does it (ADR-20261115120000).
+var supportRosterReads = map[string]string{"GET /v1/admin/support/tickets/{ticket}/customer": "s.supportTicketCustomer"}
 
 // Every provider read picks a policy at the route table, so a new GET
 // /v1/admin route cannot fall back to the admin scope alone, which every
@@ -246,6 +257,10 @@ func TestEveryAdminReadUsesAnOperatorReadPolicy(t *testing.T) {
 			case supportStaffReads[pattern]:
 				if !strings.Contains(call, "s.requireSessionPrincipal(") || !strings.Contains(call, ", true)") {
 					t.Errorf("%s:%d: %s must require a session principal and the staff support handler", file, line, pattern)
+				}
+			case supportRosterReads[pattern] != "":
+				if !strings.Contains(call, "s.requireSessionPrincipal(") || !strings.Contains(call, supportRosterReads[pattern]) {
+					t.Errorf("%s:%d: %s must require a session principal and %s", file, line, pattern, supportRosterReads[pattern])
 				}
 			case strings.Contains(call, "s.requireOperatorSessionRead(") || strings.Contains(call, "s.requireOperatorRead("):
 			default:

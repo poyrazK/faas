@@ -106,6 +106,22 @@ func TestOperatorConsoleAttentionActions(t *testing.T) {
 		t.Fatalf("replayed contact = %+v, %v; want ticket %s", action, err, first)
 	}
 
+	// The console's support inbox reads the ticket's account panel.
+	rec = env.DoOperator(t, "GET", "/v1/admin/support/tickets/"+first+"/customer", nil, nil)
+	expect(rec, rec.Body.String(), http.StatusOK)
+	var panel api.ObsSupportTicketCustomer
+	if err := json.Unmarshal(rec.Body.Bytes(), &panel); err != nil || panel.Unavailable || panel.TicketID != first ||
+		panel.AccountID != acct.ID || panel.Plan != string(api.PlanPro) || panel.Diagnosis == nil {
+		t.Fatalf("ticket customer = %+v, %v", panel, err)
+	}
+	rec = env.DoOperator(t, "GET", "/v1/admin/support/tickets/00000000-0000-4000-8000-000000000000/customer", nil, nil)
+	expect(rec, rec.Body.String(), http.StatusNotFound)
+	rec = env.DoOperator(t, "GET", "/v1/admin/support/tickets/nope/customer", nil, nil)
+	expect(rec, rec.Body.String(), http.StatusNotFound)
+	if bearer := env.Do(t, "GET", "/v1/admin/support/tickets/"+first+"/customer", nil, nil); bearer.Code < 400 {
+		t.Fatalf("bearer ticket customer status %d: %s", bearer.Code, bearer.Body)
+	}
+
 	// The summary counts both outcomes.
 	rec = env.DoOperator(t, "GET", root+"summary", nil, nil)
 	expect(rec, rec.Body.String(), http.StatusOK)
