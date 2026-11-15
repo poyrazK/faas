@@ -234,6 +234,85 @@ func (q *Queries) NodePreparesAppImage(ctx context.Context, db DBTX, arg NodePre
 	return preparing, err
 }
 
+const postgresCutoverVerification = `-- name: PostgresCutoverVerification :one
+SELECT c.account_id, c.app_id, m.environment_key, m.access, d.postgres_major,
+       m.provider_identity_id, m.credential_ref, m.ciphertext, m.kid, m.value_hash
+FROM managed_postgres_cutovers c
+JOIN managed_postgres_cutover_credentials m ON m.cutover_id=c.id
+JOIN managed_postgres_databases d ON d.id=c.target_database_id AND d.account_id=c.account_id
+WHERE c.id=$1::uuid AND c.account_id=$2::uuid
+  AND m.id=$3::uuid AND m.state='sealed'
+  AND c.state='verifying' AND c.lease_token=$4::text AND c.lease_until>clock_timestamp()
+  AND d.state='ready' AND d.backend_id=c.target_backend_id
+  AND d.backend_fingerprint=c.target_backend_fingerprint
+  AND d.provider_resource_id=c.target_resource_id AND d.desired_generation=c.target_generation
+`
+
+type PostgresCutoverVerificationParams struct {
+	CutoverID    pgtype.UUID
+	AccountID    pgtype.UUID
+	CredentialID pgtype.UUID
+	LeaseToken   string
+}
+
+type PostgresCutoverVerificationRow struct {
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	EnvironmentKey     string
+	Access             string
+	PostgresMajor      int16
+	ProviderIdentityID pgtype.Text
+	CredentialRef      pgtype.Text
+	Ciphertext         []byte
+	Kid                pgtype.Text
+	ValueHash          pgtype.Text
+}
+
+func (q *Queries) PostgresCutoverVerification(ctx context.Context, db DBTX, arg PostgresCutoverVerificationParams) (PostgresCutoverVerificationRow, error) {
+	row := db.QueryRow(ctx, postgresCutoverVerification,
+		arg.CutoverID,
+		arg.AccountID,
+		arg.CredentialID,
+		arg.LeaseToken,
+	)
+	var i PostgresCutoverVerificationRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.AppID,
+		&i.EnvironmentKey,
+		&i.Access,
+		&i.PostgresMajor,
+		&i.ProviderIdentityID,
+		&i.CredentialRef,
+		&i.Ciphertext,
+		&i.Kid,
+		&i.ValueHash,
+	)
+	return i, err
+}
+
+const recordPostgresVerification = `-- name: RecordPostgresVerification :exec
+INSERT INTO secret_verification_audit(account_id,app_id,cutover_id,credential_id)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid)
+`
+
+type RecordPostgresVerificationParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	CutoverID    pgtype.UUID
+	CredentialID pgtype.UUID
+}
+
+func (q *Queries) RecordPostgresVerification(ctx context.Context, db DBTX, arg RecordPostgresVerificationParams) error {
+	_, err := db.Exec(ctx, recordPostgresVerification,
+		arg.AccountID,
+		arg.AppID,
+		arg.CutoverID,
+		arg.CredentialID,
+	)
+	return err
+}
+
 const registryCredentialSealed = `-- name: RegistryCredentialSealed :one
 SELECT username, password_encrypted FROM app_registry_credentials
  WHERE app_id = $1::uuid AND registry = $2::text

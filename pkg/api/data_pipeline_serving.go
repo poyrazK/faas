@@ -1,14 +1,18 @@
 package api
 
-// DataPipelineServing is an explicit, versioned serving contract. Columns is
-// immutable after creation; membership changes use the reader approval flow.
+// DataPipelineServing is an explicit, versioned serving contract. Version 2
+// changes require the frozen evolution preview/approval workflow.
 type DataPipelineServing struct {
-	Version      int                       `json:"version"`
-	Columns      map[string][]string       `json:"columns,omitempty"`
-	TenantAccess *DataPipelineTenantAccess `json:"tenant_access,omitempty"`
+	AuthOrganizations *DataPipelineAuthOrganizations `json:"auth_organizations,omitempty"`
+	Relationships     []DataPipelineRelationship     `json:"relationships,omitempty"`
+	Version           int                            `json:"version"`
+	Columns           map[string][]string            `json:"columns,omitempty"`
+	TenantAccess      *DataPipelineTenantAccess      `json:"tenant_access,omitempty"`
 }
 
 type DataPipelineTenantAccess struct {
+	// ValidUntil is worker-maintained evidence for Auth synchronization.
+	ValidUntil  string                         `json:"valid_until,omitempty"`
 	Column      string                         `json:"column"`
 	Memberships []DataPipelineTenantMembership `json:"memberships"`
 }

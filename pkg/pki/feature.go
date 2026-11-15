@@ -93,9 +93,10 @@ const FeatureSecretOpener = "secret-opener"
 // Secret opener leaf identities. The client leaf's CN is the compute node's
 // name; VmmdSecretdClient is only its placeholder in the role table.
 const (
-	SecretdServerName      = "secretd.faas"
-	VmmdSecretdClient      = "vmmd-secretd.faas"
-	SecretdClientDirectory = "secretd-client"
+	SecretdServerName          = "secretd.faas"
+	VmmdSecretdClient          = "vmmd-secretd.faas"
+	SecretdClientDirectory     = "secretd-client"
+	ApidPostgresVerifierClient = "apid-postgres-verifier.faas"
 )
 
 // FeatureDBLogin is the per-node database logins of ADR-20261110210000
@@ -173,7 +174,10 @@ func FeatureRoles(feature, boxRole string) []Role {
 		controlPlane = []Role{{CommonName: SigndServerName, Kind: KindServer, Directory: "signd", Filename: "server", AltNames: ProductionSANs(SigndServerName)}}
 		compute = []Role{{CommonName: ImagedSigndClient, Kind: KindClient, Directory: SigndClientDirectory, Filename: "imaged", AltNames: ProductionSANs(ImagedSigndClient)}}
 	case FeatureSecretOpener:
-		controlPlane = []Role{{CommonName: SecretdServerName, Kind: KindServer, Directory: "secretd", Filename: "server", AltNames: ProductionSANs(SecretdServerName)}}
+		controlPlane = []Role{
+			{CommonName: SecretdServerName, Kind: KindServer, Directory: "secretd", Filename: "server", AltNames: ProductionSANs(SecretdServerName)},
+			{CommonName: ApidPostgresVerifierClient, Kind: KindClient, Directory: "secretd-verifier", Filename: "apid", AltNames: ProductionSANs(ApidPostgresVerifierClient)},
+		}
 		compute = []Role{{CommonName: VmmdSecretdClient, Kind: KindClient, Directory: SecretdClientDirectory, Filename: "vmmd", AltNames: ProductionSANs(VmmdSecretdClient)}}
 	case FeatureDBLogin:
 		units := make([]string, 0, len(DBLoginDaemonRoles))

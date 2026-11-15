@@ -1,0 +1,15 @@
+Checking ./pkg/api
+0 issues.
+Checking ./pkg/apid/datapipelines
+0 issues.
+Checking ./pkg/dashboard
+0 issues.
+Checking ./pkg/connectioncapacity
+0 issues.
+Checking ./pkg/managedpostgres
+0 issues.
+Checking ./cmd/sdk-coverage
+0 issues.
+Checking ./scripts/ci/speccompliance
+0 issues.
+Failed: []

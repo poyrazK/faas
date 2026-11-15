@@ -41,7 +41,7 @@ func collated(name string, c column) string {
 	return name
 }
 func verificationSetting(ctx context.Context, tx pgx.Tx) error {
-	_, err := tx.Exec(ctx, `SELECT set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true),set_config('idle_in_transaction_session_timeout',$3,true)`, strconv.FormatInt(api.DataPipelineVerificationLockTimeout.Milliseconds(), 10), strconv.FormatInt(api.DataPipelineVerificationQueryTimeout.Milliseconds(), 10), strconv.FormatInt(api.DataPipelineLease.Milliseconds(), 10))
+	_, err := tx.Exec(ctx, `SELECT set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true),set_config('idle_in_transaction_session_timeout',$3,true)`, strconv.FormatInt(api.DataPipelineVerificationLockTimeout.Milliseconds(), 10), strconv.FormatInt(workQueryMillis(ctx), 10), strconv.FormatInt(api.DataPipelineLease.Milliseconds(), 10))
 	if err != nil {
 		return err
 	}

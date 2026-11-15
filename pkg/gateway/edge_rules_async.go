@@ -199,6 +199,11 @@ func (h *Handler) applyEdgeRuleAsync(w http.ResponseWriter, r *http.Request, app
 		return true
 	}
 	if err != nil {
+		if errors.Is(err, ErrAsyncRouteIdempotencyConflict) {
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "idempotency_conflict", "Idempotency key conflict", "the key was already accepted for a different request"))
+			h.observeAsyncRule(rule, "blocked", "error")
+			return true
+		}
 		if errors.Is(err, state.ErrInvocationEnvironmentWorkIsolation) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, "invocation_environment_work_isolation_unavailable",
 				"Stage work unavailable", "Work policies, queues, and completion destinations need isolated stage configuration."))

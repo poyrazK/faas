@@ -44,7 +44,8 @@ const (
 	// rpcOpenEdgeHeaderSecret is slice 3i.
 	rpcOpenEdgeHeaderSecret = "OpenEdgeHeaderSecret"
 	// rpcRegistryFetch is slice 3j.
-	rpcRegistryFetch = "RegistryFetch"
+	rpcRegistryFetch         = "RegistryFetch"
+	rpcVerifyPostgresCutover = "VerifyPostgresCutover"
 )
 
 var (
@@ -66,7 +67,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	m := &Metrics{
 		opens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "faas_secretd_opens_total",
-			Help: "Opens secretd answered and audited, by RPC and authorization (owner, grant); GrantPeer counts grants recorded.",
+			Help: "Opens secretd answered and audited, by RPC and authorization (owner, grant, verification); GrantPeer counts grants recorded.",
 		}, []string{"rpc", "via"}),
 		refusals: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "faas_secretd_refusals_total",
@@ -80,7 +81,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	}
 	// Pre-create the series alerts read, so increase() sees the first
 	// refusal instead of a series appearing at 1.
-	for _, rpc := range []string{rpcOpenAppSecrets, rpcGrantPeer, rpcOpenCaptureKey, rpcOpenSidecarEnv, rpcOpenLogDrainHeader, rpcOpenTriggerConfig, rpcOpenEdgeHeaderSecret, rpcRegistryFetch} {
+	for _, rpc := range []string{rpcOpenAppSecrets, rpcGrantPeer, rpcOpenCaptureKey, rpcOpenSidecarEnv, rpcOpenLogDrainHeader, rpcOpenTriggerConfig, rpcOpenEdgeHeaderSecret, rpcRegistryFetch, rpcVerifyPostgresCutover} {
 		for _, reason := range []string{ReasonUnauthenticated, ReasonUnknownNode, ReasonNotAuthorized,
 			ReasonBudgetExhausted, ReasonUnreferenced, ReasonWrongAccount, ReasonOtherApp, ReasonEnvelope} {
 			m.refusals.WithLabelValues(rpc, reason)

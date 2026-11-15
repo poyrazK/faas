@@ -19453,3 +19453,25 @@ const (
 // MaxObjectKeyScopeBytes bounds a bucket binding's key_prefix
 // (ADR-20261106114500); the catalog CHECK enforces the same bound.
 const MaxObjectKeyScopeBytes = 512
+
+const (
+	DataPipelineRelationshipsMax        = 16
+	DataPipelineRelationshipKeysMax     = 4
+	DataPipelineOrganizationMappingsMax = 32
+	DataPipelineAuthSnapshotTTL         = time.Minute
+	DataPipelineAuthQueryTimeout        = 5 * time.Second
+)
+
+// Scheduled pipeline work remains bounded independently of owner-selected budgets.
+const (
+	DataPipelineScheduleMinSeconds       = int64(3600)
+	DataPipelineScheduleMaxSeconds       = int64(86400)
+	DataPipelineSnapshotRowsMax          = int64(100000)
+	DataPipelineSnapshotBytesMax         = int64(64 << 20)
+	DataPipelineSnapshotOperationTimeout = 45 * time.Second
+	DataPipelineQualityRulesMax          = 16
+	DataPipelineQualityBoundBytesMax     = 64
+	DataPipelineQualityScanRowsMax       = int64(10000)
+	DataPipelineWorkQueryMinMillis       = int64(50)
+	DataPipelineMinutesPerDay            = 24 * 60
+)

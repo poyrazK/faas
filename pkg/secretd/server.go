@@ -30,6 +30,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/crashcrypt"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/pki"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/triggerconfig"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -173,6 +175,8 @@ type Server struct {
 	// RegistryFetch.
 	buildIdentities []*age.X25519Identity
 	registry        *registryFetcher
+	postgresHMAC    []byte
+	postgresProbe   func(context.Context, string, managedpostgres.CredentialAccess, int) error
 }
 
 // WithDeliveryIdentities lets secretd open delivery seal-domain values
@@ -239,6 +243,11 @@ func (s *Server) caller(ctx context.Context, rpc string) (string, string, error)
 	if err != nil || strings.TrimSpace(name) == "" {
 		s.metrics.refuse(rpc, ReasonUnauthenticated)
 		return "", "", rpcErr(codes.Unauthenticated, "secretd refused the caller: no node identity")
+	}
+	// This identity is purpose-bound even if its name is registered as a node.
+	if name == pki.ApidPostgresVerifierClient {
+		s.metrics.refuse(rpc, ReasonNotAuthorized)
+		return "", "", rpcErr(codes.PermissionDenied, "secretd refused: this identity is verify-only")
 	}
 	id, err := s.store.NodeIDByName(ctx, name)
 	if errors.Is(err, ErrUnknownNode) {
