@@ -2255,6 +2255,7 @@ var cliCommands = []cliCommand{
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "stream", Short: "emit JSON Lines as pages arrive; stdout requires --json --all", Bool: true},
 				{Name: "output", Short: "publish a new JSON Lines file after all pages complete; requires --all", Value: "PATH"},
+				{Name: "timeout", Short: "overall list read budget including page requests and retries (positive duration)", Value: "DURATION"},
 			}},
 			{Name: "provenance", Short: "Show the build provenance attestation", Positionals: []string{"<id>"}},
 			{Name: "sbom", Short: "Show the build SBOM", Positionals: []string{"<id>"}},
@@ -4977,6 +4978,7 @@ var cliCommands = []cliCommand{
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
 				{Name: "stream", Short: "emit JSON Lines as pages arrive; stdout requires --json --all", Bool: true},
 				{Name: "output", Short: "publish a new JSON Lines file after all pages complete; requires --all", Value: "PATH"},
+				{Name: "timeout", Short: "overall list read budget including page requests and retries (positive duration)", Value: "DURATION"},
 			}},
 			{Name: "get", Short: "Show or recover one invocation", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "replay", Short: "re-issue failed unkeyed work"},
