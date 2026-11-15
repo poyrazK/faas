@@ -107,6 +107,9 @@ func Compile(schema []byte, rejectUnknownFields bool) (*CompiledSchema, error) {
 	if err != nil {
 		return nil, errors.Join(ErrSchemaInvalid, err)
 	}
+	if rejectUnknownFields {
+		compiled = closeLegacyCompiledSchema(compiled)
+	}
 
 	return &CompiledSchema{Schema: compiled, Digest: digest}, nil
 }
@@ -260,7 +263,8 @@ const rejectUnknownFieldsDigestSuffix = "\x00reject_on_unknown_fields"
 //
 // Drafts 04-07 have no unevaluatedProperties, so for them a schema that
 // lists its fields directly gets additionalProperties=false and a composed
-// one ($ref, allOf, anyOf, oneOf, if, dependencies) stays open.
+// one is closed after compilation by closeLegacyCompiledSchema, without
+// changing the original dialect's keyword semantics.
 func closeUnknownFields(node any, closeSelf, legacy bool) {
 	m, ok := node.(map[string]any)
 	if !ok {

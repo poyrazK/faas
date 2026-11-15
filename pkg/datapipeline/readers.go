@@ -17,6 +17,9 @@ import (
 // ReaderChange is separate from the schema workflow: access may be revoked
 // while a table is quarantined or copying. ReadSubjects remains the applied set.
 type ReaderChange struct {
+	BeforeIssuer, AfterIssuer           string                             `json:",omitempty"`
+	ResetAuth                           bool                               `json:",omitempty"`
+	BeforeValidUntil, AfterValidUntil   string                             `json:",omitempty"`
 	Tenant                              bool                               `json:",omitempty"`
 	BeforeMemberships, AfterMemberships []api.DataPipelineTenantMembership `json:",omitempty"`
 	ID, State                           string

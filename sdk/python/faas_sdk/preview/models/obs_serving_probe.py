@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.obs_serving_probe_state import ObsServingProbeState, check_obs_serving_probe_state
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.obs_serving_probe_diagnostics import ObsServingProbeDiagnostics
+
 
 T = TypeVar("T", bound="ObsServingProbe")
 
@@ -29,6 +33,13 @@ class ObsServingProbe:
     expected_first_byte_seconds: float
     max_result_age_seconds: float
     reason: str | Unset = UNSET
+    diagnostics: ObsServingProbeDiagnostics | Unset = UNSET
+    """Optional diagnostics from the same evaluated serving run. Available
+    diagnostics have complete, coherent fixed codes and retry metadata.
+    Unknown diagnostics have no numeric values or inferred success. This
+    section does not change coverage state. Raw URLs, bodies and exceptions
+    are excluded; none is success and unknown is an unclassified failure.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -59,6 +70,10 @@ class ObsServingProbe:
 
         reason = self.reason
 
+        diagnostics: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.diagnostics, Unset):
+            diagnostics = self.diagnostics.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -75,11 +90,15 @@ class ObsServingProbe:
         )
         if reason is not UNSET:
             field_dict["reason"] = reason
+        if diagnostics is not UNSET:
+            field_dict["diagnostics"] = diagnostics
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.obs_serving_probe_diagnostics import ObsServingProbeDiagnostics
+
         d = dict(src_dict)
         node = d.pop("node")
 
@@ -130,6 +149,13 @@ class ObsServingProbe:
 
         reason = d.pop("reason", UNSET)
 
+        _diagnostics = d.pop("diagnostics", UNSET)
+        diagnostics: ObsServingProbeDiagnostics | Unset
+        if isinstance(_diagnostics, Unset):
+            diagnostics = UNSET
+        else:
+            diagnostics = ObsServingProbeDiagnostics.from_dict(_diagnostics)
+
         obs_serving_probe = cls(
             node=node,
             url_id=url_id,
@@ -140,6 +166,7 @@ class ObsServingProbe:
             expected_first_byte_seconds=expected_first_byte_seconds,
             max_result_age_seconds=max_result_age_seconds,
             reason=reason,
+            diagnostics=diagnostics,
         )
 
         obs_serving_probe.additional_properties = d

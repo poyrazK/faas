@@ -47,7 +47,7 @@ func TestTopLevelUsageGroupsCustomerCommands(t *testing.T) {
 
 // operatorCommands are callable but listed only by `help --all --operator`.
 // postgres left it when managed PostgreSQL reached GA (ADR-20261031091607).
-var operatorCommands = []string{"admin", "commit", "data-repair", "entities", "github-webhook-secret", "mail", "product", "rollouts", "tenant-surfaces"}
+var operatorCommands = []string{"commit", "data-repair", "entities", "mail", "product", "rollouts", "tenant-surfaces"}
 
 // cliTreeFamilies are the sections of `help --all` after the shortcuts.
 var cliTreeFamilies = []string{"Shortcuts:", "Ship:", "Run:", "Configure:", "Data:", "Work:", "Observe:", "Agents:", "Account:"}

@@ -50,6 +50,9 @@ type sourceMetadata interface {
 // Catalog inspection never reads customer rows. This exact inspector also
 // constructs the schema used by replication; discovery cannot invent support.
 func inspectSourceTable(ctx context.Context, source sourceMetadata, name string) (relation, api.DataSourceTable, error) {
+	return inspectSourceTableMode(ctx, source, name, false)
+}
+func inspectSourceTableMode(ctx context.Context, source sourceMetadata, name string, snapshot bool) (relation, api.DataSourceTable, error) {
 	r := relation{Name: name}
 	table := api.DataSourceTable{Name: name, Supported: true, Columns: []api.DataSourceColumn{}, Issues: []api.DataConnectionIssue{}}
 	add := func(code, message, remediation, column string) {
@@ -62,10 +65,10 @@ func inspectSourceTable(ctx context.Context, source sourceMetadata, name string)
 		add("source_table_unsupported", "Table name is unsupported", "Use a lowercase SQL identifier beginning with a letter, outside the gregale_ namespace.", "")
 	}
 	var ordinary, readable, owner bool
-	err := source.QueryRow(ctx, `SELECT c.oid,c.relkind='r' AND c.relpersistence='p' AND NOT c.relispartition AND NOT c.relrowsecurity AND c.relreplident='d'
+	err := source.QueryRow(ctx, `SELECT c.oid,c.relkind='r' AND c.relpersistence='p' AND NOT c.relispartition AND NOT c.relrowsecurity AND ($2::boolean OR c.relreplident='d')
  AND NOT EXISTS(SELECT 1 FROM pg_inherits WHERE inhrelid=c.oid OR inhparent=c.oid),
  has_table_privilege(c.oid,'SELECT'),pg_has_role(c.relowner,'USAGE')
- FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=$1`, name).Scan(&r.OID, &ordinary, &readable, &owner)
+ FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname=$1`, name, snapshot).Scan(&r.OID, &ordinary, &readable, &owner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		add("source_table_unsupported", "Table is unavailable", "Select an existing public table and run the check again.", "")
 		return r, table, nil
@@ -79,7 +82,7 @@ func inspectSourceTable(ctx context.Context, source sourceMetadata, name string)
 	if !readable {
 		add("source_table_unsupported", "Table cannot be read", "Grant the source role SELECT on this table.", "")
 	}
-	if !owner {
+	if !owner && !snapshot {
 		add("source_table_unsupported", "Publication cannot include this table", "Use a source role with ownership rights on this table.", "")
 	}
 	rows, err := source.Query(ctx, `SELECT a.attname,a.atttypmod,a.attnotnull,

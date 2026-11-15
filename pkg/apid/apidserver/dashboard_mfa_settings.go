@@ -22,9 +22,16 @@ func (s *server) dashboardMFASettings(w http.ResponseWriter, r *http.Request) {
 		renderProblem(w, s.log, passwordErr)
 		return
 	}
+	data := map[string]any{"Enrolled": acct.MFAEnrolled(), "PendingSetup": len(acct.MFASecretEncrypted) > 0, "HasPassword": passwordErr == nil, "Next": dashboardMFANext(r.URL.Query().Get("next"))}
+	if at := s.pendingMFADisableAt(r.Context(), acct); at != nil && acct.MFAEnrolled() {
+		// Only a session that passed the second factor may cancel; one from a
+		// password reset alone sees the notice without the button (F14-1).
+		data["PendingDisableAt"] = at.UTC().Format("2006-01-02 15:04 UTC")
+		data["CanCancelDisable"] = !s.sessionMFAChallengePending(r, acct)
+	}
 	page := dashboard.Page{
 		Title: "Two-factor authentication", Body: "mfa_settings", Account: acctViewFrom(acct),
-		Data: map[string]any{"Enrolled": acct.MFAEnrolled(), "PendingSetup": len(acct.MFASecretEncrypted) > 0, "HasPassword": passwordErr == nil, "Next": dashboardMFANext(r.URL.Query().Get("next"))},
+		Data: data,
 	}
 	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, s.log, err)

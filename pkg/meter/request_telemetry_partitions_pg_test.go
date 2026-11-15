@@ -29,7 +29,7 @@ func (d partitionTestDB) QueryRow(ctx context.Context, sql string, args ...any) 
 
 func TestEnsureRequestTelemetryPartitionsMovesDefaultRowsAndIsIdempotent(t *testing.T) {
 	ctx := t.Context()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t) // a private clone: no CREATE INDEX CONCURRENTLY waits on other packages' transactions
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}

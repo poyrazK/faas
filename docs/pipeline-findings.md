@@ -1,6 +1,6 @@
 # Pipeline investigation backlog
 
-Investigated 2026-11-12 UTC. All sixteen findings are **fixed and locally verified** as of
+Investigated 2026-11-12 UTC. The original sixteen findings are **fixed and locally verified** as of
 2026-11-13 (Europe/Istanbul). [Validation evidence](ops/evidence/20261112-pipeline-remediation/README.md)
 records the completed checks and their limits. The original
 reproductions below describe the investigated baseline, not the repaired behavior.
@@ -26,10 +26,49 @@ The next approved batch follows [ADR-20261113181050](adr/20261113181050-pipeline
 
 Local validation and its limits are recorded in [the operability evidence](ops/evidence/20261113-pipeline-operability/README.md). These features remain in the approved staging pilot.
 
-Future opportunities retained for later implementation: safely evolve column projections, synchronize approved Auth organization memberships, and build related-table read models. Live Neon qualification, broader recovery-surface parity and verification cost controls also remain open.
+The next approved batch follows [ADR-20261113205500](adr/20261113205500-pipeline-serving-evolution.md):
 
-The other roadmap opportunities below remain future work. This batch does not
-enable production or imply that the source provider has passed the live drill.
+| Item | Customer problem | Implementation and remaining scope |
+| --- | --- | --- |
+| CUST-007 | Adding selected fields or tables requires replacing an explicitly projected mirror. | Frozen selection review, exact source-definition approval through API/CLI/dashboard, bounded backfill/verification, projected table copy and API refresh. Removals and incompatible type changes retain explicit recovery boundaries. |
+| CUST-008 | B2B portals must manually synchronize employee membership. | Owner-approved Auth app/binding and organization mapping, complete authoritative snapshots, durable reader receipts and one-minute expiring RLS proofs bound to the verified issuer and subject. Revocation is independent of the replication source; JWT organization claims grant nothing. |
+| CUST-009 | Portals cannot read related mirrored records. | Declared computed relationships to complete target primary keys, invoker RLS and exact tenant equality, recursive dependency availability checks, typed Data API export, API refresh and generation cleanup. Simple views and one-to-many relationships remain follow-up scope. |
+
+Native checks cover projection/publication replay, projected new tables, Auth issuer isolation, expiry and source-independent revocation, forged RPC arguments, multi-tenant join isolation, dependency quarantine, resync, and newly connected app refresh/retry. Validation and rollout limits are recorded in [the evolution evidence](ops/evidence/20261113-pipeline-evolution/README.md). Review and CI are tracked in [PR #7252](https://github.com/poyrazK/faas/pull/7252).
+
+PIPE-017–018 below record the empty-membership/regrant defect and automatic-grant/control race discovered during this batch. Live Neon qualification, broader recovery-surface parity and verification cost controls remain open.
+
+The next approved batch follows
+[ADR-20261114083000](adr/20261114083000-pipeline-scheduled-imports-quality-and-work-budgets.md):
+
+| Item | Customer problem | Implementation and remaining scope |
+| --- | --- | --- |
+| CUST-010 | Hourly/nightly reporting needs data without a continuously active replication subscriber, sometimes with SELECT-only credentials. | Creation-time scheduled snapshots, a distinct source check, connection-only reservations, bounded staging and verification, atomic publication preserving table identities, private run receipts, capture age and stale-refresh alerts. Existing empty destinations only; live Neon and other provider qualification remains separate. |
+| CUST-011 | A correctly replicated dataset can still contain invalid business data. | Scheduled required/unique/range/reference rules, bounded coverage, exact decimal bounds, tenant-equal references, count-only reports and debounced incidents/recoveries. Incomplete or unavailable checks cannot report a pass or clear a failure. No arbitrary SQL, automatic repair or failing-row export. |
+| CUST-012 | Customers need predictable source impact during verification and repairs. | Daily UTC windows, lower server query deadlines and per-tick verification/backfill batch budgets. Snapshot/quality manual requests respect the window. Native COPY bandwidth enforcement and larger resumable index builds remain future qualification work. |
+
+Validation and remaining rollout boundaries are recorded in
+[the scheduled-work evidence](ops/evidence/20261114-pipeline-scheduled-work/README.md).
+The implementation review caught and fixed the following issues **in this new
+batch**; these are not claims about production incidents:
+
+| Finding | Fix and durable regression evidence |
+| --- | --- |
+| A manual snapshot request reused a successful run ID and recovered the old receipt rather than importing fresh rows. | Manual requests clear the run identity; automatic lost-ack retries retain it. `TestScheduledSnapshotRetainsLastGoodCaptureAndRecoversAcknowledgement` checks both paths, exact numeric/JSON preservation, stable table identities and old repeatable-read readers. |
+| Snapshot mode could enter a CDC table-addition/removal workflow that its worker cannot reconcile. | Freeze snapshot schema/selection and reject CDC resync/repair workflows. Test the request boundary and retain the separate reviewed-pipeline recovery path. |
+| A quality aggregate checked read policies before acquiring its table locks. | Lock dependencies before validating shapes and owned/open policies; quarantined or changed tables yield unknown. `TestScheduledQualityCoverageUnknownAndTenantReferences` checks coverage, privacy and tenant-equal reference semantics. |
+| Removing a table used by a quality rule left an invalid saved configuration. | Exclude rule source/reference dependencies from removable choices until the owner removes those rules. |
+| Queueing a failed refresh could clear its stale incident before a new capture succeeded. | Preserve failure reason while queued/running and report the next allowed UTC run. The snapshot regression keeps the stale condition while the window defers work. |
+| Editing quality rules or work budgets immediately recaptured an otherwise idle snapshot source. | Preserve the capture receipt and next run; reschedule only the interval/window and require an explicit manual run for an immediate refresh. The snapshot regression rejects source access during a quality-only edit. |
+| Applying an owner's low data-query budget to the whole worker also reduced deadlines for access and lifecycle controls. | Scope lower deadlines to snapshot/quality/verification/backfill work. The snapshot pause regression asserts that lifecycle access retains its existing deadline outside the work window. |
+| Changing a work window left a preserved quality result advertising a run outside that window. | Recalculate the next allowed quality run while retaining its previous result; the quality regression changes and removes the window before a manual run. |
+| Temporary staging copied target secondary indexes and expressions on every refresh. | Build staging from the reviewed source columns and primary key, preserve public indexes, and reject unsupported target column types. The multi-table rollback regression verifies that staging has only its required primary-key indexes. |
+| Old workers/monitors could process unfamiliar scheduled intent or falsely recover a quality incident. | Database capability fences for pipelines, checks and monitors; preserve them on binary rollback. `TestScheduledWorkersFenceOlderClaims` and `TestQualityIncidentDoesNotRecoverFromUnknownOrIncompleteScan` cover these boundaries. |
+| An older API server could queue native resync/verification/schema work for a snapshot despite the worker claim fence. | Database guards reject native generations, verification, schema workflows and initialized snapshot selection changes. The compatibility regression executes legacy control SQL directly and confirms ordinary pause still works. |
+
+This batch does not enable production or imply that the source provider has
+passed the live drill. Simple views, one-to-many relationships, reviewed Auth
+detach, native COPY throttling and larger index work remain open follow-ups.
 
 The reviewed baseline is commit `46aad2a12e4d1be39d0948b6942cb18d8e71d0b2` **plus
 the existing, uncommitted first batch**: retention-aware alerts, explicit gated-read
@@ -561,6 +600,135 @@ Keep recovery explicit; a stall must not trigger automatic destructive resync.
 
 **Implementation (2026-11-13).** Initial copy now reuses durable per-table high-water/progress clocks and emits `initial_copy_stalled` health plus a `sync_blocked` incident. Worker restarts preserve progress age; recovery remains explicit. Covered by `TestPipelineInitialCopyStallOpensIncident` and `TestNativeInitialCopyStallPersistsAndRecovers`.
 
+## PIPE-017 — An empty tenant membership set prevents later grants
+
+**Status:** fixed during the CUST-007–009 batch; native regression coverage retained.
+
+A complete tenant revocation wrote the literal `false` policy while keeping the
+mirror's shared readable receipt true. A later approved membership change treated
+that policy as quarantine and skipped it; ordinary reconciliation also skipped
+reopening because the shared receipt already said readable. The catalog could
+therefore report the new membership as applied while SQL still returned no rows.
+
+The empty-reader predicate now remains distinct from quarantine's literal deny
+policy. A later approved grant updates the empty-reader policy, while actual
+quarantine stays closed. Connecting or replacing an Auth mapping deliberately
+closes the shared gate first, covering older empty-reader receipts as well as
+lost acknowledgements. `TestNativeTenantRegrantAfterEmptyMembershipPreservesQuarantine`
+and `TestNativeEvolutionAuthProofExpiryRevocationAndUnavailableSource` cover both
+manual and synchronized access. This is a defect in the previously implemented
+tenant-serving baseline, not a claim about production customer impact.
+
+## PIPE-018 — An automatic membership approval can race owner controls
+
+**Status:** fixed during the CUST-007–009 batch; catalog regression retained.
+
+Automatic Auth reader approvals are staged under the worker lease without
+incrementing the owner's configuration revision. A control request could read
+an applied reader set, then commit deletion after a new grant was staged at that
+same revision. The subsequent worker correctly refuses to apply a grant during
+deletion, leaving the pending change blocking cleanup.
+
+The control UPDATE now compares the reader-change ID observed by its initial
+read, as well as the owner revision. A concurrent snapshot causes an actionable
+conflict instead of accepting stale deletion. The catalog regression in
+`TestAuthReaderProofIsDurableAndCannotRenewInGrace` interleaves the real staging
+and control queries and proves that the stale control is rejected. This was
+found in the new local Auth synchronization implementation; no production impact
+is claimed.
+
+## PIPE-019 — New pipeline controls are missing command-tree names and help
+
+**Status:** fixed during merge qualification across PRs #7252 and #7264.
+
+[Data API acceptance run 43618311957](https://github.com/poyrazK/faas/actions/runs/43618311957)
+exposed pipeline commands that bypassed the standard CLI tree and
+evolution/operations parsers that only returned a
+flag listing for `--help`. This omitted structured usage, completion and
+reference metadata. `TestCliTreeVerbBaseline` and
+`TestEveryUsageSubcommandHasManifestHelp` failed while the focused pipeline
+journeys passed. The same run caught an older deploy hint spelling
+`secrets check`; that hint now uses the standard `env check` path.
+
+Standard tree aliases now expose source guidance, tenant access, freshness,
+index advice and evolution without changing the existing command spellings.
+Evolution help lists every action and its revision requirement. Existing tree,
+usage/help, message and documentation checks cover discovery; the evolution
+approval regression runs both spellings and verifies the frozen change ID and
+revision without replacing saved intent. The scheduled-work branch adds the
+operations manifest, its canonical alias and the creation-time
+`--operations-file` help. Its regression checks both command spellings preserve
+the requested action and expected revision, and rejects malformed local files
+before contacting the API.
+
+[Hosted Data API acceptance run 43645387930](https://github.com/poyrazK/faas/actions/runs/43645387930)
+passed on `6e616d7cc8`, including the complete CLI integration suite after these
+fixes. The later main/schema integration remains subject to fresh commit CI.
+
+## PIPE-020 — JSON help drops the existing typo recovery hint
+
+**Status:** fixed during merge qualification; final hosted acceptance remains the gate.
+
+[Data API acceptance run 43659327843](https://github.com/poyrazK/faas/actions/runs/43659327843)
+passed the native Data API checks but failed the complete CLI suite's existing
+`TestUnknownCommandSuggestionKeepsJSONErrorParseable` regression. The JSON-help
+path omitted the unique `gregale help deploy` suggestion for `help deply --json`,
+while human help already provided it. Structured help now shares the suggestion
+algorithm using its already-filtered offline command manifest and keeps the
+error as one JSON document. The offline-help regression also checks that the
+hint makes no API requests: using the live discovery manifest refreshed account
+capabilities, caught by the final required CLI shard in run 43669423148.
+Ambiguous or multiword unknown topics retain the existing discovery fallback.
+
+## Customer roadmap
+
+Reviewed 2026-11-14 against the evolution branch. CUST-007–012 have approved
+implementations summarized above; the bounded scope and remaining qualification
+are explicit. These are product opportunities, not reproduced baseline defects.
+Priorities are code-review recommendations, not measured customer-demand rankings.
+
+| ID | Customer problem and example | Bounded first release |
+| --- | --- | --- |
+| CUST-007 | Customers cannot evolve an explicit projection without creating a newly reviewed pipeline: a portal needs `order_total`, or another selected table. | Preview and approve additions to columns/table selections; preserve primary and tenant keys; backfill and verify affected tables; refresh API contracts before exposing new fields. Avoid a whole-pipeline rebuild. Treat removals and incompatible type changes separately. |
+| CUST-008 | B2B applications must maintain subject/tenant lists manually as employees join or leave customer organizations. | Bind an owner-approved Auth app and organization-to-tenant mapping; synchronize authoritative memberships with durable deduplication and periodic reconciliation. Give revocation priority and report synchronization age. JWT organization claims alone must not grant access. |
+| CUST-009 | A customer portal needs orders with customers/items, but mirrored foreign-key relationships are absent. | Owner-approved relationships and simple read views using existing Data API relationship/type export. Preserve RLS on every dependency and require all dependencies to be ready. Start with declared relationships and simple views; defer arbitrary transformations and materialized aggregates. |
+| CUST-010 | Reporting customers need hourly/nightly data without maintaining continuous replication or keeping Neon compute awake between runs. Some customers can supply only read credentials. | A distinct scheduled snapshot mode for selected tables, qualified separately with suitable read-only credentials. Stage and verify a complete snapshot before activation, retain the last successful version after failures, and expose capture time/staleness. Release source sessions and avoid retaining a CDC slot between runs; source-provider sleep/billing remains provider-dependent. |
+| CUST-011 | A mirror can match its source while still containing invalid business data, such as negative inventory or orphaned orders. | Scheduled, bounded checks on the mirror using curated rules or reviewed assertions, with count/status reports and alerts. Reuse Data API verification concepts. Do not export failing row values or automatically trigger destructive recovery. |
+| CUST-012 | Customers need predictable source impact and support for growing mirrors. Existing verification and index limits are fixed pilot bounds. | Add verification/repair schedules and configurable work budgets, explain progress/estimate uncertainty, and qualify a separate resumable path for larger approved index builds. Native PostgreSQL COPY must not be advertised as having a hard throughput cap without a mechanism that actually enforces it. |
+
+Baseline evidence and reused components:
+
+- [The serving contract](../pkg/api/data_pipeline_serving.go) originally declared columns
+  immutable. [Table-selection changes](../pkg/datapipeline/tables.go) originally rejected
+  pipelines with an explicit projection. Ordinary additive schema handling and
+  scoped repair already exist; CUST-007 extends those workflows rather than
+  replacing them.
+- [Tenant reader changes](../pkg/datapipeline/tenant_readers.go) accept explicit
+  owner-managed membership arrays. Auth already records organization membership
+  changes in [its audit log](../cmd/gregale/templates/auth/sql/0020_org_audit_log.sql),
+  providing an integration starting point; the new bridge reconciles authoritative
+  snapshots instead of depending on audit-event delivery.
+- [Mirror table creation](../pkg/datapipeline/tables_receipt.go) creates selected
+  columns, primary keys and RLS, without source foreign keys. The Data API already
+  supports [typed relationships](data-api.md#typed-relationships), computed
+  relationships and views that respect caller permissions.
+- [Current source requirements](data-pipelines.md#source-and-destination-requirements) require
+  a writable source and logical-replication privileges; the Neon onboarding
+  section documents continuous-subscriber compute implications. Scheduled mode
+  now has its own serving, recovery and qualification contract in the linked ADR.
+- [Verification](../pkg/datapipeline/verification_scan.go) proves bounded source/
+  mirror consistency. Existing [Data API assertions](data-api.md#verify-reusable-data-integrity-checks)
+  and the surrounding verification documentation are building blocks for
+  business-rule checks; scheduled pipeline quality monitoring extends them with
+  bounded coverage and count-only incident reporting.
+- [Pipeline limits](../pkg/api/limits.go) currently bound verification chunks and
+  index builds. Scheduling and larger-workload support should preserve explicit
+  source impact, storage and approval controls.
+
+Before customer rollout, finish the current PRs' CI/review and the real Neon
+source qualification described in CUST-003. The current implementations remain
+in the approved staging pilot; this roadmap does not change rollout gates.
+
 ## Related improvement backlog
 
 Keep these enhancement tracks alongside the concrete findings; their absence
@@ -570,6 +738,8 @@ alone is not a reproduced bug:
   resource IDs and resumable API deployment (related to PIPE-006–008).
 - Expose advanced table/schema/reader recovery workflows consistently across
   dashboard, API, CLI, and SDK surfaces.
+- Add an explicit reviewed Auth detach/zero-mapping workflow; this release
+  requires at least one organization mapping while synchronization is connected.
 - Make verification cost and source write-lock/load impact clearer and more
   controllable within the existing bounded verification model.
 - Tenant access beyond trusted whole-dataset subjects is implemented in CUST-001,

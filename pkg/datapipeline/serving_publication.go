@@ -60,9 +60,64 @@ func checkProjectedPublication(ctx context.Context, p Pipeline, source *pgxpool.
 		for _, c := range table.Columns {
 			expected = append(expected, c.Name)
 		}
-		if !table.Supported || !slices.Equal(expected, v.columns) {
+		matches := slices.Equal(expected, v.columns)
+		if !matches && p.Evolution != nil && p.Evolution.State == "approved" && p.Evolution.Kind == "projection" && len(p.Evolution.AddedTables) == 0 && p.Evolution.Before != nil {
+			previous := p
+			previous.Serving = p.Evolution.Before
+			_, before, beforeErr := inspectPipelineTable(ctx, previous, source, v.table)
+			var columns []string
+			for _, c := range before.Columns {
+				columns = append(columns, c.Name)
+			}
+			matches = beforeErr == nil && before.Supported && slices.Equal(columns, v.columns)
+		}
+		if !table.Supported || !matches {
 			return &blocked{"source_publication_changed", true}
 		}
 	}
 	return nil
+}
+
+// The target DDL receipt is already committed and native apply is suspended.
+// A lost source commit is retried before enabling apply or verification.
+func advanceProjectedPublication(ctx context.Context, p Pipeline, source *pgxpool.Pool, current func(context.Context) error) error {
+	if p.Evolution == nil || p.Evolution.State != "approved" || p.Evolution.Kind != "projection" || len(p.Evolution.AddedTables) > 0 {
+		return nil
+	}
+	if p.SchemaChange == nil || p.SchemaApproval != p.SchemaChange.ID {
+		return ErrConflict
+	}
+	tx, err := lockSchemaSource(ctx, p, source)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	actual := make([]relation, 0, len(p.Tables))
+	tables := make([]string, 0, len(p.Tables))
+	for _, name := range p.Tables {
+		r, table, err := inspectPipelineTable(ctx, p, tx, name)
+		if err != nil {
+			return err
+		}
+		actual = append(actual, r)
+		tables = append(tables, publicationTable(p, table))
+	}
+	if schemaPlan(p, p.SchemaChange.Before, actual).ID != p.SchemaApproval {
+		return ErrConflict
+	}
+	if _, err = tx.Exec(ctx, "ALTER PUBLICATION "+ident(pipelineName(p))+" SET TABLE "+strings.Join(tables, ",")); err != nil {
+		return err
+	}
+	var owned bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_publication WHERE pubname=$1 AND obj_description(oid,'pg_publication')=$2
+ AND NOT puballtables AND pubinsert AND pubupdate AND pubdelete AND pubtruncate AND NOT pubviaroot)`, pipelineName(p), marker(p)).Scan(&owned); err != nil {
+		return err
+	}
+	if !owned {
+		return ErrConflict
+	}
+	if err = current(ctx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }

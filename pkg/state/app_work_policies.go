@@ -30,6 +30,27 @@ type AppWorkPolicyStore interface {
 	DeleteAppWorkPolicy(context.Context, string, string, string) error
 }
 
+// ErrWorkPolicyReserved means an app declared a policy under the built-in
+// ordered policy's name, before that name was reserved, with other settings.
+var ErrWorkPolicyReserved = errors.New("state: app declares the reserved ordered work policy with other settings")
+
+// OrderedWorkPolicy reads an app's built-in ordered policy, creating its row
+// on first use (ADR-20261112193306). A pre-existing declaration under that
+// name with other settings is refused rather than reinterpreted.
+func OrderedWorkPolicy(ctx context.Context, store AppWorkPolicyStore, accountID, appID string) (AppWorkPolicy, error) {
+	record, err := store.AppWorkPolicyByName(ctx, appID, workpolicy.Ordered)
+	if errors.Is(err, ErrNotFound) {
+		record, err = store.UpsertAppWorkPolicy(ctx, accountID, appID, workpolicy.OrderedPolicy())
+	}
+	if err != nil {
+		return AppWorkPolicy{}, err
+	}
+	if !workpolicy.IsOrdered(record.Policy) {
+		return AppWorkPolicy{}, ErrWorkPolicyReserved
+	}
+	return record, nil
+}
+
 func scanAppWorkPolicy(row pgx.Row) (AppWorkPolicy, error) {
 	var record AppWorkPolicy
 	var pending string

@@ -23,6 +23,16 @@ var hexID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 func ValidID(id string) bool { return hexID.MatchString(id) }
 
 func ValidateIntent(in api.ToolPublicationIntent) error {
+	if !ValidReadinessReview(in) {
+		return errors.New("invalid publication readiness review")
+	}
+	if in.PlatformVerification {
+		if in.AccessMode != "external-oauth" || in.Auth == nil || in.Auth.Scopes == nil || in.EndpointPath == "" || !validAuthURL(in.Auth.Issuer) || !validAuthURL(in.Auth.JWKSURL) || !validAuthURL(in.Auth.Resource) || !validVerificationScopes(in.Auth.Scopes) {
+			return errors.New("invalid platform verification OAuth contract")
+		}
+	} else if in.Auth != nil || in.Legacy {
+		return errors.New("OAuth review requires platform verification")
+	}
 	if in.EndpointPath != "" && !ValidEndpointPath(in.EndpointPath) {
 		return errors.New("invalid publication endpoint path")
 	}
@@ -49,6 +59,25 @@ func ValidateIntent(in api.ToolPublicationIntent) error {
 		}
 	}
 	return nil
+}
+
+func validAuthURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && len(raw) <= api.ToolOAuthURLMaxBytes && u.Scheme == "https" && api.ValidMCPProbeHost(u.Host) && u.User == nil && u.RawQuery == "" && !u.ForceQuery && u.Fragment == "" && u.Opaque == ""
+}
+
+func validVerificationScopes(scopes []string) bool {
+	if len(scopes) > 64 {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, scope := range scopes {
+		if scope == "" || len(scope) > 256 || seen[scope] || strings.IndexFunc(scope, func(r rune) bool { return r < 0x21 || r > 0x7e || r == '"' || r == '\\' }) >= 0 {
+			return false
+		}
+		seen[scope] = true
+	}
+	return true
 }
 
 func ValidEndpointPath(value string) bool {
@@ -102,6 +131,18 @@ func ValidateOutcome(intent api.ToolPublicationIntent, out api.ToolPublicationOu
 // View turns an abandoned attempt into an uncertain result, never a resumable
 // plan. No observer can turn a serving deployment into proof of lost tests.
 func View(record api.ToolPublicationRecord, now time.Time) api.ToolPublicationRecord {
+	if record.Verification != nil {
+		v := VerificationView(*record.Verification, now)
+		if record.Status != "running" {
+			if v.Status == "pending" || v.Status == "approved" {
+				v.Status = "not_started"
+			}
+			if v.Status == "running" {
+				v.Status = "outcome_unknown"
+			}
+		}
+		record.Verification = &v
+	}
 	if record.Status == "running" && !now.Before(record.Deadline) {
 		record.Status = "outcome_unknown"
 	}

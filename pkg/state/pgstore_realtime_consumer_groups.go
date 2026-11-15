@@ -655,11 +655,14 @@ func settleRealtimeGroupMessage(ctx context.Context, tx pgx.Tx, g realtimeGroupR
 		}
 		result.Status = "completed"
 	case "release":
-		available, releaseErr := metricsqlc.New().ReleaseGroupMessage(ctx, tx, metricsqlc.ReleaseGroupMessageParams{GroupID: g.id, Sequence: seq, TokenHash: hash})
+		released, releaseErr := metricsqlc.New().ReleaseGroupMessage(ctx, tx, metricsqlc.ReleaseGroupMessageParams{GroupID: g.id, Sequence: seq, TokenHash: hash, MaxReleases: api.RealtimeConsumerGroupReleasesMax})
 		err = releaseErr
 		result.Status = "ready"
 		if err == nil {
-			result.AvailableAt = &available.Time
+			result.Status = released.Status
+			if released.Status == "ready" {
+				result.AvailableAt = &released.AvailableAt.Time
+			}
 		}
 	case "renew":
 		var until time.Time
@@ -779,7 +782,9 @@ func (s *PgStore) ReplayRealtimeConsumerGroupDeadLetter(ctx context.Context, ep,
 			return ErrConflict
 		}
 	}
-	tag, err := tx.Exec(ctx, `update managed_realtime_consumer_group_messages set status='ready',attempts=0,worker='',token_hash=null,lease_until=null,
+	// A replay starts the message over, its releases too: otherwise one
+	// dead-lettered at the release limit dies again on its next release.
+	tag, err := tx.Exec(ctx, `update managed_realtime_consumer_group_messages set status='ready',attempts=0,release_count=0,worker='',token_hash=null,lease_until=null,
  failure_code='',credential_id=null,available_at=clock_timestamp() where group_id=$1 and sequence=$2 and status='dead'`, g.id, seq)
 	if err != nil {
 		return err

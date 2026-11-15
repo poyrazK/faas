@@ -780,6 +780,12 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 		}
 	}
 	recipients = kept
+	// Mirrors enqueue_event_fanout: an object storage event nobody receives
+	// is not kept (ADR-614 amendment 2026-11-13). Object notifications create
+	// the entry themselves (publishObjectEventLocked).
+	if len(recipients) == 0 && event.Source == api.ObjectEventSource {
+		return false, nil
+	}
 	nextID := m.eventFanoutNextID + 1
 	for index := range recipients {
 		work := recipients[index].Work

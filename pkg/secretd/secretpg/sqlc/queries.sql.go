@@ -30,6 +30,33 @@ func (q *Queries) AppSecretCiphertext(ctx context.Context, db DBTX, arg AppSecre
 	return ciphertext, err
 }
 
+const buildRunner = `-- name: BuildRunner :one
+SELECT d.app_id, b.status, coalesce(b.started_at, '-infinity'::timestamptz)::timestamptz AS started_at,
+       coalesce(b.builder_node_name, '')::text AS builder_node_name
+  FROM builds b JOIN deployments d ON d.id = b.deployment_id
+ WHERE b.id = $1::uuid
+`
+
+type BuildRunnerRow struct {
+	AppID           pgtype.UUID
+	Status          string
+	StartedAt       pgtype.Timestamptz
+	BuilderNodeName string
+}
+
+// The build's app, status, start and claiming node (slice 3j-3).
+func (q *Queries) BuildRunner(ctx context.Context, db DBTX, id pgtype.UUID) (BuildRunnerRow, error) {
+	row := db.QueryRow(ctx, buildRunner, id)
+	var i BuildRunnerRow
+	err := row.Scan(
+		&i.AppID,
+		&i.Status,
+		&i.StartedAt,
+		&i.BuilderNodeName,
+	)
+	return i, err
+}
+
 const crashCaptureSealedKey = `-- name: CrashCaptureSealedKey :one
 SELECT app_id, sealed_key FROM crash_captures
  WHERE id = $1::uuid AND status <> 'expired' AND sealed_key IS NOT NULL
@@ -205,6 +232,85 @@ func (q *Queries) NodePreparesAppImage(ctx context.Context, db DBTX, arg NodePre
 	var preparing bool
 	err := row.Scan(&preparing)
 	return preparing, err
+}
+
+const postgresCutoverVerification = `-- name: PostgresCutoverVerification :one
+SELECT c.account_id, c.app_id, m.environment_key, m.access, d.postgres_major,
+       m.provider_identity_id, m.credential_ref, m.ciphertext, m.kid, m.value_hash
+FROM managed_postgres_cutovers c
+JOIN managed_postgres_cutover_credentials m ON m.cutover_id=c.id
+JOIN managed_postgres_databases d ON d.id=c.target_database_id AND d.account_id=c.account_id
+WHERE c.id=$1::uuid AND c.account_id=$2::uuid
+  AND m.id=$3::uuid AND m.state='sealed'
+  AND c.state='verifying' AND c.lease_token=$4::text AND c.lease_until>clock_timestamp()
+  AND d.state='ready' AND d.backend_id=c.target_backend_id
+  AND d.backend_fingerprint=c.target_backend_fingerprint
+  AND d.provider_resource_id=c.target_resource_id AND d.desired_generation=c.target_generation
+`
+
+type PostgresCutoverVerificationParams struct {
+	CutoverID    pgtype.UUID
+	AccountID    pgtype.UUID
+	CredentialID pgtype.UUID
+	LeaseToken   string
+}
+
+type PostgresCutoverVerificationRow struct {
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	EnvironmentKey     string
+	Access             string
+	PostgresMajor      int16
+	ProviderIdentityID pgtype.Text
+	CredentialRef      pgtype.Text
+	Ciphertext         []byte
+	Kid                pgtype.Text
+	ValueHash          pgtype.Text
+}
+
+func (q *Queries) PostgresCutoverVerification(ctx context.Context, db DBTX, arg PostgresCutoverVerificationParams) (PostgresCutoverVerificationRow, error) {
+	row := db.QueryRow(ctx, postgresCutoverVerification,
+		arg.CutoverID,
+		arg.AccountID,
+		arg.CredentialID,
+		arg.LeaseToken,
+	)
+	var i PostgresCutoverVerificationRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.AppID,
+		&i.EnvironmentKey,
+		&i.Access,
+		&i.PostgresMajor,
+		&i.ProviderIdentityID,
+		&i.CredentialRef,
+		&i.Ciphertext,
+		&i.Kid,
+		&i.ValueHash,
+	)
+	return i, err
+}
+
+const recordPostgresVerification = `-- name: RecordPostgresVerification :exec
+INSERT INTO secret_verification_audit(account_id,app_id,cutover_id,credential_id)
+VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid)
+`
+
+type RecordPostgresVerificationParams struct {
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	CutoverID    pgtype.UUID
+	CredentialID pgtype.UUID
+}
+
+func (q *Queries) RecordPostgresVerification(ctx context.Context, db DBTX, arg RecordPostgresVerificationParams) error {
+	_, err := db.Exec(ctx, recordPostgresVerification,
+		arg.AccountID,
+		arg.AppID,
+		arg.CutoverID,
+		arg.CredentialID,
+	)
+	return err
 }
 
 const registryCredentialSealed = `-- name: RegistryCredentialSealed :one
