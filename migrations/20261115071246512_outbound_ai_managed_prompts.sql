@@ -1,4 +1,4 @@
--- filename: 20261114181043624_outbound_ai_managed_prompts.sql
+-- filename: 20261115071246512_outbound_ai_managed_prompts.sql
 -- ADR 20261114180740: managed AI prompts. apid writes prompts, versions,
 -- canaries and evaluations; outboundd reads them per call, adds settled
 -- attempts to per-version minute rows, rolls canaries back and runs
