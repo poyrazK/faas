@@ -1056,6 +1056,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Notif:                       pn,
 		Log:                         log,
 		Registerer:                  ops.Registry(),
+		Subscriptions:               dunningSubscriptions(pusher),
 	})
 
 	// Per-daemon Prometheus registry (ADR-015) — built unconditionally

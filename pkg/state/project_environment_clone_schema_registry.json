@@ -38,6 +38,18 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_held_links",
+    "columns": [
+      "account_id",
+      "detected_at",
+      "held_account_id",
+      "held_org_id",
+      "held_reason",
+      "signal"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "account_billing_connections",
     "columns": [
       "account_id",
