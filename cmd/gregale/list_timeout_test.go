@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -57,8 +58,10 @@ func TestListReadErrorRetainsRealFailureAndDeadline(t *testing.T) {
 		t.Fatal("successful terminal read ignored deadline")
 	}
 	actual := errors.New("actual read failure")
-	if main.ListReadError(ctx, actual) != actual {
-		t.Fatal("deadline replaced actual API/output failure")
+	// Keep the original object as well as its errors.Is identity: wrapping it
+	// could alter downstream API/output error handling.
+	if got := main.ListReadError(ctx, actual); !errors.Is(got, actual) || reflect.ValueOf(got) != reflect.ValueOf(actual) {
+		t.Fatal("deadline replaced or wrapped actual API/output failure")
 	}
 	if main.ListReadError(context.Background(), nil) != nil {
 		t.Fatal("default context acquired an error")
