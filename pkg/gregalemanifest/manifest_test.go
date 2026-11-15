@@ -93,6 +93,30 @@ func TestBeforeCheckpointLifecycleYAML(t *testing.T) {
 	}
 }
 
+// adr: 20261114153000
+func TestWarmupLifecycleYAML(t *testing.T) {
+	m, err := ParseBytes([]byte("lifecycle:\n  warmup:\n    path: /internal/warmup\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if m.Lifecycle.Empty() {
+		t.Fatal("lifecycle with only warmup reads as empty")
+	}
+	if err := m.Lifecycle.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if got := m.Lifecycle.ToAPI().Warmup; got == nil || got.Path != "/internal/warmup" {
+		t.Fatalf("API warmup = %+v", got)
+	}
+	bad, err := ParseBytes([]byte("lifecycle:\n  warmup:\n    path: internal\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := bad.Lifecycle.Validate(); err == nil {
+		t.Fatal("relative warmup path validated")
+	}
+}
+
 func TestManifestMainWorkloadDependencies(t *testing.T) {
 	manifest, err := ParseBytes([]byte(`main_depends_on:
   - name: proxy

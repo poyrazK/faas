@@ -13,12 +13,12 @@ import (
 
 // Called after local fsync and before the adapter proceeds to its next effect.
 // A missing native acknowledgement stops the adapter; it never repeats a POST.
-func publishMCPTaskReleaseReceipt(s *mcpNativeReleaseState) error {
+func publishMCPTaskReleaseReceipt(ctx context.Context, s *mcpNativeReleaseState) error {
 	c, err := authedClient()
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	record, err := c.GetTaskToolReleaseIntent(ctx, s.TaskIntentID)
 	if err != nil {

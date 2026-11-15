@@ -4,8 +4,10 @@ package state_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -59,6 +61,48 @@ func TestMemStoreNodeCacheRetention(t *testing.T) {
 	for prefix, use := range want {
 		if got.Captures[prefix] != use {
 			t.Errorf("captures[%s] = %v, want %v", prefix, got.Captures[prefix], use)
+		}
+	}
+}
+
+// TestMemStoreNodeCacheRetentionLiveLayers: a deployment with a non-stale
+// snapshot keeps its layer (its rootfs key, or layers/<id>.ext4 when it has
+// none) in LiveLayers; a deployment whose only snapshot is stale does not.
+func TestMemStoreNodeCacheRetentionLiveLayers(t *testing.T) {
+	ctx := context.Background()
+	m := state.NewMemStore()
+	a, err := m.CreateAccount(ctx, "layers@retention.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := m.CreateApp(ctx, state.App{AccountID: a.ID, Slug: "layers", Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(rootfsKey string, stale bool) state.Deployment {
+		d, err := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + strings.Repeat("a", 64), Status: state.DeployLive, RootfsKey: rootfsKey})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.CreateSnapshot(ctx, state.Snapshot{DeploymentID: d.ID, StorageKey: "snap/" + d.ID + "/captures/c/v2/mem", Stale: stale}); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	keyed := mk("apps/layers/keyed.ext4", false)
+	unkeyed := mk("", false)
+	stale := mk("apps/layers/stale.ext4", true)
+	got, err := m.NodeCacheRetention(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]bool{
+		keyed.RootfsKey:                  true,
+		"layers/" + unkeyed.ID + ".ext4": true,
+		stale.RootfsKey:                  false,
+	} {
+		if got.LiveLayers[key] != want {
+			t.Errorf("LiveLayers[%s] = %v, want %v", key, got.LiveLayers[key], want)
 		}
 	}
 }

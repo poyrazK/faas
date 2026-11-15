@@ -15,6 +15,9 @@ func TestFormatFinancialQuantityUsesReadableMeterUnits(t *testing.T) {
 	}{
 		{api.SecondsPerGBHour, "mb_seconds", "1.0000 GB-hours"},
 		{1 << 30, "interface_bytes", "1.00 GiB"},
+		// Zero has no sign; only negative quantities (credits) do.
+		{0, "interface_bytes", "0 bytes"},
+		{-2048, "interface_bytes", "-2.00 KiB"},
 		{3, "requests", "3 requests"},
 		{0, "", "0 units"},
 	} {

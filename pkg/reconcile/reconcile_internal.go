@@ -125,6 +125,15 @@ func (s *Service) reconcile(
 	if err := s.syncAppProtocols(ctx, project, scan.Workloads); err != nil {
 		return out, err
 	}
+	if hasAppComposeSettings(scan.Workloads) {
+		apps, err := s.Store.AppsForProject(ctx, project.AccountID, project.ID)
+		if err != nil {
+			return out, fmt.Errorf("reconcile: list project apps for settings: %w", err)
+		}
+		if err := s.syncAppComposeSettings(ctx, apps, scan.Workloads); err != nil {
+			return out, err
+		}
+	}
 	out.Changed = applied.Changed
 	out.Removed = applied.Removed
 	out.Alerts = append(out.Alerts, applied.Alerts...)

@@ -22,6 +22,15 @@
 FROM mirror.gcr.io/library/node:22-alpine@sha256:12f54cafa58d0e96554ae05871e29663ff7241836377dc9a7916449b8adb062c
 # Issue #197 B3.6: mutable tag pinned via images/Dockerfile.lock.
 
+# Node 22 bundles npm 10.9, whose own dependencies carry fixed HIGH advisories
+# (brace-expansion, sigstore, pacote, picomatch, ip-address; CVE scan
+# 2026-11-14). npm 11.21.2 bundles the fixed releases. The registry tarball is
+# pinned by SHA-256 (its registry integrity is sha512-7HPApk+AflMU...) and
+# carries its dependencies, so the install is offline. The two findings no npm
+# release fixes yet are reviewed in images/agent-base.grype.yaml.
+ARG NPM_VERSION=11.21.2
+ARG NPM_SHA256=8ad8563b81e71b90ef405b140bccf3ba9b5e7884ab210bd49ee4e2f4bc6f61f5
+
 COPY --chmod=0644 images/agent-base/package.json images/agent-base/package-lock.json /opt/gregale/agents/
 COPY --chmod=0644 pkg/agentpresets/presets.json /usr/share/faas/agent-presets.json
 COPY --chmod=0755 images/agent-base/finish-install.sh /tmp/finish-install.sh
@@ -41,6 +50,11 @@ RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt \
     cd /opt/gregale/agents && \
     NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev --no-audit --no-fund && \
     /tmp/finish-install.sh && \
+    cd /tmp && \
+    NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm pack "npm@${NPM_VERSION}" --silent && \
+    echo "${NPM_SHA256}  /tmp/npm-${NPM_VERSION}.tgz" | sha256sum -c - && \
+    npm install -g --offline --no-audit --no-fund "/tmp/npm-${NPM_VERSION}.tgz" && \
+    test "$(npm --version)" = "${NPM_VERSION}" && \
     npm cache clean --force && rm -rf /root/.npm /tmp/* && \
     if id app >/dev/null 2>&1; then :; \
     elif id node >/dev/null 2>&1; then sed -i 's/^node:/app:/' /etc/passwd; \

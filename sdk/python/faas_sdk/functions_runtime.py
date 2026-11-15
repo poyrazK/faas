@@ -142,6 +142,87 @@ class FunctionInvocation:
                 return result
 
 
+class WorkflowRun:
+    """A workflow run this function started with start(); only it can read or signal the run."""
+
+    def __init__(self, function: str, run_id: str, platform_url: str = GREGALE_PLATFORM_API_URL,
+                 sync_client: httpx.Client | None = None, async_client: httpx.AsyncClient | None = None) -> None:
+        self.function = function
+        self.run_id = run_id
+        self._url = platform_url.rstrip("/") + "/v1/workflow-runs/" + run_id
+        self._sync = sync_client
+        self._async = async_client
+
+    def __repr__(self) -> str:
+        return f"WorkflowRun({self.function!r}, {self.run_id!r})"
+
+    def _status_from(self, response: httpx.Response) -> dict[str, Any]:
+        _raise_for(self.function, response)
+        body = response.json()
+        if not isinstance(body, dict):
+            raise FunctionCallError(self.function, response.status_code, None, response.text)
+        return body
+
+    def _settle(self, status: dict[str, Any], deadline: float) -> tuple[bool, Any]:
+        if status.get("done"):
+            if status.get("status") == "succeeded":
+                return True, status.get("output")
+            raise FunctionCallError(self.function, 500, {"code": "workflow_run_failed",
+                                                         "detail": status.get("error") or status.get("status"), "run": status},
+                                    str(status.get("error") or ""))
+        if time.monotonic() >= deadline:
+            raise FunctionCallError(self.function, 408, {"code": "workflow_run_pending",
+                                                         "detail": f"workflow run {self.run_id} is still {status.get('status')}",
+                                                         "run": status}, "")
+        return False, None
+
+    def _client(self, sync: bool) -> Any:
+        client = self._sync if sync else self._async
+        if client is None:
+            raise RuntimeError("this run has no client; use Functions.<name>.start")
+        return client
+
+    async def status(self) -> dict[str, Any]:
+        """The run's current state."""
+        return self._status_from(await self._client(False).get(self._url))
+
+    def status_sync(self) -> dict[str, Any]:
+        """status for synchronous handlers."""
+        return self._status_from(self._client(True).get(self._url))
+
+    async def wait(self, timeout: float = 60.0) -> Any:
+        """Wait until the run finishes and return its output.
+
+        A failed run raises FunctionCallError; so does timeout (seconds)
+        passing first, with status 408.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            response = await self._client(False).get(self._url, params=FunctionInvocation._wait_param(deadline), timeout=_MAX_WAIT_SECONDS + 5)
+            done, output = self._settle(self._status_from(response), deadline)
+            if done:
+                return output
+
+    def wait_sync(self, timeout: float = 60.0) -> Any:
+        """wait for synchronous handlers."""
+        deadline = time.monotonic() + timeout
+        while True:
+            response = self._client(True).get(self._url, params=FunctionInvocation._wait_param(deadline), timeout=_MAX_WAIT_SECONDS + 5)
+            done, output = self._settle(self._status_from(response), deadline)
+            if done:
+                return output
+
+    async def signal(self, event: str, payload: Any = None) -> None:
+        """Send the run an event its wf.wait_for_event may take."""
+        response = await self._client(False).post(self._url + "/events", json={"event": event, "payload": payload if payload is not None else {}})
+        _raise_for(self.function, response)
+
+    def signal_sync(self, event: str, payload: Any = None) -> None:
+        """signal for synchronous handlers."""
+        response = self._client(True).post(self._url + "/events", json={"event": event, "payload": payload if payload is not None else {}})
+        _raise_for(self.function, response)
+
+
 def functions_from_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
     """Parse GREGALE_FUNCTIONS; a missing or malformed value is an empty map."""
     raw = (env if env is not None else os.environ).get(GREGALE_FUNCTIONS_ENV, "")
@@ -252,6 +333,32 @@ class FunctionClient:
         _raise_for(self._name, response)
         return _invocation(self._name, response, self._platform_url, self._sync, self._async)
 
+    def _start_request(self, input: Any, idempotency_key: str | None) -> dict[str, Any]:
+        headers = {"content-type": "application/json", "accept": "application/json"}
+        if idempotency_key:
+            headers["idempotency-key"] = idempotency_key
+        return {"url": self._platform_url.rstrip("/") + "/v1/workflow-runs",
+                "content": json.dumps({"function": self._name, "input": input}), "headers": headers}
+
+    def _run(self, response: httpx.Response) -> WorkflowRun:
+        _raise_for(self._name, response)
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        run_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(run_id, str) or not run_id:
+            raise FunctionCallError(self._name, response.status_code, body if isinstance(body, dict) else None, "workflow run id missing")
+        return WorkflowRun(self._name, run_id, self._platform_url, self._sync, self._async)
+
+    async def start(self, input: Any = None, *, idempotency_key: str | None = None) -> WorkflowRun:
+        """Start a run of this workflow function and return its handle at once."""
+        return self._run(await self._async.post(**self._start_request(input, idempotency_key)))
+
+    def start_sync(self, input: Any = None, *, idempotency_key: str | None = None) -> WorkflowRun:
+        """start for synchronous handlers."""
+        return self._run(self._sync.post(**self._start_request(input, idempotency_key)))
+
 
 class Functions:
     """The functions this function may call, by attribute or item name."""
@@ -308,4 +415,5 @@ __all__ = [
     "function_base_url",
     "functions",
     "functions_from_env",
+    "WorkflowRun",
 ]

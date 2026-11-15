@@ -26,6 +26,11 @@ const devPatchDeliveryEnv = "FAAS_DEV_PATCH_DELIVERY"
 // addition to the live deployment's, which is never pruned.
 const devSourceManifestsKept = 8
 
+// devSourceManifestsKeptMeasurementOnly is the bound while patch delivery is
+// off: the live deployment's manifest plus the newest is all the preview
+// measurement compares.
+const devSourceManifestsKeptMeasurementOnly = 2
+
 func devPatchDeliveryEnabled() bool { return os.Getenv(devPatchDeliveryEnv) == "1" }
 
 // devPatchPlan is the cumulative difference between the live build's source
@@ -110,10 +115,17 @@ func (s *server) recordDevPatchSource(ctx context.Context, app state.App, deploy
 		s.devLoopMetrics.ObservePatchPlan(devloop.PatchUninspected, "", watch)
 		return false
 	}
+	// With delivery off the manifests only feed the dev_patch measurement, so
+	// keep just enough to compare with the live build instead of rewriting
+	// eight large rows per app on every save.
+	keep := devSourceManifestsKept
+	if !devPatchDeliveryEnabled() {
+		keep = devSourceManifestsKeptMeasurementOnly
+	}
 	if err := store.RecordDevSourceManifest(ctx, state.DevSourceManifest{
 		DeploymentID: deploymentID, AppID: app.ID, SourceRoot: sourceRoot,
 		Entries: devPatchEntriesToState(plan.manifest),
-	}, devSourceManifestsKept); err != nil {
+	}, keep); err != nil {
 		s.log.Warn("developer source manifest not recorded", "app_id", app.ID, "error", err)
 	}
 	switch {

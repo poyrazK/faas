@@ -328,6 +328,19 @@ func TestHealthcheckPathFromDep_Mega4(t *testing.T) {
 	if got := sched.HealthcheckPathFromDep(state.Deployment{APIHostingReceipt: receipt, InferredProfile: profile}); got != "/receiptz" {
 		t.Errorf("hosting receipt path = %q, want /receiptz", got)
 	}
+	// ADR-079 amendment 2: a defaulted /healthz is TCP readiness, from the
+	// receipt and from the inference profile alike.
+	defaultedProfile := json.RawMessage(`{"version":"v1","framework":"node","port":3000,"health_path":"/healthz","inferred":true,"health_defaulted":true}`)
+	if got := sched.HealthcheckPathFromDep(state.Deployment{InferredProfile: defaultedProfile}); got != "" {
+		t.Errorf("defaulted profile path = %q, want empty TCP-readiness path", got)
+	}
+	defaultedReceipt := json.RawMessage(`{"source":{"kind":"git"},"profile":{"version":"v1","port":3000,"health_path":"/healthz","health_defaulted":true}}`)
+	if got := sched.HealthcheckPathFromDep(state.Deployment{APIHostingReceipt: defaultedReceipt, InferredProfile: defaultedProfile}); got != "" {
+		t.Errorf("defaulted receipt path = %q, want empty TCP-readiness path", got)
+	}
+	if got := sched.HealthcheckPathFromDep(state.Deployment{OverrideHealthcheck: json.RawMessage(`{"path":"/healthz"}`), InferredProfile: defaultedProfile}); got != "/healthz" {
+		t.Errorf("declared override over a defaulted profile = %q, want /healthz", got)
+	}
 	tcpReceipt := json.RawMessage(`{"source":{"kind":"image"},"profile":{"version":"v1","port":8080,"health_path":""}}`)
 	if got := sched.HealthcheckPathFromDep(state.Deployment{APIHostingReceipt: tcpReceipt, InferredProfile: profile}); got != "" {
 		t.Errorf("direct OCI receipt path = %q, want empty TCP-readiness path", got)

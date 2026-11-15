@@ -22,7 +22,7 @@ var auditTraceIDShape = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 func cmdAuditDispatch(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl audit: missing subcommand; want trace, base-libraries, anchor or verify")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl audit: missing subcommand; want trace, base-libraries, anchor, verify or db-grants")
 		return 2
 	}
 	switch args[0] {
@@ -34,6 +34,8 @@ func cmdAuditDispatch(args []string) int {
 		return cmdAuditAnchor(args[1:])
 	case auditVerifySub:
 		return cmdAuditVerify(args[1:])
+	case auditDBGrantsSub:
+		return cmdAuditDBGrants(args[1:])
 	default:
 		_, _ = fmt.Fprintf(osStderr, "gregalectl audit: unknown subcommand %q\n", args[0])
 		return 2

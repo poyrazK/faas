@@ -312,7 +312,7 @@ func TestReferenceLookupsOnPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if run, err := store.BuildRunner(ctx, b.ID); err != nil || run.AppID != appA.ID || run.Running || run.Node != "" {
+	if run, err := store.BuildRunner(ctx, b.ID); err != nil || run.AppID != appA.ID || run.Running || run.Node != "" || run.ScopeRecorded {
 		t.Fatalf("queued build = %+v, %v", run, err)
 	}
 	if _, err := st.ClaimQueuedBuild(ctx, b.ID); err != nil {
@@ -329,6 +329,19 @@ func TestReferenceLookupsOnPostgres(t *testing.T) {
 		if _, err := store.BuildRunner(ctx, id); !errors.Is(err, secretd.ErrUnknownBuild) {
 			t.Errorf("build %q = %v, want ErrUnknownBuild", id, err)
 		}
+	}
+	// Slice 3j-4: the deployment's recorded registry scope.
+	scopedDep, err := st.CreateDeployment(ctx, state.Deployment{AppID: appA.ID, Kind: state.DeploymentKindTarball, Status: state.DeployPending,
+		SourcePath: "/spool/s.tar.gz", BuildRegistryScope: []string{"ghcr.io/acme/base"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped, err := st.CreateBuild(ctx, scopedDep.ID, state.DeploymentKindTarball, 100, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run, err := store.BuildRunner(ctx, scoped.ID); err != nil || !run.ScopeRecorded || len(run.Scope) != 1 || run.Scope[0] != "ghcr.io/acme/base" {
+		t.Fatalf("scoped build = %+v, %v", run, err)
 	}
 	if sealed, err := store.EdgeHeaderSecret(ctx, appA.ID, referenced); err != nil || len(sealed) != 1 || sealed[0] != 2 {
 		t.Fatalf("referenced edge header value = %x, %v", sealed, err)

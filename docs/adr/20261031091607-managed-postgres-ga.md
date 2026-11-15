@@ -97,3 +97,11 @@
   - **Promote every Postgres sub-capability.** Cutovers, the Data API and live queries have no live-path evidence, and overage has no invoice.
   - **Keep restore in preview.** Restore is the customer's recovery path from their own mistakes. A database product without it at GA would ask customers to trust a 7-day undo alone.
   - **Wait for an off-provider backup.** That needs storage, a schedule, a restore path and pricing. Neon keeps point-in-time history and 7 days of project recovery, and the owner chose to ship with this gap recorded.
+
+## Amendment 1 (2026-11-15): the public-release gate's recovery path and continuation
+
+Owner decisions, 2026-11-15:
+
+- **PG-03 restore-and-switch is GA.** `database-rollbacks` moves from preview to GA. It now covers both supported paths: a rollback that restores the database (bad migration) and `gregale postgres restore --switch` (bad data under the current code, ADR-20261023181931 amendment 3). The customer guide states the recovery objectives (`docs/postgres.md#recovery-objectives`): the data kept is everything up to the chosen point, the source keeps every later write, and the switch's downtime is under a minute plus a cold start, bounded by its settle (2 min) and drain (10 min) limits. Measuring them on production with the owner's account stays part of step 5 of the rollout.
+- **The always-on add-on leaves the gate.** It has no price (ADR-20261102072425 lists it open). Billed overage with its 2x ceiling and the spend cap is the priced continuation the gate requires; always-on follows the public release with its own price and ADR.
+- **Customer guide:** the plans section no longer says nothing past the allowances is billed; compute and egress overage are billed when turned on.

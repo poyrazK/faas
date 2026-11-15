@@ -268,6 +268,11 @@ const (
 	ManagedPostgresHoldPreview        = "preview"
 )
 
+// ManagedPostgresDefaultMajor is the PostgreSQL major a new database gets
+// when the request names none. Project manifests pick the newest offered
+// major instead (ADR-20261025111824).
+const ManagedPostgresDefaultMajor = 17
+
 // ManagedPostgresUsageResponse.EgressState values.
 const (
 	ManagedPostgresEgressHealthy = "healthy"

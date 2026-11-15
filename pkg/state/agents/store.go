@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -734,6 +735,11 @@ func (s *Store) activeAgent(ctx context.Context, db sqlc.DBTX, accountID, name s
 }
 
 func (s *Store) version(ctx context.Context, db sqlc.DBTX, accountID, agentID string, version int) (Version, error) {
+	// Versions are int4. Converting a larger number wrapped it, so version
+	// 4294967297 read (and ran) version 1 (CodeQL go/incorrect-integer-conversion).
+	if version < 1 || version > math.MaxInt32 {
+		return Version{}, ErrNotFound
+	}
 	row, err := s.q.GetAgentVersion(ctx, db, sqlc.GetAgentVersionParams{AgentID: agentID, AccountID: accountID, Version: int32(version)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Version{}, ErrNotFound

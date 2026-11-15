@@ -1105,6 +1105,9 @@ func cmdAppDispatch(args []string) int {
 	if args[0] == subWait && hasSelectorFlag(args[1:]) {
 		return cmdAppWaitSelected(args[1:])
 	}
+	if isAppProjectCommand(args) {
+		return cmdAppProject(args)
+	}
 	slug := args[0]
 	if code, ok := cmdAppConditions(slug, args[1:]); ok {
 		return code
@@ -1448,9 +1451,12 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 	mode := fs.String("mode", "", "delivery mode: pull|push")
 	workloadClass := fs.String("workload-class", "", "workload class: worker|job|http (http requires push and a function)")
 	maxConcurrency := fs.Int("max-concurrency", 0, "maximum concurrent deliveries")
+	// queue setup keeps a disabled binding disabled; this turns it back on
+	// (ADR-20261113180000, R5-9).
+	enabled := fs.String("enabled", "", "turn delivery on or off: true|false")
 	flags, pos := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || len(pos) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
+	if err := fs.Parse(flags); err != nil || len(pos) != 2 || (*enabled != "" && *enabled != "true" && *enabled != "false") {
+		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N] [--enabled true|false]", "queue")
 		return 1
 	}
 	req := api.UpdateQueueBindingRequest{}
@@ -1471,6 +1477,10 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 	})
 	if maxConcurrencySet {
 		req.MaxConcurrency = maxConcurrency
+	}
+	if *enabled != "" {
+		on := *enabled == "true"
+		req.Enabled = &on
 	}
 	row, err := client.UpdateQueueBinding(context.Background(), pos[0], pos[1], req)
 	if err != nil {

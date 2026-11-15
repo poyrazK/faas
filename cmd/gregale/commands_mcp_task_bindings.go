@@ -21,7 +21,7 @@ func verifyMCPTaskExecutionBindings(ctx context.Context, p mcpNativeReleasePlan,
 	command.Env = mcpTaskExecutionChildEnv(profile, false)
 	output, err := command.Output()
 	if err != nil || strings.TrimSpace(string(output)) != "{\"verified\":true}" {
-		return errors.New("Task binding role separation was not verified")
+		return errors.New("task binding role separation was not verified")
 	}
 	return nil
 }

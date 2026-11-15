@@ -452,6 +452,7 @@ from .create_binding_verification_run_request_service_targets import CreateBindi
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_database_switch_request import CreateDatabaseSwitchRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
 from .create_deploy_token_request_scopes_item import CreateDeployTokenRequestScopesItem
 from .create_deployment_files_body import CreateDeploymentFilesBody
@@ -526,6 +527,7 @@ from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
 from .database_switch import DatabaseSwitch
 from .database_switch_drain import DatabaseSwitchDrain
+from .database_switch_list import DatabaseSwitchList
 from .database_switch_phase import DatabaseSwitchPhase
 from .debug_coverage_response import DebugCoverageResponse
 from .debug_coverage_signal import DebugCoverageSignal
@@ -2487,6 +2489,7 @@ from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClas
 from .wake_timeline_page import WakeTimelinePage
 from .wake_timeline_page_mode import WakeTimelinePageMode
 from .wake_timeline_response import WakeTimelineResponse
+from .warmup_hook import WarmupHook
 from .webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
 from .webhook_workflow_receipt_response_ignored_reason import WebhookWorkflowReceiptResponseIgnoredReason
 from .webhook_workflow_receipt_response_routing_status import WebhookWorkflowReceiptResponseRoutingStatus
@@ -3172,6 +3175,7 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
+    "CreateDatabaseSwitchRequest",
     "CreateDeploymentFilesBody",
     "CreateDeploymentFilesBodyKind",
     "CreateDeploymentFilesBodyRuntime",
@@ -3244,6 +3248,7 @@ __all__ = (
     "DailyUsageResponse",
     "DatabaseSwitch",
     "DatabaseSwitchDrain",
+    "DatabaseSwitchList",
     "DatabaseSwitchPhase",
     "DebugCoverageResponse",
     "DebugCoverageSignal",
@@ -5049,6 +5054,7 @@ __all__ = (
     "WakeTimelinePage",
     "WakeTimelinePageMode",
     "WakeTimelineResponse",
+    "WarmupHook",
     "WebhookWorkflowReceiptResponse",
     "WebhookWorkflowReceiptResponseIgnoredReason",
     "WebhookWorkflowReceiptResponseRoutingStatus",
