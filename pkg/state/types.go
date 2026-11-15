@@ -699,6 +699,46 @@ type AccountHeldLinkStore interface {
 	AccountHeldLinks(ctx context.Context, accountID string) ([]AccountHeldLink, error)
 }
 
+// AccountAbuseStrike is one stored abuse recycle (ADR-20261113133500).
+type AccountAbuseStrike struct {
+	Reason   string
+	AppID    string
+	StruckAt time.Time
+}
+
+// AccountAbuseEvent is an abuse-related event about an account, its apps,
+// deployments or instances (ADR-20261115090000).
+type AccountAbuseEvent struct {
+	At      time.Time
+	Actor   string
+	Kind    string
+	Subject string
+	Data    json.RawMessage
+}
+
+// RecentHeldLink is a held-account link with the new account's sign-up
+// country and email domain, for the daily review list.
+type RecentHeldLink struct {
+	AccountHeldLink
+	Country         string
+	EmailDomain     string
+	DisposableEmail bool
+}
+
+// AccountRiskStore serves the operator account risk view
+// (ADR-20261115090000). Both PgStore and MemStore implement it.
+type AccountRiskStore interface {
+	// AccountAbuseStrikes lists the owner's strikes after since, newest first.
+	AccountAbuseStrikes(ctx context.Context, accountID string, since time.Time) ([]AccountAbuseStrike, error)
+	// HeldLinksToAccount lists the accounts linked to heldAccountID.
+	HeldLinksToAccount(ctx context.Context, heldAccountID string) ([]AccountHeldLink, error)
+	// RecentHeldLinks lists links detected from since on, newest first.
+	RecentHeldLinks(ctx context.Context, since time.Time, limit int) ([]RecentHeldLink, error)
+	// AccountAbuseEvents lists events of the given kinds about the account,
+	// its apps, deployments and instances from since on, newest first.
+	AccountAbuseEvents(ctx context.Context, accountID string, kinds []string, since time.Time, limit int) ([]AccountAbuseEvent, error)
+}
+
 // AccountAbuseStrikeStore records abuse recycles against a resource owner
 // (account or organization) for the account abuse hold escalation
 // (ADR-20261113133500). The count is shared by every schedd and survives
@@ -2240,7 +2280,10 @@ func (m AppManifest) IsZero() bool {
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
 		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0 &&
-		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0
+		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0 &&
+		// A function app whose only settings are its callables or input
+		// schema must not be stored as {} (ADR-20261111150000).
+		len(m.FunctionCallables) == 0 && len(m.FunctionInputSchema) == 0
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
@@ -5037,6 +5080,11 @@ type Invocation struct {
 	// written to invocation_sends with the row and not read back on it.
 	SentByAppID     string `json:"-"`
 	OnCompleteAppID string `json:"-"`
+	// WorkflowCallRunID and WorkflowCallOp name the code-workflow call
+	// operation an invocation runs for (ADR-20261113120824 §2); its terminal
+	// transition settles that operation. Unrelated to WorkflowRunID.
+	WorkflowCallRunID string `json:"-"`
+	WorkflowCallOp    string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`
@@ -7455,6 +7503,28 @@ type CliAuthCode struct {
 	// nil is every project (ADR-20261104085712). MemStore only: the Pg
 	// store reads it through CliAuthCodeProjects.
 	ProjectIDs []string
+	// CreatedAt and RequesterIP say when and from where the code was
+	// asked for. MemStore only: the Pg store reads them through
+	// CliAuthRequesterStore.
+	CreatedAt   time.Time
+	RequesterIP string
+}
+
+// CliAuthRequest is when and from which address a CLI login code was
+// asked for. The approval page shows it so a person approving a code
+// someone else sent can see it came from elsewhere (account audit F10).
+type CliAuthRequest struct {
+	IP        string // "" when the address was not recorded
+	CreatedAt time.Time
+}
+
+// CliAuthRequesterStore records and reads where a CLI login code came from.
+type CliAuthRequesterStore interface {
+	// RecordCliAuthRequester stores the address that minted a pending code.
+	RecordCliAuthRequester(ctx context.Context, tokenHash []byte, ip string) error
+	// CliAuthRequester returns the request facts of an unexpired code, or
+	// ErrNotFound.
+	CliAuthRequester(ctx context.Context, tokenHash []byte) (CliAuthRequest, error)
 }
 
 // CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row

@@ -197,7 +197,7 @@ const (
 	AttentionDismissReasonMax  = 200
 )
 
-// Customer attention signals, round 2 (ADR-20261113180000).
+// Customer attention signals, round 2 (ADR-20261115175928).
 const (
 	// AttentionOOMKills runtime OOM kills of one app within
 	// AttentionOOMWindow open an app_oom signal.
@@ -2683,6 +2683,16 @@ const (
 	FlagsMaxConfigVersion      = int64(9007199254740991)
 )
 
+// Flag attribute targeting bounds (ADR 20261114150000 §2).
+const (
+	FlagsMaxConditionsPerRule   = 8
+	FlagsMaxConditionValues     = 100
+	FlagsMaxAttributeValueBytes = 128
+	FlagsMaxAppAttributes       = 16
+	// FlagsMaxOwnerBytes bounds a flag's owner (ADR 20261114150000 §4).
+	FlagsMaxOwnerBytes = 128
+)
+
 // Progressive rollout controls are structural bounds, not plan allowances.
 const (
 	FlagsMaxProgressiveStages                = 8
@@ -3674,6 +3684,11 @@ const (
 	// inside DevSourceCacheTTL, so the patch a cold boot replays never
 	// expires before the build that replaces it.
 	DevBuildCoalesceWindow = 3 * time.Minute
+	// DevEditToLiveTarget is the cached-edit target for `gregale dev`: the
+	// time from a saved edit until it serves. The CLI reports it and apid
+	// derives within_slo from the reported edit-to-live time against it, so
+	// the fleet SLO does not depend on the client's own verdict.
+	DevEditToLiveTarget = 15 * time.Second
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30
@@ -3683,6 +3698,13 @@ const (
 	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
 	// the filesystem has less than this free.
 	ArtifactCacheMinFreeBytes int64 = 8 << 30
+	// SnapshotReplicaRefetchMinMargin and SnapshotReplicaRefetchCooldown
+	// bound how snapshothipd takes back a live snapshot the node cache evicted
+	// (ADR-20261115140000): only while the cache keeps this margin (or a tenth
+	// of its budget, if larger) under its budget and above its free floor, and
+	// at most once per snapshot per node per cooldown.
+	SnapshotReplicaRefetchMinMargin int64 = 8 << 30
+	SnapshotReplicaRefetchCooldown        = 6 * time.Hour
 	// ArtifactCacheReservePercent is the share of the cache filesystem kept
 	// free when the cache budget is derived from the disk
 	// (ADR-20261114182830): the free-space floor is this percentage of the
@@ -4090,6 +4112,29 @@ const (
 	// by a scheduler that stopped mid-refresh and is retired.
 	SnapshotRefreshMaxRuntime = 10 * time.Minute
 )
+
+// Clean init snapshot recapture (ADR-20261115113000). schedd's
+// `snapshot_clean_recapture` runtime config is on (a park that finds no init
+// snapshot on its node destroys the used instance and queues a clean boot,
+// prime and capture on that node) or off (that park captures the used
+// instance, as before).
+const (
+	SnapshotCleanRecaptureOff = "off"
+	SnapshotCleanRecaptureOn  = "on"
+	// DefaultSnapshotCleanRecapture is the compiled
+	// `snapshot_clean_recapture`.
+	DefaultSnapshotCleanRecapture = SnapshotCleanRecaptureOn
+	// SnapshotCleanRecaptureMaxAttempts is how many failed clean boots one
+	// queued recapture gets (after 1, 5 and 15 minutes) before it is
+	// dropped; the app's next park queues it again.
+	SnapshotCleanRecaptureMaxAttempts = 3
+)
+
+// ValidSnapshotCleanRecapture reports whether v is a valid
+// `snapshot_clean_recapture`.
+func ValidSnapshotCleanRecapture(v string) bool {
+	return v == SnapshotCleanRecaptureOff || v == SnapshotCleanRecaptureOn
+}
 
 // ValidSnapshotRefresh reports whether v is a valid `snapshot_refresh`.
 func ValidSnapshotRefresh(v string) bool {

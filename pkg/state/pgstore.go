@@ -28602,6 +28602,41 @@ func (s *PgStore) PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.Cl
 	return api.CliAuthStatus(status), aid, nil
 }
 
+// RecordCliAuthRequester implements CliAuthRequesterStore. It runs right
+// after the mint, so the row is in its stored (keyed) form.
+func (s *PgStore) RecordCliAuthRequester(ctx context.Context, tokenHash []byte, ip string) error {
+	tag, err := s.pool.Exec(ctx,
+		`update cli_auth_codes set requester_ip = $2
+		 where token_hash = $1 and status = 'pending' and account_id is null`,
+		storedCredential(credTagCLIAuthCode, tokenHash), ip)
+	if err != nil {
+		return fmt.Errorf("record cli auth requester: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// CliAuthRequester implements CliAuthRequesterStore.
+func (s *PgStore) CliAuthRequester(ctx context.Context, tokenHash []byte) (CliAuthRequest, error) {
+	return firstCredential(ctx, credentialLookups(credTagCLIAuthCode, tokenHash), func(ctx context.Context, value []byte) (CliAuthRequest, error) {
+		var req CliAuthRequest
+		var ip *string
+		err := s.pool.QueryRow(ctx,
+			`select requester_ip, created_at from cli_auth_codes
+			 where token_hash = $1 and expires_at > now()`,
+			value).Scan(&ip, &req.CreatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return req, ErrNotFound
+		}
+		if ip != nil {
+			req.IP = *ip
+		}
+		return req, err
+	})
+}
+
 // ClaimCliAuthCode atomically transitions pending → consumed and binds
 // account_id in one statement. Two error shapes distinguish the
 // reasons a claim can fail (handler renders different banners):

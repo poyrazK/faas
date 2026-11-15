@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -102,6 +103,40 @@ func loadOrCreateDeveloperID() (string, error) {
 	return id, nil
 }
 
+// onDiskPathCase rewrites each component of an absolute path to the spelling
+// stored on disk on the case-insensitive file systems macOS and Windows use
+// by default. EvalSymlinks keeps the spelling it was given, so `cd ~/Code/app`
+// and `cd ~/code/app` reached one directory but derived two workspaces, and
+// a second developer environment. A component that cannot be read keeps
+// its spelling.
+func onDiskPathCase(path string) string {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		return path
+	}
+	volume := filepath.VolumeName(path)
+	rest := strings.TrimPrefix(path[len(volume):], string(filepath.Separator))
+	if rest == "" {
+		return path
+	}
+	current := volume + string(filepath.Separator)
+	for _, component := range strings.Split(rest, string(filepath.Separator)) {
+		name := component
+		if entries, err := os.ReadDir(current); err == nil {
+			for _, entry := range entries {
+				if entry.Name() == component {
+					name = component
+					break
+				}
+				if strings.EqualFold(entry.Name(), component) {
+					name = entry.Name()
+				}
+			}
+		}
+		current = filepath.Join(current, name)
+	}
+	return current
+}
+
 // deriveDevWorkspaceID scopes a developer environment to this CLI
 // installation and canonical source directory without disclosing either value
 // to the API. Separate clones and worktrees intentionally get separate URLs.
@@ -117,6 +152,7 @@ func deriveDevWorkspaceID(developerID, sourceDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("canonicalize developer source: %w", err)
 	}
+	canonical = onDiskPathCase(filepath.Clean(canonical))
 	sum := sha256.Sum256([]byte(developerID + "\x00" + filepath.Clean(canonical)))
 	return hex.EncodeToString(sum[:16]), nil
 }

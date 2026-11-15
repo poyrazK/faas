@@ -86,14 +86,56 @@ func TestSupersededDrainDoesNotWaitPastTheGraceOrTheCap(t *testing.T) {
 			t.Fatalf("superseded instance past its grace = %s, want drained", got)
 		}
 	})
-	t.Run("app at its concurrency cap", func(t *testing.T) {
-		// A one-instance app waiting on its old instance would refuse the
-		// new release's first wake.
-		mem, e, _, dep, ids := seedSupersededDrain(ctx, t, api.PlanFree, 1, 1)
+	t.Run("app at its cap plus the rollout overlap", func(t *testing.T) {
+		// The new release already holds the overlap slot beside the busy old
+		// instance; waiting longer would refuse the new release's next wake.
+		mem, e, app, dep, ids := seedSupersededDrain(ctx, t, api.PlanFree, 1, 1)
+		next := goLiveBeside(ctx, t, mem, app, dep)
+		res, err := e.AdmitInstance(ctx, app.ID, "", "", sched.TriggerGateway)
+		if err != nil || res.AtCapacity || res.DeploymentID != next.ID {
+			t.Fatalf("new release wake beside the draining one = %+v, %v; want admitted in the overlap", res, err)
+		}
 		loop := sched.NewLoop(nil, e, nil).WithInstanceActivity(supersededActivity{ids[0]: {Inflight: 1}})
 		loop.DrainSupersededDeployment(ctx, dep.ID, time.Now().Add(time.Minute))
 		if got := supersededInstanceState(ctx, t, mem, ids[0]); got == string(state.StateRunning) {
-			t.Fatalf("superseded instance of an app at its cap = %s, want drained at once", got)
+			t.Fatalf("superseded instance of an app at its cap plus overlap = %s, want drained at once", got)
 		}
 	})
+}
+
+// Prod test 2026-11-15: apps default to max_concurrency 1, and the grace
+// compared the ledger with that cap alone, so the superseded release was
+// parked at once on every deploy and its in-flight requests got 503. The
+// drain is ADR-199's rollout overlap: the old instance keeps its requests, and
+// the new release can still wake beside it.
+func TestSupersededDrainGraceAppliesToOneInstanceApps(t *testing.T) {
+	defer sched.SetSupersededDrainPoll(time.Hour)()
+	ctx := context.Background()
+	mem, e, app, dep, ids := seedSupersededDrain(ctx, t, api.PlanFree, 1, 1)
+	next := goLiveBeside(ctx, t, mem, app, dep)
+	loop := sched.NewLoop(nil, e, nil).WithInstanceActivity(supersededActivity{ids[0]: {Inflight: 1}})
+	loop.DrainSupersededDeployment(ctx, dep.ID, time.Now().Add(time.Minute))
+	if got := supersededInstanceState(ctx, t, mem, ids[0]); got != string(state.StateRunning) {
+		t.Fatalf("busy superseded instance of a one-instance app = %s, want running for the grace", got)
+	}
+	res, err := e.AdmitInstance(ctx, app.ID, "", "", sched.TriggerGateway)
+	if err != nil || res.AtCapacity || res.DeploymentID != next.ID {
+		t.Fatalf("new release wake while the old one drains = %+v, %v; want admitted", res, err)
+	}
+}
+
+// goLiveBeside makes a new deployment of app live, superseding old.
+func goLiveBeside(ctx context.Context, t *testing.T, mem *state.MemStore, app state.App, old state.Deployment) state.Deployment {
+	t.Helper()
+	next, err := mem.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:new", Status: state.DeploySnapshotting})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.MarkDeploymentLive(ctx, next.ID); err != nil {
+		t.Fatal(err)
+	}
+	if prev, err := mem.DeploymentByID(ctx, old.ID); err != nil || prev.Status == state.DeployLive {
+		t.Fatalf("old deployment after go-live = %+v, %v; want superseded", prev.Status, err)
+	}
+	return next
 }

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"gopkg.in/yaml.v3"
@@ -117,11 +119,17 @@ func mergeDevSetupYAML(before []byte, values map[string]any) ([]byte, error) {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
+		old := devSetupMappingValue(dev, key)
+		if old == nil && devSetupZero(values[key]) {
+			// Do not write empty choices (env_file: "", buckets: null) that the
+			// manifest never had; an existing key is still updated.
+			continue
+		}
 		var value yaml.Node
 		if err := value.Encode(values[key]); err != nil {
 			return nil, err
 		}
-		if old := devSetupMappingValue(dev, key); old != nil {
+		if old != nil {
 			value.HeadComment, value.LineComment, value.FootComment = old.HeadComment, old.LineComment, old.FootComment
 			*old = value
 		} else {
@@ -130,7 +138,9 @@ func mergeDevSetupYAML(before []byte, values map[string]any) ([]byte, error) {
 	}
 	var output bytes.Buffer
 	encoder := yaml.NewEncoder(&output)
-	encoder.SetIndent(2)
+	// Keep the file's own indentation; re-encoding with a different width
+	// would rewrite every nested line of the user's manifest.
+	encoder.SetIndent(devSetupIndent(before))
 	if err := encoder.Encode(&document); err != nil {
 		return nil, err
 	}
@@ -145,6 +155,39 @@ func mergeDevSetupYAML(before []byte, values map[string]any) ([]byte, error) {
 		return nil, fmt.Errorf("validate saved setup: %w", err)
 	}
 	return output.Bytes(), nil
+}
+
+// devSetupZero reports a choice with nothing to save.
+func devSetupZero(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return true
+	case string:
+		return v == ""
+	case bool:
+		return !v
+	case []string:
+		return len(v) == 0
+	}
+	rv := reflect.ValueOf(value)
+	return (rv.Kind() == reflect.Slice || rv.Kind() == reflect.Map) && rv.Len() == 0
+}
+
+// devSetupIndent returns the indentation width the manifest already uses
+// (the first indented mapping line), or 2 for a new or flat file.
+func devSetupIndent(before []byte) int {
+	for _, line := range strings.Split(string(before), "\n") {
+		trimmed := strings.TrimLeft(line, " ")
+		width := len(line) - len(trimmed)
+		if width == 0 || trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		if width >= 2 && width <= 8 {
+			return width
+		}
+		break
+	}
+	return 2
 }
 
 func devSetupMappingValue(mapping *yaml.Node, key string) *yaml.Node {

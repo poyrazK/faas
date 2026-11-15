@@ -98,6 +98,7 @@ func Run(t *testing.T, open Open) {
 		{"cli_auth_code_claim_binds_one_account", testCliAuthCodeClaimBindsOneAccount},
 		{"cli_auth_loopback_claim_rebinds_device", testCliAuthLoopbackClaimRebindsDevice},
 		{"cli_auth_device_code_needs_its_verifier", testCliAuthDeviceCodeNeedsItsVerifier},
+		{"cli_auth_requester_is_recorded_until_approval", testCliAuthRequesterIsRecordedUntilApproval},
 		{"due_webhook_delivery_claim_respects_schedule_and_limit", testDueWebhookDeliveryClaimRespectsScheduleAndLimit},
 		{"webhook_delivery_attempts_health_retention_and_storage", testWebhookDeliveryAttemptsHealthRetentionAndStorage},
 		{"account_release_webhook_quota_and_cross_app_pagination", testAccountReleaseWebhookQuotaAndPagination},

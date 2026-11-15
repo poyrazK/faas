@@ -3945,6 +3945,7 @@
       "expires_at",
       "org_id",
       "project_ids",
+      "requester_ip",
       "status",
       "token_hash",
       "verifier_hash"
@@ -20293,6 +20294,21 @@
     "kind": "operational"
   },
   {
+    "table": "storage_object_deletions",
+    "columns": [
+      "attempts",
+      "decided_at",
+      "last_error",
+      "next_attempt_at",
+      "reason",
+      "requested_at",
+      "requested_by",
+      "state",
+      "storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "stored_workflows",
     "columns": [
       "app_id",
@@ -21829,6 +21845,17 @@
       "invocation_id",
       "sender_app_id",
       "on_complete_app_id",
+      "created_at",
+      "workflow_run_id",
+      "workflow_op"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_run_starts",
+    "columns": [
+      "run_id",
+      "starter_app_id",
       "created_at"
     ],
     "kind": "operational"

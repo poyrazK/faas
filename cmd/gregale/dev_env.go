@@ -27,7 +27,9 @@ type devSecretClient interface {
 }
 
 type devEnvSyncReport struct {
-	Changed      bool
+	Changed bool
+	// Written counts the keys actually stored; unchanged values are skipped.
+	Written      int
 	Keys         int
 	Existing     int
 	Added        int
@@ -56,6 +58,11 @@ type devEnvSyncState struct {
 	path        string
 	fingerprint [sha256.Size]byte
 	synced      bool
+	// sent holds, per key, a digest of the value this session last stored.
+	// Every secret write invalidates the app's snapshots and signals a
+	// runtime reload, so unchanged values are not written again. The digests
+	// live only in memory; a new session writes each key once.
+	sent map[string][sha256.Size]byte
 }
 
 func resolveDevEnvFilePath(cwd, raw string) (string, error) {
@@ -266,11 +273,26 @@ func (s *devEnvSyncState) syncPairs(ctx context.Context, client devSecretClient,
 			report.AddedKeys = append(report.AddedKeys, pair.Key)
 		}
 	}
+	if s.sent == nil || s.path != path {
+		s.sent = make(map[string][sha256.Size]byte, len(pairs))
+	}
+	written := 0
 	for _, pair := range pairs {
+		digest := sha256.Sum256([]byte(pair.Value))
+		if previous, ok := s.sent[pair.Key]; ok && previous == digest {
+			if _, stillThere := existing[pair.Key]; stillThere {
+				continue
+			}
+		}
 		if err := client.SetSecretWithScope(ctx, app, pair.Key, pair.Value, ""); err != nil {
+			// Keys written so far stay recorded, so the retry after the next
+			// save resumes instead of rewriting them.
 			return devEnvSyncReport{}, fmt.Errorf("set %s key %q: %w", label, pair.Key, err)
 		}
+		s.sent[pair.Key] = digest
+		written++
 	}
+	report.Written = written
 	s.path = path
 	s.fingerprint = fingerprint
 	s.synced = true

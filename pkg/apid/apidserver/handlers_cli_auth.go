@@ -98,6 +98,7 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrCapacity("could not persist code"))
 		return
 	}
+	h.recordCliAuthRequester(r, hash)
 	url := strings.TrimRight(h.urlBase, "/") + cliAuthPath + "?code=" + code
 	if loopbackPort != 0 {
 		url += "&port=" + strconv.Itoa(loopbackPort)
@@ -433,6 +434,7 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 			"AccountEmail":    acct.Email,
 			"MCP":             isMCPAuthCode(raw),
 			"LoopbackPort":    loopbackPort,
+			"Request":         h.cliAuthRequest(r, hash),
 			"MCPCapabilities": mcpCapabilities(raw),
 			"MCPOrgs":         orgs,
 			"MCPProjects":     h.mcpProjectChoices(r, acct.ID, raw, orgs),

@@ -187,7 +187,9 @@ var registry = []Spec{
 		cols("app_webhooks", "secret_sealed", "previous_secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
-	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
+	// ADR-20261110210000 slice 3k: the control plane's secretd also opens the
+	// cluster key, to mint internal-service tokens for compute schedds.
+	{Domain: Control, Readers: []string{"schedd", "secretd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("cluster_signing_keys", "sealed_blob"),
 	)},
 	// Account values are wired a group at a time (ADR 20261022111812):

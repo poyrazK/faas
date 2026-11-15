@@ -227,6 +227,14 @@ deploy. It must be safe to call repeatedly, and it can be set for gRPC, HTTP/2 a
 raw-TCP apps, which are otherwise not primed. An empty `path`
 clears it.
 
+A wake can find no usable snapshot on its node, for example after the node
+dropped it from its cache. That wake cold-boots, and when the instance later
+parks Gregale does not snapshot it, because its memory now holds what its
+requests left behind. Gregale boots, primes and snapshots a fresh instance of
+the same deployment on that node in the background instead, unbilled, so
+every restore still starts from your app's startup state. Until that snapshot
+is ready, wakes on that node cold-boot.
+
 ## Warm snapshots (opt-in, Pro and Scale)
 
 Pro and Scale apps can opt in to

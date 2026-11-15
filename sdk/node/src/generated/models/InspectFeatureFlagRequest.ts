@@ -23,5 +23,9 @@ export type InspectFeatureFlagRequest = {
    * Fallback variant for an absent flag; configured variant flags use their own default.
    */
   fallback_variant?: string;
+  /**
+   * Simulated request attributes (gregale.country, gregale.ua_family, app.<name>) for attribute-targeted rules.
+   */
+  attributes?: Record<string, string>;
 };
 

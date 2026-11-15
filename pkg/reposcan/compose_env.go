@@ -28,6 +28,25 @@ type ComposeEnv struct {
 	// Kubernetes Secret. They are never imported, and their values are never
 	// read.
 	SecretRefs map[string][]string
+	// Mesh names, lower-cased, the workloads the HTTP service mesh serves
+	// (class http, graphql or grpc). A bare host:port value that names one
+	// imports as its mesh address; one that names a raw TCP service or a
+	// datastore does not. Set by ReadProjectEnv and WithMeshServices.
+	Mesh map[string]bool
+}
+
+// WithMeshServices records which of workloads the HTTP service mesh serves.
+func (e ComposeEnv) WithMeshServices(workloads []Workload) ComposeEnv {
+	for _, w := range workloads {
+		switch w.Class {
+		case ClassHTTP, ClassGraphQL, ClassGRPC:
+			if e.Mesh == nil {
+				e.Mesh = map[string]bool{}
+			}
+			e.Mesh[strings.ToLower(w.Name)] = true
+		}
+	}
+	return e
 }
 
 // OptedIn reports whether a service's plain values may be imported.
@@ -50,7 +69,7 @@ func (e ComposeEnv) ImportsAny() bool {
 func ReadProjectEnv(fsys fs.FS, opts ScanOptions, workloads ...[]Workload) (ComposeEnv, error) {
 	env, err := ReadComposeEnv(fsys)
 	for _, group := range workloads {
-		env = env.withReleaseEnvironment(group)
+		env = env.withReleaseEnvironment(group).WithMeshServices(group)
 	}
 	if err != nil || !opts.KubernetesManifests {
 		return env, err

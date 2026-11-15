@@ -22,6 +22,27 @@ func discoverRequiredSecretFile() (string, error) {
 	return requiredSecretFileAt(root)
 }
 
+// requiredSecretFileForSource finds the declaration a deploy of sourceDir
+// uses: the source directory's own .gregale/required-secrets.json, else the
+// one at its project root (as `secrets check` run from there would find).
+func requiredSecretFileForSource(sourceDir string) (string, error) {
+	if sourceDir == "" {
+		return discoverRequiredSecretFile()
+	}
+	dir, err := filepath.Abs(sourceDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve source directory: %w", err)
+	}
+	if file, err := requiredSecretFileAt(dir); err != nil || file != "" {
+		return file, err
+	}
+	root, err := projectContextRoot(dir)
+	if err != nil || root == dir {
+		return "", err
+	}
+	return requiredSecretFileAt(root)
+}
+
 func requiredSecretFileAt(root string) (string, error) {
 	directory := filepath.Join(root, projectContextDirName)
 	info, err := os.Lstat(directory)
