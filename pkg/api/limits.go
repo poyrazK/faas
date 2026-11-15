@@ -22,6 +22,19 @@ import (
 	"time"
 )
 
+// OpenAPI tool generation is offline and bounded independently of deployment
+// quotas. Generated adapters use the normal application egress and MCP limits.
+const (
+	ToolOpenAPIDocumentMaxBytes = 256 << 10
+	ToolOpenAPIOperationsMax    = 16
+	ToolOpenAPISchemaMaxDepth   = 16
+	ToolOpenAPISchemaMaxNodes   = 4096
+	ToolOpenAPIManifestMaxBytes = 64 << 10
+	ToolOpenAPIResponseMaxBytes = 32 << 10
+	ToolOpenAPIURLMaxBytes      = 8 << 10
+	ToolOpenAPIRequestTimeout   = 15 * time.Second
+)
+
 // Private tool publication journals retain bounded metadata, never source or
 // credentials. The deadline fences abandoned publishers; it never grants a retry.
 const (
