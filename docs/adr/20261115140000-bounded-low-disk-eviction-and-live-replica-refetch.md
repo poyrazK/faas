@@ -1,7 +1,7 @@
-# ADR-20261115140000: Bound low-disk cache eviction; fetch back evicted live snapshots
+# ADR-20261115140000: Bound low-disk cache eviction; fetch back evicted live snapshots; a client leaving a wake is not a failure
 
-- Status: Accepted (owner 2026-11-15: fix the preflight overshoot and re-fetch
-  evicted live snapshots)
+- Status: Accepted (owner 2026-11-15: fix the preflight overshoot, re-fetch
+  evicted live snapshots, find the 503's deadline)
 - Date: 2026-11-15
 - Amends: ADR-063 (bounded node cache, evicted replicas retired),
   ADR-20261114182830 (cache budget from disk, eviction tiers)
@@ -54,6 +54,16 @@ remain on main.
    restore are fetched back. Otherwise the replica is retired as before.
 3. **Metric.** `snapshothipd_replica_refetch_total{outcome}` counts
    `refetched`, `no_room` and `cooldown`.
+4. **A client that leaves during a wake is not a wake failure.** The
+   2026-11-13 503 was not a server deadline. The gateway logs show the
+   visitor's request canceled after a 2.75 s wake wait (cloudflared:
+   "Incoming request ended abruptly"); the gateway then logged "wake failed",
+   recorded a 503 and marked retail-ui's health as failed, while the same
+   detached wake served the next request 2 s later. Both wake-error paths
+   (`writePublicRoutingWakeError` and the ordinary path) now check first
+   whether the request context was canceled. If it was, they record 499
+   (`statusClientClosedRequest`), log at info level, write nothing and leave
+   the app's health alone.
 
 ## Consequences
 
@@ -63,5 +73,7 @@ remain on main.
   disk.
 - A superseded deployment's snapshots may also be fetched back. The margin
   bounds what that can cost.
+- A visitor who gives up on a slow wake no longer shows up as a 503 or an
+  unhealthy app.
 - The cooldown is in memory: a vmmd restart resets it. With the room guard,
   the worst case is one extra fetch per snapshot per restart.
