@@ -3417,7 +3417,7 @@ var cliCommands = []cliCommand{
 		}}, {Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
-			{Name: "source", Short: "application source directory, relative to the manifest (default: the workload holding --from, else .)", Value: "DIR"},
+			{Name: "source", Short: "application source directory, relative to the manifest (default: the workload holding --from; at a Compose root, the one service publishing ports; else .)", Value: "DIR"},
 			{Name: "scenario", Short: "scenario name", Value: "NAME"},
 			{Name: "output", Short: "new manifest path", Value: "PATH"},
 		}}, {Name: "recovery-trend", Short: "Render recovery performance trends from campaign reports", Notes: []string{"Works offline on ordered reports."}, Flags: []cliFlag{
