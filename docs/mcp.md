@@ -1140,6 +1140,75 @@ inspection is bounded to ten pages of up to 200 deployments per candidate role.
 See [ADR 20261115105244](adr/20261115105244-task-execution-evidence-recovery-plans.md).
 
 
+### Owner recovery handover and qualification
+
+For a versioned local Task executor, the owner can stop the exact operation and
+request a handover at a captured native checkpoint revision. These commands are
+owner CLI operations; they are absent from agent and hosted MCP tool catalogs.
+Choose one 64-character lowercase hexadecimal handover ID and retain it for
+retries. Obtain the original operation and checkpoint revision from inspection.
+
+```sh
+gregale mcp server tasks execution recovery-stop \
+  --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
+  --handover-id "$HANDOVER_ID" --revision "$REVISION"
+gregale mcp server tasks execution get --id "$INTENT_ID"
+```
+
+Stop permanently fences subsequent executor requests and waits for previously
+admitted native mutation handlers to return. The native PostgreSQL store needs
+at least two pool connections for this fence; queued requests release their
+connections while waiting. `stopping` does not mean local SQL
+or an executor child has finished. `settled` additionally requires the original
+trusted CLI's normal exit acknowledgement after its gate, children and SQL pools
+finish. A timeout, signal, lost acknowledgement or legacy claim cannot establish
+that boundary. An absent process or expired original approval is insufficient.
+An already exited executor can settle immediately. Stop does not kill processes,
+retry uncertain submissions, change traffic or acquire another execution claim.
+
+After `execution.recovery.state` is `settled`, the owner can qualify restoration
+of the captured web deployment. The private original profile, source plan,
+installed dependencies and credentials must still be available. Qualification
+runs reviewed Node code and live read checks with explicit owner consent:
+
+```sh
+gregale mcp server tasks execution recovery-qualify \
+  --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
+  --handover-id "$HANDOVER_ID" --revision "$REVISION" --allow-local-checks
+```
+
+It checks source/dependency identity, database role separation, retained Task
+handler/admission compatibility, the previous workers, observer freshness and the
+exact old web artifact's MCP catalog, roles and readiness. It records owner
+attestation metadata and fresh native app snapshots. Native storage independently
+locks and compares those snapshots. Qualification changes no schema, admission,
+deployment, worker or traffic state. The result includes `qualification_sha256`
+for a separate owner decision:
+
+```sh
+gregale mcp server tasks execution recovery-approve \
+  --id "$INTENT_ID" --operation-id "$OPERATION_ID" \
+  --handover-id "$HANDOVER_ID" --revision "$REVISION" \
+  --qualification-sha256 "$QUALIFICATION_SHA256"
+```
+
+Approval binds the original operation, checkpoint, exact restore target, expected
+serving deployment, evidence and the qualification's fixed one-minute deadline.
+It neither renews that deadline nor revives the original execution approval.
+Native generation or configuration drift blocks approval; missing/ambiguous
+submissions and unavailable old workers block qualification. A handover retains
+one qualification; another attempt cannot replace it. An expired handover needs
+a future reconciliation milestone, rather than a replacement identity or lease.
+
+Use `recovery-revoke` with the same identity, revision and qualification digest to
+revoke the recovery decision, including after app drift or expiry. Current owner
+authority is required for these decisions. Root `ready_to_apply` and
+`bindings_verified` remain false. There is no recovery apply command, endpoint or
+MCP tool in this milestone. One-time guarded restoration, resume and candidate
+retirement are subsequent milestones. See
+[ADR 20261115123000](adr/20261115123000-task-recovery-handover-owner-qualification.md).
+
+
 ## Hosted tool publishing (preview)
 
 

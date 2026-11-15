@@ -40,6 +40,7 @@ type mcpNativeReleasePlan struct {
 	TimeoutSeconds     int                    `json:"timeout_seconds"`
 }
 type mcpNativeReleaseState struct {
+	executorSettled         *bool
 	TaskIntentID            string `json:"task_intent_id,omitempty"`
 	TaskOperationID         string `json:"task_operation_id,omitempty"`
 	quiet                   bool
@@ -400,9 +401,24 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 		if err != nil {
 			return printErr("Task execution", err)
 		}
-		command.Env = append(environWithout(mcpTaskExecutionChildEnv(profile, true), "FAAS_TOKEN", "FAAS_API"), "FAAS_TOKEN="+c.Token(), "FAAS_API="+profile.APIBase)
+		var token string
+		_, dir, profileErr := loadMCPTaskExecutionProfile(record)
+		if profileErr != nil || readMCPTaskPrivate(filepath.Join(dir, "claim.json"), &token) != nil {
+			return printErr("Task execution", errors.New("private executor claim unavailable"))
+		}
+		command.Env = append(environWithout(mcpTaskExecutionChildEnv(profile, true), "FAAS_TOKEN", "FAAS_API", mcpTaskFenceEnv, mcpTaskFenceAPIEnv), "FAAS_TOKEN="+c.Token(), "FAAS_API="+profile.APIBase, mcpTaskFenceEnv+"="+record.ID+":"+record.Execution.OperationID+":"+token, mcpTaskFenceAPIEnv+"="+profile.APIBase)
 	}
 	output, runErr := command.Output()
+	// Only a normal gate exit proves its awaited children and SQL pools finished.
+	// Signals, timeouts, malformed output and launch errors remain unsettled.
+	if s.executorSettled != nil && ctx.Err() == nil && command.ProcessState != nil && command.ProcessState.Exited() {
+		var exit struct {
+			Settled bool `json:"executorSettled"`
+		}
+		if json.Unmarshal(output, &exit) == nil && exit.Settled {
+			*s.executorSettled = true
+		}
+	}
 	var report struct {
 		OK     bool   `json:"ok"`
 		Stage  string `json:"stage"`

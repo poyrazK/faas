@@ -25,6 +25,9 @@ func taskExecutionOutputSchema() map[string]any {
 		props[name] = map[string]any{"type": "string", "pattern": "^[0-9a-f]{64}$"}
 	}
 	props["receipt"] = taskReleaseReceiptSchema()
+	props["fence_version"] = map[string]any{"type": "integer", "const": 1}
+	props["executor_exited_at"] = map[string]any{"type": "string", "format": "date-time"}
+	props["recovery"] = taskHandoverOutputSchema()
 	props["completed_stages"] = map[string]any{"type": "array", "items": map[string]any{"type": "string"}}
 	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"operation_id", "bindings_sha256", "authorizer_key_id", "state", "authorized_at"}, "properties": props}
 }

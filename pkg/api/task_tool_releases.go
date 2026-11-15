@@ -50,15 +50,18 @@ type TaskToolReleaseIntentRecord struct {
 // TaskToolReleaseExecution is separate, single-use owner authority for the
 // trusted local Task adapter. A running claim is never automatically taken over.
 type TaskToolReleaseExecution struct {
-	OperationID     string                  `json:"operation_id"`
-	BindingsSHA256  string                  `json:"bindings_sha256"`
-	AuthorizerKeyID string                  `json:"authorizer_key_id"`
-	State           string                  `json:"state"`
-	AuthorizedAt    time.Time               `json:"authorized_at"`
-	ClaimSHA256     string                  `json:"claim_sha256,omitempty"`
-	Stage           string                  `json:"stage,omitempty"`
-	Receipt         *TaskToolReleaseReceipt `json:"receipt,omitempty"`
-	CompletedStages []string                `json:"completed_stages,omitempty"`
+	OperationID      string                    `json:"operation_id"`
+	BindingsSHA256   string                    `json:"bindings_sha256"`
+	AuthorizerKeyID  string                    `json:"authorizer_key_id"`
+	State            string                    `json:"state"`
+	AuthorizedAt     time.Time                 `json:"authorized_at"`
+	ClaimSHA256      string                    `json:"claim_sha256,omitempty"`
+	Stage            string                    `json:"stage,omitempty"`
+	Receipt          *TaskToolReleaseReceipt   `json:"receipt,omitempty"`
+	CompletedStages  []string                  `json:"completed_stages,omitempty"`
+	FenceVersion     int                       `json:"fence_version,omitempty"`
+	ExecutorExitedAt *time.Time                `json:"executor_exited_at,omitempty"`
+	Recovery         *TaskToolRecoveryHandover `json:"recovery,omitempty"`
 }
 
 // TaskToolReleaseReceipt is a claim-holder checkpoint, not a health verdict.
@@ -82,6 +85,7 @@ type TaskToolReleaseReceipt struct {
 // is private local executor material and is never returned in a receipt.
 type TaskToolReleaseExecutionRequest struct {
 	Action         string                  `json:"action"`
+	FenceVersion   int                     `json:"fence_version,omitempty"`
 	OperationID    string                  `json:"operation_id"`
 	BindingsSHA256 string                  `json:"bindings_sha256"`
 	ClaimToken     string                  `json:"claim_token,omitempty"`
@@ -101,6 +105,7 @@ type TaskToolReleaseIntentDecision struct {
 	ReleaseFingerprint string                           `json:"release_fingerprint"`
 	Decision           string                           `json:"decision"`
 	Execution          *TaskToolReleaseExecutionRequest `json:"execution,omitempty"`
+	Recovery           *TaskToolRecoveryRequest         `json:"recovery,omitempty"`
 	// AuthorizerKeyID is supplied only by the authenticated native handler.
 	AuthorizerKeyID string `json:"-"`
 }
@@ -128,3 +133,51 @@ func (c *Client) DecideTaskToolReleaseIntent(ctx context.Context, id string, in 
 	err := c.doWithoutIdempotencyKey(ctx, http.MethodPut, "/v1/task-tool-release-intents/"+url.PathEscape(id)+"/decision", in, &out)
 	return out, err
 }
+
+// TaskToolRecoveryHandover permanently fences the original executor. Settlement
+// requires both the native write barrier and the trusted executor exit receipt.
+// Approval is separate from release approval and does not expose an apply path.
+type TaskToolRecoveryHandover struct {
+	ID              string                         `json:"id"`
+	OperationID     string                         `json:"operation_id"`
+	Revision        uint64                         `json:"revision"`
+	State           string                         `json:"state"`
+	RequestedAt     time.Time                      `json:"requested_at"`
+	SettledAt       *time.Time                     `json:"settled_at,omitempty"`
+	Qualification   *TaskToolRecoveryQualification `json:"qualification,omitempty"`
+	Decision        string                         `json:"decision,omitempty"`
+	AuthorizerKeyID string                         `json:"authorizer_key_id,omitempty"`
+	DecidedAt       *time.Time                     `json:"decided_at,omitempty"`
+}
+
+// TaskToolRecoveryQualification records an owner's local checks and a fresh
+// native snapshot. It cannot renew its deadline or change after recording.
+type TaskToolRecoveryQualification struct {
+	HandoverID                  string               `json:"handover_id"`
+	OperationID                 string               `json:"operation_id"`
+	Revision                    uint64               `json:"revision"`
+	Action                      string               `json:"action"`
+	TargetDeploymentID          string               `json:"target_deployment_id"`
+	ExpectedServingDeploymentID string               `json:"expected_serving_deployment_id"`
+	BindingsSHA256              string               `json:"bindings_sha256"`
+	EvidenceSHA256              string               `json:"evidence_sha256"`
+	NativeApps                  []TaskToolReleaseApp `json:"native_apps"`
+	ObservedAt                  time.Time            `json:"observed_at"`
+	ExpiresAt                   time.Time            `json:"expires_at"`
+}
+
+// TaskToolRecoveryRequest is owner-only. The server supplies the actor identity.
+type TaskToolRecoveryRequest struct {
+	HandoverID          string                         `json:"handover_id"`
+	OperationID         string                         `json:"operation_id"`
+	Revision            uint64                         `json:"revision"`
+	Qualification       *TaskToolRecoveryQualification `json:"qualification,omitempty"`
+	QualificationSHA256 string                         `json:"qualification_sha256,omitempty"`
+}
+
+// Private trusted-executor request headers; never included in response DTOs.
+const (
+	TaskExecutionIntentHeader    = "X-Gregale-Task-Intent"
+	TaskExecutionOperationHeader = "X-Gregale-Task-Operation"
+	TaskExecutionClaimHeader     = "X-Gregale-Task-Claim"
+)

@@ -73901,8 +73901,14 @@ components:
           - reject
           - revoke
           - authorize
+          - recovery_stop
+          - recovery_qualify
+          - recovery_approve
+          - recovery_revoke
         execution:
           $ref: '#/components/schemas/TaskToolReleaseExecutionRequest'
+        recovery:
+          $ref: '#/components/schemas/TaskToolRecoveryRequest'
     TaskToolReleaseExecution:
       description: Single-use owner authorization bound to a private local binding digest and an immutable operation. Existing claims are never automatically taken over.
       type: object
@@ -73921,13 +73927,18 @@ components:
         completed_stages:
           type: array
           items: { type: string, enum: [baseline_captured, worker_submitted, web_submitted, workers_recorded, promotion_recorded, previous_workers_parked, release_completed] }
+        fence_version: { type: integer, enum: [1] }
+        executor_exited_at: { type: string, format: date-time }
+        recovery:
+          $ref: '#/components/schemas/TaskToolRecoveryHandover'
     TaskToolReleaseExecutionRequest:
       description: Exact local execution identity and bounded transition. Private claim material is submitted by the trusted CLI and is never returned in API receipts.
       type: object
       additionalProperties: false
       required: [action, operation_id, bindings_sha256]
       properties:
-        action: { type: string, enum: [authorize, claim, guard, reconcile, complete] }
+        action: { type: string, enum: [authorize, claim, guard, reconcile, complete, executor_exited] }
+        fence_version: { type: integer, enum: [1] }
         operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
         bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
         claim_token: { type: string, pattern: '^[0-9a-f]{64}$', writeOnly: true }
@@ -73962,6 +73973,56 @@ components:
           type: object
           maxProperties: 32
           additionalProperties: { type: boolean, enum: [true] }
+    TaskToolRecoveryHandover:
+      description: Permanent executor fence and separate owner recovery authority. Settlement requires an exit acknowledgement and the native mutation barrier. No recovery apply API consumes this approval yet.
+      type: object
+      additionalProperties: false
+      required: [id, operation_id, revision, state, requested_at]
+      properties:
+        id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        state: { type: string, enum: [stopping, settled] }
+        requested_at: { type: string, format: date-time }
+        settled_at: { type: string, format: date-time }
+        qualification:
+          $ref: '#/components/schemas/TaskToolRecoveryQualification'
+        decision: { type: string, enum: [approved, revoked] }
+        authorizer_key_id: { type: string, format: uuid }
+        decided_at: { type: string, format: date-time }
+    TaskToolRecoveryQualification:
+      description: Owner attestation of fresh local checks, exact recovery target and a locked native snapshot. The fixed deadline is observed_at plus 60 seconds, independently of the original release approval. Qualifying or approving never renews it.
+      type: object
+      additionalProperties: false
+      required: [handover_id, operation_id, revision, action, target_deployment_id, expected_serving_deployment_id, bindings_sha256, evidence_sha256, native_apps, observed_at, expires_at]
+      properties:
+        handover_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        action: { type: string, enum: [restore] }
+        target_deployment_id: { type: string, format: uuid }
+        expected_serving_deployment_id: { type: string, format: uuid }
+        bindings_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        evidence_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        native_apps:
+          type: array
+          minItems: 3
+          maxItems: 35
+          items: { $ref: '#/components/schemas/TaskToolReleaseApp' }
+        observed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    TaskToolRecoveryRequest:
+      description: Owner-only handover or qualification verdict on the existing decision route. The authenticated native handler supplies the owner identity; agent inputs cannot supply it.
+      type: object
+      additionalProperties: false
+      required: [handover_id, operation_id, revision]
+      properties:
+        handover_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        operation_id: { type: string, pattern: '^[0-9a-f]{64}$' }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        qualification:
+          $ref: '#/components/schemas/TaskToolRecoveryQualification'
+        qualification_sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
     DataPipelineFreshness:
       type: object
       additionalProperties: false

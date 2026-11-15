@@ -84,7 +84,7 @@ func decodeTaskReleaseChange(r *http.Request, p httpkit.Principal, record api.Ta
 	action := "decide"
 	if owner {
 		err = httpkit.DecodeJSONSized(r, &in, api.TaskToolReleaseIntentMaxBytes)
-		if in.Decision == "authorize" {
+		if in.Decision == "authorize" || tasktoolrelease.IsRecoveryDecision(in.Decision) {
 			if p.Key == nil {
 				return in, action, state.ErrInvalidArgument
 			}

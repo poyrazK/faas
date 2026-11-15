@@ -46,6 +46,8 @@ const (
 	TaskToolReleaseReceiptWorkerIDsMax         = 1024
 	TaskToolReleaseReceiptRevisionMax          = 9_007_199_254_740_991
 	TaskToolRecoveryObservationTTL             = time.Minute
+	TaskToolRecoveryApprovalTTL                = time.Minute
+	TaskToolExecutionBarrierPollInterval       = 25 * time.Millisecond
 	TaskToolRecoveryHistoryPagesMax            = 10
 	ToolPublicationOutcomeMaxBytes             = 512 << 10
 	ToolPublicationCatalogMaxBytes             = 256 << 10

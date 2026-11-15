@@ -16,6 +16,9 @@ SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2;
 -- name: LockTaskToolReleaseIntent :one
 SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2 FOR UPDATE;
 
+-- name: LockTaskToolReleaseIntentNowait :one
+SELECT payload FROM task_tool_release_intents WHERE account_id=$1 AND id=$2 FOR UPDATE NOWAIT;
+
 -- name: UpdateTaskToolReleaseIntent :exec
 UPDATE task_tool_release_intents SET status=$3,payload=$4 WHERE account_id=$1 AND id=$2;
 

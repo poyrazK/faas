@@ -192,6 +192,9 @@ func cmdMCPTaskExecution(args []string) int {
 		return printErr("Task execution", errors.New("use execution authorize|apply|get|guard|inspect|plan-recovery"))
 	}
 	action := args[0]
+	if strings.HasPrefix(action, "recovery-") {
+		return cmdMCPTaskRecoveryOwner(args)
+	}
 	flags := newFlagSet("mcp-task-execution", flag.ContinueOnError)
 	id := flags.String("id", "", "reviewed intent identity")
 	op := flags.String("operation-id", "", "one immutable owner-selected execution identity")
@@ -353,7 +356,7 @@ func changeMCPTaskExecution(ctx context.Context, c *Client, record api.TaskToolR
 		return record, err
 	}
 	return c.CheckTaskToolReleaseIntent(ctx, record.ID, api.TaskToolReleaseIntentCheck{ReleaseFingerprint: review.Fingerprint,
-		Execution: &api.TaskToolReleaseExecutionRequest{Action: action, OperationID: p.OperationID, BindingsSHA256: p.digest(), ClaimToken: token}})
+		Execution: &api.TaskToolReleaseExecutionRequest{Action: action, FenceVersion: 1, OperationID: p.OperationID, BindingsSHA256: p.digest(), ClaimToken: token}})
 }
 
 func guardMCPTaskExecution(ctx context.Context, c *Client, record api.TaskToolReleaseIntentRecord, p mcpTaskExecutionProfile, dir string, stage ...string) error {
@@ -394,11 +397,13 @@ func applyMCPTaskExecution(ctx context.Context, c *Client, record api.TaskToolRe
 	if err != nil {
 		return printErr("Task execution claim", err)
 	}
-	if claimed.Status != "approved" || claimed.Execution == nil || claimed.Execution.State != "running" || claimed.Execution.ClaimSHA256 != toolpublication.Digest([]byte(token)) {
+	if claimed.Status != "approved" || claimed.Execution == nil || claimed.Execution.State != "running" || claimed.Execution.FenceVersion != 1 || claimed.Execution.ClaimSHA256 != toolpublication.Digest([]byte(token)) {
 		return jsonOut(writeJSON(claimed))
 	}
 	// From this point all uncertain outcomes remain claimed. Never auto-retry.
 	complete := false
+	settled := true
+	defer func() { exitMCPTaskExecutor(c, record, p, token, settled) }()
 	defer func() {
 		if !complete {
 			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -434,6 +439,8 @@ func applyMCPTaskExecution(ctx context.Context, c *Client, record api.TaskToolRe
 	}
 	// Adapter output remains private. Return only the native credential-free receipt.
 	s.quiet = true
+	settled = false
+	s.executorSettled = &settled
 	if code := runMCPNativeRelease(plan, s, state, p.Plan); code != 0 {
 		return printErr("Task execution", errors.New("release stopped; inspect the durable operation and reconcile its native journal"))
 	}
@@ -480,7 +487,7 @@ func guardMCPNativeTaskExecution(ctx context.Context, c *Client, s *mcpNativeRel
 func mcpTaskExecutionChildEnv(p mcpTaskExecutionProfile, apiAuthority bool) []string {
 	names := []string{"PATH", "HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "TMPDIR", "SYSTEMROOT", "SSL_CERT_FILE", "SSL_CERT_DIR", mcpJournalOwnerEnv}
 	if apiAuthority {
-		names = append(names, "FAAS_TOKEN", "FAAS_API")
+		names = append(names, "FAAS_TOKEN", "FAAS_API", mcpTaskFenceEnv, mcpTaskFenceAPIEnv)
 	}
 	out := []string{}
 	for _, name := range names {
