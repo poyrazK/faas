@@ -16,7 +16,7 @@ faas_serving_probe_timeout_seconds: "{{ faas_serving_probe_node_policy.timeout_s
 faas_serving_probe_retry_delay_seconds: "{{ faas_serving_probe_node_policy.retry_delay_seconds | default(30) }}"
 # Existing URLs keep status-only content validation until their probe app
 # returns the configured exact marker. The latency budget is independent of
-# the socket timeout, which also bounds reading the optional body.
+# the total attempt deadline, which also bounds DNS, TLS and optional body reads.
 faas_serving_probe_expected_body: "{{ faas_serving_probe_node_policy.expected_body | default('') }}"
 faas_serving_probe_max_first_byte_seconds: "{{ faas_serving_probe_node_policy.max_first_byte_seconds | default(faas_serving_probe_timeout_seconds) }}"
 # Operator-provisioned, root:root 0400. webhook_url is required (a

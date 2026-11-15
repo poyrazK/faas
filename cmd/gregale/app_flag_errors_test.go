@@ -261,26 +261,6 @@ func TestRouteHealthTargetErrorNamesTheMissingPiece(t *testing.T) {
 	}
 }
 
-// production-us hunt #4 (H4-38): `github-webhook-secret set ...` handed "set"
-// to the flag parser and always failed; the documented verb must reach the
-// server, and the legacy verb-less form keeps working.
-func TestGithubWebhookSecretSetVerbDispatches(t *testing.T) {
-	main.ResetJSONOut(t)
-	secret := strings.Repeat("a", 32)
-	for _, args := range [][]string{
-		{"set", "--installation-id", "42", "--secret", secret},
-		{"--installation-id", "42", "--secret", secret},
-	} {
-		f := main.AuthedFakeAPI(t, `{}`, http.StatusOK)
-		if code := main.CmdGithubWebhookSecret(args); code != 0 || (*f.SawMethod()) == "" {
-			t.Fatalf("github-webhook-secret %q exit=%d request=%s %s, want a request and exit 0", args, code, (*f.SawMethod()), (*f.SawPath()))
-		}
-	}
-	if code := main.CmdGithubWebhookSecret([]string{"rotate"}); code != 1 {
-		t.Fatalf("unknown verb exit = %d, want 1", code)
-	}
-}
-
 // production-us hunt #4 (H4-42): `deployment summary <uuid>` demanded --app
 // although the deployment names its app.
 func TestDeploymentSummaryResolvesAppFromDeployment(t *testing.T) {

@@ -45,6 +45,12 @@ def test_regen_preserves_pre_auth_target_wrapper(monkeypatch, tmp_path):
     helper.write_text("sentinel = 'hand-written helper'\n")
     webhook = package / "webhook.py"
     webhook.write_text("sentinel = 'hand-written webhook helper'\n")
+    pagination = package / "_pagination.py"
+    pagination.write_text("sentinel = 'hand-written pagination helper'\n")
+    waiters = package / "_waiters.py"
+    waiters.write_text("sentinel = 'hand-written waiters helper'\n")
+    upload = package / "_source_upload.py"
+    upload.write_text("sentinel = 'hand-written source upload helper'\n")
     source_spec = tmp_path / "openapi.yaml"
     source_spec.write_text("openapi: 3.1.0\n")
     config = tmp_path / "config.yaml"
@@ -60,6 +66,8 @@ def test_regen_preserves_pre_auth_target_wrapper(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "pre_normalize_spec", lambda _: normalized)
     monkeypatch.setattr(module, "_rewrite_init_py", lambda _: None)
     monkeypatch.setattr(module, "_patch_generator_bugs", lambda _: None)
+    monkeypatch.setattr(module, "_preserve_pagination_cursor_inputs", lambda _: None)
+    monkeypatch.setattr(module, "_adapt_source_upload_binary", lambda _: None)
     monkeypatch.setattr(module, "_canonicalise_to_head", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "_preserve_routing_replay_guard_precision", lambda _: None)
 
@@ -84,4 +92,7 @@ def test_regen_preserves_pre_auth_target_wrapper(monkeypatch, tmp_path):
 
     assert helper.read_text() == "sentinel = 'hand-written helper'\n"
     assert webhook.read_text() == "sentinel = 'hand-written webhook helper'\n"
+    assert pagination.read_text() == "sentinel = 'hand-written pagination helper'\n"
+    assert waiters.read_text() == "sentinel = 'hand-written waiters helper'\n"
+    assert upload.read_text() == "sentinel = 'hand-written source upload helper'\n"
     assert (package / "__init__.py").exists()

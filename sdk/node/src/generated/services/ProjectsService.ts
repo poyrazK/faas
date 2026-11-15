@@ -216,12 +216,20 @@ export class ProjectsService {
    */
   public static applyCachedProjectPlan({
     requestBody,
+    deploymentAttemptId,
   }: {
     requestBody: ApplyCachedProjectPlanRequest,
+    /**
+     * Durable project submission identity. Persist before apply; after an uncertain response inspect the receipt instead of resubmitting.
+     */
+    deploymentAttemptId?: string,
   }): CancelablePromise<ApplyResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/apply-plan',
+      headers: {
+        'Deployment-Attempt-ID': deploymentAttemptId,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
@@ -6204,18 +6212,26 @@ export class ProjectsService {
   public static applyCachedOrgProjectPlan({
     organization,
     requestBody,
+    deploymentAttemptId,
   }: {
     /**
      * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
      */
     organization: string,
     requestBody: ApplyCachedProjectPlanRequest,
+    /**
+     * Durable organization project submission identity. Persist before applying this organization's reviewed plan; after an uncertain response inspect its submission receipt instead of resubmitting.
+     */
+    deploymentAttemptId?: string,
   }): CancelablePromise<ApplyResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects/apply-plan',
       path: {
         'organization': organization,
+      },
+      headers: {
+        'Deployment-Attempt-ID': deploymentAttemptId,
       },
       body: requestBody,
       mediaType: 'application/json',

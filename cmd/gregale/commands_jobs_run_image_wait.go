@@ -12,6 +12,7 @@ import (
 func waitForJobRunImage(parent context.Context, client *api.Client, name string, timeout, interval time.Duration) int {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	var selected api.JobResponse
 	fail := func(err error, code int) int {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			code = 130
@@ -27,10 +28,11 @@ func waitForJobRunImage(parent context.Context, client *api.Client, name string,
 				ExitCode       int    `json:"exit_code"`
 				Error          string `json:"error"`
 				InspectCommand string `json:"inspect_command"`
-			}{name, "image_wait", false, code, err.Error(), command}
+			}{name, "image_wait", false, code, redactErrorText(err.Error()), redactErrorText(command)}
 			if outputCode := jsonOut(writeJSONSingle(receipt)); outputCode != 0 {
 				return outputCode
 			}
+			return renderJobImageWaitError(err, code, name, selected, timeout, interval)
 		} else {
 			printErr("Image preparation ended before submission", fmt.Errorf("%w; no run submitted; inspect %s", err, command))
 		}
@@ -45,7 +47,7 @@ func waitForJobRunImage(parent context.Context, client *api.Client, name string,
 	if job.Name != name || !jobRunIDPattern.MatchString(job.ID) || job.AccountID == "" {
 		return fail(errors.New("server did not identify the requested Job and account"), 1)
 	}
-	_, code, err := followJobImage(ctx, client, job, interval)
+	selected, code, err := followJobImage(ctx, client, job, interval)
 	if err != nil {
 		return fail(err, code)
 	}
