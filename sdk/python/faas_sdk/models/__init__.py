@@ -2487,6 +2487,7 @@ from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClas
 from .wake_timeline_page import WakeTimelinePage
 from .wake_timeline_page_mode import WakeTimelinePageMode
 from .wake_timeline_response import WakeTimelineResponse
+from .warmup_hook import WarmupHook
 from .webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
 from .webhook_workflow_receipt_response_ignored_reason import WebhookWorkflowReceiptResponseIgnoredReason
 from .webhook_workflow_receipt_response_routing_status import WebhookWorkflowReceiptResponseRoutingStatus
@@ -5049,6 +5050,7 @@ __all__ = (
     "WakeTimelinePage",
     "WakeTimelinePageMode",
     "WakeTimelineResponse",
+    "WarmupHook",
     "WebhookWorkflowReceiptResponse",
     "WebhookWorkflowReceiptResponseIgnoredReason",
     "WebhookWorkflowReceiptResponseRoutingStatus",

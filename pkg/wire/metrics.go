@@ -112,7 +112,10 @@ type OpsMetrics struct {
 	// The two closed labels have no app, deployment, or instance IDs.
 	initSnapshotAttempts        *prometheus.CounterVec
 	initSnapshotCaptureDuration *prometheus.HistogramVec
-	snapshotPublication         *prometheus.CounterVec
+	// initSnapshotPrime counts init snapshot priming bursts by outcome
+	// (ADR-20261114153000). One closed label, no IDs.
+	initSnapshotPrime   *prometheus.CounterVec
+	snapshotPublication *prometheus.CounterVec
 	// wakeFailover counts schedd's re-placements of a wake a node refused
 	// before the VM started (ADR-20261022184531). Closed labels only.
 	wakeFailover *prometheus.CounterVec
@@ -2292,12 +2295,19 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_compute_node_readiness",
 		Help: "One-hot readiness of each compute node this schedd heartbeats (ADR-20261022184531): 1 on the state the node last proved, 0 on the others. state is ready, degraded (answers but cannot serve a wake), unavailable or draining (both mirror lifecycle). node is the compute node name.",
 	}, []string{"node", "state"})
+	initSnapshotPrime := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_init_snapshot_prime_total",
+		Help: "Init snapshot priming before a deployment's prime capture, by outcome (ADR-20261114153000): primed (at least one 2xx), no_http_path (gRPC, HTTP/2 or raw-TCP app without lifecycle.warmup, not primed), unsupported (vmmd without PrimeInstance), no_success (no 2xx response) or failed (the RPC failed). Every outcome but primed captures the snapshot unprimed.",
+	}, []string{"outcome"})
 	initSnapshotCaptureDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_init_snapshot_capture_duration_seconds",
 		Help:    "Wall-clock duration of new terminal init snapshot captures, including before_checkpoint, by site and outcome. Reused snapshots are excluded.",
 		Buckets: []float64{0.1, 0.5, 1, 2.5, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300, 600},
 	}, []string{"site", "outcome"})
 	if prefix == "schedd" {
+		for _, outcome := range initSnapshotPrimeOutcomes {
+			initSnapshotPrime.WithLabelValues(outcome)
+		}
 		for _, site := range []string{InitSnapshotSitePrime, InitSnapshotSitePark} {
 			for _, outcome := range []string{
 				InitSnapshotOutcomeCaptured,
@@ -4168,7 +4178,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude,
 	}
 	if prefix == "schedd" {
-		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness, nodeWakeBreaker)
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, initSnapshotPrime, wakeFailover, computeNodeReadiness, nodeWakeBreaker)
 	}
 	if prefix == "imaged" {
 		commonCollectors = append(commonCollectors, snapshotPublication)
@@ -5617,6 +5627,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		warmSnapshotErrors:                         warmSnapshotErrors,
 		initSnapshotAttempts:                       initSnapshotAttempts,
 		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
+		initSnapshotPrime:                          initSnapshotPrime,
 		wakeFailover:                               wakeFailover,
 		computeNodeReadiness:                       computeNodeReadiness,
 		nodeWakeBreaker:                            nodeWakeBreaker,
@@ -6359,6 +6370,35 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 	m.initSnapshotAttempts.WithLabelValues(site, outcome).Inc()
 	if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed && outcome != InitSnapshotOutcomeSourceDiverged {
 		m.initSnapshotCaptureDuration.WithLabelValues(site, outcome).Observe(duration.Seconds())
+	}
+}
+
+// Closed outcome labels of schedd_init_snapshot_prime_total
+// (ADR-20261114153000).
+const (
+	InitSnapshotPrimePrimed      = "primed"
+	InitSnapshotPrimeNoHTTPPath  = "no_http_path"
+	InitSnapshotPrimeUnsupported = "unsupported"
+	InitSnapshotPrimeNoSuccess   = "no_success"
+	InitSnapshotPrimeFailed      = "failed"
+)
+
+var initSnapshotPrimeOutcomes = []string{
+	InitSnapshotPrimePrimed, InitSnapshotPrimeNoHTTPPath, InitSnapshotPrimeUnsupported,
+	InitSnapshotPrimeNoSuccess, InitSnapshotPrimeFailed,
+}
+
+// RecordInitSnapshotPrime counts one priming decision before a prime capture.
+// Unknown outcomes are dropped. Only schedd exports the collector.
+func (m *OpsMetrics) RecordInitSnapshotPrime(outcome string) {
+	if m == nil || m.metricPrefix != "schedd" || m.initSnapshotPrime == nil {
+		return
+	}
+	for _, known := range initSnapshotPrimeOutcomes {
+		if outcome == known {
+			m.initSnapshotPrime.WithLabelValues(outcome).Inc()
+			return
+		}
 	}
 }
 

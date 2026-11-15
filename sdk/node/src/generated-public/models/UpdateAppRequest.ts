@@ -16,6 +16,7 @@ import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
 import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { TracingConfig } from './TracingConfig.js';
+import type { WarmupHook } from './WarmupHook.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 /**
  * Partial update — every field is optional; omitted fields are unchanged.
@@ -79,6 +80,10 @@ export type UpdateAppRequest = {
    * Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it.
    */
   before_checkpoint?: BeforeCheckpointHook;
+  /**
+   * Set the path a deployment's first init snapshot is primed with. Omit to preserve; an empty path clears it.
+   */
+  warmup?: WarmupHook;
   /**
    * When the platform may pause the app's VM: between_requests pauses it between requests and freezes it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution modes accept only never. Omit to preserve; an empty string restores the default.
    */

@@ -1228,6 +1228,7 @@ export type { WakeTimelineEvent } from './WakeTimelineEvent.js';
 export type { WakeTimelineJSONRow } from './WakeTimelineJSONRow.js';
 export type { WakeTimelinePage } from './WakeTimelinePage.js';
 export type { WakeTimelineResponse } from './WakeTimelineResponse.js';
+export type { WarmupHook } from './WarmupHook.js';
 export type { WebhookWorkflowReceiptResponse } from './WebhookWorkflowReceiptResponse.js';
 export type { WorkDecision } from './WorkDecision.js';
 export type { WorkerRolloutObservation } from './WorkerRolloutObservation.js';

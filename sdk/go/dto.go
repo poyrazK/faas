@@ -195,6 +195,7 @@ type (
 	AppManifest          = api.AppManifest
 	AfterRestoreHook     = api.AfterRestoreHook
 	BeforeCheckpointHook = api.BeforeCheckpointHook
+	WarmupHook           = api.WarmupHook
 	ServiceReplicas      = api.ServiceReplicas
 
 	// Issue #477 / ADR-079: per-app public-URL auth. Both

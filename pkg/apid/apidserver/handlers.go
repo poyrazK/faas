@@ -1168,6 +1168,7 @@ func (s *server) appResponseWithDomain(a state.App, plan api.Plan, domain string
 			WorkerReplicas:               apiManifestFromState(a.Manifest).WorkerReplicas,
 			AfterRestore:                 a.Manifest.AfterRestore,
 			BeforeCheckpoint:             a.Manifest.BeforeCheckpoint,
+			Warmup:                       a.Manifest.Warmup,
 			Pause:                        a.Manifest.Pause,
 			Profiling:                    a.Manifest.Profiling,
 			Tracing:                      a.Manifest.Tracing,

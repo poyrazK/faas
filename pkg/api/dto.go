@@ -588,6 +588,9 @@ type CreateAppRequest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	// Warmup names the path init snapshot priming GETs instead of the
+	// readiness path (ADR-20261114153000). An empty path clears it.
+	Warmup *WarmupHook `json:"warmup,omitempty"`
 	// Pause declares when the platform may pause the VM (ADR-1151):
 	// between_requests, when_idle or never. Empty selects the default for
 	// the app's type.
@@ -1049,6 +1052,9 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	// Warmup names the path init snapshot priming GETs instead of the
+	// readiness path (ADR-20261114153000). An empty path clears it.
+	Warmup *WarmupHook `json:"warmup,omitempty"`
 	// Pause replaces the declared pause value; "" restores the default.
 	Pause            *string          `json:"pause,omitempty"`
 	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
