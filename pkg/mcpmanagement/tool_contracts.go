@@ -170,6 +170,9 @@ func toolIdempotent(name string, readOnly bool) bool {
 // Native result DTOs keep their existing fields while every apply result also
 // identifies the MCP plan, including receipts written by older bridges.
 func bindToolPlanID(name string, args any, data json.RawMessage) (json.RawMessage, error) {
+	if name == "gregale_apply_task_tool_deploy" {
+		return bindTaskExecutionReceipt(args, data)
+	}
 	if !strings.HasPrefix(name, "gregale_apply_") && name != "gregale_promote_deployment" {
 		return data, nil
 	}
