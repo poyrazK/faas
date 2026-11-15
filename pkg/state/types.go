@@ -3178,6 +3178,12 @@ type Deployment struct {
 	// carries the advertised serving port across imaged -> schedd -> vmmd.
 	// Raw JSON keeps state independent of the framework-profile package shape.
 	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
+	// BuildRegistryScope (ADR-20261110210000 slice 3j-4) lists the image
+	// repositories ("host/repository") the deployment's Dockerfiles name;
+	// secretd lets its builds pull only those with the app's registry
+	// credential. apid records it at creation and the column never changes;
+	// nil means not recorded. Written only; secretd reads the column.
+	BuildRegistryScope []string `json:"-"`
 	// ReleaseCommand is immutable pre-activation intent captured from the
 	// exact source version (gregale.yaml release.command or Procfile release:).
 	// The orchestrator converts it into the deployment's unique release task;

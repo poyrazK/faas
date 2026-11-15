@@ -1891,6 +1891,7 @@ CREATE TABLE public.deployments (
     promoted_at timestamp with time zone,
     rollback_release_review jsonb DEFAULT '{}'::jsonb NOT NULL,
     before_checkpoint_hook boolean,
+    build_registry_scope text[],
     CONSTRAINT deployments_canary_preset_chk CHECK (((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text])) OR (canary_preset = 'adaptive'::text))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -7898,6 +7899,23 @@ $$;
 
 
 --
+-- Name: deployment_build_registry_scope_valid(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_build_registry_scope_valid(scope text[]) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+    SELECT scope IS NULL OR (
+        cardinality(scope) <= 64
+        AND array_position(scope, NULL) IS NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM unnest(scope) AS e
+            WHERE length(e) > 255 OR e !~ '^[a-z0-9.-]+(:[0-9]{1,5})?/[a-z0-9._/-]+$'))
+$_$;
+
+
+--
 -- Name: deployment_openapi_docs_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8059,6 +8077,37 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: deployments_build_registry_scope_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployments_build_registry_scope_guard() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog', 'pg_temp'
+    AS $_$
+DECLARE
+    node text;
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        IF NEW.build_registry_scope IS DISTINCT FROM OLD.build_registry_scope THEN
+            RAISE EXCEPTION 'a deployment''s build registry scope is recorded when it is created and never changes'
+                USING ERRCODE = '42501', DETAIL = format('login=%s deployment=%s', session_user, OLD.id);
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF NEW.build_registry_scope IS NULL THEN
+        RETURN NEW;
+    END IF;
+    EXECUTE format('SELECT node_name FROM %I.compute_node_db_logins WHERE login = $1', TG_TABLE_SCHEMA)
+        INTO node USING session_user::text;
+    IF node IS NOT NULL THEN
+        NEW.build_registry_scope := NULL;
+    END IF;
+    RETURN NEW;
+END;
+$_$;
 
 
 --
@@ -66095,6 +66144,14 @@ ALTER TABLE ONLY public.deployment_submission_receipts
 
 
 --
+-- Name: deployments deployments_build_registry_scope_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.deployments
+    ADD CONSTRAINT deployments_build_registry_scope_check CHECK (public.deployment_build_registry_scope_valid(build_registry_scope)) NOT VALID;
+
+
+--
 -- Name: deployments deployments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -90599,6 +90656,13 @@ CREATE TRIGGER deployment_serving_ended_at BEFORE UPDATE OF status, traffic_perc
 --
 
 CREATE TRIGGER deployment_sidecar_layers_cap_trg BEFORE INSERT OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.deployment_sidecar_layers_cap_check();
+
+
+--
+-- Name: deployments deployments_build_registry_scope_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_build_registry_scope_guard BEFORE INSERT OR UPDATE OF build_registry_scope ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.deployments_build_registry_scope_guard();
 
 
 --

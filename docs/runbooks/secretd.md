@@ -242,6 +242,22 @@ plane: watch its network and `faas_secretd_opens_total{rpc="RegistryFetch"}`.
    Known limit: secretd finds a credential by the registry URL's exact host,
    so a Docker Hub credential stored as `docker.io` is not used for
    `registry-1.docker.io` pulls (as for imaged's pulls, 3j-2).
+4. **Builds pull only what their Dockerfiles name (slice 3j-4).** When apid
+   accepts a source deploy it records, in `deployments.build_registry_scope`,
+   the image repositories every Dockerfile in the source names (`FROM`,
+   `COPY --from`, `RUN --mount from=`, ARG defaults and Compose build args
+   expanded). The column never changes, and a per-node compute login cannot
+   record one. secretd checks each build pull against it per
+   `faas_secretd_build_registry_scope`: `observe` (the default) counts
+   `faas_secretd_build_registry_scope_total{result}` and logs `build registry
+   pull outside its deployment's scope`, refusing nothing; `enforce` refuses
+   (`faas_secretd_refusals_total{reason="out_of_scope"}`). Watch observe for a
+   few days: `out_of_scope` means a build pulled a repository its Dockerfiles
+   do not name (an ARG the parser could not resolve, a Dockerfile under an
+   unusual name); `unrecorded` means a deployment created without apid's
+   source path (GitOps candidates, older rows). Turn on enforce once both stay
+   at 0 for real builds; a node that claims another app's build then gets at
+   most that build's own base images. Back out by setting `observe` again.
 
 ## Take the edge and delivery identities off compute
 

@@ -2047,7 +2047,7 @@ Show the current status of one build
 
 List builds and discover build IDs
 
-`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all]`
+`gregale build list [--app <SLUG>] [--status <STATUS>] [--limit <N>] [--before <CURSOR>] [--cursor <CURSOR>] [--all] [--stream]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2057,6 +2057,7 @@ List builds and discover build IDs
 | `--before <CURSOR>` | alias for --cursor |  |
 | `--cursor <CURSOR>` | opaque cursor from a prior page |  |
 | `--all` | walk every page using --limit and --cursor |  |
+| `--stream` | emit JSON Lines as pages arrive; requires --json --all |  |
 
 ### build provenance
 
@@ -3118,7 +3119,7 @@ Watch invocations finish across your account in real time
 
 List invocations
 
-`gregale invocation list [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all]`
+`gregale invocation list [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] [--stream]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3126,6 +3127,7 @@ List invocations
 | `--cursor <CURSOR>` | opaque cursor from a prior page |  |
 | `--before <CURSOR>` | alias for --cursor |  |
 | `--all` | walk every page using --limit and --cursor |  |
+| `--stream` | emit JSON Lines as pages arrive; requires --json --all |  |
 
 ### invocation get
 
