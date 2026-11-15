@@ -1,7 +1,8 @@
-# ADR-20261115120000 · Snapshot drives stored as deltas against their app layer
+# ADR-20261115213230 · Snapshot drives stored as deltas against their app layer
 
 - **Status:** accepted
 - **Date:** 2026-11-15
+- **Identifier:** Renumbered from ADR-20261115120000 to distinguish this decision from full-release convergence; the snapshot-drive decision is unchanged.
 - **Amends:** ADR-633 (snapshot drive block sharing), ADR-1135 (extent encoding)
 - **Context:**
   - A capture publishes the instance's private drive under `snap/…/v2/drive`. The drive is a copy-on-write clone of the deployment's app layer (`layers/<deployment>.ext4`) in which the guest changed a few blocks. ADR-633 keeps it shared with the layer on the node, but the parent store received the whole drive: the layer's files again, for every capture.

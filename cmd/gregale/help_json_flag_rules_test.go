@@ -28,7 +28,7 @@ func discoverListFlagRules(t *testing.T, topic ...string) []main.CLIFlagRule {
 		SchemaVersion int                `json:"schema_version"`
 		Rules         []main.CLIFlagRule `json:"flag_rules"`
 	}
-	if code != 0 || text != "" || json.Unmarshal(out.Bytes(), &document) != nil || document.SchemaVersion != 1 || len(document.Rules) != 2 {
+	if code != 0 || text != "" || json.Unmarshal(out.Bytes(), &document) != nil || document.SchemaVersion != 1 || len(document.Rules) != 3 {
 		t.Fatalf("discovery: %d %s %s", code, out, text)
 	}
 	return document.Rules

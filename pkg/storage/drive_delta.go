@@ -1,6 +1,6 @@
 package storage
 
-// Snapshot drive deltas (ADR-20261115120000).
+// Snapshot drive deltas (ADR-20261115213230).
 //
 // A snapshot's private drive is a copy-on-write clone of its app layer in
 // which the guest changed a few blocks. The node cache already keeps it that

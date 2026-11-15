@@ -88,7 +88,7 @@ import (
 //	                                accept it; enable after every node reads it.
 //	FAAS_STORAGE_DRIVE_DELTA      cache — "1" uploads snapshot drives as
 //	                                deltas against their app layer
-//	                                (ADR-20261115120000). Every cache decodes
+//	                                (ADR-20261115213230). Every cache decodes
 //	                                deltas; enable only after every node runs
 //	                                a release that does. Default off.
 //	FAAS_REQUIRE_SHARED_ARTIFACTS  when "1"/"true", require a remote backend
