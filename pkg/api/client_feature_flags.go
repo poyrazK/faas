@@ -112,3 +112,12 @@ func (c *Client) RuntimeFlags(ctx context.Context) (json.RawMessage, error) {
 	err := c.do(ctx, http.MethodGet, "/v1/runtime/flags", nil, &out)
 	return out, err
 }
+
+// RuntimeFlagEvents reports conversion events for experiments
+// (ADR 20261115163113). Like RuntimeFlags it requires a Client constructed
+// with a workload JWT for gregale:flags.
+func (c *Client) RuntimeFlagEvents(ctx context.Context, req FlagEventsRequest) (FlagEventsResponse, error) {
+	var out FlagEventsResponse
+	err := c.do(ctx, http.MethodPost, "/v1/runtime/flags/events", req, &out)
+	return out, err
+}

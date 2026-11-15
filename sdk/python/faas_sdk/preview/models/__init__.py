@@ -2244,6 +2244,11 @@ from .flag_decision_inherited_from import FlagDecisionInheritedFrom
 from .flag_decision_reason import FlagDecisionReason
 from .flag_decision_source import FlagDecisionSource
 from .flag_decision_type import FlagDecisionType
+from .flag_event import FlagEvent
+from .flag_events_request import FlagEventsRequest
+from .flag_events_response import FlagEventsResponse
+from .flag_events_response_dropped import FlagEventsResponseDropped
+from .flag_events_response_month import FlagEventsResponseMonth
 from .flag_evidence import FlagEvidence
 from .flag_evidence_page import FlagEvidencePage
 from .flag_lifecycle import FlagLifecycle
@@ -8864,6 +8869,11 @@ __all__ = (
     "FlagDecisionReason",
     "FlagDecisionSource",
     "FlagDecisionType",
+    "FlagEvent",
+    "FlagEventsRequest",
+    "FlagEventsResponse",
+    "FlagEventsResponseDropped",
+    "FlagEventsResponseMonth",
     "FlagEvidence",
     "FlagEvidencePage",
     "FlagLifecycle",

@@ -4,6 +4,8 @@
 /* eslint-disable */
 import type { FeatureFlagVersion } from '../models/FeatureFlagVersion.js';
 import type { FlagDecision } from '../models/FlagDecision.js';
+import type { FlagEventsRequest } from '../models/FlagEventsRequest.js';
+import type { FlagEventsResponse } from '../models/FlagEventsResponse.js';
 import type { FlagEvidencePage } from '../models/FlagEvidencePage.js';
 import type { FlagLifecycleReport } from '../models/FlagLifecycleReport.js';
 import type { FlagOutcomesResponse } from '../models/FlagOutcomesResponse.js';
@@ -517,6 +519,42 @@ export class FlagsService {
         404: `code: not_found`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         426: `Runtime SDK does not support a capability used by the current flag bundle.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Report conversion events for flag experiments.
+   * Requires the same workload identity as getRuntimeFlags (ADR 20261115163113). Account, app and environment come from the token. Each event names the verified customer of the request it belongs to; events for customers that are not active platform tenants of the account are dropped. Accepted events count against the plan's monthly event quota (FlagEventsPerMonth); events over quota are dropped and counted, never billed.
+   * @returns FlagEventsResponse What happened to each event of the batch, and the month's usage.
+   * @throws ApiError
+   */
+  public static postRuntimeFlagEvents({
+    requestBody,
+    xFaasFlagsCapabilities,
+  }: {
+    requestBody: FlagEventsRequest,
+    /**
+     * Comma-separated optional runtime SDK capabilities. SDKs that report events advertise track-v1.
+     */
+    xFaasFlagsCapabilities?: string,
+  }): CancelablePromise<FlagEventsResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/runtime/flags/events',
+      headers: {
+        'X-Faas-Flags-Capabilities': xFaasFlagsCapabilities,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

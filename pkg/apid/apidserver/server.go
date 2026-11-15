@@ -2414,6 +2414,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.promoteFeatureFlagRollout))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.inspectFeatureFlag)))
 	mux.Handle("GET /v1/runtime/flags", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.runtimeFeatureFlags)))
+	mux.Handle("POST /v1/runtime/flags/events", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.runtimeFeatureFlagEvents)))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFeatureFlagEvidence)))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFeatureFlagOutcomes)))
 	mux.HandleFunc("GET /v1/account/platform-tenants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listPlatformTenants))))

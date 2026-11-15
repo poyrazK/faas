@@ -1162,7 +1162,7 @@ var schemaSpecOnly = map[string]bool{
 	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
 	// including their flattened embedded fields, against the OpenAPI schemas.
 	"FlagRule": true, "FlagCondition": true, "FlagLifecycle": true, "FlagLifecycleReport": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
-	"FlagsBundle": true, "FeatureFlagVersion": true,
+	"FlagsBundle": true, "FeatureFlagVersion": true, "FlagEvent": true, "FlagEventsRequest": true, "FlagEventsResponse": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
 	"InspectFeatureFlagRequest": true, "FlagRolloutPromotionRequest": true, "FlagRolloutPromotion": true,
