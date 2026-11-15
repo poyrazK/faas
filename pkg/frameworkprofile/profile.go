@@ -72,8 +72,15 @@ type Profile struct {
 	// HealthFromConfig reports that HealthPath is gregale.yaml's explicit
 	// hosting.health, which keeps HTTP readiness even on a raw-TCP routed
 	// port (ADR-20261027090000).
-	HealthFromConfig bool      `json:"health_from_config,omitempty"`
-	Warnings         []Warning `json:"warnings,omitempty"`
+	HealthFromConfig bool `json:"health_from_config,omitempty"`
+	// HealthDefaulted reports that HealthPath is the platform's /healthz:
+	// neither gregale.yaml nor the source named a health route. Startup
+	// readiness is then the port accepting connections, as for a direct
+	// image, because a plain Express or Flask app answers /healthz with 404
+	// and failed every deploy (ADR-079 amendment 2). Profiles written before
+	// it lack the mark and keep HTTP readiness.
+	HealthDefaulted bool      `json:"health_defaulted,omitempty"`
+	Warnings        []Warning `json:"warnings,omitempty"`
 	// ImageCommand is the accepted Compose CMD contract. Its presence freezes
 	// image semantics even when Cmd is nil (inherit) or the app changes class.
 	ImageCommand     *ImageCommand     `json:"image_command,omitempty"`
@@ -166,9 +173,10 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		}
 	}
 	// An unknown tree may be a home directory, not a project: do not scan it.
+	healthInferred := false
 	if framework != markers.FrameworkDocker && framework != markers.FrameworkUnknown {
 		if health := inferHealthPath(fsys); health != "" {
-			profile.HealthPath = health
+			profile.HealthPath, healthInferred = health, true
 		}
 	}
 	if cfg, present, err := hostingconfig.Load(fsys); err != nil {
@@ -183,6 +191,7 @@ func Analyze(fsys fs.FS) (Profile, error) {
 	}
 	profile.Warnings = append(profile.Warnings, loopbackWarnings(fsys)...)
 	profile.Inferred = profile.StartCommand != "" && profile.Framework != string(markers.FrameworkUnknown)
+	profile.HealthDefaulted = !healthInferred && !profile.HealthFromConfig
 	return profile, nil
 }
 
@@ -365,9 +374,9 @@ var fromPattern = regexp.MustCompile(`(?im)^\s*FROM\s+(?:--\S+\s+)*(\S+)`)
 
 // nonHTTPServiceWarning reports a Dockerfile whose serving port is a raw TCP
 // server's: its own EXPOSE, else the port of a known server image it builds
-// FROM. A source build is probed with HTTP GET /healthz on that port, which a
-// raw TCP server never answers, so the deploy fails with
-// app_startup_timeout. A directly deployed image is gated by TCP accept.
+// FROM. The build readies once the port accepts connections, but the app's
+// public route speaks HTTP, which the server does not, so it is reached over
+// an internal TCP port instead.
 func nonHTTPServiceWarning(dockerfile string) (Warning, bool) {
 	server, port := "", firstPort(dockerfile)
 	if froms := fromPattern.FindAllStringSubmatch(dockerfile, -1); len(froms) > 0 {
@@ -408,10 +417,10 @@ func nonHTTPServiceWarning(dockerfile string) (Warning, bool) {
 			what, upperFirst(managed), strings.ToUpper(server))}, true
 	}
 	return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
-		"%s. A source build must answer HTTP GET /healthz on its serving port, so this deploy fails with app_startup_timeout. "+
-			"Deploy the published image instead, which is ready once the port accepts connections: "+
-			"`gregale deploy --image <image>@sha256:<digest> --name <app>`. Then keep it private and let other apps reach it "+
-			"with `gregale app <app> --visibility internal --ports <name>=tcp:%d:internal`.", what, port)}, true
+		"%s. The app's public URL speaks HTTP, which this server does not answer. "+
+			"Deploy this build or the published image (`gregale deploy --image <image>@sha256:<digest> --name <app>`); "+
+			"either is ready once the port accepts connections. Then keep it private and let other apps reach it over TCP with "+
+			"`gregale app <app> --visibility internal --ports <name>=tcp:%d:internal`.", what, port)}, true
 }
 
 func nodePackageManager(fsys fs.FS, declared string) string {
