@@ -65,8 +65,8 @@ var routeActions = map[string]authz.OrgAction{
 	// verification, and release secrets are neither GitOps, data services,
 	// full clones nor browser approvals, and were refused to every member.
 	"GET /v1/projects/{slug}/environments/{environment}/flags":                                            authz.OrgActionReadProject,
-	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":                                   authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle":                                  authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":                                   authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes":                             authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests":                             authz.OrgActionReadProject,
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":                             authz.OrgActionReadProject,
