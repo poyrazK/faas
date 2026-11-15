@@ -544,7 +544,7 @@ same moment may pass it by their own sizes.
 
 ### Async backlog
 
-Async invocations (`gregale invoke --async`, async routes and a function's
+Async invocations (`gregale invocation run --async`, async routes and a function's
 `send()`) wait in the same kind of backlog as queue messages, so they meet the
 same plan limits: an app holds at most its plan's queue depth of pending async
 invocations, and their payload bytes count towards the account's queue backlog.
