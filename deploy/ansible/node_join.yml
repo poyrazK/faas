@@ -1314,6 +1314,64 @@
         path: /etc/systemd/system/faas-vmmd.service.d/99-zz-restore-speedups.conf
         state: absent
 
+    # Request- and deploy-path switches (group_vars/compute_nodes/
+    # perf_switches.yml), rendered on every run like the restore speed-ups.
+    - name: Ensure the schedd, imaged and builderd drop-in directories exist
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}.service.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - faas-schedd
+        - faas-imaged
+        - faas-builderd
+
+    - name: Install schedd's async wake finalize switch
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-perf-switches.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_ASYNC_WAKE_FINALIZE={{ '1' if (schedd_async_wake_finalize | default(false) | bool) else '0' }}
+
+    - name: Install imaged's app layer reuse switch
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-imaged.service.d/zz-faas-perf-switches.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_IMAGED_LAYER_REUSE={{ '1' if (imaged_app_layer_reuse | default(false) | bool) else '0' }}
+
+    - name: Install builderd's shared platform blobs switch
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-builderd.service.d/zz-faas-perf-switches.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_BUILD_SHARED_PLATFORM_BLOBS={{ '1' if (builderd_shared_platform_blobs | default(false) | bool) else '0' }}
+
+    # The 2026-11-15 trial set these switches, and the edge's binary hop (now
+    # manifest hot_path.edge_binary_hop), by hand; fsn-2 also kept its
+    # 2026-11-01 platform-blobs canary drop-in.
+    - name: Remove the hand-installed perf trial drop-ins
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}"
+        state: absent
+      loop:
+        - faas-schedd.service.d/zz-perf-trial-20261115.conf
+        - faas-imaged.service.d/zz-perf-trial-20261115.conf
+        - faas-builderd.service.d/zz-perf-trial-20261115.conf
+        - faas-builderd.service.d/zz-shared-platform-blobs.conf
+        - faas-gatewayd-public-edge.service.d/zz-perf-trial-20261115.conf
+
     # A fresh host has no /opt/faas/current yet, but release-bound base
     # preparation needs vmmd. Register the row as unavailable before the
     # temporary candidate vmmd starts so self-registration cannot make the

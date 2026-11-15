@@ -132,3 +132,61 @@ func TestLocalEntriesAndEvictLocal(t *testing.T) {
 		t.Fatal("EvictLocal removed the parent's copy")
 	}
 }
+
+// TestEvictionTakesACaptureWhole: a capture's files go together, aged by the
+// newest of them. Oldest-first over single files used to take a capture's
+// vmstate (rarely re-read, so old) and keep its memory file (read on every
+// restore), which freed nothing and left the capture unusable.
+func TestEvictionTakesACaptureWhole(t *testing.T) {
+	ctx := context.Background()
+	epoch := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	const (
+		vmstate = "snap/d/captures/c1/v2/vmstate"
+		mem     = "snap/d/captures/c1/v2/mem"
+		plain   = "apps/a/layer.ext4"
+	)
+	for _, tc := range []struct {
+		name    string
+		reclaim int
+		want    map[string]bool
+	}{
+		{"the capture's newest file keeps it young", 1, map[string]bool{vmstate: true, mem: true, plain: false}},
+		{"a capture that goes, goes whole", 2, map[string]bool{vmstate: false, mem: false, plain: false}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := newFakeBackend()
+			cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(t.TempDir(), "cache"), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			keys := []string{vmstate, plain, mem} // oldest first
+			for i, k := range keys {
+				parent.blobs[k] = []byte("blob " + k)
+				_, rc := getString(t, ctx, cache, k)
+				_ = rc.Close()
+				when := epoch.Add(time.Duration(i) * time.Minute)
+				if err := os.Chtimes(storage.CacheFileForKey(cache.Root(), k), when, when); err != nil {
+					t.Fatal(err)
+				}
+			}
+			const unit = int64(1) << 30
+			cache.SetDiskSpaceForTest(func(string) (int64, int64, error) {
+				var gone int64
+				for _, k := range keys {
+					if _, err := os.Stat(storage.CacheFileForKey(cache.Root(), k)); err != nil {
+						gone++
+					}
+				}
+				return gone * unit, 100 * unit, nil
+			})
+			if err := cache.ReclaimFreeBytes(int64(tc.reclaim) * unit); err != nil {
+				t.Fatal(err)
+			}
+			for k, want := range tc.want {
+				if got := cached(t, cache, k); got != want {
+					t.Errorf("%s cached = %v, want %v", k, got, want)
+				}
+			}
+		})
+	}
+}

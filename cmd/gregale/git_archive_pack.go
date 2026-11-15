@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -409,6 +410,9 @@ func readGitArchiveRules(srcPath string, dockerfile bool) (packRules, error) {
 	rules := packRules{dockerfile: dockerfile}
 	goVendor := map[string]bool{}
 	var ignore, dockerignore []byte
+	// Compose files and service .dockerignore files, for
+	// composeServiceDockerignorePatterns. Bounded like the root files.
+	composeInputs := map[string][]byte{}
 	err := forEachArchiveEntry(srcPath, func(hdr *tar.Header, body io.Reader) error {
 		name := strings.TrimSuffix(hdr.Name, "/")
 		if path.Base(name) == "modules.txt" && path.Base(path.Dir(name)) == "vendor" && hdr.Typeflag == tar.TypeReg {
@@ -420,6 +424,16 @@ func readGitArchiveRules(srcPath string, dockerfile bool) (packRules, error) {
 			dst = &ignore
 		case name == dockerignoreFile && dockerfile:
 			dst = &dockerignore
+		case hdr.Typeflag == tar.TypeReg && len(composeInputs) < 256 &&
+			(slices.Contains(composeFileNames, name) || (path.Base(name) == dockerignoreFile && name != dockerignoreFile)):
+			data, err := io.ReadAll(io.LimitReader(body, maxGitignoreBytes+1))
+			if err != nil {
+				return err
+			}
+			if len(data) <= maxGitignoreBytes {
+				composeInputs[name] = data
+			}
+			return nil
 		default:
 			return nil
 		}
@@ -439,7 +453,12 @@ func readGitArchiveRules(srcPath string, dockerfile bool) (packRules, error) {
 	if err != nil {
 		return rules, fmt.Errorf("read deploy ignore files: %w", err)
 	}
-	rules.patterns = append(parseDockerignore(dockerignore), parseGregaleignore(ignore)...)
+	rules.patterns = parseDockerignore(dockerignore)
+	rules.patterns = append(rules.patterns, composeServiceDockerignorePatterns(func(rel string) ([]byte, bool) {
+		data, ok := composeInputs[rel]
+		return data, ok
+	})...)
+	rules.patterns = append(rules.patterns, parseGregaleignore(ignore)...)
 	rules.goVendor = func(rel string) bool { return goVendor[rel] }
 	return rules, nil
 }

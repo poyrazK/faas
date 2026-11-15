@@ -412,6 +412,7 @@ type ServiceProxy struct {
 	endpointTTL               time.Duration
 	now                       func() time.Time
 	log                       *slog.Logger
+	policyRefusals            publicRoutingRefusalLog
 	resolveEnvironmentBinding ServiceProxyEnvironmentBindingResolver
 	observeCall               func(callerAppID, targetAppID string, woken bool)
 

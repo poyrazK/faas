@@ -41,3 +41,20 @@ SELECT r.id, r.runtime, r.architecture, r.created_at,
         OR EXISTS (SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.release_id = r.id)
         OR EXISTS (SELECT 1 FROM runtime_upgrade_operations o WHERE o.target_release_id = r.id))::bool AS keep
   FROM runtime_releases r;
+
+-- name: ListLiveSnapshotLayerKeys :many
+-- The app and sidecar layers of deployments with a non-stale snapshot, keyed
+-- as ClaimSnapshotReplica keys them. Snapshot fan-out keeps a replica only
+-- while its layers are cached too, so these share the live captures' last
+-- eviction tier.
+SELECT DISTINCT (CASE WHEN d.rootfs_key <> '' THEN d.rootfs_key
+                      ELSE 'layers/' || d.id::text || '.ext4' END)::text AS key
+  FROM snapshots sn
+  JOIN deployments d ON d.id = sn.deployment_id
+ WHERE NOT sn.stale
+UNION
+SELECT dsl.storage_key::text
+  FROM deployment_sidecar_layers dsl
+  JOIN snapshots sn ON sn.deployment_id = dsl.deployment_id
+ WHERE NOT sn.stale
+   AND dsl.storage_key <> '';
