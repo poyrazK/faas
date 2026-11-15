@@ -27,6 +27,8 @@
 - [ADR-20261115175927: Operator console signal actions](20261115175927-operator-console-signal-actions.md) — accepted; JSON routes for signal actions, customer health and the support inbox.
 - [ADR-20261115133053: Offline output contracts in CLI JSON help](20261115133053-cli-json-help-output-contracts.md) — accepted; explicit list formats, selectors, empty behavior, publication and error contracts without API discovery.
 
+- [ADR-20261115153114: Offline verification of CLI list exports](20261115153114-cli-offline-export-verification.md) — accepted; exact bytes, SHA-256 and record counts checked against saved receipts without API access.
+
 - [ADR-20261115110124: gRPC steps in `gregale test` scenarios](20261115110124-test-grpc-steps.md) — accepted; a request or check may carry a `grpc:` call (definitions from `.proto` files compiled with protocompile and/or server reflection; unary and all streaming shapes; status, protobuf-JSON pointers, message count, header and trailer metadata); `local` dials plaintext HTTP/2, `real-vm` the deployed app over TLS; load mode stays HTTP-only
 - [ADR-20261115105130: Opt-in streamed list output](20261115105130-cli-streamed-list-output.md)
 - [ADR-20261115121720: Atomic CLI list exports](20261115121720-cli-atomic-list-exports.md) — accepted; private JSON Lines staging, no-overwrite publication and completion integrity receipts.
