@@ -11916,7 +11916,7 @@ type CountProductionQueueDeadLetterParams struct {
 	RowLimit  int32
 }
 
-// Counted up to row_limit (ADR-20261115183906, R7-3): every state read
+// Counted up to row_limit (ADR-20261113180000, R7-3): every state read
 // counted the whole dead letter.
 func (q *Queries) CountProductionQueueDeadLetter(ctx context.Context, db DBTX, arg CountProductionQueueDeadLetterParams) (int64, error) {
 	row := db.QueryRow(ctx, countProductionQueueDeadLetter,
@@ -22500,7 +22500,7 @@ type ExpirePendingQueueMessagesRow struct {
 // ADR-20261112200000: the wait also restarts when a retry or a nack delay
 // makes the message due again, so a back-off longer than the retention no
 // longer turns the retry into an expiry.
-// ADR-20261115183906 (R5-3, R6-3): a held owner (suspended, or under an abuse
+// ADR-20261113180000 (R5-3, R6-3): a held owner (suspended, or under an abuse
 // hold) keeps its messages: the sweep restarts their wait at half the
 // retention instead of dead-lettering them, so after the hold lifts each has
 // at least half the retention left (skipping them only deferred the expiry to
@@ -82412,7 +82412,7 @@ type QueueConsumerRetiredBindingForReviveParams struct {
 }
 
 // ADR-20261112200000: the retired production binding a create with the same
-// name revives. ADR-20261115183906 (R5-2): the name alone selects it; the
+// name revives. ADR-20261113180000 (R5-2): the name alone selects it; the
 // create's queue name then applies as an ordinary rename, so its held
 // messages drain under the new name (leases and push claims select them by
 // binding). Requiring the old queue name too left a binding re-created under
@@ -88934,7 +88934,7 @@ type ReadProductionQueueStateLiveRow struct {
 	OldestPendingAt pgtype.Timestamptz
 }
 
-// ADR-20261115183906 (R7-3): a named queue counts the messages sent under
+// ADR-20261113180000 (R7-3): a named queue counts the messages sent under
 // the name and those of the production binding that reads the name now, so
 // a binding's backlog from before a queue_name rename still shows; leases
 // and push claims already take it. The oldest pending message is the oldest
@@ -99738,7 +99738,7 @@ type RefreshHeldQueueMessagesParams struct {
 	BatchLimit       int32
 }
 
-// ADR-20261115183906 (R5-5): a held push queue's due messages that have
+// ADR-20261113180000 (R5-5): a held push queue's due messages that have
 // waited older_than restart their retention wait. due_at moves to now: the
 // row stays due, and its state does not change, so no notification fires.
 func (q *Queries) RefreshHeldQueueMessages(ctx context.Context, db DBTX, arg RefreshHeldQueueMessagesParams) (int64, error) {
@@ -101139,7 +101139,7 @@ type ReplayDeadLetterInvocationParams struct {
 	AppID     pgtype.UUID
 }
 
-// ADR-20261115183906 (R6-1, R8-2): the replay drops the dead letter's
+// ADR-20261113180000 (R6-1, R8-2): the replay drops the dead letter's
 // outcome code and retention horizon with its result.
 func (q *Queries) ReplayDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayDeadLetterInvocationParams) (int64, error) {
 	result, err := db.Exec(ctx, replayDeadLetterInvocation, arg.ID, arg.AccountID, arg.AppID)
@@ -101152,7 +101152,7 @@ func (q *Queries) ReplayDeadLetterInvocation(ctx context.Context, db DBTX, arg R
 const replayProductionDeadLetterInvocation = `-- name: ReplayProductionDeadLetterInvocation :execrows
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
     instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code='',
-    -- ADR-20261115183906 (R6-1, R8-2): a replay settles anew; the dead
+    -- ADR-20261113180000 (R6-1, R8-2): a replay settles anew; the dead
     -- letter's result and retention horizon do not carry over.
     result=NULL,result_retention_until=NULL
 FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1::uuid
@@ -105264,7 +105264,7 @@ func (q *Queries) RetryExternalTriggerRecordByOperator(ctx context.Context, db D
 const retryProductionQueueDeadLetter = `-- name: RetryProductionQueueDeadLetter :one
 UPDATE invocations i SET state='pending',attempts=0,last_error=NULL,outcome=NULL,due_at=now(),lease_expires_at=NULL,
     instance_id=NULL,last_replayed_at=now(),completed_at=NULL,quota_reserved=false,replay_generation=i.replay_generation+1,work_decision=NULL,outcome_code='',
-    -- ADR-20261115183906 (R6-1, R8-2): a replay settles anew; the dead
+    -- ADR-20261113180000 (R6-1, R8-2): a replay settles anew; the dead
     -- letter's result and retention horizon do not carry over.
     result=NULL,result_retention_until=NULL
 FROM production_invocation_work p WHERE p.id=i.id AND i.id=$1 AND i.account_id=$2 AND i.state='dead_letter' AND NOT EXISTS(SELECT 1 FROM customer_operation_executions e WHERE e.invocation_id=i.id)
@@ -105411,7 +105411,7 @@ type RetryQueueDeadLetterInvocationParams struct {
 	AccountID pgtype.UUID
 }
 
-// ADR-20261115183906 (R6-1, R8-2): a replay starts a new delivery, so it
+// ADR-20261113180000 (R6-1, R8-2): a replay starts a new delivery, so it
 // also drops the dead letter's outcome code and its retention horizon. Kept,
 // the horizon let the reaper delete the replayed message the moment it
 // settled again, and the code reported the old expiry on a later success.

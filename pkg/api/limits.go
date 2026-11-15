@@ -205,7 +205,7 @@ const (
 	AttentionDismissReasonMax  = 200
 )
 
-// Customer attention signals, round 2 (ADR-20261113180000).
+// Customer attention signals, round 2 (ADR-20261115175928).
 const (
 	// AttentionOOMKills runtime OOM kills of one app within
 	// AttentionOOMWindow open an app_oom signal.
