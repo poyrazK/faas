@@ -66,7 +66,7 @@ func cmdInvocations(args []string) int {
 	case "wait":
 		return cmdInvocationsWait(args[1:])
 	}
-	printCommandValidation(os.Stderr, "unknown invocations subcommand %q\n", args[0])
+	printUnknownCommandValidation(os.Stderr, "invocations", args[0], "unknown invocations subcommand %q\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "invocations", nestedCliCommand("invocations"), args[0])
 }
 

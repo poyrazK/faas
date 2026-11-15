@@ -230,7 +230,7 @@ func run(args []string) (status int) {
 	defer func() { treeUsageFrom, treeUsageTo = previousUsageFrom, previousUsageTo }()
 	if len(args) > 0 {
 		if noun, ok := lookupCliTreeNoun(args[0]); ok && oldPathDepth(args[:1]) == 0 {
-			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name))
+			return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name), cliUnknownCommand, strings.Fields(leadingWords(args))))
 		}
 	}
 	jsonUsageHelp = hasHelpFlag(args)
@@ -876,10 +876,10 @@ func run(args []string) (status int) {
 }
 
 func unknownCommand(name string) int {
-	if suggestion, ok := suggestCommand(name); ok {
-		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; did you mean 'gregale %s'?", name, suggestion))
+	if suggestion, ok := rootCommandSuggestion(name); ok {
+		return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; did you mean 'gregale %s'?", name, suggestion), cliUnknownCommand, strings.Fields(name)))
 	}
-	return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", name))
+	return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; run 'gregale help' for usage", name), cliUnknownCommand, strings.Fields(name)))
 }
 
 // printManifestHelp resolves verb paths without invoking a command parser or
