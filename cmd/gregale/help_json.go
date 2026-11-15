@@ -66,7 +66,7 @@ func runJSONHelp(args []string) int {
 	if !ok {
 		message := fmt.Sprintf("gregale: unknown help topic %q; run 'gregale --json help' for commands", strings.Join(words, " "))
 		if len(words) == 1 {
-			if suggestion, ok := suggestCommand(words[0]); ok {
+			if suggestion, ok := suggestCommandFrom(words[0], manifest, commands); ok {
 				message += fmt.Sprintf("; did you mean 'gregale help %s'?", suggestion)
 			}
 		}

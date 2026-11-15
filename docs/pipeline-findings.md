@@ -673,8 +673,11 @@ fixes. The later main/schema integration remains subject to fresh commit CI.
 passed the native Data API checks but failed the complete CLI suite's existing
 `TestUnknownCommandSuggestionKeepsJSONErrorParseable` regression. The JSON-help
 path omitted the unique `gregale help deploy` suggestion for `help deply --json`,
-while human help already provided it. Structured help now uses the same
-capability-filtered suggestion helper and keeps the error as one JSON document.
+while human help already provided it. Structured help now shares the suggestion
+algorithm using its already-filtered offline command manifest and keeps the
+error as one JSON document. The offline-help regression also checks that the
+hint makes no API requests: using the live discovery manifest refreshed account
+capabilities, caught by the final required CLI shard in run 43669423148.
 Ambiguous or multiword unknown topics retain the existing discovery fallback.
 
 ## Customer roadmap

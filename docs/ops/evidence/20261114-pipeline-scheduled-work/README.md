@@ -100,3 +100,14 @@ JSON-help typo-recovery regression tracked as PIPE-020. The parent feature
 branch fixes it using the existing filtered suggestion helper. This branch
 inherits that fix, regenerates SQLC and preview SDKs against current main,
 and requires a fresh complete hosted acceptance run before merge.
+
+[Hosted run 43667097190](https://github.com/poyrazK/faas/actions/runs/43667097190)
+completed the complete CLI suite in 826.590 seconds on
+`6615cb5b3ad2998b3c1873c39618f9197ba8175d`. Its sole CLI failure was the
+offline-help regression in PIPE-020: live command discovery made four API
+requests while producing typo suggestions. All six required checks, native
+pipeline acceptance, SDK mirror and image checks passed on that commit.
+The parent fix now supplies the existing offline manifest to the shared
+suggestion algorithm. Focused JSON-help, typo/ambiguity and edit-distance tests
+passed locally in 5.748 seconds, including the explicit zero-request recovery
+hint regression. Final hosted acceptance remains required after restacking.
