@@ -2188,11 +2188,12 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// (spec §9: row goes to AppDeleted, snapshot GC follows on
 	// the grace sweeper). data carries the slug so the
 	// audit row is searchable even after the row soft-deletes.
-	s.audit.Emit(r.Context(), "app.deleted", &acct.ID, map[string]any{
+	deleted := map[string]any{
 		"app_id":             parked.ID,
 		"slug":               parked.Slug,
 		"delete_grace_until": parked.DeleteGraceUntil,
-	})
+	}
+	s.audit.EmitAs(r.Context(), requestAuditActor(r, acct.ID, deleted), "app.deleted", &acct.ID, deleted)
 	w.WriteHeader(http.StatusNoContent)
 }
 
