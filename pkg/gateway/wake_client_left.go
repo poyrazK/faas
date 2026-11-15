@@ -21,7 +21,7 @@ func (h *Handler) clientLeftDuringWake(r *http.Request, app App) bool {
 	// A traffic revocation or an expired request budget also cancels the
 	// request, with a cause, and keeps its own answer. Only a plain cancel is
 	// the client going away.
-	if trafficRevocationCause(r.Context()) != nil || context.Cause(r.Context()) != context.Canceled {
+	if trafficRevocationCause(r.Context()) != nil || !errors.Is(context.Cause(r.Context()), context.Canceled) {
 		return false
 	}
 	if h.log != nil {
