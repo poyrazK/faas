@@ -35813,11 +35813,9 @@ CREATE TABLE public.commit_sources (
     managed_database_id uuid,
     poll_interval_ms integer DEFAULT 5000 NOT NULL,
     CONSTRAINT commit_source_operation_policy_name CHECK (((operation_policy IS NULL) OR (operation_policy ~ '^[a-z][a-z0-9-]{0,62}$'::text))),
-    CONSTRAINT commit_sources_changes_check CHECK ((((queue_name IS NULL) AND (changes_feeds IS NULL) AND (managed_database_id IS NULL) AND (poll_interval_ms = 5000)) OR ((queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (jsonb_typeof(changes_feeds) = 'array'::text) AND ((jsonb_array_length(changes_feeds) >= 1) AND (jsonb_array_length(changes_feeds) <= 20)) AND (destination = 'operation'::text) AND (contract_version = 1) AND (operation_policy IS NULL) AND (NOT allow_tenant_selection)))),
     CONSTRAINT commit_sources_contract_version_check CHECK ((((destination = 'operation'::text) AND (contract_version = ANY (ARRAY[1, 2])) AND ((NOT allow_tenant_selection) OR (contract_version = 2))) OR ((destination = 'event'::text) AND (contract_version = 3) AND (NOT allow_tenant_selection) AND (operation_policy IS NULL)))),
     CONSTRAINT commit_sources_destination_check CHECK ((destination = ANY (ARRAY['operation'::text, 'event'::text]))),
     CONSTRAINT commit_sources_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
-    CONSTRAINT commit_sources_poll_interval_check CHECK (((poll_interval_ms >= 1000) AND (poll_interval_ms <= 600000))),
     CONSTRAINT commit_sources_relay_status_check CHECK ((relay_status = ANY (ARRAY['unconfigured'::text, 'healthy'::text, 'credential_unavailable'::text, 'database_unavailable'::text, 'schema_unqualified'::text, 'source_binding_unqualified'::text, 'replay_pending'::text, 'retention_unqualified'::text, 'cleanup_pending'::text, 'blocked_scan_pending'::text, 'blocked_status_pending'::text, 'handoff_pending'::text, 'status_unavailable'::text, 'blocked_events'::text])))
 );
 
@@ -64661,11 +64659,27 @@ ALTER TABLE ONLY public.commit_sources
 
 
 --
+-- Name: commit_sources commit_sources_changes_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.commit_sources
+    ADD CONSTRAINT commit_sources_changes_check CHECK ((((queue_name IS NULL) AND (changes_feeds IS NULL) AND (managed_database_id IS NULL) AND (poll_interval_ms = 5000)) OR ((queue_name ~ '^[a-z][a-z0-9-]{0,62}$'::text) AND (jsonb_typeof(changes_feeds) = 'array'::text) AND ((jsonb_array_length(changes_feeds) >= 1) AND (jsonb_array_length(changes_feeds) <= 20)) AND (destination = 'operation'::text) AND (contract_version = 1) AND (operation_policy IS NULL) AND (NOT allow_tenant_selection)))) NOT VALID;
+
+
+--
 -- Name: commit_sources commit_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.commit_sources
     ADD CONSTRAINT commit_sources_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: commit_sources commit_sources_poll_interval_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.commit_sources
+    ADD CONSTRAINT commit_sources_poll_interval_check CHECK (((poll_interval_ms >= 1000) AND (poll_interval_ms <= 600000))) NOT VALID;
 
 
 --

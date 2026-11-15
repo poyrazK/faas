@@ -2,7 +2,9 @@
 -- migration-compat: expand
 
 -- +goose Up
--- commit_sources is small; the constraint checks lock it briefly.
+-- The checks are added NOT VALID: new writes are checked at once, and every
+-- existing row holds the column defaults, which satisfy them. The one source
+-- per app index is built concurrently by 20261115051534380.
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- ADR-20261112140000: a changes source is a Commit source whose customer
@@ -17,25 +19,19 @@ ALTER TABLE commit_sources
     ADD COLUMN IF NOT EXISTS changes_feeds jsonb,
     ADD COLUMN IF NOT EXISTS managed_database_id uuid,
     ADD COLUMN IF NOT EXISTS poll_interval_ms integer NOT NULL DEFAULT 5000;
-ALTER TABLE commit_sources DROP CONSTRAINT IF EXISTS commit_sources_poll_interval_check;
 ALTER TABLE commit_sources ADD CONSTRAINT commit_sources_poll_interval_check
-    CHECK (poll_interval_ms BETWEEN 1000 AND 600000);
-ALTER TABLE commit_sources DROP CONSTRAINT IF EXISTS commit_sources_changes_check;
+    CHECK (poll_interval_ms BETWEEN 1000 AND 600000) NOT VALID;
 ALTER TABLE commit_sources ADD CONSTRAINT commit_sources_changes_check CHECK (
     (queue_name IS NULL AND changes_feeds IS NULL AND managed_database_id IS NULL AND poll_interval_ms = 5000)
     OR (queue_name ~ '^[a-z][a-z0-9-]{0,62}$'
         AND jsonb_typeof(changes_feeds) = 'array'
         AND jsonb_array_length(changes_feeds) BETWEEN 1 AND 20
         AND destination = 'operation' AND contract_version = 1
-        AND operation_policy IS NULL AND NOT allow_tenant_selection));
--- One changes source per app (ADR-20261112140000 §8).
-CREATE UNIQUE INDEX IF NOT EXISTS commit_sources_changes_app
-    ON commit_sources (app_id) WHERE queue_name IS NOT NULL;
+        AND operation_policy IS NULL AND NOT allow_tenant_selection)) NOT VALID;
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP INDEX IF EXISTS commit_sources_changes_app;
 ALTER TABLE commit_sources DROP CONSTRAINT IF EXISTS commit_sources_changes_check;
 ALTER TABLE commit_sources DROP CONSTRAINT IF EXISTS commit_sources_poll_interval_check;
 ALTER TABLE commit_sources
