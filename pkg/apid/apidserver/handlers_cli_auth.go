@@ -99,7 +99,7 @@ func (h *cliAuthHandlers) mintCliAuthCode(w http.ResponseWriter, r *http.Request
 		return
 	}
 	h.recordCliAuthRequester(r, hash)
-	url :=strings.TrimRight(h.urlBase, "/") + cliAuthPath + "?code=" + code
+	url := strings.TrimRight(h.urlBase, "/") + cliAuthPath + "?code=" + code
 	if loopbackPort != 0 {
 		url += "&port=" + strconv.Itoa(loopbackPort)
 	}
