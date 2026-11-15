@@ -2347,6 +2347,8 @@ export type { PlatformTenantUsageBucketResponse } from './models/PlatformTenantU
 export type { PlatformTenantUsageResponse } from './models/PlatformTenantUsageResponse.js';
 export type { PlatformTenantWebhookListResponse } from './models/PlatformTenantWebhookListResponse.js';
 export type { PlatformTenantWebhookResponse } from './models/PlatformTenantWebhookResponse.js';
+export type { PostgresChangeFeed } from './models/PostgresChangeFeed.js';
+export type { PostgresChangesResponse } from './models/PostgresChangesResponse.js';
 export type { PreAuthEnforcementSuggestion } from './models/PreAuthEnforcementSuggestion.js';
 export type { PreAuthFailedResponseLimit } from './models/PreAuthFailedResponseLimit.js';
 export type { PreAuthObservationsResponse } from './models/PreAuthObservationsResponse.js';
@@ -2619,6 +2621,7 @@ export type { PutOutboundCredentialRequest } from './models/PutOutboundCredentia
 export type { PutOutboundDailyRequestBudgetRequest } from './models/PutOutboundDailyRequestBudgetRequest.js';
 export type { PutOutboundRequestPolicyRequest } from './models/PutOutboundRequestPolicyRequest.js';
 export type { PutOutboundRunsBindingRequest } from './models/PutOutboundRunsBindingRequest.js';
+export type { PutPostgresChangesRequest } from './models/PutPostgresChangesRequest.js';
 export type { PutWebhookWorkflowBindingRequest } from './models/PutWebhookWorkflowBindingRequest.js';
 export type { QueueBindingCanary } from './models/QueueBindingCanary.js';
 export type { QueueBindingResponse } from './models/QueueBindingResponse.js';

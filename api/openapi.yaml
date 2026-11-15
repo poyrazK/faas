@@ -87993,7 +87993,7 @@ components:
       properties:
         source_id: { type: string, format: uuid }
         queue_name: { type: string }
-        database: { type: string, description: The managed database name, when managed. }
+        database: { type: string, description: "The managed database name, when managed." }
         managed: { type: boolean }
         poll_interval_seconds: { type: integer }
         feeds:

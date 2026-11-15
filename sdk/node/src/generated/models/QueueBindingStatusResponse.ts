@@ -35,6 +35,14 @@ export type QueueBindingStatusResponse = {
   dead_letter: number;
   oldest_pending_at?: string | null;
   oldest_pending_age_seconds?: number | null;
+  /**
+   * group_key groups whose first message has failed and holds later messages with its key until it succeeds or dead-letters. Omitted when zero.
+   */
+  blocked_groups?: number;
+  /**
+   * Age of the oldest message holding its group_key group.
+   */
+  oldest_blocked_age_seconds?: number;
   generated_at: string;
 };
 

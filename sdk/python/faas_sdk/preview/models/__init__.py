@@ -4500,6 +4500,9 @@ from .post_force_restart_instance_confirm import PostForceRestartInstanceConfirm
 from .post_otlp_metrics_json_body import PostOTLPMetricsJsonBody
 from .post_otlp_metrics_response_200 import PostOTLPMetricsResponse200
 from .post_sweep_stuck_builds_confirm import PostSweepStuckBuildsConfirm
+from .postgres_change_feed import PostgresChangeFeed
+from .postgres_change_feed_operations_item import PostgresChangeFeedOperationsItem
+from .postgres_changes_response import PostgresChangesResponse
 from .pre_auth_enforcement_suggestion import PreAuthEnforcementSuggestion
 from .pre_auth_enforcement_suggestion_status import PreAuthEnforcementSuggestionStatus
 from .pre_auth_failed_response_limit import PreAuthFailedResponseLimit
@@ -5002,6 +5005,8 @@ from .put_outbound_credential_request import PutOutboundCredentialRequest
 from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
 from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
+from .put_postgres_changes_connection_body import PutPostgresChangesConnectionBody
+from .put_postgres_changes_request import PutPostgresChangesRequest
 from .put_webhook_workflow_binding_request import PutWebhookWorkflowBindingRequest
 from .put_webhook_workflow_binding_request_filter import PutWebhookWorkflowBindingRequestFilter
 from .queue_binding_canary import QueueBindingCanary
@@ -10864,6 +10869,9 @@ __all__ = (
     "PostForceColdBootAppConfirm",
     "PostForceParkInstanceConfirm",
     "PostForceRestartInstanceConfirm",
+    "PostgresChangeFeed",
+    "PostgresChangeFeedOperationsItem",
+    "PostgresChangesResponse",
     "PostOTLPMetricsJsonBody",
     "PostOTLPMetricsResponse200",
     "PostSweepStuckBuildsConfirm",
@@ -11335,6 +11343,8 @@ __all__ = (
     "PutOutboundDailyRequestBudgetRequest",
     "PutOutboundRequestPolicyRequest",
     "PutOutboundRunsBindingRequest",
+    "PutPostgresChangesConnectionBody",
+    "PutPostgresChangesRequest",
     "PutWebhookWorkflowBindingRequest",
     "PutWebhookWorkflowBindingRequestFilter",
     "QueueBindingCanary",
