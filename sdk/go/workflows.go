@@ -83,6 +83,9 @@ type WorkflowReportedOp struct {
 	DurationMS   int64                `json:"duration_ms,omitempty"`
 	Event        string               `json:"event,omitempty"`
 	TimeoutMS    int64                `json:"timeout_ms,omitempty"`
+	// Function and Input are a call operation's callee and request body.
+	Function string          `json:"function,omitempty"`
+	Input    json.RawMessage `json:"input,omitempty"`
 }
 
 // WorkflowResult is the workflow function's state after a call: running,
@@ -141,6 +144,63 @@ type WorkflowStepError struct {
 }
 
 func (e *WorkflowStepError) Error() string { return e.Message }
+
+// WorkflowCallError is a failed WorkflowCall; Code is function_call_failed.
+type WorkflowCallError struct {
+	Step     string
+	Function string
+	Code     string
+	Message  string
+}
+
+func (e *WorkflowCallError) Error() string { return e.Message }
+
+// WorkflowCallOption changes one WorkflowCall.
+type WorkflowCallOption func(*workflowCallOptions)
+
+type workflowCallOptions struct{ name string }
+
+// WithCallName names the call's operation in the journal; it defaults to the
+// function's name.
+func WithCallName(name string) WorkflowCallOption {
+	return func(o *workflowCallOptions) { o.name = name }
+}
+
+// WorkflowCall calls a function this workflow may call (a sibling in its
+// functions project, or an app under its calls:) and decodes its output. The
+// run parks while the function runs, with no VM held; the call keeps the
+// callee's own retries. A failed call returns a *WorkflowCallError.
+func WorkflowCall[T any](wf *Workflow, function string, input any, opts ...WorkflowCallOption) (T, error) {
+	var zero T
+	o := workflowCallOptions{name: function}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	seq, opName, entry, conflict := wf.claim(o.name, "call", "")
+	if entry != nil && entry.Status == "succeeded" {
+		return WorkflowDecode[T](entry.Output)
+	}
+	if entry != nil && entry.Status == "failed" {
+		message := entry.Error
+		if message == "" {
+			message = "function " + function + " failed"
+		}
+		return zero, &WorkflowCallError{Step: opName, Function: function, Code: "function_call_failed", Message: message}
+	}
+	if entry == nil {
+		op := WorkflowReportedOp{Seq: seq, Name: opName, Kind: "call", Function: function}
+		if input != nil && !conflict {
+			raw, err := json.Marshal(input)
+			if err != nil {
+				return zero, fmt.Errorf("faas: call %s input is not JSON: %w", function, err)
+			}
+			op.Input = raw
+		}
+		wf.report(op)
+	}
+	wf.suspend()
+	return zero, nil
+}
 
 type nonRetryableError struct{ err error }
 
@@ -596,6 +656,10 @@ type WorkflowLocalRunOptions struct {
 	// MaxInvocations stops a run that does not finish (default 1000).
 	MaxInvocations int
 	RunID          string
+	// Functions are stand-ins for the functions WorkflowCall reaches, by
+	// name. An error fails the call; a name with none fails it as not
+	// callable.
+	Functions map[string]func(input json.RawMessage) (any, error)
 }
 
 // WorkflowLocalRunResult is a finished local run.
@@ -650,6 +714,9 @@ func RunWorkflowLocally(ctx context.Context, definition WorkflowDefinition, inpu
 				return WorkflowLocalRunResult{Status: "failed", Error: fmt.Sprintf("nondeterministic workflow: operation %d %q", op.Seq, op.Name), Journal: journal, Invocations: invocation}, nil
 			}
 			entry := localWorkflowEntry(op, journal, defaultAttempts, options.Events, consumed)
+			if op.Kind == "call" {
+				entry = localWorkflowCall(op, options.Functions)
+			}
 			if op.Seq < len(journal) {
 				journal[op.Seq] = entry
 			} else {
@@ -708,5 +775,26 @@ func localWorkflowEntry(op WorkflowReportedOp, journal []WorkflowJournalEntry, d
 			entry.TimedOut = true
 		}
 	}
+	return entry
+}
+
+func localWorkflowCall(op WorkflowReportedOp, functions map[string]func(json.RawMessage) (any, error)) WorkflowJournalEntry {
+	entry := WorkflowJournalEntry{Seq: op.Seq, Name: op.Name, Kind: op.Kind}
+	fn := functions[op.Function]
+	if fn == nil {
+		entry.Status, entry.Error = "failed", fmt.Sprintf("function %q is not callable from this workflow", op.Function)
+		return entry
+	}
+	value, err := fn(op.Input)
+	if err != nil {
+		entry.Status, entry.Error = "failed", err.Error()
+		return entry
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		entry.Status, entry.Error = "failed", err.Error()
+		return entry
+	}
+	entry.Status, entry.Output = "succeeded", raw
 	return entry
 }
