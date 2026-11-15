@@ -2253,7 +2253,8 @@ var cliCommands = []cliCommand{
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
-				{Name: "stream", Short: "emit JSON Lines as pages arrive; requires --json --all", Bool: true},
+				{Name: "stream", Short: "emit JSON Lines as pages arrive; stdout requires --json --all", Bool: true},
+				{Name: "output", Short: "publish a new JSON Lines file after all pages complete; requires --all", Value: "PATH"},
 			}},
 			{Name: "provenance", Short: "Show the build provenance attestation", Positionals: []string{"<id>"}},
 			{Name: "sbom", Short: "Show the build SBOM", Positionals: []string{"<id>"}},
@@ -4979,7 +4980,8 @@ var cliCommands = []cliCommand{
 				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
-				{Name: "stream", Short: "emit JSON Lines as pages arrive; requires --json --all", Bool: true},
+				{Name: "stream", Short: "emit JSON Lines as pages arrive; stdout requires --json --all", Bool: true},
+				{Name: "output", Short: "publish a new JSON Lines file after all pages complete; requires --all", Value: "PATH"},
 			}},
 			{Name: "get", Short: "Show or recover one invocation", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "replay", Short: "re-issue failed unkeyed work"},
@@ -6190,6 +6192,19 @@ var cliCommands = []cliCommand{
 			{Name: "restore", Short: "Restore a database to a new database", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
+				{Name: "switch", Short: "move this app to the copy, keeping its code", Value: "APP"},
+				{Name: "env", Short: "with --switch: environment whose bindings move", Value: "SCOPE"},
+				{Name: "yes", Short: "with --switch: switch without prompting", Bool: true},
+				{Name: "no-wait", Short: "with --switch: return once the switch starts", Bool: true},
+				{Name: "timeout", Short: "with --switch: wait deadline", Value: "DURATION"},
+				{Name: "poll-interval", Short: "with --switch: poll interval", Value: "DURATION"},
+			}, Notes: []string{
+				"With --switch the app moves to the copy without changing its code: it stops serving while it is fenced and drained, then cold starts on the copy.",
+				"Writes after the restore point stay only in the source database, which keeps every write.",
+				"Follow or cancel the switch with `gregale release rollback status <app> <switch-id>`.",
+			}, Examples: []string{
+				"gregale postgres restore orders --name orders-before-import --point-in-time 2026-10-30T09:00:00Z",
+				"gregale postgres restore orders --name orders-0900 --point-in-time 2026-10-30T09:00:00Z --switch my-api",
 			}},
 			{Name: "branch", Short: "Make, list and delete copy-on-write branches of a database", Notes: []string{
 				"A branch is a restore: a new database that shares its source's storage until written to. `gregale postgres branch <database> <name>` is `branch create`.",
