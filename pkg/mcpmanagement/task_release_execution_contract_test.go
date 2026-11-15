@@ -20,6 +20,16 @@ func TestMCPTaskApplyReceiptIdentityContract(t *testing.T) {
 	if err != nil || string(bound) != string(body) || strings.Contains(string(bound), `"plan_id"`) {
 		t.Fatal("Task receipt was rewritten as a generic deployment plan", err)
 	}
+
+	m := &management{}
+	verified, err := m.addToolVerification("gregale_apply_task_tool_deploy", args, bound)
+	if err != nil || string(verified) != string(body) || strings.Contains(string(verified), `"verification"`) {
+		t.Fatal("Task receipt acquired unrelated generic verification", err)
+	}
+	generic, err := m.addToolVerification("gregale_apply_operation", applyArgs{PlanID: "reviewed"}, json.RawMessage(`{"plan_id":"reviewed"}`))
+	if err != nil || !strings.Contains(string(generic), `"verification"`) {
+		t.Fatal("generic apply lost verification", err)
+	}
 	for _, field := range []string{"intent", "operation", "digest"} {
 		t.Run(field, func(t *testing.T) {
 			request := args
