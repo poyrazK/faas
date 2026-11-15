@@ -11,7 +11,8 @@ from faas_sdk.preview.queue_consumer import QueueConsumer
 class FakeQueue:
     """Serves the lease API from memory; an empty lease waits briefly like the server's long-poll."""
 
-    def __init__(self, payloads, extend_fails=False):
+    def __init__(self, payloads, extend_fails=False, ack_failures=0):
+        self.ack_failures = ack_failures
         self.calls = []
         self.pending = [
             {
@@ -39,6 +40,9 @@ class FakeQueue:
             if not taken:
                 await asyncio.sleep(0.03)
             return httpx.Response(200, json={"messages": taken})
+        if verb == "ack" and self.ack_failures > 0:
+            self.ack_failures -= 1
+            return httpx.Response(503, json={"title": "unavailable"})
         held = not (verb == "extend" and self.extend_fails)
         receipts = body["receipts"]
         failed = [] if held else [{"receipt": r, "reason": "lease_expired"} for r in receipts]
@@ -89,6 +93,23 @@ async def test_acks_handled_messages_and_nacks_failures():
     nack = fake.verbs("nack")[0][1]
     assert nack["receipts"] == ["m1.r"] and nack["delay_seconds"] == 5 and "boom" in nack["error"]
     assert any(isinstance(error, RuntimeError) and str(error) == "boom" for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_retries_a_failed_ack():
+    # adr: 20261113180000 — a transient ack failure no longer leaves a handled
+    # message to be redelivered after its timeout.
+    fake = FakeQueue([{"ok": True}], ack_failures=1)
+
+    async def handle(message):
+        return None
+
+    consumer = fake.consumer(handle)
+    run = asyncio.create_task(consumer.run())
+    await until(lambda: len(fake.verbs("ack")) == 2)
+    consumer.stop()
+    await run
+    assert [call[1] for call in fake.verbs("ack")] == [{"receipts": ["m0.r"]}] * 2
 
 
 @pytest.mark.asyncio

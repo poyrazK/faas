@@ -824,6 +824,12 @@ receipt. Stopping a local wait leaves server processing running.
 including committed HEAD, even when secret scanning is off or `.gregaleignore`
 tries to reinclude it. Keep secrets out of any archive you supply with `--tarball`.
 
+When the source directory (or its project root) has
+`.gregale/required-secrets.json`, an app deploy warns before the upload about
+each declared name the app has neither as a secret nor as an environment
+variable in the deploy's scope, counting the names `--secrets-file` just
+sealed. It only warns: a binding or the image can still supply the value.
+
 For projects, apply carries the bundle separately and seals it for every selected
 workload in the requested environment before it queues any build. This requires
 `secrets:write` or `admin` in addition to deploy permission. A secret configuration

@@ -44,7 +44,7 @@ func cmdMCPTaskRetirement(args []string) int {
 	}
 	action := args[0]
 	owner := action == "retire-qualify" || action == "retire-approve" || action == "retire-revoke"
-	if flags.NArg() != 0 || !toolpublication.ValidID(*id) || !toolpublication.ValidID(*op) || !toolpublication.ValidID(*handover) || action != "retire" && action != "retire-hook" && !owner || action == "retire-qualify" && (*digest != "" || !*local) || action != "retire-qualify" && !(action == "retire-hook" && *phase == "qualify") && (!toolpublication.ValidID(*digest) || *local) || action == "retire" && !*consent || action != "retire" && *consent || action != "retire-hook" && *phase != "" || action == "retire-hook" && *phase != "qualify" && *phase != "park" && *phase != "observe" {
+	if flags.NArg() != 0 || !toolpublication.ValidID(*id) || !toolpublication.ValidID(*op) || !toolpublication.ValidID(*handover) || action != "retire" && action != "retire-hook" && !owner || action == "retire-qualify" && (*digest != "" || !*local) || action != "retire-qualify" && (action != "retire-hook" || *phase != "qualify") && (!toolpublication.ValidID(*digest) || *local) || action == "retire" && !*consent || action != "retire" && *consent || action != "retire-hook" && *phase != "" || action == "retire-hook" && *phase != "qualify" && *phase != "park" && *phase != "observe" {
 		return printErr("Task retirement", errors.New("require exact native identities, separate owner approval and appropriate local execution consent"))
 	}
 	c, err := authedClient()

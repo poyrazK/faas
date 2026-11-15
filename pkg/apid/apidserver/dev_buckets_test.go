@@ -104,17 +104,40 @@ func devBucketsSuite(t *testing.T, e devBucketsFixture) {
 	if len(*provider.Created()) != 2 {
 		t.Fatal("restart reprovisioned")
 	}
-	// Permission changes and revocation fail closed without replacing rights.
+	// A changed permission replaces this app's developer binding; a binding
+	// revoked by hand fails closed and is never re-minted.
 	changed := request
 	changed.Buckets = []api.DevBucketRequest{{Name: "assets", Permission: "read"}}
-	if response := e.do(t, http.MethodPut, path, changed, nil); response.Code != http.StatusConflict {
-		t.Fatalf("permission drift = %d", response.Code)
+	if response := e.do(t, http.MethodPut, path, changed, nil); response.Code != http.StatusOK {
+		t.Fatalf("permission change = %d: %s", response.Code, response.Body.String())
 	}
-	if _, err := credentials.RevokeObjectS3ComputeBinding(t.Context(), e.account.ID, bucket.Bucket.ID, bucket.Binding.ID); err != nil {
+	old, err := credentials.GetObjectS3Credential(t.Context(), e.account.ID, bucket.Bucket.ID, bucket.Binding.ID)
+	if err != nil || old.Status == state.ObjectS3CredentialStatusActive {
+		t.Fatalf("old binding still active after permission change: %v", err)
+	}
+	all, err := credentials.ListObjectS3Credentials(t.Context(), e.account.ID, bucket.Bucket.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if response := e.do(t, http.MethodPut, path, request, nil); response.Code != http.StatusConflict {
-		t.Fatalf("revoked retry = %d: %s", response.Code, response.Body.String())
+	var replacement state.ObjectS3Credential
+	for _, credential := range all {
+		if credential.Status == state.ObjectS3CredentialStatusActive && credential.ManagedAppID == app.ID && credential.Label == "developer" {
+			if replacement.ID != "" {
+				t.Fatal("two active developer bindings after permission change")
+			}
+			replacement = credential
+		}
+	}
+	if replacement.ID == "" || replacement.Permission != "read" {
+		t.Fatalf("replacement binding = %+v", replacement)
+	}
+	if _, err := credentials.RevokeObjectS3ComputeBinding(t.Context(), e.account.ID, bucket.Bucket.ID, replacement.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, retry := range []api.UpsertDevSessionRequest{changed, request} {
+		if response := e.do(t, http.MethodPut, path, retry, nil); response.Code != http.StatusConflict {
+			t.Fatalf("revoked retry = %d: %s", response.Code, response.Body.String())
+		}
 	}
 	rows, err := e.store.ListAppSecretsInScope(t.Context(), e.account.ID, app.ID, api.DefaultEnvScope)
 	if err != nil || len(rows) != 0 {

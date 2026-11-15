@@ -24,6 +24,9 @@ func TestApplySnapshotRefreshConfig(t *testing.T) {
 		{runtimeconfig.KeySnapshotRefreshWindowHours, `48`, true, true},
 		{runtimeconfig.KeySnapshotRefreshWindowHours, `0`, true, false},
 		{runtimeconfig.KeySnapshotRefreshWindowHours, `"48"`, true, false},
+		{runtimeconfig.KeySnapshotCleanRecapture, `"off"`, true, true},
+		{runtimeconfig.KeySnapshotCleanRecapture, `"on"`, true, true},
+		{runtimeconfig.KeySnapshotCleanRecapture, `"shadow"`, true, false},
 		{runtimeconfig.KeyDataPlacement, `true`, false, true},
 	} {
 		handled, err := applySnapshotRefreshConfig(r, tc.key, json.RawMessage(tc.value))
@@ -32,7 +35,7 @@ func TestApplySnapshotRefreshConfig(t *testing.T) {
 		}
 	}
 	for _, key := range snapshotRefreshKeys {
-		if key != runtimeconfig.KeySnapshotRefresh && key != runtimeconfig.KeySnapshotRefreshWindowHours {
+		if key != runtimeconfig.KeySnapshotRefresh && key != runtimeconfig.KeySnapshotRefreshWindowHours && key != runtimeconfig.KeySnapshotCleanRecapture {
 			t.Errorf("unexpected key %s", key)
 		}
 	}

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FlagCondition } from './FlagCondition.js';
 import type { ProgressiveRollout } from './ProgressiveRollout.js';
 /**
  * Ordered targeting rule; customer/group and subject constraints combine with AND. Subject rules require a customer or group constraint. Subject IDs are opaque application IDs and are evaluated only after application authentication. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment. Progressive rollout is limited to boolean true rules.
@@ -25,6 +26,10 @@ export type FlagRule = {
    * Allocation unit for rollout percentages. Omitted preserves customer-level allocation. Subject rollout requires a customer or group constraint and an authenticated subject context.
    */
   rollout_unit?: 'customer' | 'subject';
+  /**
+   * Request attribute conditions; all must hold. Runtime SDKs need capability attribute-targeting-v1.
+   */
+  attributes?: Array<FlagCondition>;
   progression?: ProgressiveRollout;
   value?: (boolean | string);
 };

@@ -25,7 +25,7 @@ var deploySettingGroups = map[string]string{
 	"startup_deadline_s": "lifecycle", "max_retries": "lifecycle",
 	"request_timeout_s": "lifecycle", "stop_grace_period_s": "lifecycle",
 	"stop_signal": "lifecycle", "service_replicas": "lifecycle", "worker_replicas": "lifecycle",
-	"after_restore": "lifecycle", "before_checkpoint": "lifecycle",
+	"after_restore": "lifecycle", "before_checkpoint": "lifecycle", "warmup": "lifecycle",
 	"scaling_policy": "scaling", "retry_policy": "scaling",
 }
 

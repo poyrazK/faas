@@ -8393,6 +8393,344 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/ai-prompts:
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIPrompts
+      summary: List the account's managed AI prompts.
+      description: >-
+        Requires MFA and read scope. Returns each prompt with its live, previous live and latest versions and its canary.
+      responses:
+        '200':
+          description: The prompts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIPrompt
+      summary: Read a managed AI prompt.
+      description: >-
+        Requires MFA and read scope. Apps call a prompt with POST $GREGALE_OUTBOUND_URL/p/{prompt}.
+      responses:
+        '200':
+          description: The prompt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPrompt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundAIPrompt
+      summary: Delete a managed AI prompt.
+      description: >-
+        Requires MFA and deploy-write scope. Deletes its versions, canary and evaluations; calls to it then answer 404.
+      responses:
+        '204': { description: Prompt deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/versions:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIPromptVersions
+      summary: List a managed AI prompt's versions.
+      description: >-
+        Requires MFA and read scope. Newest first, without their messages.
+      responses:
+        '200':
+          description: The versions.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptVersionList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: pushOutboundAIPromptVersion
+      summary: Push a managed AI prompt version.
+      description: >-
+        Requires MFA and deploy-write scope. Stores an immutable version, creating the prompt on its first version, which becomes live. A later version is live only when live is true. A push identical to the latest version stores nothing and answers 200 with created false. {{name}} placeholders in message content are replaced by the call's variables or the version's defaults as plain text. The target is an openai-format route, or a managed AI integration an openai-format route accepts, with a model. Each prompt keeps 200 versions; prompts per account follow the plan.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushOutboundAIPromptVersionRequest' }
+      responses:
+        '201':
+          description: The new version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushOutboundAIPromptVersionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '429':
+          description: The account reached its plan's managed prompt limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/outbound/ai-prompts/{prompt}/versions/{version}:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+      - name: version
+        in: path
+        required: true
+        description: The version number.
+        schema: { type: integer, minimum: 1 }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIPromptVersion
+      summary: Read a managed AI prompt version.
+      description: >-
+        Requires MFA and read scope. Returns its messages, variables, defaults, target and params.
+      responses:
+        '200':
+          description: The version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptVersion' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/live:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    put:
+      tags: [outbound]
+      operationId: setOutboundAIPromptLive
+      summary: Make a managed AI prompt version live.
+      description: >-
+        Requires MFA and deploy-write scope. The old live version becomes the previous one and any canary ends.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIPromptLiveRequest' }
+      responses:
+        '200':
+          description: The prompt with the chosen version live.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPrompt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/rollback:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    post:
+      tags: [outbound]
+      operationId: rollBackOutboundAIPrompt
+      summary: Roll a managed AI prompt back.
+      description: >-
+        Requires MFA and deploy-write scope. Makes the previous live version live again and ends any canary.
+      responses:
+        '200':
+          description: The prompt with its previous live version back.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPrompt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/canary:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    put:
+      tags: [outbound]
+      operationId: setOutboundAIPromptCanary
+      summary: Start or replace a managed AI prompt canary.
+      description: >-
+        Requires MFA and deploy-write scope. Sends percent of unpinned calls to a version that is not live, chosen per X-Gregale-AI-Session, else X-Gregale-AI-User, else at random. The outbound gateway rolls it back with the route canary rule.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIPromptCanaryRequest' }
+      responses:
+        '200':
+          description: The canary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptCanary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [outbound]
+      operationId: deleteOutboundAIPromptCanary
+      summary: Stop a managed AI prompt canary.
+      description: >-
+        Requires MFA and deploy-write scope. The live version keeps serving.
+      responses:
+        '204': { description: The prompt's canary stopped. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/canary/promote:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    post:
+      tags: [outbound]
+      operationId: promoteOutboundAIPromptCanary
+      summary: Promote a managed AI prompt canary.
+      description: >-
+        Requires MFA and deploy-write scope. Makes the canary's version live and ends the canary.
+      responses:
+        '200':
+          description: The prompt with the canary's version live.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPrompt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/stats:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIPromptStats
+      summary: Read a managed AI prompt's per-version stats.
+      description: >-
+        Requires MFA and read scope. Returns each version's settled attempts, errors, mean time to first byte, cost and good and bad feedback over the last 24 hours.
+      responses:
+        '200':
+          description: The stats.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptStats' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompts/{prompt}/evaluations:
+    parameters:
+      - $ref: '#/components/parameters/OutboundAIPromptName'
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIPromptEvaluations
+      summary: List a managed AI prompt's evaluations.
+      description: >-
+        Requires MFA and read scope. Newest first, at most 100, without their cases' results.
+      responses:
+        '200':
+          description: The evaluations.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptEvaluationList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [outbound]
+      operationId: createOutboundAIPromptEvaluation
+      summary: Evaluate a managed AI prompt version.
+      description: >-
+        Requires MFA and deploy-write scope. The outbound gateway renders the version and the live version for each case's variables, calls each version's target, and asks the judge model which answer is better, in a random order. It passes when losses and candidate errors are at most max_loss_rate percent of the cases; a passing evaluation starts its canary, if it has one, while the baseline is still live and the prompt has no active canary. Calls are metered and capped under the caller evaluation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOutboundAIPromptEvaluationRequest' }
+      responses:
+        '202':
+          description: The prompt evaluation, pending until the outbound gateway runs it.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptEvaluation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/ai-prompt-evaluations/{evaluation}:
+    parameters:
+      - name: evaluation
+        in: path
+        required: true
+        description: UUID of the prompt evaluation.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIPromptEvaluation
+      summary: Read a managed AI prompt evaluation.
+      description: >-
+        Requires MFA and read scope. Returns each case's result; answer texts need admin or secrets:read. Evaluations are kept for 30 days.
+      responses:
+        '200':
+          description: The prompt evaluation with each case's result.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIPromptEvaluation' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/runs:
     parameters:
       - name: integration
@@ -22923,6 +23261,21 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/dev/sessions:
+    get:
+      tags: [dev]
+      operationId: listDevSessions
+      summary: List the account's remote developer environments.
+      description: Every developer environment of the account, wherever it was started, with its project, backing app, URL, teardown state and lease expiry. Never renews a lease.
+      responses:
+        '200':
+          description: Developer environments.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevSessionListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/dev/sessions/{project}:
     parameters:
       - name: project
@@ -22987,8 +23340,13 @@ paths:
         - name: workspace_id
           in: query
           required: false
-          description: Opaque local workspace identity returned by the CLI derivation. Omit only to target a legacy session.
+          description: Opaque local workspace identity returned by the CLI derivation. Omit only to target a legacy session or when app is given.
           schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+        - name: app
+          in: query
+          required: false
+          description: The environment's backing dev-* app slug, as listed by GET /v1/dev/sessions. Selects the environment instead of workspace_id, so one whose checkout moved can be stopped from anywhere.
+          schema: { type: string }
       responses:
         '204': { description: Developer environment removed. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -31109,6 +31467,32 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [deployments]
+      operationId: createDatabaseSwitch
+      summary: Restore a database and move the app to the copy.
+      description: "Restores one of the app's managed PostgreSQL databases to point_in_time as a new database and moves the app's bindings in the scope to it, keeping the live release. The app stops serving from fencing until it resumes on the copy. Writes after point_in_time stay only in the source database, which keeps every write. Needs the postgres:manage scope and a verified email. Follow the returned switch with GET; cancel it before it starts switching."
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDatabaseSwitchRequest' }
+            example: {"database_id":"0123456789abcdef0123456789abcdef","name":"orders-0900","point_in_time":"2026-10-30T09:00:00Z"}
+      responses:
+        '202':
+          description: The switch was recorded and runs in the background.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseSwitch' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
@@ -59013,6 +59397,68 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  # ADR-20261115090000: abuse review for operators. Customer data, so an
+  # operator session with MFA; email, sign-up address and user agent need
+  # ?include_pii=1, which writes a pii.accessed audit row.
+  /v1/admin/accounts/{id}/risk:
+    get:
+      tags: [admin]
+      operationId: getAccountRisk
+      summary: An account's abuse risk (operator-only).
+      description: |
+        The account's abuse hold, sign-up record (country, network owner,
+        email domain, disposable flag), links to and from abuse-held
+        accounts, abuse strikes inside the hold window, and abuse events
+        (holds, CPU signals, abuse scans, abuse recycles) of the last 30
+        days, newest first.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: "UUID of the account to review." }
+        - { name: include_pii, in: query, required: false, schema: { type: boolean }, description: "Include email, sign-up address and user agent (audited)." }
+      responses:
+        '200':
+          description: The account's abuse risk.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountRiskResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: admin_required — reading an account''s abuse risk needs an operator session with MFA.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404':
+          description: 'code: not_found — no account with that id.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/admin/held-links:
+    get:
+      tags: [admin]
+      operationId: listHeldLinks
+      summary: New accounts linked to abuse-held accounts (operator-only).
+      description: |
+        Links detected in the last `since`, newest
+        first, with the new account's sign-up country and email domain.
+        Defaults to the last 24 hours and 200 rows.
+      parameters:
+        - { name: since, in: query, required: false, schema: { type: string }, description: "Window as a duration, e.g. 24h; at most 720h." }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 1000 }, description: "Maximum held-account links returned; defaults to 200." }
+      responses:
+        '200':
+          description: Recent held-account links.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HeldLinksResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'code: admin_required — the held-link review needs an operator session with MFA.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   # ─── Operator Polar refunds (issue #279) ───────────────────────────────
   # Money-moving route. MFA is enforced for session principals, while the
   # admin scope + FAAS_ADMIN_EMAILS allowlist protect operator API keys.
@@ -62341,6 +62787,26 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/flags/lifecycle:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+    get:
+      tags: [flags]
+      operationId: getProjectFlagLifecycle
+      summary: Report each flag's owner, expiry, last change and use.
+      description: "Flags whose attention list is not empty need a decision: expired, expires_soon (within 7 days), stale (serves one value and unchanged for 14 days), never_evaluated (enabled, no decision in 7 days of retained request telemetry) or no_owner. An hourly check also records one flags.lifecycle_attention audit event per flag, reason and configuration version."
+      responses:
+        '200':
+          description: Lifecycle report for the current configuration.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagLifecycleReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/projects/{slug}/environments/{environment}/flags/rollback:
@@ -73019,6 +73485,12 @@ components:
         example: '</v1/uploads>; rel="successor-version", <https://github.com/poyrazK/faas/blob/main/docs/adr/115-local-tarball-deploy-trust-root.md>; rel="deprecation"'
 
   parameters:
+    OutboundAIPromptName:
+      name: prompt
+      in: path
+      required: true
+      description: Name of the managed AI prompt, a DNS label.
+      schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' }
     AgentActivityBefore:
       name: before
       in: query
@@ -88400,11 +88872,43 @@ components:
         subjects: { type: array, minItems: 1, maxItems: 1000, uniqueItems: true, items: { type: string, pattern: '^[!-~]{1,128}$' }, description: "Opaque application subject IDs, matched inside the selected customers/group. Use stable internal IDs, not emails or display names." }
         rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of eligible customers by default, or eligible subjects when rollout_unit is subject; omitted means all eligible targets." }
         rollout_unit: { type: string, enum: [customer, subject], description: Allocation unit for rollout percentages. Omitted preserves customer-level allocation. Subject rollout requires a customer or group constraint and an authenticated subject context. }
+        attributes: { type: array, minItems: 1, maxItems: 8, items: { $ref: '#/components/schemas/FlagCondition' }, description: "Request attribute conditions; all must hold. Runtime SDKs need capability attribute-targeting-v1." }
         progression: { $ref: '#/components/schemas/ProgressiveRollout' }
         value:
           oneOf:
             - { type: boolean }
             - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Directly select a configured variant. }
+    FlagLifecycleReport:
+      description: Lifecycle of every flag in the current configuration.
+      type: object
+      required: [config_version, generated_at, flags]
+      properties:
+        config_version: { type: integer, format: int64, minimum: 0 }
+        generated_at: { type: string, format: date-time }
+        flags: { type: array, items: { $ref: '#/components/schemas/FlagLifecycle' } }
+    FlagLifecycle:
+      description: One flag's owner, expiry, last change and recent use.
+      type: object
+      required: [key, last_changed_version, last_changed_at, serves_one_value, evidence, attention]
+      properties:
+        key: { type: string }
+        owner: { type: string }
+        expires_at: { type: string, format: date }
+        last_changed_version: { type: integer, format: int64, description: "Newest version that changed this flag, within the last 200 versions." }
+        last_changed_at: { type: string, format: date-time }
+        serves_one_value: { type: boolean, description: "True when every request gets the same value (disabled, killed, no rules, or a first rule matching everybody)." }
+        evaluated_requests: { type: integer, format: int64, description: Requests with a decision for this flag in the last 7 days of retained telemetry. }
+        evidence: { type: string, enum: [available, unavailable] }
+        attention: { type: array, items: { type: string, enum: [expired, expires_soon, stale, never_evaluated, no_owner] } }
+    FlagCondition:
+      description: "One request attribute condition. gregale.country (ISO 3166-1 alpha-2) and gregale.ua_family are verified by the gateway; app.<name> attributes are supplied by the application after it authenticates the user. A missing attribute never matches, including not_in. ends_with applies only to app.* attributes."
+      type: object
+      additionalProperties: false
+      required: [attribute, op, values]
+      properties:
+        attribute: { type: string, pattern: '^(gregale\.(country|ua_family)|app\.[a-z][a-z0-9_]{0,31})$' }
+        op: { type: string, enum: [in, not_in, ends_with] }
+        values: { type: array, minItems: 1, maxItems: 100, uniqueItems: true, items: { type: string, pattern: '^[ -~]{1,128}$' } }
     ProgressiveRollout:
       description: Health-gated stages for a boolean true rule. Promotion is manual by default; auto_advance opts into server-managed promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage]; stages must strictly increase and end at 10000 basis points.
       type: object
@@ -88507,6 +89011,9 @@ components:
         description: { type: string, maxLength: 512 }
         type: { type: string, enum: [boolean, variant], default: boolean }
         enabled: { type: boolean }
+        owner: { type: string, maxLength: 128, description: "Who decides about this flag, for example a team or an email. Not used in evaluation." }
+        expires_at: { type: string, format: date, description: Date after which the lifecycle report marks the flag expired. Not used in evaluation. }
+        killed: { type: boolean, default: false, description: "Forces every evaluation to the application's fallback (reason killed), whatever the default, rules or inherited decisions say. Gregale's gateway also reports killed flags on each request, so a kill applies on the next request. SDKs without capability kill-v1 receive bundles without killed flags." }
         default:
           description: Boolean fallback for boolean flags or named fallback variant for variant flags.
           oneOf:
@@ -88571,6 +89078,11 @@ components:
         version: { type: integer, format: int64, minimum: 0, description: Zero or omitted selects current configuration. }
         fallback: { type: boolean, default: false }
         fallback_variant: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Fallback variant for an absent flag; configured variant flags use their own default. }
+        attributes:
+          type: object
+          maxProperties: 18
+          description: Simulated request attributes (gregale.country, gregale.ua_family, app.<name>) for attribute-targeted rules.
+          additionalProperties: { type: string, pattern: '^[ -~]{1,128}$' }
     FlagDecision:
       description: Explainable boolean or named-variant decision against a configuration version.
       type: object
@@ -88584,7 +89096,7 @@ components:
         type: { type: string, enum: [boolean, variant], description: Present as variant for named-variant decisions; omitted for legacy boolean decisions. }
         config_version: { type: integer, format: int64, minimum: 0 }
         rule_id: { type: string }
-        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, subject_missing, rule_match, configuration_stale, type_mismatch] }
+        reason: { type: string, enum: [flag_missing, default, disabled, customer_missing, subject_missing, rule_match, configuration_stale, type_mismatch, killed] }
         bucket: { type: integer, minimum: 0, maximum: 9999, description: Boolean rollout bucket or weighted variant assignment bucket. }
         rollout_bucket: { type: integer, minimum: 0, maximum: 9999, description: Eligibility bucket for rollout-gated variant rules. }
         source: { type: string, enum: [configuration, fallback, inherited] }
@@ -88689,7 +89201,7 @@ components:
       properties:
         source_id: { type: string, format: uuid }
         queue_name: { type: string }
-        database: { type: string, description: "The managed database name, when managed." }
+        database: { type: string, description: 'The managed database name, when managed.' }
         managed: { type: boolean }
         poll_interval_seconds: { type: integer }
         feeds:
@@ -89570,6 +90082,234 @@ components:
           - type: 'null'
         started_at: { type: string, format: date-time }
         decided_at: { type: [string, 'null'], format: date-time }
+    OutboundAIPromptMessage:
+      type: object
+      description: A templated message; content may hold {{name}} placeholders.
+      required: [role, content]
+      properties:
+        role: { type: string, enum: [system, developer, user, assistant] }
+        content: { type: string, minLength: 1 }
+    OutboundAIPromptTarget:
+      type: object
+      description: >-
+        Where a version's calls go: an openai-format route, or a managed AI integration with a model. Exactly one of route_id
+        and integration_id is set; on a route target model is optional and is the request's model.
+      properties:
+        route_id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        model: { type: string, minLength: 1, maxLength: 128 }
+    OutboundAIPromptParams:
+      type: object
+      description: The sampling settings a version sends.
+      properties:
+        temperature: { type: number, minimum: 0, maximum: 2 }
+        top_p: { type: number, minimum: 0, maximum: 1 }
+        max_tokens: { type: integer, minimum: 1 }
+        stop: { type: array, maxItems: 4, items: { type: string, minLength: 1 } }
+        response_format: { type: object, additionalProperties: true }
+    PushOutboundAIPromptVersionRequest:
+      type: object
+      description: A new version. messages, defaults and params together are at most 64 KiB.
+      required: [messages, target]
+      properties:
+        description: { type: string, maxLength: 280, description: Replaces the prompt's description when set. }
+        messages: { type: array, minItems: 1, maxItems: 32, items: { $ref: '#/components/schemas/OutboundAIPromptMessage' } }
+        defaults: { type: object, additionalProperties: { type: string }, description: Values for variables a call may omit. }
+        target: { $ref: '#/components/schemas/OutboundAIPromptTarget' }
+        params: { $ref: '#/components/schemas/OutboundAIPromptParams' }
+        note: { type: string, maxLength: 280 }
+        live: { type: boolean, description: Make the version live. A prompt's first version always is. }
+    OutboundAIPromptVersion:
+      description: One immutable version of a managed AI prompt.
+      type: object
+      required: [version, messages, variables, defaults, target, params, note, created_at]
+      properties:
+        version: { type: integer, minimum: 1 }
+        messages: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptMessage' } }
+        variables: { type: array, items: { type: string }, description: The distinct placeholder names, sorted. }
+        defaults: { type: object, additionalProperties: { type: string } }
+        target: { $ref: '#/components/schemas/OutboundAIPromptTarget' }
+        params: { $ref: '#/components/schemas/OutboundAIPromptParams' }
+        note: { type: string }
+        created_at: { type: string, format: date-time }
+    OutboundAIPromptVersionSummary:
+      description: A managed AI prompt version without its messages.
+      type: object
+      required: [version, target, note, created_at]
+      properties:
+        version: { type: integer, minimum: 1 }
+        target: { $ref: '#/components/schemas/OutboundAIPromptTarget' }
+        note: { type: string }
+        created_at: { type: string, format: date-time }
+    OutboundAIPromptVersionList:
+      description: A managed AI prompt's versions, newest first.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptVersionSummary' } }
+    PushOutboundAIPromptVersionResponse:
+      description: The prompt and the version a push stored, or the identical latest version.
+      type: object
+      required: [prompt, version, created]
+      properties:
+        prompt: { $ref: '#/components/schemas/OutboundAIPrompt' }
+        version: { $ref: '#/components/schemas/OutboundAIPromptVersion' }
+        created: { type: boolean, description: False when the push matched the latest version. }
+    OutboundAIPrompt:
+      type: object
+      description: A managed AI prompt. live_version serves unpinned calls; previous_live_version is what a rollback restores.
+      required: [id, name, description, live_version, previous_live_version, latest_version, canary, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        live_version: { type: [integer, 'null'], minimum: 1 }
+        previous_live_version: { type: [integer, 'null'], minimum: 1 }
+        latest_version: { type: integer, minimum: 0 }
+        canary:
+          oneOf:
+          - $ref: '#/components/schemas/OutboundAIPromptCanary'
+          - type: 'null'
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    OutboundAIPromptList:
+      description: The account's managed AI prompts.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/OutboundAIPrompt' } }
+    PutOutboundAIPromptLiveRequest:
+      description: The version to make live.
+      type: object
+      required: [version]
+      properties:
+        version: { type: integer, minimum: 1 }
+    OutboundAIPromptCanary:
+      type: object
+      description: >-
+        A prompt canary: version serves percent of unpinned calls. It is rolled back when, after min_calls attempts in the
+        window, its error rate exceeds the live version's by more than max_error_rate_increase percentage points, or its mean
+        time to first byte by more than max_latency_increase_percent.
+      required: [version, percent, max_error_rate_increase, max_latency_increase_percent, min_calls, window_minutes, state, reason, started_at, decided_at]
+      properties:
+        version: { type: integer, minimum: 1 }
+        percent: { type: integer, minimum: 1, maximum: 50 }
+        max_error_rate_increase: { type: integer, minimum: 0, maximum: 100 }
+        max_latency_increase_percent: { type: [integer, 'null'], minimum: 1, maximum: 1000 }
+        min_calls: { type: integer, minimum: 10, maximum: 100000 }
+        window_minutes: { type: integer, minimum: 5, maximum: 1440 }
+        state: { type: string, enum: [active, rolled_back] }
+        reason:
+          oneOf:
+          - type: string
+            enum: [error_rate, latency]
+          - type: 'null'
+        started_at: { type: string, format: date-time }
+        decided_at: { type: [string, 'null'], format: date-time }
+    PutOutboundAIPromptCanaryRequest:
+      type: object
+      description: Start or replace a prompt canary. Omitted margins take the route canary defaults.
+      required: [version, percent]
+      properties:
+        version: { type: integer, minimum: 1 }
+        percent: { type: integer, minimum: 1, maximum: 50 }
+        max_error_rate_increase: { type: integer, minimum: 0, maximum: 100 }
+        max_latency_increase_percent: { type: integer, minimum: 1, maximum: 1000 }
+        min_calls: { type: integer, minimum: 10, maximum: 100000 }
+        window_minutes: { type: integer, minimum: 5, maximum: 1440 }
+    OutboundAIPromptVersionStats:
+      description: One version's calls, errors, latency, cost and feedback over the stats window.
+      type: object
+      required: [version, calls, errors, error_rate, mean_ttfb_ms, cost_millicents, mean_cost_millicents, good_feedback, bad_feedback]
+      properties:
+        version: { type: integer, minimum: 1 }
+        calls: { type: integer, format: int64 }
+        errors: { type: integer, format: int64 }
+        error_rate: { type: number }
+        mean_ttfb_ms: { type: [integer, 'null'], format: int64 }
+        cost_millicents: { type: integer, format: int64 }
+        mean_cost_millicents: { type: [integer, 'null'], format: int64 }
+        good_feedback: { type: integer, format: int64 }
+        bad_feedback: { type: integer, format: int64 }
+    OutboundAIPromptStats:
+      description: A managed AI prompt's per-version stats.
+      type: object
+      required: [window_start, live_version, canary_version, versions]
+      properties:
+        window_start: { type: string, format: date-time }
+        live_version: { type: [integer, 'null'] }
+        canary_version: { type: [integer, 'null'] }
+        versions: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptVersionStats' } }
+    CreateOutboundAIPromptEvaluationRequest:
+      description: A candidate version, the variable sets to run it on, and the judge model.
+      type: object
+      required: [version, cases, judge_integration_id, judge_model]
+      properties:
+        version: { type: integer, minimum: 1 }
+        cases:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: { type: object, additionalProperties: { type: string } }
+          description: Variable sets; each is rendered with the candidate and the live version.
+        judge_integration_id: { type: string, format: uuid }
+        judge_model: { type: string, minLength: 1, maxLength: 128 }
+        max_loss_rate: { type: integer, minimum: 0, maximum: 100 }
+        canary: { $ref: '#/components/schemas/PutOutboundAIPromptCanaryRequest' }
+    OutboundAIPromptEvaluationItem:
+      description: One case's result in a managed AI prompt evaluation.
+      type: object
+      required: [case, verdict, baseline_status, candidate_status, baseline_cost_millicents, candidate_cost_millicents, baseline_ttfb_ms, candidate_ttfb_ms]
+      properties:
+        case: { type: integer, minimum: 0 }
+        verdict: { type: string, enum: [win, tie, loss, candidate_error, judge_error] }
+        baseline_status: { type: [integer, 'null'] }
+        candidate_status: { type: [integer, 'null'] }
+        baseline_cost_millicents: { type: integer, format: int64 }
+        candidate_cost_millicents: { type: integer, format: int64 }
+        baseline_ttfb_ms: { type: [integer, 'null'], format: int64 }
+        candidate_ttfb_ms: { type: [integer, 'null'], format: int64 }
+        baseline_output_text: { type: string }
+        candidate_output_text: { type: string }
+    OutboundAIPromptEvaluation:
+      description: A comparison of a candidate prompt version against the live version.
+      type: object
+      required: [id, prompt, baseline_version, candidate_version, judge_integration_id, judge_model, max_loss_rate, canary, state, verdict, error_code, cases, wins, ties, losses, candidate_errors, judge_errors, baseline, candidate, canary_started, created_at, started_at, finished_at]
+      properties:
+        id: { type: string, format: uuid }
+        prompt: { type: string }
+        baseline_version: { type: integer, minimum: 1 }
+        candidate_version: { type: integer, minimum: 1 }
+        judge_integration_id: { type: string, format: uuid }
+        judge_model: { type: string }
+        max_loss_rate: { type: integer }
+        canary:
+          oneOf:
+          - $ref: '#/components/schemas/PutOutboundAIPromptCanaryRequest'
+          - type: 'null'
+        state: { type: string, enum: [pending, running, done, failed] }
+        verdict: { type: [string, 'null'], enum: [pass, fail, null] }
+        error_code: { type: [string, 'null'] }
+        cases: { type: integer }
+        wins: { type: integer }
+        ties: { type: integer }
+        losses: { type: integer }
+        candidate_errors: { type: integer }
+        judge_errors: { type: integer }
+        baseline: { $ref: '#/components/schemas/OutboundAIEvaluationTargetStats' }
+        candidate: { $ref: '#/components/schemas/OutboundAIEvaluationTargetStats' }
+        canary_started: { type: boolean }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        items: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptEvaluationItem' } }
+        content_withheld: { type: boolean, description: The items' answer texts were left out; reading them needs admin or secrets:read. }
+    OutboundAIPromptEvaluationList:
+      description: A managed AI prompt's evaluations, newest first.
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/OutboundAIPromptEvaluation' } }
     PutOutboundAIRouteCanaryRequest:
       type: object
       description: >-
@@ -90962,7 +91702,7 @@ components:
         request_id: { type: string, format: uuid, description: "Optional reserved database identity for durable workflows. Identical retries recover the same resource independently of the HTTP response cache. A different reservation cannot adopt an existing name." }
         name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
         region: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$' }
-        postgres_major: { type: integer, minimum: 12, maximum: 99, default: 16 }
+        postgres_major: { type: integer, minimum: 12, maximum: 99, default: 17 }
         service_class: { type: string, enum: [development, burstable, production], default: development }
         availability: { type: string, enum: [single_zone, high_availability], default: single_zone }
         scale_to_zero: { type: boolean, default: true }
@@ -93329,6 +94069,101 @@ components:
         flows:
           type: array
           items: { $ref: '#/components/schemas/EgressFlowLogEntry' }
+        truncated: { type: boolean }
+
+    AccountRiskLink:
+      description: "A new account linked to an abuse-held account."
+      type: object
+      required: [account_id, held_account_id, held_reason, signal, detected_at]
+      properties:
+        account_id: { type: string }
+        held_account_id: { type: string }
+        held_org_id: { type: string }
+        held_reason: { type: string }
+        signal: { type: string, enum: [signup_network, email_domain] }
+        detected_at: { type: string, format: date-time }
+
+    AccountRiskSignup:
+      description: "The account's sign-up record. signup_ip and user_agent only with include_pii, and only for 90 days."
+      type: object
+      required: [method, email_domain, disposable_email, created_at]
+      properties:
+        method: { type: string }
+        signup_ip: { type: string }
+        user_agent: { type: string }
+        country: { type: string }
+        asn: { type: integer, format: int64, minimum: 0 }
+        asn_org: { type: string }
+        email_domain: { type: string }
+        disposable_email: { type: boolean }
+        created_at: { type: string, format: date-time }
+        reduced_at: { type: string, format: date-time }
+
+    AccountRiskStrike:
+      description: "An abuse recycle inside the hold window."
+      type: object
+      required: [reason, struck_at]
+      properties:
+        reason: { type: string }
+        app_id: { type: string }
+        struck_at: { type: string, format: date-time }
+
+    AccountRiskEvent:
+      description: "An abuse event about the account, one of its apps, deployments or instances."
+      type: object
+      required: [at, kind, actor, subject]
+      properties:
+        at: { type: string, format: date-time }
+        kind: { type: string }
+        actor: { type: string }
+        subject: { type: string }
+        data: { type: object, additionalProperties: true }
+
+    AccountRiskResponse:
+      description: "An account's abuse risk. email only with include_pii."
+      type: object
+      required: [account_id, status, plan, created_at, links_to_held, linked_accounts, strikes, abuse_events]
+      properties:
+        account_id: { type: string }
+        email: { type: string }
+        status: { type: string }
+        plan: { type: string }
+        created_at: { type: string, format: date-time }
+        abuse_hold_at: { type: string, format: date-time }
+        abuse_hold_reason: { type: string }
+        signup: { $ref: '#/components/schemas/AccountRiskSignup' }
+        links_to_held:
+          type: array
+          items: { $ref: '#/components/schemas/AccountRiskLink' }
+        linked_accounts:
+          type: array
+          items: { $ref: '#/components/schemas/AccountRiskLink' }
+        strikes:
+          type: array
+          items: { $ref: '#/components/schemas/AccountRiskStrike' }
+        abuse_events:
+          type: array
+          items: { $ref: '#/components/schemas/AccountRiskEvent' }
+
+    HeldLinkReview:
+      description: "A held-account link with the new account's sign-up country and email domain."
+      allOf:
+        - $ref: '#/components/schemas/AccountRiskLink'
+        - type: object
+          required: [disposable_email]
+          properties:
+            country: { type: string }
+            email_domain: { type: string }
+            disposable_email: { type: boolean }
+
+    HeldLinksResponse:
+      description: "Recent held-account links, newest first. truncated means the page limit was reached."
+      type: object
+      required: [links, truncated]
+      properties:
+        links:
+          type: array
+          items: { $ref: '#/components/schemas/HeldLinkReview' }
         truncated: { type: boolean }
 
     AccountLimits:
@@ -98539,6 +99374,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -99802,13 +100639,36 @@ components:
         go_command:
           type: string
           description: "The stored Go command; omitted when none."
+        live_patches:
+          type: boolean
+          description: "Whether this control plane delivers live source patches to developer environments. Automatic watch mode is chosen only when it does. Omitted by older servers."
+
+    DevSessionSummary:
+      description: One developer environment in the account list.
+      type: object
+      required: [project, app, url, expires_at]
+      properties:
+        project: { type: string }
+        app: { type: string, description: "Backing dev-* app slug; DELETE /v1/dev/sessions/{project}?app= stops it." }
+        url: { type: string }
+        state: { type: string, description: "Lease state: open, stale, tearing_down or torn_down." }
+        expires_at: { type: string, format: date-time }
+
+    DevSessionListResponse:
+      description: The account's developer environments.
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/DevSessionSummary' }
 
     DevSyncPhase:
       description: Safe phase-level timing from a developer sync.
       type: object
       required: [phase, status]
       properties:
-        phase: { type: string, enum: [sync, cache, build, boot, ready, route] }
+        phase: { type: string, enum: [sync, patch, cache, build, boot, ready, route] }
         status: { type: string, enum: [completed, failed, in_progress] }
         duration_ms: { type: integer, minimum: 0, maximum: 3600000 }
         reason: { type: string, maxLength: 512 }
@@ -99898,7 +100758,7 @@ components:
           minProperties: 1
           maxProperties: 13
           propertyNames:
-            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, scaling_policy, retry_policy]
+            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, warmup, scaling_policy, retry_policy]
           additionalProperties: {}
           description: Observed values from the app read; null represents an unset optional policy. Must cover every mutated setting.
 
@@ -99974,6 +100834,9 @@ components:
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
           description: "Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it."
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
+          description: "Set the path a deployment's first init snapshot is primed with. Omit to preserve; an empty path clears it."
         pause:
           type: string
           enum: [between_requests, when_idle, never, ""]
@@ -100773,6 +101636,9 @@ components:
         interval_seconds: { type: integer, enum: [300, 900, 3600] }
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
+        warning:
+          type: string
+          description: Why the check cannot pass as configured, e.g. the app's platform auth refuses the credential-less probe.
         results:
           $ref: '#/components/schemas/SyntheticCheckResults'
     SyntheticCheckResults:
@@ -100995,6 +101861,14 @@ components:
           maximum: 2000
           default: 500
           description: "Deadline for checkpoint response in milliseconds; 0 uses the 500 ms default."
+    WarmupHook:
+      description: "Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests (5 s at most) to it on the app's HTTP port; without it, the HTTP health check path is used. Priming never fails a deploy."
+      type: object
+      properties:
+        path:
+          type: string
+          description: "Absolute path on the app's HTTP port. Should exercise the request code a wake needs warm and be safe to call repeatedly."
+          example: "/internal/warmup"
     AppManifest:
       description: "App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag. The optional `env_secrets` field carries sealed-secret refs (\"secret:NAME\" strings) resolved by the host at wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."
       type: object
@@ -101075,6 +101949,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -120685,6 +121561,7 @@ components:
           type: array
           items: { type: string, format: uuid }
           description: "Deployments whose release commands the restore undoes; rolling back to them is refused afterwards."
+        keeps_release: { type: boolean, description: "True for a restore that moves the app to the copy without changing its code; the target deployment is the release that served when it was requested." }
         source_database_id: { type: string, format: uuid, description: "The database the app leaves. It keeps every write." }
         source_database_name: { type: string }
         target_database_id: { type: string, format: uuid, description: "The restored copy, once its restore has started." }
@@ -120704,6 +121581,17 @@ components:
         phase_started_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+
+    CreateDatabaseSwitchRequest:
+      description: "Restore a managed database the app binds and move the app to the copy, keeping its code."
+      type: object
+      additionalProperties: false
+      required: [database_id, name, point_in_time]
+      properties:
+        database_id: { type: string, format: uuid, description: "The managed database the app's bindings point at." }
+        name: { type: string, minLength: 1, maxLength: 63, description: "Name of the restored copy; it becomes the app's database." }
+        point_in_time: { type: string, format: date-time, description: "A time inside the database's restore range. Writes after it stay only in the source database." }
+        scope: { type: string, description: "The environment whose bindings move; empty is the default scope." }
 
     DatabaseSwitchDrain:
       description: "A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot invalidated), still pending, or blocking the switch."
@@ -124027,7 +124915,7 @@ components:
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$', description: "Canonical platform trace id when the request carried a valid trace context." }
 
     QueueReceiveResponse:
-      description: "200 — a completed queue invocation observed by the long-poll feed. 204 (no body) on timeout."
+      description: "200 — a settled queue invocation observed by the long-poll feed: every waiting receive sees it, and one that settles while none waits is not replayed. 204 (no body) on timeout. Consume with pull leases instead."
       type: object
       required: [id, payload]
       properties:
@@ -124036,6 +124924,7 @@ components:
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         payload: { type: object, additionalProperties: true }
         result: { type: object, additionalProperties: true }
+        state: { type: string, description: "How the message settled: completed, failed or cancelled. A failed or cancelled message's result is its error." }
         trace_id: { type: string, pattern: '^[a-f0-9]{32}$' }
         traceparent: { type: string, description: "W3C traceparent propagated from the producer." }
 

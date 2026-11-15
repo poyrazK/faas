@@ -98,7 +98,9 @@ func loopbackLogin(ctx context.Context, c *Client, ln net.Listener, codeResp api
 	defer func() { _ = srv.Close() }()
 
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", codeResp.URL)
-	_, _ = fmt.Fprintln(osStdout, "  Click Authorize in your browser to sign in.")
+	// Nothing to type: the person only checks the page names this login
+	// (F10-3, ADR-20261115160000).
+	_, _ = fmt.Fprintf(osStdout, "  Click Authorize in your browser if it shows %s and port %d.\n", codeResp.Code, port)
 	if err := openBrowser(codeResp.URL); err != nil {
 		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		_, _ = fmt.Fprintln(os.Stderr, "  Open the URL above in a browser on this computer, or run 'gregale login --device'.")

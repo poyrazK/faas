@@ -113,8 +113,8 @@ func (e *PrivateExecutor) begin(r *http.Request, acct state.Account, key state.A
 	if !ok {
 		return api.ToolInvocationReceipt{}, errors.New("invocation store unavailable")
 	}
-	if old, err := journal.GetToolInvocation(r.Context(), acct.ID, id); err == nil {
-		old, err = delegatedInvocationRecord(r, acct, e.store, journal, key, id)
+	if _, err := journal.GetToolInvocation(r.Context(), acct.ID, id); err == nil {
+		old, err := delegatedInvocationRecord(r, acct, e.store, journal, key, id)
 		if err != nil {
 			return api.ToolInvocationReceipt{}, err
 		}

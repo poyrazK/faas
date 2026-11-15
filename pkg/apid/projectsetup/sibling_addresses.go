@@ -1,6 +1,7 @@
 package projectsetup
 
 import (
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -28,8 +29,13 @@ func SiblingAddresses(env reposcan.ComposeEnv, service string, callable []string
 // ValidSiblingAddress reports whether value is a Gregale service address
 // SiblingAddresses produces: an http, https, ws or wss URL without
 // credentials whose host is <service>.svc.gregale on the service mesh port or
-// <service>.internal. apid checks what githubd sends before writing it.
+// <service>.internal, or the bare host:port <service>.svc.gregale:<mesh port>
+// a gRPC target imports as. apid checks what githubd sends before writing it.
 func ValidSiblingAddress(value string) bool {
+	if host, port, err := net.SplitHostPort(value); err == nil && !strings.Contains(value, "/") {
+		name, ok := strings.CutSuffix(host, ".svc.gregale")
+		return ok && api.ValidServiceName(name) && port == strconv.Itoa(api.ServiceBindingPort)
+	}
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.User != nil || parsed.Opaque != "" {
 		return false

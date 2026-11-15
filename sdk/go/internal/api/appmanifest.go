@@ -50,6 +50,11 @@ type BeforeCheckpointHook struct {
 	TimeoutMS int    `json:"timeout_ms,omitempty"`
 }
 
+// WarmupHook names the path that primes a deployment's first init snapshot.
+type WarmupHook struct {
+	Path string `json:"path"`
+}
+
 // AppManifest is the /etc/faas/app.json contract: the single handoff from the
 // build/imaging side (imaged) to the guest side (guest-init). imaged writes it
 // into the app layer; guest-init applies env, execs the entrypoint as the app
@@ -91,6 +96,7 @@ type AppManifest struct {
 	RestartPolicy    string                `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Warmup           *WarmupHook           `json:"warmup,omitempty"`
 	// Pause declares when the platform may pause the VM (ADR-1151):
 	// between_requests, when_idle or never. Empty selects the default.
 	Pause     string           `json:"pause,omitempty"`
