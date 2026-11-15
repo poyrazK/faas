@@ -30479,6 +30479,24 @@ CREATE TABLE public.account_email_changes (
 
 
 --
+-- Name: account_held_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_held_links (
+    account_id uuid NOT NULL,
+    held_account_id uuid NOT NULL,
+    held_org_id uuid,
+    held_reason text NOT NULL,
+    signal text NOT NULL,
+    detected_at timestamp with time zone NOT NULL,
+    CONSTRAINT account_held_links_check CHECK ((account_id <> held_account_id)),
+    CONSTRAINT account_held_links_detected_at_check CHECK (isfinite(detected_at)),
+    CONSTRAINT account_held_links_held_reason_check CHECK ((held_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'cpu_sustained'::text, 'operator'::text]))),
+    CONSTRAINT account_held_links_signal_check CHECK ((signal = ANY (ARRAY['signup_network'::text, 'email_domain'::text])))
+);
+
+
+--
 -- Name: account_mail_throttle; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -62123,6 +62141,14 @@ ALTER TABLE ONLY public.account_email_changes
 
 
 --
+-- Name: account_held_links account_held_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_held_links
+    ADD CONSTRAINT account_held_links_pkey PRIMARY KEY (account_id, held_account_id, signal);
+
+
+--
 -- Name: account_mail_throttle account_mail_throttle_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -76063,6 +76089,13 @@ CREATE UNIQUE INDEX account_email_changes_one_pending_idx ON public.account_emai
 
 
 --
+-- Name: account_held_links_held_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX account_held_links_held_idx ON public.account_held_links USING btree (held_account_id);
+
+
+--
 -- Name: account_signup_facts_ip_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -86406,6 +86439,13 @@ CREATE INDEX service_recovery_due_idx ON public.service_recovery USING btree (ne
 
 
 --
+-- Name: sessions_account_issued_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sessions_account_issued_idx ON public.sessions USING btree (account_id, issued_at DESC);
+
+
+--
 -- Name: sessions_active_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -95151,6 +95191,30 @@ ALTER TABLE ONLY public.account_deploy_rate_limits
 
 ALTER TABLE ONLY public.account_email_changes
     ADD CONSTRAINT account_email_changes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_held_links account_held_links_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_held_links
+    ADD CONSTRAINT account_held_links_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_held_links account_held_links_held_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_held_links
+    ADD CONSTRAINT account_held_links_held_account_id_fkey FOREIGN KEY (held_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_held_links account_held_links_held_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_held_links
+    ADD CONSTRAINT account_held_links_held_org_id_fkey FOREIGN KEY (held_org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --
