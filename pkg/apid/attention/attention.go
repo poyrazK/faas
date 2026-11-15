@@ -380,7 +380,7 @@ func (e *Evaluator) List(ctx context.Context, f Filter) ([]api.ObsAttentionSigna
 	}
 	rows, err := e.Pool.Query(ctx, `SELECT `+signalColumns+`
 		FROM customer_attention_signals
-		WHERE state = ANY($1) AND ($2 = '' OR account_id::text = $2) AND ($3 = '' OR kind = $3)
+		WHERE state = ANY($1) AND ($2 = '' OR account_id = NULLIF($2, '')::uuid) AND ($3 = '' OR kind = $3)
 		ORDER BY last_seen_at DESC, id DESC LIMIT $4`, f.States, f.AccountID, f.Kind, f.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("attention: list: %w", err)

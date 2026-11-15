@@ -238,7 +238,8 @@ func cmdInvocationsList(args []string) int {
 	before := fs.String("before", "", "opaque pagination cursor (alias for --cursor)")
 	fs.StringVar(before, "cursor", "", "start after the cursor from a prior page")
 	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
-	stream := fs.Bool("stream", false, "emit rows as JSON Lines as pages arrive (requires --json --all)")
+	stream := fs.Bool("stream", false, "emit rows as JSON Lines as pages arrive (stdout requires --json --all)")
+	outputPath := fs.String("output", "", "publish a new JSON Lines file after all pages complete (requires --all)")
 	limit := fs.Int("limit", 50, "max rows (1..100; server caps at 100)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -251,7 +252,13 @@ func cmdInvocationsList(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale invocation list [--cursor C] [--limit N] [--all] (1 <= N <= 100)", "invocations")
 		return 1
 	}
-	if !validateListStream(*stream, *all) {
+	output, err := prepareListOutput(*outputPath, flagWasSet(fs, "output"), *all)
+	if err != nil {
+		return printErr("Invalid list output", err)
+	}
+	if output != nil {
+		defer output.Close()
+	} else if !validateListStream(*stream, *all) {
 		return 1
 	}
 	client, err := authedClient()
@@ -261,12 +268,15 @@ func cmdInvocationsList(args []string) int {
 	// The ledger is account-wide, so a row needs its app: "POST /healthz
 	// failed" named no app (Hunt 12 H12-33).
 	var slugs map[string]string
-	if !jsonOutput {
+	if !jsonOutput && output == nil {
 		slugs = appSlugsByID(client)
 	}
 	fetch := func(ctx context.Context, cursor string) ([]api.Invocation, string, error) {
 		page, err := client.ListInvocations(ctx, cursor, *limit)
 		return page.Invocations, page.NextBefore, err
+	}
+	if output != nil {
+		return runListFileExport("Could not list invocations", *before, output, fetch)
 	}
 	if *stream {
 		return runStreamList("Could not list invocations", *before, fetch)
