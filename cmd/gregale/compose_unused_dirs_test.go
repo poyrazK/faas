@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"fmt"
 	"io"
@@ -80,12 +81,11 @@ func TestPackLeavesOutComposeUnusedDirsOnlyOverTheEntryLimit(t *testing.T) {
 
 func tarNames(t *testing.T, archive string) []string {
 	t.Helper()
-	f, err := os.Open(archive)
+	raw, err := os.ReadFile(archive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
+	gz, err := gzip.NewReader(bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
