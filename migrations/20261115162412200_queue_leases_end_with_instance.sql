@@ -31,7 +31,7 @@ END;
 $$;
 -- +goose StatementEnd
 
-CREATE TRIGGER instance_end_queue_leases AFTER UPDATE OF state ON instances
+CREATE OR REPLACE TRIGGER instance_end_queue_leases AFTER UPDATE OF state ON instances
     FOR EACH ROW WHEN ((old.state IS DISTINCT FROM new.state) AND (new.state = ANY (ARRAY['stopped'::text, 'failed'::text])))
     EXECUTE FUNCTION end_queue_leases_with_instance();
 
