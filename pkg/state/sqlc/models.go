@@ -2698,6 +2698,7 @@ type Build struct {
 	CacheKeySha256               pgtype.Text
 	NotBefore                    pgtype.Timestamptz
 	CoalescedWith                pgtype.UUID
+	BuilderNodeName              pgtype.Text
 }
 
 type BuildExportPublication struct {
@@ -3994,6 +3995,9 @@ type DataPipeline struct {
 	ServingConfig          []byte
 	FreshnessTargetSeconds int64
 	IndexChange            []byte
+	EvolutionChange        []byte
+	WorkConfig             []byte
+	WorkStatus             []byte
 }
 
 type DataPipelineAlert struct {
