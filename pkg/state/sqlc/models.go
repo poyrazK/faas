@@ -2698,6 +2698,7 @@ type Build struct {
 	CacheKeySha256               pgtype.Text
 	NotBefore                    pgtype.Timestamptz
 	CoalescedWith                pgtype.UUID
+	BuilderNodeName              pgtype.Text
 }
 
 type BuildExportPublication struct {
