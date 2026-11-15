@@ -30,6 +30,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"tool_oauth_authorizations": state.CloneSchemaIdentity,
 		"tool_invocations":          state.CloneSchemaOperational,
 		"tool_publications":         state.CloneSchemaOperational,
+		"task_tool_release_intents": state.CloneSchemaOperational,
 
 		// adr:1660,1662,1665,1666 — saved authority stays with its source;
 		// public compile inputs require an isolated configuration strategy.

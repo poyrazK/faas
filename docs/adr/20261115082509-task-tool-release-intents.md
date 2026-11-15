@@ -25,6 +25,8 @@ credential and project restrictions for each request. Memory and PostgreSQL
 stores verify requesting-key authority, personal app ownership and native review
 snapshots during preparation and checks. PostgreSQL locks the requesting key and
 app rows while changing the journal, ordering app locks by native ID.
+Classify the journal as operational clone data: review history and approval stay
+with their original account and apps and are never copied into an environment.
 
 ## Agent and owner workflow
 
