@@ -20,6 +20,10 @@ name: mutation
 # equivalent mutants) and raise -min-efficacy once the baseline is known.
 
 on:
+  # TEMPORARY: first full run before the workflow exists on main (dispatch
+  # needs it there). Remove before merging.
+  push:
+    branches: [test/mutation-testing]
   workflow_dispatch:
     inputs:
       target:
