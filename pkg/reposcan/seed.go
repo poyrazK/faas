@@ -140,6 +140,8 @@ type workloadSeed struct {
 	allowedServiceCallers     *[]string
 	allowedServiceCallScopes  *api.ServiceCallerScopes
 	platformTenantRequired    *bool
+	streaming                 *bool
+	wakeAhead                 *bool
 	renamedFrom               string
 
 	class     Class
