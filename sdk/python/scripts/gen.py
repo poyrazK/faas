@@ -1400,8 +1400,11 @@ from .dev_bridge import (
 )
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
 from .flags import (
+    GREGALE_CLIENT_COUNTRY_HEADER,
+    GREGALE_CLIENT_UA_FAMILY_HEADER,
     GREGALE_FLAG_CONTEXT_HEADER,
     GREGALE_FLAG_EVIDENCE_HEADER,
+    GREGALE_FLAG_KILLS_HEADER,
     GREGALE_FLAG_PROPAGATION_HEADER,
     AsyncGregaleFlagsTransport,
     FlagDecision,
@@ -1413,6 +1416,8 @@ from .flags import (
     flag_subject_bucket,
     flag_subject_variant_bucket,
     flag_variant_bucket,
+    match_conditions,
+    parse_kills,
     validate_bundle,
 )
 from .issues import IssueReporter
@@ -1438,14 +1443,18 @@ from .operations import (
 from .operations_runtime import GregaleOperations, OperationExecutionContext, OperationHTTPError
 from .ai_gateway import (
     AI_CALL_HEADER,
+    AI_PROMPT_VERSION_HEADER,
     AI_SESSION_HEADER,
     AI_TAGS_HEADER,
     AI_TRACE_HEADER,
     AI_USER_HEADER,
     AIGatewayError,
+    AIPrompt,
+    AIPromptResult,
     ai_gateway_feedback,
     ai_gateway_headers,
     ai_gateway_url,
+    ai_prompt,
     is_valid_ai_user_id,
     opaque_ai_user_id,
 )
@@ -1708,6 +1717,7 @@ from .event_acknowledgment_intent_recovery_pass import (
 __all__ = (
     *_PACKAGE_ALL,
     "AI_CALL_HEADER",
+    "AI_PROMPT_VERSION_HEADER",
     "AI_SESSION_HEADER",
     "AI_TAGS_HEADER",
     "AI_TRACE_HEADER",
@@ -1716,12 +1726,18 @@ __all__ = (
     "ai_gateway_feedback",
     "ai_gateway_headers",
     "ai_gateway_url",
+    "AIPrompt",
+    "AIPromptResult",
+    "ai_prompt",
     "is_valid_ai_user_id",
     "opaque_ai_user_id",
     "IssueReporter",
     "GREGALE_FLAG_CONTEXT_HEADER",
     "GREGALE_FLAG_EVIDENCE_HEADER",
     "GREGALE_FLAG_PROPAGATION_HEADER",
+    "GREGALE_CLIENT_COUNTRY_HEADER",
+    "GREGALE_CLIENT_UA_FAMILY_HEADER",
+    "GREGALE_FLAG_KILLS_HEADER",
     "GregaleFlags",
     "GregaleFlagsMiddleware",
     "AsyncGregaleFlagsTransport",
@@ -1732,6 +1748,8 @@ __all__ = (
     "flag_subject_bucket",
     "flag_subject_variant_bucket",
     "flag_variant_bucket",
+    "match_conditions",
+    "parse_kills",
     "validate_bundle",
     "CRASH_SNAPSHOT_ENDPOINT",
     "CrashSnapshotResult",

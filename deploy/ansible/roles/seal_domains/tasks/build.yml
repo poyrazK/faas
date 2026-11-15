@@ -11,12 +11,22 @@
       - faas_seal_domain_build_writes in ['', 'fleet', 'dual', 'domain']
       - faas_seal_domain_build_writes != 'domain' or (faas_seal_domain_build_readers_verified | bool)
       - not (faas_seal_domain_build_contracted | bool) or faas_seal_domain_build_writes == 'domain'
+      - not (faas_seal_domain_build_retired_on_compute | bool) or faas_box_role | default('single-box') == 'compute-only'
+      - not (faas_seal_domain_build_retired_on_compute | bool) or ((faas_seal_domain_build_contracted | bool) and (faas_seal_domain_runtime_contracted | bool))
+      - not (faas_seal_domain_build_retired_on_compute | bool) or (faas_imaged_secretd_registry_pulls | default(false) | bool)
+      - not (faas_seal_domain_build_retired_on_compute | bool) or (faas_vmmd_build_registry_mirror | default(false) | bool)
+      - not (faas_seal_domain_build_retired_on_compute | bool) or faas_secretd_target | default('') | length > 0
     fail_msg: >-
       faas_seal_domain_build_writes is '', fleet, dual or domain. domain needs
       faas_seal_domain_build_readers_verified once every imaged reports
       faas_seal_domain_loaded{domain="build"} 1 and the previous release
       left the rollback window. faas_seal_domain_build_contracted needs
-      writes=domain.
+      writes=domain. faas_seal_domain_build_retired_on_compute
+      (ADR-20261110210000 slice 3g-3) is for compute-only hosts and needs
+      faas_seal_domain_build_contracted and
+      faas_seal_domain_runtime_contracted (imaged and vmmd without the fleet
+      and host identities), faas_imaged_secretd_registry_pulls,
+      faas_vmmd_build_registry_mirror and faas_secretd_target.
 
 # 0400 root:root. systemd hands the identity to imaged alone as a
 # credential; no other unit names it.
@@ -32,6 +42,26 @@
   when:
     - faas_box_role | default('single-box') in ['compute-only', 'single-box']
     - faas_seal_domain_build_identity_src | length > 0
+    - not (faas_seal_domain_build_retired_on_compute | bool)
+
+# ADR-20261110210000 slice 3g-3: a retired compute node holds no build
+# identity. Its imaged pulls private images through secretd, its vmmd serves
+# builder VMs a secretd-backed registry mirror, and both refuse to start
+# while the identity is still on disk or loaded. The probe result the node
+# published earlier is stale, so it goes too. vmmd keeps the identity it
+# loaded until it restarts: drain and restart it (docs/runbooks/secretd.md).
+- name: seal_domains — take the build domain identity off a retired compute node
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  notify: restart faas-imaged for seal domains
+  loop:
+    - /etc/faas/secrets/domains/build.age
+    - /etc/faas/secrets/domains/build.age.previous
+    - "{{ faas_seal_domain_textfile_dir }}/faas_seal_domain_build.prom"
+  when:
+    - faas_box_role | default('single-box') == 'compute-only'
+    - faas_seal_domain_build_retired_on_compute | bool
 
 # ADR-20261110210000 slice 3j: a control-plane host holds the build identity
 # only for secretd, which pulls from apps' private registries, and only
@@ -81,6 +111,7 @@
   when:
     - faas_box_role | default('single-box') in ['compute-only', 'single-box']
     - faas_seal_domain_build_previous_identity_src | length > 0
+    - not (faas_seal_domain_build_retired_on_compute | bool)
 
 - name: seal_domains — remove the previous build domain identity
   ansible.builtin.file:
@@ -100,7 +131,7 @@
     mode: "0755"
   when:
     - faas_box_role | default('single-box') in ['compute-only', 'single-box']
-    - faas_seal_domain_build_identity_src | length > 0
+    - faas_seal_domain_build_identity_src | length > 0 or (faas_seal_domain_build_retired_on_compute | bool)
 
 # The contract step (ADR 20261022111812, step 4): imaged keeps no identity
 # that opens a value the domain does not. The check writes nothing and
@@ -120,10 +151,13 @@
       - "{{ faas_seal_domain_db_env }}"
       - --json
   changed_when: false
+  # A retired node (slice 3g-3) has no build identity to run the check
+  # with; it passed on the node before retirement, which needs contracted.
   when:
     - faas_box_role | default('single-box') in ['compute-only', 'single-box']
     - faas_seal_domain_build_identity_src | length > 0
     - faas_seal_domain_build_contracted | bool
+    - not (faas_seal_domain_build_retired_on_compute | bool)
 
 - name: seal_domains — give imaged the build domain identity
   ansible.builtin.template:
@@ -135,7 +169,7 @@
   notify: restart faas-imaged for seal domains
   when:
     - faas_box_role | default('single-box') in ['compute-only', 'single-box']
-    - faas_seal_domain_build_identity_src | length > 0
+    - faas_seal_domain_build_identity_src | length > 0 or (faas_seal_domain_build_retired_on_compute | bool)
 
 - name: seal_domains — restart imaged before proving the domain
   ansible.builtin.meta: flush_handlers
@@ -155,6 +189,20 @@
     - faas_box_role | default('single-box') in ['compute-only', 'single-box']
     - faas_seal_domain_build_identity_src | length > 0
     - faas_seal_domain_build_contracted | bool
+    - not (faas_seal_domain_build_retired_on_compute | bool)
+
+# A retired imaged holds no build, fleet or host identity at all.
+- name: seal_domains — prove a retired imaged runs without any build identity
+  ansible.builtin.find:
+    paths: /run/credentials/faas-imaged.service
+  register: faas_seal_domain_imaged_retired_credentials
+  failed_when: >-
+    (faas_seal_domain_imaged_retired_credentials.files | map(attribute='path') | map('basename') |
+     select('in', ['faas_seal_domain_build', 'faas_seal_domain_build_previous', 'faas_fleet_age_identity', 'faas_host_age_identity']) | list | length) > 0
+  when:
+    - faas_box_role | default('single-box') == 'compute-only'
+    - faas_seal_domain_build_retired_on_compute | bool
+    - not (faas_join_defer_service_handlers | default(false) | bool)
 
 - name: seal_domains — prove this node opens the build domain probe
   ansible.builtin.command:
@@ -175,6 +223,7 @@
   when:
     - faas_box_role | default('single-box') in ['compute-only', 'single-box']
     - faas_seal_domain_build_identity_src | length > 0
+    - not (faas_seal_domain_build_retired_on_compute | bool)
 
 - name: seal_domains — install the build domain recipient
   ansible.builtin.copy:

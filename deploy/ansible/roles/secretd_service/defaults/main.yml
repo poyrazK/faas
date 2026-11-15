@@ -15,6 +15,13 @@ faas_secretd_apps_per_node_hour: ""
 # ciphertext instead of naming the app's own row. Turn on once every schedd
 # and vmmd runs a release that sends references.
 faas_secretd_require_references: false
+# ADR-20261110210000 slice 3j-4: how a build's registry pulls are held to the
+# repositories its deployment's Dockerfiles name
+# (deployments.build_registry_scope). observe counts
+# faas_secretd_build_registry_scope_total{result} and refuses nothing;
+# enforce refuses out-of-scope and unrecorded pulls once observe shows none;
+# off checks nothing.
+faas_secretd_build_registry_scope: observe
 # Loopback /metrics (faas_secretd_opens_total, faas_secretd_refusals_total),
 # scraped by the prometheus role's secretd job. Refusals are the alertable
 # compromise signal (FaasSecretdRefusedNode and friends).

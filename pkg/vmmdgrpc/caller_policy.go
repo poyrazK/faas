@@ -55,6 +55,7 @@ var vmmdCallerPolicy = map[string]vmmdCaller{
 	vmmdpb.Vmmd_MountParentExt4ReadOnly_FullMethodName:                 callerSchedd | callerImaged,
 	vmmdpb.Vmmd_MaterializeParentExt4_FullMethodName:                   callerSchedd | callerImaged,
 	vmmdpb.Vmmd_MaterializeVerifiedParentExt4_FullMethodName:           callerSchedd | callerImaged,
+	vmmdpb.Vmmd_PrimeInstance_FullMethodName:                           callerSchedd,
 	vmmdpb.Vmmd_UmountParentExt4_FullMethodName:                        callerSchedd | callerImaged,
 	vmmdpb.Vmmd_AcknowledgeMigration_FullMethodName:                    callerSchedd,
 	vmmdpb.Vmmd_AdoptMigratedInstance_FullMethodName:                   callerSchedd,

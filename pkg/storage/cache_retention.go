@@ -92,3 +92,41 @@ func (c *LocalCacheBackend) EvictLocal(key string) error {
 	c.evictCache(key)
 	return nil
 }
+
+// RoomToRefetch reports whether the cache can take back an evicted entry
+// without evicting anything for it (ADR-20261115140000): its footprint stays
+// at least margin under the byte budget and its filesystem keeps at least
+// margin above the free-space floor. margin is the larger of minMargin and a
+// tenth of the budget. A full cache, where a re-fetch would only evict
+// another entry (the ADR-063 loop), never has room.
+func (c *LocalCacheBackend) RoomToRefetch(minMargin int64) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	margin := max(minMargin, c.maxBytes/10)
+	entries, err := c.snapshotCacheLocked()
+	if err != nil {
+		return false, err
+	}
+	if newCacheFootprint(entries).total()+margin > c.maxBytes {
+		return false, nil
+	}
+	if c.minFreeBytes > 0 {
+		free, total, err := c.diskSpace(c.root)
+		if err != nil || total <= 0 || free < c.minFreeBytes+margin {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// RoomToRefetch runs (*LocalCacheBackend).RoomToRefetch on the cache that
+// holds key under root. known is false for a root without a read-through
+// cache.
+func RoomToRefetch(root StorageBackend, key string, minMargin int64) (room, known bool, err error) {
+	cache, _, err := CacheBackendForKey(root, key)
+	if err != nil || cache == nil {
+		return false, false, err
+	}
+	room, err = cache.RoomToRefetch(minMargin)
+	return room, true, err
+}

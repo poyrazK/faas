@@ -46,3 +46,14 @@ can keep using the Free plan without paying. The internal-mail suspension and
 deletion outbox paths stay in apid and maild, unused by meterd; removing them
 is separate cleanup. `meterd_dunning_deletion_blocked_accounts` stays
 published at zero for its existing alert.
+
+## Amendment 2026-11-15: the sweep asks the provider first
+
+Before moving an account to Free, meterd lists the customer's subscriptions
+at the billing provider (`billing.CustomerSubscriptionLister`, Polar). If the
+account's subscription, or any subscription when the account's is not
+listed, is in good standing, a payment webhook was missed or not accepted:
+the move waits, and apid's 30-minute billing reconciliation restores the
+account from the same listing. A provider error also defers the move and
+fails the dunning tick, so a customer who may have paid is never moved on a
+guess. A provider without the listing keeps the sweep on local state.

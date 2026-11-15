@@ -236,20 +236,33 @@ plane: watch its network and `faas_secretd_opens_total{rpc="RegistryFetch"}`.
    `not_authorized` refusal for a build means the claim recorded no node
    (builderd logs `record the build's node`). Then the rest of compute. Once
    every node runs it, no compute daemon opens a registry password, and the
-   build identity can leave compute (`docs/runbooks/secretd.md`, "Take the
-   edge and delivery identities off compute", extended to build). Job images
-   pull through secretd with imaged's switch (3j-2b).
+   build identity can leave compute ("Take the build identity off compute"
+   below). Job images pull through secretd with imaged's switch (3j-2b).
 
    Known limit: secretd finds a credential by the registry URL's exact host,
    so a Docker Hub credential stored as `docker.io` is not used for
    `registry-1.docker.io` pulls (as for imaged's pulls, 3j-2).
+4. **Builds pull only what their Dockerfiles name (slice 3j-4).** When apid
+   accepts a source deploy it records, in `deployments.build_registry_scope`,
+   the image repositories every Dockerfile in the source names (`FROM`,
+   `COPY --from`, `RUN --mount from=`, ARG defaults and Compose build args
+   expanded). The column never changes, and a per-node compute login cannot
+   record one. secretd checks each build pull against it per
+   `faas_secretd_build_registry_scope`: `observe` (the default) counts
+   `faas_secretd_build_registry_scope_total{result}` and logs `build registry
+   pull outside its deployment's scope`, refusing nothing; `enforce` refuses
+   (`faas_secretd_refusals_total{reason="out_of_scope"}`). Watch observe for a
+   few days: `out_of_scope` means a build pulled a repository its Dockerfiles
+   do not name (an ARG the parser could not resolve, a Dockerfile under an
+   unusual name); `unrecorded` means a deployment created without apid's
+   source path (GitOps candidates, older rows). Turn on enforce once both stay
+   at 0 for real builds; a node that claims another app's build then gets at
+   most that build's own base images. Back out by setting `observe` again.
 
 ## Take the edge and delivery identities off compute
 
 Once slices 3f–3i run on every compute node, nothing on compute needs the
-edge or delivery identity. The build identity stays until builder VMs pull
-through the control plane (slice 3j-3): vmmd still opens builder registry
-passwords with it.
+edge or delivery identity. The build identity has its own section below.
 
 **Edge, per node.** Prerequisites: `faas_seal_domain_edge_contracted: true`
 (the fleet identity also opens edge values), `faas_gateway_secretd_log_drains:
@@ -286,6 +299,69 @@ including nodes that join later, as retired. The control plane keeps both.
 Back out a node by setting its switch to false and converging: the role
 stages the identity again and the daemon restarts with it. With the CD
 variable on, unset it first.
+
+## Take the build identity off compute (slice 3g-3)
+
+Once imaged (3j-2) and builder VMs (3j-3) pull private registries through
+secretd on every compute node, nothing on compute needs the build identity.
+
+**Per node.** Prerequisites: `faas_seal_domain_build_contracted: true` and
+`faas_seal_domain_runtime_contracted: true` (imaged and vmmd without the
+fleet and host identities, which also open registry passwords),
+`faas_imaged_secretd_registry_pulls: true`,
+`faas_vmmd_build_registry_mirror: true`, `faas_secretd_target`, and
+`SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true`, so secretd holds the identity. Set
+`faas_seal_domain_build_retired_on_compute: true` for the node and converge
+(`--limit`). The role removes `build.age` and `build.age.previous`, stops
+publishing the build probe from the node, gives imaged
+`FAAS_SEAL_DOMAIN_BUILD_RETIRED=true` (and restarts it without any build,
+fleet or host credential) and gives vmmd the same switch. vmmd still holds
+the identity it loaded, so **drain the node and restart vmmd**. Check:
+imaged logs `build identity retired on this node` and the converge proves its
+credentials hold no build, fleet or host identity; vmmd logs `vmmd: build
+identity retired`; either refuses to start if its secretd path is off or a
+build identity is back. A private-image deploy and a Dockerfile build `FROM`
+a private base image both still succeed on the node.
+
+**Fleet-wide (CD).** Once every compute node is retired, set the GitHub
+environment variable `SEAL_DOMAIN_BUILD_RETIRED_ON_COMPUTE=true` (needs
+`SEAL_DOMAIN_BUILD_ON_CONTROL_PLANE=true`). cd-compute is then not handed the
+build identity, does not fetch it from the escrow, and marks every node,
+including nodes that join later, as retired. The control plane keeps it for
+secretd.
+
+Back out a node by setting its switch to false and converging: the role
+stages the identity again; restart vmmd to load it. With the CD variable on,
+unset it first.
+
+## Internal-service tokens from secretd (slice 3k)
+
+Compute schedds normally sign the internal-service tokens they attach for
+internal_only apps (ADR-119) with the cluster key, which every compute node
+can open. With slice 3k they ask secretd instead, for each app they own or
+hold a grant for, and need no cluster key.
+
+1. **Control plane.** The control domain identity must be staged on the
+   control plane (`/etc/faas/secrets/domains/control.age`, which the CP
+   schedd already reads). Converge secretd_service. The unit gains
+   `FAAS_SECRETD_CONTROL_IDENTITY`, and after a restart secretd mints. Check:
+   from a compute node, a dispatch to an internal_only app still succeeds
+   after step 2, and
+   `faas_secretd_opens_total{rpc="MintInternalServiceToken"}` rises.
+2. **One compute node.** Set `FAAS_SCHEDD_INTERNAL_SVC_MINTER=secretd` for
+   its schedd. It needs `FAAS_SCHEDD_SECRETD_TARGET`. Workflow outbound
+   (`FAAS_WORKFLOW_OUTBOUND_ENABLED=1`) refuses to start on such a schedd.
+   Restart schedd. Check:
+   - The journal shows `schedd: internal-service tokens minted by secretd`.
+   - Internal_only cron and trigger dispatches still pass.
+   - `faas_secretd_refusals_total{rpc="MintInternalServiceToken"}` stays
+     flat. A rise means the node dispatches for an app it neither owns nor
+     holds a grant for.
+3. **Gateways.** From this release on, both internal-only gates refuse a
+   token minted for another app, with audit reason `app_mismatch`. A legacy
+   token without an `app_id` passes as before.
+
+Back out a node by unsetting the variable and restarting schedd.
 
 ## Rotation
 

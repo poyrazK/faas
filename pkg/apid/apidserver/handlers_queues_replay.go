@@ -59,6 +59,10 @@ func (s *server) queueDeadLetterReplay(w http.ResponseWriter, r *http.Request, a
 			api.WriteProblem(w, problem)
 			return
 		}
+		if problem := appevents.QueueBindingRetiredProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 		api.WriteProblem(w, api.ErrCapacity("queue dead-letter replay"))
 		return
 	}

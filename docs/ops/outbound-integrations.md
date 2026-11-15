@@ -1896,6 +1896,93 @@ a route's evaluations.
 `outbound_ai_evaluations_total` counts finished evaluations by result (`pass`,
 `fail` or `failed`).
 
+## Managed prompts
+
+A managed prompt (ADR 20261114180740) is a named, versioned call recipe on the
+account. Apps call it by name; changing the prompt never needs a deploy.
+
+- **Versions:** each version is immutable and holds:
+  - up to 32 `messages` (`system`, `developer`, `user`, `assistant`) whose
+    content may use `{{variable}}` placeholders (names
+    `[A-Za-z_][A-Za-z0-9_]{0,63}`, at most 50 per version);
+  - `defaults` for variables a call may omit;
+  - a `target`: an openai-format route, or a managed AI integration that an
+    openai-format route accepts, with a `model`;
+  - `params`: `temperature`, `top_p`, `max_tokens`, up to 4 `stop` strings
+    and a `response_format` object;
+  - an optional `note`.
+
+  Messages, defaults and params together are at most 64 KiB. Each prompt
+  keeps 200 versions; pushing one more deletes the oldest version that is
+  neither live, previous live nor in a canary.
+- **Pushing:** `gregale ai prompts push support.yaml` (or
+  `POST /v1/outbound/ai-prompts/{name}/versions`) stores a version. A
+  prompt's first version is live; later ones are live only with `--live`. A
+  push identical to the latest version stores nothing, so pushing from CI on
+  every deploy is safe. Prompts per account: Hobby 25, Pro 100, Scale 500
+  (`OutboundAIPromptsMax`).
+
+  ```yaml
+  name: support
+  description: Support replies
+  target: { integration_id: 3f1c..., model: gpt-4o }
+  params: { temperature: 0.2, max_tokens: 400 }
+  defaults: { tone: friendly }
+  messages:
+    - role: system
+      content: You answer for Acme support in a {{tone}} tone.
+    - role: user
+      content: "{{question}}"
+  ```
+- **Calling:** `POST $GREGALE_OUTBOUND_URL/p/{name}` (or the public AI host
+  with an access token) with
+  `{"variables": {...}, "messages": [...], "stream": true, "version": 7}`:
+  - `variables` fill the placeholders as plain text: a value is never scanned
+    for placeholders, so user input cannot change the template;
+  - `messages` (optional) are OpenAI chat messages appended after the
+    template's, for a conversation;
+  - `version` (optional) pins a version, for tests and CI.
+
+  The gateway renders the version into an OpenAI chat completions request
+  and serves it through the version's route, or a one-target openai-format
+  route to its integration, so translation, fallback, caps, guardrails,
+  caches, tags and traces all apply. The answer is OpenAI chat completions
+  JSON or SSE, and `X-Gregale-AI-Prompt-Version` names the version that
+  served it.
+- **Going live:** `gregale ai prompts promote <name> <version>` makes a
+  version live, keeping the old one as the previous version;
+  `gregale ai prompts rollback <name>` puts the previous version back. Both
+  end any canary.
+- **Canaries:** `gregale ai prompts canary <name> <version> --percent 10`
+  sends that share of unpinned calls to a version, sticky per
+  `X-Gregale-AI-Session`, else `X-Gregale-AI-User`, else at random.
+  outboundd judges it with the route canary rule (error-rate and optional
+  latency margins after `min_calls`) and rolls it back on its own;
+  `canary <name> promote` makes it live and `canary <name> stop` ends it.
+- **Stats:** `gregale ai prompts stats <name>` shows each version's
+  attempts, errors, mean time to first byte, cost and good and bad feedback
+  over the last 24 hours. Attempts are counted per attempt, so a route
+  fallback counts as an error for the version; both sides of a canary face
+  the same providers. The request log records each call's `prompt_id` and
+  `prompt_version`.
+- **Evaluations:** `gregale ai prompts evaluate <name> <version> --cases
+  cases.jsonl --judge <id> --judge-model gpt-5 [--canary-percent 10]`
+  renders the candidate and the live version for each of up to 50 variable
+  sets, calls each version's target in process (a route target uses its
+  first target) under the caller `evaluation`, and asks the judge which
+  answer is better with the route evaluation's judge prompt and pass rule. A
+  passing evaluation starts its canary while the baseline is still live and
+  no canary is active. Captured traffic is not replayed: captures hold
+  rendered text, not variables.
+- **Other commands:** `list`, `get <name> [--version N]`,
+  `diff <name> <a> <b>`, `render <name> --var k=v` (shows what a version
+  sends, without calling a model) and `rm <name>`.
+
+`outbound_ai_prompt_calls_total{pick}` counts prompt calls by how their
+version was picked (`live`, `canary`, `pinned`), and
+`outbound_ai_prompt_canary_rollbacks_total{reason}` counts prompt canary
+rollbacks.
+
 ## Runs
 
 When vmmd serves the relay, an outbound-enabled Run gets

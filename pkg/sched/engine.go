@@ -442,7 +442,10 @@ type Engine struct {
 	// from releasing its retired destination's reservation more than once.
 	functionDestinationReleases releasedDestinations
 	vmm                         RoutedVMM
-	notif                       Notifier
+	// cleanRecapture queues clean init snapshot recaptures instead of
+	// capturing a used instance at park (ADR-20261115113000); nil captures.
+	cleanRecapture cleanRecaptureSink
+	notif          Notifier
 	// notifyInPublication sends a wake's instance_changed from its RUNNING
 	// publication (WithNotifyInPublication).
 	notifyInPublication bool
@@ -3880,7 +3883,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	e.emitInstanceChanged(ctx, ins.ID, appID, initState, wakeID)
 
-	if err := e.ledger.Admit(Request{
+	if err := e.admitWithStaleRepair(ctx, appID, Request{
 		Instance: ins.ID, AppID: appID, DeploymentID: dep.ID, DeploymentScope: dep.Scope, Plan: acct.Plan,
 		EnvironmentKey:        environmentKey,
 		ProductionEnvironment: productionEnvironment,
@@ -7380,12 +7383,22 @@ const watchdogColdBootFailurePrefix = "cold_boot_timeout: "
 // deployment the watchdog already failed with its generic cold-boot timeout:
 // vmmd's typed readiness problem for the stopped guest (for example a
 // healthcheck that answered 503) says why the app was not ready.
+//
+// vmmd's catch-all "internal" is not a reason: when the watchdog stops the
+// guest, vmmd's wait for readiness ends as "readiness: context canceled" with
+// that code, and replacing the timeout with it told a Spring app that needed
+// more than the 30 s default window that the platform had failed (2026-11-15
+// agent eval, deployment 20b6a0a4).
 func refinesWatchdogStartupTimeout(dep state.Deployment, cause error) bool {
 	var problem *api.Problem
 	return dep.Status == state.DeployFailed && dep.ErrorCode == api.CodeAppStartupTimeout &&
 		strings.HasPrefix(dep.Error, watchdogColdBootFailurePrefix) &&
-		errors.As(cause, &problem) && problem != nil && problem.Code != ""
+		errors.As(cause, &problem) && problem != nil && problem.Code != "" && problem.Code != vmmdCatchAllCode
 }
+
+// vmmdCatchAllCode is the Problem code vmmd gives a boot failure it did not
+// classify (see nodeCausedBootFailure).
+const vmmdCatchAllCode = "internal"
 
 // projectServiceModeConflict reports a project service that was deployed as a
 // worker and listens: the scan found nothing calling it, so the customer's fix
@@ -7519,8 +7532,12 @@ func (e *Engine) ParkIdle(ctx context.Context, instanceID string, check IdlePark
 
 func (e *Engine) park(ctx context.Context, instanceID string, check *IdleParkCheck) error {
 	ins, err := e.lockedParkable(ctx, instanceID)
-	if err != nil || ins == nil {
+	if err != nil {
 		return err
+	}
+	if ins == nil {
+		e.releaseIfNoLongerResident(ctx, instanceID)
+		return nil
 	}
 	if check != nil && state.State(ins.State) == state.StateRunning {
 		if reason := check.activity(ctx, *ins); reason != "" {
@@ -7586,6 +7603,79 @@ func (e *Engine) ParkWithReason(ctx context.Context, instanceID, reason string) 
 // states. It is app-scoped and is called only on a would-be concurrency
 // rejection. Terminal rows release their reservation; snapshotting and
 // migrating rows keep RAM but no longer consume an app serving slot.
+// reservationAuditInterval is how often a scheduler reconciles its ledger
+// with the instance rows. A peer scheduler can move an instance this ledger
+// holds (an operator intent any schedd may claim): request wakes repaired
+// that at their cap, but nothing else did until the scheduler restarted.
+const reservationAuditInterval = time.Minute
+
+// ReleaseStaleReservations reconciles every app this ledger holds
+// reservations for with its instance rows, under the app's lock, and returns
+// how many reservations it released.
+func (e *Engine) ReleaseStaleReservations(ctx context.Context) int {
+	released := 0
+	for _, appID := range e.ledger.AppsWithReservations() {
+		if ctx.Err() != nil {
+			break
+		}
+		e.lockApp(appID)
+		n, err := e.reconcileAppAdmission(ctx, appID)
+		e.unlockApp(appID)
+		if err != nil {
+			e.log.Warn("sched: reservation audit", "app", logsanitize.Field(appID), "err", err)
+			continue
+		}
+		if n > 0 {
+			e.log.Info("sched: reservation audit released stale reservations", "app", logsanitize.Field(appID), "instances", n)
+			released += n
+		}
+	}
+	return released
+}
+
+// releaseIfNoLongerResident frees this ledger's reservation for an instance
+// another scheduler already parked, stopped or failed. A park that finds the
+// row gone from RUNNING used to return without touching the ledger, so the
+// owner kept counting an instance a peer had moved (an operator intent any
+// schedd may claim, or a drain a non-owner ran) until it restarted.
+func (e *Engine) releaseIfNoLongerResident(ctx context.Context, instanceID string) {
+	if !e.ledger.ResidentFor(instanceID) {
+		return
+	}
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil || state.State(ins.State).CountsForRAM() {
+		return
+	}
+	e.ledger.Release(instanceID)
+	e.log.Info("sched: released the reservation of an instance a peer moved", "instance", instanceID, "app", logsanitize.Field(ins.AppID), "state", ins.State)
+}
+
+// admitWithStaleRepair is ledger.Admit that, when the ledger refuses at the
+// app's concurrency cap, releases the app's stale reservations (rows no
+// longer resident) and tries once more. The request gates do this before
+// their cap decision, but explicit-deployment admissions bypass the gates,
+// so a reservation left behind by a stopped instance refused them until
+// schedd restarted (prod test 2026-11-15: every immediate-rollout
+// verification of an app with one leaked slot got 429 and the deploy
+// failed deployment_verification_unavailable, while ordinary wakes worked).
+func (e *Engine) admitWithStaleRepair(ctx context.Context, appID string, req Request) error {
+	err := e.ledger.Admit(req)
+	var prob *api.Problem
+	if err == nil || !errors.As(err, &prob) || prob.Code != api.CodePlanLimitConcur {
+		return err
+	}
+	repaired, reconcileErr := e.reconcileAppAdmission(ctx, appID)
+	if reconcileErr != nil {
+		e.log.Warn("sched: reconcile stale admission after cap refusal", "app", logsanitize.Field(appID), "err", reconcileErr)
+		return err
+	}
+	if repaired == 0 {
+		return err
+	}
+	e.log.Info("sched: released stale admission after cap refusal", "app", logsanitize.Field(appID), "instances", repaired)
+	return e.ledger.Admit(req)
+}
+
 func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, error) {
 	instances, err := e.admissionRepairRows(ctx, appID)
 	if err != nil {
@@ -8892,6 +8982,20 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			}
 		}
 		return nil
+	}
+
+	// ADR-20261115113000: with no init snapshot to reuse on this node, the
+	// capture below would hold what this instance's requests left in memory.
+	// Retire it and let the refresher capture a fresh, primed boot instead.
+	if allowReuse && e.parkNeedsCleanRecapture(ctx, ins, app,
+		app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled, frozenFunction) {
+		return e.parkForCleanRecapture(ctx, ins)
+	}
+
+	if !allowReuse && !frozenFunction {
+		// ADR-20261114153000: the deployment's first init snapshot holds
+		// code paths that already ran once. Never fails the capture.
+		e.primeInitSnapshot(ctx, ins, dep, app)
 	}
 
 	storageKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierInit, uuid.NewString())
