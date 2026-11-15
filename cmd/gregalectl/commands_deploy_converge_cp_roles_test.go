@@ -191,10 +191,12 @@ func TestControlPlaneHashesIgnoreTheVarsDirectory(t *testing.T) {
 	}
 }
 
-// Every control-plane role entry carries the selection condition, so a
-// --roles convergence skips exactly the roles it did not name; the compute
-// play, which node_join imports, carries none.
-func TestBootstrapControlPlaneRolesCarryTheSelection(t *testing.T) {
+// Every role entry carries its lane's selection condition, so a --roles
+// convergence skips exactly the roles it did not name: the control-plane
+// play faas_cp_converge_roles (ADR-20261030150000), the compute play, which
+// node_join imports, faas_join_converge_roles (ADR-20261115120000). Neither
+// carries the other's.
+func TestBootstrapRolesCarryTheirLaneSelection(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "bootstrap.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -203,8 +205,8 @@ func TestBootstrapControlPlaneRolesCarryTheSelection(t *testing.T) {
 	if err := yaml.Unmarshal(body, &plays); err != nil {
 		t.Fatal(err)
 	}
-	selection := regexp.MustCompile(`^faas_cp_converge_roles \| default\(none\) is none or '([a-z0-9_]+)' in faas_cp_converge_roles$`)
-	sawControlPlane := false
+	lanes := map[string]string{"control_plane": "faas_cp_converge_roles", "compute_nodes": "faas_join_converge_roles"}
+	saw := map[string]bool{}
 	for _, play := range plays {
 		hosts, _ := play["hosts"].(string)
 		roles, _ := play["roles"].([]any)
@@ -221,29 +223,31 @@ func TestBootstrapControlPlaneRolesCarryTheSelection(t *testing.T) {
 					conditions = append(conditions, s)
 				}
 			}
-			var selected []string
-			for _, c := range conditions {
-				if m := selection.FindStringSubmatch(c); m != nil {
-					selected = append(selected, m[1])
-				} else if strings.Contains(c, "faas_cp_converge_roles") {
-					t.Errorf("%s: role %s has a malformed selection condition %q", hosts, name, c)
+			for group, variable := range lanes {
+				selection := regexp.MustCompile(`^` + variable + ` \| default\(none\) is none or '([a-z0-9_]+)' in ` + variable + `$`)
+				var selected []string
+				for _, c := range conditions {
+					if m := selection.FindStringSubmatch(c); m != nil {
+						selected = append(selected, m[1])
+					} else if strings.Contains(c, variable) {
+						t.Errorf("%s: role %s has a malformed selection condition %q", hosts, name, c)
+					}
 				}
-			}
-			switch hosts {
-			case "control_plane":
-				sawControlPlane = true
-				if len(selected) != 1 || selected[0] != name {
-					t.Errorf("control-plane role %s must carry its own selection condition; conditions = %q", name, conditions)
-				}
-			default:
-				if len(selected) != 0 {
-					t.Errorf("%s role %s must not carry the control-plane selection", hosts, name)
+				if hosts == group {
+					saw[group] = true
+					if len(selected) != 1 || selected[0] != name {
+						t.Errorf("%s role %s must carry its own %s condition; conditions = %q", group, name, variable, conditions)
+					}
+				} else if len(selected) != 0 {
+					t.Errorf("%s role %s must not carry the %s selection", hosts, name, variable)
 				}
 			}
 		}
 	}
-	if !sawControlPlane {
-		t.Fatal("bootstrap.yml has no control_plane play")
+	for group := range lanes {
+		if !saw[group] {
+			t.Fatalf("bootstrap.yml has no %s play with roles", group)
+		}
 	}
 }
 

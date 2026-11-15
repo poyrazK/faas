@@ -103,6 +103,21 @@ The control plane's design, applied to the compute play:
 - The convergence report that failed all five rc.344 attempts.
 - Widening unit releases to compute daemons, guest init or images.
 
+### What the planner picks on recent releases
+
+`host_roles.py changed --group compute_nodes`, with the earlier release's
+hashes as the node's record:
+
+| range | compute roles converged |
+|---|---|
+| rc.343 → rc.344 | 11 of 40: nftables, serving_probe, seal_domains, vmmd_service, geoip, gatewayd_internal_service, compute_only_service, alloy, promtail, role_convergence, fleet_verify |
+| rc.344 → main (2026-11-15) | all 40: #7338 added `group_vars/compute_nodes/vmmd_restore_speedups.yml`, and group_vars are globals |
+
+The slow roles of a full bootstrap (storage, firecracker's kernel build,
+host_hardening's packages, supply_chain_scanners' Grype database) changed
+in neither range. A group_vars change still converges every role; narrowing
+that to the roles that read the variable is a possible follow-up.
+
 ## Consequences
 
 - A typical full release converges a handful of control-plane roles instead
