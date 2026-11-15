@@ -8,8 +8,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from faas_sdk.preview import FaaSClient as PreviewClient
-from faas_sdk.preview.api.deployments import get_build as preview_get_build
 
 from faas_sdk import (
     ErrCapacity,
@@ -22,6 +20,8 @@ from faas_sdk import (
     RetryPolicy,
 )
 from faas_sdk.api.deployments import get_build
+from faas_sdk.preview import FaaSClient as PreviewClient
+from faas_sdk.preview.api.deployments import get_build as preview_get_build
 
 _SDK = Path(__file__).resolve().parents[1]
 _CONTRACT = _SDK / "request-contracts/async-options.json"

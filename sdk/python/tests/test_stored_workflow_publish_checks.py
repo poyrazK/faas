@@ -1,7 +1,7 @@
+from faas_sdk.preview.models.stored_workflow_publish_policy import StoredWorkflowPublishPolicy
 from faas_sdk.preview.models.check_stored_workflow_publication_request import CheckStoredWorkflowPublicationRequest
 from faas_sdk.preview.models.check_stored_workflow_publication_response import CheckStoredWorkflowPublicationResponse
 from faas_sdk.preview.models.publish_stored_workflow_request import PublishStoredWorkflowRequest
-from faas_sdk.preview.models.stored_workflow_publish_policy import StoredWorkflowPublishPolicy
 
 
 def test_server_checks_wire_roundtrip():

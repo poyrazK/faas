@@ -2,8 +2,8 @@
 
 import httpx
 import pytest
-from faas_sdk.preview.api.account import get_capabilities
 
+from faas_sdk.preview.api.account import get_capabilities
 from faas_sdk.client import AuthenticatedClient
 from faas_sdk.types import UNSET
 

@@ -1,7 +1,6 @@
 import pytest
-from faas_sdk.preview.models.workflow_recovery_policy_automatic_execution import (
-    WorkflowRecoveryPolicyAutomaticExecution,
-)
+
+from faas_sdk.preview.models.workflow_recovery_policy_automatic_execution import WorkflowRecoveryPolicyAutomaticExecution
 
 
 @pytest.mark.parametrize(

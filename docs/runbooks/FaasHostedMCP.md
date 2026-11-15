@@ -28,6 +28,24 @@ Covers `FaasHostedMCPDown`, `FaasHostedMCPRestarting` and
   dropped after ten idle minutes, so memory follows active connections.
   `gregale_management_mcp_connection_servers` counts the built ones.
 
+## OAuth client callback refused
+
+`invalid_client` with `none of the client's redirect URIs is allowed on this
+server` means the bridge fetched the client's metadata but none of its callbacks
+matched the operator allowlist. Authorization stops before account sign-in.
+
+The shipped unit allows Google Antigravity's exact HTTPS callback,
+`https://antigravity.google/oauth-callback`, published at
+`https://antigravity.google/oauth/client-metadata.json`. Older units omit it.
+Inspect `systemctl cat faas-mcp-bridge` for the active `--oauth-redirect-uri`
+arguments and any `ExecStart` override. Converge `control_plane_service` to
+install the updated unit and let its handler reload/restart the bridge. An
+override that replaces `ExecStart` also needs the exact callback. Retry
+**Authenticate** in Antigravity after the updated service is running.
+
+Add only independently verified exact HTTPS callbacks; the existing loopback
+rules remain separate. Do not accept arbitrary client-provided redirect hosts.
+
 ## Inspect and revoke connections
 
 The admin socket is `/run/faas-mcp-bridge/admin.sock`, in a 0700 directory

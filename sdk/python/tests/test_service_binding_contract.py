@@ -10,13 +10,13 @@ from uuid import UUID
 import attrs
 import httpx
 import pytest
+
 from faas_sdk.preview.api.apps import create_app, explain_app_service_binding, get_app, update_app
+from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models.app_response import AppResponse
 from faas_sdk.preview.models.create_app_request import CreateAppRequest
 from faas_sdk.preview.models.service_binding_explanation import ServiceBindingExplanation
 from faas_sdk.preview.models.update_app_request import UpdateAppRequest
-
-from faas_sdk.client import AuthenticatedClient
 
 
 def test_managed_service_receipt_context_is_typed():

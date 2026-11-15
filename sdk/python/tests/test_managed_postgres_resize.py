@@ -2,11 +2,11 @@ import json
 from uuid import UUID
 
 import httpx
+
 from faas_sdk.preview.api.managed_postgres import get_managed_postgres_resize, resize_managed_postgres_database
+from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models.managed_postgres_resize import ManagedPostgresResize
 from faas_sdk.preview.models.resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
-
-from faas_sdk.client import AuthenticatedClient
 
 
 def test_resize_uuid_replay_and_progress() -> None:

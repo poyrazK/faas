@@ -84,9 +84,7 @@ def test_pagerduty_acknowledgement_contracts():
 
 def test_pagerduty_hold_contract():
     from faas_sdk.preview.models.mcp_readiness_incident_attention import MCPReadinessIncidentAttention
-    from faas_sdk.preview.models.mcp_readiness_pager_duty_acknowledgement_hold import (
-        MCPReadinessPagerDutyAcknowledgementHold,
-    )
+    from faas_sdk.preview.models.mcp_readiness_pager_duty_acknowledgement_hold import MCPReadinessPagerDutyAcknowledgementHold
 
     hold = dict(
         destination="primary",

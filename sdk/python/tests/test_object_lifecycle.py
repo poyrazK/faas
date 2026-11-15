@@ -4,6 +4,7 @@ import json
 from uuid import UUID
 
 import httpx
+
 from faas_sdk.preview.api.storage import (
     create_object_lifecycle_scan,
     delete_object_bucket_lifecycle,
@@ -11,14 +12,13 @@ from faas_sdk.preview.api.storage import (
     get_object_lifecycle_scan,
     put_object_bucket_lifecycle,
 )
+from faas_sdk.client import AuthenticatedClient
 from faas_sdk.preview.models import (
     ObjectBucketLifecycle,
     ObjectBucketLifecycleRequest,
     ObjectLifecycleRule,
     ObjectLifecycleScan,
 )
-
-from faas_sdk.client import AuthenticatedClient
 
 
 def test_object_lifecycle_configuration_and_scan() -> None:

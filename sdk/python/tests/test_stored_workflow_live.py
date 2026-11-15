@@ -1,10 +1,8 @@
 from faas_sdk.preview.api.workflows.start_stored_workflow_live_verification import _get_kwargs
-from faas_sdk.preview.models.start_stored_workflow_live_verification_request import (
-    StartStoredWorkflowLiveVerificationRequest,
-)
 from faas_sdk.preview.models.stored_workflow_live_expectation import StoredWorkflowLiveExpectation
 from faas_sdk.preview.models.stored_workflow_live_verification import StoredWorkflowLiveVerification
 from faas_sdk.preview.models.stored_workflow_test_case import StoredWorkflowTestCase
+from faas_sdk.preview.models.start_stored_workflow_live_verification_request import StartStoredWorkflowLiveVerificationRequest
 
 
 def test_live_expectations_preserve_null_zero_and_large_numbers():
@@ -67,8 +65,8 @@ def test_shared_suite_metadata_routes_and_missing_run_identity():
     from faas_sdk.preview.api.workflows.get_stored_workflow_live_suite import _get_kwargs as get_kwargs
     from faas_sdk.preview.api.workflows.list_stored_workflow_live_suites import _get_kwargs as list_kwargs
     from faas_sdk.preview.api.workflows.save_stored_workflow_live_suite import _get_kwargs as save_kwargs
-    from faas_sdk.preview.models.save_stored_workflow_live_suite_request import SaveStoredWorkflowLiveSuiteRequest
     from faas_sdk.preview.models.stored_workflow_live_suite import StoredWorkflowLiveSuite
+    from faas_sdk.preview.models.save_stored_workflow_live_suite_request import SaveStoredWorkflowLiveSuiteRequest
 
     suite_id = UUID("00000000-0000-4000-8000-000000000010")
     run_id = "00000000-0000-4000-8000-000000000011"
@@ -128,9 +126,7 @@ def test_suite_comparison_reads_explicit_pair_and_preserves_unknown_evidence():
     baseline = UUID("00000000-0000-4000-8000-000000000002")
     kwargs = _get_kwargs("billing", "case/report", candidate, baseline)
     assert kwargs["method"] == "get" and "json" not in kwargs
-    assert (
-        kwargs["url"] == f"/v1/apps/billing/workflows/stored/case%2Freport/live-suites/{candidate}/compare/{baseline}"
-    )
+    assert kwargs["url"] == f"/v1/apps/billing/workflows/stored/case%2Freport/live-suites/{candidate}/compare/{baseline}"
     summary = {
         "id": str(baseline),
         "name": "report",
@@ -176,8 +172,8 @@ def test_managed_suites_preserve_target_and_explicit_continuation():
     from faas_sdk.preview.api.workflows.advance_stored_workflow_live_suite import _get_kwargs as advance_kwargs
     from faas_sdk.preview.api.workflows.start_stored_workflow_live_suite import _get_kwargs as start_kwargs
     from faas_sdk.preview.models.advance_stored_workflow_live_suite_request import AdvanceStoredWorkflowLiveSuiteRequest
-    from faas_sdk.preview.models.start_stored_workflow_live_suite_request import StartStoredWorkflowLiveSuiteRequest
     from faas_sdk.preview.models.stored_workflow_live_suite_summary import StoredWorkflowLiveSuiteSummary
+    from faas_sdk.preview.models.start_stored_workflow_live_suite_request import StartStoredWorkflowLiveSuiteRequest
 
     suite_id = UUID("0199e820-0000-7000-8000-000000000010")
     body = {
@@ -219,11 +215,9 @@ def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
     from faas_sdk.preview.api.workflows.get_stored_workflow_live_baseline import _get_kwargs as get_head
     from faas_sdk.preview.api.workflows.get_stored_workflow_live_baseline_history import _get_kwargs as get_history
     from faas_sdk.preview.api.workflows.promote_stored_workflow_live_baseline import _get_kwargs as promote
-    from faas_sdk.preview.models.promote_stored_workflow_live_baseline_request import (
-        PromoteStoredWorkflowLiveBaselineRequest,
-    )
     from faas_sdk.preview.models.stored_workflow_live_baseline import StoredWorkflowLiveBaseline
     from faas_sdk.preview.models.stored_workflow_live_baseline_history import StoredWorkflowLiveBaselineHistory
+    from faas_sdk.preview.models.promote_stored_workflow_live_baseline_request import PromoteStoredWorkflowLiveBaselineRequest
 
     promotion_id = UUID("00000000-0000-4000-8000-000000000020")
     suite_id = "00000000-0000-4000-8000-000000000010"
@@ -275,9 +269,7 @@ def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
     assert StoredWorkflowLiveBaselineHistory.from_dict(history).to_dict() == history
 
     from faas_sdk.preview.api.workflows.list_stored_workflow_live_baselines import _get_kwargs as list_baselines
-    from faas_sdk.preview.models.list_stored_workflow_live_baselines_response import (
-        ListStoredWorkflowLiveBaselinesResponse,
-    )
+    from faas_sdk.preview.models.list_stored_workflow_live_baselines_response import ListStoredWorkflowLiveBaselinesResponse
 
     listing = list_baselines("billing", "case/report")
     assert listing["method"] == "get"
@@ -303,19 +295,16 @@ def test_named_baselines_preserve_explicit_promotion_and_audit_receipts():
 
 def test_baseline_retirement_request_and_history_roundtrip():
     from faas_sdk.preview.api.workflows.retire_stored_workflow_live_baseline import _get_kwargs
-    from faas_sdk.preview.models.retire_stored_workflow_live_baseline_request import (
-        RetireStoredWorkflowLiveBaselineRequest,
-    )
     from faas_sdk.preview.models.stored_workflow_live_baseline_history import StoredWorkflowLiveBaselineHistory
     from faas_sdk.preview.models.stored_workflow_live_baseline_retirement import StoredWorkflowLiveBaselineRetirement
+    from faas_sdk.preview.models.retire_stored_workflow_live_baseline_request import RetireStoredWorkflowLiveBaselineRequest
 
     identity = "00000000-0000-4000-8000-000000000014"
     request = RetireStoredWorkflowLiveBaselineRequest(expected_revision=3)
     kwargs = _get_kwargs("billing", "case/report", "production", identity, body=request)
     assert kwargs["method"] == "put"
     assert (
-        kwargs["url"]
-        == f"/v1/apps/billing/workflows/stored/case%2Freport/live-baselines/production/retirements/{identity}"
+        kwargs["url"] == f"/v1/apps/billing/workflows/stored/case%2Freport/live-baselines/production/retirements/{identity}"
     )
     assert kwargs["json"] == {"expected_revision": 3}
     receipt = {

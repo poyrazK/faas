@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+
 from faas_sdk.preview.job_operations_runtime import GregaleJobOperations
 from faas_sdk.preview.models.operation_artifact_request import OperationArtifactRequest
 

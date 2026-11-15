@@ -3,10 +3,10 @@
 from uuid import UUID
 
 import httpx
-from faas_sdk.preview.api.storage import delete_object_bucket_version
-from faas_sdk.preview.models import ObjectVersionDeleteResult
 
+from faas_sdk.preview.api.storage import delete_object_bucket_version
 from faas_sdk.client import AuthenticatedClient
+from faas_sdk.preview.models import ObjectVersionDeleteResult
 
 
 def test_owned_version_deletion() -> None:

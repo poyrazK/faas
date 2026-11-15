@@ -1,11 +1,11 @@
 from uuid import UUID
 
 import httpx
+
 from faas_sdk.preview.api.projects import abort_project_environment_promotion, recover_project_environment_promotion
+from faas_sdk.client import Client
 from faas_sdk.preview.models.project_promotion_control import ProjectPromotionControl
 from faas_sdk.preview.models.project_promotion_control_request import ProjectPromotionControlRequest
-
-from faas_sdk.client import Client
 
 
 def test_promotion_controls_generation_and_accepted_receipts():

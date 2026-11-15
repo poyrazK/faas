@@ -9,7 +9,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from faas_sdk.preview import inspect_project as inspect_preview_project
 
 from faas_sdk import (
     FaaSClient,
@@ -23,6 +22,7 @@ from faas_sdk import (
     load_source_deployment_state,
     validate_project_plan,
 )
+from faas_sdk.preview import inspect_project as inspect_preview_project
 
 CONTRACT = Path(__file__).resolve().parents[1] / "request-contracts/project-inspection.json"
 if not CONTRACT.exists():

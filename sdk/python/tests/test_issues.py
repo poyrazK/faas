@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 
 import pytest
+
 from faas_sdk.preview.issues import IssueReporter
 
 
@@ -63,12 +64,8 @@ def test_optional_correlation_is_validated_before_delivery(monkeypatch):
     reporter = IssueReporter("http://localhost", "exports", "g_issue_test")
     try:
         assert reporter.capture_exception(ValueError("bad"), trace_id="bad", span_id="0" * 16, invocation_id="bad")
-        assert reporter.capture_exception(
-            ValueError("good"),
-            trace_id="A" * 32,
-            span_id="B" * 16,
-            invocation_id="C4F3D348-8842-4EEC-B6E4-9666096E5D48",
-        )
+        assert reporter.capture_exception(ValueError("good"), trace_id="A" * 32, span_id="B" * 16,
+                                          invocation_id="C4F3D348-8842-4EEC-B6E4-9666096E5D48")
         assert reporter.flush()
         assert all(key not in received[0] for key in ("trace_id", "span_id", "invocation_id"))
         assert received[1]["trace_id"] == "a" * 32
@@ -87,10 +84,7 @@ def test_payload_limit_preserves_grouping_independent_of_context(monkeypatch):
     error = ValueError("outer")
     error.__cause__ = TypeError("middle")
     error.__cause__.__cause__ = RuntimeError("root")
-    crumbs = [
-        {"occurred_at": datetime.now(UTC).isoformat(), "category": "custom", "level": "info", "message": "\x01" * 256}
-        for _ in range(16)
-    ]
+    crumbs = [{"occurred_at": datetime.now(UTC).isoformat(), "category": "custom", "level": "info", "message": "\x01" * 256} for _ in range(16)]
     reporter = IssueReporter("http://localhost", "exports", "g_issue_test", grouping_strategy="cause-chain-v1")
     try:
         assert reporter.capture_exception(error)
@@ -137,15 +131,8 @@ def test_invalid_breadcrumb_timestamps_do_not_drop_exception():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     reporter = IssueReporter(f"http://127.0.0.1:{server.server_port}", "exports", "g_issue_test")
     try:
-        stamps = [
-            "yesterday",
-            "2026-02-30T10:00:00Z",
-            (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
-            datetime.now(UTC).isoformat(),
-        ]
-        breadcrumbs = [
-            {"occurred_at": stamp, "category": "custom", "level": "info", "message": "entry"} for stamp in stamps
-        ]
+        stamps = ["yesterday", "2026-02-30T10:00:00Z", (datetime.now(UTC) + timedelta(minutes=10)).isoformat(), datetime.now(UTC).isoformat()]
+        breadcrumbs = [{"occurred_at": stamp, "category": "custom", "level": "info", "message": "entry"} for stamp in stamps]
         assert reporter.capture_exception(ValueError("context"), breadcrumbs=breadcrumbs)
         assert reporter.flush()
         assert len(received) == 1
@@ -459,11 +446,11 @@ def test_split_preview_client_preserves_unavailable_history_and_original_scope()
     from uuid import UUID
 
     import httpx
+
     from faas_sdk.preview.api.apps import preview_issue_split
+    from faas_sdk.client import AuthenticatedClient
     from faas_sdk.preview.models.issue_split_matcher import IssueSplitMatcher
     from faas_sdk.preview.models.issue_split_preview import IssueSplitPreview
-
-    from faas_sdk.client import AuthenticatedClient
 
     original = UUID("11111111-1111-4111-8111-111111111111")
     canonical = "22222222-2222-4222-8222-222222222222"
@@ -498,12 +485,12 @@ def test_split_rule_clients_preserve_routing_state_and_transfer_accounting():
     from uuid import UUID
 
     import httpx
+
     from faas_sdk.preview.api.apps import create_issue_split_rule, update_issue_split_rule
+    from faas_sdk.client import AuthenticatedClient
     from faas_sdk.preview.models.issue_split_matcher import IssueSplitMatcher
     from faas_sdk.preview.models.issue_split_rule import IssueSplitRule
     from faas_sdk.preview.models.issue_split_rule_update import IssueSplitRuleUpdate
-
-    from faas_sdk.client import AuthenticatedClient
 
     source = UUID("11111111-1111-4111-8111-111111111111")
     rule_id = UUID("22222222-2222-4222-8222-222222222222")
@@ -636,11 +623,11 @@ def test_priority_preview_and_atomic_undo_sdk_contract():
     from uuid import UUID
 
     import httpx
+
     from faas_sdk.preview.api.apps.undo_issue_split_rule import sync
+    from faas_sdk.client import AuthenticatedClient
     from faas_sdk.preview.models.issue_split_preview import IssueSplitPreview
     from faas_sdk.preview.models.issue_split_rule_undo_request import IssueSplitRuleUndoRequest
-
-    from faas_sdk.client import AuthenticatedClient
 
     source = "11111111-1111-4111-8111-111111111111"
     rule_id = "22222222-2222-4222-8222-222222222222"
@@ -701,17 +688,13 @@ def test_priority_preview_and_atomic_undo_sdk_contract():
 
 def test_route_does_not_change_trimmed_cause_evidence():
     from copy import deepcopy
-
     from faas_sdk.preview.issues import _trim_event
 
     frame = {"file": "x" * 413, "function": "f" * 150, "line": 1, "in_app": True}
-    event = {
-        "frames": [frame] * 32,
-        "causes": [
-            {"exception_type": "Error", "frames": [frame] * 32},
-            {"exception_type": "Error", "frames": [frame] * 32},
-        ],
-    }
+    event = {"frames": [frame] * 32, "causes": [
+        {"exception_type": "Error", "frames": [frame] * 32},
+        {"exception_type": "Error", "frames": [frame] * 32},
+    ]}
     without_route, with_route = deepcopy(event), deepcopy(event)
     with_route["route"] = "\x01" * 256
     assert _trim_event(without_route) and _trim_event(with_route)

@@ -1,7 +1,6 @@
 """A direct node lookup preserves intent unknowns and completed submission history."""
 
 from faas_sdk.preview.models.obs_node_probe_notifications import ObsNodeProbeNotifications
-
 from faas_sdk.types import UNSET
 
 
@@ -14,11 +13,8 @@ def snapshot() -> dict:
         "reason": "inventory_unavailable",
         "max_age_seconds": 120,
         "inventory": {
-            "state": "unavailable",
-            "reason": "inventory_missing",
-            "configured": None,
-            "expected_pairs": None,
-            "observed_at": None,
+            "state": "unavailable", "reason": "inventory_missing",
+            "configured": None, "expected_pairs": None, "observed_at": None,
         },
         "expected": None,
         "max_result_age_seconds": None,
@@ -28,9 +24,7 @@ def snapshot() -> dict:
 
 def configured_inventory(body: dict) -> dict:
     return {
-        "state": "healthy",
-        "configured": True,
-        "expected_pairs": 40,
+        "state": "healthy", "configured": True, "expected_pairs": 40,
         "observed_at": body["generated_at"],
     }
 
@@ -60,26 +54,15 @@ def test_expected_node_preserves_both_channels_and_historical_success() -> None:
     body["inventory"] = configured_inventory(body)
     body["channels"] = [
         {
-            "node": body["node"],
-            "channel": "webhook",
-            "state": "last_submission_failed",
-            "enabled": True,
-            "evaluated_at": body["generated_at"],
-            "last_run_at": body["generated_at"],
-            "last_attempt_at": "2026-11-13T12:00:00+00:00",
-            "last_success_at": "2026-11-12T12:00:00+00:00",
+            "node": body["node"], "channel": "webhook", "state": "last_submission_failed",
+            "enabled": True, "evaluated_at": body["generated_at"], "last_run_at": body["generated_at"],
+            "last_attempt_at": "2026-11-13T12:00:00+00:00", "last_success_at": "2026-11-12T12:00:00+00:00",
             "failure_code": "timeout",
         },
         {
-            "node": body["node"],
-            "channel": "heartbeat",
-            "state": "unknown",
-            "reason": "recording_unknown",
-            "enabled": None,
-            "evaluated_at": body["generated_at"],
-            "last_run_at": None,
-            "last_attempt_at": None,
-            "last_success_at": None,
+            "node": body["node"], "channel": "heartbeat", "state": "unknown", "reason": "recording_unknown",
+            "enabled": None, "evaluated_at": body["generated_at"], "last_run_at": None,
+            "last_attempt_at": None, "last_success_at": None,
         },
     ]
     decoded = ObsNodeProbeNotifications.from_dict(body)

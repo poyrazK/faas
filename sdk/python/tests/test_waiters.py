@@ -9,7 +9,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from faas_sdk.preview import FaaSClient as PreviewClient
 
 from faas_sdk import (
     BuildWaitOptions,
@@ -28,6 +27,7 @@ from faas_sdk import (
 )
 from faas_sdk.models.build_response import BuildResponse
 from faas_sdk.models.release_timeline import ReleaseTimeline
+from faas_sdk.preview import FaaSClient as PreviewClient
 
 SDK = Path(__file__).resolve().parents[1]
 CONTRACT_PATH = SDK / "request-contracts/waiters.json"

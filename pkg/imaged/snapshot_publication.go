@@ -2,9 +2,11 @@ package imaged
 
 import (
 	"context"
+	"strings"
+
+	"github.com/onebox-faas/faas/pkg/crashcrypt"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
-	"strings"
 )
 
 func (h *Handler) deleteSnapshotPair(ctx context.Context, snap state.Snapshot) {
@@ -19,6 +21,11 @@ func (h *Handler) deleteSnapshotPair(ctx context.Context, snap state.Snapshot) {
 		}
 		if err := h.deleteSnapshotObject(ctx, be, key); err != nil {
 			h.log.Warn("imaged: remove unused snapshot", "key", key, "err", err)
+		}
+		// A sealed snapshot (ADR-20261110210000 slice 3d-3) is stored only
+		// as encrypted twins; a plaintext one has none.
+		if err := be.Delete(ctx, key+crashcrypt.Suffix); err != nil && !storage.IsNotFound(err) {
+			h.log.Warn("imaged: remove unused sealed snapshot", "key", key+crashcrypt.Suffix, "err", err)
 		}
 	}
 }
@@ -59,7 +66,7 @@ func (h *Handler) cleanupSnapshotCaptures(ctx context.Context, be storage.Storag
 	for _, key := range keys {
 		// The backend may return broader listings; constrain destructive cleanup
 		// to this deployment's generation namespace.
-		memKey := key
+		memKey := strings.TrimSuffix(key, crashcrypt.Suffix)
 		for _, suffix := range []string{"/vmstate", "/drive", "/backing"} {
 			if strings.HasSuffix(memKey, suffix) {
 				memKey = strings.TrimSuffix(memKey, suffix) + "/mem"

@@ -9,10 +9,10 @@ import tarfile
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
-import faas_sdk.preview as preview
 import pytest
 
 import faas_sdk as public
+import faas_sdk.preview as preview
 from faas_sdk import SourcePreparationError, SourcePreparationOptions, inspect_source, prepare_source
 
 SDK = Path(__file__).resolve().parents[1]

@@ -391,13 +391,13 @@ func cmdBuildList(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale build list --limit N (1 <= N <= 200)", "build")
 		return 1
 	}
-	output, err := prepareListOutput(*outputPath, flagWasSet(fs, "output"), *all)
+	output, err := prepareListOutput(*outputPath, flagWasSet(fs, "output"), *all, "build list")
 	if err != nil {
 		return printErr("Invalid list output", err)
 	}
 	if output != nil {
 		defer output.Close()
-	} else if !validateListStream(*stream, *all) {
+	} else if !validateListStream(*stream, *all, "build list") {
 		return 1
 	}
 	client, err := authedClient()

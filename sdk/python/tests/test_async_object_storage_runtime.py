@@ -10,9 +10,9 @@ import traceback
 from pathlib import Path
 
 import pytest
-from faas_sdk.async_secret_reload_runtime import AsyncSecretReloadCoordinator, AsyncSecretReloadIO
 from faas_sdk.preview.async_object_storage_runtime import AsyncObjectStorageBinding
 from faas_sdk.preview.async_postgres_pool_runtime import AsyncPostgresPoolBinding
+from faas_sdk.async_secret_reload_runtime import AsyncSecretReloadCoordinator, AsyncSecretReloadIO
 from faas_sdk.preview.object_storage_runtime import ObjectStorageBindingError
 from faas_sdk.preview.postgres_pool_runtime import PostgresPoolBindingError
 from faas_sdk.secret_reload_runtime import SecretReloadError

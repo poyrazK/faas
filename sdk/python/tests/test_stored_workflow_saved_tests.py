@@ -1,6 +1,6 @@
-from faas_sdk.preview.models.save_stored_workflow_test_suite_request import SaveStoredWorkflowTestSuiteRequest
 from faas_sdk.preview.models.stored_workflow_response import StoredWorkflowResponse
 from faas_sdk.preview.models.stored_workflow_test_report import StoredWorkflowTestReport
+from faas_sdk.preview.models.save_stored_workflow_test_suite_request import SaveStoredWorkflowTestSuiteRequest
 
 
 def test_saved_suite_null_and_large_integer_roundtrip():

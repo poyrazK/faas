@@ -3,10 +3,7 @@
 from io import BytesIO
 from uuid import UUID
 
-from faas_sdk.preview.api.operations import (
-    get_platform_tenant_self_operation_events,
-    start_platform_tenant_self_operation,
-)
+from faas_sdk.preview.api.operations import get_platform_tenant_self_operation_events, start_platform_tenant_self_operation
 from faas_sdk.preview.models.operation_accepted_response import OperationAcceptedResponse
 from faas_sdk.preview.models.operation_events_response import OperationEventsResponse
 from faas_sdk.preview.models.operation_start_request import OperationStartRequest
@@ -16,7 +13,6 @@ def test_direct_job_upload_wire_contract() -> None:
     from faas_sdk.preview.api.operations import reuse_job_operation_upload, upload_job_operation_artifact
     from faas_sdk.preview.models.operation_artifact_upload_request import OperationArtifactUploadRequest
     from faas_sdk.preview.models.operation_job_artifact_response import OperationJobArtifactResponse
-
     from faas_sdk.types import File
 
     operation = UUID("11111111-1111-4111-8111-111111111111")
@@ -92,7 +88,9 @@ def test_direct_workflow_upload_with_current_native_proof() -> None:
     import json
 
     import httpx
+
     from faas_sdk.preview.api.operations import reuse_workflow_operation_upload, upload_workflow_operation_artifact
+    from faas_sdk.client import AuthenticatedClient
     from faas_sdk.preview.models.operation_artifact_upload_request import OperationArtifactUploadRequest
     from faas_sdk.preview.models.operation_workflow_artifact_response import OperationWorkflowArtifactResponse
     from faas_sdk.preview.models.reuse_workflow_operation_upload_x_gregale_operation_execution_kind import (
@@ -101,8 +99,6 @@ def test_direct_workflow_upload_with_current_native_proof() -> None:
     from faas_sdk.preview.models.upload_workflow_operation_artifact_x_gregale_operation_execution_kind import (
         UploadWorkflowOperationArtifactXGregaleOperationExecutionKind,
     )
-
-    from faas_sdk.client import AuthenticatedClient
     from faas_sdk.types import File
 
     operation = UUID("11111111-1111-4111-8111-111111111111")
@@ -178,11 +174,7 @@ def test_direct_workflow_upload_with_current_native_proof() -> None:
 
 
 def test_recovery_inspection_preview_and_revision_fence() -> None:
-    from faas_sdk.preview.api.operations import (
-        inspect_operation_recovery,
-        preview_operation_recovery,
-        recover_operation,
-    )
+    from faas_sdk.preview.api.operations import inspect_operation_recovery, preview_operation_recovery, recover_operation
     from faas_sdk.preview.models.operation_recovery_preview import OperationRecoveryPreview
     from faas_sdk.preview.models.operation_recovery_preview_request import OperationRecoveryPreviewRequest
     from faas_sdk.preview.models.operation_recovery_request import OperationRecoveryRequest
@@ -469,7 +461,6 @@ def test_operation_completion_retry_receipt_contract() -> None:
 def test_workflow_operation_definition_and_execution_identity() -> None:
     from faas_sdk.preview.models.operation_definition_spec import OperationDefinitionSpec
     from faas_sdk.preview.models.operation_execution import OperationExecution
-
     from faas_sdk.types import UNSET
 
     definition = {
@@ -545,11 +536,11 @@ def test_submission_lookup_and_principal_feature_fences() -> None:
 
 def test_direct_http_upload_with_workload_jwt_and_invocation_proof() -> None:
     import httpx
+
     from faas_sdk.preview.api.operations import reuse_operation_upload, upload_operation_artifact
+    from faas_sdk.client import AuthenticatedClient
     from faas_sdk.preview.models.operation_artifact_upload_request import OperationArtifactUploadRequest
     from faas_sdk.preview.models.operation_artifact_upload_response import OperationArtifactUploadResponse
-
-    from faas_sdk.client import AuthenticatedClient
     from faas_sdk.types import File
 
     operation = UUID("11111111-1111-4111-8111-111111111111")

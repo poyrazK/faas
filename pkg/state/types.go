@@ -7382,6 +7382,12 @@ type Snapshot struct {
 	Stale                           bool
 	DeletePending                   bool
 	CreatedAt                       time.Time
+	// SealedKey and SealedCaptureID describe a snapshot sealed at the source
+	// (ADR-20261110210000 slice 3d-3): the capture key sealed to the capture
+	// recipient, and the capture id (storage_key's capture token) it is
+	// bound to. Both empty for a plaintext snapshot.
+	SealedKey       []byte `json:"-"`
+	SealedCaptureID string
 	// CPUTemplate and CPUModel are the capturing node's CPU identity
 	// (ADR-20261024225612): a templated snapshot restores on any node
 	// class the template supports, a template-less one only on the same

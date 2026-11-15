@@ -2,10 +2,10 @@ import datetime
 from uuid import UUID
 
 import httpx
-from faas_sdk.preview.api.deployments import get_rollback_operation, rollback_app
-from faas_sdk.preview.models import DeploymentResponse, RollbackOperation, RollbackRequest
 
+from faas_sdk.preview.api.deployments import get_rollback_operation, rollback_app
 from faas_sdk.client import Client
+from faas_sdk.preview.models import DeploymentResponse, RollbackOperation, RollbackRequest
 
 
 def test_checked_rollback_exact_request_and_202_receipt():

@@ -1230,6 +1230,10 @@ type Manager struct {
 	// captureRecipient, when set, is what crash-capture keys are sealed to
 	// in place of the first host identity's recipient (slice 3e).
 	captureRecipient *age.X25519Recipient
+	// captureKeys caches sealed snapshot keys opened through secretd
+	// (ADR-20261110210000 slice 3d-3) so a sealed wake pays the round trip
+	// once per capture, not on every restore.
+	captureKeys captureKeyCache
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
@@ -6030,11 +6034,22 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		return WakeColdBoot, scanErr
 	}
 	// ADR-733: a sealed crash capture restores or fails. Cold booting would
-	// hand the caller a fresh instance that is not the capture.
-	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0
-	if sealed {
+	// hand the caller a fresh instance that is not the capture. A sealed park
+	// or warm snapshot (SealedCache, ADR-20261110210000 slice 3d-3) is cache
+	// like any snapshot: one that cannot be opened cold boots (ADR-005).
+	sealed := req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0 && !req.Snapshot.SealedCache
+	if req.Snapshot != nil && len(req.Snapshot.SealedKey) > 0 {
 		if err := m.openSealedSnapshot(ctx, req.AppID, req.Snapshot); err != nil {
-			return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
+			if sealed {
+				return WakeRestore, fmt.Errorf("sealed crash capture: %w", err)
+			}
+			m.log.Warn("sealed snapshot key not opened, cold booting instead of restoring",
+				"instance", req.Instance, "storage_key", req.Snapshot.StorageKey, "err", err)
+			if timings != nil {
+				timings.restoreError = err.Error()
+			}
+			m.metrics.ObserveFallback()
+			req.Snapshot.Stale = true
 		}
 	}
 	restorable := (len(req.ArtifactSources) == 0 || req.SnapshotRestore != nil) && PlanWake(req.Snapshot, m.fcVersion) == WakeRestore && companionSnapshotMemoryMatches(req)
@@ -6621,7 +6636,13 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	}
 	if spec.nativeRuntime == nil {
 		// The native producer already published the backing object exclusively.
-		m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
+		// A sealed park (slice 3d-3) publishes its backing through the sealing
+		// store too, as WarmSnapshot does.
+		store := m.storage
+		if spec.Storage != nil {
+			store = spec.Storage
+		}
+		m.writeSnapshotBackingTo(context.WithoutCancel(ctx), store, instance, spec.StorageKey)
 	}
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, true, nil

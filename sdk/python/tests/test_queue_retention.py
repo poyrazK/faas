@@ -1,9 +1,9 @@
 """Retained queue identities are available through the generated public API."""
 
 import httpx
-from faas_sdk.preview.api.queues import list_queue_bindings
 
 from faas_sdk import FaaSClient
+from faas_sdk.preview.api.queues import list_queue_bindings
 
 
 def test_retained_queue_recovery_history() -> None:

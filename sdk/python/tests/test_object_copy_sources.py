@@ -4,14 +4,10 @@ import json
 from uuid import UUID
 
 import httpx
-from faas_sdk.preview.api.storage import (
-    delete_object_s3_copy_source,
-    list_object_s3_copy_sources,
-    set_object_s3_copy_source,
-)
-from faas_sdk.preview.models import ObjectS3CopySource, ObjectS3CopySourceList, SetObjectS3CopySourceRequest
 
+from faas_sdk.preview.api.storage import delete_object_s3_copy_source, list_object_s3_copy_sources, set_object_s3_copy_source
 from faas_sdk.client import AuthenticatedClient
+from faas_sdk.preview.models import ObjectS3CopySource, ObjectS3CopySourceList, SetObjectS3CopySourceRequest
 
 
 def test_copy_source_grants() -> None:

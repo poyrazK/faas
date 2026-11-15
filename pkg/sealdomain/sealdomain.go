@@ -131,6 +131,10 @@ var registry = []Spec{
 		// build domain's contract check waits for any such capture to
 		// expire.
 		cols("crash_captures", "sealed_key"),
+		// ADR-20261110210000 slice 3d-3: a park or warm snapshot's capture
+		// key, sealed at the source by vmmd exactly as a crash capture's,
+		// opened by vmmd (or secretd by reference) to restore it.
+		cols("snapshots", "sealed_key"),
 	)},
 	{Domain: Outbound, Readers: []string{"outboundd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("outbound_integration_credentials", "authorization_sealed"),

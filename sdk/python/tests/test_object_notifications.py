@@ -4,14 +4,14 @@ import json
 from uuid import UUID
 
 import httpx
+
 from faas_sdk.preview.api.storage import (
     delete_object_bucket_notifications,
     get_object_bucket_notifications,
     put_object_bucket_notifications,
 )
-from faas_sdk.preview.models import ObjectBucketNotifications, ObjectBucketNotificationsRequest
-
 from faas_sdk.client import AuthenticatedClient
+from faas_sdk.preview.models import ObjectBucketNotifications, ObjectBucketNotificationsRequest
 
 
 def test_notification_configuration():
