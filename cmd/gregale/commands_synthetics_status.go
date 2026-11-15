@@ -47,6 +47,9 @@ func renderSyntheticStatus(w io.Writer, c api.SyntheticCheckResponse) {
 	if !c.Enabled {
 		_, _ = fmt.Fprintln(w, "  Paused.")
 	}
+	if c.Warning != "" {
+		_, _ = fmt.Fprintf(w, "  Warning:  %s\n", c.Warning)
+	}
 	res := c.Results
 	if res == nil || len(res.Recent) == 0 {
 		_, _ = fmt.Fprintln(w, "  No runs yet; the first runs within one interval of creation.")

@@ -23,6 +23,7 @@ func TestMatch_PinsImagedBehaviour(t *testing.T) {
 		// `sidecar_stateful_denied` here before imaged even runs.
 		{"bare-postgres", "postgres:16", true, "postgres"},
 		{"bare-postgres-sha", "postgres@sha256:" + strings.Repeat("a", 64), true, "postgres"},
+		{"tag-and-digest", "docker.io/library/redis:7-alpine@sha256:" + strings.Repeat("a", 64), true, "redis"},
 		{"dockerhub-postgres", "docker.io/postgres:16", true, "postgres"},
 		{"dockerhub-library-postgres", "docker.io/library/postgres:16", true, "postgres"},
 		{"ghcr-postgres-alpine", "ghcr.io/me/postgres:16-alpine", true, "postgres"},

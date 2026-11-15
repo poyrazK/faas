@@ -2251,6 +2251,7 @@ var cliCommands = []cliCommand{
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
+				{Name: "stream", Short: "emit JSON Lines as pages arrive; requires --json --all", Bool: true},
 			}},
 			{Name: "provenance", Short: "Show the build provenance attestation", Positionals: []string{"<id>"}},
 			{Name: "sbom", Short: "Show the build SBOM", Positionals: []string{"<id>"}},
@@ -3328,7 +3329,11 @@ var cliCommands = []cliCommand{
 			{Name: "env-file", Short: "KEY=VALUE file (default: dev.env_file; local process settings or remote developer secrets)", Value: "PATH"},
 			{Name: "service-override-file", Short: "sync validated service URLs as developer secrets", Value: "PATH"},
 			{Name: "once", Short: "deploy once and exit"},
-			{Name: "stop", Short: "tear down the developer environment"},
+			{Name: "stop", Short: "tear down the developer environment (asks before deleting its database and buckets)"},
+			{Name: "app", Short: "with --stop, the dev-* app to stop, as shown by gregale dev list", Value: "SLUG"},
+			{Name: "yes", Short: "with --stop, do not ask before deleting the database and buckets"},
+			{Name: "proxy-port", Short: "local browser address for an authenticated environment (default 8788)", Value: "N"},
+			{Name: "no-proxy", Short: "do not serve the authenticated environment on localhost"},
 			{Name: "no-logs", Short: "do not attach the live runtime log stream"},
 			{Name: "open", Short: "open the developer environment URL after the first live sync"},
 			{Name: "bucket", Short: "provision a private workspace bucket; repeatable", Value: "NAME"},
@@ -3342,6 +3347,7 @@ var cliCommands = []cliCommand{
 		},
 		Subcommands: []cliSub{
 			{Name: "status", Short: "show developer-environment quota usage"},
+			{Name: "list", Short: "list the account's developer environments, wherever they were started"},
 			{Name: "bridge", Short: "run an HTTP service locally in a remote development environment", Flags: []cliFlag{
 				{Name: "environment", Short: "named development environment", Value: "ENV"},
 				{Name: "local-port", Short: "local HTTP service port", Value: "PORT"},
@@ -4971,6 +4977,7 @@ var cliCommands = []cliCommand{
 				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
 				{Name: "all", Short: "walk every page using --limit and --cursor"},
+				{Name: "stream", Short: "emit JSON Lines as pages arrive; requires --json --all", Bool: true},
 			}},
 			{Name: "get", Short: "Show or recover one invocation", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "replay", Short: "re-issue failed unkeyed work"},

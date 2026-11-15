@@ -2240,7 +2240,10 @@ func (m AppManifest) IsZero() bool {
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
 		m.HealthPath == "" && !m.HealthPathWakes && !m.SessionAffinity && m.VersionAffinityCookie == "" && !m.VersionAffinityManagedCookie && m.RevisionPinTTLSeconds == 0 &&
-		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0
+		m.ReleasePolicy == "" && len(m.ReleaseProbePaths) == 0 &&
+		// A function app whose only settings are its callables or input
+		// schema must not be stored as {} (ADR-20261111150000).
+		len(m.FunctionCallables) == 0 && len(m.FunctionInputSchema) == 0
 }
 
 func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
@@ -3178,6 +3181,12 @@ type Deployment struct {
 	// carries the advertised serving port across imaged -> schedd -> vmmd.
 	// Raw JSON keeps state independent of the framework-profile package shape.
 	InferredProfile json.RawMessage `json:"inferred_profile,omitempty"`
+	// BuildRegistryScope (ADR-20261110210000 slice 3j-4) lists the image
+	// repositories ("host/repository") the deployment's Dockerfiles name;
+	// secretd lets its builds pull only those with the app's registry
+	// credential. apid records it at creation and the column never changes;
+	// nil means not recorded. Written only; secretd reads the column.
+	BuildRegistryScope []string `json:"-"`
 	// ReleaseCommand is immutable pre-activation intent captured from the
 	// exact source version (gregale.yaml release.command or Procfile release:).
 	// The orchestrator converts it into the deployment's unique release task;
@@ -5031,6 +5040,11 @@ type Invocation struct {
 	// written to invocation_sends with the row and not read back on it.
 	SentByAppID     string `json:"-"`
 	OnCompleteAppID string `json:"-"`
+	// WorkflowCallRunID and WorkflowCallOp name the code-workflow call
+	// operation an invocation runs for (ADR-20261113120824 §2); its terminal
+	// transition settles that operation. Unrelated to WorkflowRunID.
+	WorkflowCallRunID string `json:"-"`
+	WorkflowCallOp    string `json:"-"`
 	// WorkPolicyName and WorkKeyDigest identify an app-scoped scheduling lane.
 	// The raw application key is never persisted in this ledger.
 	WorkPolicyName     string     `json:"work_policy_name,omitempty"`

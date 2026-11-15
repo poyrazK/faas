@@ -14,7 +14,30 @@ import (
 const (
 	devRuntimeLogRetryInitial = time.Second
 	devRuntimeLogRetryMax     = 5 * time.Second
+	// devRuntimeLogParkedRetry is how often the follower looks for the
+	// environment waking up again after the stream ended because it parked.
+	devRuntimeLogParkedRetry = 15 * time.Second
 )
+
+// devStreamEnd is why one log stream ended.
+type devStreamEnd int
+
+const (
+	devStreamEnded  devStreamEnd = iota // a clean end (timeout backstop or similar)
+	devStreamParked                     // the environment has no running instance
+)
+
+// devLogFollower carries state across reconnects: the newest sequence
+// number printed per instance, so the retained lines a reconnect replays are
+// not printed twice, and whether the parked notice was shown.
+type devLogFollower struct {
+	lastSeq      map[string]int64
+	onDiagnostic func(devDiagnostic)
+}
+
+func newDevLogFollower(onDiagnostic func(devDiagnostic)) *devLogFollower {
+	return &devLogFollower{lastSeq: map[string]int64{}, onDiagnostic: onDiagnostic}
+}
 
 // JSON mode follows the same stream for diagnostics, without rendering raw
 // application lines. Join on stop so no output survives the command's return.
@@ -50,40 +73,56 @@ func followDevRuntimeLogsWithDiagnostics(ctx context.Context, client *Client, sl
 		seen[d.Code] = struct{}{}
 		onDiagnostic(d)
 	}
+	follower := newDevLogFollower(report)
+	parked := false
 	for {
-		err := streamDevRuntimeLogsWithDiagnostics(ctx, client, slug, report)
+		started := time.Now()
+		end, err := follower.stream(ctx, client, slug)
 		if ctx.Err() != nil {
 			return
 		}
-		if err != nil {
+		delay := retry
+		switch {
+		case err == nil && end == devStreamParked:
+			// A parked developer environment is normal between edits; say
+			// so once and look again slowly instead of warning every few
+			// seconds until the next request wakes it.
+			if !parked && !jsonOutput {
+				PrintProgress(osStdout, "runtime logs paused: the environment is parked until its next request")
+			}
+			parked = true
+			delay = devRuntimeLogParkedRetry
+		case err != nil:
+			parked = false
 			PrintWarn(osStderr, "runtime log stream interrupted: %v; reconnecting", err)
-		} else {
-			PrintWarn(osStderr, "runtime log stream ended; reconnecting")
+		default:
+			parked = false
 		}
-		timer := time.NewTimer(retry)
+		if time.Since(started) > devRuntimeLogRetryMax {
+			retry = devRuntimeLogRetryInitial // a stream that ran a while resets the backoff
+		}
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return
 		case <-timer.C:
 		}
-		if retry < devRuntimeLogRetryMax {
-			retry *= 2
-			if retry > devRuntimeLogRetryMax {
-				retry = devRuntimeLogRetryMax
-			}
+		if delay == retry && retry < devRuntimeLogRetryMax {
+			retry = min(retry*2, devRuntimeLogRetryMax)
 		}
 	}
 }
 
 func streamDevRuntimeLogs(ctx context.Context, client *Client, slug string) error {
-	return streamDevRuntimeLogsWithDiagnostics(ctx, client, slug, nil)
+	_, err := newDevLogFollower(nil).stream(ctx, client, slug)
+	return err
 }
 
-func streamDevRuntimeLogsWithDiagnostics(ctx context.Context, client *Client, slug string, onDiagnostic func(devDiagnostic)) error {
+func (f *devLogFollower) stream(ctx context.Context, client *Client, slug string) (devStreamEnd, error) {
 	body, err := client.StreamAppLogs(ctx, slug, "", true, api.LogFilter{})
 	if err != nil {
-		return fmt.Errorf("open app log stream: %w", err)
+		return devStreamEnded, fmt.Errorf("open app log stream: %w", err)
 	}
 	defer func() { _ = body.Close() }()
 	dec := api.NewDecoder(body)
@@ -93,24 +132,21 @@ func streamDevRuntimeLogsWithDiagnostics(ctx context.Context, client *Client, sl
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return devStreamEnded, ctx.Err()
 		case event, ok := <-dec.Events():
 			if !ok {
-				return nil
+				return devStreamEnded, nil
 			}
-			done, eventErr := renderDevRuntimeLogEventWithDiagnostics(event, onDiagnostic)
-			if eventErr != nil {
-				return eventErr
-			}
-			if done {
-				return nil
+			end, done, eventErr := f.render(event)
+			if eventErr != nil || done {
+				return end, eventErr
 			}
 		case streamErr := <-dec.Errors():
 			if ctx.Err() != nil {
-				return ctx.Err()
+				return devStreamEnded, ctx.Err()
 			}
 			if streamErr != nil && !errors.Is(streamErr, io.EOF) {
-				return streamErr
+				return devStreamEnded, streamErr
 			}
 			// The decoder may have buffered events before publishing EOF.
 			// Drain them so a clean disconnect never drops the last lines.
@@ -118,49 +154,63 @@ func streamDevRuntimeLogsWithDiagnostics(ctx context.Context, client *Client, sl
 				select {
 				case event, ok := <-dec.Events():
 					if !ok {
-						return nil
+						return devStreamEnded, nil
 					}
-					done, eventErr := renderDevRuntimeLogEventWithDiagnostics(event, onDiagnostic)
-					if eventErr != nil {
-						return eventErr
-					}
-					if done {
-						return nil
+					end, done, eventErr := f.render(event)
+					if eventErr != nil || done {
+						return end, eventErr
 					}
 				default:
-					return nil
+					return devStreamEnded, nil
 				}
 			}
 		}
 	}
 }
 
-func renderDevRuntimeLogEventWithDiagnostics(event api.Event, onDiagnostic func(devDiagnostic)) (bool, error) {
+// render prints one stream event. done reports the stream's terminal event.
+func (f *devLogFollower) render(event api.Event) (devStreamEnd, bool, error) {
 	switch event.Event {
 	case "log":
-		if event.Data != "" {
-			if !jsonOutput {
-				_, _ = fmt.Fprintln(osStdout, formatDevRuntimeLog(event.Data))
+		if event.Data == "" {
+			return devStreamEnded, false, nil
+		}
+		var entry api.LogEvent
+		parsed := json.Unmarshal([]byte(event.Data), &entry) == nil && entry.Line != ""
+		if parsed && entry.Seq > 0 {
+			// A reconnect replays the instance's retained lines; print each
+			// line once.
+			if entry.Seq <= f.lastSeq[entry.InstanceID] {
+				return devStreamEnded, false, nil
 			}
-			var entry api.LogEvent
-			line := event.Data
-			if err := json.Unmarshal([]byte(event.Data), &entry); err == nil && entry.Line != "" {
-				line = entry.Line
-			}
-			if onDiagnostic != nil {
-				if diagnostic, ok := classifyDevRuntimeLog(line); ok {
-					onDiagnostic(diagnostic)
-				}
+			f.lastSeq[entry.InstanceID] = entry.Seq
+		}
+		if !jsonOutput {
+			_, _ = fmt.Fprintln(osStdout, formatDevRuntimeLog(event.Data))
+		}
+		line := event.Data
+		if parsed {
+			line = entry.Line
+		}
+		if f.onDiagnostic != nil {
+			if diagnostic, ok := classifyDevRuntimeLog(line); ok {
+				f.onDiagnostic(diagnostic)
 			}
 		}
 	case "gap":
 		PrintWarn(osStderr, "runtime log gap: some earlier lines were not retained")
 	case "degraded":
-		return false, errors.New("scheduler temporarily unavailable")
+		return devStreamEnded, false, errors.New("scheduler temporarily unavailable")
 	case "end":
-		return true, nil
+		var end struct {
+			Reason string `json:"reason"`
+		}
+		if json.Unmarshal([]byte(event.Data), &end) == nil && end.Reason == "not_found" {
+			return devStreamParked, true, nil
+		}
+		return devStreamEnded, true, nil
 	}
-	return false, nil
+	return devStreamEnded, false, nil
 }
 
 func formatDevRuntimeLog(data string) string {

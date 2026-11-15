@@ -462,18 +462,47 @@ class CliLoginTests(unittest.TestCase):
     def test_cli_login_deletes_only_what_the_run_created(self):
         g = ev.CliGregale("/bin/gregale")
         before = {"apps": {"retail-ui", "eval-x-old"}, "projects": {"shop"}}
-        after = {"apps": {"retail-ui", "eval-x-old", "voting-redis", "eval-x-1"}, "projects": {"shop", "voting"}}
+        # rb-java-off is another session's app, created while the run was going (2026-11-15).
+        after = {"apps": {"retail-ui", "eval-x-old", "voting-redis", "eval-x-1", "rb-java-off"}, "projects": {"shop", "voting", "h15"}}
         touched = {"apps": ["retail-ui", "voting-redis"], "projects": ["voting"]}
+        evidence = "gregale deploy --image redis --name voting-redis\ngregale deploy --project --project-slug voting"
         with mock.patch.object(g, "inventory", return_value=after):
-            self.assertEqual(ev.deletable(g, before, touched, "eval-x-1"),
+            self.assertEqual(ev.deletable(g, before, touched, "eval-x-1", evidence),
                              ({"apps": ["eval-x-1", "voting-redis"], "projects": ["voting"]}, "eval-x-1"))
             # A slug that existed before the run (or never got created) is not deleted.
-            self.assertEqual(ev.deletable(g, before, touched, "eval-x-old")[1], None)
+            self.assertEqual(ev.deletable(g, before, touched, "eval-x-old", evidence)[1], None)
+            # With no evidence only the harness's own slug is the run's.
+            self.assertEqual(ev.deletable(g, before, touched, "eval-x-1"), ({"apps": ["eval-x-1"], "projects": []}, "eval-x-1"))
         # Without an inventory from before the run nothing is provably the run's.
         self.assertEqual(ev.deletable(g, None, touched, "eval-x-1"), ({"apps": [], "projects": []}, None))
         # A dedicated eval account deletes everything the run touched.
         plain = ev.Gregale("/bin/gregale", "https://api.example", "tok")
         self.assertEqual(ev.deletable(plain, before, touched, "eval-x-1"), (touched, "eval-x-1"))
+
+    def test_only_apps_the_agent_named_are_the_runs(self):
+        g = ev.CliGregale("/bin/gregale")
+        with tempfile.TemporaryDirectory() as d:
+            project = Path(d)
+            (project / "docker-compose.yml").write_text("services:\n  vote:\n    build: ./vote\n  result:\n    build: ./result\n")
+            (project / "node_modules").mkdir()
+            (project / "node_modules" / "pkg.json").write_text('{"name": "zq-imm-repro-1115"}')
+            metrics = {"commands": ["gregale deploy --name voting-app-redis --yes"],
+                       "tool_inputs": ['{"app": "voting-worker"}']}
+            evidence = ev.run_evidence(metrics, project)
+        touched = {"apps": ["result", "vote", "voting-app-redis", "voting-worker", "zq-imm-repro-1115", "rb-java-off", "votes"],
+                   "projects": ["h15"]}
+        mine, others = ev.attribute(g, touched, evidence)
+        self.assertEqual(mine, {"apps": ["result", "vote", "voting-app-redis", "voting-worker"], "projects": []})
+        self.assertEqual(others, {"apps": ["zq-imm-repro-1115", "rb-java-off", "votes"], "projects": ["h15"]})
+        # A dedicated eval account has only the run in it.
+        plain = ev.Gregale("/bin/gregale", "https://api.example", "tok")
+        self.assertEqual(ev.attribute(plain, touched, ""), (touched, {"apps": [], "projects": []}))
+
+    def test_claude_tool_inputs_are_evidence_but_not_recorded(self):
+        lines = [json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "mcp__gregale__gregale_get_app", "input": {"app": "voting-app-redis"}}]}})]
+        metrics = ev.parse_claude(lines)
+        self.assertEqual(metrics["tool_inputs"], ['{"app": "voting-app-redis"}'])
 
     def test_cli_login_no_longer_implies_keep_apps(self):
         parsed = []
@@ -534,6 +563,9 @@ class OutsideWriteTests(unittest.TestCase):
             outside = ev.writes_outside(["src/app.js", str(run_dir / "notes.md"), str(Path(d) / "elsewhere.txt"), "../../escape.txt"],
                                         run_dir, project)
             self.assertEqual(outside, sorted([str((Path(d) / "elsewhere.txt").resolve()), str((Path(d) / "escape.txt").resolve())]))
+            # The agent's own memory (Claude's ~/.claude/projects/*/memory) is not the task's.
+            memory = Path(d) / ".claude" / "projects" / "x" / "memory" / "note.md"
+            self.assertEqual(ev.writes_outside([str(memory)], run_dir, project, (Path(d) / ".claude",)), [])
 
     def test_home_writes_skip_old_files_ignored_paths_and_the_run(self):
         with tempfile.TemporaryDirectory() as d:
