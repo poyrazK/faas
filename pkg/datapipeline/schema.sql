@@ -10,6 +10,8 @@ CREATE TABLE data_pipeline_connections (
  UNIQUE(account_id,name), UNIQUE(account_id,id)
 );
 CREATE TABLE data_pipelines (
+ work_config jsonb NOT NULL DEFAULT '{}' CHECK(jsonb_typeof(work_config)='object'),
+ work_status jsonb NOT NULL DEFAULT '{}' CHECK(jsonb_typeof(work_status)='object'),
  evolution_change jsonb NOT NULL DEFAULT '{}' CHECK(jsonb_typeof(evolution_change)='object' AND octet_length(evolution_change::text)<=4194304 AND (evolution_change='{}' OR coalesce(evolution_change->>'state','') IN ('preview','approved','applied','superseded'))),
 	freshness_target_seconds bigint NOT NULL DEFAULT 0 CHECK(freshness_target_seconds=0 OR freshness_target_seconds BETWEEN 15 AND 86400),
 	index_change jsonb NOT NULL DEFAULT '{}' CHECK(jsonb_typeof(index_change)='object' AND octet_length(index_change::text)<=65536 AND (index_change='{}' OR coalesce(index_change->>'state','') IN ('requested','preview','approved','applied','blocked','cancelled'))),
@@ -110,10 +112,10 @@ CREATE TABLE data_pipeline_alerts (
  revision bigint NOT NULL DEFAULT 1 CHECK (revision>0),
  enabled boolean NOT NULL DEFAULT false,
  ciphertext bytea NOT NULL DEFAULT '' CHECK (octet_length(ciphertext)<=16384),
- candidate_code text NOT NULL DEFAULT '' CHECK(candidate_code IN ('','monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed','freshness_unconfirmed','recovered')),
+ candidate_code text NOT NULL DEFAULT '' CHECK(candidate_code IN ('','monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed','freshness_unconfirmed','quality_failed','snapshot_stale','recovered')),
  candidate_since timestamptz,
  incident_id text NOT NULL DEFAULT '' CHECK(incident_id='' OR incident_id ~ '^[0-9a-f-]{36}$'),
- incident_code text NOT NULL DEFAULT '' CHECK(incident_code IN ('','monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed','freshness_unconfirmed')),
+ incident_code text NOT NULL DEFAULT '' CHECK(incident_code IN ('','monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed','freshness_unconfirmed','quality_failed','snapshot_stale')),
  check_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  CHECK (NOT enabled OR octet_length(ciphertext)>0)
@@ -127,7 +129,7 @@ CREATE TABLE data_pipeline_alert_deliveries (
  config_revision bigint NOT NULL CHECK(config_revision>0),
  incident_id uuid NOT NULL,
  kind text NOT NULL CHECK(kind IN ('incident','recovery')),
- code text NOT NULL CHECK(code IN ('monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed','freshness_unconfirmed')),
+ code text NOT NULL CHECK(code IN ('monitoring_stale','sync_blocked','retention_pressure','apply_unconfirmed','freshness_unconfirmed','quality_failed','snapshot_stale')),
  occurred_at timestamptz NOT NULL,
  status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','delivered','dead','cancelled')),
  attempts integer NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 7),
@@ -178,3 +180,62 @@ BEGIN
 END $$;
 
 CREATE TRIGGER pipeline_freshness_alert_fence BEFORE UPDATE ON data_pipeline_alerts FOR EACH ROW EXECUTE FUNCTION pipeline_freshness_alert_fence();
+
+CREATE OR REPLACE FUNCTION pipeline_serving_worker_claim() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE serving boolean; operability boolean; evolution boolean; protocol text;
+BEGIN
+ protocol:=current_setting('gregale.pipeline_worker_protocol',true);
+ IF TG_TABLE_NAME='data_pipelines' THEN
+  serving:=NEW.serving_config<>'{}'::jsonb;
+  operability:=NEW.index_change->>'state'='approved';
+  evolution:=coalesce(NEW.serving_config->>'version','1')='2';
+ ELSE
+  serving:=coalesce(NEW.request->'Serving','null'::jsonb)<>'null'::jsonb;
+  operability:=coalesce((NEW.request->>'FreshnessTargetSeconds')::bigint,0)>0;
+  evolution:=false;
+ END IF;
+ IF NEW.lease_token<>'' AND NEW.lease_token IS DISTINCT FROM OLD.lease_token THEN
+  IF evolution AND coalesce(protocol,'') NOT IN ('pipeline-evolution-v1','pipeline-scheduled-v1') THEN RETURN NULL; END IF;
+  IF operability AND (protocol IS NULL OR protocol NOT IN ('pipeline-operability-v1','pipeline-evolution-v1','pipeline-scheduled-v1')) THEN RETURN NULL; END IF;
+  IF serving AND (protocol IS NULL OR protocol NOT IN ('customer-serving-v1','pipeline-operability-v1','pipeline-evolution-v1','pipeline-scheduled-v1')) THEN RETURN NULL; END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION pipeline_freshness_alert_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF NEW.enabled AND NEW.revision=OLD.revision
+ AND coalesce(current_setting('gregale.pipeline_worker_protocol',true),'') NOT IN ('pipeline-operability-v1','pipeline-evolution-v1','pipeline-scheduled-v1')
+ AND EXISTS(SELECT 1 FROM data_pipelines WHERE id=NEW.pipeline_id AND freshness_target_seconds>0) THEN
+  RAISE EXCEPTION 'freshness-aware monitor required' USING ERRCODE='55000';
+ END IF;
+ IF NEW.enabled AND NEW.revision=OLD.revision
+ AND current_setting('gregale.pipeline_worker_protocol',true) IS DISTINCT FROM 'pipeline-scheduled-v1'
+ AND EXISTS(SELECT 1 FROM data_pipelines WHERE id=NEW.pipeline_id AND work_config<>'{}') THEN
+  RAISE EXCEPTION 'scheduled-work-aware monitor required' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION pipeline_scheduled_worker_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_TABLE_NAME='data_pipelines' THEN
+  IF TG_OP='UPDATE' AND (NEW.work_config ? 'snapshot') IS DISTINCT FROM (OLD.work_config ? 'snapshot') THEN
+   RAISE EXCEPTION 'pipeline import mode is immutable' USING ERRCODE='23514';
+  END IF;
+  IF OLD.work_config ? 'snapshot' AND (
+   NEW.generation IS DISTINCT FROM OLD.generation OR NEW.verify_requested
+   OR NEW.schema_change IS DISTINCT FROM OLD.schema_change
+   OR (OLD.initialized AND (NEW.tables IS DISTINCT FROM OLD.tables
+    OR coalesce(NEW.serving_config->'columns','{}'::jsonb) IS DISTINCT FROM coalesce(OLD.serving_config->'columns','{}'::jsonb)))) THEN
+   RAISE EXCEPTION 'snapshot pipelines cannot enter native replication workflows' USING ERRCODE='23514';
+  END IF;
+  IF NEW.work_config<>'{}' AND NEW.lease_token<>'' AND (TG_OP='INSERT' OR NEW.lease_token IS DISTINCT FROM OLD.lease_token)
+   AND current_setting('gregale.pipeline_worker_protocol',true) IS DISTINCT FROM 'pipeline-scheduled-v1' THEN RETURN NULL; END IF;
+ ELSE
+  IF NEW.result->>'mode'='snapshot' AND NEW.lease_token<>'' AND NEW.lease_token IS DISTINCT FROM OLD.lease_token
+   AND current_setting('gregale.pipeline_worker_protocol',true) IS DISTINCT FROM 'pipeline-scheduled-v1' THEN RETURN NULL; END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+CREATE OR REPLACE TRIGGER data_pipelines_scheduled_fence BEFORE UPDATE OF work_config,lease_token,generation,verify_requested,schema_change,tables,serving_config ON data_pipelines FOR EACH ROW EXECUTE FUNCTION pipeline_scheduled_worker_fence();
+CREATE OR REPLACE TRIGGER data_pipeline_checks_scheduled_fence BEFORE UPDATE OF lease_token ON data_connection_checks FOR EACH ROW EXECUTE FUNCTION pipeline_scheduled_worker_fence();

@@ -121,7 +121,7 @@ func (h *managedPostgresHooks) egress() managedpostgres.EgressAllowanceFunc {
 	return h.Egress
 }
 
-func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
+func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
 	registry, err := managedpostgres.Load(getenv, managedPostgresFactories(pool))
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -307,6 +307,9 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	}
 	secretSink.identities = hostCredentialIdentities
 	secretSink.probe = managedpostgres.VerifyCredentialSQL
+	if err := configurePostgresCutoverVerifier(ctx, secretSink, getenv); err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
 		ProvisioningEnabled: operationsGate,
 		ProvisioningAllowed: provisioningAllowed,

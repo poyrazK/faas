@@ -62,8 +62,21 @@ func connectionRow(r sqlc.DataPipelineConnection) Connection {
 }
 func pipelineRow(r sqlc.DataPipeline) Pipeline {
 	p := Pipeline{AccountID: uid(r.AccountID), LeaseToken: r.LeaseToken, LeaseUntil: r.LeaseUntil.Time, VerifyRequested: r.VerifyRequested, Initialized: r.Initialized, DataPipeline: api.DataPipeline{FreshnessTargetSeconds: r.FreshnessTargetSeconds, AppliedThroughAt: stamp(r.AppliedThroughAt), ID: uid(r.ID), Name: r.Name, SourceConnectionID: uid(r.SourceConnectionID), DatabaseID: uid(r.DatabaseID), DesiredState: r.DesiredState, State: r.State, Revision: r.Revision, Generation: r.Generation, ObservedRevision: r.ObservedRevision, ObservationFresh: r.ObservedAt.Valid && r.ObservedRevision == r.Revision && time.Since(r.ObservedAt.Time) >= 0 && time.Since(r.ObservedAt.Time) < api.DataPipelineObservationMaxAge, Reason: r.Reason, TablesReady: int(r.TablesReady), ObservedAt: stamp(r.ObservedAt), Verification: r.Verification, VerifiedAt: stamp(r.VerifiedAt), CreatedAt: stamp(r.CreatedAt)}}
+	if len(r.WorkConfig) > 2 {
+		if json.Unmarshal(r.WorkConfig, &p.Operations) != nil {
+			p.ServingInvalid = true
+		}
+	}
+	if len(r.WorkStatus) > 2 {
+		if json.Unmarshal(r.WorkStatus, &p.OperationsStatus) != nil {
+			p.ServingInvalid = true
+		}
+	}
 	_ = json.Unmarshal(r.Tables, &p.Tables)
 	_ = json.Unmarshal(r.ReadSubjects, &p.ReadSubjects)
+	if !validOperations(p.Operations, p.Tables) {
+		p.ServingInvalid = true
+	}
 	if len(r.EvolutionChange) > 2 {
 		if json.Unmarshal(r.EvolutionChange, &p.Evolution) != nil {
 			p.ServingInvalid = true
@@ -209,7 +222,7 @@ func (s *PostgresStore) Create(ctx context.Context, p Pipeline) (Pipeline, error
 	old, err := s.q.PipelineGetByName(ctx, tx, sqlc.PipelineGetByNameParams{AccountID: p.AccountID, Name: p.Name})
 	if err == nil {
 		existing := pipelineRow(old)
-		if existing.FreshnessTargetSeconds != p.FreshnessTargetSeconds || existing.SourceConnectionID != p.SourceConnectionID || existing.DatabaseID != p.DatabaseID || !slices.Equal(existing.Tables, p.Tables) || !slices.Equal(existing.ReadSubjects, p.ReadSubjects) || existing.DesiredState == "deleted" || !sameServing(existing.Serving, p.Serving) {
+		if string(operationsJSON(existing.Operations)) != string(operationsJSON(p.Operations)) || existing.FreshnessTargetSeconds != p.FreshnessTargetSeconds || existing.SourceConnectionID != p.SourceConnectionID || existing.DatabaseID != p.DatabaseID || !slices.Equal(existing.Tables, p.Tables) || !slices.Equal(existing.ReadSubjects, p.ReadSubjects) || existing.DesiredState == "deleted" || !sameServing(existing.Serving, p.Serving) {
 			return Pipeline{}, ErrConflict
 		}
 		return existing, nil
@@ -246,6 +259,12 @@ func (s *PostgresStore) Create(ctx context.Context, p Pipeline) (Pipeline, error
 	if check.DatabaseID != "" && check.DatabaseID != p.DatabaseID {
 		return Pipeline{}, ErrCheckRequired
 	}
+	if (check.Mode == "snapshot") != snapshotMode(p) {
+		return Pipeline{}, ErrCheckRequired
+	}
+	if err = validateQualityMetadata(p, p.Operations, check.DataConnectionCheck); err != nil {
+		return Pipeline{}, err
+	}
 	if err = ValidateServingSelection(check.DataConnectionCheck, p.Tables, p.Serving); err != nil {
 		return Pipeline{}, err
 	}
@@ -267,7 +286,7 @@ func (s *PostgresStore) Create(ctx context.Context, p Pipeline) (Pipeline, error
 	}
 	tables, _ := json.Marshal(p.Tables)
 	subjects, _ := json.Marshal(p.ReadSubjects)
-	r, err := s.q.PipelineInsert(ctx, tx, sqlc.PipelineInsertParams{ID: p.ID, AccountID: p.AccountID, Name: p.Name, SourceConnectionID: p.SourceConnectionID, DatabaseID: p.DatabaseID, Tables: tables, ReadSubjects: subjects, FreshnessTargetSeconds: p.FreshnessTargetSeconds, ServingConfig: servingJSON(p.Serving)})
+	r, err := s.q.PipelineInsert(ctx, tx, sqlc.PipelineInsertParams{ID: p.ID, AccountID: p.AccountID, Name: p.Name, SourceConnectionID: p.SourceConnectionID, DatabaseID: p.DatabaseID, Tables: tables, ReadSubjects: subjects, FreshnessTargetSeconds: p.FreshnessTargetSeconds, ServingConfig: servingJSON(p.Serving), WorkConfig: operationsJSON(p.Operations)})
 	if err != nil {
 		return Pipeline{}, storeError(err)
 	}
@@ -314,6 +333,9 @@ func (s *PostgresStore) Control(ctx context.Context, account, id string, revisio
 	arg := sqlc.PipelineControlParams{AccountID: account, ID: id, Revision: revision, DesiredState: p.DesiredState, VerifyRequested: p.VerifyRequested, State: p.State, QueuedVerification: []byte("{}")}
 	if p.ReaderChange != nil {
 		arg.ReaderChangeID = p.ReaderChange.ID
+	}
+	if snapshotMode(p) && (action == "resync" || action == "verify") {
+		return Pipeline{}, ErrInvalid
 	}
 	switch action {
 	case "pause":
@@ -380,6 +402,9 @@ func (s *PostgresStore) Finish(ctx context.Context, p Pipeline, ob Observation) 
 	arg := sqlc.PipelineFinishParams{AppliedThroughAt: pgtype.Timestamptz{Time: ob.AppliedThroughAt, Valid: !ob.AppliedThroughAt.IsZero()}, AccountID: p.AccountID, ID: p.ID, Revision: p.Revision, LeaseToken: p.LeaseToken, State: ob.State, Reason: ob.Reason, TablesReady: int32(ob.TablesReady), Verification: ob.Verification, Initialized: ob.Initialized, VerifiedAt: pgtype.Timestamptz{Time: ob.VerifiedAt, Valid: !ob.VerifiedAt.IsZero()}}
 	arg.WalRetention = []byte("{}")
 	arg.EvolutionApplied = ob.EvolutionApplied
+	if ob.OperationsStatus != nil {
+		arg.WorkStatus = operationsJSON(ob.OperationsStatus)
+	}
 	if ob.WALSample != nil {
 		arg.WalRetention, _ = json.Marshal(ob.WALSample)
 	}

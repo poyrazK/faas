@@ -31,6 +31,9 @@ func (s *PostgresStore) ApproveSchema(ctx context.Context, account, id string, r
 		return storeError(err)
 	}
 	p := pipelineRow(r)
+	if snapshotMode(p) {
+		return ErrConflict
+	}
 	if liveTableRepair(p.SchemaChange) && !retry {
 		return ErrConflict
 	}

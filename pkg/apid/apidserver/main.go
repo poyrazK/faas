@@ -1779,7 +1779,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if srv.managedPostgresUncapped {
 		log.Warn("managed postgres release held to accounts a flag rule names: compute and storage caps are not both on")
 	}
-	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(ctx, deps.pool, deps.getenv, log,
 		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink, RestoreSlotExpired: srv.recordManagedPostgresRestoreSlotExpired,
 			BranchExpired: srv.recordManagedPostgresBranchExpired, NotifyRestoreSlot: srv.noticeManagedPostgresRestoreSlot, NotifyPlanExcess: srv.noticeManagedPostgresPlanExcess,
 			Egress: srv.managedPostgresEgressAllowance}, ops.Registry())

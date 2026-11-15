@@ -633,11 +633,13 @@ var methodRouteMap = map[string]string{
 	"POST /v1/tool-invocations/{id}/{action}":            "DispatchToolInvocation",
 	"POST /v1/tool-oauth-connections/{id}/authorization": "AuthorizeToolOAuthConnection",
 	"POST /v1/tool-publications/{id}/outcome":            "FinishToolPublication",
+	"POST /v1/tool-publications/{id}/verification":       "VerifyToolPublication",
 	"PUT /v1/delegated-tool-invocations/{id}":            "BeginDelegatedToolInvocation",
 	"PUT /v1/tool-grants/{id}":                           "PutToolGrant",
 	"PUT /v1/tool-invocations/{id}":                      "BeginToolInvocation",
 	"PUT /v1/tool-oauth-connections/{id}":                "PutToolOAuthConnection",
 	"PUT /v1/tool-publications/{id}":                     "BeginToolPublication",
+	"PUT /v1/tool-publications/{id}/verification":        "DecideToolPublicationVerification",
 
 	// Customer support uses typed personal and organization methods.
 	"GET /v1/support/tickets":                                   "ListSupportTickets",
@@ -1652,6 +1654,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/data/pipelines/{id}":                                                     "GetDataPipeline",
 	"POST /v1/data/pipelines/{id}/control":                                            "ControlDataPipeline",
 	"POST /v1/data/pipelines/{id}/schema-approval":                                    "ApproveDataPipelineSchema",
+	"POST /v1/data/pipelines/{id}/operations":                                         "ConfigureDataPipelineOperations",
 	"POST /v1/data/pipelines/{id}/evolution":                                          "EvolveDataPipeline",
 	"POST /v1/data/pipelines/{id}/tenant-readers":                                     "ChangeDataPipelineTenantReaders",
 	"POST /v1/data/pipeline-setups/plan":                                              "PlanDataPipelineSetup",
@@ -2850,6 +2853,12 @@ var methodRouteMap = map[string]string{
 	"GET /v1/invitations/{token}":                "PeekInvitation",
 	"POST /v1/invitations/{token}/accept":        "AcceptInvitation",
 	"DELETE /v1/orgs/{slug}/invitations/{token}": "RevokeInvitation",
+	// Postgres change workers (ADR-20261112140000): literal hyphen; the SDK
+	// verbs follow the operationIds.
+	"GET /v1/apps/{slug}/postgres-changes":            "GetPostgresChanges",
+	"PUT /v1/apps/{slug}/postgres-changes":            "PutPostgresChanges",
+	"DELETE /v1/apps/{slug}/postgres-changes":         "DeletePostgresChanges",
+	"PUT /v1/apps/{slug}/postgres-changes/connection": "PutPostgresChangesConnection",
 	// PR-8 §2 — cursor-paginated list of every invitation minted on
 	// the org (pending/consumed/revoked/expired). Auto-derivation
 	// yields "GetOrgsSlugInvitations" which reads as a singleton

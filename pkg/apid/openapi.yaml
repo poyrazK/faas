@@ -3173,7 +3173,7 @@ paths:
     put:
       operationId: beginToolPublication
       summary: Journal a reviewed publication before execution; requires deploy-write scope and MFA policy
-      description: Only created=true authorizes the publisher to start once. Duplicate identities return created=false; changed reviews conflict. Local paths and credentials are excluded.
+      description: Only created=true authorizes the publisher to start once. Duplicate identities return created=false; changed reviews conflict. Local paths and credentials are excluded. Hosted private reviews include platform_verification and the reviewed OAuth contract; their completed outcomes must match API-held candidate verification.
       requestBody:
         required: true
         content:
@@ -3211,6 +3211,50 @@ paths:
         '403': {description: Account authority or MFA requirement not satisfied}
         '404': {description: Publication or deployment unavailable to this account}
         '409': {description: Outcome immutable or publisher deadline elapsed}
+  /v1/tool-publications/{id}/verification:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string, pattern: '^[0-9a-f]{64}$'}, description: Exact private publication identity}
+    post:
+      operationId: verifyToolPublication
+      summary: Request owner-approved platform verification of one private candidate
+      description: Requires unscoped personal deploy-write authority and MFA policy. Returns a pending owner review binding the publishing key, native candidate/source, catalog pin and immutable publication review. Only an owner-approved fresh begin launches a bounded API-held credential worker. Repeats return retained status and never replay fixtures. Fixture bodies remain transient; credentials and secret names are never returned. Requires the private-publication operator gate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolPublicationVerificationRequest'}
+      responses:
+        '200':
+          description: Pending approval or retained verification receipt; Cache-Control is no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolPublicationVerification'}
+        '400': {description: Invalid candidate or fixtures}
+        '403': {description: Publishing authority or MFA requirement not satisfied}
+        '404': {description: Current publisher or candidate authority unavailable}
+        '409': {description: Review differs or source/serving identity changed}
+        '429': {description: Verification workers busy; retry the same unstarted request}
+        '503': {description: Platform-held candidate verification is disabled by the operator}
+    put:
+      operationId: decideToolPublicationVerification
+      summary: Approve or revoke private candidate test authority as the personal administrator
+      description: Requires unscoped personal administrator authority and MFA policy. Approval selects exactly one existing ordinary secret:MCP_* test token or managed execution OAuth connection on the candidate app's default environment. The exact request digest and credential authorization binding are immutable. Managed connections must match the reviewed issuer and resource and cover all reviewed scopes. Approval performs no provider request. Revocation blocks subsequent credential dispatches; an accepted HTTP request may finish. Completed test evidence is consumed and cannot be reauthorized or revoked. This grants no invocation access.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ToolPublicationVerificationDecision'}
+      responses:
+        '200':
+          description: Public approval status without credential metadata
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ToolPublicationVerification'}
+        '400': {description: Invalid decision or secret namespace}
+        '403': {description: Personal administrator or MFA requirement not satisfied}
+        '404': {description: Candidate or ordinary app credential unavailable}
+        '409': {description: 'Review changed, expired or consumed'}
+        '503': {description: Owner candidate-test approval is disabled or the OAuth connection needs reconnection}
   /v1/tool-oauth-connections:
     get:
       operationId: listToolOAuthConnections
@@ -50018,6 +50062,95 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/postgres-changes:
+    get:
+      tags: [queues]
+      operationId: getPostgresChanges
+      summary: Show the app's Postgres change capture and its relay health.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: The app's Postgres change capture.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PostgresChangesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [queues]
+      operationId: putPostgresChanges
+      summary: Capture Postgres row changes into one of the app's queues.
+      description: Declares which table columns are captured and the queue that receives each change. For a managed database Gregale installs capture and connects at once; for a database you run, finish with `gregale postgres-changes install`.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutPostgresChangesRequest' }
+      responses:
+        '200':
+          description: Capture declared; for a managed database, installed and connected.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PostgresChangesResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [queues]
+      operationId: deletePostgresChanges
+      summary: Stop capturing Postgres changes for the app.
+      description: Pauses delivery. On a managed database the capture triggers and the relay login are removed; on a database you run, use `gregale postgres-changes uninstall`.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '204':
+          description: Capture stopped.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/apps/{slug}/postgres-changes/connection:
+    put:
+      tags: [queues]
+      operationId: putPostgresChangesConnection
+      summary: Store the relay login for a database you run; credentials are never returned.
+      description: The URL must log in as the relay role the install created and verify TLS. Owner credentials are refused.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connection_url]
+              properties:
+                connection_url: { type: string, maxLength: 8192, writeOnly: true }
+      responses:
+        '204':
+          description: Relay login sealed without returning credential material.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/commit-sources:
     post:
       tags: [queues]
@@ -72156,6 +72289,35 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /v1/data/pipelines/{id}/operations:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      description: Pipeline whose scheduled maintenance policy is updated.
+      schema: {type: string, format: uuid}
+    post:
+      summary: Configure scheduled pipeline work
+      operationId: configureDataPipelineOperations
+      tags: [data_pipelines]
+      description: Set bounded snapshot schedules, curated quality rules and UTC work budgets, or request the next snapshot or quality run. Import mode and serving selection remain immutable. Manual requests respect work windows.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DataPipelineOperationsRequest'}
+      responses:
+        '202':
+          description: Scheduled work policy or explicit run request accepted.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DataPipeline'}
+        default:
+          description: Scheduled operations validation, ownership, admission or intent conflict.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+
   /v1/data/pipelines/{id}/evolution:
     parameters:
     - name: id
@@ -75582,11 +75744,69 @@ components:
         required_scopes: {type: array, maxItems: 64, items: {type: string, maxLength: 256}}
         evidence_origin: {type: string, enum: [publisher_attested]}
         availability: {type: string, enum: [not_checked]}
+    ToolPublicationAuth:
+      type: object
+      description: Reviewed external OAuth issuer, signing keys, resource and scopes for one private publication.
+      additionalProperties: false
+      required: [issuer, jwks_url, resource, scopes]
+      properties:
+        issuer: {type: string, format: uri, maxLength: 2048}
+        jwks_url: {type: string, format: uri, maxLength: 2048}
+        resource: {type: string, format: uri, maxLength: 2048}
+        scopes: {type: array, maxItems: 64, uniqueItems: true, items: {type: string, minLength: 1, maxLength: 256}}
+    ToolPublicationVerificationRequest:
+      type: object
+      description: Exact native candidate and catalog pin with the reviewed transient behavioral fixture bytes.
+      additionalProperties: false
+      required: [deployment_id, catalog_sha256, fixtures_json]
+      properties:
+        deployment_id: {type: string, format: uuid}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        fixtures_json: {type: string, maxLength: 65536, description: Exact reviewed fixture bytes; SHA-256 must match the publication intent}
+    ToolPublicationVerificationDecision:
+      type: object
+      description: Owner approval selecting one sealed test token or managed OAuth connection, or revoking unconsumed candidate-test authority.
+      additionalProperties: false
+      required: [request_sha256]
+      properties:
+        request_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        credential_secret_ref: {type: string, description: Existing ordinary secret:MCP_* app test-token reference; exclusive with credential_connection_id and forbidden for revocation}
+        credential_connection_id: {type: string, format: uuid, description: Existing owner-approved execution OAuth connection; exclusive with credential_secret_ref and forbidden for revocation}
+        revoke: {type: boolean, default: false}
+    ToolPublicationVerification:
+      type: object
+      description: Durable public candidate-test metadata; never includes a token, secret reference or ciphertext.
+      required: [request_sha256, publication_id, key_id, app_id, deployment_id, deployment_source_sha256, catalog_sha256, status, created_at, deadline]
+      properties:
+        request_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        publication_id: {type: string, pattern: '^[0-9a-f]{64}$'}
+        key_id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        deployment_id: {type: string, format: uuid}
+        deployment_source_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        catalog_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        status: {type: string, enum: [pending, approved, running, completed, failed, revoked, not_started, outcome_unknown]}
+        created_at: {type: string, format: date-time}
+        deadline: {type: string, format: date-time}
+        outcome: {$ref: '#/components/schemas/ToolPublicationVerificationOutcome'}
+    ToolPublicationVerificationOutcome:
+      type: object
+      description: Platform-observed catalog and named test results without credentials or upstream response data.
+      required: [ok, protocol_verified, checks]
+      properties:
+        ok: {type: boolean}
+        protocol_verified: {type: boolean}
+        catalog_base64: {type: string, format: byte, description: Canonical verified catalog; absent on failure}
+        checks: {type: array, maxItems: 64, items: {type: object, required: [name, status], properties: {name: {type: string}, status: {type: string, enum: [passed, failed]}}}}
+        code: {type: string, description: Stable verification failure stage without upstream response data}
     ToolPublicationIntent:
       type: object
       description: Reviewed publication metadata bounded to 64 KiB; never includes local paths or credentials.
       required: [app, source_sha256, fixtures_sha256, access_mode, tool_scopes, test_cases]
       properties:
+        platform_verification: {type: boolean, default: false, description: Private hosted candidates require separate owner-approved API-held test execution}
+        auth: {$ref: '#/components/schemas/ToolPublicationAuth'}
+        legacy: {type: boolean, default: false, description: Include legacy protocol qualification for platform verification}
         endpoint_path: {type: string, maxLength: 512, description: Reviewed canonical MCP path; new invocations require this field and never infer a missing endpoint}
         app: {type: string}
         app_id: {type: string}
@@ -75721,6 +75941,7 @@ components:
       description: Account-owned durable publication review and immutable outcome bound to native deployment source identity.
       required: [id, account_id, intent, status, created_at, deadline, evidence_origin]
       properties:
+        verification: {$ref: '#/components/schemas/ToolPublicationVerification'}
         id: {type: string, pattern: '^[0-9a-f]{64}$'}
         account_id: {type: string, format: uuid}
         intent: {$ref: '#/components/schemas/ToolPublicationIntent'}
@@ -87693,6 +87914,57 @@ components:
         p50_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p50 from stored latency bucket upper bounds. }
         p95_latency_ms: { type: integer, minimum: 0, description: Request-weighted nearest-rank p95 from stored latency bucket upper bounds. }
         latency_quantized: { type: boolean, enum: [true], description: Latency values are conservative bucket upper bounds. }
+    PostgresChangeFeed:
+      description: Allowlisted columns of one table whose row changes are captured.
+      type: object
+      required: [name, table, columns]
+      properties:
+        name: { type: string, pattern: '^[a-z][a-z0-9_]{0,39}$', description: 'Appears in each event type, database.<name>.<operation>.' }
+        table: { type: string, maxLength: 256, description: Table name; unqualified names are in the public schema. }
+        columns:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: The only columns an event carries. The primary key must be listed.
+          items: { type: string, maxLength: 63 }
+        operations:
+          type: array
+          description: Operations to capture; all three when omitted.
+          items: { type: string, enum: [insert, update, delete] }
+    PutPostgresChangesRequest:
+      description: Declares the app's Postgres change capture.
+      type: object
+      required: [queue_name, feeds]
+      properties:
+        database: { type: string, maxLength: 256, description: A managed database name or ID. Omit for a database you run. }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: The app queue binding that receives the changes. }
+        poll_interval_seconds: { type: integer, minimum: 1, maximum: 600, description: 'How often the outbox is read; default 5. 300 or more lets an idle managed database suspend.' }
+        feeds:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items: { $ref: '#/components/schemas/PostgresChangeFeed' }
+    PostgresChangesResponse:
+      description: The app's Postgres change capture and its relay health.
+      type: object
+      required: [source_id, queue_name, managed, poll_interval_seconds, feeds, enabled, connected, relay_role, relay_status]
+      properties:
+        source_id: { type: string, format: uuid }
+        queue_name: { type: string }
+        database: { type: string, description: The managed database name, when managed. }
+        managed: { type: boolean }
+        poll_interval_seconds: { type: integer }
+        feeds:
+          type: array
+          items: { $ref: '#/components/schemas/PostgresChangeFeed' }
+        enabled: { type: boolean }
+        connected: { type: boolean, description: Whether Gregale holds the relay login. }
+        relay_role: { type: string, description: The least-privilege login the install creates for delivery. }
+        relay_status: { type: string }
+        last_checked_at: { type: string, format: date-time }
+        pending_events: { type: integer, format: int64 }
+        blocked_events: { type: integer, format: int64 }
+        oldest_pending_at: { type: string, format: date-time }
     CreateCommitSourceRequest:
       description: Register an immutable database source bound to managed Operations or application-event publication. Event destinations require version 3, no operation policy and no customer selection.
       type: object
@@ -124593,6 +124865,7 @@ components:
         work:
           allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
           description: "Optional keyed ordering policy for a queue message. Scoped environment bindings reject this option until their policy adapter is available."
+        group_key: { type: string, minLength: 1, maxLength: 128, description: "Messages with the same group_key are delivered one at a time, in send order, on push and pull consumers; a message waiting to retry holds later ones with its key. Cannot be combined with work. Preview: refused with queue_groups_unavailable until released to the account." }
 
     QueueSendBatchRequest:
       description: "Body for POST /v1/apps/{slug}/queues/send-batch: up to 100 messages for one queue, sent in order. The body is at most 8 MiB; each message meets its plan's message size."
@@ -124616,6 +124889,7 @@ components:
       type: object
       properties:
         payload: { type: object, additionalProperties: true }
+        group_key: { type: string, minLength: 1, maxLength: 128, description: "Ordering key for this message: it is delivered after earlier messages with the same group_key, from this batch or any send, and before later ones. Preview: refused with queue_groups_unavailable until released to the account." }
 
     QueueSendBatchResult:
       description: "The outcome of one message by its zero-based input index: accepted, rejected with the problem, or not attempted after an earlier rejection."
@@ -124744,6 +125018,8 @@ components:
         dead_letter: { type: integer, minimum: 0 }
         oldest_pending_at: { type: [string, "null"], format: date-time }
         oldest_pending_age_seconds: { type: [integer, "null"], minimum: 0 }
+        blocked_groups: { type: integer, minimum: 0, description: "group_key groups whose first message has failed and holds later messages with its key until it succeeds or dead-letters. Omitted when zero." }
+        oldest_blocked_age_seconds: { type: integer, minimum: 0, description: "Age of the oldest message holding its group_key group." }
         generated_at: { type: string, format: date-time }
 
     RetryPolicyDTO:
@@ -140707,6 +140983,10 @@ components:
       required:
       - expected_revision
       properties:
+        mode:
+          type: string
+          enum: [snapshot]
+          description: Select snapshot inspection for read-only scheduled imports; omit for continuous replication.
         tables:
           type: array
           maxItems: 16
@@ -140740,6 +141020,10 @@ components:
       - tables
       - created_at
       properties:
+        mode:
+          type: string
+          enum: [snapshot]
+          description: Snapshot-specific compatibility evidence, without native replication requirements.
         source_provider_hint:
           type: string
           description: Hostname-derived setup hint; never a qualification or admission grant.
@@ -140981,6 +141265,8 @@ components:
       - database_id
       - tables
       properties:
+        operations:
+          $ref: '#/components/schemas/DataPipelineOperations'
         freshness_target_seconds:
           type: integer
           format: int64
@@ -141265,6 +141551,10 @@ components:
       - verification
       - created_at
       properties:
+        operations:
+          $ref: '#/components/schemas/DataPipelineOperations'
+        operations_status:
+          $ref: '#/components/schemas/DataPipelineOperationsStatus'
         schema_review: {$ref: '#/components/schemas/DataPipelineSchemaReview'}
         evolution:
           $ref: '#/components/schemas/DataPipelineEvolution'
@@ -141423,6 +141713,278 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DataPipeline'
+
+    DataPipelineOperations:
+      description: Versioned policy for bounded scheduled snapshots, mirror quality checks and optional maintenance. Snapshot
+        mode is chosen at creation and cannot be changed later.
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        snapshot:
+          $ref: '#/components/schemas/DataPipelineSnapshotSchedule'
+        quality:
+          $ref: '#/components/schemas/DataPipelineQualitySchedule'
+        workload:
+          $ref: '#/components/schemas/DataPipelineWorkload'
+    DataPipelineSnapshotSchedule:
+      description: Read-only full snapshot cadence. Zero row/byte budgets select the pilot ceilings of 100000 rows and 64 MiB.
+        Runs are bounded to 45 seconds and retain the last successful capture on failure.
+      type: object
+      additionalProperties: false
+      required:
+      - every_seconds
+      properties:
+        every_seconds:
+          type: integer
+          format: int64
+          minimum: 3600
+          maximum: 86400
+        max_rows:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 100000
+        max_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 67108864
+    DataPipelineWorkload:
+      description: Owner maintenance budgets within hard pilot bounds. Query timeout is zero for the default or 50 through 2000
+        milliseconds; batch count is zero for default or one through four. Native COPY bandwidth is outside this policy.
+      type: object
+      additionalProperties: false
+      properties:
+        window:
+          $ref: '#/components/schemas/DataPipelineWorkWindow'
+        query_timeout_millis:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 2000
+        batches_per_tick:
+          type: integer
+          minimum: 0
+          maximum: 4
+    DataPipelineWorkWindow:
+      description: Daily UTC minute window with an inclusive start and exclusive end. Start and end differ; a start after end
+        crosses midnight. Omit the window for all-day work.
+      type: object
+      additionalProperties: false
+      required:
+      - start_minute_utc
+      - end_minute_utc
+      properties:
+        start_minute_utc:
+          type: integer
+          minimum: 0
+          maximum: 1439
+        end_minute_utc:
+          type: integer
+          minimum: 0
+          maximum: 1439
+    DataPipelineQualitySchedule:
+      description: Scheduled curated mirror checks, limited to 16 named rules and 10000 inspected source rows per rule. Incomplete
+        coverage cannot be reported as passed; only counts and status leave the private worker.
+      type: object
+      additionalProperties: false
+      required:
+      - every_seconds
+      - rules
+      properties:
+        every_seconds:
+          type: integer
+          format: int64
+          minimum: 3600
+          maximum: 86400
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineQualityRule'
+          minItems: 1
+          maxItems: 16
+    DataPipelineQualityRule:
+      description: Structured business-data assertion on selected columns. Numeric bounds are exact decimal strings; reference
+        rules match a complete selected target primary key and preserve tenant equality. SQL expressions are not accepted.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - kind
+      - table
+      - columns
+      properties:
+        name:
+          type: string
+          pattern: ^[a-z][a-z0-9_]{0,62}$
+        kind:
+          type: string
+          enum:
+          - required
+          - unique
+          - range
+          - reference
+        table:
+          type: string
+          maxLength: 63
+        columns:
+          type: array
+          items:
+            type: string
+            maxLength: 63
+          minItems: 1
+          maxItems: 4
+        minimum:
+          type: string
+          maxLength: 64
+        maximum:
+          type: string
+          maxLength: 64
+        reference_table:
+          type: string
+          maxLength: 63
+        reference_columns:
+          type: array
+          items:
+            type: string
+            maxLength: 63
+          minItems: 1
+          maxItems: 4
+    DataPipelineOperationsRequest:
+      description: Revision-checked replacement maintenance configuration or an explicit snapshot/quality run request. Configure
+        supplies config; run actions omit it and still respect the saved UTC window.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_revision
+      - action
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        action:
+          type: string
+          enum:
+          - configure
+          - run_snapshot
+          - run_quality
+        config:
+          $ref: '#/components/schemas/DataPipelineOperations'
+    DataPipelineOperationsStatus:
+      description: Historical scheduled-work observations. Capture time bounds data age independently of the catalog worker observation
+        timestamp.
+      type: object
+      additionalProperties: false
+      properties:
+        snapshot:
+          $ref: '#/components/schemas/DataPipelineSnapshotStatus'
+        quality:
+          $ref: '#/components/schemas/DataPipelineQualityStatus'
+    DataPipelineSnapshotStatus:
+      description: Most recent snapshot attempt plus the last activated capture. Rows and bytes describe that successful capture
+        and remain unchanged after failed refreshes. A private target receipt preserves capture time through lost acknowledgements.
+      type: object
+      additionalProperties: false
+      required:
+      - run_id
+      - state
+      - rows
+      - bytes
+      properties:
+        run_id:
+          type: string
+        state:
+          type: string
+          enum:
+          - due
+          - running
+          - succeeded
+          - failed
+        reason:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        next_run_at:
+          type: string
+          format: date-time
+        captured_at:
+          type: string
+          format: date-time
+        rows:
+          type: integer
+          format: int64
+          minimum: 0
+        bytes:
+          type: integer
+          format: int64
+          minimum: 0
+    DataPipelineQualityStatus:
+      description: Last completed or attempted quality scan for the recorded generation. Unknown and inconclusive are separate
+        from passed; failing row values never appear in this observation.
+      type: object
+      additionalProperties: false
+      required:
+      - state
+      - checked_at
+      - next_run_at
+      - generation
+      - results
+      properties:
+        state:
+          type: string
+          enum:
+          - passed
+          - failed
+          - inconclusive
+          - unknown
+        checked_at:
+          type: string
+          format: date-time
+        next_run_at:
+          type: string
+          format: date-time
+        generation:
+          type: integer
+          format: int64
+          minimum: 1
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/DataPipelineQualityResult'
+    DataPipelineQualityResult:
+      description: One curated rule outcome. A lower-bound count reflects limited coverage; zero violations with incomplete coverage
+        is inconclusive rather than passed.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - state
+      - violations
+      - count_is_lower_bound
+      properties:
+        name:
+          type: string
+        state:
+          type: string
+          enum:
+          - passed
+          - failed
+          - inconclusive
+          - unknown
+        violations:
+          type: integer
+          format: int64
+          minimum: 0
+        count_is_lower_bound:
+          type: boolean
 
   responses:
     SupportInvalid:

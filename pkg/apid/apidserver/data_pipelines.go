@@ -164,7 +164,7 @@ func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 		return errors.New("data pipelines: catalog unavailable")
 	}
 	defer pool.Close()
-	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(pool, os.Getenv, log, nil)
+	service, reconciler, bindings, bindingReconciler, usage, health, err := loadManagedPostgres(ctx, pool, os.Getenv, log, nil)
 	if err != nil {
 		return err
 	}
@@ -192,4 +192,8 @@ func runDataPipelineWorker(ctx context.Context, log *slog.Logger) error {
 		return db.Spec.StorageLimitBytes, err
 	}, RefreshRelationships: store.RefreshRelationships, RefreshSchema: store.RefreshSchema, RefreshReadGate: store.RefreshReadGate, Policy: policy, Target: service.WithPipelineSQL, Capacity: capacity, Admit: store.AdmitCapacity}}
 	return worker.Run(ctx)
+}
+
+func (s *server) pipelineOperations(w http.ResponseWriter, r *http.Request, a state.Account) {
+	s.dataPipelines.Operations(w, r, a.ID)
 }

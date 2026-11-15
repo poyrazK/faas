@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.data_pipeline_operations import DataPipelineOperations
     from ..models.data_pipeline_serving import DataPipelineServing
 
 
@@ -28,6 +29,9 @@ class CreateDataPipelineRequest:
     source_connection_id: UUID
     database_id: UUID
     tables: list[str]
+    operations: DataPipelineOperations | Unset = UNSET
+    """Versioned policy for bounded scheduled snapshots, mirror quality checks and optional maintenance. Snapshot
+    mode is chosen at creation and cannot be changed later."""
     freshness_target_seconds: int | Unset = UNSET
     """Initial checkpoint confirmation target for the new pipeline; use zero to disable it, or 15 to 86400 seconds."""
     serving: DataPipelineServing | Unset = UNSET
@@ -44,6 +48,10 @@ class CreateDataPipelineRequest:
         database_id = str(self.database_id)
 
         tables = self.tables
+
+        operations: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.operations, Unset):
+            operations = self.operations.to_dict()
 
         freshness_target_seconds = self.freshness_target_seconds
 
@@ -65,6 +73,8 @@ class CreateDataPipelineRequest:
                 "tables": tables,
             }
         )
+        if operations is not UNSET:
+            field_dict["operations"] = operations
         if freshness_target_seconds is not UNSET:
             field_dict["freshness_target_seconds"] = freshness_target_seconds
         if serving is not UNSET:
@@ -76,6 +86,7 @@ class CreateDataPipelineRequest:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.data_pipeline_operations import DataPipelineOperations
         from ..models.data_pipeline_serving import DataPipelineServing
 
         d = dict(src_dict)
@@ -86,6 +97,13 @@ class CreateDataPipelineRequest:
         database_id = UUID(d.pop("database_id"))
 
         tables = cast(list[str], d.pop("tables"))
+
+        _operations = d.pop("operations", UNSET)
+        operations: DataPipelineOperations | Unset
+        if isinstance(_operations, Unset):
+            operations = UNSET
+        else:
+            operations = DataPipelineOperations.from_dict(_operations)
 
         freshness_target_seconds = d.pop("freshness_target_seconds", UNSET)
 
@@ -103,6 +121,7 @@ class CreateDataPipelineRequest:
             source_connection_id=source_connection_id,
             database_id=database_id,
             tables=tables,
+            operations=operations,
             freshness_target_seconds=freshness_target_seconds,
             serving=serving,
             read_subjects=read_subjects,

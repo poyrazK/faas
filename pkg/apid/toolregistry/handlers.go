@@ -1,5 +1,5 @@
-// Package toolregistry owns private publication journals and their immutable
-// registry projection. It never executes customer code or resumes publishers.
+// Package toolregistry owns publication journals, their immutable registry
+// projection and bounded owner-approved private protocol execution.
 package toolregistry
 
 import (
@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
-func Handler(store state.Store) httpkit.AccountHandler {
+func Handler(store state.Store, privatePublication ...bool) httpkit.AccountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		w.Header().Set("Cache-Control", "no-store")
 		if !personalAccess(w, r, acct, store, true) {
@@ -36,7 +36,7 @@ func Handler(store state.Store) httpkit.AccountHandler {
 			out, err := journal.GetToolPublication(r.Context(), acct.ID, id)
 			respond(w, out, err)
 		case http.MethodPut:
-			begin(w, r, acct, store, journal, id)
+			begin(w, r, acct, store, journal, id, privatePublication...)
 		case http.MethodPost:
 			finish(w, r, acct, store, journal, id)
 		}
@@ -70,7 +70,7 @@ func personalAccess(w http.ResponseWriter, r *http.Request, acct state.Account, 
 	return !denied
 }
 
-func begin(w http.ResponseWriter, r *http.Request, acct state.Account, store state.Store, journal state.ToolPublicationStore, id string) {
+func begin(w http.ResponseWriter, r *http.Request, acct state.Account, store state.Store, journal state.ToolPublicationStore, id string, privatePublication ...bool) {
 	var in api.ToolPublicationIntent
 	if httpkit.DecodeJSONSized(r, &in, api.ToolPublicationIntentMaxBytes) != nil || toolpublication.ValidateIntent(in) != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid publication review"))
@@ -86,6 +86,10 @@ func begin(w http.ResponseWriter, r *http.Request, acct state.Account, store sta
 	}
 	if !errors.Is(err, state.ErrNotFound) {
 		respond(w, nil, err)
+		return
+	}
+	if in.PlatformVerification && (len(privatePublication) == 0 || !privatePublication[0]) {
+		api.WriteProblem(w, api.NewProblem(503, "private_publication_disabled", "Private publication unavailable", "the operator must enable platform-held publication verification"))
 		return
 	}
 	app, err := store.AppBySlug(r.Context(), in.App)

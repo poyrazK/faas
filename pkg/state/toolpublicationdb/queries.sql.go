@@ -556,6 +556,50 @@ func (q *Queries) LockToolPublicationAccount(ctx context.Context, db DBTX, id pg
 	return id_2, err
 }
 
+const lockToolPublicationCandidate = `-- name: LockToolPublicationCandidate :one
+SELECT d.id FROM deployments d
+JOIN apps a ON a.id=d.app_id
+JOIN accounts c ON c.id=a.account_id
+JOIN api_keys k ON k.account_id=a.account_id
+WHERE a.account_id=$1 AND a.id=$2 AND a.slug=$3
+AND d.id=$4 AND d.source_sha256=$5
+AND d.status='live' AND d.traffic_percent=0 AND COALESCE(d.scope,'default') IN ('','default')
+AND c.status='active' AND k.id=$6 AND k.status IN ('active','grace')
+AND (k.expires_at IS NULL OR k.expires_at>now())
+AND (k.scopes @> ARRAY['deploy:write']::text[] OR k.scopes @> ARRAY['admin']::text[])
+AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id))
+AND (a.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND o.personal_org AND o.personal_owner_account_id=a.account_id))
+AND ($7::text='' OR EXISTS(SELECT 1 FROM deployments b WHERE b.app_id=a.id AND b.id::text=$7 AND b.status='live' AND b.traffic_percent=100 AND COALESCE(b.scope,'default') IN ('','default')))
+AND NOT EXISTS(SELECT 1 FROM deployments b WHERE b.app_id=a.id AND b.status='live' AND b.traffic_percent>0 AND COALESCE(b.scope,'default') IN ('','default') AND (b.id::text<>$7 OR b.traffic_percent<>100))
+FOR SHARE OF d,a,k,c
+`
+
+type LockToolPublicationCandidateParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	AppSlug         string
+	DeploymentID    pgtype.UUID
+	SourceSha256    pgtype.Text
+	KeyID           pgtype.UUID
+	ExpectedServing string
+}
+
+func (q *Queries) LockToolPublicationCandidate(ctx context.Context, db DBTX, arg LockToolPublicationCandidateParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, lockToolPublicationCandidate,
+		arg.AccountID,
+		arg.AppID,
+		arg.AppSlug,
+		arg.DeploymentID,
+		arg.SourceSha256,
+		arg.KeyID,
+		arg.ExpectedServing,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const revokeToolGrant = `-- name: RevokeToolGrant :one
 UPDATE tool_grants SET revoked_at=COALESCE(revoked_at,now()),
 payload=jsonb_set(payload,'{revoked_at}',to_jsonb(COALESCE(revoked_at,now())))

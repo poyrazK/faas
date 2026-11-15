@@ -4332,6 +4332,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err := deployManifestQueueBindings(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest queue bindings failed", err)
 	}
+	if err := deployManifestPostgresChanges(ctx, client, slug, sourceDir); err != nil {
+		return printErr("Manifest postgres_changes failed", err)
+	}
 	if err := deployManifestLabels(ctx, client, slug, sourceDir); err != nil {
 		return printErr("Manifest labels failed", err)
 	}

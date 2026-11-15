@@ -24,6 +24,7 @@ import (
 
 	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretd"
@@ -52,6 +53,7 @@ type config struct {
 	// buildIdentityPath is optional (slice 3j): set, secretd also pulls
 	// from apps' private registries with the build seal domain.
 	buildIdentityPath string
+	postgresHMACPath  string
 	appsPerNodeHour   int
 	requireReferences bool
 }
@@ -71,6 +73,7 @@ func configFromEnv(getenv func(string) string) (config, error) {
 		deliveryIdentityPath: getenv("FAAS_SECRETD_DELIVERY_IDENTITY"),
 		// Optional too: without it RegistryFetch refuses.
 		buildIdentityPath: getenv("FAAS_SECRETD_BUILD_IDENTITY"),
+		postgresHMACPath:  getenv("FAAS_SECRETD_POSTGRES_HMAC_KEY"),
 	}
 	if cfg.metricsAddr != "" {
 		host, _, err := net.SplitHostPort(cfg.metricsAddr)
@@ -128,6 +131,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	var postgresHMAC []byte
+	if cfg.postgresHMACPath != "" {
+		postgresHMAC, err = os.ReadFile(cfg.postgresHMACPath)
+		if err != nil || len(postgresHMAC) < 32 || len(postgresHMAC) > 4096 {
+			return errors.New("secretd: invalid PostgreSQL fingerprint key credential")
+		}
+	}
 	var edgeIdentities, deliveryIdentities, buildIdentities []*age.X25519Identity
 	if cfg.edgeIdentityPath != "" {
 		if edgeIdentities, err = sealdomain.LoadReaderIdentities(cfg.edgeIdentityPath); err != nil {
@@ -169,7 +179,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}()
 	go sweepGrants(ctx, store, log)
 
-	tlsCfg, err := wire.LoadServerTLSConfigWithPrefixAndVerifier("secretd_", cfg.certPath, cfg.keyPath, cfg.caPath, nodes)
+	tlsCfg, err := wire.LoadServerTLSConfigWithPrefixAndVerifier("secretd_", cfg.certPath, cfg.keyPath, cfg.caPath, secretd.PostgresClientVerifier{Nodes: nodes})
 	if err != nil {
 		return fmt.Errorf("secretd: server TLS: %w", err)
 	}
@@ -189,7 +199,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 	srv := grpc.NewServer(wire.ServerCredsOrEmpty(tlsCfg)...)
 	secretdpb.RegisterSecretdServer(srv, secretd.NewServer(store, identities, cfg.appsPerNodeHour, log).
 		RequireReferences(cfg.requireReferences).WithMetrics(metrics).WithEdgeIdentities(edgeIdentities).
-		WithDeliveryIdentities(deliveryIdentities).WithBuildIdentities(buildIdentities))
+		WithDeliveryIdentities(deliveryIdentities).WithBuildIdentities(buildIdentities).
+		WithPostgresVerification(postgresHMAC, managedpostgres.VerifyCredentialSQL))
 	go func() {
 		<-ctx.Done()
 		srv.GracefulStop()

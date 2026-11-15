@@ -679,9 +679,9 @@ request to 15 seconds. Existing native publication and invocation limits apply.
 
 An owner may bind an existing ordinary `secret:MCP_*` application access token
 to one exact private tool grant. The publication must use `external-oauth`; the
-first preview supports only its default environment. Use the existing local
-verified publication workflow for private tools. Hosted publication remains
-open-only.
+first preview supports only its default environment. Private tools can use the
+local verified publication workflow or the opt-in hosted private publication
+flow below, which requires a separate owner decision for candidate tests.
 
 Enable the `mcp-hosted-tool-invocations` preview capability for the account.
 Enable `FAAS_MCP_PRIVATE_TOOL_INVOCATION=1` on APID, then enable
@@ -944,7 +944,7 @@ access and must be assigned accordingly.
 The hosted `build-tools` catalog exposes `gregale_get_tool_template` (Node, Go or Python),
 `gregale_create_source_upload`, `gregale_plan_uploaded_tool_deploy`,
 `gregale_apply_tool_deploy` and `gregale_get_tool_deploy`. It exposes no local-path
-or standalone test tool. The preview accepts open-access Node, Go and Python
+or standalone test tool. The preview accepts Node, Go and Python
 application projects with the hosting contract and behavioral fixtures. Select
 `runtime: "node"`, `"go"` or `"python"` when planning an upload; omitted runtime
 defaults to Node for existing clients. Node requires a `package.json` start
@@ -982,7 +982,113 @@ and upload contents are ephemeral and expire; they do not survive bridge restart
 Reconcile failed or uncertain attempts before submitting another reviewed plan.
 Publication evidence remains publisher-attested. Publishing does not create an
 invocation grant: the owner must separately grant each exact version/tool to the
-recipient agent. Private OAuth tools and durable Tasks are outside this preview.
+recipient agent. Private OAuth publication additionally requires the flow below;
+durable Tasks retain their dedicated release workflow.
+
+### Hosted private tool publication (preview)
+
+Deploy the matching API, CLI and bridge, then enable
+`FAAS_MCP_PRIVATE_TOOL_PUBLICATION=1` on the API. The bridge uses the existing
+`--allow-tool-publishing` and `build-tools` settings. Private invocation remains
+separately enabled and consented. Shared organizations and scoped principals
+remain excluded.
+
+Upload a Node, Go or Python project whose `gregale-mcp.json` declares
+`external-oauth`, issuer, JWKS URL, canonical app resource, scopes and an explicit
+tool policy. Plan it with `access_mode: "external-oauth"` and reviewed fixtures.
+The plan returns the OAuth contract and `owner_approval_required: true`. No token,
+environment variable or credential reference is accepted from the agent.
+
+Apply stages a normal zero-traffic candidate and pins its catalog. Before any
+credential-bearing verification request or fixture, the API retains a pending
+review bound to the publishing key, deployment, native source archive, reviewed
+source/fixtures/OAuth contract and catalog pin. Poll `gregale_get_tool_deploy`;
+its `verification` includes `request_sha256`, `deployment_id` and
+`deployment_source_sha256`. The publishing connection receives no test token or
+secret name.
+
+The personal owner inspects the candidate, source and complete review:
+
+```bash
+gregale mcp server tool-publication get --id <PUBLICATION_ID>
+gregale mcp server tool-publication approve \
+  --id <PUBLICATION_ID> --request-sha256 <REVIEWED_REQUEST_SHA256> \
+  --credential-secret-ref secret:MCP_PUBLICATION_TEST
+```
+
+Alternatively, select an existing managed execution OAuth connection:
+
+```bash
+gregale mcp server tool-publication approve \
+  --id <PUBLICATION_ID> --request-sha256 <REVIEWED_REQUEST_SHA256> \
+  --credential-connection-id <OWNER_APPROVED_CONNECTION_UUID>
+```
+
+Choose exactly one credential source. A managed connection must belong to the
+candidate app and current project, use the default environment, match the reviewed
+issuer and resource, and cover the reviewed global and tool scopes. Guided OAuth
+must already be connected by the owner. Approval does not refresh or test a token.
+Connection identifiers and provider credential metadata stay out of agent receipts.
+
+The verification worker renews an expired or expiring access token through the
+existing durable connection lease. Concurrent consumers reuse the saved token.
+Each provider request rechecks the exact publication approval and lease; no
+invocation grant is created. Each application request rechecks current authority.
+A successful accepted refresh is saved even if publication approval is revoked
+while the provider responds, preserving the rotating refresh token. Further
+application requests remain blocked. Connection revocation also blocks installing
+the response.
+
+Lost refresh replies, rejected grants or changed scopes retain a
+`reconnect_required` failure. Reconnect OAuth with a new connection identity and
+review a new publication attempt; repeated requests never replay the exchange or
+fixtures. Verification stops at its execution deadline or the selected token's
+expiry. It never renews a token mid-fixture or repeats a fixture after expiry.
+
+The static credential option must already be an ordinary sealed `MCP_*` app test
+token in the candidate app's default environment. It must authorize the reviewed
+OAuth resource and scopes. Native Gregale API tokens and managed infrastructure
+credentials cannot be used as test tokens. Setup and approval require personal
+administrator authority under MFA policy; these owner commands are absent from
+the agent tool catalog. The owner must trust the approved application and its
+deployment authority with that token, as with existing private invocation.
+
+The API runs OAuth discovery, catalog, stateless protocol/readiness and behavioral
+checks with the token held in its process. It checks the public candidate and
+exact replicas for the reviewed protocol versions. Only canonical catalog data,
+named checks and fixed failure-stage codes enter the receipt. Credential
+reflections in catalog data fail the check. Combined evidence that cannot fit the
+native journal fails before behavioral fixtures or promotion. The CLI receives
+the verification receipt, rechecks catalog fleet health and the serving baseline, and performs
+guarded promotion. Successful native finalization must match that verification
+and native deployment source. Builds and customer code still use ordinary builder
+and application VMs.
+
+Candidate test authority is separate from invocation. After publication, the owner
+must create an exact version/tool grant with its own private invocation credential
+binding. Publishing never creates that grant or enables another agent's calls.
+
+To revoke pending or running candidate test authority:
+
+```bash
+gregale mcp server tool-publication revoke \
+  --id <PUBLICATION_ID> --request-sha256 <REVIEWED_REQUEST_SHA256>
+```
+
+Revocation, publisher narrowing/revocation, source/serving drift or credential
+rotation prevents later credential dispatches; an accepted HTTP request may
+finish. Completed test evidence is consumed and cannot be reauthorized or revoked.
+Use tool-grant revocation to remove invocation access. Verification runs at most
+once, within 90 seconds after approval is consumed. Repeated requests, lost replies
+and restarts only read retained evidence. A closed parent cannot start remaining
+tests. Failed or uncertain fixtures can have external effects: inspect the native
+record and candidate before submitting another publication.
+
+This preview supports ordinary sealed test tokens and owner-approved managed
+execution OAuth connections within the existing four-worker pool and publication
+retention bounds. Durable Tasks and configured platform readiness roles remain separate work;
+private hosted publication refuses configured readiness roles. Live staging
+acceptance remains skipped.
 
 ## Private tool registry
 

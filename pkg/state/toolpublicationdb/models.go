@@ -9,7 +9,8 @@ import (
 )
 
 type Account struct {
-	ID pgtype.UUID
+	ID     pgtype.UUID
+	Status string
 }
 
 type ApiKey struct {
@@ -44,6 +45,15 @@ type AppSecret struct {
 	ManagedPostgresBindingID         pgtype.UUID
 	ManagedObjectStorageCredentialID pgtype.UUID
 	ManagedCredentialRef             pgtype.Text
+}
+
+type Deployment struct {
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	SourceSha256   pgtype.Text
+	Scope          pgtype.Text
+	Status         string
+	TrafficPercent int32
 }
 
 type Org struct {
