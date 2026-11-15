@@ -4,6 +4,8 @@
 /* eslint-disable */
 import type { MFAConfirmRequest } from '../models/MFAConfirmRequest.js';
 import type { MFAConfirmResponse } from '../models/MFAConfirmResponse.js';
+import type { MFADisableEmailCancelRequest } from '../models/MFADisableEmailCancelRequest.js';
+import type { MFADisableEmailCancelResponse } from '../models/MFADisableEmailCancelResponse.js';
 import type { MFADisableEmailConfirmRequest } from '../models/MFADisableEmailConfirmRequest.js';
 import type { MFADisableEmailConfirmResponse } from '../models/MFADisableEmailConfirmResponse.js';
 import type { MFADisableEmailRequest } from '../models/MFADisableEmailRequest.js';
@@ -207,6 +209,33 @@ export class MfaService {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/mfa/disable-email',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+      },
+    });
+  }
+  /**
+   * Cancel a pending email-assisted MFA disable.
+   * Cancels every pending email-assisted MFA disable on the account,
+   * so its emailed link stops working. A browser session must have
+   * passed the second factor; a session from a password reset alone
+   * is refused. Signing in with the authenticator app or a recovery
+   * code cancels a pending disable too. The owner is emailed when a
+   * request is cancelled.
+   *
+   * @returns MFADisableEmailCancelResponse Pending requests cancelled (`cancelled` is 0 when none was pending).
+   * @throws ApiError
+   */
+  public static mfaDisableEmailCancel({
+    requestBody,
+  }: {
+    requestBody?: MFADisableEmailCancelRequest,
+  }): CancelablePromise<MFADisableEmailCancelResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/mfa/disable-email-cancel',
       body: requestBody,
       mediaType: 'application/json',
       errors: {

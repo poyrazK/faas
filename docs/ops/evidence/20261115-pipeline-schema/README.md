@@ -10,7 +10,7 @@ Designs: [evolution](../../../adr/20261113205500-pipeline-serving-evolution.md) 
 [scheduled work](../../../adr/20261114083000-pipeline-scheduled-imports-quality-and-work-budgets.md).
 
 A fresh disposable PostgreSQL 16 database replayed every migration and produced
-the canonical 111,770-line schema and migration checksum. SQLC generation and
+the canonical 111,780-line schema and migration checksum. SQLC generation and
 ADR uniqueness passed.
 
 [Compatibility SQL](legacy-worker-compat.sql) invokes the actual migrated trigger
