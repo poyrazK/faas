@@ -70,8 +70,15 @@ recovery; local preparation checks do not establish deployed acceptance.
 | 159 | Public OpenAPI spec and capabilities endpoint | `TestPublicSurface/openapi_spec`, `TestAccountAndKeys/capabilities` | — |
 | 161 | Docs site and trust pages | `TestDocsPages` (every route not marked `unpublished` in `docs/customer-pages.json`), `TestPublicSurface/security_txt` | pages of preview and internal capabilities, which are deliberately unpublished |
 
+`TestListStreamingIsolatedCLI` extends row 156: early invocation rows, partial
+API failures with progress/correlation, and SIGINT cancelling the active read.
+
 45 of the 47 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
+
+`TestJSONHelpGlobalFlagsIsolatedCLI` extends row 156: it discovers global
+connection/automation options without API requests, then constructs and runs a
+profile-scoped, read-only invocation list from another working directory.
 
 `invoke --async --wait` is covered by `TestInvokeAsyncWaitLiveAPI` (one
 health request through the durable queue, compared with its stored record) and

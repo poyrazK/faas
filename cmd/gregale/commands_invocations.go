@@ -238,6 +238,7 @@ func cmdInvocationsList(args []string) int {
 	before := fs.String("before", "", "opaque pagination cursor (alias for --cursor)")
 	fs.StringVar(before, "cursor", "", "start after the cursor from a prior page")
 	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
+	stream := fs.Bool("stream", false, "emit rows as JSON Lines as pages arrive (requires --json --all)")
 	limit := fs.Int("limit", 50, "max rows (1..100; server caps at 100)")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -250,6 +251,9 @@ func cmdInvocationsList(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale invocation list [--cursor C] [--limit N] [--all] (1 <= N <= 100)", "invocations")
 		return 1
 	}
+	if !validateListStream(*stream, *all) {
+		return 1
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -260,10 +264,14 @@ func cmdInvocationsList(args []string) int {
 	if !jsonOutput {
 		slugs = appSlugsByID(client)
 	}
-	items, next, err := collectListPages(context.Background(), *before, *all, func(ctx context.Context, cursor string) ([]api.Invocation, string, error) {
+	fetch := func(ctx context.Context, cursor string) ([]api.Invocation, string, error) {
 		page, err := client.ListInvocations(ctx, cursor, *limit)
 		return page.Invocations, page.NextBefore, err
-	})
+	}
+	if *stream {
+		return runStreamList("Could not list invocations", *before, fetch)
+	}
+	items, next, err := collectListPages(context.Background(), *before, *all, fetch)
 	resp := api.ListInvocationsResponse{Invocations: items, NextBefore: next}
 	if err != nil {
 		return printErr("Could not list invocations", err)

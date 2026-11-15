@@ -376,20 +376,15 @@ var fromPattern = regexp.MustCompile(`(?im)^\s*FROM\s+(?:--\S+\s+)*(\S+)`)
 // server's: its own EXPOSE, else the port of a known server image it builds
 // FROM. The build readies once the port accepts connections, but the app's
 // public route speaks HTTP, which the server does not, so it is reached over
-// an internal TCP port instead.
+// an internal TCP port instead. A final stage built FROM a datastore is
+// reported whatever its port: apid refuses that build (stateless_only_violation).
 func nonHTTPServiceWarning(dockerfile string) (Warning, bool) {
+	if base, hosted, stateful := statefuldenylist.MatchDockerfile([]byte(dockerfile)); stateful {
+		return datastoreWarning(imageName(base), hosted), true
+	}
 	server, port := "", firstPort(dockerfile)
 	if froms := fromPattern.FindAllStringSubmatch(dockerfile, -1); len(froms) > 0 {
-		ref := strings.ToLower(froms[len(froms)-1][1])
-		if at := strings.IndexByte(ref, '@'); at >= 0 {
-			ref = ref[:at]
-		}
-		if slash := strings.LastIndexByte(ref, '/'); slash >= 0 {
-			ref = ref[slash+1:]
-		}
-		if colon := strings.IndexByte(ref, ':'); colon >= 0 {
-			ref = ref[:colon]
-		}
+		ref := imageName(froms[len(froms)-1][1])
 		if serverPort, known := nonHTTPServers[ref]; known {
 			server = ref
 			if port == 0 {
@@ -404,23 +399,41 @@ func nonHTTPServiceWarning(dockerfile string) (Warning, bool) {
 	if server != "" {
 		what = fmt.Sprintf("this builds %s, which serves its own TCP protocol on port %d", server, port)
 	}
-	// A datastore is refused as an image too (stateless_only_violation): an
-	// app parks to a snapshot and keeps no data. Name the hosted service.
-	if hosted, stateful := statefuldenylist.Set[server]; stateful {
-		managed := hosted
-		if server == "postgres" {
-			managed = "use managed PostgreSQL: `gregale postgres create <name>`"
-		}
-		return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
-			"%s. Gregale does not run datastores, built or as an image: an app parks to a snapshot and keeps no data. "+
-				"%s, and read its URL from the environment: `gregale env set --app <app> %s_URL=<url>`.",
-			what, upperFirst(managed), strings.ToUpper(server))}, true
-	}
 	return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
 		"%s. The app's public URL speaks HTTP, which this server does not answer. "+
 			"Deploy this build or the published image (`gregale deploy --image <image>@sha256:<digest> --name <app>`); "+
 			"either is ready once the port accepts connections. Then keep it private and let other apps reach it over TCP with "+
 			"`gregale app <app> --visibility internal --ports <name>=tcp:%d:internal`.", what, port)}, true
+}
+
+// datastoreWarning names the hosted service for a datastore build. A datastore
+// is refused built or as an image (stateless_only_violation): an app parks to
+// a snapshot and keeps no data.
+func datastoreWarning(server, hosted string) Warning {
+	managed := hosted
+	if server == "postgres" {
+		managed = "use managed PostgreSQL: `gregale postgres create <name>`"
+	}
+	return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
+		"this builds %s, a datastore. Gregale does not run datastores, built or as an image: an app parks to a snapshot and keeps no data. "+
+			"%s, and read its URL from the environment: `gregale env set --app <app> %s_URL=<url>`.",
+		server, upperFirst(managed), strings.ToUpper(server))}
+}
+
+// imageName is an image reference's last path segment without tag or digest:
+// docker.io/library/postgres:16@sha256:… → postgres.
+func imageName(ref string) string {
+	ref = strings.ToLower(ref)
+	if at := strings.IndexByte(ref, '@'); at >= 0 {
+		ref = ref[:at]
+	}
+	if slash := strings.LastIndexByte(ref, '/'); slash >= 0 {
+		ref = ref[slash+1:]
+	}
+	if colon := strings.IndexByte(ref, ':'); colon >= 0 {
+		ref = ref[:colon]
+	}
+	return ref
 }
 
 func nodePackageManager(fsys fs.FS, declared string) string {
