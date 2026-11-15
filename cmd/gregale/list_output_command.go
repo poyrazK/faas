@@ -18,12 +18,12 @@ type preparedListOutput struct {
 	file      *listOutputFile
 }
 
-func prepareListOutput(path string, selected, all bool) (*preparedListOutput, error) {
+func prepareListOutput(path string, selected, all bool, command string) (*preparedListOutput, error) {
 	if !selected {
 		return nil, nil
 	}
-	if !all {
-		return nil, errors.New("--output requires --all")
+	if violation := listFlagRuleViolation(listOutputRequiresAll, listFlagRuleState{Output: selected, All: all}, command); violation != nil {
+		return nil, violation
 	}
 	if strings.TrimSpace(path) == "" || path == "-" {
 		return nil, errors.New("--output requires a nonempty file path; omit it to write to stdout")

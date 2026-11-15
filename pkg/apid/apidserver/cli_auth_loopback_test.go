@@ -15,9 +15,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 )
 
-func mintLoopbackCodeForTest(t *testing.T, srv http.Handler, port int) api.CliAuthCodeResponse {
+func mintLoopbackCodeForTest(t *testing.T, srv http.Handler, port int, challenge string) api.CliAuthCodeResponse {
 	t.Helper()
-	raw, _ := json.Marshal(api.CliAuthCodeRequest{Device: true, LoopbackPort: port})
+	raw, _ := json.Marshal(api.CliAuthCodeRequest{Device: true, LoopbackPort: port, CodeChallenge: challenge})
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/cli-auth/code", bytes.NewReader(raw))
 	r.Header.Set("Content-Type", "application/json")
@@ -32,9 +32,13 @@ func mintLoopbackCodeForTest(t *testing.T, srv http.Handler, port int) api.CliAu
 	return out
 }
 
-func exchangeDeviceCodeForTest(t *testing.T, srv http.Handler, deviceCode string) *httptest.ResponseRecorder {
+func exchangeDeviceCodeForTest(t *testing.T, srv http.Handler, deviceCode string, verifier ...string) *httptest.ResponseRecorder {
 	t.Helper()
-	raw, _ := json.Marshal(api.CliAuthExchangeRequest{DeviceCode: deviceCode})
+	req := api.CliAuthExchangeRequest{DeviceCode: deviceCode}
+	if len(verifier) > 0 {
+		req.CodeVerifier = verifier[0]
+	}
+	raw, _ := json.Marshal(req)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/v1/cli-auth/exchange", bytes.NewReader(raw))
 	r.Header.Set("Content-Type", "application/json")
@@ -52,7 +56,27 @@ func TestCliAuthLoopback_OneClickHandsDeviceCodeToBrowserMachine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	minted := mintLoopbackCodeForTest(t, srv, 49152)
+	// The CLI keeps a verifier and sends only its SHA-256 (account audit
+	// F10-3); a malformed challenge or one without a device code is refused.
+	verifier, challenge, err := api.NewCliAuthVerifier()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []api.CliAuthCodeRequest{
+		{Device: true, CodeChallenge: "not-hex"},
+		{Device: true, CodeChallenge: challenge[:62]},
+		{CodeChallenge: challenge},
+	} {
+		raw, _ := json.Marshal(bad)
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/v1/cli-auth/code", bytes.NewReader(raw))
+		r.Header.Set("Content-Type", "application/json")
+		srv.ServeHTTP(rec, r)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("mint %+v: %d %s, want 400", bad, rec.Code, rec.Body)
+		}
+	}
+	minted := mintLoopbackCodeForTest(t, srv, 49152, challenge)
 	if !minted.Loopback || len(minted.DeviceCode) != 64 {
 		t.Fatalf("mint = %+v, want loopback with a device code", minted)
 	}
@@ -61,15 +85,29 @@ func TestCliAuthLoopback_OneClickHandsDeviceCodeToBrowserMachine(t *testing.T) {
 		t.Fatalf("URL = %q, want code and port=49152", minted.URL)
 	}
 
-	// The page: one button, no code to type.
+	// The page names where the code came from (account audit F10): a
+	// browser elsewhere sees both addresses.
 	session := srv.issueBrowserSessionForTest(t, acct.Email)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/cli-auth?"+u.RawQuery, nil)
+	r.RemoteAddr = "198.51.100.7:4000"
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
+	srv.ServeHTTP(rec, r)
+	if body := rec.Body.String(); !strings.Contains(body, "from <code>192.0.2.1</code>; this browser is at <code>198.51.100.7</code>") {
+		t.Fatalf("render from another address lacks the requester line: %s", body)
+	}
+
+	// The page: one button, no code to type.
+	rec = httptest.NewRecorder()
+	r = httptest.NewRequest(http.MethodGet, "/cli-auth?"+u.RawQuery, nil)
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
 	srv.ServeHTTP(rec, r)
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, "Authorize") {
 		t.Fatalf("render: %d %s", rec.Code, body)
+	}
+	if !strings.Contains(body, "from <code>192.0.2.1</code> (this network)") {
+		t.Fatalf("render lacks the same-network requester line: %s", body)
 	}
 	if strings.Contains(body, `placeholder="ABCD-1234"`) {
 		t.Fatalf("one-click page asks to type the code: %s", body)
@@ -120,8 +158,21 @@ func TestCliAuthLoopback_OneClickHandsDeviceCodeToBrowserMachine(t *testing.T) {
 	if rec := exchangeDeviceCodeForTest(t, srv, minted.DeviceCode); rec.Code != http.StatusGone {
 		t.Fatalf("exchange with the minting device code: %d %s, want 410", rec.Code, rec.Body)
 	}
-	// The browser's machine does.
-	rec = exchangeDeviceCodeForTest(t, srv, fresh)
+	// The device code alone, as browser history or a local server's log
+	// would hold it, gets nothing, nor does it with someone else's verifier,
+	// and neither attempt spends it.
+	other, _, _ := api.NewCliAuthVerifier()
+	if rec := exchangeDeviceCodeForTest(t, srv, fresh); rec.Code != http.StatusGone {
+		t.Fatalf("exchange without the verifier: %d %s, want 410", rec.Code, rec.Body)
+	}
+	if rec := exchangeDeviceCodeForTest(t, srv, fresh, other); rec.Code != http.StatusGone {
+		t.Fatalf("exchange with another verifier: %d %s, want 410", rec.Code, rec.Body)
+	}
+	if rec := exchangeDeviceCodeForTest(t, srv, fresh, "zz"); rec.Code != http.StatusBadRequest {
+		t.Fatalf("exchange with a malformed verifier: %d %s, want 400", rec.Code, rec.Body)
+	}
+	// The CLI on the browser's machine, which holds the verifier, does.
+	rec = exchangeDeviceCodeForTest(t, srv, fresh, verifier)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("exchange with the loopback device code: %d %s", rec.Code, rec.Body)
 	}

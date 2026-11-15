@@ -8,8 +8,9 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 // lease; the independent state key arrives as a systemd credential. Agents'
 // provisioning commands and uploads run the active release's gregale CLI as
 // subprocesses with an empty private home, so the unit needs only a private
-// /tmp, and a CLI release does not restart it. The default OAuth callbacks are the published Claude and ChatGPT ones
-// plus loopback; an operator replaces ExecStart in a drop-in to change them.
+// /tmp, and a CLI release does not restart it. The default OAuth callbacks
+// are the published Claude, ChatGPT and Google Antigravity ones plus loopback;
+// an operator replaces ExecStart in a drop-in to change them.
 // Metrics are on 127.0.0.1:9110 (the flag's default). The connection admin
 // socket sits in a 0700 runtime directory the service user owns: operators
 // list and revoke connections as that user with gregale mcp connections.
@@ -29,6 +30,7 @@ func UnitMcpBridge() daemonunit.Unit {
 		ExecStart: `/opt/faas/current/bin/mcp-bridged --state-key-file %d/faas_mcp_bridge_state_key --admin-socket /run/faas-mcp-bridge/admin.sock` +
 			` --oauth-redirect-uri https://claude.ai/api/mcp/auth_callback --oauth-redirect-uri https://claude.com/api/mcp/auth_callback` +
 			` --oauth-redirect-uri https://chatgpt.com/connector_platform_oauth_redirect` +
+			` --oauth-redirect-uri https://antigravity.google/oauth-callback` +
 			` --oauth-redirect-uri http://localhost/callback --oauth-redirect-uri http://127.0.0.1/callback` +
 			// Uploads and plan directories live on the state disk, not in the
 			// private /tmp, which may be tmpfs inside the 1G memory limit; the
