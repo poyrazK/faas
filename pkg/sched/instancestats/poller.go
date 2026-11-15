@@ -678,6 +678,10 @@ func (p *Poller) decodeTelemetrySnapshot(
 			row.RXBytes = uint64(*in.NetRxBytes)
 			row.RX = Valid
 		}
+		if in.InternalTxBytes != nil && *in.InternalTxBytes >= 0 {
+			row.InternalTXBytes = uint64(*in.InternalTxBytes)
+			row.InternalTXValid = true
+		}
 		if in.DiskUsedBytes != nil && in.DiskCapacityBytes != nil &&
 			*in.DiskUsedBytes >= 0 && *in.DiskCapacityBytes > 0 &&
 			*in.DiskUsedBytes <= *in.DiskCapacityBytes {
@@ -1038,6 +1042,10 @@ func (p *Poller) decodeStatsSnapshot(
 		if in.NetRxBytes != nil {
 			row.RXBytes = uint64(*in.NetRxBytes)
 			row.RX = Valid
+		}
+		if in.InternalTxBytes != nil && *in.InternalTxBytes >= 0 {
+			row.InternalTXBytes = uint64(*in.InternalTxBytes)
+			row.InternalTXValid = true
 		}
 		if in.DiskUsedBytes != nil && in.DiskCapacityBytes != nil &&
 			*in.DiskUsedBytes >= 0 && *in.DiskCapacityBytes > 0 &&
