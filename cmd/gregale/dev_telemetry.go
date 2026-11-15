@@ -27,7 +27,7 @@ const (
 	devPhaseReady       = "ready"
 	devPhaseRoute       = "route"
 	devPhaseFailed      = "failed"
-	devEditToLiveTarget = 15 * time.Second
+	devEditToLiveTarget = api.DevEditToLiveTarget
 )
 
 var devPhaseOrder = []string{

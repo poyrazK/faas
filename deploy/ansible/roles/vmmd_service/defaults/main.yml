@@ -113,7 +113,8 @@ vmmd_instance_bridge_unit: false
 
 # ADR-740 developer live source patches. Must match control_plane_service's
 # value: apid publishes patches and vmmd serves them to developer environments.
-faas_dev_patch_delivery_enabled: false
+# On by default (owner decision 2026-11-15); see control_plane_service.
+faas_dev_patch_delivery_enabled: true
 
 # ADR-1141 cluster workload-identity signing key (tasks/workload_identity.yml).
 # Point faas_workload_identity_source_dir at the controller-side directory

@@ -1196,6 +1196,21 @@ func (c *Client) DeleteDevSessionsProject(ctx context.Context, project string, w
 	return c.do(ctx, "DELETE", path, nil, nil)
 }
 
+// DestroyDevSessionByApp stops a developer environment selected by its
+// backing dev-* app slug instead of the local workspace, for environments
+// whose checkout moved (DELETE /v1/dev/sessions/{project}?app=).
+func (c *Client) DestroyDevSessionByApp(ctx context.Context, project, appSlug string) error {
+	path := "/v1/dev/sessions/" + project + "?" + url.Values{"app": {appSlug}}.Encode()
+	return c.do(ctx, "DELETE", path, nil, nil)
+}
+
+// GetDevSessions is the path-shaped SDK method for GET /v1/dev/sessions: the
+// account's developer environments, wherever they were started.
+func (c *Client) GetDevSessions(ctx context.Context) (DevSessionListResponse, error) {
+	var out DevSessionListResponse
+	return out, c.do(ctx, "GET", "/v1/dev/sessions", nil, &out)
+}
+
 // RegisterScenarioTest gives a run's developer sessions a private service
 // namespace before source deployment. Registration is create-only.
 func (c *Client) RegisterScenarioTest(ctx context.Context, runID string, req RegisterScenarioTestRequest) error {
@@ -1715,7 +1730,17 @@ func (c *Client) DeployDevSource(ctx context.Context, slug string, source io.Rea
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	req.Header.Set("Idempotency-Key", newUUIDv4())
+	// Like DeployTarball: a caller-supplied key and attempt identity let a
+	// retried or timed-out sync replay or recover the same deployment
+	// instead of starting a second build nobody can cancel.
+	idempotencyKey := IdempotencyKeyFromContext(ctx)
+	if idempotencyKey == "" {
+		idempotencyKey = newUUIDv4()
+	}
+	req.Header.Set("Idempotency-Key", idempotencyKey)
+	for key, values := range deploymentAttemptHeaders(ctx) {
+		req.Header[key] = values
+	}
 	var out DeploymentResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }

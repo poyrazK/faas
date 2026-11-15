@@ -23059,6 +23059,21 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/dev/sessions:
+    get:
+      tags: [dev]
+      operationId: listDevSessions
+      summary: List the account's remote developer environments.
+      description: Every developer environment of the account, wherever it was started, with its project, backing app, URL, teardown state and lease expiry. Never renews a lease.
+      responses:
+        '200':
+          description: Developer environments.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevSessionListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/dev/sessions/{project}:
     parameters:
       - name: project
@@ -23123,8 +23138,13 @@ paths:
         - name: workspace_id
           in: query
           required: false
-          description: Opaque local workspace identity returned by the CLI derivation. Omit only to target a legacy session.
+          description: Opaque local workspace identity returned by the CLI derivation. Omit only to target a legacy session or when app is given.
           schema: { type: string, pattern: '^[a-f0-9]{32}$' }
+        - name: app
+          in: query
+          required: false
+          description: The environment's backing dev-* app slug, as listed by GET /v1/dev/sessions. Selects the environment instead of workspace_id, so one whose checkout moved can be stopped from anywhere.
+          schema: { type: string }
       responses:
         '204': { description: Developer environment removed. }
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -99680,13 +99700,36 @@ components:
         go_command:
           type: string
           description: "The stored Go command; omitted when none."
+        live_patches:
+          type: boolean
+          description: "Whether this control plane delivers live source patches to developer environments. Automatic watch mode is chosen only when it does. Omitted by older servers."
+
+    DevSessionSummary:
+      description: One developer environment in the account list.
+      type: object
+      required: [project, app, url, expires_at]
+      properties:
+        project: { type: string }
+        app: { type: string, description: "Backing dev-* app slug; DELETE /v1/dev/sessions/{project}?app= stops it." }
+        url: { type: string }
+        state: { type: string, description: "Lease state: open, stale, tearing_down or torn_down." }
+        expires_at: { type: string, format: date-time }
+
+    DevSessionListResponse:
+      description: The account's developer environments.
+      type: object
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items: { $ref: '#/components/schemas/DevSessionSummary' }
 
     DevSyncPhase:
       description: Safe phase-level timing from a developer sync.
       type: object
       required: [phase, status]
       properties:
-        phase: { type: string, enum: [sync, cache, build, boot, ready, route] }
+        phase: { type: string, enum: [sync, patch, cache, build, boot, ready, route] }
         status: { type: string, enum: [completed, failed, in_progress] }
         duration_ms: { type: integer, minimum: 0, maximum: 3600000 }
         reason: { type: string, maxLength: 512 }

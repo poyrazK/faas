@@ -921,6 +921,26 @@ type DevSessionResponse struct {
 	// none. A client that asked for one and finds it missing is talking to an
 	// API that ignores the request field.
 	GoCommand string `json:"go_command,omitempty"`
+	// LivePatches reports whether this control plane delivers ADR-740 live
+	// source patches. Watch mode is only faster than a developer build when
+	// they are delivered, so automatic watch selection falls back without
+	// them. Omitted by servers that predate the field.
+	LivePatches *bool `json:"live_patches,omitempty"`
+}
+
+// DevSessionSummary is one developer environment in GET /v1/dev/sessions.
+// App is the backing dev-* slug, accepted by DELETE /v1/dev/sessions/{project}?app=.
+type DevSessionSummary struct {
+	Project   string    `json:"project"`
+	App       string    `json:"app"`
+	URL       string    `json:"url"`
+	State     string    `json:"state,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// DevSessionListResponse lists the account's developer environments.
+type DevSessionListResponse struct {
+	Sessions []DevSessionSummary `json:"sessions"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
