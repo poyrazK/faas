@@ -16,6 +16,7 @@ func TestVerifierReportsGatewayRefusalStatus(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
+		w.Header().Set("X-Faas-Request-ID", "01a1de8c03007a93b6e75b186a932b63")
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = w.Write([]byte(`{"code":"app_concurrency_reached","detail":"secret-looking body text"}`))
@@ -29,8 +30,14 @@ func TestVerifierReportsGatewayRefusalStatus(t *testing.T) {
 	if VerificationRecoveryCode(err) != SmokeErrorGatewayUnavailable || got.Status != SmokeSkipped || got.StatusCode != http.StatusTooManyRequests || got.ErrorCode != SmokeErrorGatewayUnavailable {
 		t.Fatalf("result = %+v err=%v, want unavailable gateway 429", got, err)
 	}
-	if got.Error != "public route returned HTTP 429 without authenticated candidate evidence (app_concurrency_reached)" {
-		t.Fatalf("error = %q", got.Error)
+	const want = "public route returned HTTP 429 (app_concurrency_reached, request 01a1de8c03007a93b6e75b186a932b63) without authenticated candidate evidence"
+	if got.Error != want {
+		t.Fatalf("error = %q, want %q", got.Error, want)
+	}
+	// imaged logs and fails the deploy with the returned error, not the
+	// receipt: it must name the refusal too (prod test 2026-11-15).
+	if err == nil || err.Error() != want {
+		t.Fatalf("returned error = %v, want %q", err, want)
 	}
 	if strings.Contains(got.Error, "secret-looking") {
 		t.Fatal("body content leaked into the receipt")

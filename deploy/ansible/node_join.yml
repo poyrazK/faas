@@ -119,6 +119,16 @@
         faas_join_managed_host: "{{ faas_join_managed_host_probe.rc == 0 }}"
         faas_join_bootstrap_contract_current: "{{ faas_join_managed_host_probe.rc == 0 and (faas_join_recorded_bootstrap_contract.content | default('') | b64decode | trim) == faas_join_bootstrap_contract_sha256 }}"
 
+    # ADR-20261115120000: CD names the roles whose content hash differs from
+    # the node's record (gregalectl deploy join --roles). Only a managed host
+    # converges just those; a fresh or rebuilt one converges every role.
+    - name: Select the compute roles this convergence applies
+      ansible.builtin.set_fact:
+        faas_join_converge_roles: >-
+          {{ faas_join_converge_roles_requested
+             if (faas_join_managed_host and (faas_join_converge_roles_requested | default([]) | length > 0))
+             else none }}
+
     - name: Report the managed-host rollout decision
       ansible.builtin.debug:
         msg: >-
@@ -126,7 +136,9 @@
              if faas_join_bootstrap_contract_current
              else ('Managed-host bootstrap contract is stale; preparation skips role convergence, which activation runs before the drain.'
                    if (faas_join_managed_host and (faas_join_rollout_phase | default('full')) == 'prepare')
-                   else 'Managed-host bootstrap contract is absent or stale; running full convergence.') }}
+                   else (('Managed-host bootstrap contract is stale; converging the changed compute roles: ' + (faas_join_converge_roles | join(', ')))
+                         if (faas_join_converge_roles | default(none)) is not none
+                         else 'Managed-host bootstrap contract is absent or stale; running full convergence.')) }}
 
     # The parallel preparation lane is narrower than node adoption: it never
     # converges OS or roles (bootstrap.yml ends every host in prepare) and never
@@ -936,6 +948,21 @@
         content: "{{ faas_join_bootstrap_contract_sha256 }}\n"
       # Preparation skips role convergence, so it must not claim the contract.
       when: (faas_join_rollout_phase | default('full')) != 'prepare'
+
+    # ADR-20261115120000: every compute role's content hash at this release
+    # (scripts/ci/host_roles.py hashes --group compute_nodes), so the next
+    # release converges only the roles whose hash differs. Written with the
+    # contract, after the bootstrap play succeeded, never by preparation.
+    - name: Persist the converged compute role hashes
+      ansible.builtin.copy:
+        dest: /var/lib/faas/bootstrap/compute-roles.json
+        owner: root
+        group: root
+        mode: "0600"
+        content: "{{ faas_join_role_record }}"
+      when:
+        - (faas_join_rollout_phase | default('full')) != 'prepare'
+        - faas_join_role_record | default('') | length > 0
 
 - name: Verify the signed release before promoting its operator CLI
   hosts: compute_nodes

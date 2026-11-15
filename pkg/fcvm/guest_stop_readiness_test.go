@@ -127,6 +127,15 @@ func TestGuestStoppedDuringStartupAttributesSupervisedCrashesToTheApp(t *testing
 			"Too many arguments!\n",
 			"guest-init: sidecar echo crashed (restart 1/3): run sidecar echo: exit status 127\n",
 		}, wantCrash: true},
+		// Prod test 2026-11-15 (P4): an app that exits 0 without listening
+		// failed its deploy as internal.
+		{name: "clean exit before readiness", lines: []string{
+			"exiting without listening\n",
+			"guest-init: app exited cleanly (status 0, policy=on-failure); a clean exit is not restarted\n",
+		}, wantCrash: true},
+		{name: "workload set main clean exit", lines: []string{
+			"guest-init: main exited cleanly (status 0, policy=no); a clean exit is not restarted\n",
+		}, wantCrash: true},
 		{name: "guest-init failure", lines: []string{
 			"guest-init: assemble overlay: mount overlay: invalid argument\n",
 			"[    0.912345] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000100\n",
@@ -146,6 +155,9 @@ func TestGuestStoppedDuringStartupAttributesSupervisedCrashesToTheApp(t *testing
 			if tc.wantCrash {
 				if p == nil || p.Code != api.CodeAppStartupCrash || p.Status != 422 || !strings.Contains(p.Detail, "exited before becoming ready") {
 					t.Fatalf("startup failure = %#v, want a 422 %s problem carrying the detail", err, api.CodeAppStartupCrash)
+				}
+				if clean := strings.Contains(strings.Join(tc.lines, ""), "exited cleanly"); clean != strings.Contains(p.Detail, "listening on $PORT") {
+					t.Fatalf("clean-exit hint present = %v, want %v: %q", !clean, clean, p.Detail)
 				}
 				return
 			}
