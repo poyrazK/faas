@@ -1682,23 +1682,41 @@ func (q *Queries) RegisterCircuitProbe(ctx context.Context, db DBTX, arg Registe
 }
 
 const releaseGroupMessage = `-- name: ReleaseGroupMessage :one
-UPDATE managed_realtime_consumer_group_messages SET status='ready',attempts=greatest(0,attempts-1),release_count=release_count+1,
- worker='',token_hash=NULL,lease_until=NULL,credential_id=NULL,failure_code='',available_at=clock_timestamp()
- WHERE group_id=$1::text::uuid AND sequence=$2::bigint AND status='leased'
- AND token_hash=$3::bytea AND lease_until>clock_timestamp() RETURNING available_at
+UPDATE managed_realtime_consumer_group_messages SET
+ status=CASE WHEN release_count+1>=$1::integer THEN 'dead' ELSE 'ready' END,
+ attempts=greatest(0,attempts-1),release_count=release_count+1,
+ worker='',token_hash=NULL,lease_until=NULL,credential_id=NULL,
+ failure_code=CASE WHEN release_count+1>=$1::integer THEN 'release_limit' ELSE '' END,
+ available_at=clock_timestamp()
+ WHERE group_id=$2::text::uuid AND sequence=$3::bigint AND status='leased'
+ AND token_hash=$4::bytea AND lease_until>clock_timestamp() RETURNING status, available_at
 `
 
 type ReleaseGroupMessageParams struct {
-	GroupID   string
-	Sequence  int64
-	TokenHash []byte
+	MaxReleases int32
+	GroupID     string
+	Sequence    int64
+	TokenHash   []byte
 }
 
-func (q *Queries) ReleaseGroupMessage(ctx context.Context, db DBTX, arg ReleaseGroupMessageParams) (pgtype.Timestamptz, error) {
-	row := db.QueryRow(ctx, releaseGroupMessage, arg.GroupID, arg.Sequence, arg.TokenHash)
-	var available_at pgtype.Timestamptz
-	err := row.Scan(&available_at)
-	return available_at, err
+type ReleaseGroupMessageRow struct {
+	Status      string
+	AvailableAt pgtype.Timestamptz
+}
+
+// A release hands the attempt back; at max_releases it dead-letters as
+// release_limit instead, so a worker that always releases cannot loop on
+// one message forever.
+func (q *Queries) ReleaseGroupMessage(ctx context.Context, db DBTX, arg ReleaseGroupMessageParams) (ReleaseGroupMessageRow, error) {
+	row := db.QueryRow(ctx, releaseGroupMessage,
+		arg.MaxReleases,
+		arg.GroupID,
+		arg.Sequence,
+		arg.TokenHash,
+	)
+	var i ReleaseGroupMessageRow
+	err := row.Scan(&i.Status, &i.AvailableAt)
+	return i, err
 }
 
 const rememberEventID = `-- name: RememberEventID :exec
@@ -1719,7 +1737,7 @@ func (q *Queries) RememberEventID(ctx context.Context, db DBTX, arg RememberEven
 }
 
 const replayDeadLetter = `-- name: ReplayDeadLetter :exec
-UPDATE managed_realtime_consumer_group_messages SET status='ready',attempts=0,worker='',token_hash=NULL,lease_until=NULL,
+UPDATE managed_realtime_consumer_group_messages SET status='ready',attempts=0,release_count=0,worker='',token_hash=NULL,lease_until=NULL,
  failure_code='',credential_id=NULL,available_at=clock_timestamp() WHERE group_id=$1::text::uuid AND sequence=$2::bigint AND status='dead'
 `
 

@@ -175,6 +175,8 @@ type MemStore struct {
 	// egressOverage is each account's or org's egress overage election
 	// (EgressOverageStore, ADR-20261104204500).
 	egressOverage map[string]EgressOverageElection
+	// planFitNotices backs PlanFitNoticeStore (billing review H17-4).
+	planFitNotices map[string]PlanFitNotice
 	// creditDiscounts are the provider discounts that carry account credit
 	// (CreditDiscountStore), keyed by row id, created on first use.
 	creditDiscounts     map[string]CreditDiscount
@@ -2796,7 +2798,6 @@ func (m *MemStore) SuspendAccountForFreeQuota(_ context.Context, id string) (boo
 		return false, nil
 	}
 	a.Status = AccountSuspended
-	a.PastDueAt = nil
 	m.storeRouteCheckAccountLocked(id, a)
 	m.freeQuotaSuspended[id] = true
 	m.syncPersonalOrgStatusLocked(id, AccountSuspended)

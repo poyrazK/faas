@@ -602,7 +602,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "account",
 		DocSlug: "account",
-		Short:   "Export or delete your account, and view its status, DPA and SLO",
+		Short:   "Export or delete your account and view its status, health, DPA and SLO",
 		Subcommands: []cliSub{
 			{Name: "export", Short: "Export account data (GDPR)", Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "output file", Value: "PATH"},
@@ -616,6 +616,9 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "restore", Short: "Cancel a pending deletion"},
 			{Name: "status", Short: "Show account status"},
+			{Name: "health", Short: "Show what may stop your account from working", Notes: []string{
+				"Lists restrictions, problems that keep recurring, failed deployments, custom-domain problems and refused API requests, like the dashboard's account health page.",
+			}, Examples: []string{"gregale account health get", "gregale account health get --json"}},
 			{Name: "dpa", Short: "Print the Data Processing Agreement template", Notes: []string{"Placeholders are filled when the agreement is signed."}, Flags: []cliFlag{
 				{Name: "o", ShortName: "o", Short: "write the DPA template to a file", Value: "PATH"},
 			}},
@@ -984,33 +987,6 @@ var cliCommands = []cliCommand{
 			{Name: "early-access", Short: "list only early-access features you can join or have joined", Bool: true},
 			{Name: "org", Short: "with --early-access, list the organization's early access", Value: "SLUG"},
 		},
-	},
-	{
-		Name:     "admin",
-		DocSlug:  "admin",
-		Short:    "Operator account actions: credits, refunds and abuse holds",
-		Audience: cliAudienceOperator,
-		Subcommands: []cliSub{
-			{Name: "credit", Short: "Issue a billing credit", Flags: []cliFlag{
-				{Name: "reason", Short: "credit reason text", Req: true, Value: "text"},
-			}},
-			{Name: "refund", Short: "Refund a paid Polar invoice", Flags: []cliFlag{
-				{Name: "reason", Short: "refund reason text", Req: true, Value: "text"},
-				{Name: "idempotency-key", Short: "stable provider retry key", Value: "key"},
-			}},
-			{Name: "consume-credits", Short: "Consume credits against an invoice", Positionals: []string{"<invoice-id>"}, Flags: []cliFlag{{Name: "idempotency-key", Short: "stable retry key", Value: "K"}}},
-			{Name: "abuse-hold", Short: "Place or release an account abuse hold", Flags: []cliFlag{
-				{Name: "note", Short: "audit note", Req: true, Value: "text"},
-			}},
-			{Name: "egress-flows", Short: "Search the egress flow log (which tenant connected where)", Flags: []cliFlag{
-				{Name: "remote", Short: "remote IP address or CIDR", Value: "ip|cidr"},
-				{Name: "account", Short: "account id", Value: "id"},
-				{Name: "from", Short: "window start (RFC 3339)", Value: "time"},
-				{Name: "to", Short: "window end (RFC 3339)", Value: "time"},
-				{Name: "limit", Short: "maximum rows", Value: "n"},
-			}},
-		},
-		Positionals: []string{"<uuid>", "<cents>"},
 	},
 	{
 		Name:    "ai",
@@ -6100,20 +6076,6 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"gregale postgres capabilities --json"}},
 			{Name: "usage", Short: "Show monthly managed PostgreSQL usage and guardrail state"},
 			{Name: "overage", Short: "Show or change compute overage past the monthly allowance", Notes: []string{"With overage on, databases keep running up to twice the allowance."}, Positionals: []string{"[on|off]"}, Examples: []string{"gregale postgres overage on"}},
-			{Name: "reconcile", Short: "Preview or apply legacy identity and shutdown evidence (operator only)", Positionals: []string{"<account_id>"}, Flags: []cliFlag{
-				{Name: "file", Short: "verified identity and shutdown evidence JSON file", Value: "FILE", Req: true},
-				{Name: "apply", Short: "apply with expected_revision from preview"},
-				{Name: "session-file", Short: "private operator session cookie file (required for apply)", Value: "FILE"},
-			}, Examples: []string{"gregale postgres reconcile ACCOUNT_ID --file reconciliation.json --json"}},
-			{Name: "usage-import", Short: "Preview or apply retained usage evidence (operator only)", Positionals: []string{"<account_id>"}, Flags: []cliFlag{
-				{Name: "file", Short: "normalized retained evidence JSON file", Value: "FILE", Req: true},
-				{Name: "apply", Short: "apply with expected_revision from preview"},
-				{Name: "session-file", Short: "private operator session cookie file (required for apply)", Value: "FILE"},
-			}, Examples: []string{"gregale postgres usage-import ACCOUNT_ID --file retained-usage.json --json"}},
-			{Name: "diagnostics", Short: "Explain accounting blockers for an account (operator only)", Positionals: []string{"<account_id>"}, Flags: []cliFlag{
-				{Name: "after", Short: "resume after next_cursor", Value: "UUID"},
-				{Name: "limit", Short: "maximum databases in this page (1-100)", Value: "N"},
-			}, Examples: []string{"gregale postgres diagnostics ACCOUNT_ID --json"}},
 			{Name: "create", Short: "Create a managed PostgreSQL database", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "region", Short: "provider-neutral region", Req: true, Value: "REGION"},
 				{Name: "postgres-major", Short: "PostgreSQL major version", Value: "N"},
@@ -6874,18 +6836,6 @@ var cliCommands = []cliCommand{
 				{Name: "wait-for-ack", Short: "wait until every active authorized runtime confirms it applied the secret; needs com.gregale.secret-reload-signal, even with --restart"},
 				{Name: "timeout", Short: "maximum time to wait for application acknowledgements (requires --wait-for-ack)", Value: "DURATION"},
 			}},
-		},
-	},
-	{
-		// Compatibility surface for installation-scoped secrets used by
-		// legacy non-GitHub senders. Standard GitHub App webhooks use the
-		// single platform App secret documented in ADR-012 §8.
-		Name:     "github-webhook-secret",
-		DocSlug:  "github-webhook-secret",
-		Short:    "Manage legacy installation-scoped webhook secrets (admin)",
-		Audience: cliAudienceCompatibility,
-		Subcommands: []cliSub{
-			{Name: "set", Short: "Rotate the secret for one installation_id", Flags: []cliFlag{{Name: "installation-id", Short: "GitHub App installation_id", Req: true, Value: "ID"}, {Name: "secret", Short: "secret hex (32-64 chars; prefer --from-stdin)", Value: "HEX"}, {Name: "from-stdin", Short: "read the secret hex from stdin"}}},
 		},
 	},
 	// operator-side verbs (sign-keys, node-key) moved to gregalectl

@@ -2,7 +2,7 @@
 // `gregale billing status --watch` (PR-P4).
 //
 // Prints the authenticated customer's provider-independent billing status.
-// Provider catalogs remain under `gregale billing price-catalog`, while this
+// Provider catalogs are managed with `gregalectl billing price-catalog`, while this
 // customer command works without operator allowlisting.
 //
 // PR-P4 additions:
@@ -218,40 +218,4 @@ func printCustomerBillingStatus(w io.Writer, resp api.BillingStatusResponse) {
 	_, _ = fmt.Fprintf(tw, "Customer:\t%s\n", configured(resp.CustomerConfigured))
 	_, _ = fmt.Fprintf(tw, "Subscription:\t%s\n", configured(resp.SubscriptionConfigured))
 	_, _ = fmt.Fprintf(tw, "Reconciliation:\t%s\n", reconcileState)
-}
-
-// printBillingStatus renders the catalog as a tab-aligned table.
-// The first column is "plan / kind" so the operator can scan a row
-// per (plan, kind) pair; the second column is the provider-side
-// handle; the third is the SyncedAt timestamp.
-//
-// An empty catalog (no hydration yet) renders the active provider,
-// SyncedAt: never synced" header followed by a one-line hint to run
-// `gregale billing price-catalog sync`. We do not gate that hint on
-// the response — the operator's CLI subcommand is the right place
-// for actionable guidance.
-func printBillingStatus(w io.Writer, resp api.BillingCatalogResponse) {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	defer func() { _ = tw.Flush() }()
-
-	_, _ = fmt.Fprintf(tw, "Provider:\t%s\n", resp.Provider)
-	syncedAt := "never synced"
-	if resp.SyncedAt != "" {
-		syncedAt = resp.SyncedAt
-	}
-	_, _ = fmt.Fprintf(tw, "SyncedAt:\t%s\n", syncedAt)
-	if len(resp.Entries) == 0 {
-		_, _ = fmt.Fprintln(tw, "\nCatalog:\t<empty>")
-		_, _ = fmt.Fprintln(tw, "\nRun `gregale billing price-catalog sync` to hydrate.")
-		return
-	}
-	_, _ = fmt.Fprintln(tw, "\nCatalog:")
-	_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\n", "PLAN/KIND", "HANDLE", "SYNCED AT")
-	for _, e := range resp.Entries {
-		synced := GlyphEmDash
-		if !e.SyncedAt.IsZero() && !e.SyncedAt.Equal(time.Time{}) {
-			synced = e.SyncedAt.UTC().Format("2006-01-02T15:04:05Z")
-		}
-		_, _ = fmt.Fprintf(tw, "  %s/%s\t%s\t%s\n", e.Plan, e.Kind, e.Handle, synced)
-	}
 }

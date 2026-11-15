@@ -20331,7 +20331,8 @@ $$;
 CREATE FUNCTION public.invocation_backlog_bytes(source text, payload jsonb) RETURNS bigint
     LANGUAGE sql IMMUTABLE
     AS $$
-    SELECT CASE WHEN source = 'queue' THEN octet_length(payload::text)::bigint ELSE 0 END
+    SELECT CASE WHEN source IN ('queue', 'async_invoke', 'delayed_task')
+        THEN octet_length(payload::text)::bigint ELSE 0 END
 $$;
 
 
@@ -20345,7 +20346,7 @@ CREATE FUNCTION public.invocation_backlog_count() RETURNS trigger
 BEGIN
     IF TG_OP IN ('UPDATE', 'DELETE') AND OLD.state IN ('pending', 'dispatching') THEN
         UPDATE invocation_backlog_counters
-        SET pending = pending - 1, bytes = bytes - invocation_backlog_bytes(OLD.source, OLD.payload)
+        SET pending = pending - 1, bytes = greatest(0, bytes - invocation_backlog_bytes(OLD.source, OLD.payload))
         WHERE app_id = OLD.app_id AND source = OLD.source AND account_id = OLD.account_id
             AND slot = (hashtext(OLD.id::text) & 7);
     END IF;
@@ -51805,9 +51806,30 @@ CREATE TABLE public.pg_ratelimit_counters (
     tokens bigint NOT NULL,
     last_refill timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT pg_ratelimit_counters_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
-    CONSTRAINT pg_ratelimit_counters_scope_check CHECK ((scope = ANY (ARRAY['app'::text, 'account'::text, 'rule'::text, 'preauth'::text]))),
+    CONSTRAINT pg_ratelimit_counters_scope_v2_check CHECK ((scope = ANY (ARRAY['app'::text, 'account'::text, 'rule'::text, 'preauth'::text, 'event_publish'::text]))),
     CONSTRAINT pg_ratelimit_counters_tokens_check CHECK ((tokens >= 0))
 );
+
+
+--
+-- Name: plan_fit_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.plan_fit_notices (
+    subject_id uuid NOT NULL,
+    plan text NOT NULL,
+    apps_digest text NOT NULL,
+    noticed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT plan_fit_notices_apps_digest_check CHECK ((apps_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT plan_fit_notices_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text])))
+);
+
+
+--
+-- Name: TABLE plan_fit_notices; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.plan_fit_notices IS 'Last plan-fit email per billing subject: the plan and the sha256 of its over-plan app set. Written by meterd (billing review H17-4).';
 
 
 --
@@ -71291,6 +71313,14 @@ ALTER TABLE ONLY public.pg_preauth_failure_counters
 
 ALTER TABLE ONLY public.pg_ratelimit_counters
     ADD CONSTRAINT pg_ratelimit_counters_pkey PRIMARY KEY (scope, subject_id, plan);
+
+
+--
+-- Name: plan_fit_notices plan_fit_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.plan_fit_notices
+    ADD CONSTRAINT plan_fit_notices_pkey PRIMARY KEY (subject_id);
 
 
 --

@@ -54,8 +54,8 @@ The hold is operator-only. The same commands can place one by hand, for
 example on a provider abuse report:
 
 ```
-gregale admin abuse-hold place --note "<why>" <account_uuid>
-gregale admin abuse-hold release --note "<review outcome>" <account_uuid>
+gregalectl accounts abuse-hold place --account-id <account_uuid> --note "<why>" --yes
+gregalectl accounts abuse-hold release --account-id <account_uuid> --note "<review outcome>" --yes
 ```
 
 Both are audited (`account.abuse_hold_placed` / `account.abuse_hold_released`);
