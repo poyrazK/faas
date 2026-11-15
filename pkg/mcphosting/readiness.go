@@ -109,7 +109,7 @@ func checkReadiness(ctx context.Context, source *Client, baseline *Contract, for
 	client.HTTP = &hc
 	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if !add("initialize", "Initialize negotiation, authorization or stateless transport failed", client.InitializeStateless(bounded)) {
+	if !add("initialize", "Initialize negotiation, authorization or stateless transport failed", client.OpenStateless(bounded)) {
 		return report
 	}
 	ping, err := client.request(bounded, "ping", nil, nil, false)

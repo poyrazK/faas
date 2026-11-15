@@ -4121,9 +4121,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if err != nil {
 		return printErr("Manifest resource scope resolution failed", err)
 	}
-	if existingApp && !projectRequested && !*createOnly {
-		warnMissingRequiredSecrets(ctx, client, slug, manifestScope)
-	}
 	// The deploy session is written after the app is created or updated;
 	// prove it can be before changing anything remotely (#6625).
 	if !*createOnly {
@@ -4223,6 +4220,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if !jsonOutput {
 			PrintOK(osStdout, "Configured %d secret(s) before deployment", len(deploySecrets))
 		}
+	}
+	// After the app exists and --secrets-file values are sealed, so a first
+	// deploy is checked and the file's names count (deploy-path review P10).
+	if !projectRequested {
+		warnMissingRequiredSecrets(ctx, client, slug, manifestScope, sourceDir)
 	}
 
 	// Issue #791 PR-C / ADR-090: gregale.yaml triggers are staged after

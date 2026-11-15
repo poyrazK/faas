@@ -5906,6 +5906,7 @@
       "app_id",
       "before_checkpoint_hook",
       "build_id",
+      "build_registry_scope",
       "canary_preset",
       "canary_stages",
       "canary_step",

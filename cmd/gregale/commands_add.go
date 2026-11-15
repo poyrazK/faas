@@ -325,7 +325,7 @@ func cmdAddPostgres(args []string) int {
 	environmentKey := fs.String("environment-key", "DATABASE_URL", "connection environment variable name")
 	databaseRef := fs.String("database", "", "existing database ID or name")
 	region := fs.String("region", "", "provider-neutral region (required when creating)")
-	major := fs.Int("postgres-major", 16, "PostgreSQL major version")
+	major := fs.Int("postgres-major", api.ManagedPostgresDefaultMajor, "PostgreSQL major version")
 	serviceClass := fs.String("class", "development", "service class: development|burstable|production")
 	availability := fs.String("availability", "single_zone", "availability: single_zone|high_availability")
 	scaleToZero := fs.Bool("scale-to-zero", true, "suspend compute when idle")

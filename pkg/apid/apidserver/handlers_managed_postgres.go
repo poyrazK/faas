@@ -142,7 +142,7 @@ func managedPostgresSpecFromRequest(req api.CreateManagedPostgresDatabaseRequest
 	}
 	spec := managedpostgres.Spec{Region: req.Region, PostgresMajor: req.PostgresMajor, Class: class, Availability: availability, ScaleToZero: scaleToZero, StorageLimitBytes: storage, RestoreWindowSeconds: restoreWindow}
 	if spec.PostgresMajor == 0 {
-		spec.PostgresMajor = 16
+		spec.PostgresMajor = api.ManagedPostgresDefaultMajor
 	}
 	// Name the entitlement that refused the request; a bare "quota exceeded"
 	// read like usage and sent customers to check credentials (hunt #10).
@@ -742,7 +742,15 @@ func (s *server) createManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, problem)
 		return
 	}
-	binding, err := s.managedPostgresBindings.Create(r.Context(), managedpostgres.CreateBindingRequest{AccountID: app.AccountID, DatabaseAccountID: acct.ID, DatabaseID: r.PathValue("id"), AppID: req.AppID, Scope: req.Scope, EnvironmentKey: req.EnvironmentKey, Access: managedpostgres.CredentialAccess(req.Access)})
+	// The binding's credentials are delivered as a secret in its scope, so a
+	// project app's "production" binds into the lane production is served
+	// from, as a secret write does (appValueScope).
+	scope, prob := s.appValueScope(r.Context(), app, req.Scope)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	binding, err := s.managedPostgresBindings.Create(r.Context(), managedpostgres.CreateBindingRequest{AccountID: app.AccountID, DatabaseAccountID: acct.ID, DatabaseID: r.PathValue("id"), AppID: req.AppID, Scope: scope, EnvironmentKey: req.EnvironmentKey, Access: managedpostgres.CredentialAccess(req.Access)})
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return

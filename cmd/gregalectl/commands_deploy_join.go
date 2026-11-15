@@ -72,13 +72,19 @@ type deployJoinOptions struct {
 	RepoRoot                string
 	PostgresOverlapNodes    int
 	RolloutPhase            string
-	SkipFleetPreflight      bool
-	Resume                  bool
-	Timeout                 time.Duration
-	LeaseTTL                time.Duration
-	DryRun                  bool
-	Yes                     bool
-	JSON                    bool
+	// ConvergeRoles names the compute roles a stale contract converges on a
+	// managed host (ADR-20261115120000); empty converges every role.
+	ConvergeRoles []string
+	// RoleRecordFile is the compute role-hash record node_join writes beside
+	// the contract after a successful convergence.
+	RoleRecordFile     string
+	SkipFleetPreflight bool
+	Resume             bool
+	Timeout            time.Duration
+	LeaseTTL           time.Duration
+	DryRun             bool
+	Yes                bool
+	JSON               bool
 }
 
 type deployJoinReport struct {
@@ -200,6 +206,8 @@ func cmdDeployJoinNode(args []string) int {
 	artifactDir := fs.String("artifact-dir", "", "directory containing the standard release, key, trust-bundle, and bootstrap assets")
 	ansibleVars := fs.String("ansible-vars-file", "", "optional provider/overlay Ansible vars file")
 	repoRoot := fs.String("repo-root", "", "path to the faas repository (default: inferred from gregalectl)")
+	convergeRoles := fs.String("roles", "", "comma-separated compute roles a stale contract converges on a managed host (default: every role; ADR-20261115120000)")
+	roleRecordFile := fs.String("role-record-file", "", "compute role hashes (scripts/ci/host_roles.py hashes --group compute_nodes) node_join records after a convergence")
 	skipPreflight := fs.Bool("skip-fleet-preflight", false, "skip the complete-fleet preflight (only for a previously validated fleet)")
 	prepareOnly := fs.Bool("prepare-only", false, "stage and verify an existing managed node without draining it")
 	activatePrepared := fs.Bool("activate-prepared", false, "activate a release previously completed by --prepare-only")
@@ -263,6 +271,8 @@ func cmdDeployJoinNode(args []string) int {
 		RepoRoot:                *repoRoot,
 		PostgresOverlapNodes:    1,
 		RolloutPhase:            rolloutPhase,
+		ConvergeRoles:           splitJoinRoles(*convergeRoles),
+		RoleRecordFile:          *roleRecordFile,
 		SkipFleetPreflight:      *skipPreflight,
 		Resume:                  *resume,
 		Timeout:                 *timeout,
@@ -779,6 +789,13 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	if err != nil {
 		return 3, err
 	}
+	if err := requireComputeRoles(ansibleDir, opts.ConvergeRoles); err != nil {
+		return 2, err
+	}
+	roleRecord, err := readComputeRoleRecord(opts.RoleRecordFile)
+	if err != nil {
+		return 2, err
+	}
 	tempRoot, err := os.MkdirTemp("", "gregale-node-join-")
 	if err != nil {
 		return 3, fmt.Errorf("create temporary inventory: %w", err)
@@ -930,6 +947,8 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_bootstrap_contract_sha256":  bootstrapContractSHA256,
 		"faas_join_peer_contract_sha256":       peerContractSHA256,
 		"faas_join_rollout_phase":              rolloutPhase,
+		"faas_join_converge_roles_requested":   joinRolesVar(opts.ConvergeRoles),
+		"faas_join_role_record":                roleRecord,
 		"faas_join_candidate_ca_fingerprint":   candidateCAFingerprint,
 		"faas_postgres_rollout_overlap_nodes":  postgresRolloutOverlapNodes(opts.PostgresOverlapNodes),
 		// A clean provider-created host does not have the release binary or

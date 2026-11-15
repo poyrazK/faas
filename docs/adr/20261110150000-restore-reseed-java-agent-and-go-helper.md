@@ -81,3 +81,18 @@ The two runtimes differ in what can be done from outside the process:
 - Validation: unit tests for env stamping, the agent asset, the coverage
   classifier and the helper; the uncovered-runtime metal test asserts that
   Java's `Math.random` and `ThreadLocalRandom` now differ across restores.
+
+## Amendment 2026-11-15: list threads without a stack walk
+
+The agent found the threads to reseed with `Thread.getAllStackTraces()`, which
+stops the JVM at a safepoint and walks every thread's stack. Right after a
+restore the stacks' pages are not yet faulted back in. In production-us a
+74-thread Java app spent 180-305 ms in that call alone, and the agent added
+340-430 ms to `resume_hook` (437-532 ms against 94-101 ms with
+`GREGALE_RESTORE_RESEED=off`). Spring apps on a freshly materialized
+snapshot showed 0.7-1.8 s in the reseed stage.
+
+The agent now enumerates the root thread group instead: the same live
+platform threads, no safepoint and no stack walk (1-3 ms on the same app).
+Virtual threads were in neither list; their `ThreadLocalRandom` state is
+unchanged by this.
