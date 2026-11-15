@@ -60,7 +60,7 @@ CODEX_FAILURE = [
 class TaskTests(unittest.TestCase):
     def test_shipped_tasks_load(self):
         tasks = ev.load_tasks()
-        self.assertEqual([t["id"] for t in tasks], ["deploy-starter", "fix-failed-deploy", "rollback-bad-release", "diagnose-failure", "deploy-retail-store", "deploy-voting-app"])
+        self.assertEqual([t["id"] for t in tasks], ["deploy-starter", "fix-failed-deploy", "rollback-bad-release", "diagnose-failure", "deploy-retail-store", "deploy-voting-app", "assess-compose-project"])
 
     def test_invalid_tasks_are_refused(self):
         good = {"id": "ok-task", "prompt": "deploy {app}", "template": "hello-node", "checks": [{"kind": "answer", "pattern": "x"}], "budget_usd": 1, "timeout_s": 60}

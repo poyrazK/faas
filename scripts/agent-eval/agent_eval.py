@@ -39,12 +39,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from project_discovery import discovery_checks, fingerprints
+
 HERE = Path(__file__).resolve().parent
 TASKS = HERE / "tasks.json"
 AGENTS = ("claude", "codex", "gemini", "cursor")
 AGENT_BINARIES = {"claude": "claude", "codex": "codex", "gemini": "gemini", "cursor": "cursor-agent"}
 TOOLSETS = ("core", "release", "diagnose", "all", "none")
-SETUP_KINDS = ("deploy", "replace")
+SETUP_KINDS = ("deploy", "replace", "fixture")
 CHECK_KINDS = ("http", "serving", "file_contains", "answer", "apps_created", "apps_serving", "app_http", "no_traps")
 FEATURE_KINDS = ("command", "file", "state")
 FEATURE_STATES = ("project_created",)
@@ -99,6 +101,12 @@ def load_tasks(path: Path = TASKS) -> list[dict]:
         for step in task.get("setup", []):
             if step.get("kind") not in SETUP_KINDS:
                 raise EvalError(f"{tid}: unknown setup kind {step.get('kind')!r}")
+            if step.get("kind") == "fixture" and step.get("name") != "compose-assessment":
+                raise EvalError(f"{tid}: unknown project fixture")
+        if "project_discovery" in task and not isinstance(task["project_discovery"], bool):
+            raise EvalError(f"{tid}: project_discovery must be boolean")
+        if task.get("project_discovery") and (task.get("repo") or task.get("setup") != [{"kind": "fixture", "name": "compose-assessment"}]):
+            raise EvalError(f"{tid}: project discovery requires only its fixed source fixture")
         if not task.get("checks"):
             raise EvalError(f"{tid}: at least one check is required")
         for check in task["checks"]:
@@ -838,7 +846,7 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
     project = run_dir / "project"
     record = {"task": task["id"], "agent": agent, "toolset": toolset, "app": slug, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
     created: dict = {"apps": [], "projects": []}
-    before, evidence = None, ""
+    before, evidence, project_before = None, "", None
     try:
         before = gregale.inventory()
         if task.get("repo"):
@@ -854,6 +862,12 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
                 result = gregale.cli("deploy", "--path", str(project), "--name", slug, "--app", "--yes", cwd=project, timeout=1200)
                 if (result.returncode == 0) != (step.get("expect", "success") == "success"):
                     raise EvalError(f"setup deploy exit {result.returncode}: {result.stderr[-300:]}")
+            elif step["kind"] == "fixture":
+                shutil.copytree(HERE / "fixtures" / step["name"], project, dirs_exist_ok=True)
+        if task.get("project_discovery"):
+            project_before = fingerprints(project)
+            options = argparse.Namespace(**vars(options))
+            options.mcp_writes = False
         command, extra_env = agent_command(agent, task_prompt(task, slug, toolset), task, run_dir, project, gregale, toolset, options)
         env = {**gregale.env(), **extra_env}
         # The agent's shell `gregale` must be the binary under test.
@@ -892,6 +906,8 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         record.update({k: v for k, v in metrics.items() if k != "tool_inputs"})
         record["created"] = created
         record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"])
+        if task.get("project_discovery"):
+            record["checks"].extend(discovery_checks(lines, metrics, project, project_before, created))
         record["success"] = all(check["ok"] for check in record["checks"])
         record.update(grade_features(task, metrics["commands"], project, created))
         record["anti_patterns"] = grade_anti_patterns(metrics["commands"])

@@ -40,6 +40,8 @@ const (
 // toolsetOf assigns every tool a primary toolset. Shared plan helpers are also
 // included in the workflow groups below. TestEveryToolHasAToolset keeps this complete.
 var toolsetOf = map[string]string{
+	"gregale_get_workflow":                   ToolsetCore,
+	"gregale_assess_project":                 ToolsetCore,
 	"gregale_invoke_tool":                    ToolsetInvoke,
 	"gregale_get_tool_invocation":            ToolsetInvoke,
 	"gregale_get_tool_connection":            ToolsetInvoke,
@@ -182,6 +184,8 @@ func toolsetIncludes(name, selected string) bool {
 		return true
 	}
 	switch name {
+	case "gregale_context", "gregale_get_workflow", "gregale_assess_project":
+		return selected == ToolsetCore || selected == ToolsetRelease || selected == ToolsetDiagnose || selected == ToolsetProvision || selected == ToolsetOperate
 	case "gregale_create_source_upload":
 		return selected == ToolsetBuildTools
 	case "gregale_list_actions", "gregale_get_action":

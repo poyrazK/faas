@@ -211,7 +211,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerAgentKeyCatalog(s, m)
 	registerResourceSubscriptions(s, m)
 	registerRequestAdmission(s, m)
-	register(s, m, "gregale_context", "Identify the selected Gregale connection, account, and platform capabilities.", m.connection)
+	register(s, m, "gregale_context", "Identify the selected connection, account, platform capabilities and workflow task index. Use gregale_get_workflow for task-specific tools and access requirements.", m.connection)
 	register(s, m, "gregale_list_apps", "List a bounded page of this account's apps, sorted by slug, optionally only those a label selector picks (preview). Continue with next_offset; app lists can change between calls.", m.listApps)
 	register(s, m, "gregale_get_app", "Inspect one app's status, deployment availability, URLs, and resource settings. Environment values and manifests are excluded.", m.getApp)
 	register(s, m, "gregale_list_deployments", "List recent account deployments. Continue with next_before to discover deployment IDs.", m.listDeployments)
@@ -247,6 +247,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerToolRegistry(s, m)
 	registerToolInvocations(s, m)
 	registerAgentApprovals(s, m)
+	registerWorkflows(s, m)
 	return s, m, nil
 }
 

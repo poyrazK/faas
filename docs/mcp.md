@@ -464,6 +464,62 @@ between pages can shift offsets. Deployment pagination uses the API's cursor.
 Metrics retain their `source` field; degraded telemetry is not proof of zero
 traffic or healthy service.
 
+## Discover capabilities for a project
+
+The core, release, diagnose, provision and operate catalogs include `gregale_context`,
+`gregale_get_workflow` and `gregale_assess_project`. The context tool lists five
+task IDs: `deploy_app`, `deploy_project`, `add_database`, `add_domain` and
+`diagnose_failure`. Discovery tools are read-only and do not create a plan.
+
+On a local connection, assess an absolute project directory:
+
+```json
+{"path":"/absolute/path/to/project"}
+```
+
+On a hosted connection, or to inspect selected source files only, supply files:
+
+```json
+{"files":{"compose.yaml":"services:\n  web:\n    image: nginx:alpine\n    ports: [\"8080:80\"]\n"}}
+```
+
+The assessment returns detected workloads, dependency and environment-key names,
+relevant feature IDs, bridge-owned explanations and the next workflow selector.
+It does not return source commands, environment values, images or raw warnings.
+Inline input is limited to 200 UTF-8 files and 96 KiB including path bytes.
+Local input is limited to 2,000 files, 256 KiB per file, 8 MiB total and 4,000
+visited entries. Common generated directories, symlinks and known secret-file
+names are excluded. Supply relevant manifests and source when a full repository
+exceeds these bounds. Oversized input is refused rather than silently truncated.
+
+Get a recipe using its returned selector:
+
+```json
+{"task":"deploy_project"}
+```
+
+For existing-app guidance, `app` and optional `project`/`environment` bind the
+recipe's selectors to the connection's current access. Steps report `available`,
+`requires_toolset`, `requires_permission`, `plan_restricted`,
+`platform_unavailable`, `unknown` or `unsupported`. `available` means the tool is
+listed and connection consent permits that step; native authorization, exact
+inputs and capacity still require the existing planning/preflight and apply
+checks. Fill `required_inputs` before calling a tool. Alternative source inputs
+are described as `path_or_files` or `files_or_upload_id`; these are choices,
+not argument names. Retain IDs from preceding responses.
+
+Selecting another toolset does not grant permission. Clients that cannot refresh
+their catalog need to reconnect with the requested toolset, within the server's
+configured maximum. Missing capability metadata remains `unknown`.
+
+Assessment is an offline source snapshot. Native plans resolve account flags,
+database bindings, pricing and quotas; omitted source and capability-gated
+functions/Kubernetes behavior can change their result. Multi-service project
+deployment still uses `gregale scan --path <directory> --json` and the reviewed
+`gregale deploy --project --path <directory> --dry-run` CLI workflow. A hosted
+bridge cannot run commands on the caller's computer. The recipe explicitly
+reports that handoff, and never replaces it with single-app deployments.
+
 ## Execute existing jobs
 
 The `execute` catalog adapts native account-owned jobs; it creates no new

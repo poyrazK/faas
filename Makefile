@@ -363,7 +363,7 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 
 .PHONY: test-mcp-agent-workflows
 test-mcp-agent-workflows: ## Evaluate MCP discovery and recovery workflows against local native API fixtures
-	$(GO_TEST) -count=1 -run 'Test(AgentWorkflow|RecoveryContracts|VerificationContracts|FocusedCatalog|CoreCatalogStaysSmall)' ./pkg/mcpmanagement
+	$(GO_TEST) -count=1 -run 'Test(AgentWorkflow|WorkflowAvailability|Assessment|RecoveryContracts|VerificationContracts|FocusedCatalog|CoreCatalogStaysSmall)' ./pkg/mcpmanagement
 
 .PHONY: test-apid
 test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
@@ -491,7 +491,7 @@ migrations-land: ## Merge origin/main into a migration-carrying branch: take mai
 
 .PHONY: agent-eval-test
 agent-eval-test: ## Unit tests of the coding-agent eval harness; runs no agents (ADR-20261026152009)
-	python3 scripts/agent-eval/agent_eval_test.py
+	python3 -m unittest discover -s scripts/agent-eval -p '*_test.py'
 
 AGENT_EVAL_AGENTS ?= claude
 AGENT_EVAL_TOOLSETS ?= core,all
