@@ -215,7 +215,7 @@ type ObsAttentionListResponse struct {
 	Limit int                  `json:"limit"`
 }
 
-// Operator console signal actions (ADR-20261115120000): the JSON twins of
+// Operator console signal actions (ADR-20261115183907): the JSON twins of
 // the staff page at /dashboard/admin/support/attention.
 
 // ObsAttentionDismissRequest is the body of
@@ -293,7 +293,7 @@ type ObsSupportTicketSnapshot struct {
 // ObsSupportTicketCustomer answers GET /v1/admin/support/tickets/{ticket}/customer:
 // the account behind a ticket, its live diagnosis, the snapshot taken when
 // the ticket was opened, and the restriction kinds lifted or added since
-// (ADR-20261115120000). Unavailable means the account could not be loaded;
+// (ADR-20261115183907). Unavailable means the account could not be loaded;
 // only the ticket id is then meaningful.
 type ObsSupportTicketCustomer struct {
 	TicketID    string                    `json:"ticket_id"`
