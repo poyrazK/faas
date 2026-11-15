@@ -89,6 +89,33 @@ func TestQuotePlatformTenantUsageOverridesAppPriceAndFallsBackBeforeEffectiveMin
 	}
 }
 
+// Priced (shown on quotes and statements) means every billable unit has a
+// price: one unpriced minute, or no usage at all, leaves the quote unpriced.
+func TestQuotePlatformTenantUsagePricedOnlyWhenEveryUnitIsPriced(t *testing.T) {
+	start := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	tenantCards := []state.PlatformTenantRateCard{{ID: uuid.NewString(), Currency: "EUR", Unit: state.PlatformTenantRateCardUnitRequest,
+		PriceMillicentsPerUnit: 25, EffectiveFrom: start.Add(time.Minute)}}
+	for _, tc := range []struct {
+		name       string
+		usage      []state.APIConsumerUsageBucket
+		wantPriced bool
+	}{
+		{"every minute priced", []state.APIConsumerUsageBucket{{WindowStart: start.Add(time.Minute), BillableUnits: 2}}, true},
+		{"a minute before any card", []state.APIConsumerUsageBucket{
+			{WindowStart: start, BillableUnits: 3}, {WindowStart: start.Add(time.Minute), BillableUnits: 2}}, false},
+		{"no usage", nil, false},
+		{"only zero-unit minutes", []state.APIConsumerUsageBucket{{WindowStart: start.Add(time.Minute), BillableUnits: 0}}, false},
+	} {
+		quote, err := QuotePlatformTenantUsage(nil, tenantCards, tc.usage)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if quote.Priced != tc.wantPriced {
+			t.Errorf("%s: Priced = %v, want %v (quote %+v)", tc.name, quote.Priced, tc.wantPriced, quote)
+		}
+	}
+}
+
 func TestQuotePlatformTenantUsageAllowsTenantCurrencyToDifferFromUnusedAppCards(t *testing.T) {
 	start := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
 	appCards := []state.APIConsumerRateCard{{ID: uuid.NewString(), Currency: "USD", Unit: state.APIConsumerRateCardUnitRequest,
