@@ -58,3 +58,14 @@ func serveRestoreRecycle(conn net.Conn, recycle func() error) {
 		}
 	}
 }
+
+// RegisterStatelessRunner joins the restore reseed barrier for the runner
+// process itself. The runner shims are Go programs that keep no userspace
+// random state (they draw only from the kernel, which guest-init reseeds),
+// so there is nothing to recycle. Without it guest-init reported the shim as
+// an uncovered Go process ("restore: processes not covered by the userspace
+// RNG reseed ... runtimes=go") into every node and python app's logs on
+// every wake (ADR-20261109140000).
+func RegisterStatelessRunner(runtime string) bool {
+	return RegisterRestoreRecycle(runtime, func() error { return nil })
+}

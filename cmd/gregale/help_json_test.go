@@ -23,10 +23,12 @@ type helpDocument struct {
 	Positionals                 []string
 	Examples                    []string
 	Notes                       []string
-	SubcommandsAfterPositionals bool `json:"subcommands_after_positionals"`
-	FlagsAfterPositionals       bool `json:"flags_after_positionals"`
+	SubcommandsAfterPositionals bool             `json:"subcommands_after_positionals"`
+	FlagsAfterPositionals       bool             `json:"flags_after_positionals"`
+	GlobalFlags                 []helpGlobalFlag `json:"global_flags"`
 	Flags                       []struct {
 		Name       string
+		Value      string
 		Spellings  []string
 		TakesValue bool `json:"takes_value"`
 		Required   bool
@@ -65,7 +67,7 @@ func readJSONHelp(t *testing.T, args ...string) helpDocument {
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		t.Fatalf("help must be exactly one JSON document: %v", err)
 	}
-	if document.SchemaVersion != 1 || document.DocsURL == "" || document.Aliases == nil || document.Positionals == nil || document.Flags == nil || document.Examples == nil || document.Notes == nil || document.Subcommands == nil {
+	if document.SchemaVersion != 1 || document.DocsURL == "" || document.Aliases == nil || document.Positionals == nil || document.Flags == nil || document.GlobalFlags == nil || document.Examples == nil || document.Notes == nil || document.Subcommands == nil {
 		t.Fatalf("missing schema metadata or array collections: %+v", document)
 	}
 	return document

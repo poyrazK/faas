@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -30,6 +31,14 @@ class FeatureFlag:
     rules: list[FlagRule]
     description: str | Unset = UNSET
     type_: FeatureFlagType | Unset = "boolean"
+    owner: str | Unset = UNSET
+    """Who decides about this flag, for example a team or an email. Not used in evaluation."""
+    expires_at: datetime.date | Unset = UNSET
+    """Date after which the lifecycle report marks the flag expired. Not used in evaluation."""
+    killed: bool | Unset = False
+    """Forces every evaluation to the application's fallback (reason killed), whatever the default, rules or
+    inherited decisions say. Gregale's gateway also reports killed flags on each request, so a kill applies on the
+    next request. SDKs without capability kill-v1 receive bundles without killed flags."""
     seed: str | Unset = UNSET
     """Server-supplied stable allocation seed; omit for a new flag."""
     variants: list[FlagVariant] | Unset = UNSET
@@ -54,6 +63,14 @@ class FeatureFlag:
         if not isinstance(self.type_, Unset):
             type_ = self.type_
 
+        owner = self.owner
+
+        expires_at: str | Unset = UNSET
+        if not isinstance(self.expires_at, Unset):
+            expires_at = self.expires_at.isoformat()
+
+        killed = self.killed
+
         seed = self.seed
 
         variants: list[dict[str, Any]] | Unset = UNSET
@@ -77,6 +94,12 @@ class FeatureFlag:
             field_dict["description"] = description
         if type_ is not UNSET:
             field_dict["type"] = type_
+        if owner is not UNSET:
+            field_dict["owner"] = owner
+        if expires_at is not UNSET:
+            field_dict["expires_at"] = expires_at
+        if killed is not UNSET:
+            field_dict["killed"] = killed
         if seed is not UNSET:
             field_dict["seed"] = seed
         if variants is not UNSET:
@@ -115,6 +138,17 @@ class FeatureFlag:
         else:
             type_ = check_feature_flag_type(_type_)
 
+        owner = d.pop("owner", UNSET)
+
+        _expires_at = d.pop("expires_at", UNSET)
+        expires_at: datetime.date | Unset
+        if isinstance(_expires_at, Unset):
+            expires_at = UNSET
+        else:
+            expires_at = datetime.date.fromisoformat(_expires_at)
+
+        killed = d.pop("killed", UNSET)
+
         seed = d.pop("seed", UNSET)
 
         _variants = d.pop("variants", UNSET)
@@ -133,6 +167,9 @@ class FeatureFlag:
             rules=rules,
             description=description,
             type_=type_,
+            owner=owner,
+            expires_at=expires_at,
+            killed=killed,
             seed=seed,
             variants=variants,
         )

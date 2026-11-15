@@ -10,6 +10,70 @@ cohort evidence. Business
 logic must explicitly check a flag. Flags do not grant
 permissions or paid entitlements and are independent from deployment traffic splits.
 
+## Change one flag from the CLI
+
+The short commands read the current configuration, change one thing and
+publish it with the version they read. If someone else published in between,
+they apply the same change to the new configuration, at most three times.
+
+```bash
+gregale flag create new-export --project exports              # enabled, default false
+gregale flag rollout set new-export 10 --project exports      # 10% of customers get true
+gregale flag rule create new-export --id pilot --group pilot-customers --project exports
+gregale flag disable new-export --project exports             # also sets default false
+gregale flag list --project exports
+gregale flag create checkout --variants legacy,new --project exports
+gregale flag delete new-export --project exports
+```
+
+### Kill a flag
+
+```bash
+gregale flag kill set new-export --project exports     # every check serves the fallback in your code
+gregale flag kill unset new-export --project exports
+```
+
+A killed flag (`"killed": true`) evaluates to the **fallback your code passes**
+at the call site, with reason `killed`, whatever its default, rules or a
+decision inherited from another service say. The fallback is the behavior your
+code had before the flag existed, so a kill never turns something on.
+
+Gregale's gateway lists each environment's killed flags on every request
+(`X-Faas-Flag-Kills`), and the SDKs honor that list before their cached
+configuration, so a kill applies from the next request rather than the next
+refresh. Work that does not arrive through the gateway (queued messages, cron)
+picks the kill up on the SDK's next refresh. SDKs advertise capability
+`kill-v1`; an older SDK receives configurations without killed flags, so it
+also serves its fallback (reason `flag_missing`) after its next refresh. A kill
+is a published version like any other change, with history and rollback.
+
+`rollout set` manages a rule named `everyone-percent` that always stays last;
+`rule create` inserts new rules before it, so targeted rules win. `disable` on a
+boolean flag also sets its default to `false`, because a disabled flag serves
+its default. Use `flags apply --file` for whole-configuration changes. The earlier spellings
+(`flags on`, `off`, `percent`, `rule-add`, `rule-rm`, `kill`, `unkill`, `stale`)
+keep working.
+
+### Owners, expiry and stale flags
+
+Give each flag an owner and a removal date when you create it:
+
+```bash
+gregale flag create new-export --owner payments --expires 2027-01-31 --project exports
+gregale flag set new-export --expires never --project exports
+gregale flag stale list --project exports          # add --all for every flag
+```
+
+`flag stale list` (`GET .../flags/lifecycle`) reports, for each flag, its owner,
+expiry, the newest version that changed it (looking back 200 versions), whether
+it serves one value to everybody, and how many requests decided it in the last
+7 days when your plan keeps request telemetry. A flag needs attention when it
+is `expired`, `expires_soon` (within 7 days), `stale` (serves one value and
+unchanged for 14 days), `never_evaluated` (enabled, unchanged for a week and no
+decisions) or has `no_owner`. Gregale also checks every environment hourly and
+records one `flags.lifecycle_attention` audit event per flag, reason and
+configuration version. Owner and expiry never change evaluation.
+
 ## Publish a customer release
 
 Flags are scoped to a project and named environment. A project app's `default`
@@ -146,6 +210,44 @@ variant consistently:
 }
 ```
 
+## Target request attributes
+
+A rule's `attributes` lists conditions that must all hold, alongside its other
+constraints:
+
+```json
+{"id": "eu-pro", "attributes": [
+  {"attribute": "gregale.country", "op": "in", "values": ["DE", "FR"]},
+  {"attribute": "app.plan", "op": "in", "values": ["pro", "scale"]}
+], "value": true}
+```
+
+- `gregale.country` (ISO 3166-1 alpha-2) and `gregale.ua_family` (`chrome`,
+  `firefox`, `safari`, `bot`, ...) come from Gregale's gateway, which stamps
+  them on each request. Clients cannot set them; an unknown value is absent.
+- `app.<name>` attributes come from your application after it authenticates
+  the user: `flags.withAttributes({plan: 'pro'}, fn)` in Node,
+  `async with flags.for_attributes({"plan": "pro"})` in Python and
+  `flags.WithAttributes(ctx, map[string]string{"plan": "pro"})` in Go. Names
+  are lowercase identifiers, at most 16 per request; values are printable ASCII
+  up to 128 bytes, and an invalid value is dropped.
+- Operators are `in`, `not_in` and, for `app.*` only, `ends_with`. A condition
+  on a missing attribute never matches, including `not_in`.
+- A verified customer is still required: anonymous requests use the default.
+- Attribute values are not stored in request evidence or propagated to other
+  services.
+- Runtime SDKs need capability `attribute-targeting-v1`; older SDKs receive
+  `426 flags_sdk_capability_required` while an enabled flag uses attributes.
+
+From the CLI, `--attr country=DE,FR` means `in`, `--attr 'plan!=free'` means
+`not_in` and `--attr 'email$=@example.com'` means `ends_with`. `country` and
+`ua_family` are the gateway's attributes; any other bare name is `app.<name>`:
+
+```bash
+gregale flag rule create new-export --id eu-pro --attr country=DE,FR --attr plan=pro --project exports
+gregale flags inspect --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111 --attr country=DE --attr plan=pro
+```
+
 ## Check behavior in a Node application
 
 Use `@gregale/sdk-node` in a managed Gregale VM. The workload needs the existing
@@ -213,7 +315,7 @@ fallback, with reason `configuration_stale`. Missing flags also use the fallback
 Startup during a configuration outage also permits explicit fallback behavior.
 Disabling a defined flag uses its configured default; use `default: false` for an
 off switch. Changes do not interrupt requests already using an earlier version.
-Do not use this mechanism for an instantaneous security revocation.
+Do not use this mechanism for an instantaneous security revocation; use `gregale flag kill set` for an emergency stop of application behavior.
 
 ### Use flags in a Python ASGI application
 

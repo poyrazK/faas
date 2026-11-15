@@ -84,6 +84,27 @@ Not changed, with the reasons:
 Binding a listener does not choose who reaches it; the firewall does. These
 binds only keep the listeners off the public card if the ruleset is ever lost.
 
+### Amendment 2026-11-15: wildcard listeners refuse to start without the firewall
+
+The listeners left on the wildcard depend on the ruleset being loaded, but
+gatewayd-internal and the node-local schedd only `Wants=` it: if
+`nftables.service` failed at boot, they would start and listen on every card,
+including an OVH host's public address. A `60-faas-require-host-firewall.conf`
+drop-in now makes each refuse to start (`ExecStartPre=+…`) unless the `inet
+faas` input chain is loaded with `policy drop`:
+
+- gatewayd-internal's service **and** its durable socket, which binds 8080
+  before the service runs, when the node has a TCP listener
+  (`faas_gateway_listen`);
+- the compute node's schedd (9091).
+
+vmmd gets no guard: on a compute node it re-applies the full ruleset itself at
+start (`applyStartupEgressPolicy`) and exits if that fails, so it is what
+repairs a missing ruleset, and gatewayd-internal starts after it. The check
+runs only at start; a drop-in change reloads systemd and restarts nothing.
+`faas_require_host_firewall: false` turns it off for a host whose firewall is
+not this repo's nftables role.
+
 ## Consequences
 
 - Production narrows on its next `bootstrap-control-plane`/`bootstrap-compute`

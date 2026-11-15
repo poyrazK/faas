@@ -1921,6 +1921,7 @@ var ToolAuthorizationCallbackForTest = toolAuthorizationCallback
 var RunToolConnectionBrowserCommandForTest = runMCPToolConnectionBrowser
 var RunMCPCatalogMonitor = runMCPCatalogMonitor
 var RunMCPNativeRelease = runMCPNativeRelease
+var RunMCPNativeReleaseContext = runMCPNativeReleaseContext
 var RunMCPNativeRetirement = runMCPNativeRetirement
 var RunMCPResourceWatch = runMCPResourceWatch
 var RunMCPWatch = runMCPWatch
@@ -2890,6 +2891,65 @@ var DoctorCheckRuntimeOOM = doctorCheckRuntimeOOM
 var ResolveDeployReadiness = resolveDeployReadiness
 var DeployProbeOverrides = deployProbeOverrides
 
+// UpdateAppCLISurface is one reviewed CLI surface of an API field.
+type UpdateAppCLISurface = updateAppCLISurface
+
+// DeployRequestCLISurfaces returns the deploy request's CLI surfaces.
+func DeployRequestCLISurfaces() map[string]UpdateAppCLISurface { return deployRequestCLISurfaces }
+
+// DeployOverridesCLISurfaces returns the deploy overrides' CLI surfaces.
+func DeployOverridesCLISurfaces() map[string]UpdateAppCLISurface { return deployOverridesCLISurfaces }
+
 func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, id string, in api.ToolPublicationVerificationRequest) (api.ToolPublicationVerification, error) {
 	return waitPrivatePublicationVerification(ctx, c, id, in)
+}
+
+var RememberInitApp = rememberInitApp
+var LinkedDefaultAppName = linkedDefaultAppName
+
+// gregale dev findings (2026-11-15).
+var DevSourceFingerprint = devSourceFingerprint
+var DevLocalEnvExcludes = devLocalEnvExcludes
+var PackedCredentialFiles = packedCredentialFiles
+var ShouldExcludeWithRules = func(srcDir, rel string, isDir, dockerfile bool) bool {
+	return loadPackRules(srcDir, dockerfile).exclude(rel, isDir)
+}
+var DevAuthProxyHandler = devAuthProxyHandler
+var DevNeedsAuthProxy = devNeedsAuthProxy
+var IsDevSourceRouteMissing = isDevSourceRouteMissing
+var OnDiskPathCase = onDiskPathCase
+var RenewDevSessionWhileWatching = renewDevSessionWhileWatching
+
+type DevSeedRunner = devSeedRunner
+type DevSeedOutcome = devSeedOutcome
+
+var NewDevSeedRunner = newDevSeedRunner
+
+const DevSeedOutcomeDone = devSeedOutcomeDone
+const DevSeedOutcomeFailed = devSeedOutcomeFailed
+
+func (r *devSeedRunner) Start() (bool, bool)                    { return r.start() }
+func (r *devSeedRunner) Finish(o devSeedOutcome) devSeedOutcome { return r.finish(o) }
+
+// DevLogFollowerRender renders events through one follower and returns
+// whether each ended the stream as parked.
+func DevLogFollowerRender(events []api.Event) (parked []bool) {
+	f := newDevLogFollower(nil)
+	for _, event := range events {
+		end, done, _ := f.render(event)
+		parked = append(parked, done && end == devStreamParked)
+	}
+	return parked
+}
+
+// SyncDevEnvPairs runs one env-file sync with in-memory pairs.
+func SyncDevEnvPairs(ctx context.Context, s *devEnvSyncState, client devSecretClient, app, path string, pairs map[string]string, fingerprint byte) (written int, err error) {
+	list := make([]secretsPair, 0, len(pairs))
+	for key, value := range pairs {
+		list = append(list, secretsPair{Key: key, Value: value})
+	}
+	var fp [32]byte
+	fp[0] = fingerprint
+	report, err := s.syncPairs(ctx, client, app, path, list, fp, "developer config")
+	return report.Written, err
 }

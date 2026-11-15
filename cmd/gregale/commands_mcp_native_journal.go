@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -103,6 +104,10 @@ func ownMCPJournal(path string, adapter bool) (func(), error) {
 }
 
 func saveMCPNativeState(path string, s *mcpNativeReleaseState) error {
+	return saveMCPNativeStateContext(context.Background(), path, s)
+}
+
+func saveMCPNativeStateContext(ctx context.Context, path string, s *mcpNativeReleaseState) error {
 	lock, err := lockMCPJournal(path + ".write.lock")
 	if err != nil {
 		return err
@@ -152,7 +157,7 @@ func saveMCPNativeState(path string, s *mcpNativeReleaseState) error {
 	}
 	*s = next
 	if s.TaskIntentID != "" && s.Stage != "restore_pending" && s.Stage != "web_restored" && s.Stage != "quarantined" && s.Stage != "retirement_pending" && s.Stage != "worker_retired" {
-		return publishMCPTaskReleaseReceipt(s)
+		return publishMCPTaskReleaseReceipt(ctx, s)
 	}
 	return nil
 }

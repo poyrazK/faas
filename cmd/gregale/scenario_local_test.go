@@ -311,12 +311,12 @@ scenarios:
 }
 
 func TestLocalScenarioRejectsPlatformWaitsMissingKeysAndInvalidURLs(t *testing.T) {
-	for _, raw := range []string{"", "https://localhost:3000", "http://example.com", "http://192.168.1.3", "http://user:secret@localhost", "http://localhost/path", "http://localhost?key=value", "http://localhost?", "http://localhost#fragment", "http://localhost#", "http://localhost:0", "http://localhost:65536"} {
+	for _, raw := range []string{"", "https://localhost:3000", "http://example.com", "http://192.168.1.3", "http://user:secret@localhost", "http://localhost/path", "http://localhost?key=value", "http://localhost?", "http://localhost#fragment", "http://localhost#", "http://localhost:0", "http://localhost:65536", "http://shop.gregale.dev", "https://shop.gregale.dev:8443", "https://a.b.gregale.dev", "https://gregale.dev", "https://shop.gregale.dev.evil.com", "https://example.com", "https://shop.gregale.dev/v1"} {
 		if _, err := main.ValidateLocalTestURL(raw); err == nil {
 			t.Errorf("invalid local origin was accepted: %q", raw)
 		}
 	}
-	for _, raw := range []string{"http://localhost:3000/", "http://127.0.0.1:3000", "http://[::1]:3000"} {
+	for _, raw := range []string{"http://localhost:3000/", "http://127.0.0.1:3000", "http://[::1]:3000", "https://frontend.gregale.dev", "https://frontend.gregale.dev/"} {
 		if got, err := main.ValidateLocalTestURL(raw); err != nil || got != strings.TrimSuffix(raw, "/") {
 			t.Errorf("local origin = (%q, %v)", got, err)
 		}

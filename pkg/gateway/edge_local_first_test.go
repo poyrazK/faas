@@ -101,6 +101,56 @@ func TestAcquireLocalTargetPrefersThisNodeWhileASlotIsFree(t *testing.T) {
 	}
 }
 
+// Prod 2026-11-14: with a free slot on any local instance, local first kept
+// every request on the entry node until one VM held concurrency_per_vm (80 on
+// Scale), so an instance the autoscaler started on another node took none.
+// Local first now holds only while the local instance is no busier than the
+// least busy instance elsewhere.
+func TestAcquireLocalTargetYieldsWhenThisNodeIsBusier(t *testing.T) {
+	_, h := spreadFixture(t)
+	app := App{ID: "app-1", Plan: api.PlanScale}
+	remote := PickResult{OK: true, Picked: "dep-1", Target: Target{NodeID: "node-b", InstanceID: "b1", DeploymentID: "dep-1"}}
+	ctx := h.localFirstContext(edgeAsked(context.Background()))
+	const perVM = 80
+
+	// a1 and a2 each take one request while b1 has none.
+	for range 2 {
+		if _, _, ok := h.acquireLocalTarget(ctx, app, remote, perVM); !ok {
+			t.Fatal("local first refused an even load")
+		}
+	}
+	if _, _, ok := h.acquireLocalTarget(ctx, app, remote, perVM); ok {
+		t.Fatal("local first kept a request while node-b's instance was idle")
+	}
+	// node-b's instance catches up: local first applies again.
+	releaseRemote, ok := h.vmConcurrency.tryAcquire("b1", string(app.Plan), perVM)
+	if !ok {
+		t.Fatal("could not hold a request on b1")
+	}
+	defer releaseRemote()
+	if _, _, ok := h.acquireLocalTarget(ctx, app, remote, perVM); !ok {
+		t.Fatal("local first refused once the load was even again")
+	}
+}
+
+// With no instance of the deployment on another node, local first serves
+// every request locally while a slot is free, as before.
+func TestAcquireLocalTargetWithoutRemoteInstances(t *testing.T) {
+	b := NewPGBackend(nil, nil, nil)
+	b.appsPicker["app-1"] = &appPicker{sets: map[string]*targetSet{
+		"dep-1": {entries: []Target{{NodeID: "node-a", InstanceID: "a1"}}},
+	}}
+	h := NewHandlerWith(b, NewMetrics(), nil).WithEdgeLocalFirst(func(context.Context) (string, error) { return "node-a", nil })
+	app := App{ID: "app-1", Plan: api.PlanScale}
+	pick := PickResult{OK: true, Picked: "dep-1", Target: Target{NodeID: "node-a", InstanceID: "a1", DeploymentID: "dep-1"}}
+	ctx := h.localFirstContext(edgeAsked(context.Background()))
+	for i := range 5 {
+		if _, _, ok := h.acquireLocalTarget(ctx, app, pick, 80); !ok {
+			t.Fatalf("request %d left the only node", i)
+		}
+	}
+}
+
 func TestLocalFirstNeedsTheNodeID(t *testing.T) {
 	b, _ := spreadFixture(t)
 	h := NewHandlerWith(b, NewMetrics(), nil).WithEdgeLocalFirst(func(context.Context) (string, error) { return "", errors.New("registry down") })

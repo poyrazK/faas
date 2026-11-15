@@ -153,6 +153,12 @@ func TestAgentsAndVersions(t *testing.T) {
 	if _, err := s.Version(ctx, other, "triage", 2); !errors.Is(err, agents.ErrNotFound) {
 		t.Fatalf("another account's version: %v", err)
 	}
+	// Versions are int4: a number past it used to wrap, so 1<<32+1 read version 1.
+	for _, n := range []int{1<<32 + 1, 1 << 31, 0, -1} {
+		if got, err := s.Version(ctx, account, "triage", n); !errors.Is(err, agents.ErrNotFound) {
+			t.Fatalf("version %d: got %+v, %v; want not found", n, got, err)
+		}
+	}
 	list, err := s.Agents(ctx, account, "", 10)
 	if err != nil || len(list) != 2 || list[0].Name != "review" || list[1].Name != "triage" {
 		t.Fatalf("list: %+v %v", list, err)
