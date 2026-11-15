@@ -114,6 +114,7 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 		}
 		clone.capturedCrons = capturedCloneCrons(records)
+		clone.capturedEventSubscriptions = capturedCloneEventSubscriptions(records)
 	} else {
 		source, err := readCloneFeatureFlagsTx(ctx, tx, clone.AccountID, clone.ProjectID, clone.SourceSlug)
 		if err != nil {
@@ -454,6 +455,9 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 			return result, err
 		}
 		if err := copyCapturedCronsTx(ctx, tx, clone, &result); err != nil {
+			return result, err
+		}
+		if err := copyCapturedEventSubscriptionsTx(ctx, tx, clone, &result); err != nil {
 			return result, err
 		}
 		if result.RoutesCopied < result.WorkloadsCopied {

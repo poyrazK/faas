@@ -103,6 +103,11 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 			return nil, err
 		}
 		snapshot.Crons = &crons
+		subscriptions, err := m.captureCloneEventSubscriptionsLocked(appID, op.SourceEnvironment)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.EventSubscriptions = &subscriptions
 		for _, layer := range m.deploymentSidecarLayers {
 			if layer.DeploymentID == source.ID {
 				snapshot.Layers = append(snapshot.Layers, layer)
@@ -128,6 +133,9 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 		captured[appID] = true
 	}
 	if err := m.requireCloneCronsCapturedLocked(projectID, op.SourceEnvironment, captured); err != nil {
+		return nil, err
+	}
+	if err := m.requireCloneEventSubscriptionsCapturedLocked(projectID, op.SourceEnvironment, captured); err != nil {
 		return nil, err
 	}
 	var keys []string
