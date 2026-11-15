@@ -2890,6 +2890,15 @@ var DoctorCheckRuntimeOOM = doctorCheckRuntimeOOM
 var ResolveDeployReadiness = resolveDeployReadiness
 var DeployProbeOverrides = deployProbeOverrides
 
+// UpdateAppCLISurface is one reviewed CLI surface of an API field.
+type UpdateAppCLISurface = updateAppCLISurface
+
+// DeployRequestCLISurfaces returns the deploy request's CLI surfaces.
+func DeployRequestCLISurfaces() map[string]UpdateAppCLISurface { return deployRequestCLISurfaces }
+
+// DeployOverridesCLISurfaces returns the deploy overrides' CLI surfaces.
+func DeployOverridesCLISurfaces() map[string]UpdateAppCLISurface { return deployOverridesCLISurfaces }
+
 func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, id string, in api.ToolPublicationVerificationRequest) (api.ToolPublicationVerification, error) {
 	return waitPrivatePublicationVerification(ctx, c, id, in)
 }
