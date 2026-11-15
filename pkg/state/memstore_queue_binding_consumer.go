@@ -57,7 +57,7 @@ func (m *MemStore) mutateQueueBindingConsumerLocked(accountID, appID, id string,
 		// Mirrors the PgStore revive (ADR-20261112200000).
 		for retiredID, retired := range m.queueBindings {
 			if retired.AppID == appID && retired.AccountID == accountID && retired.EnvironmentID == "" && retired.RetiredAt != nil &&
-				retired.Name == create.Name && retired.QueueName == create.QueueName {
+				retired.Name == create.Name { // name alone (ADR-20261113180000, R5-2)
 				retired.RetiredAt = nil
 				m.queueBindings[retiredID] = retired
 				wanted := *create

@@ -71,7 +71,7 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 	safeAppSlug := logsanitize.Field(app.Slug)
 	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\n", "")
 	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\r", "")
-	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
+	scope, _, prob := s.appScopeFromQuery(r, app, false /* allowAll */)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return

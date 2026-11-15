@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
@@ -59,6 +60,13 @@ type DunningParams struct {
 	// Registerer receives meterd_dunning_deletion_blocked_accounts; nil
 	// leaves the gauge unregistered (tests).
 	Registerer prometheus.Registerer
+	// Subscriptions, when set, is asked for the customer's subscriptions
+	// before an account moves to Free for non-payment: a subscription the
+	// provider reports paid up means a missed or unaccepted webhook, so the
+	// move waits for apid's reconciliation to restore the account (billing
+	// review: the dunning sweep never asked the provider). Nil keeps the
+	// sweep on local state only.
+	Subscriptions billing.CustomerSubscriptionLister
 }
 
 // Dunning is the 7-day / 21-day dunning timer. Owns the ticker + the
@@ -212,6 +220,9 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 			// and stays active, as the Terms say; past_due_at stays as the
 			// unpaid balance's marker until a paid order or an operator
 			// clears it. Nothing is suspended or deleted for non-payment.
+			if d.deferToProvider(ctx, acct, fail) {
+				continue
+			}
 			if err := d.moveToFreeForNonpayment(ctx, acct, state.AccountPastDue, now); err != nil {
 				fail(acct, "move to free", err)
 			}
@@ -227,6 +238,9 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 				fail(acct, "quota suspension", err)
 				continue
 			} else if quota {
+				continue
+			}
+			if d.deferToProvider(ctx, acct, fail) {
 				continue
 			}
 			if err := d.moveToFreeForNonpayment(ctx, acct, state.AccountSuspended, now); err != nil {

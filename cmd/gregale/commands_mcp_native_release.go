@@ -324,6 +324,10 @@ func cmdMCPTaskRelease(args []string) int {
 	return jsonOut(writeJSON(map[string]any{"workerIDs": s.WorkerIDs, "stage": s.Stage}))
 }
 func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state, plan string) int {
+	return runMCPNativeReleaseContext(context.Background(), p, s, state, plan)
+}
+
+func runMCPNativeReleaseContext(ctx context.Context, p mcpNativeReleasePlan, s mcpNativeReleaseState, state, plan string) int {
 	quiet := s.quiet
 	if s.Stage == "restore_pending" || s.Stage == "web_restored" || s.Stage == "quarantined" || s.Stage == "retirement_pending" || s.Stage == "worker_retired" {
 		return printErr("MCP release", errors.New("recovery or retirement started; resume that operation or create a new release instead"))
@@ -337,7 +341,7 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 	if err := requireMCPNativeNodeWorker(p.WorkerPath); err != nil {
 		return printErr("MCP release runtime", err)
 	}
-	if err := preflightMCPControlPlane(); err != nil {
+	if err := preflightMCPControlPlaneContext(ctx); err != nil {
 		return printErr("MCP control-plane compatibility", err)
 	}
 	if s.PendingSubmission != "" {
@@ -345,7 +349,7 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 		if err != nil {
 			return printErr("MCP release recovery", err)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.TimeoutSeconds)*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds)*time.Second)
 		err = reconcileMCPNativeSubmission(ctx, c, p, &s, state)
 		cancel()
 		if err != nil {
@@ -383,7 +387,7 @@ func runMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, state,
 		return printErr("MCP release plan", err)
 	}
 	// Each adapter and each wait has its own deadline; bound the entire invocation too.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(p.TimeoutSeconds*5+120)*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.TimeoutSeconds*5+120)*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, "node", "tasks-release.js", f.Name())
 	command.Dir = p.WorkerPath

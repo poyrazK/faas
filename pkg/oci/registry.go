@@ -643,8 +643,8 @@ func (c *RegistryClient) confirmBlobInRepository(ctx context.Context, r Referenc
 	url := c.baseURL(r) + "/v2/" + r.Repository + "/blobs/" + digest
 	hc := *c.hc
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	head := func(authz string) (int, http.Header, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	probe := func(method, authz string) (int, http.Header, error) {
+		req, err := http.NewRequestWithContext(ctx, method, url, nil)
 		if err != nil {
 			return 0, nil, fmt.Errorf("oci: build blob check: %w", err)
 		}
@@ -659,16 +659,26 @@ func (c *RegistryClient) confirmBlobInRepository(ctx context.Context, r Referenc
 		_ = resp.Body.Close()
 		return resp.StatusCode, resp.Header, nil
 	}
-	status, header, err := head("")
+	status, header, err := probe(http.MethodHead, "")
 	if err != nil {
 		return err
 	}
+	authz := ""
 	if status == http.StatusUnauthorized {
-		authz, err := c.authorization(ctx, header.Values("Www-Authenticate"), auth)
-		if err != nil {
+		if authz, err = c.authorization(ctx, header.Values("Www-Authenticate"), auth); err != nil {
 			return err
 		}
-		if status, _, err = head(authz); err != nil {
+		if status, _, err = probe(http.MethodHead, authz); err != nil {
+			return err
+		}
+	}
+	// Some registries refuse HEAD on blobs while serving GET: public.ecr.aws
+	// answers an authorized HEAD with 401 and the same GET with a 307 to its
+	// CDN, so every public ECR image failed admission (2026-11-15 agent
+	// eval). Ask again with a GET; the redirect is not followed and the body
+	// is closed unread.
+	if status == http.StatusUnauthorized || status == http.StatusMethodNotAllowed {
+		if status, _, err = probe(http.MethodGet, authz); err != nil {
 			return err
 		}
 	}

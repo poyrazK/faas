@@ -106,6 +106,19 @@ func upsertDevSessionWithMode(client *Client, project string, req api.UpsertDevS
 	if err != nil {
 		return session, mode, err
 	}
+	if mode.Source == "detected" && req.Watch != nil && session.LivePatches != nil && !*session.LivePatches {
+		// Without live patches every save rebuilds anyway, so a development
+		// server only trades the production-shaped build for no speedup.
+		// Explicit --watch or dev.watch still get what they asked for.
+		req.Watch = nil
+		session, err = upsertDevSession(client, project, req)
+		if err != nil {
+			return session, mode, err
+		}
+		mode = devModeSelection{Mode: "build", Source: "server", Reason: "live_patches_off",
+			Detail: "this Gregale installation does not deliver live patches, so watch mode would not make saves faster; using a production-shaped developer build"}
+		return session, mode, nil
+	}
 	if mode.Source == "detected" && req.Watch != nil && session.Watch == nil {
 		// Older servers can ignore the request field. A successful response
 		// reporting watch off is the existing build path, not proof of HMR.

@@ -111,6 +111,9 @@ func (s *server) applySourceFunctionAppSettings(ctx context.Context, acct state.
 	if req.BeforeCheckpoint != nil {
 		fields = append(fields, "before_checkpoint")
 	}
+	if req.Warmup != nil {
+		fields = append(fields, "warmup")
+	}
 	manifest, ok := stateManifestForUpdate(app, &req)
 	if req.ServiceBindingTargets != nil || req.ServiceBindingPolicy != nil || req.FunctionCallables != nil {
 		if !ok {

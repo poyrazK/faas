@@ -60,6 +60,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -534,7 +535,23 @@ var ExecutionRequest = executionRequest
 var ExtractInputValue = extractInputValue
 var ExtractTarGzToDir = extractTarGzToDir
 var FailedStageFromJSON = failedStageFromJSON
-var FeatureFlagConfigRequiresSubjectTargeting = featureFlagConfigRequiresSubjectTargeting
+var RuntimeBundleForSDK = runtimeBundleForSDK
+
+// RunFeatureFlagLifecycleCheck runs the lifecycle reconciler for one
+// environment at now (ADR 20261114150000 §4).
+func RunFeatureFlagLifecycleCheck(s *server, env state.FeatureFlagAutoRolloutCandidate, now time.Time) {
+	r := &featureFlagLifecycleReconciler{server: s}
+	r.checkEnvironment(context.Background(), s.store.(state.AuditEventOutboxStore), env, now)
+}
+
+func FeatureFlagRequiredCapabilities(config flags.Config) []string {
+	var out []string
+	for _, c := range featureFlagRequiredCapabilities(config) {
+		out = append(out, c.capability)
+	}
+	return out
+}
+
 var FeatureFlagOutcomeQuery = featureFlagOutcomeQuery
 var FetchAccountMetricsSnapshot = fetchAccountMetricsSnapshot
 var FindDashboardCookie = findDashboardCookie
@@ -2598,3 +2615,5 @@ func (s *server) SetSignupGeoForTest(country func(net.IP) string, asn func(net.I
 func (r pgHandlerEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map[string]string) *httptest.ResponseRecorder {
 	return r.doSession(p0, p1, p2, p3, p4, p5)
 }
+
+var SyntheticCheckAuthWarning = syntheticCheckAuthWarning
