@@ -15021,6 +15021,32 @@ paths:
               schema: { $ref: '#/components/schemas/MFADisableEmailResponse' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /v1/account/mfa/disable-email-cancel:
+    post:
+      tags: [mfa]
+      operationId: mfaDisableEmailCancel
+      summary: Cancel a pending email-assisted MFA disable.
+      description: |
+        Cancels every pending email-assisted MFA disable on the account,
+        so its emailed link stops working. A browser session must have
+        passed the second factor; a session from a password reset alone
+        is refused. Signing in with the authenticator app or a recovery
+        code cancels a pending disable too. The owner is emailed when a
+        request is cancelled.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFADisableEmailCancelRequest'
+      responses:
+        '200':
+          description: Pending requests cancelled (`cancelled` is 0 when none was pending).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MFADisableEmailCancelResponse' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /v1/account/mfa/disable-email/confirm:
     post:
       tags: [mfa]
@@ -125560,6 +125586,21 @@ components:
       description: Empty success body; the confirmation link is sent by email.
       type: object
       additionalProperties: false
+
+    MFADisableEmailCancelRequest:
+      description: Optional body; a browser session sends the CSRF token minted for `mfa_disable_email_cancel`.
+      type: object
+      additionalProperties: false
+      properties:
+        csrf_token: { type: string }
+
+    MFADisableEmailCancelResponse:
+      description: How many pending email-assisted MFA disables were cancelled.
+      type: object
+      required: [cancelled]
+      additionalProperties: false
+      properties:
+        cancelled: { type: integer, minimum: 0, example: 1 }
 
     MFADisableEmailConfirmRequest:
       description: Body for consuming the emailed token after the cooldown.

@@ -209,6 +209,7 @@ func (s *server) finishEmailChange(r *http.Request, change state.EmailChange) {
 	s.revokeSessionsAfterPasswordChange(r.Context(), change.AccountID, "")
 	if acct, err := s.store.AccountByID(r.Context(), change.AccountID); err == nil {
 		s.revokeInteractiveSignInKeys(r, acct, "email_changed")
+		s.removeOldAddressProviderLinks(r.Context(), acct, change.OldEmail)
 	}
 	s.audit.Emit(r.Context(), "account.email_changed", &change.AccountID, nil)
 	s.moveBillingEmailsInBackground(r.Context(), change)
