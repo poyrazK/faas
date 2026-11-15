@@ -167,6 +167,7 @@ def _fixture_generator(tmp_path, monkeypatch):
         "faas_sdk/job_types.py": b"# uncommitted job type generator\n",
         "faas_sdk/_project_verification.py": b"# uncommitted exact-deployment verification\n",
         "faas_sdk/preview/_binding_runner.py": b"# uncommitted verification runner\n",
+        "faas_sdk/preview/files.py": b"# uncommitted preview file workflows\n",
         "faas_sdk/preview/_binding_runner_diagnostics.py": b"# uncommitted automatic diagnostics\n",
         "faas_sdk/preview/_binding_creation.py": b"# uncommitted reviewed creation\n",
         "faas_sdk/preview/_binding_qualification.py": b"# uncommitted qualification waiting\n",
@@ -345,3 +346,11 @@ def test_regenerated_barrels_export_typed_jobs(tmp_path, monkeypatch):
     for name in ("JobContract", "TypedJob", "TypedJobRun", "JobCheckpoint", "run_job_task"):
         assert f"{name} as {name}" in generator._INIT_PY_TEMPLATE
         assert f"{name} as {name}" in generator._PREVIEW_INIT_PY_TEMPLATE
+
+
+def test_regenerated_preview_barrel_exports_files(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    assert "files.py" in generator.PREVIEW_WRAPPER_MODULES
+    for name in ("FileBucket", "FileCheckpoint", "FileOptions", "PathFileSource"):
+        assert name in generator._PREVIEW_INIT_PY_TEMPLATE
+        assert name not in generator._INIT_PY_TEMPLATE

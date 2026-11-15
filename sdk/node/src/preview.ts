@@ -17,6 +17,9 @@
 // Static services and FaaSClient retain their legacy shared state.
 
 export { createClient, type GregaleClient } from './isolated-client-preview.js';
+export * from './files.js';
+export type { ManagedFileBucket, FileHelpers } from './file-client.js';
+export { pathFileSource } from './file-client.js';
 export type { RequestOptions, ResponseInfo, ResponseObserver } from './request-options.js';
 export { PaginationError, type PaginationOptions, type DeploymentPagination } from './deployment-pagination.js';
 export { WaiterError, type WaiterFailureCode, type WaiterOptions, type WaiterSnapshot, type WaiterProgress, type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters } from './deployment-waiters.js';

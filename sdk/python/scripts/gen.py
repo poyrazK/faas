@@ -210,6 +210,7 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
+    "files.py",
     "_wrapper.py",
     "_binding_qualification.py",
     "_binding_creation.py",
@@ -1280,6 +1281,7 @@ elsewhere its calls answer 404 no such API route.
 """
 
 # ruff: noqa: F401
+from .files import BytesFileSource, FileBucket, FileCheckpoint, FileCode, FileError, FileMetadata, FileObject, FileOptions, FilePage, FilePart, FileProgress, FileSource, FileUploadResult, PathFileSource, file_source_digest
 from ..job_runtime import (
     JobContract as JobContract,
     JobError as JobError,
@@ -1796,6 +1798,7 @@ from .event_acknowledgment_intent_recovery_pass import (
 )
 
 __all__ = (
+    "BytesFileSource", "FileBucket", "FileCheckpoint", "FileCode", "FileError", "FileMetadata", "FileObject", "FileOptions", "FilePage", "FilePart", "FileProgress", "FileSource", "FileUploadResult", "PathFileSource", "file_source_digest",
     *_PACKAGE_ALL,
     "AI_CALL_HEADER",
     "AI_SESSION_HEADER",

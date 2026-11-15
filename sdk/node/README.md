@@ -4777,3 +4777,48 @@ exceeds consumed claims without resetting them. Frozen receipts resolve exact
 retries across Go/Node within Node's safe generation range, with known rejection
 receipts on `EventAcknowledgmentIntentBudgetAdoptionError.receipt`. See
 [budget adoption, exact fences and uncertainty](../../docs/event-acknowledgment-budget-adoption.md#node-selection-adoption-and-replay).
+
+## Application files (preview)
+
+Upload application/customer files with a server-side storage credential and
+bucket grant. This is separate from deployment source archives:
+
+```ts
+import {createClient, pathFileSource, parseFileCheckpoint} from '@gregale/sdk-node/preview';
+const client = createClient(apiURL, {token: storageToken});
+const files = client.storage.files({appSlug: 'imports', bucket: bucketID});
+const source = await pathFileSource('rows.csv');
+const uploaded = await files.upload('imports/new-unique-id/input.csv', source, {
+  timeoutMs: 120_000, maxBytes: 100 * 1024 * 1024, contentType: 'text/csv',
+  onCheckpoint: async checkpoint => saveDurably(checkpoint),
+  onProgress: progress => console.log(progress.confirmed_bytes),
+});
+// After restart, re-open the same source and resume the saved session:
+await files.resume(parseFileCheckpoint(savedJSON), source, {timeoutMs: 120_000});
+const store = await files.jobStore({timeoutMs: 30_000, prefix: 'job-results/'});
+const job = client.jobs.defineJob(contract, {store});
+```
+
+`downloadTo(key, sink, options)` streams bounded chunks; `download` buffers the
+result. `metadata`, `list` (opaque cursor), `delete`, and explicit multipart
+`abort(checkpoint, options)` are available. `put` supports small/empty files and
+create-only `ifNoneMatch: '*'`; persist `onReceipt(id)` before dispatch and call
+`confirm(id, key, size, options)` to recover an uncertain write. A receipt proves
+the attempt committed, rather than the current value of a mutable key.
+
+Local cancellation preserves remote parts. Save checkpoints durably, serialize
+one writer per session, keep the source stable, and use a new key for each logical
+upload. Resume verifies source bytes and reconciles confirmed provider parts.
+Defaults: 100 MiB, 10,000 parts, 60 polls; supported part layouts use at most
+64 MiB per part. Increase `maxBytes` explicitly for larger files. An ETag is
+opaque. The managed JobStore separately verifies SHA-256 of its stored bytes.
+Streaming sinks may have partial output on failure; publish only after success.
+Bucket handles retain their endpoint/token snapshot; recreate a handle after
+changing the parent client's credentials or endpoint.
+
+Browsers import `createFileBucket`, `blobFileSource`, and `FileBroker` from
+`@gregale/sdk-node/preview/browser`. Connect the broker to your authenticated
+application routes. Authorize each server-owned file ID/session/operation; never
+expose a generic signing proxy or Gregale credentials. Checkpoints contain no
+signed URLs. See the [complete browser CSV import example](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+and [design decisions](../../docs/adr/20261115153000-sdk-application-files.md).

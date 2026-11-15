@@ -97,3 +97,59 @@ duplicate delivery. The deployed equivalent is `TestSDKTypedBackgroundJobs` in
 `tests/journeys`, enabled only with an isolated API/token, `GREGALE_E2E_NODE_SDK`
 and `GREGALE_E2E_JOB_CONTRACT` matching a configured example job with managed obj
 result storage. Local tests do not establish deployed scheduler acceptance.
+
+## Browser file imports (preview)
+
+`file-api.mjs` and `file-index.html` extend this example with a complete file
+workflow: authenticated application record → direct resumable upload → confirmed
+stored CSV → typed jobs → progress → stored rejection report download. Both
+worker languages can now use the SDK's built-in managed JobStore.
+
+Configure an existing app and bucket with storage preview access and read/write
+grants. Set bucket CORS to allow your application origin, PUT, and the returned
+Content-Type header, exposing ETag and Content-Length. Configure the existing
+`csv-import` Jobs template with the same database and SDK, and these worker vars:
+
+```sh
+export FAAS_API=https://your-gregale-api
+export FAAS_TOKEN=your-backend-token
+export GREGALE_FILE_APP=imports
+export GREGALE_FILE_BUCKET=your-bucket-uuid
+# On workers, prefer a credential scoped to this app/bucket:
+export GREGALE_FILE_TOKEN=your-worker-storage-token
+export GREGALE_IMPORT_STATE=/private/path/file-imports
+export GREGALE_FILE_USERS='{"alice":"replace-with-alice-app-token","bob":"replace-with-bob-app-token"}'
+npm --prefix sdk/node run build
+node examples/sdk-csv-jobs/file-api.mjs
+```
+
+Open `http://127.0.0.1:8080`, enter Alice's application token and choose a CSV.
+The backend credential stays on the server. Replace the static token map with
+your normal application authentication before using the example as a product.
+The demo listens on loopback; production hosting also needs TLS. This file flow
+accepts up to 1 MiB per CSV and generates its own unique storage keys.
+
+Pause preserves the remote session. After a reload, enter the same application's
+token, select the same file and choose **Resume saved import**. The browser saves
+only the file identity and credential-free checkpoint in localStorage. **Discard
+upload** explicitly aborts it. A completed upload resumes without another PUT.
+Every file/session/sign/complete/abort/start/progress/report route checks the
+durable record's owner first, so knowing a file ID does not grant another user
+access. The backend exposes only the operations for that record, with fixed
+keys, type and size; it does not proxy arbitrary storage requests.
+
+Before submitting rows the backend reads the stored bytes, checks the initially
+declared size and fixed-block source digest, and uses an immutable version when
+available. Submission intent is saved before Jobs access. If acceptance is
+uncertain, inspect that intent/run explicitly rather than creating another
+submission. Row/task failures remain visible in progress and results; the CSV
+report lists validation rejections. Stored reports and inputs remain after task
+cancellation, following the application's retention policy.
+
+The local command above now also checks browser uploads, application restarts,
+cross-language upload checkpoints, managed result storage with actual Node and
+Python workers, and Bob being denied every operation on Alice's files. When
+Chrome is available, it runs the real browser flow including progress, download
+and reload/resume. Set `GREGALE_LOCAL_CHROME` to a Chrome/Chromium executable on
+other systems. Storage and the scheduler are local protocol fixtures; this does
+not establish deployed preview access, provider behavior or bucket CORS.

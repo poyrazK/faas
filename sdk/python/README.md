@@ -3710,3 +3710,45 @@ resolve exact original retries across SDKs, preserving native int64 generations
 and microsecond fences. Known rejection errors expose their `.receipt`; uncertain
 COMMIT requires retrying the saved command on a fresh connection. See
 [budget adoption, guards and cancellation](../../docs/event-acknowledgment-budget-adoption.md#python-selection-adoption-and-replay).
+
+## Application files (preview)
+
+The async preview file client uploads customer files, streams downloads, exposes
+metadata/list/delete, and provides a managed storage adapter for typed jobs:
+
+```python
+from faas_sdk.preview import FaaSClient, FileCheckpoint, FileOptions, PathFileSource
+
+client = FaaSClient(base_url=api_url, token=storage_token)
+files = client.files(app_slug="imports", bucket=bucket_id)
+source = PathFileSource("rows.csv")
+options = FileOptions(timeout=120, on_checkpoint=save_durably, on_progress=show_progress)
+try:
+    uploaded = await files.upload("imports/new-unique-id/input.csv", source,
+                                  options=options, content_type="text/csv")
+    # After restart, re-open the source and load checkpoint.to_dict() JSON:
+    await files.resume(FileCheckpoint.from_dict(saved_json), source, options=options)
+    store = await files.job_store(options=FileOptions(timeout=30), prefix="job-results/")
+    job = client.define_job(contract, store=store)
+finally:
+    await client.aclose()
+```
+
+The API requires storage preview access and bucket grants. Every operation needs
+a positive total timeout, including body reads and callbacks. Cancel its asyncio
+task to stop locally; use `abort(checkpoint, options=...)` to discard remote parts.
+One writer owns each session/checkpoint; keep source bytes stable and use a fresh
+key for each logical upload. Checkpoints are portable with Node and contain no
+credentials or signed URLs. Resume compares source digests and confirmed parts.
+
+`put(..., on_receipt=save_receipt)` supports empty files and
+`if_none_match="*"`. `confirm(receipt, key, size, options=...)` inspects the same
+attempt after a lost response. A completed receipt does not prove the current
+value of a mutable key. The managed JobStore uses create-only content-addressed
+objects, verifies SHA-256 bytes and restricts references to its configured prefix.
+
+`download_to(key, sink, options=...)` streams; `download` buffers within
+`max_bytes`. Sinks can receive partial bytes before failure. Defaults are 100 MiB,
+10,000 parts and 60 polls, with a maximum supported part size of 64 MiB. ETags
+are opaque. See the [browser CSV import example](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+for app-owned authorization, restart recovery and downloadable rejection reports.

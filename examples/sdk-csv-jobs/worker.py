@@ -37,7 +37,19 @@ async def handler(input: Input, context: JobContext) -> Output:
 
 
 async def main():
-    if "GREGALE_LOCAL_JOB_STORE" in os.environ:
+    file_client = None
+    if "GREGALE_FILE_BUCKET" in os.environ:
+        from faas_sdk.preview import FaaSClient, FileOptions
+
+        file_client = FaaSClient(
+            base_url=os.environ["FAAS_API"],
+            token=os.environ.get("GREGALE_FILE_TOKEN", os.environ.get("FAAS_TOKEN")),
+        )
+        store = await file_client.files(
+            app_slug=os.environ["GREGALE_FILE_APP"],
+            bucket=os.environ["GREGALE_FILE_BUCKET"],
+        ).job_store(options=FileOptions(timeout=60))
+    elif "GREGALE_LOCAL_JOB_STORE" in os.environ:
         store = LocalJobStore(os.environ["GREGALE_LOCAL_JOB_STORE"])
     else:
         spec = importlib.util.spec_from_file_location(
@@ -53,6 +65,9 @@ async def main():
             json.dumps({"code": getattr(error, "code", "handler_failed")}), flush=True
         )
         raise SystemExit(1) from None
+    finally:
+        if file_client is not None:
+            await file_client.aclose()
 
 
 if __name__ == "__main__":

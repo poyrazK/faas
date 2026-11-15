@@ -45,6 +45,10 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     assert.equal(prepared.plan.fileCount,1); assert.ok(prepared.size>0); assert.match(prepared.sha256,/^[a-f0-9]{64}$/);
     assert.equal((await sourceSdk.inspectSource('source-project')).fileCount,1);
     const previewSdk = await import('@gregale/sdk-node/preview'); assert.equal(previewSdk.prepareSource,sourceSdk.prepareSource);
+    const fileBrowser = await import('@gregale/sdk-node/preview/browser');
+    const publicBrowser = await import('@gregale/sdk-node/browser');
+    assert.equal(typeof fileBrowser.createFileBucket,'function'); assert.equal(publicBrowser.createFileBucket,undefined);
+    assert.equal(sourceSdk.FileError,undefined); assert.equal(typeof previewSdk.pathFileSource,'function');
     const sourceOptions = {timeoutMs:10000,onCheckpoint:value => sourceSdk.saveSourceUploadCheckpoint('source-state.json',value)};
     const staged = await sourceClient.uploads.uploadSource({path:'source.tar.gz',appSlug:'api'},sourceOptions);
     assert.equal(staged.stage,'ready');
@@ -291,6 +295,17 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     waiters.waitForBuild({ id: 'build' }, {});
     // @ts-expect-error legacy static services keep their original surface
     DeploymentsService.waitForBuild({ id: 'build' }, buildOptions);
+    const fileBucket: import('@gregale/sdk-node/preview').ManagedFileBucket = preview.storage.files({appSlug:'app',bucket:'bucket'});
+    const fileSource: import('@gregale/sdk-node/preview/browser').FileSource = {size:1,async read(){return new Uint8Array([1]);}};
+    const fileUpload:Promise<import('@gregale/sdk-node/preview').FileUploadResult> = fileBucket.upload('key',fileSource,{timeoutMs:1000,onCheckpoint:c=>{
+      // @ts-expect-error checkpoint part digests are readonly
+      c.part_digests.push('changed');
+    }});
+    void fileUpload;
+    // @ts-expect-error files remain preview only
+    client.storage.files({appSlug:'app',bucket:'bucket'});
+    // @ts-expect-error a total transfer budget is required
+    fileBucket.upload('key',fileSource,{});
     const helpers: ExecutionHelpers = preview;
     const execution: Promise<ExecutionResponse> = helpers.runExecution({ runtime: 'node22', source: 'console.log(1)' });
     const events: AsyncGenerator<ExecutionEvent, void, void> = helpers.watchExecution('run', { after: 1 });

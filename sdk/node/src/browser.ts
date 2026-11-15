@@ -1,5 +1,6 @@
 // Browser-safe entry point. Keep this barrel free of imports from the Node
 // SDK's root surface, which intentionally includes Node-only helpers.
+export * from './files.js';
 export {
   createGregaleBrowserFetch,
   GREGALE_RELEASE_HEADER,
