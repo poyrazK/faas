@@ -415,7 +415,13 @@ func cmdAddPostgres(args []string) int {
 		if err := addPostgresUnsupported(ctx, client, *region, *access, *availability, true); err != nil {
 			return printErr("Cannot create managed PostgreSQL database", err)
 		}
-		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("database", appName, name, *scope, *environmentKey))
+		// Every create field joins the key: a retry after a refused request
+		// (a region with no backend) with a corrected --region, class or
+		// major is a new request, not a replay that is refused for 24 h as
+		// "Idempotency-Key reused" (prod 2026-11-15).
+		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("database", appName, name, *scope, *environmentKey,
+			"region", strings.TrimSpace(*region), "major", fmt.Sprint(*major), "class", *serviceClass, "availability", *availability,
+			"scale-to-zero", fmt.Sprint(*scaleToZero), "storage", fmt.Sprint(*storage), "restore-window", fmt.Sprint(*restoreWindow)))
 		database, err = client.CreateManagedPostgresDatabase(createCtx, api.CreateManagedPostgresDatabaseRequest{
 			Name: name, Region: strings.TrimSpace(*region), PostgresMajor: *major,
 			ServiceClass: *serviceClass, Availability: *availability, ScaleToZero: scaleToZero,
