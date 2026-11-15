@@ -72,7 +72,6 @@ ConsumeCliAuthCode
 ConsumeProjectEnvironmentApproval
 ConsumeRecoveryCode
 CountAPIKeys
-CountActiveCronInvocations
 CountActiveOrgMembers
 CountActiveRunsByApp
 CountAppEnv

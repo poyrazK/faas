@@ -89,6 +89,13 @@ func (m *MemStore) CreateScheduledCronInvocationOccurrence(_ context.Context, cr
 				}
 				replacedPending = active
 			}
+		} else if policy.Overlap == "skip" {
+			for _, candidate := range m.invocations {
+				if candidate.CronID != nil && *candidate.CronID == cronID && candidate.Source == InvocationCron && m.timedOutCronRunMayRunLocked(candidate) {
+					status, reason, blocker = "skipped_overlap", timedOutCronRunReason, candidate.OccurrenceID
+					break
+				}
+			}
 		}
 	}
 	if invocation.State == "" {

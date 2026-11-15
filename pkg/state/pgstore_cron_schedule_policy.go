@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -155,6 +156,18 @@ func (s *PgStore) CreateScheduledCronInvocationOccurrence(ctx context.Context, c
 					replacedOccurrenceIDs = append(replacedOccurrenceIDs, row.occurrenceID)
 				}
 				replacedPending = len(replacedOccurrenceIDs) > 0
+			}
+		} else if policy.Overlap == "skip" {
+			var timedOut string
+			err := tx.QueryRow(ctx, `
+				select coalesce(inv.occurrence_id::text, '') from invocations inv
+				 where inv.cron_id = $1::uuid and inv.source = 'cron' and `+timedOutCronRunPredicate+`
+				 order by inv.completed_at desc limit 1`, cronID, api.CronTimedOutRunHold).Scan(&timedOut)
+			switch {
+			case err == nil:
+				status, reason, blocker = "skipped_overlap", timedOutCronRunReason, timedOut
+			case !errors.Is(err, pgx.ErrNoRows):
+				return Invocation{}, ScheduleOccurrence{}, false, fmt.Errorf("state: find timed-out HTTP cron run: %w", err)
 			}
 		}
 	}
