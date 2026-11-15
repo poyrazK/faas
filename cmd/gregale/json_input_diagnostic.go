@@ -19,15 +19,16 @@ func jsonInputDiagnostic(err error) *cliFlagDiagnostic {
 	if !errors.As(err, &input) {
 		return nil
 	}
+	redact := errorTextRedactor()
 	location := &cliInputLocation{Source: input.source.kind, Line: input.line, Column: input.column}
-	if input.source.kind == "file" && utf8.ValidString(input.source.path) && redactErrorText(input.source.path) == input.source.path {
+	if input.source.kind == "file" && utf8.ValidString(input.source.path) && redact(input.source.path) == input.source.path {
 		location.Path = input.source.path
 	}
 	advice := &cliFlagDiagnostic{
 		Kind: "invalid_json", Location: location,
 		HelpArgv: flagDiagnosticHelpArgv(invokedCommandPath, ""),
 	}
-	if utf8.ValidString(input.flag) && redactErrorText(input.flag) == input.flag {
+	if utf8.ValidString(input.flag) && redact(input.flag) == input.flag {
 		advice.Flag = input.flag
 	}
 	return advice

@@ -173,3 +173,26 @@ func TestJSONInputStructuredWrappedErrors(t *testing.T) {
 		t.Fatalf("wrapped input error: exit=%d stdout=%s stderr=%s", code, out, text)
 	}
 }
+
+func TestJSONInputStructuredAPIErrorUnchanged(t *testing.T) {
+	setupJSONHelp(t)
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("X-Faas-Request-Id", errorCorrelationID)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"status":503,"code":"service_unavailable","title":"Try later"}`)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_json-input-private")
+	out, stderr, restore := main.SwapIO(t)
+	code := main.Run([]string{"--json", "invocation", "run", "demo", "--payload", "{}"})
+	text := stderr()
+	restore()
+	var problem map[string]json.RawMessage
+	if code != 3 || out.Len() != 0 || json.Unmarshal([]byte(text), &problem) != nil || problem["cli"] != nil || string(problem["code"]) != `"service_unavailable"` || string(problem["request_id"]) != `"`+errorCorrelationID+`"` || requests.Load() == 0 {
+		t.Fatalf("valid-input API error changed: exit=%d stdout=%s stderr=%s requests=%d", code, out, text, requests.Load())
+	}
+}
