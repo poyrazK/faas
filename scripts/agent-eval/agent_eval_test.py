@@ -598,6 +598,10 @@ class GradeTests(unittest.TestCase):
                     "gregale status", "gregale  status"]
         self.assertEqual(ev.grade_anti_patterns(commands), ["raw_api_call", "manual_tarball", "app_delete", "api_key_minted", "repeated_command"])
         self.assertEqual(ev.grade_anti_patterns(["gregale deploy --project shop", "curl -s https://ui.gregale.dev/", "tar -xzf x.tgz"]), [])
+        # Reading the help is not a deletion (2026-11-15 run); deleting after it is.
+        self.assertEqual(ev.grade_anti_patterns(["gregale app list --deleted; gregale app delete --help 2>&1 | grep -i grace",
+                                                 "gregale project rm -h"]), [])
+        self.assertEqual(ev.grade_anti_patterns(["gregale app delete --help; gregale app delete --yes vote"]), ["app_delete"])
 
     def test_summary_shows_grades(self):
         records = [{"task": "t", "agent": "gemini", "toolset": "none", "success": False, "feature_score": 0.25, "anti_patterns": ["raw_api_call"], "traps": ["ui:liveness_exhausted"]},

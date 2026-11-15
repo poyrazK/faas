@@ -143,6 +143,8 @@ RULES = [
     # Keyed credential hashes (ADR 20261029202403): storage plumbing under
     # every credential, no capability of its own.
     (r"^credhash$", "INFRA"),
+    # ADR-20261115180000: shared-store object deletion on the control plane.
+    (r"^objectgc$", "INFRA"),
     # ADR-20261109170000: signd's record of the layers it signed.
     (r"^artifact-signatures$", "INFRA"),
     # ADR-20261109170000: signd's listener and imaged's signd target.
