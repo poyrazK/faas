@@ -1639,6 +1639,9 @@ func (r *server) KeysLeftAfterReset(p0 context.Context, p1 state.Account) []stat
 func (r *server) RemoveForeignProviderLinks(p0 context.Context, p1 string, p2 string) {
 	r.removeForeignProviderLinks(p0, p1, p2)
 }
+func (r *server) RemoveOldAddressProviderLinks(p0 context.Context, p1 state.Account, p2 string) {
+	r.removeOldAddressProviderLinks(p0, p1, p2)
+}
 func (r *server) VmmdMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.vmmdMetricsDiscovery(p0, p1)
 }
@@ -2393,10 +2396,15 @@ func (r *server) LinkOAuthByEmail(req *http.Request, acct state.Account, provide
 
 // Login failure limiter internals (bug hunt round 8: eviction when full).
 func NewLoginFailureLimiterForTest() *loginFailureLimiter { return newLoginFailureLimiter() }
-func (l *loginFailureLimiter) Record(key string) bool     { return l.record(key) }
-func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
-	return l.retryAfter(key)
+func (l *loginFailureLimiter) Record(key string) bool {
+	return l.record(key, api.LoginFailuresPerEmail)
 }
+func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
+	return l.retryAfter(key, api.LoginFailuresPerEmail)
+}
+
+// LoginNetwork exposes the failed-password budget's client network (F10-1).
+var LoginNetwork = loginNetwork
 
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues

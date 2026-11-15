@@ -537,6 +537,10 @@ canary-alert-test: ## Exercise the synthetic-canary Alertmanager payload against
 canary-heartbeat-test: ## Verify scheduled-canary heartbeat eligibility, transport failures and credential redaction
 	python3 scripts/ops/canary_heartbeat_test.py
 
+.PHONY: canary-transport-test
+canary-transport-test: ## Verify bounded canary SSH preflight and independent notification fallback
+	python3 scripts/ops/canary_transport_test.py
+
 .PHONY: post-deployment-monitoring-test
 post-deployment-monitoring-test: ## Verify deployment-monitoring transport, evidence retention and recovery ordering
 	python3 scripts/ci/post_deployment_monitoring_test.py

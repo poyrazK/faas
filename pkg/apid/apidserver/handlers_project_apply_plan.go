@@ -45,6 +45,10 @@ func (s *server) applyCachedProjectPlan(w http.ResponseWriter, r *http.Request, 
 	query := replay.URL.Query()
 	query.Set("plan_token", request.PlanToken)
 	replay.URL.RawQuery = query.Encode()
+	if replay.Header.Get(api.DeploymentAttemptHeader) != "" {
+		s.projectApplySubmission(w, replay, acct)
+		return
+	}
 	s.applyProject(w, replay, acct)
 }
 

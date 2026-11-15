@@ -12,6 +12,9 @@ import (
 )
 
 func validObsServingHealth(out api.ObsServingHealth) bool {
+	if !operatorobs.ServingProbeNotificationsValid(out) {
+		return false
+	}
 	if out.GeneratedAt.IsZero() || out.Scope != operatorobs.ServingHealthScope || out.MaxAgeSeconds != int(api.ObsHealthFreshnessMaxAge.Seconds()) || out.Probes == nil || len(out.Probes) > api.ObsServingProbePairsMax || !reflect.DeepEqual(out.Limitations, operatorobs.ServingHealthLimitations()) || !slices.Contains(operatorobs.ServingHealthReasons(), out.Reason) {
 		return false
 	}
@@ -45,7 +48,7 @@ func validObsServingHealth(out api.ObsServingHealth) bool {
 }
 
 func validServingProbe(probe api.ObsServingProbe, now time.Time) bool {
-	if !operatorobs.ServingProbeNodeValid(probe.Node) || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(probe.URLID) || !slices.Contains(operatorobs.ServingProbeStates(), probe.State) || !slices.Contains(operatorobs.ServingHealthReasons(), probe.Reason) {
+	if !operatorobs.ServingProbeNodeValid(probe.Node) || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(probe.URLID) || !slices.Contains(operatorobs.ServingProbeStates(), probe.State) || !slices.Contains(operatorobs.ServingHealthReasons(), probe.Reason) || !operatorobs.ServingProbeDiagnosticsValid(probe, now) {
 		return false
 	}
 	for _, value := range []float64{probe.ExpectedFirstByteSeconds, probe.MaxResultAgeSeconds} {

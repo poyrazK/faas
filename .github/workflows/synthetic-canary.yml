@@ -74,36 +74,8 @@ jobs:
           fetch-depth: 1
 
       - name: Set up control-plane SSH
-        run: |
-          set -euo pipefail
-          [[ -n "$CP_HOST" && -n "$CP_SSH_KEY" ]] || {
-            echo "::error::CP_HOST and CP_SSH_KEY are required to reach the control plane" >&2
-            exit 1
-          }
-          install -d -m 0700 ~/.ssh
-          printf '%s\n' "$CP_SSH_KEY" > ~/.ssh/deploy_key
-          chmod 0600 ~/.ssh/deploy_key
-          # Trust CP_HOST only when it presents a host key the operator
-          # verified in COMPUTE_KNOWN_HOSTS, the fleet file cd-compute already
-          # requires. A bare ssh-keyscan trusted whatever answered, every run.
-          [[ -n "${COMPUTE_KNOWN_HOSTS:-}" ]] || {
-            echo "::error::COMPUTE_KNOWN_HOSTS is required to verify the control-plane host key" >&2
-            exit 1
-          }
-          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
-          pinned=0
-          while read -r _ key_type key; do
-            [[ -n "${key:-}" ]] || continue
-            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
-              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> ~/.ssh/known_hosts
-              pinned=1
-            fi
-          done <<<"$scanned"
-          [[ $pinned == 1 ]] || {
-            echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
-            exit 1
-          }
-          chmod 0600 ~/.ssh/known_hosts
+        timeout-minutes: 1
+        run: bash scripts/ops/canary_ssh.sh setup
 
       - name: Resolve the live release and fleet size
         run: |
@@ -111,7 +83,7 @@ jobs:
           # The canary asks about the release that is SERVING, not about a
           # candidate. Read it off the host's current pointer rather than from
           # this checkout, which is only here to carry the script.
-          active_release="$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+          active_release="$(bash scripts/ops/canary_ssh.sh run \
             'basename "$(readlink -f /opt/faas/current)"')"
           [[ "$active_release" =~ ^[0-9a-f]{40}$ ]] || {
             echo "::error::/opt/faas/current does not resolve to a release SHA (got '${active_release}')" >&2
@@ -120,7 +92,7 @@ jobs:
           echo "ACTIVE_RELEASE=$active_release" >> "$GITHUB_ENV"
 
           status_file="$RUNNER_TEMP/fleet-status.json"
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+          bash scripts/ops/canary_ssh.sh run \
             "/usr/local/bin/gregalectl compute-nodes release-status --desired-release '${active_release}' --timeout 0 --break-glass-db -json" \
             > "$status_file"
           active_node_count="$(jq -er '.active_node_count | select(. > 0)' "$status_file")"
@@ -133,7 +105,7 @@ jobs:
           set -euo pipefail
           # Originates from the control plane for the same reason cd-platform
           # does: Cloudflare blocks GitHub-hosted egress to the public host.
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
+          bash scripts/ops/canary_ssh.sh run \
             "env RELEASE_SHA='${ACTIVE_RELEASE}' RUN_ID='${GITHUB_RUN_ID}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
             < deploy/scripts/production-release-acceptance.sh \
             2>&1 | tee "$RUNNER_TEMP/canary.log"
@@ -150,43 +122,9 @@ jobs:
 
       - name: Page on canary failure
         if: failure() && (github.event_name == 'schedule' || inputs.page_on_failure)
+        timeout-minutes: 3
         env:
           CANARY_FALLBACK_WEBHOOK_URL: ${{ secrets.CANARY_FALLBACK_WEBHOOK_URL }}
           CANARY_HEARTBEAT_OUTCOME: ${{ steps.heartbeat.outcome }}
-        run: |
-          set -euo pipefail
-          # A red GitHub badge is not a notification. Route through the
-          # Alertmanager the platform already uses so this reaches the same
-          # receivers, silences and grouping as every other page.
-          tail="$(tail -c 2000 "$RUNNER_TEMP/canary.log" 2>/dev/null || echo 'no output captured')"
-          summary="a customer could not deploy and invoke on release ${ACTIVE_RELEASE:-unknown}"
-          if [[ "$CANARY_HEARTBEAT_OUTCOME" == "failure" ]]; then
-            summary="the deployment canary passed on release ${ACTIVE_RELEASE:-unknown}, but its independent heartbeat could not be reported"
-            tail="Check CANARY_HEARTBEAT_URL and the fixed error code in the heartbeat step. No provider response or secret URL is logged."
-          fi
-          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          # ssh joins its command words with spaces and the REMOTE shell
-          # re-parses the result, so these must be quoted for that second
-          # parse or a summary with spaces arrives as several arguments and a
-          # log tail containing a quote breaks the command outright. printf %q
-          # emits one shell-safe token each. This is the same defect class the
-          # check_shell_quoting gate enforces in Go; the gate does not read
-          # YAML, so it did not catch it here.
-          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
-            "env CANARY_RUN_URL=$(printf %q "$run_url") bash -s -- $(printf %q "$summary") $(printf %q "$tail")" \
-            < scripts/ops/canary_alert.sh; then
-            echo "::error::synthetic canary failed; a severity=page alert was pushed to Alertmanager"
-            exit 0
-          fi
-          # The control plane did not take the page. The outage may be the
-          # control plane itself, which also carries Alertmanager, so notify
-          # the chat webhook directly (ADR-20261023124955 §5).
-          if [[ -z "${CANARY_FALLBACK_WEBHOOK_URL:-}" ]]; then
-            echo "::error::synthetic canary failed and the Alertmanager push failed; set CANARY_FALLBACK_WEBHOOK_URL so this reaches someone" >&2
-            exit 1
-          fi
-          jq -n --arg text "Gregale synthetic canary failed and the control plane did not accept the page: ${summary}. ${run_url}" '{text: $text}' |
-            curl --fail --silent --show-error --max-time 15 \
-              --header 'Content-Type: application/json' --data @- "$CANARY_FALLBACK_WEBHOOK_URL" >/dev/null
-          echo "::error::synthetic canary failed; Alertmanager was unreachable, so the fallback webhook was notified"
-          exit 1
+          CANARY_PROBE_OUTCOME: ${{ steps.probe.outcome }}
+        run: bash scripts/ops/canary_failure.sh

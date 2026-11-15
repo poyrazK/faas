@@ -161,9 +161,10 @@ trusted device:
 
     %s
 
-If you did not request this, do nothing — the request expires after
-24 hours and no action is taken. You should also change your
-password and contact support@gregale.dev so we can investigate.
+If you did not request this, sign in with your authenticator app or a
+recovery code, or press Cancel on the two-factor page: that cancels the
+request. Then change your password and contact support@gregale.dev so we
+can investigate.
 
 — Gregale
 `, email, atStr, confirmAfter, confirmURL)
@@ -193,9 +194,10 @@ trusted device:
 
     %s
 
-If you did not request this, do nothing — the request expires at
-%s and no action is taken. You should also change your
-password and contact support@gregale.dev so we can investigate.
+If you did not request this, sign in with your authenticator app or a
+recovery code, or press Cancel on the two-factor page: that cancels the
+request (otherwise it expires at %s). Then change your password and
+contact support@gregale.dev so we can investigate.
 
 — Gregale
 `, email, requested, ready, confirmURL, expiry)
@@ -225,4 +227,24 @@ sessions and contact support@gregale.dev.
 — Gregale
 `, safeRecipient(email), disabledAt.UTC().Format("2006-01-02 15:04:05 UTC"), label)
 	return
+}
+
+// MFADisableEmailCancelledBody tells the owner a pending email-assisted MFA
+// disable was cancelled; how says by what, e.g. "after a sign-in with your
+// authenticator app" (F14-1).
+func MFADisableEmailCancelledBody(email, how string, at time.Time) (subject, body string) {
+	email = safeRecipient(email)
+	subject = "Two-factor removal cancelled on your Gregale account"
+	body = fmt.Sprintf(`Hi,
+
+A pending request to turn off two-factor authentication on your Gregale
+account (%s) was cancelled at %s, %s.
+
+Two-factor authentication stays on. If you did not ask to turn it off,
+someone may have access to your email: change your email password and
+your Gregale password.
+
+— Gregale
+`, email, at.UTC().Format("2006-01-02 15:04 UTC"), how)
+	return subject, body
 }
