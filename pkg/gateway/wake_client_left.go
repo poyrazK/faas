@@ -18,6 +18,12 @@ func (h *Handler) clientLeftDuringWake(r *http.Request, app App) bool {
 	if r == nil || !errors.Is(r.Context().Err(), context.Canceled) {
 		return false
 	}
+	// A traffic revocation or an expired request budget also cancels the
+	// request, with a cause, and keeps its own answer. Only a plain cancel is
+	// the client going away.
+	if trafficRevocationCause(r.Context()) != nil || context.Cause(r.Context()) != context.Canceled {
+		return false
+	}
 	if h.log != nil {
 		h.log.Info("gateway: client left during wake; the wake continues", "app_id", app.ID)
 	}
