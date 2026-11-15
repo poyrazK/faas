@@ -5,6 +5,7 @@ package projectaccess
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 	"net/http"
 	"strings"
@@ -319,6 +320,16 @@ func lookupProblem(err error) *api.Problem {
 	if errors.Is(err, state.ErrNotFound) {
 		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such project resource")
 	}
+	// A lookup cut by the request deadline is a timeout, not a capacity
+	// refusal. Prod 2026-11-15: a large `deploy --project` upload used the
+	// whole 5 s budget, the project lookup then failed on the deadline, and
+	// the CLI showed "Briefly at capacity" with nothing logged.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		slog.Warn("projectaccess: project lookup cut by the request deadline", "err", err)
+		return api.NewProblem(http.StatusGatewayTimeout, api.CodeRequestBudgetExceeded, "Request timed out",
+			"the project lookup ran past the request deadline; retry the request")
+	}
+	slog.Warn("projectaccess: project lookup failed", "err", err)
 	return api.ErrCapacity("could not authorize project access")
 }
 

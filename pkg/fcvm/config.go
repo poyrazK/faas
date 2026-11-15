@@ -216,10 +216,12 @@ const guestTimerArgs = "clocksource=kvm-clock lapic=notscdeadline "
 // ... kthread starved for 334901 jiffies ... OOM is now expected behavior"
 // into the customer's log stream after every wake (production-us hunt #8).
 // The clock jump is the restore, not a stalled CPU; nmi_watchdog and the
-// hung-task detector are disabled for the same reason. Boot arguments are not
+// hung-task detector are disabled for the same reason, and so is the workqueue
+// watchdog, which printed "BUG: workqueue lockup - pool cpus=0 ... stuck for
+// Ns" after snapshot wakes (prod CLI e2e 2026-11-14). Boot arguments are not
 // part of the snapshot backing identity, so existing snapshots stay valid and
 // new captures inherit the setting.
-const guestStallWarningArgs = "rcupdate.rcu_cpu_stall_suppress=1 "
+const guestStallWarningArgs = "rcupdate.rcu_cpu_stall_suppress=1 workqueue.watchdog_thresh=0 "
 
 // guestBootCPUArgs switches off guest kernel work that the Firecracker 1.17
 // guest config builds in and Gregale does not use (ADR-983): boot-time crypto

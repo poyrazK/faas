@@ -344,6 +344,7 @@ jobs:
         run: |
           python3 scripts/ci/check_migration_expand_contract_test.py
           python3 scripts/ci/slo_gate_test.py
+          python3 scripts/migrations_land_test.py
           python3 scripts/ci/deploy_preflight_test.py
           python3 scripts/ci/unit_watch_record_test.py
           python3 scripts/ci/unit_watch_test.py

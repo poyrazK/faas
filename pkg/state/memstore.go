@@ -167,7 +167,7 @@ type MemStore struct {
 	trafficAppsSuffix           string
 	// abuseStrikes is each resource owner's abuse recycle times inside the
 	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
-	abuseStrikes map[string][]time.Time
+	abuseStrikes map[string][]AccountAbuseStrike
 	// signupFacts is each account's sign-up record (ADR-20261113160000).
 	signupFacts map[string]AccountSignupFacts
 	// heldLinks is each account's links to abuse-held accounts
@@ -856,6 +856,7 @@ type MemStore struct {
 	appWebhooks                 map[string]AppWebhook
 	appWebhookDeliveries        map[string]AppWebhookDelivery
 	invocationSends             map[string]InvocationSend
+	workflowRunStarts           map[string]string
 	appWebhookDeliverySources   map[string]string
 	entityOutboxAcceptances     map[string]string
 	appWebhookDeliveryAttempts  map[string][]AppWebhookDeliveryAttempt
@@ -16381,6 +16382,7 @@ func (m *MemStore) QueueState(ctx context.Context, appID string) (QueueStats, er
 	}
 
 	var s QueueStats
+	now := time.Now()
 	for _, inv := range m.invocations {
 		if inv.AppID != appID || inv.Source != InvocationQueue || !m.productionInvocationWorkLocked(inv) {
 			continue
@@ -16388,7 +16390,8 @@ func (m *MemStore) QueueState(ctx context.Context, appID string) (QueueStats, er
 		switch inv.State {
 		case InvocationPending:
 			s.Depth++
-			if s.OldestPendingAt.IsZero() || inv.CreatedAt.Before(s.OldestPendingAt) {
+			// Oldest ready message (ADR-20261113180000, R7-3).
+			if !inv.DueAt.After(now) && (s.OldestPendingAt.IsZero() || inv.CreatedAt.Before(s.OldestPendingAt)) {
 				s.OldestPendingAt = inv.CreatedAt
 			}
 		case InvocationDispatching:
@@ -16419,15 +16422,27 @@ func (m *MemStore) QueueStateForQueue(ctx context.Context, appID, queueName stri
 		return zero0, err
 	}
 
+	// Mirrors ReadProductionQueueStateLive (ADR-20261113180000, R7-3): the
+	// production binding that reads the name now brings its earlier backlog.
+	bindingID := ""
+	var bindingCreated time.Time
+	for _, b := range m.queueBindings {
+		if sameMemUUID(b.AppID, appID) && b.DeploymentScope == "" && b.QueueName == queueName &&
+			(bindingID == "" || b.CreatedAt.Before(bindingCreated)) {
+			bindingID, bindingCreated = b.ID, b.CreatedAt
+		}
+	}
+	now := time.Now()
 	var s QueueStats
 	for _, inv := range m.invocations {
-		if inv.AppID != appID || inv.QueueName != queueName || inv.Source != InvocationQueue || !m.productionInvocationWorkLocked(inv) {
+		mine := inv.QueueName == queueName || bindingID != "" && sameMemUUID(inv.QueueBindingID, bindingID)
+		if inv.AppID != appID || !mine || inv.Source != InvocationQueue || !m.productionInvocationWorkLocked(inv) {
 			continue
 		}
 		switch inv.State {
 		case InvocationPending:
 			s.Depth++
-			if s.OldestPendingAt.IsZero() || inv.CreatedAt.Before(s.OldestPendingAt) {
+			if !inv.DueAt.After(now) && (s.OldestPendingAt.IsZero() || inv.CreatedAt.Before(s.OldestPendingAt)) {
 				s.OldestPendingAt = inv.CreatedAt
 			}
 		case InvocationDispatching:

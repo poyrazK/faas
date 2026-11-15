@@ -31,6 +31,8 @@ func (r packRules) selection(rel string, isDir bool) packSelection {
 			result.reason = "Go module vendoring"
 		case defaultExcludeDirs[base]:
 			result = packSelection{excluded: true, reason: "default build-artifact exclusion"}
+		case r.pythonVenv != nil && r.pythonVenv(rel):
+			result = packSelection{excluded: true, reason: "Python virtual environment"}
 		default:
 			result.reason = "source directory"
 		}

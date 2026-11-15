@@ -39,6 +39,9 @@ type testHTTPRequest struct {
 	JSONNull bool              `yaml:"-" json:"json_null,omitempty"` // Preserve explicit null in replay/workload identities.
 	Expect   testHTTPExpect    `yaml:"expect"`
 	Capture  map[string]string `yaml:"capture"`
+	// GRPC makes this a gRPC call instead of an HTTP request
+	// (ADR-20261115110124); Method, Path, Headers and JSON are then unused.
+	GRPC *testGRPCCall `yaml:"grpc,omitempty" json:"grpc,omitempty"`
 }
 
 func (r testHTTPRequest) hasJSONBody() bool {
@@ -49,6 +52,13 @@ type testHTTPExpect struct {
 	Status      int            `yaml:"status"`
 	ContentType string         `yaml:"content_type,omitempty"`
 	JSON        map[string]any `yaml:"json,omitempty"`
+	// gRPC expectations (ADR-20261115110124). Code is a status name or
+	// number (default OK); Message matches the status message exactly.
+	Code         any               `yaml:"code,omitempty" json:"code,omitempty"`
+	Message      *string           `yaml:"message,omitempty" json:"message,omitempty"`
+	MessageCount *int              `yaml:"message_count,omitempty" json:"message_count,omitempty"`
+	Headers      map[string]string `yaml:"headers,omitempty" json:"headers,omitempty"`
+	Trailers     map[string]string `yaml:"trailers,omitempty" json:"trailers,omitempty"`
 }
 
 type testHTTPRequestEvidence struct {
@@ -179,6 +189,41 @@ func validateTestHTTPRequestsWithCaptures(scenario testScenario, dataFields []st
 		if step.As != "" && !consumers[step.As] {
 			return fmt.Errorf("HTTP step %q names undeclared consumer %q", step.Name, step.As)
 		}
+		if step.GRPC != nil {
+			if err := validateTestGRPCStep(scenario, step, known); err != nil {
+				return fmt.Errorf("gRPC step %q: %w", step.Name, err)
+			}
+		} else if err := validateTestHTTPOnlyStep(scenario, step, known); err != nil {
+			return err
+		}
+		for capture, pointer := range step.Capture {
+			if !testTriggerKeyPattern.MatchString(capture) || captureNames[capture] {
+				return fmt.Errorf("HTTP step %q has invalid or duplicate capture %q", step.Name, capture)
+			}
+			if _, err := testJSONPointerParts(pointer); err != nil {
+				return fmt.Errorf("HTTP step %q capture %q: %w", step.Name, capture, err)
+			}
+			captureNames[capture] = true
+			known["steps."+step.Name+"."+capture] = "example-value"
+			if beforeWait {
+				beforeWaitCaptures[capture] = true
+			}
+		}
+	}
+	if len(scenario.Trigger) == 0 {
+		for _, condition := range scenario.WaitFor.Invocations {
+			if !beforeWaitCaptures[condition.TriggerKey] {
+				return fmt.Errorf("invocation trigger_key %q must be captured by a request", condition.TriggerKey)
+			}
+		}
+	}
+	return nil
+}
+
+// validateTestHTTPOnlyStep checks the fields only an HTTP step has: method,
+// path, headers, JSON body and the HTTP expectation.
+func validateTestHTTPOnlyStep(scenario testScenario, step testHTTPRequest, known map[string]string) error {
+	{
 		if step.Method != http.MethodGet && step.Method != http.MethodHead && step.Method != http.MethodPost && step.Method != http.MethodPut && step.Method != http.MethodPatch && step.Method != http.MethodDelete {
 			return fmt.Errorf("HTTP step %q has unsupported method %q", step.Name, step.Method)
 		}
@@ -222,26 +267,6 @@ func validateTestHTTPRequestsWithCaptures(scenario testScenario, dataFields []st
 		}
 		if err := validateTestHTTPJSON(step.JSON, known); err != nil {
 			return fmt.Errorf("HTTP step %q JSON: %w", step.Name, err)
-		}
-		for capture, pointer := range step.Capture {
-			if !testTriggerKeyPattern.MatchString(capture) || captureNames[capture] {
-				return fmt.Errorf("HTTP step %q has invalid or duplicate capture %q", step.Name, capture)
-			}
-			if _, err := testJSONPointerParts(pointer); err != nil {
-				return fmt.Errorf("HTTP step %q capture %q: %w", step.Name, capture, err)
-			}
-			captureNames[capture] = true
-			known["steps."+step.Name+"."+capture] = "example-value"
-			if beforeWait {
-				beforeWaitCaptures[capture] = true
-			}
-		}
-	}
-	if len(scenario.Trigger) == 0 {
-		for _, condition := range scenario.WaitFor.Invocations {
-			if !beforeWaitCaptures[condition.TriggerKey] {
-				return fmt.Errorf("invocation trigger_key %q must be captured by a request", condition.TriggerKey)
-			}
 		}
 	}
 	return nil
@@ -456,7 +481,13 @@ func runTestHTTPRequestsWithData(ctx context.Context, baseURL, runID string, con
 	for _, step := range steps {
 		result := testHTTPRequestEvidence{Name: step.Name, Method: step.Method, Path: strings.SplitN(step.Path, "?", 2)[0], PathTemplateSHA256: testHTTPPathTemplateDigest(step.Path)}
 		started := time.Now()
-		err := runOneTestHTTPRequest(ctx, client, baseURL, step, values, consumerKeys, captures, data, &result)
+		var err error
+		if step.GRPC != nil {
+			result.Method, result.Path, result.PathTemplateSHA256 = "GRPC", step.GRPC.Method, testHTTPPathTemplateDigest(step.GRPC.Method)
+			err = runOneTestGRPCRequest(ctx, baseURL, step, values, consumerKeys, captures, data, &result)
+		} else {
+			err = runOneTestHTTPRequest(ctx, client, baseURL, step, values, consumerKeys, captures, data, &result)
+		}
 		result.DurationMS = time.Since(started).Milliseconds()
 		result.Passed = err == nil
 		if err != nil {
@@ -621,6 +652,13 @@ func runOneTestHTTPRequestWithBody(ctx context.Context, client *http.Client, bas
 	if decoder.Decode(new(any)) != io.EOF {
 		return errors.New("response body must contain one JSON value")
 	}
+	return checkTestJSONDocument(document, step, values, captures, data)
+}
+
+// checkTestJSONDocument applies a step's JSON pointer assertions and captures
+// to a decoded response document (numbers as json.Number). HTTP and gRPC
+// steps share it.
+func checkTestJSONDocument(document any, step testHTTPRequest, values, captures map[string]string, data map[string]any) error {
 	for pointer, expected := range step.Expect.JSON {
 		actual, ok := testJSONPointer(document, pointer)
 		if !ok {

@@ -640,6 +640,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				responseHeaders.Add(h.GetName(), h.GetValue())
 			}
 			stripHopByHopInPlace(responseHeaders)
+			trailersOnly := takeGRPCTrailersOnlyStatus(responseHeaders)
 			for name, values := range responseHeaders {
 				for _, value := range values {
 					forwardedResponseHeader(r.Context(), w.Header(), name, value)
@@ -658,6 +659,11 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			}
 			w.WriteHeader(int(init.GetStatus()))
 			wroteHeader = true
+			for name, values := range trailersOnly {
+				for _, value := range values {
+					forwardedResponseTrailer(r.Context(), w.Header(), name, value)
+				}
+			}
 			// Only an explicit long-lived response may detach its handshake
 			// budget. Ordinary HTTP uses the same RPC framing but stays bounded.
 			if init.GetStatus() >= http.StatusOK && init.GetStatus() < http.StatusBadRequest {
@@ -774,6 +780,30 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// distinguish a clean bidi close from a client-disconnect
 	// (which surfaces as a Send error).
 	<-bodyErrCh
+}
+
+// grpcTrailersOnlyFields are the status fields a gRPC server sends in a
+// Trailers-Only response (one HEADERS frame with END_STREAM).
+var grpcTrailersOnlyFields = []string{"Grpc-Status", "Grpc-Message", "Grpc-Status-Details-Bin"}
+
+// takeGRPCTrailersOnlyStatus removes and returns the status fields of a gRPC
+// Trailers-Only answer. The guest's H2 frame carries them with the headers,
+// so the bridge reports them as headers; sent on as a header block followed
+// by a bare end of stream, a gRPC client reports "server closed the stream
+// without sending trailers" instead of the status. Moving them to trailers
+// keeps the status where every gRPC client reads it.
+func takeGRPCTrailersOnlyStatus(header http.Header) http.Header {
+	if !strings.HasPrefix(strings.ToLower(header.Get("Content-Type")), "application/grpc") || header.Get("Grpc-Status") == "" {
+		return nil
+	}
+	moved := make(http.Header, len(grpcTrailersOnlyFields))
+	for _, name := range grpcTrailersOnlyFields {
+		if values := header.Values(name); len(values) > 0 {
+			moved[name] = append([]string(nil), values...)
+			header.Del(name)
+		}
+	}
+	return moved
 }
 
 // H2 can reveal trailer names only after body EOF. Apply the normal guest

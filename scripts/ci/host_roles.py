@@ -56,7 +56,7 @@ GROUPS = ("control_plane", "compute_nodes")
 # The role selection condition a play's role entries carry: lets a
 # converge run apply only the roles whose content changed. It is not role
 # content, so it is dropped before hashing.
-SELECTION = re.compile(r"faas_cp_converge_roles")
+SELECTION = re.compile(r"faas_(?:cp|join)_converge_roles")
 COMMON_FILES = (ANSIBLE + "/ansible.cfg", ANSIBLE + "/requirements.yml")
 # Role subdirectories whose YAML Ansible executes or loads; files/ and
 # templates/ are data a task names, scanned for nothing.

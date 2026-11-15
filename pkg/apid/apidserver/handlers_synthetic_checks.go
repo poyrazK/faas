@@ -163,5 +163,28 @@ func (s *server) syntheticCheckResponse(app state.App, row state.SyntheticCheck)
 		URL:            appURLForDomain(app.Slug, s.domain) + row.Path,
 		ExpectedStatus: row.ExpectedStatus, TimeoutMS: row.TimeoutMS, IntervalSeconds: row.IntervalSeconds,
 		Enabled: row.Enabled, CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339),
+		Warning: syntheticCheckAuthWarning(app, row.ExpectedStatus),
 	}
+}
+
+// syntheticCheckAuthWarning names the platform auth that refuses a probe: the
+// runner sends no credential (ADR-748), so on such an app every run fails
+// with 401 or 403 unless the check expects exactly that.
+func syntheticCheckAuthWarning(app state.App, expected int) string {
+	if expected == http.StatusUnauthorized || expected == http.StatusForbidden {
+		return ""
+	}
+	var gate string
+	switch {
+	case app.PublicAuthMode == api.AppPublicAuthModeBearer || app.RequireAuthn:
+		gate = "bearer auth"
+	case app.PublicAuthMode == api.AppPublicAuthModeBasic:
+		gate = "basic auth"
+	case app.ConsumerAuthMode == state.ConsumerAuthModeRequired:
+		gate = "required API consumer keys"
+	default:
+		return ""
+	}
+	return "This app uses " + gate + " and synthetic probes send no credential, so every run will fail with 401 or 403. " +
+		"Point the check at a public path the app serves without auth, or set --expect-status 401 to check reachability only."
 }
