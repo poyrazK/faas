@@ -1058,6 +1058,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_CACHE_MAX_BYTES` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_REFRESH` | shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_SERVE_STALE` | shared | `envfile` |  |  | `` |  |
+| `FAAS_STORAGE_DRIVE_DELTA` | shared | `envfile` |  |  | `` | node caches upload snapshot drives as deltas against their app layer; default off; enable only after every compute node runs a vmmd that decodes them (ADR-20261115120000) |
 | `FAAS_STORAGE_FALLBACK_BACKEND` | imaged, vmmd, shared | `envfile` |  |  | `` | optional `oci` read/delete fallback during GCS migration; writes remain GCS-only |
 | `FAAS_STORAGE_LOCAL_PREFIXES` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |

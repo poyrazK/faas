@@ -1139,6 +1139,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_STORAGE_CACHE_MAX_BYTES", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_STORAGE_CACHE_REFRESH", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_STORAGE_CACHE_SERVE_STALE", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
+	{Name: "FAAS_STORAGE_DRIVE_DELTA", Owners: []string{"shared"}, Source: EnvSourceEnvFile, Note: "node caches upload snapshot drives as deltas against their app layer; default off; enable only after every compute node runs a vmmd that decodes them (ADR-20261115120000)"},
 	{Name: "FAAS_STORAGE_FALLBACK_BACKEND", Owners: []string{"imaged", "vmmd", "shared"}, Source: EnvSourceEnvFile, Note: "optional `oci` read/delete fallback during GCS migration; writes remain GCS-only"},
 	{Name: "FAAS_STORAGE_LOCAL_PREFIXES", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_STORAGE_ROLLUP_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
