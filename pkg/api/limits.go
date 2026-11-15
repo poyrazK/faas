@@ -3674,6 +3674,11 @@ const (
 	// inside DevSourceCacheTTL, so the patch a cold boot replays never
 	// expires before the build that replaces it.
 	DevBuildCoalesceWindow = 3 * time.Minute
+	// DevEditToLiveTarget is the cached-edit target for `gregale dev`: the
+	// time from a saved edit until it serves. The CLI reports it and apid
+	// derives within_slo from the reported edit-to-live time against it, so
+	// the fleet SLO does not depend on the client's own verdict.
+	DevEditToLiveTarget = 15 * time.Second
 	// DevSourceCacheMaxBytes is the aggregate node-local cache budget. Oldest
 	// source bases are evicted first; eviction is always recoverable by resend.
 	DevSourceCacheMaxBytes int64 = 4 << 30

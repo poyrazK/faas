@@ -71,8 +71,9 @@ func TestEnforceBudgetDoesNotEvictForSharedBlocks(t *testing.T) {
 		// physical footprint is two.
 		{"shared blocks fit the budget", 3*block - 1, nil},
 		// Evicting the layer frees nothing while the drive still holds its
-		// blocks, so eviction continues to the drive.
-		{"over budget even counted once", 2*block - 1, []string{"apps/layer.ext4", "snap/dep/captures/c/v2/drive"}},
+		// blocks, so eviction continues to the drive, and a capture goes
+		// whole: its memory file without the drive could not be restored.
+		{"over budget even counted once", 2*block - 1, []string{"apps/layer.ext4", "snap/dep/captures/c/v2/drive", "snap/dep/captures/c/v2/mem"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -237,7 +237,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DEV_BRIDGE_RELAY_URL` | apid | `dropin` |  | http://127.0.0.1:9098 | `` | API-to-relay loopback hop |
 | `FAAS_DEV_BUILD_COALESCE_SECONDS` | apid | `default` |  | 180 | `` | ADR-20261021221906 window a live-patched developer sync holds its build back; 0 turns coalescing off; tests shorten it |
 | `FAAS_DEV_DEBUG` | shared | `guest` |  |  | `` | ADR-741 developer debugger switch; set by `gregale dev --debug` as app env on the developer environment only and read by guest-init, which starts the Node inspector only when FAAS_DEVELOPER_ENVIRONMENT=1 |
-| `FAAS_DEV_PATCH_DELIVERY` | apid, vmmd | `dropin` |  | 0 | `` | ADR-740 developer live source patches; 99-faas-dev-patch.conf drop-ins from control_plane_service and vmmd_service (faas_dev_patch_delivery_enabled); both daemons must agree |
+| `FAAS_DEV_PATCH_DELIVERY` | apid, vmmd | `dropin` |  | 0 | `` | ADR-740 developer live source patches; 99-faas-dev-patch.conf drop-ins from control_plane_service and vmmd_service (faas_dev_patch_delivery_enabled); both daemons must agree; the Ansible default turns it on |
 | `FAAS_DEV_TOKEN` | apid | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_DEV_WATCH` | shared | `guest` |  |  | `` | ADR-1170 watch-mode developer image marker; set in the image by the watch-mode build and read by guest-init, which then applies live patches without restarting the development server |
 | `FAAS_DNS_API_URL` | gatewayd-public | `default` |  |  | `` |  |
@@ -423,6 +423,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAYD_OBJECT_RELAY_UPSTREAM` | gatewayd-internal | `default` |  |  | `` | loopback s3-gatewayd address the contained-branch object relay forwards to; empty disables the relay (ADR-20261031193635 slice 6c) |
 | `FAAS_GATEWAYD_PUBLIC_ROLE` | gatewayd-public, shared | `dropin` |  |  | `` |  |
 | `FAAS_GATEWAYD_ROLE` | gatewayd-internal, shared | `dropin` |  |  | `` |  |
+| `FAAS_GATEWAY_ALLOW_PLAIN_HTTP` | gatewayd-public | `default` |  | 0 | `` | 1 serves app requests a trusted ingress received over plain http (X-Forwarded-Proto: http) instead of 308-redirecting them to https; default off |
 | `FAAS_GATEWAY_BASIC_AUTH` | gatewayd-internal | `dropin` |  | sealed | `` | ADR-20261110210000 slice 3h: sealed opens app basic-auth credentials with the edge identity; verifier checks apid's argon2id verifier (app_basic_auth_verifiers, keyed by the sealed blob's SHA-256) and opens only a credential without one; verifier-only never opens it and refuses a credential without a verifier. gatewayd_internal_service renders it from faas_gateway_basic_auth |
 | `FAAS_GATEWAY_CIRCUIT_BREAKER` | gatewayd-internal | `dropin` |  |  | `` | ADR-201 §2; on (the drop-in default since H4-68) shares one instance-health breaker between the public path and the service proxy, tuned per app by kind=circuit_breaker rules; off installs the legacy fixed-TTL quarantine and leaves the public path unbroken |
 | `FAAS_GATEWAY_CONTROL_LISTEN` | gatewayd-internal | `default` |  |  | `` |  |
@@ -1068,7 +1069,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STREAM_BRIDGE_GOGC` | vmmd | `default` |  |  | `` | optional integer: GOGC for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gogc in vmmd.toml) |
 | `FAAS_STREAM_BRIDGE_GOMAXPROCS` | vmmd | `default` |  |  | `` | optional integer: GOMAXPROCS for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gomaxprocs in vmmd.toml) |
 | `FAAS_STREAM_BRIDGE_PERSISTENT` | shared | `default` |  |  | `` |  |
-| `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
+| `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | v1 is ignored since bug hunt B23; roll back by installing the previous bridge binary, see docs/ops/h2c-rollback.md |
 | `FAAS_STRIPE_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_SUPPORT_WEBHOOK_SECRET` | apid | `secrets-env` |  |  | `` | optional support webhook signing secret of at least 32 bytes delivered by /etc/faas/sealed.env; configure together with FAAS_SUPPORT_WEBHOOK_URL; unset keeps delivery disabled |
 | `FAAS_SUPPORT_WEBHOOK_URL` | apid | `default` |  |  | `` | optional HTTPS support webhook destination; configure together with FAAS_SUPPORT_WEBHOOK_SECRET; unset keeps delivery disabled |

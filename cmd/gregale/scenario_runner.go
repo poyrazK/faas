@@ -400,7 +400,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	validateOnly := fs.Bool("validate", false, "validate scenario sources without platform access")
 	preflightOnly := fs.Bool("preflight", false, "check account capacity before provisioning")
 	engine := fs.String("engine", "real-vm", "real-vm, local, or simulated")
-	baseURL := fs.String("base-url", "", "HTTP loopback origin (optional with local.command)")
+	baseURL := fs.String("base-url", "", "loopback origin or https://<app>.gregale.dev (optional with local.command)")
 	dataPath := fs.String("data", "", "JSON or CSV case data for the local engine")
 	load := fs.Bool("load", false, "run native HTTP journeys concurrently with the local engine")
 	vus := fs.Int("vus", 0, "concurrent users or arrival-rate concurrency cap (1..50, default 1)")

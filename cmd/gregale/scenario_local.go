@@ -13,12 +13,21 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// localTestRemoteDomain is the hosted platform's app domain. Besides a
+// loopback origin, --base-url accepts one of its apps' default HTTPS hosts,
+// so a smoke or load scenario can run against a live deployment without a
+// localhost reverse proxy. Other hosts stay refused: the local engine must
+// not become a load generator pointed at somebody else's site.
+const localTestRemoteDomain = "gregale.dev"
 
 func validateLocalTestURL(raw string) (string, error) {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(raw, "#") || (parsed.Path != "" && parsed.Path != "/") {
-		return "", errors.New("--base-url must be an HTTP loopback origin, such as http://localhost:3000, without a path, credentials, query, or fragment")
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(raw, "#") || (parsed.Path != "" && parsed.Path != "/") {
+		return "", errors.New("--base-url must be an origin, such as http://localhost:3000 or https://my-app.gregale.dev, without a path, credentials, query, or fragment")
 	}
 	host := parsed.Hostname()
 	if port := parsed.Port(); port != "" {
@@ -27,13 +36,28 @@ func validateLocalTestURL(raw string) (string, error) {
 			return "", errors.New("--base-url port must be between 1 and 65535")
 		}
 	}
+	if isGregaleAppHost(host) {
+		if parsed.Scheme != "https" || parsed.Port() != "" {
+			return "", errors.New("a Gregale app --base-url must be https://<app>." + localTestRemoteDomain + " without a port")
+		}
+		return strings.TrimSuffix(parsed.String(), "/"), nil
+	}
+	if parsed.Scheme != "http" {
+		return "", errors.New("--engine local accepts http:// loopback origins or https://<app>." + localTestRemoteDomain)
+	}
 	if !strings.EqualFold(host, "localhost") {
 		address := net.ParseIP(host)
 		if address == nil || !address.IsLoopback() {
-			return "", errors.New("--engine local accepts only localhost or a loopback IP address")
+			return "", errors.New("--engine local accepts only localhost, a loopback IP address, or https://<app>." + localTestRemoteDomain)
 		}
 	}
 	return strings.TrimSuffix(parsed.String(), "/"), nil
+}
+
+// isGregaleAppHost reports whether host is exactly <slug>.gregale.dev.
+func isGregaleAppHost(host string) bool {
+	label, ok := strings.CutSuffix(strings.ToLower(host), "."+localTestRemoteDomain)
+	return ok && label != "" && !strings.Contains(label, ".") && api.ValidAppSlug(label)
 }
 
 func validateLocalTestScenario(scenario testScenario) error {

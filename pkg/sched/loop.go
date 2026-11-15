@@ -1000,6 +1000,8 @@ func (l *Loop) Run(ctx context.Context) error {
 
 	reaperT := time.NewTicker(10 * time.Second)
 	defer reaperT.Stop()
+	reservationAuditT := time.NewTicker(reservationAuditInterval)
+	defer reservationAuditT.Stop()
 	cronTicks := minuteTicks(ctx, time.Now)
 	// Fire-now safety ticker (PR-D / issue #791). 60s cadence
 	// mirrors pkg/sched/fire_now.go::fireNowSafetyTick: when a
@@ -1379,6 +1381,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-reaperT.C:
 			l.dispatchReaper(ctx)
+		case <-reservationAuditT.C:
+			l.submitWork(workReservationAudit, "tick", func() { l.engine.ReleaseStaleReservations(ctx) })
 		case <-cronTicks:
 			l.submitWork(workCronSweep, "sweep", func() { l.runCronTick(ctx) })
 		case <-l.cronResume:
@@ -3257,7 +3261,13 @@ func (l *Loop) parkIdleSupersededInstances(ctx context.Context, deploymentID str
 		return 0
 	}
 	app, err := e.store.AppByID(ctx, dep.AppID)
-	if err != nil || e.ledger.Concurrency(app.ID) >= max(app.MaxConcurrency, 1)+api.RolloutConcurrencyGrant {
+	// Only the app's owner scheduler parks its instances, as
+	// drainDeploymentInstances requires. Every schedd receives
+	// deployment_changed; a non-owner that parked the instance first left the
+	// owner's park a no-op, so the owner's reservation was never released and
+	// later explicit admissions were refused at the cap (prod test
+	// 2026-11-15: immediate-rollout verification 429s after canaries).
+	if err != nil || !e.ownsApp(app) || e.ledger.Concurrency(app.ID) >= max(app.MaxConcurrency, 1)+api.RolloutConcurrencyGrant {
 		return 0
 	}
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)

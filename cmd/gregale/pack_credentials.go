@@ -76,6 +76,56 @@ func packedCredentialFiles(srcDir string, dockerfile bool, extraExcludes ...stri
 	return names
 }
 
+// localEnvFileName reports whether relSlash is a local .env file (.env or
+// .env.*), not a committed template without values.
+func localEnvFileName(relSlash string) bool {
+	base := path.Base(relSlash)
+	return (base == ".env" || strings.HasPrefix(base, ".env.")) && !envTemplateFiles[base]
+}
+
+// devLocalEnvExcludes lists, as absolute paths, the local .env files the
+// packer would upload from srcDir. `gregale dev` keeps them out of the
+// developer upload (owner decision 2026-11-15) unless .gregaleignore (or
+// .dockerignore for a Dockerfile build) re-includes one with a negated rule
+// such as `!.env`. `gregale deploy` keeps uploading them and only warns.
+func devLocalEnvExcludes(srcDir string, dockerfile bool, extraExcludes ...string) []string {
+	if resolved, err := filepath.EvalSymlinks(srcDir); err == nil {
+		srcDir = resolved
+	}
+	rules := loadPackRules(srcDir, dockerfile)
+	var entries []packEntry
+	if err := collectPackEntries(srcDir, srcDir, "", rules, packExtraExcludeSet(srcDir, extraExcludes), &entries, 0); err != nil {
+		return nil
+	}
+	var excluded []string
+	for _, entry := range entries {
+		if entry.info.IsDir() || !localEnvFileName(entry.rel) {
+			continue
+		}
+		if rules.selection(entry.rel, false).reason == "negated ignore rule" {
+			continue // explicitly re-included
+		}
+		excluded = append(excluded, filepath.Join(srcDir, filepath.FromSlash(entry.rel)))
+	}
+	sort.Strings(excluded)
+	return excluded
+}
+
+// devLocalEnvNote tells the developer which local env files stayed out of
+// the upload and how to send their values instead.
+func devLocalEnvNote(srcDir string, files []string) string {
+	names := make([]string, 0, len(files))
+	for _, file := range files {
+		if rel, err := filepath.Rel(srcDir, file); err == nil {
+			names = append(names, filepath.ToSlash(rel))
+		}
+	}
+	if len(names) > maxCredentialWarningNames {
+		names = append(names[:maxCredentialWarningNames], fmt.Sprintf("and %d more", len(files)-maxCredentialWarningNames))
+	}
+	return fmt.Sprintf("not uploading local env files (%s); pass --env-file to sync their values as developer secrets, or add a negated rule such as !.env to .gregaleignore to upload one", strings.Join(names, ", "))
+}
+
 // maxCredentialWarningNames bounds the file list in one warning line.
 const maxCredentialWarningNames = 10
 
