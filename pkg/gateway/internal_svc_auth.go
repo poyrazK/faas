@@ -240,6 +240,19 @@ func (h *Handler) applyIngressInternalSvc(w http.ResponseWriter, r *http.Request
 			"present a valid Gregale-internal JWT (aud='gregale.internal')"))
 		return true
 	}
+	if internalSvcTokenForOtherApp(tok, app.ID) {
+		h.emitAuthnAudit(r, app, nil, "instances.public_auth_internal_invalid", map[string]any{
+			"app_id":    app.ID,
+			"from_host": r.Host,
+			"reason":    "app_mismatch",
+		})
+		if h.metrics != nil {
+			h.metrics.ObserveInternalAuthMatch("blocked")
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
+			"internal token is for another app", "an internal-service token opens only the app it was minted for"))
+		return true
+	}
 	if h.metrics != nil {
 		h.metrics.ObserveInternalAuthMatch("matched")
 	}
