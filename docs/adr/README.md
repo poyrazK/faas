@@ -2390,3 +2390,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261115132027: One-time owner-approved Task web restoration](20261115132027-one-time-owner-approved-task-web-restore.md) — accepted; local Task compatibility lock, separate runtime snapshots, atomic traffic/approval consumption and retained results prevent duplicate restoration.
 
 - [ADR-20261115145619: Owner-approved candidate Task quarantine](20261115145619-owner-approved-candidate-task-quarantine.md) — separate expiring authority, one admitted fence attempt and read-only reconciliation.
+
+- [ADR-20261115160000: Owner-approved Task worker retirement](20261115160000-owner-approved-task-worker-retirement.md) — separate expiring approval, atomic conditional parking and read-only shutdown reconciliation.

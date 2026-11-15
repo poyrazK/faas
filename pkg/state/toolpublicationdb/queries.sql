@@ -216,3 +216,9 @@ SELECT id FROM apps WHERE account_id=$1 AND id=$2 FOR UPDATE NOWAIT;
 SELECT (sqlc.arg(expires_at)::timestamptz>clock_timestamp()
 AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=sqlc.arg(owner_key_id)::uuid AND k.account_id=sqlc.arg(account_id) AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()))
 AND EXISTS(SELECT 1 FROM api_keys k WHERE k.id=sqlc.arg(requester_key_id)::uuid AND k.account_id=sqlc.arg(account_id) AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())))::boolean AS fresh;
+
+-- name: ReadTaskRetirementApp :one
+SELECT status,manifest,COALESCE(workload_class,'')::text AS workload_class,COALESCE(park_transition_id::text,'')::text AS park_transition_id FROM apps WHERE account_id=$1 AND id=$2 FOR SHARE;
+
+-- name: ReadTaskRetirementLatestDeployment :one
+SELECT id::text FROM deployments WHERE app_id=$1 ORDER BY created_at DESC LIMIT 1;

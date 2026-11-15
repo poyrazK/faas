@@ -130,6 +130,9 @@ func (s *PgStore) ChangeTaskToolReleaseIntent(ctx context.Context, account, id, 
 	if err := json.Unmarshal(body, &record); err != nil {
 		return record, err
 	}
+	if tasktoolrelease.IsRetirementChange(action, in) {
+		return s.changeTaskRetirementTx(ctx, tx, account, record, in)
+	}
 	if tasktoolrelease.IsQuarantineChange(action, in) {
 		return s.changeTaskQuarantineTx(ctx, tx, account, record, in)
 	}

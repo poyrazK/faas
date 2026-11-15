@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tasktoolrelease"
+	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
 type taskRestoreFixture struct {
@@ -32,7 +33,7 @@ type taskRestoreFixture struct {
 	worker, previous, baseline state.Instance
 }
 
-func newTaskRestoreFixture(t *testing.T, s state.Store) *taskRestoreFixture {
+func newTaskRestoreFixture(t *testing.T, s state.Store, customize ...func(string, *state.App)) *taskRestoreFixture {
 	t.Helper()
 	ctx := t.Context()
 	f := &taskRestoreFixture{store: s, apps: map[string]state.App{}}
@@ -70,7 +71,11 @@ func newTaskRestoreFixture(t *testing.T, s state.Store) *taskRestoreFixture {
 	}
 	base := map[string]string{}
 	for _, role := range []string{"web", "worker", "observer", "previous_worker"} {
-		app, err := s.CreateApp(ctx, state.App{AccountID: f.account.ID, Slug: strings.ReplaceAll(role, "_", "-") + "-" + suffix, Status: state.AppActive, Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 5, IdleTimeoutS: 30})
+		input := state.App{AccountID: f.account.ID, Slug: strings.ReplaceAll(role, "_", "-") + "-" + suffix, Status: state.AppActive, Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 5, IdleTimeoutS: 30}
+		for _, custom := range customize {
+			custom(role, &input)
+		}
+		app, err := s.CreateApp(ctx, input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -86,8 +91,8 @@ func newTaskRestoreFixture(t *testing.T, s state.Store) *taskRestoreFixture {
 	}
 	in.ObserverMetricApp = f.apps["observer"].Slug
 	j := s.(state.TaskToolReleaseIntentStore)
-	r, err := j.PrepareTaskToolReleaseIntent(ctx, f.account.ID, f.caller.ID, strings.Repeat(suffix[:1], 64), in)
-	// Use a guaranteed hexadecimal identity regardless of the UUID's first digit.
+	r, err := j.PrepareTaskToolReleaseIntent(ctx, f.account.ID, f.caller.ID, toolpublication.Digest([]byte("restore-fixture:"+suffix)), in)
+	// Hash the identity so it cannot collide with a repeated private proof sentinel.
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,10 +5,12 @@
 import type { TaskToolQuarantine } from './TaskToolQuarantine.js';
 import type { TaskToolRecoveryQualification } from './TaskToolRecoveryQualification.js';
 import type { TaskToolRecoveryResult } from './TaskToolRecoveryResult.js';
+import type { TaskToolRetirement } from './TaskToolRetirement.js';
 /**
  * Permanent executor fence and separate owner recovery authority. Settlement requires an exit acknowledgement and the native mutation barrier. Restore and quarantine have separate authority and retained results.
  */
 export type TaskToolRecoveryHandover = {
+  retirement?: TaskToolRetirement;
   quarantine?: TaskToolQuarantine;
   result?: TaskToolRecoveryResult;
   id: string;

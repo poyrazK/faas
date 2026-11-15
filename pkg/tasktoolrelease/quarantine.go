@@ -118,8 +118,11 @@ func validQuarantineInstances(q api.TaskToolRecoveryQualification, snapshot map[
 }
 
 func validQuarantineQualification(r api.TaskToolReleaseIntentRecord, q api.TaskToolRecoveryQualification) bool {
+	return validCleanupQualification(r, q, "quarantine", r.Execution.Recovery.Result.CommittedAt)
+}
+func validCleanupQualification(r api.TaskToolReleaseIntentRecord, q api.TaskToolRecoveryQualification, action string, since time.Time) bool {
 	e, h, receipt := r.Execution, r.Execution.Recovery, r.Execution.Receipt
-	if q.Action != "quarantine" || q.OperationID != e.OperationID || q.HandoverID != h.ID || q.Revision != receipt.Revision || q.TargetDeploymentID != receipt.WorkerDeploymentID || q.TargetDeploymentID == "" || q.ExpectedServingDeploymentID != receipt.ServingDeploymentID || q.BindingsSHA256 != e.BindingsSHA256 || !toolpublication.ValidID(q.EvidenceSHA256) || q.ObservedAt.Before(h.Result.CommittedAt) || !q.ExpiresAt.Equal(q.ObservedAt.Add(api.TaskToolRecoveryApprovalTTL)) || len(q.NativeApps) != len(r.Intent.Apps) || len(receipt.WorkerIDs) == 0 {
+	if q.Action != action || q.OperationID != e.OperationID || q.HandoverID != h.ID || q.Revision != receipt.Revision || q.TargetDeploymentID != receipt.WorkerDeploymentID || q.TargetDeploymentID == "" || q.ExpectedServingDeploymentID != receipt.ServingDeploymentID || q.BindingsSHA256 != e.BindingsSHA256 || !toolpublication.ValidID(q.EvidenceSHA256) || q.ObservedAt.Before(since) || !q.ExpiresAt.Equal(q.ObservedAt.Add(api.TaskToolRecoveryApprovalTTL)) || len(q.NativeApps) != len(r.Intent.Apps) || len(receipt.WorkerIDs) == 0 {
 		return false
 	}
 	seen := map[string]bool{}
