@@ -74,15 +74,22 @@ The workflow's `gate` job merges each target's shard reports
 (`go run ./cmd/mutate -merge 'reports/mutation-ledger-*/*.json'`) and fails
 when efficacy falls below the target's floor:
 
-| Target | First full run (2026-11-15) | Floor |
-| --- | --- | --- |
-| billing | 76.2% (924 killed, 288 lived, 174 not covered) | 76% |
-| ledger | 70.4% (247 killed, 104 lived, 128 not covered) | 70% |
+| Target | First run (43699361433) | After triage (43714485891) | Floor |
+| --- | --- | --- | --- |
+| billing | 76.2% (924 killed, 288 lived, 174 not covered) | 78.0% (949 killed, 267 lived, 170 not covered) | 78% |
+| ledger | 70.4% (247 killed, 104 lived, 128 not covered) | 79.8% (316 killed, 80 lived, 83 not covered) | 79% |
 
 Raise a floor (in `mutation.yml`) after a run that triaged survivors lifts
-the score. Survivors from that run worth tests next: ledger
-`admission.go:756` (release adds the agent discount back), the flexible-job
-CPU checks (`admission.go:539/1131/1148/1152`), and
-`admission_environment_capacity.go` (21 survivors); billing
-`api_consumer_pricing.go` (43) and `platform_tenant_month_statements.go`
-(41).
+the score. Largest remaining survivor groups: ledger `admission.go` (32,
+many are clamp-to-zero equivalents), `admission_frozen.go` (12) and
+`admission_environment_capacity.go` (10); billing
+`platform_tenant_month_statements.go` (34), `api_consumer_pricing.go` (32,
+mostly int64 overflow-guard boundaries), `api_consumer_statements.go` (25)
+and `financial_visibility.go` (24). The latest run's per-shard job summaries
+list each survivor with its source line.
+
+Known equivalent mutants (no test can kill them): `admission_cpu_quota.go:13`
+(boost and its deadline are cleared together), `admission.go:1148`
+(`cpuCeiling > 0` → `>= 0`: no CPU check without a budget),
+`api_consumer_pricing.go:416` (after the first tier `position` never exceeds
+the previous bound).

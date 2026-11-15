@@ -16,16 +16,12 @@ name: mutation
 # package, so a full pass is hours of runner time spread over the shards
 # below. Survivors land in each shard's job summary and JSON artifact; the
 # gate job merges the shards and fails when a target's efficacy drops below
-# its floor. Floors are the first full run (2026-11-15, run 43699361433:
-# billing 76.2%, ledger 70.4%) rounded down; raise them as survivors are
+# its floor. Floors are the latest full run (2026-11-15, run 43714485891:
+# billing 78.0%, ledger 79.8%) rounded down; raise them as survivors are
 # triaged into tests. Equivalent mutants (a change that cannot alter
 # behaviour) are expected and stay as survivors.
 
 on:
-  # TEMPORARY: second full run with the widened ledger tests (dispatch needs
-  # the workflow on main). Remove before merging.
-  push:
-    branches: [test/mutation-testing]
   workflow_dispatch:
     inputs:
       target:
@@ -181,7 +177,7 @@ jobs:
           go build -o mutate ./cmd/mutate
           status=0
           # target:floor (percent efficacy over the merged shards)
-          for spec in billing:76 ledger:70; do
+          for spec in billing:78 ledger:79; do
             t="${spec%%:*}"; floor="${spec##*:}"
             if ! compgen -G "reports/mutation-$t-*/*.json" >/dev/null; then
               continue # target not selected on this dispatch
