@@ -22,9 +22,16 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261115135218: Discoverable CLI list flag dependencies](20261115135218-cli-list-flag-dependencies.md) — accepted; shared dependency registry, offline help and typed local advice with preserved validation contracts.
+
+- [ADR-20261115175928: Customer attention contact and outcomes](20261115175928-customer-attention-contact-and-outcomes.md) — accepted; distinct identifier for customer attention, preserving historical migration citations.
+- [ADR-20261115175927: Operator console signal actions](20261115175927-operator-console-signal-actions.md) — accepted; JSON routes for signal actions, customer health and the support inbox.
+- [ADR-20261115133053: Offline output contracts in CLI JSON help](20261115133053-cli-json-help-output-contracts.md) — accepted; explicit list formats, selectors, empty behavior, publication and error contracts without API discovery.
+
 - [ADR-20261115110124: gRPC steps in `gregale test` scenarios](20261115110124-test-grpc-steps.md) — accepted; a request or check may carry a `grpc:` call (definitions from `.proto` files compiled with protocompile and/or server reflection; unary and all streaming shapes; status, protobuf-JSON pointers, message count, header and trailer metadata); `local` dials plaintext HTTP/2, `real-vm` the deployed app over TLS; load mode stays HTTP-only
 - [ADR-20261115105130: Opt-in streamed list output](20261115105130-cli-streamed-list-output.md)
 - [ADR-20261115121720: Atomic CLI list exports](20261115121720-cli-atomic-list-exports.md) — accepted; private JSON Lines staging, no-overwrite publication and completion integrity receipts.
+
 - [ADR-20261115090000: Operator account risk view](20261115090000-account-risk-view.md) — accepted; `gregalectl accounts risk` and `held-links` show an account's hold, sign-up record, held-account links, strikes and abuse events; PII only with `--include-pii`
 - [ADR-20261114180740: AI gateway managed prompts](20261114180740-ai-gateway-managed-prompts.md) — accepted; named, immutable prompt versions (messages with plain-text `{{variable}}` substitution, route or integration target, sampling params) called at `$GREGALE_OUTBOUND_URL/p/{name}` through the ordinary route path; live/previous-live pointers, canaries with route-canary rollback, per-version minute stats and feedback, evaluations on supplied variable sets; plan limits 25/100/500 prompts (Hobby/Pro/Scale)
 - [ADR-20261114174600: Flag new accounts that resemble abuse-held ones](20261114174600-held-account-links.md) — accepted; a sign-up sharing a /24 or /48 or a private email domain with an abuse-held account is stored in `account_held_links`, audited and counted; flag only
@@ -2390,4 +2397,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261114201959: Resumable source deployment workflows in the SDKs](20261114201959-sdk-resumable-source-deployment-workflows.md) — accepted; local journals compose preparation, checkpointed uploads, receipt recovery and release observation with one deadline and typed outcomes.
 - [ADR-20261114220642: Typed project inspection in Node and Python](20261114220642-sdk-typed-project-inspection.md) — accepted; immutable discovery plans resolve manifest/workspace intent and bind configuration fingerprints to resumable deployments without rewriting source.
 - [ADR-20261114232023: Reviewed project workflows in Node and Python](20261114232023-sdk-reviewed-project-workflows.md) — accepted; server previews, exact-source cached apply, durable submission receipts and per-service outcomes compose complete local projects.
+
+- [ADR-20261115072125: Read-only agent review of MCP Task releases](20261115072125-agent-task-release-review.md) — accepted; offline local stack review reuses native release parsing and fingerprints, reports credential-free roles and limits, and preserves the separate owner-operated release flow.
 - [ADR-20261115100336: A restore keeps gunicorn's workers](20261115100336-restore-keeps-gunicorn-workers.md) — accepted; the Python restore preload stops gunicorn's master from killing workers after the restore clock jump (amends ADR-680, ADR-20261109120000)

@@ -197,7 +197,7 @@ const (
 	AttentionDismissReasonMax  = 200
 )
 
-// Customer attention signals, round 2 (ADR-20261113180000).
+// Customer attention signals, round 2 (ADR-20261115175928).
 const (
 	// AttentionOOMKills runtime OOM kills of one app within
 	// AttentionOOMWindow open an app_oom signal.
@@ -3725,6 +3725,13 @@ const (
 	// (FAAS_STORAGE_CACHE_MAX_BYTES) the cache evicts its oldest entries while
 	// the filesystem has less than this free.
 	ArtifactCacheMinFreeBytes int64 = 8 << 30
+	// SnapshotReplicaRefetchMinMargin and SnapshotReplicaRefetchCooldown
+	// bound how snapshothipd takes back a live snapshot the node cache evicted
+	// (ADR-20261115140000): only while the cache keeps this margin (or a tenth
+	// of its budget, if larger) under its budget and above its free floor, and
+	// at most once per snapshot per node per cooldown.
+	SnapshotReplicaRefetchMinMargin int64 = 8 << 30
+	SnapshotReplicaRefetchCooldown        = 6 * time.Hour
 	// ArtifactCacheReservePercent is the share of the cache filesystem kept
 	// free when the cache budget is derived from the disk
 	// (ADR-20261114182830): the free-space floor is this percentage of the

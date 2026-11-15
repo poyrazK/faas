@@ -219,8 +219,18 @@ func cmdMCPTaskRelease(args []string) int {
 	if err := flags.Parse(args); err != nil {
 		return 1
 	}
+	if action == "plan" {
+		if flags.NArg() != 0 || *planPath == "" || *statePath != "" || *resume {
+			return printErr("MCP release plan", errors.New("use release plan --plan PATH without --state or --resume"))
+		}
+		review, err := reviewMCPTaskRelease(*planPath)
+		if err != nil {
+			return printErr("MCP release plan", err)
+		}
+		return jsonOut(writeJSON(review))
+	}
 	if flags.NArg() != 0 || *planPath == "" || *statePath == "" || (action != "run" && action != "start" && action != "drain" && action != "restore-hook" && action != "status" && action != "recover" && action != "restore" && action != "quarantine" && action != "retire" && action != "retire-check" && action != "retire-hook") {
-		return printErr("MCP release", errors.New("use release [run|status|recover|restore|quarantine|retire] --plan PATH --state PATH"))
+		return printErr("MCP release", errors.New("use release plan --plan PATH, or release [run|status|recover|restore|quarantine|retire] --plan PATH --state PATH"))
 	}
 	p, err := readMCPNativePlan(*planPath)
 	if err != nil {

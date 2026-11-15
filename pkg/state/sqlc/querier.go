@@ -876,6 +876,8 @@ type Querier interface {
 	CountProductionPendingInvocations(ctx context.Context, db DBTX, arg CountProductionPendingInvocationsParams) (int64, error)
 	CountProductionPendingQueueWorkInLane(ctx context.Context, db DBTX, arg CountProductionPendingQueueWorkInLaneParams) (int64, error)
 	CountProductionQueueBindingActive(ctx context.Context, db DBTX, arg CountProductionQueueBindingActiveParams) (int64, error)
+	// Counted up to row_limit (ADR-20261113180000, R7-3): every state read
+	// counted the whole dead letter.
 	CountProductionQueueDeadLetter(ctx context.Context, db DBTX, arg CountProductionQueueDeadLetterParams) (int64, error)
 	CountProfileInvestigations(ctx context.Context, db DBTX, appID string) (int64, error)
 	CountProjectEnvironmentCloneDatabaseAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -1091,6 +1093,9 @@ type Querier interface {
 	// a denial may carry a note for the agent (ADR-20261107140000 §6). It returns
 	// the decided request for its webhook event (§4).
 	DecideAgentApproval(ctx context.Context, db DBTX, arg DecideAgentApprovalParams) (AgentApprovalRequest, error)
+	// Records an outcome for the request that was checked; a newer request for
+	// the key (a later requested_at) stays requested.
+	DecideStorageObjectDeletion(ctx context.Context, db DBTX, arg DecideStorageObjectDeletionParams) (int64, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
 	// separate method because every decrement site is a terminal event
@@ -1335,6 +1340,7 @@ type Querier interface {
 	DueAlertChannelStandDowns(ctx context.Context, db DBTX, arg DueAlertChannelStandDownsParams) ([]DueAlertChannelStandDownsRow, error)
 	DueManagedPostgresCutoverSourceFences(ctx context.Context, db DBTX, arg DueManagedPostgresCutoverSourceFencesParams) ([]ManagedPostgresCutover, error)
 	DueManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, arg DueManagedPostgresLifecycleDatabasesParams) ([]ManagedPostgresDatabase, error)
+	DueStorageObjectDeletions(ctx context.Context, db DBTX, arg DueStorageObjectDeletionsParams) ([]DueStorageObjectDeletionsRow, error)
 	// The customer's override wins over the default.
 	EffectiveOperationConcurrencyLimit(ctx context.Context, db DBTX, arg EffectiveOperationConcurrencyLimitParams) (int32, error)
 	EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg EffectiveWorkflowDefinitionsParams) ([]byte, error)
@@ -1895,6 +1901,16 @@ type Querier interface {
 	// message replayed from the dead letter gets the whole retention again. A
 	// replay is never earlier than the send, so the created_at bound still
 	// narrows invocations_queue_pending_created_idx.
+	// ADR-20261112200000: the wait also restarts when a retry or a nack delay
+	// makes the message due again, so a back-off longer than the retention no
+	// longer turns the retry into an expiry.
+	// ADR-20261113180000 (R5-3, R6-3): a held owner (suspended, or under an abuse
+	// hold) keeps its messages: the sweep restarts their wait at half the
+	// retention instead of dead-lettering them, so after the hold lifts each has
+	// at least half the retention left (skipping them only deferred the expiry to
+	// the first sweep after reactivation). An expired message's push receipt
+	// moves to dead_letter with it; left pending it was never reaped, and a
+	// replay re-arms it from dead_letter.
 	ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error)
 	ExpireProfileCanaryChecks(ctx context.Context, db DBTX, arg ExpireProfileCanaryChecksParams) error
 	ExpireProfileDeploymentChecks(ctx context.Context, db DBTX, arg ExpireProfileDeploymentChecksParams) error
@@ -6228,7 +6244,11 @@ type Querier interface {
 	QueueConsumerOwnedTriggers(ctx context.Context, db DBTX, arg QueueConsumerOwnedTriggersParams) ([]QueueConsumerOwnedTriggersRow, error)
 	QueueConsumerRetireBinding(ctx context.Context, db DBTX, arg QueueConsumerRetireBindingParams) (QueueBinding, error)
 	// ADR-20261112200000: the retired production binding a create with the same
-	// name and queue name revives.
+	// name revives. ADR-20261113180000 (R5-2): the name alone selects it; the
+	// create's queue name then applies as an ordinary rename, so its held
+	// messages drain under the new name (leases and push claims select them by
+	// binding). Requiring the old queue name too left a binding re-created under
+	// a new queue name refused and its messages stranded.
 	QueueConsumerRetiredBindingForRevive(ctx context.Context, db DBTX, arg QueueConsumerRetiredBindingForReviveParams) (QueueBinding, error)
 	QueueConsumerReviveBinding(ctx context.Context, db DBTX, arg QueueConsumerReviveBindingParams) (QueueBinding, error)
 	QueueConsumerUpdateBinding(ctx context.Context, db DBTX, arg QueueConsumerUpdateBindingParams) (QueueBinding, error)
@@ -6573,6 +6593,12 @@ type Querier interface {
 	ReadProductionDeadLetterEvent(ctx context.Context, db DBTX, arg ReadProductionDeadLetterEventParams) (DeadLetterEvent, error)
 	// ADR-531: production filtering precedes aggregates, limits, and cursor anchors.
 	ReadProductionQueueInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error)
+	// ADR-20261113180000 (R7-3): a named queue counts the messages sent under
+	// the name and those of the production binding that reads the name now, so
+	// a binding's backlog from before a queue_name rename still shows; leases
+	// and push claims already take it. The oldest pending message is the oldest
+	// one ready for delivery: a message waiting out a retry back-off made the
+	// queue look stalled.
 	ReadProductionQueueStateLive(ctx context.Context, db DBTX, arg ReadProductionQueueStateLiveParams) (ReadProductionQueueStateLiveRow, error)
 	// ReadProductionQueueStateLive plus CountProductionQueueDeadLetter for the
 	// status reads a customer can poll: each count stops at row_limit, and the
@@ -7203,6 +7229,10 @@ type Querier interface {
 	// same order changes nothing.
 	RedeemCreditDiscount(ctx context.Context, db DBTX, arg RedeemCreditDiscountParams) (int64, error)
 	RefreshGitHubConnectionToken(ctx context.Context, db DBTX, arg RefreshGitHubConnectionTokenParams) (int64, error)
+	// ADR-20261113180000 (R5-5): a held push queue's due messages that have
+	// waited older_than restart their retention wait. due_at moves to now: the
+	// row stays due, and its state does not change, so no notification fires.
+	RefreshHeldQueueMessages(ctx context.Context, db DBTX, arg RefreshHeldQueueMessagesParams) (int64, error)
 	RegisterApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg RegisterApplicationStandardLogConsumerParams) ([]byte, error)
 	RegisterComputeNodeRuntimeIdentity(ctx context.Context, db DBTX, arg RegisterComputeNodeRuntimeIdentityParams) (int64, error)
 	// ADR-20261018030613: schedd fences rollback before vmmd can reopen a function source.
@@ -7317,6 +7347,8 @@ type Querier interface {
 	// the row is replaced only if no one changed it since it was read.
 	ReplaceEdgeRuleSetVersionRules(ctx context.Context, db DBTX, arg ReplaceEdgeRuleSetVersionRulesParams) (int64, error)
 	ReplaceProductionAppWorkloadSettings(ctx context.Context, db DBTX, arg ReplaceProductionAppWorkloadSettingsParams) error
+	// ADR-20261113180000 (R6-1, R8-2): the replay drops the dead letter's
+	// outcome code and retention horizon with its result.
 	ReplayDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayDeadLetterInvocationParams) (int64, error)
 	ReplayProductionDeadLetterInvocation(ctx context.Context, db DBTX, arg ReplayProductionDeadLetterInvocationParams) (int64, error)
 	// ADR-570: only the current process may acknowledge durable policy replay.
@@ -7386,6 +7418,10 @@ type Querier interface {
 	// vsock listener that accepted the request. Same rules as the 5xx trigger:
 	// opt-in, a running non-fork instance, nothing in flight, cooldown passed.
 	RequestSDKCrashCapture(ctx context.Context, db DBTX, arg RequestSDKCrashCaptureParams) (CrashCapture, error)
+	// ADR-20261115180000: object deletion moves to the control plane.
+	// A fresh request, whatever the row held before; the trigger stamps a
+	// per-node login's node.
+	RequestStorageObjectDeletion(ctx context.Context, db DBTX, arg RequestStorageObjectDeletionParams) error
 	// Bounded deployment cost allocation for the customer request analytics
 	// window. Request counts are weighted by the publisher's collapsed `count`.
 	// The window total is computed before LIMIT so the handler can allocate the
@@ -7638,8 +7674,13 @@ type Querier interface {
 	RetryExternalTriggerRecordByOperator(ctx context.Context, db DBTX, arg RetryExternalTriggerRecordByOperatorParams) (int64, error)
 	RetryProductionQueueDeadLetter(ctx context.Context, db DBTX, arg RetryProductionQueueDeadLetterParams) (Invocation, error)
 	RetryProductionQueueTriggerInvocations(ctx context.Context, db DBTX, arg RetryProductionQueueTriggerInvocationsParams) error
+	// ADR-20261113180000 (R6-1, R8-2): a replay starts a new delivery, so it
+	// also drops the dead letter's outcome code and its retention horizon. Kept,
+	// the horizon let the reaper delete the replayed message the moment it
+	// settled again, and the code reported the old expiry on a later success.
 	RetryQueueDeadLetterInvocation(ctx context.Context, db DBTX, arg RetryQueueDeadLetterInvocationParams) (Invocation, error)
 	RetryQueueLeaseInvocation(ctx context.Context, db DBTX, arg RetryQueueLeaseInvocationParams) (int64, error)
+	RetryStorageObjectDeletion(ctx context.Context, db DBTX, arg RetryStorageObjectDeletionParams) (int64, error)
 	ReverseAccountInvoiceCreditConsumption(ctx context.Context, db DBTX, arg ReverseAccountInvoiceCreditConsumptionParams) (int64, error)
 	// Operator revert of the last confirmed email change (ADR 20261110100000).
 	// Applies only while the account still has the address that change moved it
@@ -8136,6 +8177,9 @@ type Querier interface {
 	// billing rows DeleteAccount removes, that is apps with no org or a personal
 	// org. Billing rows outlive instance rows, so they cover parked history.
 	SnapshotLogArchiveErasureInstances(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	// Whether a live row names the object: the exact key, the memory key of
+	// its capture, or (for a v2 capture) any object of the capture directory.
+	SnapshotObjectReferenced(ctx context.Context, db DBTX, arg SnapshotObjectReferencedParams) (pgtype.Bool, error)
 	SnapshotPublicationRuntimeChangedAt(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
 	SnapshotPublicationSource(ctx context.Context, db DBTX, instanceID pgtype.UUID) (SnapshotPublicationSourceRow, error)
 	SnapshotRecoveryAdmissionValid(ctx context.Context, db DBTX, arg SnapshotRecoveryAdmissionValidParams) (bool, error)
