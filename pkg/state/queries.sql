@@ -17948,7 +17948,7 @@ INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic
  source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,environment_workload_held,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
  override_healthcheck,override_liveness_probe,override_readiness_probe,override_main_depends_on,sidecars,workflows,
  full_rootfs_allow_auto,full_rootfs_override,min_instances,release_command,release_command_shell,disable_startup_cpu_boost,
- rollback_on_5xx)
+ rollback_on_5xx,build_registry_scope)
 VALUES(sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,sqlc.arg(kind)::text,sqlc.arg(image)::text,sqlc.arg(commit_sha)::text,'pending',0,true,
  nullif(sqlc.arg(source_path)::text,''),sqlc.arg(source_root)::text,nullif(sqlc.arg(source_sha256)::text,''),sqlc.arg(source_bytes)::bigint,nullif(sqlc.arg(source_url)::text,''),sqlc.arg(runtime)::jsonb->'source_archive'->>'log_path',
  (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid),sqlc.arg(runtime)::jsonb,
@@ -17967,7 +17967,10 @@ VALUES(sqlc.arg(app_id)::uuid,sqlc.arg(scope)::text,sqlc.arg(kind)::text,sqlc.ar
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce(sqlc.arg(runtime)::jsonb->'deployment_inputs'->'release_command','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'release_command_shell')::boolean,false),
  coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'disable_startup_cpu_boost')::boolean,false),
- coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'rollback_on_5xx')::boolean,false))
+ coalesce((sqlc.arg(runtime)::jsonb->'deployment_inputs'->>'rollback_on_5xx')::boolean,false),
+ -- ADR-20261110210000 slice 3j-4: the reviewed archive's build registry
+ -- scope; NULL records none.
+ sqlc.narg(build_registry_scope)::text[])
 RETURNING id;
 
 -- name: CreateEnvironmentGitOpsSourceBuild :exec

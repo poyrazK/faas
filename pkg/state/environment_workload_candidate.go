@@ -101,6 +101,12 @@ type EnvironmentWorkloadSourceArtifact struct {
 	SHA256           string `json:"sha256"`
 	Bytes            int64  `json:"bytes"`
 	LogPath          string `json:"log_path"`
+	// BuildRegistryScope (ADR-20261110210000 slice 3j-4) lists the image
+	// repositories the archive's Dockerfiles name, for the candidate's
+	// deployments.build_registry_scope. Not part of the frozen inputs: apid
+	// hands it over in memory, and nil records none. A pointer keeps the
+	// artifact comparable.
+	BuildRegistryScope *[]string `json:"-"`
 }
 
 type EnvironmentWorkloadCandidate struct {

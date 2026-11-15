@@ -72,5 +72,10 @@ func attachCandidateSource(input Deployment, artifacts map[string]EnvironmentWor
 	}
 	input.EnvironmentWorkloadRuntime = string(raw)
 	input.SourcePath, input.SourceSHA256, input.SourceBytes, input.BuildID, input.LogPath = artifact.Path, artifact.SHA256, artifact.Bytes, artifact.BuildID, artifact.LogPath
+	// ADR-20261110210000 slice 3j-4: the candidate records the archive's
+	// build registry scope when it is inserted.
+	if artifact.BuildRegistryScope != nil {
+		input.BuildRegistryScope = *artifact.BuildRegistryScope
+	}
 	return input, nil
 }
