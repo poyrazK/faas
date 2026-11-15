@@ -281,11 +281,11 @@ type PGBackend struct {
 	// (ADR 20261114150000 §3); nil until WithFlagKillLoader.
 	flagKills *FlagKillCache
 	// boots tracks other gateways' boots in progress (at-capacity waits).
-	boots     bootTracker
-	router    Router
-	sched     Scheduler
-	log       *slog.Logger
-	metrics   *Metrics
+	boots   bootTracker
+	router  Router
+	sched   Scheduler
+	log     *slog.Logger
+	metrics *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
 	// rechecks keeps the warm custom-domain registry rechecks briefly.
