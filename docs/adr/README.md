@@ -2394,3 +2394,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261115082509: Durable Task stack release intents and owner review](20261115082509-task-tool-release-intents.md) — accepted; immutable native stack reviews, separate owner decisions, fixed expiry and source/app drift invalidation grant no execution authority.
 - [ADR-20261115101539: Owner-bound local Task tool execution](20261115101539-owner-bound-task-tool-execution.md) — accepted; separate binding-bound owner authorization, one-time native claims, guarded Node execution and inspection after reconnect preserve native release and recovery fences.
 - [ADR-20261115100336: A restore keeps gunicorn's workers](20261115100336-restore-keeps-gunicorn-workers.md) — accepted; the Python restore preload stops gunicorn's master from killing workers after the restore clock jump (amends ADR-680, ADR-20261109120000)
+
+- [ADR-20261115183906: Queue review rounds 5–8](20261115183906-queue-review-round-5-8-fixes.md) — accepted; held retention, replay resets, wake-ups and consumers; renumbered to resolve a concurrent identifier collision.
+- [ADR-20261115183907: Operator console signal actions](20261115183907-operator-console-signal-actions.md) — accepted; customer views and support inbox actions; renumbered to resolve a concurrent identifier collision.
