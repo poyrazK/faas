@@ -249,6 +249,13 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
+	return newHarnessFor(t, false)
+}
+
+// newHarnessFor builds the harness; keepRelease records a switch that keeps
+// the live release (ADR-20261023181931 amendment 3) instead of a rollback.
+func newHarnessFor(t *testing.T, keepRelease bool) *harness {
+	t.Helper()
 	ctx := context.Background()
 	h := &harness{t: t, clock: time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC), store: state.NewMemStore()}
 	app, err := h.store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: uuid.NewString(), Slug: "shop"})
@@ -267,9 +274,13 @@ func newHarness(t *testing.T) *harness {
 			h.events = append(h.events, e)
 		},
 		Now: h.now}
-	h.sw, err = h.store.CreateDatabaseSwitch(ctx, state.DatabaseSwitch{AccountID: app.AccountID, AppID: app.ID, Scope: "default",
+	sw := state.DatabaseSwitch{AccountID: app.AccountID, AppID: app.ID, Scope: "default",
 		FromDeploymentID: from.ID, TargetDeploymentID: target.ID, UndoneDeploymentIDs: []string{from.ID},
-		SourceDatabaseID: uuid.NewString(), TargetName: "orders-before-v42", RestorePoint: h.clock.Add(-time.Hour), CreatedAt: h.clock})
+		SourceDatabaseID: uuid.NewString(), TargetName: "orders-before-v42", RestorePoint: h.clock.Add(-time.Hour), CreatedAt: h.clock}
+	if keepRelease {
+		sw.TargetDeploymentID, sw.UndoneDeploymentIDs, sw.TargetName = from.ID, []string{}, "orders-0900"
+	}
+	h.sw, err = h.store.CreateDatabaseSwitch(ctx, sw)
 	if err != nil {
 		t.Fatal(err)
 	}

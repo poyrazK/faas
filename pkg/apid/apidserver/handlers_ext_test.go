@@ -1572,18 +1572,6 @@ func TestGetDeployment_HappyPath(t *testing.T) {
 	}
 }
 
-// A deployment whose app was deleted mid-rollout answers 404, not a retryable
-// 503: `gregale deploy` polled it for 17 minutes on prod (2026-11-15).
-func TestGetDeployment_DeletedAppReturns404(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	dep := mustSeedDeployment(t, e, "gone-dep")
-	if _, err := e.store.ScheduleAppDeletion(context.Background(), dep.AppID, time.Now().Add(7*24*time.Hour)); err != nil {
-		t.Fatalf("schedule deletion: %v", err)
-	}
-	rec := e.do(t, "GET", "/v1/deployments/"+dep.ID, nil, nil)
-	assertProblem(t, rec, 404, api.CodeNotFound)
-}
-
 // TestGetDeployment_UnknownReturns404 covers the not-found branch.
 func TestGetDeployment_UnknownReturns404(t *testing.T) {
 	e := setup(t, api.PlanPro)

@@ -1201,27 +1201,73 @@ func (c *LocalCacheBackend) enforceBudgetLocked(protect string) error {
 	// Sort by eviction tier, then oldest-first; evict until budget restored
 	// (ADR-20261114182830: entries nothing references go first, live
 	// snapshot captures last).
-	tiers := make(map[string]int, len(entries))
+	//
+	// A snapshot capture's files (mem, vmstate, drive, backing) are one
+	// eviction unit, aged by the newest of them: a restore reads them by
+	// different paths and refreshes their mtimes unevenly, and oldest-first
+	// over single files took a capture's 14 KB vmstate while keeping its
+	// 1 GiB memory file. That freed nothing, yet left the capture unusable,
+	// so fan-out retired the replica and the next wake fetched the whole
+	// snapshot again (production-us, 2026-11-15: 38 of 46 retired replicas
+	// on one node had their memory file but not their vmstate).
+	groups := make(map[string]evictionGroup, len(entries))
 	for _, e := range entries {
-		tiers[e.key] = c.tierLocked(e.key)
+		g := cacheEvictionGroup(e.key)
+		cur, seen := groups[g]
+		tier := c.tierLocked(e.key)
+		if !seen || tier > cur.tier {
+			cur.tier = tier
+		}
+		if !seen || e.modTime.After(cur.newest) {
+			cur.newest = e.modTime
+		}
+		cur.pinned = cur.pinned || e.pinned
+		cur.protected = cur.protected || e.key == protect
+		groups[g] = cur
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
-		if ti, tj := tiers[entries[i].key], tiers[entries[j].key]; ti != tj {
-			return ti < tj
+		gi, gj := cacheEvictionGroup(entries[i].key), cacheEvictionGroup(entries[j].key)
+		a, b := groups[gi], groups[gj]
+		if a.tier != b.tier {
+			return a.tier < b.tier
+		}
+		if !a.newest.Equal(b.newest) {
+			return a.newest.Before(b.newest)
+		}
+		if gi != gj {
+			return gi < gj
 		}
 		return entries[i].modTime.Before(entries[j].modTime)
 	})
 	// ADR-633: count blocks shared between entries (a snapshot drive and
 	// its app layer) once.
 	footprint := newCacheFootprint(entries)
+	// Low disk evicts only the shortfall measured here. The filesystem's own
+	// free count lags the removals (XFS frees unlinked blocks in the
+	// background, and reflink-shared blocks not at all), so evicting until
+	// statfs agrees overshot: one 1 GiB build preflight evicted ~25 GB,
+	// live snapshots included (2026-11-13, ADR-20261115140000).
+	shortfall := c.diskShortfallLocked()
+	start := footprint.total()
+	current := ""
 	for i, e := range entries {
-		withinBudget := footprint.total() <= c.maxBytes
-		if withinBudget && !c.diskLowLocked() {
-			break
+		group := cacheEvictionGroup(e.key)
+		g := groups[group]
+		if group != current {
+			// Budget is checked between groups only: a capture that
+			// started going goes whole.
+			withinBudget := footprint.total() <= c.maxBytes
+			if withinBudget && (shortfall <= 0 || start-footprint.total() >= shortfall || !c.diskLowLocked()) {
+				break
+			}
+			current = group
+			g.skip = g.pinned || (withinBudget && g.protected)
+			groups[group] = g
 		}
-		if e.pinned || (withinBudget && e.key == protect) {
-			// Low disk alone never evicts the entry being installed:
-			// that would only refetch it on the next miss.
+		if g.skip {
+			// Low disk alone never evicts the entry being installed (or
+			// the rest of its capture): that would only refetch it on the
+			// next miss. A pinned member keeps its whole capture.
 			continue
 		}
 		if err := os.Remove(e.path); err == nil {
@@ -1236,6 +1282,46 @@ func (c *LocalCacheBackend) enforceBudgetLocked(protect string) error {
 		}
 	}
 	return nil
+}
+
+// diskShortfallLocked is how many bytes the cache filesystem lacks to reach
+// minFreeBytes now; zero when it has enough or cannot say. Caller holds c.mu.
+func (c *LocalCacheBackend) diskShortfallLocked() int64 {
+	if c.minFreeBytes <= 0 {
+		return 0
+	}
+	free, total, err := c.diskSpace(c.root)
+	if err != nil || total <= 0 || free >= c.minFreeBytes {
+		return 0
+	}
+	return c.minFreeBytes - free
+}
+
+// evictionGroup is the eviction state of one capture (or one plain entry).
+type evictionGroup struct {
+	tier      int
+	newest    time.Time
+	pinned    bool
+	protected bool
+	skip      bool
+}
+
+// cacheEvictionGroup is the eviction unit of key: the capture directory for
+// the files of one snapshot capture (snap/<deployment>/captures/<id>/v2/... or
+// the legacy snap/<deployment>/captures/<id>/...), the key itself otherwise.
+// It mirrors state.SnapshotCapturePrefix, which storage cannot import.
+func cacheEvictionGroup(key string) string {
+	parts := strings.Split(key, "/")
+	if len(parts) < 5 || parts[0] != "snap" || parts[2] != "captures" || parts[1] == "" || parts[3] == "" {
+		return key
+	}
+	switch {
+	case len(parts) == 6 && parts[4] == "v2":
+		return strings.Join(parts[:5], "/") + "/"
+	case len(parts) == 5:
+		return strings.Join(parts[:4], "/") + "/"
+	}
+	return key
 }
 
 // diskLowLocked reports whether the cache filesystem has less free space than

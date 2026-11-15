@@ -10,6 +10,7 @@ from ..models.flag_rule_rollout_unit import FlagRuleRolloutUnit, check_flag_rule
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.flag_condition import FlagCondition
     from ..models.progressive_rollout import ProgressiveRollout
 
 
@@ -38,6 +39,8 @@ class FlagRule:
     rollout_unit: FlagRuleRolloutUnit | Unset = UNSET
     """Allocation unit for rollout percentages. Omitted preserves customer-level allocation. Subject rollout
     requires a customer or group constraint and an authenticated subject context."""
+    attributes: list[FlagCondition] | Unset = UNSET
+    """Request attribute conditions; all must hold. Runtime SDKs need capability attribute-targeting-v1."""
     progression: ProgressiveRollout | Unset = UNSET
     """Health-gated stages for a boolean true rule. Promotion is manual by default; auto_advance opts into server-
     managed promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage];
@@ -66,6 +69,13 @@ class FlagRule:
         if not isinstance(self.rollout_unit, Unset):
             rollout_unit = self.rollout_unit
 
+        attributes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.attributes, Unset):
+            attributes = []
+            for attributes_item_data in self.attributes:
+                attributes_item = attributes_item_data.to_dict()
+                attributes.append(attributes_item)
+
         progression: dict[str, Any] | Unset = UNSET
         if not isinstance(self.progression, Unset):
             progression = self.progression.to_dict()
@@ -93,6 +103,8 @@ class FlagRule:
             field_dict["rollout"] = rollout
         if rollout_unit is not UNSET:
             field_dict["rollout_unit"] = rollout_unit
+        if attributes is not UNSET:
+            field_dict["attributes"] = attributes
         if progression is not UNSET:
             field_dict["progression"] = progression
         if value is not UNSET:
@@ -102,6 +114,7 @@ class FlagRule:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.flag_condition import FlagCondition
         from ..models.progressive_rollout import ProgressiveRollout
 
         d = dict(src_dict)
@@ -129,6 +142,15 @@ class FlagRule:
         else:
             rollout_unit = check_flag_rule_rollout_unit(_rollout_unit)
 
+        _attributes = d.pop("attributes", UNSET)
+        attributes: list[FlagCondition] | Unset = UNSET
+        if _attributes is not UNSET:
+            attributes = []
+            for attributes_item_data in _attributes:
+                attributes_item = FlagCondition.from_dict(attributes_item_data)
+
+                attributes.append(attributes_item)
+
         _progression = d.pop("progression", UNSET)
         progression: ProgressiveRollout | Unset
         if isinstance(_progression, Unset):
@@ -150,6 +172,7 @@ class FlagRule:
             subjects=subjects,
             rollout=rollout,
             rollout_unit=rollout_unit,
+            attributes=attributes,
             progression=progression,
             value=value,
         )

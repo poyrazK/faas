@@ -482,7 +482,12 @@ migration-lint: ## Expand/contract lint of the migrations added since BASE (defa
 release-safety-check-test: ## Unit tests of the version-skew check, migration linter and post-deploy SLO gate
 	python3 scripts/ci/check_migration_expand_contract_test.py
 	python3 scripts/ci/slo_gate_test.py
+	python3 scripts/migrations_land_test.py
 	$(GO) test -count=1 ./scripts/ci/versionskew
+
+.PHONY: migrations-land
+migrations-land: ## Merge origin/main into a migration-carrying branch: take main's digest, move this branch's migrations after main's, regenerate schema.sql + sqlc (DATABASE_URL or a throwaway Postgres); stages, never commits
+	python3 scripts/migrations_land.py
 
 .PHONY: agent-eval-test
 agent-eval-test: ## Unit tests of the coding-agent eval harness; runs no agents (ADR-20261026152009)
@@ -568,6 +573,24 @@ coverage-floor: ## Assert ship-blocking package floors across all coverage/cover
 .PHONY: test-property
 test-property: ## Property-based invariant tests (no KVM, no DB needed). §6.2 invariants land here.
 	$(GO) test -race -count=1 -timeout=10m ./tests/property/...
+
+# Mutation testing (cmd/mutate): flip one operator at a time and check that a
+# test notices. Survivors are lines tests execute but do not pin down. Slow —
+# every mutant recompiles the package — so it runs weekly in
+# .github/workflows/mutation.yml, not in PR CI. Locally, narrow it with
+# MUTATE_SHARD=i/n, or MUTATE_FLAGS=-list to see mutants without running them.
+MUTATE_WORKERS ?= 2
+MUTATE_SHARD   ?= 1/1
+MUTATE_FLAGS   ?=
+MUTATE = $(GO_DEV_ENV) GOMEMLIMIT=$(GO_TEST_MEMLIMIT) $(GO) run ./cmd/mutate -workers $(MUTATE_WORKERS) -shard $(MUTATE_SHARD) -testflags=$(GO_TEST_LDFLAGS) $(MUTATE_FLAGS)
+
+.PHONY: test-mutation-billing
+test-mutation-billing: ## Mutation testing of pkg/billing against its own tests (MUTATE_SHARD=i/n, MUTATE_WORKERS=n, MUTATE_FLAGS=-list|-json f)
+	$(MUTATE) -pkg ./pkg/billing
+
+.PHONY: test-mutation-ledger
+test-mutation-ledger: ## Mutation testing of the schedd admission ledger (pkg/sched/admission*.go) against its tests + tests/property
+	$(MUTATE) -pkg ./pkg/sched -files 'admission*.go' -tests 'admission*_test.go,*ledger*_test.go,flexible_reserve_test.go,stage_capacity_test.go,vcpu_combined_test.go,frozen_test.go,cpu_admission_test.go,state_machine_edges_test.go' -also ./tests/property
 
 .PHONY: coverage
 coverage: ## Aggregate coverage/cover-shard*.out and print a sorted table per package.

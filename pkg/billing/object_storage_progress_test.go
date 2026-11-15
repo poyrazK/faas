@@ -196,3 +196,19 @@ func TestObjectStorageProgressSkipsMonthsBeforeActivation(t *testing.T) {
 		t.Fatalf("pre-activation step = %d, %v, progress %+v", n, err, store.progress)
 	}
 }
+
+// A month whose buckets were all deleted still has its provider usage
+// reports; the daily step must bill them, not treat the account as idle.
+func TestObjectStorageProgressBillsReportsAfterBucketsAreGone(t *testing.T) {
+	store, sink, accounts, period := objectStorageProgressFixture(api.PlanHobby, 3)
+	snapshot := store.snapshots["acct"]
+	snapshot.Buckets = nil
+	store.snapshots["acct"] = snapshot
+	day5 := period.AddDate(0, 0, 4).Add(12 * time.Hour)
+	if n, err := deliverObjectStorageProgressAt(t, store, accounts, sink, day5); err != nil || n != 1 {
+		t.Fatalf("step with reports but no buckets = %d, %v; want 1", n, err)
+	}
+	if len(sink.charges) != 1 || sink.charges[0] != 3000 {
+		t.Fatalf("charges = %v, want 3000", sink.charges)
+	}
+}

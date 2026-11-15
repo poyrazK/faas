@@ -335,7 +335,9 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 		if code != 0 {
 			return code
 		}
-		linkInitDeploy(absDest, deploySlug, stderr)
+		if err := rememberInitApp(absDest, deploySlug); err != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: deployed %s but could not remember it in %s: %v; run gregale deploy --name %s there\n", deploySlug, absDest, err, deploySlug)
+		}
 		return writeInitJSON(stdout, initReceipt{Template: tpl, Path: absDest, Status: "created", Deployed: true, MCPConfig: mcpConfig})
 	}
 
@@ -375,22 +377,27 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	if secretsFile != "" {
 		deployArgs = append(deployArgs, "--secrets-file", secretsFile)
 	}
-	code := cmdDeployTarball(deployArgs)
-	if code == 0 {
-		linkInitDeploy(absDest, slug, stderr)
+	if code := cmdDeployTarball(deployArgs); code != 0 {
+		return code
 	}
-	return code
+	if err := rememberInitApp(absDest, slug); err != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: deployed %s but could not remember it in %s: %v; run gregale deploy --name %s there\n", slug, absDest, err, slug)
+		return 0
+	}
+	PrintOK(stdout, "Remembered app %s in %s", slug, projectContextPath(absDest))
+	return 0
 }
 
-// linkInitDeploy saves the app `init --deploy` just deployed as the new
-// directory's standalone context, so a later plain `gregale deploy` there
-// updates that app. Without it the next deploy derived the slug from the
-// directory name and created a second app (prod 2026-11-14: init --deploy
-// --name e2ecc-web, then deploy from ./web created "web").
-func linkInitDeploy(dest, slug string, stderr io.Writer) {
-	if _, err := saveProjectContext(dest, localProjectContext{Version: standaloneContextVersion, App: slug}); err != nil {
-		_, _ = fmt.Fprintf(stderr, "warning: deployed %s but could not link %s to it (%v); run `gregale link --app %s` there\n", slug, dest, err, slug)
+// rememberInitApp saves the app init --deploy created as dir's standalone
+// default, so a later plain gregale deploy there updates it instead of
+// creating an app named after the directory. init created dir empty, so no
+// other saved default can be replaced.
+func rememberInitApp(dir, slug string) error {
+	if err := ensureProjectContextIgnored(dir); err != nil {
+		return fmt.Errorf("ignore local context: %w", err)
 	}
+	_, err := saveProjectContext(dir, localProjectContext{Version: standaloneContextVersion, App: slug})
+	return err
 }
 
 func docsURLForTemplate(name string) string {
