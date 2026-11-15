@@ -214,3 +214,66 @@ type ObsAttentionListResponse struct {
 	Items []ObsAttentionSignal `json:"items"`
 	Limit int                  `json:"limit"`
 }
+
+// Operator console signal actions (ADR-20261115120000): the JSON twins of
+// the staff page at /dashboard/admin/support/attention.
+
+// ObsAttentionDismissRequest is the body of
+// POST /v1/admin/obs/attention/{id}/dismiss. Outcome is one of
+// AttentionDismissOutcomes; Note is optional, at most
+// AttentionDismissReasonMax bytes.
+type ObsAttentionDismissRequest struct {
+	Outcome string `json:"outcome"`
+	Note    string `json:"note,omitempty"`
+}
+
+// ObsAttentionContactRequest is the body of
+// POST /v1/admin/obs/attention/{id}/contact. The Idempotency-Key header is
+// also the support ticket's idempotency key, so a retry replays the ticket.
+type ObsAttentionContactRequest struct {
+	Subject  string `json:"subject"`
+	Category string `json:"category"`
+	Body     string `json:"body"`
+}
+
+// ObsAttentionActionResponse answers a dismiss or contact with the signal
+// as it now stands and, after a contact, the ticket that was opened.
+type ObsAttentionActionResponse struct {
+	Signal   ObsAttentionSignal `json:"signal"`
+	TicketID string             `json:"ticket_id,omitempty"`
+}
+
+// ObsAttentionContactDraft answers
+// GET /v1/admin/obs/attention/{id}/contact-draft: the prefilled message for
+// an open signal, worded with only what the customer can see in their own
+// dashboard.
+type ObsAttentionContactDraft struct {
+	Subject    string   `json:"subject"`
+	Category   string   `json:"category"`
+	Body       string   `json:"body"`
+	Categories []string `json:"categories"`
+	SubjectMax int      `json:"subject_max"`
+	BodyMax    int      `json:"body_max"`
+}
+
+// ObsAttentionKindSummary is how one signal kind fared: how many opened,
+// what support did and how long it took to act. FalsePositivePercent is -1
+// when nobody acted on any; MedianActSeconds is absent then too.
+type ObsAttentionKindSummary struct {
+	Kind                 string   `json:"kind"`
+	Total                int64    `json:"total"`
+	Open                 int64    `json:"open"`
+	Contacted            int64    `json:"contacted"`
+	FalsePositive        int64    `json:"false_positive"`
+	OtherDismissed       int64    `json:"other_dismissed"`
+	ResolvedOnOwn        int64    `json:"resolved_on_own"`
+	FalsePositivePercent int64    `json:"false_positive_percent"`
+	MedianActSeconds     *float64 `json:"median_act_seconds,omitempty"`
+}
+
+// ObsAttentionSummaryResponse answers GET /v1/admin/obs/attention/summary:
+// signals first seen in the last WindowDays, one row per kind that had any.
+type ObsAttentionSummaryResponse struct {
+	WindowDays int                       `json:"window_days"`
+	Items      []ObsAttentionKindSummary `json:"items"`
+}
