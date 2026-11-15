@@ -18,6 +18,11 @@ func (h *Handler) clientLeftDuringWake(r *http.Request, app App) bool {
 	if r == nil || !errors.Is(r.Context().Err(), context.Canceled) {
 		return false
 	}
+	// A traffic revocation also cancels the request; the client is still
+	// there and must get the revocation's 403 problem, not a silent 499.
+	if trafficRevocationCause(r.Context()) != nil {
+		return false
+	}
 	if h.log != nil {
 		h.log.Info("gateway: client left during wake; the wake continues", "app_id", app.ID)
 	}
