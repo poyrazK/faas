@@ -3,6 +3,7 @@
 import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {resolve} from 'node:path';
+import {csvBatchPipeline} from './pipeline-batch.mjs';
 import {csvPipeline} from './pipeline.mjs';
 const runtime=process.env.GREGALE_NODE_JOB_RUNTIME?pathToFileURL(resolve(process.env.GREGALE_NODE_JOB_RUNTIME)):new URL('../../sdk/node/dist/job-runtime.js',import.meta.url);
 const sdk=await import(new URL('./preview.js',runtime)),{runWorkflowInvocation}=await import(new URL('./workflows.js',runtime));
@@ -20,7 +21,7 @@ try{
     }return result;
   };
   const scope=JSON.parse(process.env.GREGALE_PIPELINE_SCOPE),store=sdk.postgresPipelineJobStore(query),jobStore=await files.jobStore({timeoutMs:10000});
-  const {pipeline}=await csvPipeline({sdk,client,scope,store,jobStore,reviewed:process.env.GREGALE_REVIEWED_PIPELINE==='1',gateStore:sdk.postgresPipelineGateStore(query)});
+  let {pipeline}=await csvPipeline({sdk,client,scope,store,jobStore,reviewed:process.env.GREGALE_REVIEWED_PIPELINE==='1',gateStore:sdk.postgresPipelineGateStore(query)});
   // Wait for both module imports before starting the SDK's operation deadline.
   if(process.env.GREGALE_PIPELINE_BARRIER){
     await pool.query("INSERT INTO sdk_pipeline_barrier VALUES ('node-ready') ON CONFLICT DO NOTHING");
@@ -29,5 +30,12 @@ try{
     if(!ready)throw new Error('Fixture driver startup expired');
   }
   const request=JSON.parse(await readFile(process.argv[2],'utf8'));
+  if(request.workflow==='csv-batch-pipeline')({pipeline}=await csvBatchPipeline({sdk,scope,token:process.env.FAAS_TOKEN,store,childrenStore:sdk.postgresPipelineChildrenStore(async(sql,values)=>{
+    if(process.env.GREGALE_CHILDREN_BARRIER&&sql.startsWith('UPDATE public.gregale_pipeline_children SET state=')&&values[4]){
+      await pool.query("INSERT INTO sdk_pipeline_barrier VALUES ('child-node') ON CONFLICT DO NOTHING");
+      for(let n=0;n<3000;n++){if((await pool.query("SELECT count(*)::int AS n FROM sdk_pipeline_barrier WHERE driver IN ('child-node','child-python')")).rows[0].n===2)break;await new Promise(r=>setTimeout(r,5));}
+    }
+    return pool.query(sql,values);
+  }),gateStore:sdk.postgresPipelineGateStore(query),requestTimeoutMs:30000}));
   console.log(JSON.stringify(await runWorkflowInvocation(pipeline.definition,request)));
 }finally{await pool.end();}

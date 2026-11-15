@@ -23,6 +23,14 @@ from ..job_runtime import (
     _scope as _job_scope,
 )
 from ..workflows import RetryPolicy, WorkflowContext, WorkflowDefinition
+from .pipeline_children import (
+    PipelineBatchResult,
+    PipelineChild,
+    PipelineChildOptions,
+    PipelineChildren,
+    PipelineChildView,
+)
+from .pipeline_children_state import PipelineChildrenError
 from .pipeline_gates import (
     GateKind,
     PipelineGateError,
@@ -37,6 +45,7 @@ from .pipeline_state import (
     PipelineJobReceipt,
     PipelineJobStore,
     PipelineScope,
+    _parse_pipeline_lineage,
     match_pipeline_job,
     pipeline_job_identity,
     pipeline_name,
@@ -127,6 +136,8 @@ class JobPipelineContext:
         self._operations = self._journal_bytes = self._pending_gates = 0
         self._blocked = False
         self._input_sha256 = input_sha256
+        self._envelope: dict[str, Any] | None = None
+        self._composing = False
 
     def _claim(self) -> None:
         self._operations += 1
@@ -156,6 +167,8 @@ class JobPipelineContext:
         self, kind: GateKind, name: str, contract: JobContract[I, O], review: I, options: PipelineGateOptions
     ) -> PipelineGateOutcome[O]:
         p = self._pipeline
+        if self._composing:
+            raise PipelineChildrenError("blocked")
         if p.gate_store is None or name in self._used:
             raise PipelineGateError("invalid_input")
         self._used.add(name)
@@ -193,10 +206,53 @@ class JobPipelineContext:
         finally:
             self._pending_gates -= 1
 
+    async def children(
+        self,
+        name: str,
+        definition: PipelineChild[I, O],
+        inputs: Sequence[JobInput[I]],
+        *,
+        options: PipelineChildOptions,
+    ) -> PipelineBatchResult[O]:
+        self._can_submit()
+        p = self._pipeline
+        if p.children is None or self._envelope is None or name in self._used or self._composing:
+            raise PipelineError("invalid_input")
+        self._used.add(name)
+        self._composing = True
+        try:
+            return await p.children.run(
+                self._wf,
+                self._envelope,
+                name,
+                definition,
+                inputs,
+                options,
+                claim=self._claim,
+                budget=self._budget,
+                guard=self._can_submit,
+                polls=p.options.max_polls,
+                delay=p.options.poll_delay,
+            )
+        finally:
+            self._composing = False
+
+    async def child(
+        self, name: str, definition: PipelineChild[I, O], value: I, *, options: PipelineChildOptions
+    ) -> PipelineChildView[O]:
+        from dataclasses import replace
+
+        result = await self.children(
+            name, definition, [JobInput("one", value)], options=replace(options, concurrency=1)
+        )
+        return result.children[0]
+
     async def job(
         self, step: str, inputs: Sequence[JobInput[I]], *, definition: PipelineJob[I, O]
     ) -> PipelineJobResult[O]:
         self._can_submit()
+        if self._composing:
+            raise PipelineChildrenError("blocked")
         p, wf, settings = self._pipeline, self._wf, self._pipeline.options
         if step not in p.jobs or p.jobs[step] is not definition or step in self._used:
             raise PipelineError("invalid_input", step)
@@ -398,11 +454,13 @@ class JobPipeline(Generic[PI, PO]):
         run: Callable[[PI, JobPipelineContext], Awaitable[PO]],
         options: JobPipelineOptions | None = None,
         gate_store: PipelineGateStore | None = None,
+        children: PipelineChildren | None = None,
     ):
         self.contract, self.scope, self.store = contract, scope, store
         self.gate_store = gate_store
+        self.children = children
         self.jobs, self.options = dict(jobs), options or JobPipelineOptions()
-        if not self.jobs and gate_store is None or any(not pipeline_name(k) for k in self.jobs):
+        if not self.jobs and gate_store is None and children is None or any(not pipeline_name(k) for k in self.jobs):
             raise PipelineError("invalid_input")
 
         async def entry(envelope: Any, wf: WorkflowContext) -> dict[str, Any]:
@@ -414,11 +472,17 @@ class JobPipeline(Generic[PI, PO]):
                 or envelope.get("scope") != scope.to_dict()
             ):
                 raise PipelineError("scope_mismatch")
+            if "lineage" in envelope:
+                _parse_pipeline_lineage(envelope["lineage"])
             value = contract.input(envelope["input"])
             context = JobPipelineContext(self, wf, envelope["owner_id"], job_value_hash(envelope | {"input": value}))
+            context._envelope = envelope | {"input": value}
             output = contract.output(await run(value, context))
             if context._pending_gates:
                 raise PipelineGateError("pending")
+            if context._composing:
+                context._blocked = True
+                raise PipelineChildrenError("blocked")
             context._budget(output)
             return {
                 "version": 1,

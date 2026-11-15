@@ -168,6 +168,8 @@ def _fixture_generator(tmp_path, monkeypatch):
         "faas_sdk/_project_verification.py": b"# uncommitted exact-deployment verification\n",
         "faas_sdk/preview/_binding_runner.py": b"# uncommitted verification runner\n",
         "faas_sdk/preview/files.py": b"# uncommitted preview file workflows\n",
+        "faas_sdk/preview/pipeline_children.py": b"# uncommitted child runtime\n",
+        "faas_sdk/preview/pipeline_children_state.py": b"# uncommitted child receipts\n",
         "faas_sdk/preview/pipeline_gates.py": b"# uncommitted approval/input gates\n",
         "faas_sdk/preview/file_pipelines.py": b"# uncommitted typed file pipelines\n",
         "faas_sdk/preview/_binding_runner_diagnostics.py": b"# uncommitted automatic diagnostics\n",
@@ -378,9 +380,9 @@ def test_regenerated_preview_barrel_preserves_live_jobs(tmp_path, monkeypatch):
 
 def test_regenerated_preview_barrel_preserves_job_pipelines(tmp_path, monkeypatch):
     generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
-    for module in ("pipeline_state.py", "job_pipelines.py", "job_pipeline_client.py", "pipeline_gates.py"):
+    for module in ("pipeline_state.py", "job_pipelines.py", "job_pipeline_client.py", "pipeline_gates.py", "pipeline_children.py", "pipeline_children_state.py"):
         assert module in generator.PREVIEW_WRAPPER_MODULES
-    for name in ("JobPipelineClient", "JobPipeline", "PipelineScope", "PipelineJobReceipt", "job_pipeline_live_snapshot", "PipelineGateService", "PipelineGateOptions"):
+    for name in ("JobPipelineClient", "JobPipeline", "PipelineScope", "PipelineJobReceipt", "job_pipeline_live_snapshot", "PipelineGateService", "PipelineGateOptions", "PipelineChildren", "PipelineChildOptions"):
         assert name in generator._PREVIEW_INIT_PY_TEMPLATE
         assert name not in generator._INIT_PY_TEMPLATE
     compile(generator._PREVIEW_INIT_PY_TEMPLATE, "preview/__init__.py", "exec")

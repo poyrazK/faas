@@ -11,6 +11,8 @@ elsewhere its calls answer 404 no such API route.
 
 # ruff: noqa: F401
 from .pipeline_state import PipelineFailure, pipeline_failure, PIPELINE_JOB_SCHEMA, PipelineError, PipelineJobReceipt, PipelineJobStore, PipelineScope, PostgresPipelineJobStore, pipeline_job_identity, read_pipeline_artifact
+from .pipeline_children_state import PIPELINE_CHILDREN_SCHEMA, PipelineChildrenError, PipelineChildrenReceipt, PipelineChildrenStore, PostgresPipelineChildrenStore, pipeline_children_identity, pipeline_children_intent
+from .pipeline_children import PipelineChildren, PipelineChild, PipelineChildOptions, PipelineChildView, PipelineBatchResult, PipelineChildrenTransport, NativePipelineChildrenTransport, pipeline_children_live_snapshot
 from .pipeline_gates import PIPELINE_GATE_SCHEMA, NativePipelineGateTransport, PipelineGateActor, PipelineGateError, PipelineGateOptions, PipelineGateOutcome, PipelineGateRecord, PipelineGateService, PipelineGateStore, PipelineGateTransport, PipelineGateView, PostgresPipelineGateStore, pipeline_gate_intent
 from .job_pipelines import JobPipeline, JobPipelineContext, JobPipelineOptions, PipelineItem, PipelineJob, PipelineJobResult
 from .job_pipeline_client import job_pipeline_live_snapshot, JobPipelineClient, PipelineCheckpoint, PipelineInspection, PipelineStepInspection, TypedPipelineRun
@@ -641,6 +643,7 @@ from .realtime_workers import (
 )
 
 __all__ = (
+    'PipelineChildren', 'PipelineChild', 'PipelineChildOptions', 'PipelineChildView', 'PipelineBatchResult', 'PipelineChildrenTransport', 'NativePipelineChildrenTransport', 'pipeline_children_live_snapshot', 'PIPELINE_CHILDREN_SCHEMA', 'PipelineChildrenError', 'PipelineChildrenReceipt', 'PipelineChildrenStore', 'PostgresPipelineChildrenStore', 'pipeline_children_identity', 'pipeline_children_intent',
     'LiveJobWaiting', 'PIPELINE_GATE_SCHEMA', 'NativePipelineGateTransport', 'PipelineGateActor', 'PipelineGateError', 'PipelineGateOptions', 'PipelineGateOutcome', 'PipelineGateRecord', 'PipelineGateService', 'PipelineGateStore', 'PipelineGateTransport', 'PipelineGateView', 'PostgresPipelineGateStore', 'pipeline_gate_intent',
     'PipelineFailure', 'pipeline_failure', 'job_pipeline_live_snapshot', 'PIPELINE_JOB_SCHEMA', 'PipelineError', 'PipelineJobReceipt', 'PipelineJobStore', 'PipelineScope', 'PostgresPipelineJobStore', 'pipeline_job_identity', 'read_pipeline_artifact', 'JobPipeline', 'JobPipelineContext', 'JobPipelineOptions', 'PipelineItem', 'PipelineJob', 'PipelineJobResult', 'JobPipelineClient', 'PipelineCheckpoint', 'PipelineInspection', 'PipelineStepInspection', 'TypedPipelineRun',
     'LiveJob', 'LiveJobError', 'LiveJobFailure', 'LiveJobSink', 'LiveJobSnapshot', 'LiveJobSource', 'LiveJobStatus', 'realtime_live_job_source',

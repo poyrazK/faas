@@ -371,3 +371,59 @@ and report download, concurrent opposing Node/Python decisions, database expiry
 and parent cancellation. See [SDK gate semantics](../../docs/sdk-pipeline-gates.md)
 for backend authorization, recovery and native workflow limitations. The native
 control plane and realtime transport in this test are local protocol fixtures.
+
+## Batch imports (preview)
+
+`pipeline-batch.mjs` and `batch_pipeline.py` reuse `csv-reviewed-pipeline` for
+multiple CSV files. The generated `batch-contract.json` input is
+`{imports: [{id, value: {import_id, source}}]}` with stable item IDs and the same
+owned source descriptors as a single import. Generate TypeScript/Python types
+with the existing `job-types` commands. Each child validates its file, waits for
+its own review, imports rows and produces a verified rejection report. The parent
+returns ordered child outcomes and a combined saved/rejected row summary.
+
+Install the existing Job/gate/receipt schemas plus:
+
+```sh
+psql "$DATABASE_URL" -f sdk/request-contracts/pipeline-children.sql
+```
+
+Set `GREGALE_BATCH_PIPELINE=1` alongside the scope, database, bucket, backend
+credentials, application users and private realtime endpoint from the reviewed
+example. Start `pipeline-api.mjs`. Publish two native code workflow definitions:
+`csv-batch-pipeline` with `code.path: /csv-batch-pipeline` and
+`csv-reviewed-pipeline` with `code.path: /csv-reviewed-pipeline`. Both definitions
+are served with the SDK's native gateway source checks. The local CLI drivers
+remain test-only and must not be exposed as HTTP routes.
+
+After application authentication, start the batch using a typed pipeline client
+bound to the batch contract and current owner. Retain its root run ID/checkpoint.
+Visit `/batch-review.html?run=PARENT_RUN_ID`, enter your application token, and
+attach to the private live parent view. Each child links to its existing review
+and report screen. The parent view displays pending reviews, per-child states,
+completed results and totals. Changing credentials clears the displayed state.
+The protected backend `/batches/ID/view`, `/snapshot` and `/ticket` routes verify
+native parent ownership before exposing child metadata or issuing tickets.
+No platform token is sent to the browser.
+
+The example uses concurrency two, a three-minute batch deadline, collected
+outcomes, and cancellation of child orchestration on deadline/parent stop.
+It runs bounded child recovery every second, alongside gate delivery recovery.
+Accepted Jobs retain their own cancellation semantics. An unknown child-start
+reply stays unresolved until a trusted operator identifies the exact run and
+calls `coordinator.reconcile`; it is never automatically re-posted. See
+[policy, lineage, budgets and recovery details](../../docs/sdk-pipeline-composition.md).
+
+```sh
+npm --prefix sdk/node run build
+node --test examples/sdk-csv-jobs/composition-local.test.mjs
+```
+
+This fixture uses a real isolated PostgreSQL cluster, alternating Node/Python
+parent/child drivers and actual workers, two competing CAS admission drivers,
+a lost child-start ACK, dropped journals, verified-ID adoption, current reviewer
+auth, two-user isolation, native-status-based child approval views and Chrome
+parent progress. It confirms two child workflows, six Jobs and two verified
+reports. The native control plane and realtime transport are local protocol
+fixtures. Set `GREGALE_LOCAL_PYTHON`, `GREGALE_LOCAL_PG_BIN` and
+`GREGALE_LOCAL_CHROME` as for the other local examples when paths differ.

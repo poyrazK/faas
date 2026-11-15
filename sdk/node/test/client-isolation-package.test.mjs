@@ -319,10 +319,20 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     void updates;void view;
     declare const pipelineStore: import('@gregale/sdk-node/preview').PipelineJobStore;
     declare const pipelineScope: import('@gregale/sdk-node/preview').PipelineScope;
+    declare const childStore: import('@gregale/sdk-node/preview').PipelineChildrenStore;
+    const {PipelineChildren}=await import('@gregale/sdk-node/preview');
+    const childDefinition={contract:jobContract};
+    const coordinator=new PipelineChildren({scope:pipelineScope,parentContract:jobContract,children:[childDefinition],store:childStore,token:'backend'});
+    type BatchView=import('@gregale/sdk-node/preview/browser').PipelineBatchResult<number>;
     const {defineJobPipeline,createJobPipelineClient}=await import('@gregale/sdk-node/preview');
     declare const gateStore: import('@gregale/sdk-node/preview').PipelineGateStore;
     type GateView = import('@gregale/sdk-node/preview/browser').PipelineGateView<string,number>;
-    const jobPipeline=defineJobPipeline(jobContract,{scope:pipelineScope,store:pipelineStore,gateStore,jobs:{work:{contract:jobContract,job:client.jobs.defineJob(jobContract)}}},async(input,wf)=>{
+    const jobPipeline=defineJobPipeline(jobContract,{scope:pipelineScope,store:pipelineStore,gateStore,children:coordinator,jobs:{work:{contract:jobContract,job:client.jobs.defineJob(jobContract)}}},async(input,wf)=>{
+      const single = await wf.child('child',childDefinition,input,{timeoutMs:60000});
+      const childOutput:number|undefined=single.output;void childOutput;
+      const batch:import('@gregale/sdk-node/preview').PipelineBatchResult<number>=await wf.children('children',childDefinition,[{id:'one',value:input}],{timeoutMs:60000,concurrency:2});void batch;
+      // @ts-expect-error child input retains the generated string type
+      await wf.child('bad-child',childDefinition,42,{timeoutMs:60000});
       const approval = await wf.approval('review',jobContract,input,{timeoutMs:60000,requiredRoles:['reviewer']});
       if(approval.state==='approved'){ const typed:number=approval.payload;void typed; }
       // @ts-expect-error review must match its generated contract
@@ -339,6 +349,8 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     const pipelineClient=createJobPipelineClient({baseURL:'https://api.test',token:'backend',scope:pipelineScope,ownerId:'alice',contract:jobContract});
     const pipelineRun=await pipelineClient.start('input',{timeoutMs:1000,idempotencyKey:'one'});
     const pipelineOutput:Promise<number>=pipelineRun.result({timeoutMs:1000});void pipelineOutput;void jobPipeline;
+    // @ts-expect-error composition remains preview-only
+    type PublicChildren=import('@gregale/sdk-node').PipelineChildren;
     // @ts-expect-error approval services remain preview-only
     type PublicGate=import('@gregale/sdk-node').PipelineGateStore;
     // @ts-expect-error job pipelines remain preview-only

@@ -120,3 +120,5 @@ export { consumeRealtimeChannelWithFallback } from './realtime-transport.js';
 export type { RealtimeTransport, RealtimeTransportMessage, RealtimeTransportOptions } from './realtime-transport.js';
 
 export type * from './pipeline-gate-types.js';
+
+export type * from './pipeline-children-types.js';

@@ -42,6 +42,14 @@ async def main() -> None:
         )
 
         async def query(sql: str, values: list[Any]) -> list[dict[str, Any]]:
+            if os.environ.get("GREGALE_CHILDREN_BARRIER") and sql.startswith("UPDATE public.gregale_pipeline_children SET state=") and values[4]:
+                async with await psycopg.AsyncConnection.connect(os.environ["DATABASE_URL"], autocommit=True, row_factory=dict_row) as barrier:
+                    await barrier.execute("INSERT INTO sdk_pipeline_barrier VALUES ('child-python') ON CONFLICT DO NOTHING")
+                    for _ in range(3000):
+                        row = await (await barrier.execute("SELECT count(*)::int AS n FROM sdk_pipeline_barrier WHERE driver IN ('child-node','child-python')")).fetchone()
+                        if row["n"] == 2:
+                            break
+                        await asyncio.sleep(0.005)
             ordered = [values[int(m[1]) - 1] for m in re.finditer(r"\$(\d+)", sql)]
             statement = re.sub(r"\$\d+", "%s", sql)
             async with await psycopg.AsyncConnection.connect(
@@ -160,10 +168,15 @@ async def main() -> None:
                     await asyncio.sleep(0.005)
                 else:
                     raise RuntimeError("Fixture driver startup expired")
+        request = json.loads(Path(sys.argv[1]).read_text())
+        if request["workflow"] == "csv-batch-pipeline":
+            from batch_pipeline import csv_batch_pipeline
+            from faas_sdk.preview import PostgresPipelineChildrenStore
+            pipeline, _coordinator = csv_batch_pipeline(scope=scope, token=os.environ["FAAS_TOKEN"], store=PostgresPipelineJobStore(query), children_store=PostgresPipelineChildrenStore(query), gate_store=PostgresPipelineGateStore(query), request_timeout=30)
         print(
             json.dumps(
                 await run_workflow_invocation(
-                    pipeline.definition, json.loads(Path(sys.argv[1]).read_text())
+                    pipeline.definition, request
                 )
             )
         )

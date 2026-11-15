@@ -296,3 +296,18 @@ async def read_pipeline_artifact(
         return data
 
     return await _scope(options.timeout, read)
+
+
+def _parse_pipeline_lineage(value: Any) -> dict[str, Any]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"version", "parent_run_id", "batch_identity", "item_id"}
+        or type(value["version"]) is not int
+        or value["version"] != 1
+        or not _uuid(value["parent_run_id"])
+        or not _hash(value["batch_identity"])
+        or not isinstance(value["item_id"], str)
+        or re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", value["item_id"]) is None
+    ):
+        raise PipelineError("receipt_conflict")
+    return copy.deepcopy(value)

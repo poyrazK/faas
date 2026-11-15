@@ -3849,3 +3849,14 @@ expires decisions using database time, and recovers uncertain native event
 delivery. Existing pipelines remain unchanged until a gate store is configured.
 See [usage, authentication and recovery](../../docs/sdk-pipeline-gates.md) and
 the [reviewed CSV import](../../examples/sdk-csv-jobs/README.md#reviewed-import-preview).
+
+## Typed child pipelines and batches (preview)
+
+Invoke a registered pipeline with `wf.child`, or run ordered inputs through
+`wf.children` with a shared concurrency cap. `PipelineChildren` verifies native
+parent/child provenance, retains uncertain starts for explicit reconciliation,
+and applies captured failure, deadline and parent-stop policies. Recovery uses
+an application-owned PostgreSQL ledger and never automatically repeats unknown
+starts. Existing pipelines opt in through a coordinator; their APIs stay intact.
+See [usage and recovery](../../docs/sdk-pipeline-composition.md) and the
+[reviewed batch CSV example](../../examples/sdk-csv-jobs/README.md#batch-imports-preview).

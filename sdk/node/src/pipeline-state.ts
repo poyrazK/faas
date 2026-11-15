@@ -21,7 +21,14 @@ export function pipelineFailure(value: unknown): { readonly code: PipelineCode; 
   return Object.freeze({ code: parts[1] as PipelineCode, ...(fileEventUUID(last) ? { jobRunId: last } : {}) });
 }
 export interface PipelineScope { readonly base_url: string; readonly account_id: string; readonly app_id: string; readonly app_slug: string; }
+export interface PipelineLineage { readonly version: 1; readonly parent_run_id: string; readonly batch_identity: string; readonly item_id: string; }
+export function parsePipelineLineage(value: unknown): PipelineLineage {
+  const v = value as PipelineLineage;
+  if (!v || Object.keys(v).sort().join() !== 'batch_identity,item_id,parent_run_id,version' || v.version !== 1 || !fileEventUUID(v.parent_run_id) || !fileEventHash(v.batch_identity) || typeof v.item_id !== 'string' || !/^[A-Za-z0-9_.:-]{1,128}$/.test(v.item_id)) throw new PipelineError('receipt_conflict');
+  return jobSnapshot(v);
+}
 export interface PipelineEnvelope<I> {
+  readonly lineage?: PipelineLineage;
   readonly version: 1; readonly contract_sha256: string; readonly scope: PipelineScope; readonly owner_id: string; readonly input: I;
 }
 export interface PipelineResultEnvelope<O> extends Omit<PipelineEnvelope<O>, 'input'> { readonly output: O; }

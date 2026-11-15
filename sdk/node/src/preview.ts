@@ -743,3 +743,7 @@ export { parseJobCheckpoint, type JobCheckpoint, type JobProgress, type JobRunOp
 
 export { PipelineGateError, pipelineGateIntent, parsePipelineGateRecord, pipelineGateSchema, postgresPipelineGateStore, nativePipelineGateTransport, createPipelineGateService, type PipelineGateOptions, type PipelineGateStore, type PipelineGateTransport } from './pipeline-gates.js';
 export type * from './pipeline-gate-types.js';
+
+export { PipelineChildren, nativePipelineChildrenTransport, pipelineChildrenLiveSnapshot, type PipelineChild, type PipelineChildrenTransport } from './pipeline-children.js';
+export * from './pipeline-children-state.js';
+export type * from './pipeline-children-types.js';

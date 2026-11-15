@@ -174,13 +174,16 @@ from __future__ import annotations
 from typing import assert_type
 from faas_sdk import JobContract,JobInput,JobSubmitOptions,JobRunOptions,JobProgress,JobItemOutcome,TypedJobRun
 from faas_sdk.preview import LiveJob,LiveJobSnapshot,LiveJobFailure,LiveJobSource,realtime_live_job_source
-from faas_sdk.preview import PipelineGateOptions,PipelineGateOutcome,PipelineGateService,JobPipeline,JobPipelineClient,PipelineCheckpoint,PipelineInspection,TypedPipelineRun,JobPipelineContext,PipelineJob,PipelineJobResult
+from faas_sdk.preview import PipelineChild,PipelineChildOptions,PipelineBatchResult,PipelineChildView,PipelineGateOptions,PipelineGateOutcome,PipelineGateService,JobPipeline,JobPipelineClient,PipelineCheckpoint,PipelineInspection,TypedPipelineRun,JobPipelineContext,PipelineJob,PipelineJobResult
 async def typed_job_pipeline(client:JobPipelineClient[str,int],context:JobPipelineContext,job:PipelineJob[str,int])->None:
     run=await client.start("one",timeout=1,idempotency_key="one")
     assert_type(run,TypedPipelineRun[int])
     assert_type(run.checkpoint,PipelineCheckpoint)
     assert_type(await run.result(timeout=1),int)
     assert_type(await run.inspect(timeout=1),PipelineInspection)
+    child:PipelineChild[str,int]=PipelineChild(contract=job.contract)
+    assert_type(await context.child("child",child,"input",options=PipelineChildOptions(timeout=60)),PipelineChildView[int])
+    assert_type(await context.children("children",child,[JobInput("one","input")],options=PipelineChildOptions(timeout=60,concurrency=2)),PipelineBatchResult[int])
     assert_type(await context.approval("review",job.contract,"input",options=PipelineGateOptions(timeout=60,required_roles=("reviewer",))),PipelineGateOutcome[int])
     assert_type(await context.wait_for_input("reply",job.contract,"input",options=PipelineGateOptions(timeout=60,required_roles=("reviewer",))),PipelineGateOutcome[int])
     assert_type(await context.job("work",[JobInput("one","input")],definition=job),PipelineJobResult[int])

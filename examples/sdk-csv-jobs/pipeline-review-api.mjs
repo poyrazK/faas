@@ -3,11 +3,11 @@ import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 
-export function createPipelineReviewServer({sdk,client,scope,files,contract,pipeline,reviewContract,gateStore,users,realtime,nativeEntry,token}){
+export function createPipelineReviewServer({sdk,client,scope,files,contract,pipeline,reviewContract,gateStore,users,realtime,nativeEntry,token,batch,nativePaths=['/csv-reviewed-pipeline']}){
   if(typeof token!=='string'||!token)throw new Error('backend_token_required');
   const leases=new Map(),options={timeoutMs:10000};
   const principal=(name,token)=>{const u=users[name];if(!u||u.token!==token)throw new Error('unauthorized');return u;};
-  const typed=ownerId=>sdk.createJobPipelineClient({baseURL:scope.base_url,token,scope,ownerId,contract});
+  const typed=(ownerId,root=contract)=>sdk.createJobPipelineClient({baseURL:scope.base_url,token,scope,ownerId,contract:root});
   const gates=sdk.createPipelineGateService({scope,pipelineSha256:contract.sha256,contract:reviewContract,store:gateStore,
     transport:sdk.nativePipelineGateTransport({scope,token,contract,timeoutMs:10000}),
     authorize:async(_record,_action,access)=>{const u=principal(access.name,access.token);return {actor_id:access.name,owner_id:u.owner_id,roles:u.roles};},
@@ -22,6 +22,12 @@ export function createPipelineReviewServer({sdk,client,scope,files,contract,pipe
   const bridge=sdk.createLiveJobBridge({pollDelayMs:realtime?.pollDelayMs??500,leaseMs:35000,requestTimeoutMs:15000,maxResources:128,
     loadSnapshot:async(id,signal)=>{
       const access=leases.get(id);if(!access)throw new Error('unauthorized');const u=principal(access.name,access.token);
+      if(access.batch){
+        const run=await typed(u.owner_id,batch.contract).resumeById(id,{...options,signal});
+        const view=await batch.coordinator.inspect(id,'imports',u.owner_id,batch.child,{...options,signal});
+        const native=await run.inspect({...options,signal});principal(access.name,access.token);
+        return sdk.pipelineChildrenLiveSnapshot(view,native,id);
+      }
       const run=await typed(u.owner_id).resumeById(id,{...options,signal});
       let snapshot=await sdk.jobPipelineLiveSnapshot(run,{resourceId:id,steps:['validate','import','report'],...options,signal,inspectJob:(step,active)=>pipeline.inspectJob(id,step,u.owner_id,{...options,signal:active})});
       const gate=await matching(id,u.owner_id,signal);
@@ -39,27 +45,29 @@ export function createPipelineReviewServer({sdk,client,scope,files,contract,pipe
   });
   // Durable delivery is independent of an open browser or workflow process.
   let draining=false;
-  const timer=setInterval(async()=>{if(draining)return;draining=true;try{await gates.drain(100,{timeoutMs:10000});}catch{}finally{draining=false;}},1000);timer.unref();
+  const timer=setInterval(async()=>{if(draining)return;draining=true;try{try{await gates.drain(100,{timeoutMs:10000});}catch{}if(batch)try{await batch.coordinator.recover(100,{timeoutMs:10000});}catch{}}finally{draining=false;}},1000);timer.unref();
   const server=http.createServer(async(req,res)=>{
     const path=new URL(req.url,'http://localhost').pathname;
-    if(nativeEntry&&req.method==='POST'&&path==='/csv-reviewed-pipeline')return nativeEntry(req,res);
+    if(nativeEntry&&req.method==='POST'&&nativePaths.includes(path))return nativeEntry(req,res);
     const send=(status,value)=>{if(res.destroyed)return;res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
-    if(req.method==='GET'&&(path==='/'||path==='/pipeline-review-browser.mjs'||/^\/sdk\/(live-jobs|live-job-realtime|browser-realtime|realtime-resume|realtime-expiry|realtime-activity)\.js$/.test(path))){
-      try{const file=path==='/'?new URL('pipeline-review.html',import.meta.url):path.startsWith('/sdk/')?new URL('../../sdk/node/dist/'+path.slice(5),import.meta.url):new URL('pipeline-review-browser.mjs',import.meta.url);res.writeHead(200,{'Content-Type':path==='/'?'text/html':'text/javascript','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(await readFile(file));}catch{send(404,{code:'not_found'});}return;
+    if(req.method==='GET'&&(path==='/'||path==='/pipeline-review-browser.mjs'||path==='/batch-review.html'||path==='/batch-review-browser.mjs'||/^\/sdk\/(live-jobs|live-job-realtime|browser-realtime|realtime-resume|realtime-expiry|realtime-activity)\.js$/.test(path))){
+      try{const file=path==='/'?new URL('pipeline-review.html',import.meta.url):path.startsWith('/sdk/')?new URL('../../sdk/node/dist/'+path.slice(5),import.meta.url):new URL(path==='/batch-review.html'?'batch-review.html':path==='/batch-review-browser.mjs'?'batch-review-browser.mjs':'pipeline-review-browser.mjs',import.meta.url);res.writeHead(200,{'Content-Type':path==='/'||path.endsWith('.html')?'text/html':'text/javascript','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(await readFile(file));}catch{send(404,{code:'not_found'});}return;
     }
     const token=req.headers.authorization?.replace(/^Bearer /,''),name=Object.keys(users).find(n=>users[n].token===token);
     if(!name){send(401,{code:'unauthorized'});return;}
-    const route=/^\/runs\/([a-f0-9-]{36})\/(snapshot|ticket|gate|decision|report)$/.exec(path);
+    const route=/^\/(runs|batches)\/([a-f0-9-]{36})\/(snapshot|ticket|gate|decision|report|view)$/.exec(path);
     if(!route){send(404,{code:'not_found'});return;}
     const abort=new AbortController();req.once('aborted',()=>abort.abort());res.once('close',()=>{if(!res.writableEnded)abort.abort();});const signal=abort.signal;
     try{
-      const access={name,token},u=principal(name,token),id=route[1],action=route[2];
+      const access={name,token},u=principal(name,token),id=route[2],action=route[3],isBatch=route[1]==='batches';
+      if(isBatch&&(!batch||!['snapshot','ticket','view'].includes(action))){send(404,{code:'not_found'});return;}
       // Verify native root ownership before revealing even a pending gate ID.
-      const run=await typed(u.owner_id).resumeById(id,{...options,signal});principal(name,token);
-      if(req.method==='GET'&&action==='snapshot'){leases.set(id,access);send(200,await bridge.snapshot(id));return;}
+      const run=await typed(u.owner_id,isBatch?batch.contract:contract).resumeById(id,{...options,signal});principal(name,token);
+      if(req.method==='GET'&&isBatch&&action==='view'){const view=await batch.coordinator.inspect(id,'imports',u.owner_id,batch.child,{...options,signal});const state=await run.inspect({...options,signal});const output=state.status==='succeeded'?await run.result({...options,signal}):null;principal(name,token);send(200,{view,output});return;}
+      if(req.method==='GET'&&action==='snapshot'){leases.set(id,{...access,batch:isBatch});send(200,await bridge.snapshot(id));return;}
       if(req.method==='GET'&&action==='ticket'){
         if(!realtime){send(503,{code:'realtime_not_configured'});return;}
-        const value=await client.realtime.issueRealtimeSubscriptionTicket({slug:scope.app_slug,id:realtime.endpointId,requestBody:{principal:name,channels:[channel(id)],ttl_seconds:30}},{...options,signal,retry:false});principal(name,token);leases.set(id,access);bridge.watch(id);send(200,{...value,url:realtime.url,channel:channel(id)});return;
+        const value=await client.realtime.issueRealtimeSubscriptionTicket({slug:scope.app_slug,id:realtime.endpointId,requestBody:{principal:name,channels:[channel(id)],ttl_seconds:30}},{...options,signal,retry:false});principal(name,token);leases.set(id,{...access,batch:isBatch});bridge.watch(id);send(200,{...value,url:realtime.url,channel:channel(id)});return;
       }
       const row=await matching(id,u.owner_id,signal);
       if(req.method==='GET'&&action==='gate'){const gate=row?await gates.inspect(row.intent.id,access,{...options,signal}):null;principal(name,token);send(200,{gate});return;}
