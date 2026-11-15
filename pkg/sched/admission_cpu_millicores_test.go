@@ -147,6 +147,24 @@ func TestSetCPUStartupBoostUntil_FutureKeepsPastReleases(t *testing.T) {
 	}
 }
 
+// Releasing an instance mid-boost returns both its sustained quota and the
+// boost still on top of it; nothing lingers in the node's CPU figure.
+func TestRelease_DuringStartupBoostReturnsAllCPU(t *testing.T) {
+	t.Parallel()
+	ledger := sched.NewNodeLedger()
+	req := cpuAdmissionRequest("boosted")
+	req.CPUMillicores = 250
+	req.CPUStartupBoostMillicores = 1000
+	req.CPUStartupBoostUntil = time.Now().Add(time.Hour)
+	if err := ledger.Admit(req); err != nil {
+		t.Fatalf("admit: %v", err)
+	}
+	ledger.Release("boosted")
+	if got := ledger.UsedCPUMillicoresForNode("node-a"); got != 0 {
+		t.Fatalf("CPU after releasing a boosted instance = %d, want 0", got)
+	}
+}
+
 func TestAdmit_StartupCPUBoostCountsAgainstPhysicalBudget(t *testing.T) {
 	t.Parallel()
 	ledger := sched.NewNodeLedger()

@@ -67,7 +67,22 @@ newer Go than `go.mod` pins and edits files in place.
 
 A lived mutant is either a missing assertion (write the test, cite the
 behaviour per `TESTOWNERS`) or an equivalent mutant: a change that cannot
-alter behaviour, e.g. `if q < 0 { return 0 }` → `q <= 0` when q == 0 already
-yields 0. Leave equivalent mutants alone. Once the survivor list is triaged,
-set `-min-efficacy` in the workflow to the measured level so regressions fail
-the weekly run.
+alter behaviour, e.g. a clamp `if n < 0 { n = 0 }` → `n <= 0`. Leave
+equivalent mutants alone.
+
+The workflow's `gate` job merges each target's shard reports
+(`go run ./cmd/mutate -merge 'reports/mutation-ledger-*/*.json'`) and fails
+when efficacy falls below the target's floor:
+
+| Target | First full run (2026-11-15) | Floor |
+| --- | --- | --- |
+| billing | 76.2% (924 killed, 288 lived, 174 not covered) | 76% |
+| ledger | 70.4% (247 killed, 104 lived, 128 not covered) | 70% |
+
+Raise a floor (in `mutation.yml`) after a run that triaged survivors lifts
+the score. Survivors from that run worth tests next: ledger
+`admission.go:756` (release adds the agent discount back), the flexible-job
+CPU checks (`admission.go:539/1131/1148/1152`), and
+`admission_environment_capacity.go` (21 survivors); billing
+`api_consumer_pricing.go` (43) and `platform_tenant_month_statements.go`
+(41).

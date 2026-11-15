@@ -63,6 +63,7 @@ type config struct {
 	minEfficacy  float64
 	jsonOut      string
 	list         bool
+	merge        string
 	tags         string
 	testFlags    []string
 }
@@ -74,7 +75,12 @@ func main() {
 		os.Exit(2)
 	}
 	ctx := context.Background()
-	rep, err := run(ctx, cfg, os.Stdout)
+	var rep *report
+	if cfg.merge != "" {
+		rep, err = mergeReports(cfg.merge, os.Stdout)
+	} else {
+		rep, err = run(ctx, cfg, os.Stdout)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mutate:", err)
 		os.Exit(2)
@@ -105,12 +111,13 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&cfg.jsonOut, "json", "", "write the full report as JSON to this path")
 	fs.BoolVar(&cfg.list, "list", false, "list mutants and coverage status without running them")
 	fs.StringVar(&cfg.tags, "tags", "", "build tags passed to go test")
+	fs.StringVar(&cfg.merge, "merge", "", "instead of running, combine -json shard reports matching this glob into one summary (honours -min-efficacy)")
 	var testFlags string
 	fs.StringVar(&testFlags, "testflags", "", "extra space-separated go test flags for every run, e.g. -ldflags=-w")
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
 	}
-	if cfg.pkg == "" {
+	if cfg.pkg == "" && cfg.merge == "" {
 		return cfg, errors.New("-pkg is required")
 	}
 	cfg.files = splitList(files)
@@ -920,4 +927,39 @@ func tail(b []byte, n int) string {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// mergeReports combines shard reports (from -json) into one summary, so a
+// sharded CI run can gate on the whole target rather than on each slice.
+func mergeReports(glob string, out io.Writer) (*report, error) {
+	files, err := filepath.Glob(glob)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no reports match %q", glob)
+	}
+	sort.Strings(files)
+	var all []*mutant
+	pkg, runRe := "", ""
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		var r report
+		if err := json.Unmarshal(b, &r); err != nil {
+			return nil, fmt.Errorf("%s: %w", f, err)
+		}
+		if pkg != "" && r.Package != pkg {
+			return nil, fmt.Errorf("%s reports %s, others %s", f, r.Package, pkg)
+		}
+		pkg, runRe = r.Package, r.Run
+		all = append(all, r.Mutants...)
+	}
+	rep := summarize(pkg, runRe, config{shard: 1, shards: 1}, all)
+	rep.Shard = fmt.Sprintf("merged %d", len(files))
+	rep.Elapsed = "n/a"
+	printReport(out, rep, false)
+	return rep, nil
 }

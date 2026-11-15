@@ -14,16 +14,14 @@ name: mutation
 #
 # Weekly and on dispatch, never on pull requests: each mutant recompiles its
 # package, so a full pass is hours of runner time spread over the shards
-# below. Report-only for now: the job fails only if the harness itself
-# breaks or the unmutated tests fail. Survivors land in the job summary and
-# the JSON report artifact; triage them into tests (or note them as
-# equivalent mutants) and raise -min-efficacy once the baseline is known.
+# below. Survivors land in each shard's job summary and JSON artifact; the
+# gate job merges the shards and fails when a target's efficacy drops below
+# its floor. Floors are the first full run (2026-11-15, run 43699361433:
+# billing 76.2%, ledger 70.4%) rounded down; raise them as survivors are
+# triaged into tests. Equivalent mutants (a change that cannot alter
+# behaviour) are expected and stay as survivors.
 
 on:
-  # TEMPORARY: first full run before the workflow exists on main (dispatch
-  # needs it there). Remove before merging.
-  push:
-    branches: [test/mutation-testing]
   workflow_dispatch:
     inputs:
       target:
@@ -145,3 +143,56 @@ jobs:
           path: mutation-results/
           retention-days: 30
           if-no-files-found: ignore
+
+  gate:
+    # One shard is a slice of the mutants, so its score swings; the floor
+    # applies to each target's merged reports. A failed or missing shard
+    # fails the gate rather than scoring a partial run.
+    name: efficacy gate
+    needs: mutate
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: every shard finished
+        env:
+          RESULT: ${{ needs.mutate.result }}
+        run: |
+          if [ "$RESULT" != success ]; then
+            echo "::error::mutate shards ended with '$RESULT'; not scoring a partial run"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: mutation-*
+          path: reports
+      - name: merge shards and apply floors
+        run: |
+          set -euo pipefail
+          go build -o mutate ./cmd/mutate
+          status=0
+          # target:floor (percent efficacy over the merged shards)
+          for spec in billing:76 ledger:70; do
+            t="${spec%%:*}"; floor="${spec##*:}"
+            if ! compgen -G "reports/mutation-$t-*/*.json" >/dev/null; then
+              continue # target not selected on this dispatch
+            fi
+            {
+              echo "### mutation: $t (all shards, floor $floor%)"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            if ./mutate -merge "reports/mutation-$t-*/*.json" -min-efficacy "$floor" > "merged-$t.log" 2>&1; then
+              :
+            else
+              status=1
+            fi
+            grep -E '^(Killed|Test efficacy):|below -min-efficacy' "merged-$t.log" >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            tail -3 "merged-$t.log"
+          done
+          exit "$status"

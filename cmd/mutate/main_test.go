@@ -276,6 +276,40 @@ func TestTestFuncNames(t *testing.T) {
 	}
 }
 
+func TestMergeReportsCombinesShards(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, r report) {
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Shard 1 alone is 100%, shard 2 alone 0%; together 3 killed of 4 scored.
+	write("a.json", report{Package: "example.com/p", Mutants: []*mutant{{Status: statusKilled}, {Status: statusKilled}, {Status: statusNotCovered}}})
+	write("b.json", report{Package: "example.com/p", Mutants: []*mutant{{Status: statusTimedOut}, {Status: statusLived}, {Status: statusNotViable}}})
+	var buf bytes.Buffer
+	rep, err := mergeReports(filepath.Join(dir, "*.json"), &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Killed != 2 || rep.TimedOut != 1 || rep.Lived != 1 || rep.NotCovered != 1 || rep.NotViable != 1 || rep.Efficacy != 75 {
+		t.Fatalf("merged = %+v", rep)
+	}
+	write("c.json", report{Package: "example.com/other"})
+	if _, err := mergeReports(filepath.Join(dir, "*.json"), &buf); err == nil {
+		t.Fatal("merged reports from two packages")
+	}
+	if _, err := mergeReports(filepath.Join(dir, "none-*.json"), &buf); err == nil {
+		t.Fatal("merged an empty glob")
+	}
+	if _, err := parseFlags([]string{"-merge", "x/*.json"}); err != nil {
+		t.Fatalf("-merge without -pkg rejected: %v", err)
+	}
+}
+
 func TestParseFlags(t *testing.T) {
 	cfg, err := parseFlags([]string{"-pkg", "./pkg/x", "-files", "a*.go, b.go", "-shard", "2/4", "-also", "./t"})
 	if err != nil {
