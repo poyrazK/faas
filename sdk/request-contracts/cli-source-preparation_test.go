@@ -12,14 +12,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestCLISourcePreparationContract(t *testing.T) {
-	_, self, _, _ := runtime.Caller(0)
-	root := filepath.Clean(filepath.Join(filepath.Dir(self), "../.."))
+	rootOutput, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Fatalf("resolve platform repository from test working directory: %v", err)
+	}
+	root := strings.TrimSpace(string(rootOutput))
 	read := func(name string) []byte {
 		data, err := os.ReadFile(filepath.Join(root, name))
 		if os.IsNotExist(err) { // Support the SDK-only sparse checkout used locally.
@@ -103,9 +105,13 @@ func (*deploySourceFilesReport) observe(string, bool, int64, packSelection, bool
 	write("contract.json", read("sdk/request-contracts/source-preparation.json"))
 	write("go.mod", []byte("module sourcecontract\n\ngo 1.26.0\n"))
 	write("contract_test.go", []byte(cliSourceHarness))
-	cmd := exec.Command(filepath.Join(runtime.GOROOT(), "bin/go"), "test", "-count=1", "-v", ".")
+	goPath, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatalf("resolve selected Go toolchain: %v", err)
+	}
+	cmd := exec.Command(goPath, "test", "-count=1", "-v", ".")
 	cmd.Dir = tmp
-	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=", "GOTOOLCHAIN=local", "GOROOT="+runtime.GOROOT())
+	cmd.Env = append(os.Environ(), "GOWORK=off", "GOFLAGS=", "GOTOOLCHAIN=local")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("CLI source contract: %v\n%s", err, output)
