@@ -1,4 +1,6 @@
-# ADR: Queue review rounds 5–8 — held retention, replay resets, wake-ups and consumers
+# ADR-20261115183906: Queue review rounds 5–8 — held retention, replay resets, wake-ups and consumers
+
+Renumbered from ADR-20261113180000 to resolve a concurrent identifier collision. Historical citations in issued migrations retain the original identifier.
 
 Date: 2026-11-13
 Status: Accepted

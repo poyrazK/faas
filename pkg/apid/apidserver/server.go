@@ -4714,7 +4714,7 @@ func (s *server) handler() http.Handler {
 	// ADR-20261113123000: customers who are probably stuck.
 	mux.HandleFunc("GET /v1/admin/obs/attention",
 		s.authLimited(s.requireOperatorSessionRead(s.obsListAttention)))
-	// ADR-20261115120000: the operator console's signal actions and the
+	// ADR-20261115183907: the operator console's signal actions and the
 	// customer's own health view.
 	mux.HandleFunc("GET /v1/admin/obs/attention/summary",
 		s.authLimited(s.requireOperatorSessionRead(s.obsAttentionSummary)))

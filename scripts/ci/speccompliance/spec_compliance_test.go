@@ -147,7 +147,7 @@ var routeExclude = map[string]bool{
 	// ADR-20261112134100: private staff inbox metadata; public customer counterparts remain documented.
 	"GET /v1/admin/support/notifications":          true,
 	"POST /v1/admin/support/tickets/{ticket}/read": true,
-	// ADR-20261115120000: the private staff inbox API, now registered literally; the operator console reads it.
+	// ADR-20261115183907: the private staff inbox API, now registered literally; the operator console reads it.
 	"GET /v1/admin/support/tickets":                                               true,
 	"GET /v1/admin/support/tickets/{ticket}":                                      true,
 	"GET /v1/admin/support/tickets/{ticket}/messages":                             true,
@@ -524,7 +524,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/tenants/{id}/360":             true, // operator-only tenant 360 projection
 	"GET /v1/admin/obs/lookup":                       true, // operator-only identifier lookup (ADR-20261112170000)
 	"GET /v1/admin/obs/attention":                    true, // operator-only customer attention signals (ADR-20261113123000)
-	"GET /v1/admin/obs/attention/summary":            true, // operator console signal actions (ADR-20261115120000)
+	"GET /v1/admin/obs/attention/summary":            true, // operator console signal actions (ADR-20261115183907)
 	"GET /v1/admin/obs/attention/{id}/contact-draft": true,
 	"POST /v1/admin/obs/attention/{id}/dismiss":      true,
 	"POST /v1/admin/obs/attention/{id}/contact":      true,
