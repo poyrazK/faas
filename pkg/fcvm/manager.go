@@ -735,6 +735,12 @@ type Instance struct {
 	// first window has been observed.
 	EgressNewDstPerMin int64
 	EgressFanoutValid  bool
+	// InternalTxBytes is the cumulative bytes this instance sent to
+	// Gregale-internal destinations (billing review R8-2), accumulated from
+	// the per-namespace faas_internal_tx counter deltas so a counter reset
+	// does not lower it. InternalTxValid is false until the first poll.
+	InternalTxBytes uint64
+	InternalTxValid bool
 	// EgressFloodDropsPerMin is the new flows dropped in the last minute for
 	// exceeding the per-destination rate (ADR-361 decision 9). It is
 	// recorded in the same poll tick as the fan-out sample.
@@ -2981,6 +2987,36 @@ func (m *Manager) RecordEgressFanout(instance string, perMinute int64) {
 	if inst, ok := m.live[instance]; ok {
 		inst.EgressNewDstPerMin, inst.EgressFanoutValid = perMinute, true
 	}
+}
+
+// RecordInternalEgress adds delta bytes the instance sent to internal
+// destinations (billing review R8-2) and marks the total observed. Unknown
+// instances are ignored: the poll raced a teardown.
+func (m *Manager) RecordInternalEgress(instance string, delta uint64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.live[instance]; ok {
+		inst.InternalTxBytes += delta
+		inst.InternalTxValid = true
+	}
+}
+
+// InternalEgressBytes returns the instance's cumulative internal egress
+// bytes; ok is false until the first per-namespace poll observed it.
+func (m *Manager) InternalEgressBytes(instance string) (uint64, bool) {
+	if m == nil {
+		return 0, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, ok := m.live[instance]
+	if !ok || !inst.InternalTxValid {
+		return 0, false
+	}
+	return inst.InternalTxBytes, true
 }
 
 // EgressFanout returns the instance's latest fan-out sample and its plan's

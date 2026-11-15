@@ -866,6 +866,11 @@ message InstanceStatsRow {
   // a live-migrated instance keeps its ID and restarts its counters on the new
   // node (ADR-20261104090000). Older schedds never set it.
   bool departed = 13;
+  // Billing review R8-2: the cumulative part of net_tx_bytes the guest sent
+  // to internal destinations (vmmd InstanceStats.internal_tx_bytes), in the
+  // same interface bytes. Unset when vmmd has no reading for the instance;
+  // older schedds never set it.
+  google.protobuf.Int64Value internal_tx_bytes = 14;
 }
 
 message ListInstanceStatsRequest {
@@ -1180,6 +1185,9 @@ message InstanceTelemetry {
   // and quiet for the ladder's freeze delay). 0 when off, running or not on
   // the ladder.
   int32 idle_ladder_level = 25;
+  // Billing review R8-2: vmmd's InstanceStats.internal_tx_bytes, the
+  // cumulative part of net_tx_bytes the guest sent to internal destinations.
+  google.protobuf.Int64Value internal_tx_bytes = 26;
 }
 
 // ReportCapacityAck is the typed "I consumed all your messages"

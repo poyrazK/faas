@@ -184,36 +184,40 @@ var adoptionInstanceInventory = map[string]string{
 	"EgressNewDstPerMin":              "reset",
 	"EgressFanoutValid":               "reset",
 	"EgressFloodDropsPerMin":          "reset",
-	"StaticEgressExcluded":            "rebuilt",
-	"PrivateNetworkExcluded":          "rebuilt",
-	"networkPolicyMu":                 "reset",
-	"resolvedEgress":                  "rebuilt", // surviving nft entries retain their remaining lifetimes
-	"resolvedEgressGeneration":        "reset",   // restart invalidates outstanding DNS grants
-	"booting":                         "reset",   // only set on a booting network owner, which is never adopted
-	"awaitingExit":                    "reset",   // only set while a teardown call waits on the guest
-	"egressAllowlistUncertain":        "reset",   // adopted guests re-prove their journaled allowlist
-	"egressPortsUncertain":            "reset",   // adopted guests read the surviving port sets
-	"databaseEgress":                  "rebuilt", // surviving egress_db pairs retain their remaining lifetimes
-	"environmentBranch":               "refused", // a contained branch guest is not adopted (ADR-20261031193635)
-	"branchDatabaseEgress":            "refused", // its branch_db pairs go with it
-	"TailCount":                       "reset",   // the host only ever sees decrements
-	"tailSecondsAccum":                "reset",   // informational, not billed
-	"adoptionVCPUs":                   "rebuilt",
-	"adoptionMemSizeMiB":              "rebuilt",
-	"adoptionOp":                      "reset", // resolved before adoption (slice 3)
-	"devPatched":                      "rebuilt",
-	"bridge":                          "rebuilt",
-	"migrationPaused":                 "rebuilt",
-	"warmSpare":                       "rebuilt",
-	"DataRepairOnly":                  "refused", // a data repair runs as an execution, which adoption kills
-	"HealthcheckGRPC":                 "rebuilt",
-	"HealthcheckGRPCService":          "rebuilt",
-	"RoutedPortRawTCP":                "rebuilt",
-	"functionDestination":             "bootonly", // function VM resources: native qualification builds only
-	"functionExecutions":              "bootonly",
-	"functionMigration":               "bootonly",
-	"publicForwardTarget":             "bootonly", // captured only under native process recovery
-	"wakeID":                          "bootonly", // function VM migration authority
+	// R8-2: an adopted guest's internal-egress total restarts from zero;
+	// meterd counts a reading below its checkpoint as a counter reset.
+	"InternalTxBytes":          "reset",
+	"InternalTxValid":          "reset",
+	"StaticEgressExcluded":     "rebuilt",
+	"PrivateNetworkExcluded":   "rebuilt",
+	"networkPolicyMu":          "reset",
+	"resolvedEgress":           "rebuilt", // surviving nft entries retain their remaining lifetimes
+	"resolvedEgressGeneration": "reset",   // restart invalidates outstanding DNS grants
+	"booting":                  "reset",   // only set on a booting network owner, which is never adopted
+	"awaitingExit":             "reset",   // only set while a teardown call waits on the guest
+	"egressAllowlistUncertain": "reset",   // adopted guests re-prove their journaled allowlist
+	"egressPortsUncertain":     "reset",   // adopted guests read the surviving port sets
+	"databaseEgress":           "rebuilt", // surviving egress_db pairs retain their remaining lifetimes
+	"environmentBranch":        "refused", // a contained branch guest is not adopted (ADR-20261031193635)
+	"branchDatabaseEgress":     "refused", // its branch_db pairs go with it
+	"TailCount":                "reset",   // the host only ever sees decrements
+	"tailSecondsAccum":         "reset",   // informational, not billed
+	"adoptionVCPUs":            "rebuilt",
+	"adoptionMemSizeMiB":       "rebuilt",
+	"adoptionOp":               "reset", // resolved before adoption (slice 3)
+	"devPatched":               "rebuilt",
+	"bridge":                   "rebuilt",
+	"migrationPaused":          "rebuilt",
+	"warmSpare":                "rebuilt",
+	"DataRepairOnly":           "refused", // a data repair runs as an execution, which adoption kills
+	"HealthcheckGRPC":          "rebuilt",
+	"HealthcheckGRPCService":   "rebuilt",
+	"RoutedPortRawTCP":         "rebuilt",
+	"functionDestination":      "bootonly", // function VM resources: native qualification builds only
+	"functionExecutions":       "bootonly",
+	"functionMigration":        "bootonly",
+	"publicForwardTarget":      "bootonly", // captured only under native process recovery
+	"wakeID":                   "bootonly", // function VM migration authority
 	// ADR-20261107160000: an adopted guest's later resumes send no identity and
 	// its file keeps the last one published, the same instance. A warm spare
 	// promoted after a vmmd restart keeps the capture's identity in the file.

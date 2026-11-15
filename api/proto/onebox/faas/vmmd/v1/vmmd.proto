@@ -2000,6 +2000,12 @@ message InstanceStats {
   // 0 when the ladder is off, the instance is running, or it is not on the
   // ladder.
   int32 idle_ladder_level = 30;
+  // Billing review R8-2 (ADR-20261114100000): cumulative bytes the guest
+  // itself sent to Gregale-internal destinations (the netns
+  // faas_internal_tx counter, in veth terms: IP bytes plus Ethernet framing),
+  // a part of net_tx_bytes. Accumulated by vmmd across counter resets; absent
+  // until the first per-namespace poll and on older nodes. Additive.
+  google.protobuf.Int64Value internal_tx_bytes = 31;
 }
 
 message HTTPAdmissionEnforcement {
