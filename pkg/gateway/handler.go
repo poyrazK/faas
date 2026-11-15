@@ -8104,6 +8104,7 @@ haveApp:
 	// the HTTP bytes to this exact instance. A retry restamps for its own
 	// target inside the forward closures below.
 	var identity api.PlatformIdentity
+	r = h.withFlagRequestAttributes(r)
 	r, identity = stampTargetIdentity(r, app, target)
 	requestAttrs.addIdentity(identity)
 
