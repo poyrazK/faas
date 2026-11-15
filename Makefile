@@ -482,7 +482,12 @@ migration-lint: ## Expand/contract lint of the migrations added since BASE (defa
 release-safety-check-test: ## Unit tests of the version-skew check, migration linter and post-deploy SLO gate
 	python3 scripts/ci/check_migration_expand_contract_test.py
 	python3 scripts/ci/slo_gate_test.py
+	python3 scripts/migrations_land_test.py
 	$(GO) test -count=1 ./scripts/ci/versionskew
+
+.PHONY: migrations-land
+migrations-land: ## Merge origin/main into a migration-carrying branch: take main's digest, move this branch's migrations after main's, regenerate schema.sql + sqlc (DATABASE_URL or a throwaway Postgres); stages, never commits
+	python3 scripts/migrations_land.py
 
 .PHONY: agent-eval-test
 agent-eval-test: ## Unit tests of the coding-agent eval harness; runs no agents (ADR-20261026152009)
