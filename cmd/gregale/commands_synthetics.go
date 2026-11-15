@@ -111,7 +111,7 @@ func cmdSyntheticsCreate(args []string) int {
 		for _, seconds := range api.SyntheticCheckIntervalsSeconds {
 			minutes = append(minutes, strconv.Itoa(seconds/60))
 		}
-		return printErr("Invalid synthetic check", fmt.Errorf("--every-minutes must be one of %s; shorter intervals would keep the app permanently awake", strings.Join(minutes, ", ")))
+		return printErr("Invalid synthetic check", fmt.Errorf("--every-minutes must be one of %s; each probe resets the app's idle timer, so any interval at or under its idle timeout keeps it awake", strings.Join(minutes, ", ")))
 	}
 	req, prob := api.NormalizeCreateSyntheticCheck(api.CreateSyntheticCheckRequest{
 		Name: *name, Method: *method, Path: *path, ExpectedStatus: *expect, TimeoutMS: *timeout, IntervalSeconds: *every * 60,
