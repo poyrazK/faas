@@ -106,6 +106,31 @@ func TestAgentMeasuredChargeFollowsSamples(t *testing.T) {
 	}
 }
 
+// Samples the reader marks unusable (ok=false) never set a run's charge,
+// however high they read; the run stays at its peak.
+func TestAgentMeasuredChargeIgnoresUnusableSamples(t *testing.T) {
+	m := &fakeMeasurement{mb: map[string]int{"n1": 0}, ok: true}
+	l, clock := newMeasuredLedger(m)
+	m.asOf = clock.now()
+	samples := &fakeAgentMemory{mb: map[string]float64{}, ok: true}
+	l.EnableAgentMeasuredCharge(samples.read)
+	for i := 0; i < 10; i++ {
+		clock.tick()
+		if err := l.Admit(agentChargeReq(i, 2048, 300)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clock.tick()
+	samples.asOf = clock.now()
+	for i := 0; i < 10; i++ {
+		samples.mb[fmt.Sprintf("agent-%d", i)] = 700
+	}
+	samples.ok = false
+	if used := l.AdmissionUsedMB("n1"); used != 10*308 {
+		t.Fatalf("used %d MB from unusable samples, want ten peaks of 308", used)
+	}
+}
+
 // Invariant 2 on an agent node (ADR-20261027090015 §3) over random
 // admissions, releases and samples: an admission leaves the measured figure
 // within the ceiling, reservations within the overcommit bound, and each
