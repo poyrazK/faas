@@ -21,6 +21,8 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261115175928: Customer attention contact and outcomes](20261115175928-customer-attention-contact-and-outcomes.md) — accepted; distinct identifier for customer attention, preserving historical migration citations.
+- [ADR-20261115175927: Operator console signal actions](20261115175927-operator-console-signal-actions.md) — accepted; JSON routes for signal actions, customer health and the support inbox.
 - [ADR-20261115133053: Offline output contracts in CLI JSON help](20261115133053-cli-json-help-output-contracts.md) — accepted; explicit list formats, selectors, empty behavior, publication and error contracts without API discovery.
 
 - [ADR-20261115110124: gRPC steps in `gregale test` scenarios](20261115110124-test-grpc-steps.md) — accepted; a request or check may carry a `grpc:` call (definitions from `.proto` files compiled with protocompile and/or server reflection; unary and all streaming shapes; status, protobuf-JSON pointers, message count, header and trailer metadata); `local` dials plaintext HTTP/2, `real-vm` the deployed app over TLS; load mode stays HTTP-only

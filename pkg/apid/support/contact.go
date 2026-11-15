@@ -9,7 +9,7 @@ import (
 	q "github.com/onebox-faas/faas/pkg/apid/support/sqlc"
 )
 
-// ContactRequest opens a ticket that support starts (ADR-20261113180000):
+// ContactRequest opens a ticket that support starts (ADR-20261115175928):
 // staff reach out to a customer who may be stuck before the customer
 // writes in.
 type ContactRequest struct {

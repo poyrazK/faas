@@ -1,6 +1,6 @@
 // Package attention finds customers who are probably stuck and keeps one
 // signal per account, kind and subject for support (ADR-20261113123000,
-// round 2 ADR-20261113180000).
+// round 2 ADR-20261115175928).
 //
 // An evaluation runs the rules against data the platform already stores
 // (failed deployments, recorded API refusals, custom-domain status, runtime
