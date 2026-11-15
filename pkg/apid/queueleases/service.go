@@ -111,7 +111,7 @@ func (s Service) WorkloadScope(r *http.Request) (state.Account, state.App, strin
 // app: its current slug, or a slug it had before a rename that no other app
 // holds now. Workers name their app by the slug they were configured with, so
 // requiring the current slug broke every running pull consumer on a rename
-// until its code changed and it was redeployed (ADR-20261115183906, R8-1).
+// until its code changed and it was redeployed (ADR-20261113180000, R8-1).
 // The token, not the slug, carries the authority.
 func workloadPathNamesApp(r *http.Request, store state.Store, app state.App) bool {
 	slug := r.PathValue("slug")
@@ -243,7 +243,7 @@ func (s Service) lease(ctx context.Context, store state.QueueLeaseStore, req sta
 		// holds the request for its wait without touching the database.
 		// Returning at once made the SDK consumers, which poll again on an
 		// empty answer, spin lease transactions back to back
-		// (ADR-20261115183906, R5-1).
+		// (ADR-20261113180000, R5-1).
 		leases, err := store.LeaseQueueMessages(ctx, req)
 		if err != nil || len(leases) > 0 {
 			return leases, err
@@ -327,7 +327,7 @@ func coalesceQueueWakes(ctx context.Context, wakes <-chan db.Notification) {
 
 // queueMessageDue matches an invocation_due payload for a queue message of
 // appID. The payload is only a hint; the next lease re-checks everything. A
-// payload that names a queue matches only queueName (ADR-20261115183906,
+// payload that names a queue matches only queueName (ADR-20261113180000,
 // R5-10): every message of the app used to wake every waiter of the app. A
 // payload without the key, from a database before that migration, matches
 // any queue. Messages sent under a binding's earlier name are found by the
