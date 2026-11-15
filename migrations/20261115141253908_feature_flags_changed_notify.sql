@@ -1,4 +1,4 @@
--- filename: 20261114160000000_feature_flags_changed_notify.sql
+-- filename: 20261115141253908_feature_flags_changed_notify.sql
 -- migration-compat: expand
 
 -- ADR 20261114150000 §3: gatewayd-internal caches each deployment's flag
