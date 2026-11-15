@@ -2,6 +2,7 @@ package journeys
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,7 +22,14 @@ func TestCLIArgumentCountsIsolatedCLI(t *testing.T) {
 		t.Skip("set GREGALE_JOURNEY_TEST_CLI or configure a journey target")
 	}
 	var requests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { requests.Add(1); w.WriteHeader(500) }))
+	const correlationID = "019a767e7f0070008000000000000001"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.Header().Set("X-Faas-Request-Id", correlationID)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"status":503,"code":"service_unavailable","title":"Try later"}`)
+	}))
 	t.Cleanup(server.Close)
 	tg := &target{api: server.URL, cli: cli, home: t.TempDir(), appsDomain: "apps.example.test"}
 	for _, tc := range []struct {
@@ -58,5 +66,10 @@ func TestCLIArgumentCountsIsolatedCLI(t *testing.T) {
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("invalid arguments/help made %d requests", requests.Load())
+	}
+	result := tg.exec(t, "fp_test_argument-counts-journey", tg.home, time.Minute, "invocation", "get", "--", "00000000-0000-4000-8000-000000000001")
+	var problem map[string]json.RawMessage
+	if result.exit != 3 || len(result.stdout) != 0 || requests.Load() != 1 || json.Unmarshal(result.stderr, &problem) != nil || string(problem["code"]) != `"service_unavailable"` || string(problem["request_id"]) != `"`+correlationID+`"` || problem["cli"] != nil {
+		t.Fatalf("valid count/API Problem: exit=%d requests=%d stdout=%s stderr=%s", result.exit, requests.Load(), result.stdout, result.stderr)
 	}
 }

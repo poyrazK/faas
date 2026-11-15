@@ -327,7 +327,7 @@ func cmdInvocationsGet(args []string) int {
 	inv, err := client.GetInvocation(ctx, id)
 	if err != nil {
 		var ae *APIError
-		if errors.As(err, &ae) {
+		if !jsonOutput && errors.As(err, &ae) {
 			renderAPIError(os.Stderr, ae)
 			return exitCodeForStatus(ae.Problem.Status)
 		}
@@ -342,7 +342,7 @@ func cmdInvocationsGet(args []string) int {
 		}
 		if err != nil {
 			var ae *APIError
-			if errors.As(err, &ae) {
+			if !jsonOutput && errors.As(err, &ae) {
 				renderAPIError(os.Stderr, ae)
 				return exitCodeForStatus(ae.Problem.Status)
 			}

@@ -166,3 +166,71 @@ func TestCLIValidArgumentCountsReachAPI(t *testing.T) {
 		}
 	}
 }
+
+// Valid positional counts must preserve the selected output mode all the way
+// through a server failure, including after the read preceding a replay.
+func TestCLIArgumentGetErrorOutputModes(t *testing.T) {
+	setupJSONHelp(t)
+	const id = "00000000-0000-4000-8000-000000000001"
+	for _, replay := range []string{"", "--replay", "--replay-keyed"} {
+		t.Run("read"+replay, func(t *testing.T) {
+			for _, mode := range []string{"json", "environment", "human"} {
+				t.Run(mode, func(t *testing.T) {
+					var gets, posts atomic.Int32
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if r.Method == http.MethodGet {
+							gets.Add(1)
+							if replay != "" {
+								w.Header().Set("Content-Type", "application/json")
+								_, _ = io.WriteString(w, `{"id":"`+id+`","state":"failed"}`)
+								return
+							}
+						} else if r.Method == http.MethodPost {
+							posts.Add(1)
+						}
+						w.Header().Set("Content-Type", "application/problem+json")
+						w.Header().Set("X-Faas-Request-Id", errorCorrelationID)
+						w.WriteHeader(http.StatusServiceUnavailable)
+						_, _ = io.WriteString(w, `{"status":503,"code":"service_unavailable","title":"Try later"}`)
+					}))
+					t.Cleanup(server.Close)
+					t.Setenv("FAAS_API", server.URL)
+					t.Setenv("FAAS_TOKEN", "fp_test_argument-private")
+					t.Setenv("FAAS_JSON", "0")
+					args := []string{"invocation", "get"}
+					if replay != "" {
+						args = append(args, replay)
+					}
+					args = append(args, "--", id)
+					if mode == "json" {
+						args = append([]string{"--json"}, args...)
+					} else if mode == "environment" {
+						t.Setenv("FAAS_JSON", "1")
+					}
+					out, stderr, restore := main.SwapIO(t)
+					code := main.Run(args)
+					text := stderr()
+					restore()
+					wantPosts := int32(0)
+					if replay != "" {
+						wantPosts = 1
+					}
+					if code != 3 || out.Len() != 0 || gets.Load() != 1 || posts.Load() != wantPosts {
+						t.Fatalf("API traversal changed: exit=%d gets=%d posts=%d stdout=%s stderr=%s", code, gets.Load(), posts.Load(), out, text)
+					}
+					if mode == "human" {
+						if json.Valid([]byte(text)) || !strings.Contains(text, "Try later\n") || !strings.Contains(text, "Request ID: "+errorCorrelationID) || strings.Contains(text, `"cli"`) {
+							t.Fatalf("human API error changed: %s", text)
+						}
+						return
+					}
+					var problem map[string]json.RawMessage
+					decoder := json.NewDecoder(strings.NewReader(text))
+					if decoder.Decode(&problem) != nil || decoder.Decode(new(any)) != io.EOF || string(problem["status"]) != "503" || string(problem["code"]) != `"service_unavailable"` || string(problem["exit_code"]) != "3" || string(problem["request_id"]) != `"`+errorCorrelationID+`"` || problem["cli"] != nil {
+						t.Fatalf("JSON API Problem changed: %s", text)
+					}
+				})
+			}
+		})
+	}
+}
