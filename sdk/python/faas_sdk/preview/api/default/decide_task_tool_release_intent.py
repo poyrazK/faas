@@ -57,10 +57,6 @@ def _parse_response(
         response_409 = cast(Any, None)
         return response_409
 
-    if response.status_code == 429:
-        response_429 = cast(Any, None)
-        return response_429
-
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -86,15 +82,16 @@ def sync_detailed(
 ) -> Response[Any | TaskToolReleaseIntentRecord]:
     """Record an exact-digest owner decision; requires personal non-agent administrator and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained
+    release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app
+    and key facts. Owner cancellation uses the retained review even after source files or requesting-key
+    authority disappear. Decisions never renew the fifteen-minute deadline or grant deployment,
+    migration or invocation authority.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentDecision):
+        body (TaskToolReleaseIntentDecision): Owner verdict bound to an immutable Task intent
+            digest and its retained source fingerprint.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -124,15 +121,16 @@ def sync(
 ) -> Any | TaskToolReleaseIntentRecord | None:
     """Record an exact-digest owner decision; requires personal non-agent administrator and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained
+    release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app
+    and key facts. Owner cancellation uses the retained review even after source files or requesting-key
+    authority disappear. Decisions never renew the fifteen-minute deadline or grant deployment,
+    migration or invocation authority.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentDecision):
+        body (TaskToolReleaseIntentDecision): Owner verdict bound to an immutable Task intent
+            digest and its retained source fingerprint.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,15 +155,16 @@ async def asyncio_detailed(
 ) -> Response[Any | TaskToolReleaseIntentRecord]:
     """Record an exact-digest owner decision; requires personal non-agent administrator and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained
+    release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app
+    and key facts. Owner cancellation uses the retained review even after source files or requesting-key
+    authority disappear. Decisions never renew the fifteen-minute deadline or grant deployment,
+    migration or invocation authority.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentDecision):
+        body (TaskToolReleaseIntentDecision): Owner verdict bound to an immutable Task intent
+            digest and its retained source fingerprint.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -193,15 +192,16 @@ async def asyncio(
 ) -> Any | TaskToolReleaseIntentRecord | None:
     """Record an exact-digest owner decision; requires personal non-agent administrator and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained
+    release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app
+    and key facts. Owner cancellation uses the retained review even after source files or requesting-key
+    authority disappear. Decisions never renew the fifteen-minute deadline or grant deployment,
+    migration or invocation authority.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentDecision):
+        body (TaskToolReleaseIntentDecision): Owner verdict bound to an immutable Task intent
+            digest and its retained source fingerprint.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

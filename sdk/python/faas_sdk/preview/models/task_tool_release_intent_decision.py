@@ -15,6 +15,8 @@ T = TypeVar("T", bound="TaskToolReleaseIntentDecision")
 
 @_attrs_define
 class TaskToolReleaseIntentDecision:
+    """Owner verdict bound to an immutable Task intent digest and its retained source fingerprint."""
+
     intent_sha256: str
     release_fingerprint: str
     decision: TaskToolReleaseIntentDecisionDecision

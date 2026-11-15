@@ -86,11 +86,10 @@ def sync_detailed(
 ) -> Response[Any | TaskToolReleaseIntentRecord]:
     """Save an immutable Task stack review; requires deploy-write scope and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Save an immutable Node Task stack review under a caller-chosen stable identity. Bind its source
+    fingerprint, exact native app snapshots and requesting key to the account. Existing identical
+    requests return the retained record; changed reviews conflict. The review expires fifteen minutes
+    after preparation and grants no runtime authority. Retain at most 256 intent identities per account.
 
     Args:
         id (str):
@@ -126,11 +125,10 @@ def sync(
 ) -> Any | TaskToolReleaseIntentRecord | None:
     """Save an immutable Task stack review; requires deploy-write scope and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Save an immutable Node Task stack review under a caller-chosen stable identity. Bind its source
+    fingerprint, exact native app snapshots and requesting key to the account. Existing identical
+    requests return the retained record; changed reviews conflict. The review expires fifteen minutes
+    after preparation and grants no runtime authority. Retain at most 256 intent identities per account.
 
     Args:
         id (str):
@@ -161,11 +159,10 @@ async def asyncio_detailed(
 ) -> Response[Any | TaskToolReleaseIntentRecord]:
     """Save an immutable Task stack review; requires deploy-write scope and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Save an immutable Node Task stack review under a caller-chosen stable identity. Bind its source
+    fingerprint, exact native app snapshots and requesting key to the account. Existing identical
+    requests return the retained record; changed reviews conflict. The review expires fifteen minutes
+    after preparation and grants no runtime authority. Retain at most 256 intent identities per account.
 
     Args:
         id (str):
@@ -199,11 +196,10 @@ async def asyncio(
 ) -> Any | TaskToolReleaseIntentRecord | None:
     """Save an immutable Task stack review; requires deploy-write scope and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Save an immutable Node Task stack review under a caller-chosen stable identity. Bind its source
+    fingerprint, exact native app snapshots and requesting key to the account. Existing identical
+    requests return the retained record; changed reviews conflict. The review expires fifteen minutes
+    after preparation and grants no runtime authority. Retain at most 256 intent identities per account.
 
     Args:
         id (str):

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	main "github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/tasktoolrelease"
 )
@@ -85,6 +86,7 @@ func TestMCPTaskIntentCLIReviewJourney(t *testing.T) {
 	t.Setenv("FAAS_API", backend.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_fake_fixture")
 	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "1")
+	t.Cleanup(main.ResetCapabilityView)
 	t.Setenv("PATH", t.TempDir())
 	run := func(action, want string, extra ...string) {
 		t.Helper()

@@ -48,10 +48,6 @@ def _parse_response(
         response_409 = cast(Any, None)
         return response_409
 
-    if response.status_code == 429:
-        response_429 = cast(Any, None)
-        return response_429
-
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -76,11 +72,10 @@ def sync_detailed(
 ) -> Response[Any | TaskToolReleaseIntentRecord]:
     """Read the retained Task review and last observed approval; requires account-wide read scope
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Return the retained credential-free Task stack review and its last recorded approval state. The
+    requesting key and personal owner may inspect it. This read observes no source files and certifies
+    no current binding or native app facts. Expired reviews are projected as expired. Every response
+    keeps ready_to_apply and bindings_verified false.
 
     Args:
         id (str):
@@ -111,11 +106,10 @@ def sync(
 ) -> Any | TaskToolReleaseIntentRecord | None:
     """Read the retained Task review and last observed approval; requires account-wide read scope
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Return the retained credential-free Task stack review and its last recorded approval state. The
+    requesting key and personal owner may inspect it. This read observes no source files and certifies
+    no current binding or native app facts. Expired reviews are projected as expired. Every response
+    keeps ready_to_apply and bindings_verified false.
 
     Args:
         id (str):
@@ -141,11 +135,10 @@ async def asyncio_detailed(
 ) -> Response[Any | TaskToolReleaseIntentRecord]:
     """Read the retained Task review and last observed approval; requires account-wide read scope
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Return the retained credential-free Task stack review and its last recorded approval state. The
+    requesting key and personal owner may inspect it. This read observes no source files and certifies
+    no current binding or native app facts. Expired reviews are projected as expired. Every response
+    keeps ready_to_apply and bindings_verified false.
 
     Args:
         id (str):
@@ -174,11 +167,10 @@ async def asyncio(
 ) -> Any | TaskToolReleaseIntentRecord | None:
     """Read the retained Task review and last observed approval; requires account-wide read scope
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Return the retained credential-free Task stack review and its last recorded approval state. The
+    requesting key and personal owner may inspect it. This read observes no source files and certifies
+    no current binding or native app facts. Expired reviews are projected as expired. Every response
+    keeps ready_to_apply and bindings_verified false.
 
     Args:
         id (str):

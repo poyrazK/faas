@@ -16,6 +16,8 @@ T = TypeVar("T", bound="TaskToolReleaseApp")
 
 @_attrs_define
 class TaskToolReleaseApp:
+    """One existing personal app role and its exact default-environment native release snapshot."""
+
     role: TaskToolReleaseAppRole
     app: str
     review: AppReleaseReview

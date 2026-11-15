@@ -84,15 +84,15 @@ export class DefaultService {
   protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read the retained Task review and last observed approval; requires account-wide read scope
-   * Personal account, default environment and Node workers only. Review approval grants no deployment, migration, credential or invocation authority. App and serving snapshots must match. Approval expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns retained metadata and performs no local source observation. Owner decisions are excluded from agent and MCP-login credentials. No credentials or local paths are accepted or returned.
-   * @returns TaskToolReleaseIntentRecord Durable review journal; Cache-Control is no-store
+   * Return the retained credential-free Task stack review and its last recorded approval state. The requesting key and personal owner may inspect it. This read observes no source files and certifies no current binding or native app facts. Expired reviews are projected as expired. Every response keeps ready_to_apply and bindings_verified false.
+   * @returns TaskToolReleaseIntentRecord Retained Task review metadata from this account journal
    * @throws ApiError
    */
   public static getTaskToolReleaseIntent({
     id,
   }: {
     /**
-     * Stable caller-chosen intent identity; repeat it after uncertain replies
+     * Stable identity of the saved Task stack review
      */
     id: string,
   }): CancelablePromise<TaskToolReleaseIntentRecord> {
@@ -103,18 +103,17 @@ export class DefaultService {
         'id': id,
       },
       errors: {
-        400: `Invalid, oversized or unsupported review`,
-        403: `Personal account or owner authority required`,
-        404: `Intent unavailable to this principal`,
-        409: `Immutable review, app snapshot or decision changed`,
-        429: `Retained Task intent quota reached`,
+        400: `Malformed Task review identity`,
+        403: `Personal Task review inspection scope is required`,
+        404: `The review is unavailable to this inspecting principal`,
+        409: `The requested Task review cannot be inspected in its current form`,
       },
     });
   }
   /**
    * Save an immutable Task stack review; requires deploy-write scope and MFA policy
-   * Personal account, default environment and Node workers only. Review approval grants no deployment, migration, credential or invocation authority. App and serving snapshots must match. Approval expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns retained metadata and performs no local source observation. Owner decisions are excluded from agent and MCP-login credentials. No credentials or local paths are accepted or returned.
-   * @returns TaskToolReleaseIntentRecord Durable review journal; Cache-Control is no-store
+   * Save an immutable Node Task stack review under a caller-chosen stable identity. Bind its source fingerprint, exact native app snapshots and requesting key to the account. Existing identical requests return the retained record; changed reviews conflict. The review expires fifteen minutes after preparation and grants no runtime authority. Retain at most 256 intent identities per account.
+   * @returns TaskToolReleaseIntentRecord Newly prepared or identically replayed immutable Task intent
    * @throws ApiError
    */
   public static prepareTaskToolReleaseIntent({
@@ -122,7 +121,7 @@ export class DefaultService {
     requestBody,
   }: {
     /**
-     * Stable caller-chosen intent identity; repeat it after uncertain replies
+     * Stable identity of the saved Task stack review
      */
     id: string,
     requestBody: TaskToolReleaseIntent,
@@ -136,18 +135,18 @@ export class DefaultService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid, oversized or unsupported review`,
-        403: `Personal account or owner authority required`,
-        404: `Intent unavailable to this principal`,
-        409: `Immutable review, app snapshot or decision changed`,
-        429: `Retained Task intent quota reached`,
+        400: `Unsupported or oversized Task stack review input`,
+        403: `Task intent preparation requires personal deploy-write authority and MFA policy`,
+        404: `The Task review requester is no longer available`,
+        409: `The intent identity or its native app snapshot already differs`,
+        429: `The account has reached its retained Task review quota`,
       },
     });
   }
   /**
    * Revalidate source fingerprint and native app reviews; requires deploy-write scope and MFA policy
-   * Personal account, default environment and Node workers only. Review approval grants no deployment, migration, credential or invocation authority. App and serving snapshots must match. Approval expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns retained metadata and performs no local source observation. Owner decisions are excluded from agent and MCP-login credentials. No credentials or local paths are accepted or returned.
-   * @returns TaskToolReleaseIntentRecord Durable review journal; Cache-Control is no-store
+   * Compare a freshly computed local release fingerprint with the retained Task intent and revalidate native app and requesting-key facts. Observed mismatches permanently mark pending or approved reviews stale. Restoring previous source bytes does not revive approval. This journal update executes no tool, migration, deployment or customer code.
+   * @returns TaskToolReleaseIntentRecord Task source and native snapshot revalidation result
    * @throws ApiError
    */
   public static checkTaskToolReleaseIntent({
@@ -155,7 +154,7 @@ export class DefaultService {
     requestBody,
   }: {
     /**
-     * Stable caller-chosen intent identity; repeat it after uncertain replies
+     * Task intent identity whose source and native snapshots are revalidated
      */
     id: string,
     requestBody: TaskToolReleaseIntentCheck,
@@ -169,18 +168,17 @@ export class DefaultService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid, oversized or unsupported review`,
-        403: `Personal account or owner authority required`,
-        404: `Intent unavailable to this principal`,
-        409: `Immutable review, app snapshot or decision changed`,
-        429: `Retained Task intent quota reached`,
+        400: `Invalid current Task release fingerprint`,
+        403: `Task revalidation requires the requesting publisher or personal owner`,
+        404: `No review can be revalidated by this caller`,
+        409: `The Task review changed before revalidation completed`,
       },
     });
   }
   /**
    * Record an exact-digest owner decision; requires personal non-agent administrator and MFA policy
-   * Personal account, default environment and Node workers only. Review approval grants no deployment, migration, credential or invocation authority. App and serving snapshots must match. Approval expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns retained metadata and performs no local source observation. Owner decisions are excluded from agent and MCP-login credentials. No credentials or local paths are accepted or returned.
-   * @returns TaskToolReleaseIntentRecord Durable review journal; Cache-Control is no-store
+   * An unscoped personal administrator approves, rejects or revokes the exact intent digest and retained release fingerprint. Agent and MCP-login credentials cannot decide. Approval revalidates native app and key facts. Owner cancellation uses the retained review even after source files or requesting-key authority disappear. Decisions never renew the fifteen-minute deadline or grant deployment, migration or invocation authority.
+   * @returns TaskToolReleaseIntentRecord Retained owner verdict with its original review expiry
    * @throws ApiError
    */
   public static decideTaskToolReleaseIntent({
@@ -188,7 +186,7 @@ export class DefaultService {
     requestBody,
   }: {
     /**
-     * Stable caller-chosen intent identity; repeat it after uncertain replies
+     * Retained Task review identity for an exact-digest owner decision
      */
     id: string,
     requestBody: TaskToolReleaseIntentDecision,
@@ -202,11 +200,10 @@ export class DefaultService {
       body: requestBody,
       mediaType: 'application/json',
       errors: {
-        400: `Invalid, oversized or unsupported review`,
-        403: `Personal account or owner authority required`,
-        404: `Intent unavailable to this principal`,
-        409: `Immutable review, app snapshot or decision changed`,
-        429: `Retained Task intent quota reached`,
+        400: `Invalid owner verdict or Task source fingerprint`,
+        403: `A non-agent personal administrator and MFA policy are required to decide`,
+        404: `The owner decision target or owner credential is unavailable`,
+        409: `The owner digest or retained Task decision no longer matches`,
       },
     });
   }

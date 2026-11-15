@@ -10,6 +10,8 @@ T = TypeVar("T", bound="TaskToolReleaseIntentCheck")
 
 @_attrs_define
 class TaskToolReleaseIntentCheck:
+    """Freshly computed local Task fingerprint supplied for permanent native drift detection."""
+
     release_fingerprint: str
 
     def to_dict(self) -> dict[str, Any]:

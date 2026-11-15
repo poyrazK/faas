@@ -57,10 +57,6 @@ def _parse_response(
         response_409 = cast(Any, None)
         return response_409
 
-    if response.status_code == 429:
-        response_429 = cast(Any, None)
-        return response_429
-
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
@@ -86,15 +82,15 @@ def sync_detailed(
 ) -> Response[Any | TaskToolReleaseIntentRecord]:
     """Revalidate source fingerprint and native app reviews; requires deploy-write scope and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Compare a freshly computed local release fingerprint with the retained Task intent and revalidate
+    native app and requesting-key facts. Observed mismatches permanently mark pending or approved
+    reviews stale. Restoring previous source bytes does not revive approval. This journal update
+    executes no tool, migration, deployment or customer code.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentCheck):
+        body (TaskToolReleaseIntentCheck): Freshly computed local Task fingerprint supplied for
+            permanent native drift detection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -124,15 +120,15 @@ def sync(
 ) -> Any | TaskToolReleaseIntentRecord | None:
     """Revalidate source fingerprint and native app reviews; requires deploy-write scope and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Compare a freshly computed local release fingerprint with the retained Task intent and revalidate
+    native app and requesting-key facts. Observed mismatches permanently mark pending or approved
+    reviews stale. Restoring previous source bytes does not revive approval. This journal update
+    executes no tool, migration, deployment or customer code.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentCheck):
+        body (TaskToolReleaseIntentCheck): Freshly computed local Task fingerprint supplied for
+            permanent native drift detection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,15 +153,15 @@ async def asyncio_detailed(
 ) -> Response[Any | TaskToolReleaseIntentRecord]:
     """Revalidate source fingerprint and native app reviews; requires deploy-write scope and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Compare a freshly computed local release fingerprint with the retained Task intent and revalidate
+    native app and requesting-key facts. Observed mismatches permanently mark pending or approved
+    reviews stale. Restoring previous source bytes does not revive approval. This journal update
+    executes no tool, migration, deployment or customer code.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentCheck):
+        body (TaskToolReleaseIntentCheck): Freshly computed local Task fingerprint supplied for
+            permanent native drift detection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -193,15 +189,15 @@ async def asyncio(
 ) -> Any | TaskToolReleaseIntentRecord | None:
     """Revalidate source fingerprint and native app reviews; requires deploy-write scope and MFA policy
 
-     Personal account, default environment and Node workers only. Review approval grants no deployment,
-    migration, credential or invocation authority. App and serving snapshots must match. Approval
-    expires after 15 minutes. Check permanently invalidates observed source or native drift. GET returns
-    retained metadata and performs no local source observation. Owner decisions are excluded from agent
-    and MCP-login credentials. No credentials or local paths are accepted or returned.
+     Compare a freshly computed local release fingerprint with the retained Task intent and revalidate
+    native app and requesting-key facts. Observed mismatches permanently mark pending or approved
+    reviews stale. Restoring previous source bytes does not revive approval. This journal update
+    executes no tool, migration, deployment or customer code.
 
     Args:
         id (str):
-        body (TaskToolReleaseIntentCheck):
+        body (TaskToolReleaseIntentCheck): Freshly computed local Task fingerprint supplied for
+            permanent native drift detection.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
