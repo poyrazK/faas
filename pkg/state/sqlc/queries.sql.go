@@ -13711,12 +13711,12 @@ func (q *Queries) CreateSession(ctx context.Context, db DBTX, arg CreateSessionP
 }
 
 const createSnapshot = `-- name: CreateSnapshot :one
-INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation,cpu_template,cpu_model)
+INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation,cpu_template,cpu_model,sealed_key,sealed_capture_id)
 VALUES($1::uuid,$2::text,$3::text,
  $4::bigint,$5::bigint,$6::bigint,
  $7::text,$8::boolean,$9::text,$10::uuid,$11::bigint,
- $12::text,$13::text)
-RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at
+ $12::text,$13::text,$14::bytea,$15::uuid)
+RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at, sealed_key, sealed_capture_id
 `
 
 type CreateSnapshotParams struct {
@@ -13733,6 +13733,8 @@ type CreateSnapshotParams struct {
 	RecoveryGeneration              int64
 	CpuTemplate                     string
 	CpuModel                        string
+	SealedKey                       []byte
+	SealedCaptureID                 pgtype.UUID
 }
 
 func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapshotParams) (Snapshot, error) {
@@ -13750,6 +13752,8 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		arg.RecoveryGeneration,
 		arg.CpuTemplate,
 		arg.CpuModel,
+		arg.SealedKey,
+		arg.SealedCaptureID,
 	)
 	var i Snapshot
 	err := row.Scan(
@@ -13770,6 +13774,8 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		&i.CpuTemplate,
 		&i.CpuModel,
 		&i.StaleAt,
+		&i.SealedKey,
+		&i.SealedCaptureID,
 	)
 	return i, err
 }
@@ -43752,7 +43758,7 @@ func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX,
 }
 
 const latestSnapshot = `-- name: LatestSnapshot :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at, sealed_key, sealed_capture_id FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY (tier='warm') DESC,created_at DESC LIMIT 1
 `
@@ -43778,12 +43784,14 @@ func (q *Queries) LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgty
 		&i.CpuTemplate,
 		&i.CpuModel,
 		&i.StaleAt,
+		&i.SealedKey,
+		&i.SealedCaptureID,
 	)
 	return i, err
 }
 
 const latestSnapshotForTier = `-- name: LatestSnapshotForTier :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at, sealed_key, sealed_capture_id FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY created_at DESC LIMIT 1
 `
@@ -43814,6 +43822,8 @@ func (q *Queries) LatestSnapshotForTier(ctx context.Context, db DBTX, arg Latest
 		&i.CpuTemplate,
 		&i.CpuModel,
 		&i.StaleAt,
+		&i.SealedKey,
+		&i.SealedCaptureID,
 	)
 	return i, err
 }
@@ -59162,7 +59172,7 @@ func (q *Queries) LiveServiceProxyInstanceRowsByHostIP(ctx context.Context, db D
 }
 
 const liveSnapshotsForTier = `-- name: LiveSnapshotsForTier :many
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at, sealed_key, sealed_capture_id FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY created_at DESC
 `
@@ -59199,6 +59209,8 @@ func (q *Queries) LiveSnapshotsForTier(ctx context.Context, db DBTX, arg LiveSna
 			&i.CpuTemplate,
 			&i.CpuModel,
 			&i.StaleAt,
+			&i.SealedKey,
+			&i.SealedCaptureID,
 		); err != nil {
 			return nil, err
 		}

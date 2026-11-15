@@ -334,6 +334,40 @@ Back out a node by setting its switch to false and converging: the role
 stages the identity again; restart vmmd to load it. With the CD variable on,
 unset it first.
 
+## Seal park and warm snapshots at the source (slice 3d-3)
+
+Off by default. With it on, vmmd publishes a park or warm capture only as
+age-encrypted `.age` twins and returns the capture key sealed to the runtime
+recipient; imaged records it on the snapshot row (`snapshots.sealed_key`,
+`sealed_capture_id`); a wake hands it back and vmmd opens it through
+secretd's `OpenCaptureKey` (cached per node for 10 minutes). A node's
+object-store credentials then neither read another app's snapshot memory
+nor rewrite it undetected. A snapshot that cannot be opened cold boots
+(ADR-005).
+
+1. **Before.** Every vmmd runs a release with `SnapshotRef.sealed_cache`
+   (a vmmd without it treats a sealed snapshot as a crash capture and fails
+   the wake instead of cold booting). On a node with the runtime identity
+   retired (slice 3e), vmmd must open keys through secretd
+   (`faas_vmmd_secretd_open`). Run `make test-metal` and `make leakcheck`
+   on a native KVM host, and measure the restore p95 on the reference node
+   with sealing on: it must stay under 350 ms.
+2. **Turn on.** Set `FAAS_SCHEDD_SEAL_SNAPSHOTS=1` for schedd and restart
+   it. Check: schedd logs `schedd: park and warm snapshots sealed at the
+   source`; new rows carry a key
+   (`select count(*) filter (where sealed_key is not null), count(*) from
+   snapshots where not stale and created_at > now() - interval '1 hour'`);
+   `faas_secretd_opens_total{rpc="OpenCaptureKey"}` rises with sealed wakes.
+   Plaintext rows are recaptured sealed at their next park instead of being
+   reused; until then they stay plaintext.
+3. **Not covered.** Captures under Application Standard native admission
+   (measured) and the execution runtime catalog stay plaintext. Encrypted
+   memory does not compress or share pages across snapshots: watch
+   `snapshot_fleet_avg_mb`.
+
+Turn it off by unsetting the variable: new captures are plaintext again and
+sealed rows still restore while the runtime recipient's identity is served.
+
 ## Rotation
 
 The runtime domain rotates as before (`docs/runbooks/seal-domain-key-escrow.md`).
