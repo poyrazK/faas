@@ -3824,8 +3824,11 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 					return nil
 				}
 			case api.ExecutionModeRequest, api.ExecutionModeService:
-				if ready.NoSnapshotReason != "ephemeral_secret" {
-					return fmt.Errorf("imaged: %s deployment_ready requires snapshot activation unless an authorized ephemeral-secret proof is supplied", mode)
+				// Both reasons prove a healthy boot with a STOPPED instance:
+				// one retired before capture for its ephemeral secrets, one
+				// whose capture failed (deploy-path review P13, ADR-005).
+				if ready.NoSnapshotReason != "ephemeral_secret" && ready.NoSnapshotReason != state.SnapshotPrimeCaptureFailedReason {
+					return fmt.Errorf("imaged: %s deployment_ready requires snapshot activation unless an authorized ephemeral-secret or failed-capture proof is supplied", mode)
 				}
 				if ready.InstanceID == "" {
 					return fmt.Errorf("imaged: %s ephemeral-secret readiness missing instance_id", mode)
