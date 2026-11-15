@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -1553,6 +1554,10 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 			v := value.GetValue()
 			item.NetRxBytes = &v
 		}
+		if value := row.GetInternalTxBytes(); value != nil {
+			v := value.GetValue()
+			item.InternalTxBytes = &v
+		}
 		if value := row.GetDiskUsedBytes(); value != nil {
 			v := value.GetValue()
 			item.DiskUsedBytes = &v
@@ -1682,6 +1687,9 @@ func instanceStatsRowProto(r instancestats.InstanceStat) *scheddpb.InstanceStats
 	if r.DiskValid {
 		row.DiskUsedBytes = wrapperspb.Int64(r.DiskUsedBytes)
 		row.DiskCapacityBytes = wrapperspb.Int64(r.DiskCapacityBytes)
+	}
+	if r.InternalTXValid && r.InternalTXBytes <= math.MaxInt64 {
+		row.InternalTxBytes = wrapperspb.Int64(int64(r.InternalTXBytes))
 	}
 	return row
 }

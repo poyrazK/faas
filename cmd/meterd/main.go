@@ -258,6 +258,8 @@ func (a *scheddEgressAdapter) ReadUsageDeltas(instanceID string) (meter.UsageDel
 		NetworkCumulative: true,
 		NetTXValid:        row.TxValid == 0,
 		NetRXValid:        row.RxValid == 0,
+		InternalTXBytes:   row.InternalTxBytes,
+		InternalTXValid:   row.InternalTxValid,
 	}, true
 }
 
@@ -482,7 +484,7 @@ func (a *gatewayEgressAdapter) consumeStream(ctx context.Context, client egressp
 				}
 				return true
 			}
-			if frame.GetBytes() > math.MaxInt64 || frame.GetRequests() > math.MaxInt32 || frame.GetColdBoots() > math.MaxInt32 {
+			if frame.GetBytes() > math.MaxInt64 || frame.GetRequests() > math.MaxInt32 || frame.GetColdBoots() > math.MaxInt32 || frame.GetServiceReplyBytes() > math.MaxInt64 {
 				if log != nil {
 					log.Error("gatewayEgressAdapter: replay frame counters overflow", "event_id", frame.GetEventId())
 				}
@@ -610,6 +612,8 @@ func (a *egressAggregator) ReadUsageDeltas(instanceID string) (meter.UsageDeltas
 		out.NetworkCumulative = schedd.NetworkCumulative
 		out.NetTXValid = schedd.NetTXValid
 		out.NetRXValid = schedd.NetRXValid
+		out.InternalTXBytes = schedd.InternalTXBytes
+		out.InternalTXValid = schedd.InternalTXValid
 	}
 	if a.gw != nil {
 		var gateway meter.UsageDeltas
@@ -1158,7 +1162,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		fleetEgress := &fleetGatewayEgressAdapter{
 			nodes: store, store: store, tlsCfg: gwEgressTLS, dialFn: dialGatewayEgressStream,
 			now: deps.now, log: log, metrics: egressMetrics,
-			active: make(map[string]*fleetEgressEntry),
+			active:               make(map[string]*fleetEgressEntry),
+			serviceReplyUnbilled: mc != nil && mc.InternalEgressUnbilled,
 		}
 		gwEgress = fleetEgress
 		go fleetEgress.Run(ctx)
