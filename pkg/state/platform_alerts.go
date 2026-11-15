@@ -1,0 +1,80 @@
+package state
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+)
+
+// CronSuspendedFailing pauses an HTTP cron whose recent runs all failed
+// (ADR-20261115194000). Editing the cron or promoting a deployment resumes
+// it.
+const CronSuspendedFailing = "failing"
+
+// PlatformAlertKind is what a platform alert email is about.
+type PlatformAlertKind string
+
+const (
+	// PlatformAlertAppOutage: the app answered (almost) only 5xx for the
+	// outage window. SubjectID is the app ID.
+	PlatformAlertAppOutage PlatformAlertKind = "app_outage"
+	// PlatformAlertCronFailingPaused: schedd paused a failing cron.
+	// SubjectID is the cron ID.
+	PlatformAlertCronFailingPaused PlatformAlertKind = "cron_failing_paused"
+)
+
+// Platform alert notice statuses.
+const (
+	PlatformAlertPending = "pending"
+	PlatformAlertSent    = "sent"
+	PlatformAlertSkipped = "skipped"
+	PlatformAlertFailed  = "failed"
+)
+
+// PlatformAlertNotice is one email the platform owes an account.
+type PlatformAlertNotice struct {
+	ID        string
+	AccountID string
+	AppID     string
+	Kind      PlatformAlertKind
+	SubjectID string
+	// Detail is a small JSON object the email renders (error rate, cron
+	// path, last error); never secrets.
+	Detail    json.RawMessage
+	CreatedAt time.Time
+	Attempts  int
+}
+
+// PlatformAlertNoticeStore queues and drains platform alert emails.
+type PlatformAlertNoticeStore interface {
+	// QueuePlatformAlertNotice queues n unless a notice of the same kind
+	// and subject is pending or was created within cooldown. It reports
+	// whether it queued one.
+	QueuePlatformAlertNotice(ctx context.Context, n PlatformAlertNotice, cooldown time.Duration) (bool, error)
+	// ClaimPlatformAlertNotices leases up to limit due pending notices.
+	ClaimPlatformAlertNotices(ctx context.Context, limit int, lease time.Duration) ([]PlatformAlertNotice, error)
+	// FinishPlatformAlertNotice records a notice's final status (sent,
+	// skipped or failed).
+	FinishPlatformAlertNotice(ctx context.Context, id, status, lastError string) error
+	// RetryPlatformAlertNotice puts a claimed notice back for a later try.
+	RetryPlatformAlertNotice(ctx context.Context, id string, at time.Time, lastError string) error
+	// TrimPlatformAlertNotices deletes finished notices older than before.
+	TrimPlatformAlertNotices(ctx context.Context, before time.Time) (int, error)
+}
+
+// CronFailurePauseStore pauses failing HTTP crons.
+type CronFailurePauseStore interface {
+	// PauseCronIfFailing pauses the enabled, unsuspended cron when its
+	// newest runs finished invocations all failed and the oldest of them
+	// was created at least span ago, and queues a cron_failing_paused
+	// notice in the same transaction. It reports whether it paused.
+	PauseCronIfFailing(ctx context.Context, cronID string, runs int, span, cooldown time.Duration) (bool, error)
+}
+
+// truncatePlatformAlertError bounds last_error to its column CHECK.
+func truncatePlatformAlertError(s string) string {
+	if len(s) > 512 {
+		return s[:512]
+	}
+	return s
+}

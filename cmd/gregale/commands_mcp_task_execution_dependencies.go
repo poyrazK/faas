@@ -42,7 +42,7 @@ func mcpTaskExecutionDependencies(plan string) (string, error) {
 		files++
 		bytes += info.Size()
 		if files > mcpTaskReviewSourceMaxFiles || bytes > mcpTaskReviewSourceMaxBytes {
-			return errors.New("Task dependency tree exceeds review bounds")
+			return errors.New("task dependency tree exceeds review bounds")
 		}
 		rel, e := filepath.Rel(root, path)
 		if e != nil {
@@ -56,13 +56,13 @@ func mcpTaskExecutionDependencies(plan string) (string, error) {
 			}
 			relTarget, e := filepath.Rel(root, target)
 			if e != nil || relTarget == ".." || strings.HasPrefix(relTarget, ".."+string(os.PathSeparator)) {
-				return errors.New("Task dependencies must not reference external files")
+				return errors.New("task dependencies must not reference external files")
 			}
 			_, _ = fmt.Fprintf(h, "link:%d:%s", len(relTarget), relTarget)
 			return nil
 		}
 		if !info.Mode().IsRegular() {
-			return errors.New("Task dependencies require regular files")
+			return errors.New("task dependencies require regular files")
 		}
 		f, e := openCustomerFile(path)
 		if e != nil {

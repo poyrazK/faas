@@ -32,6 +32,10 @@
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
 
+- [ADR-20261115213230: Snapshot drives stored as deltas](20261115213230-snapshot-drive-deltas.md) — accepted; distinct identifier preserving the snapshot-drive decision and its scoped citations.
+
+- [ADR-20261115145412: Best-effort progress for CLI list exports](20261115145412-cli-list-export-progress.md) — accepted; throttled private-file counters, explicit publication/stopping events and preserved receipts/errors.
+
 - [ADR-20261115141842: Overall read budgets for CLI lists](20261115141842-cli-overall-list-timeout.md) — accepted; optional shared deadlines, preserved retries/progress and atomic publication boundaries.
 
 - [ADR-20261115135218: Discoverable CLI list flag dependencies](20261115135218-cli-list-flag-dependencies.md) — accepted; shared dependency registry, offline help and typed local advice with preserved validation contracts.
@@ -2419,3 +2423,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261115123000: Task recovery handover and owner qualification](20261115123000-task-recovery-handover-owner-qualification.md) — accepted; native mutation barrier, normal executor exit receipt, immutable restore qualification and separate expiring owner verdict; recovery apply remains a later milestone.
 - [ADR-20261115132027: One-time owner-approved Task web restoration](20261115132027-one-time-owner-approved-task-web-restore.md) — accepted; local Task compatibility lock, separate runtime snapshots, atomic traffic/approval consumption and retained results prevent duplicate restoration.
 - [ADR-20261115100336: A restore keeps gunicorn's workers](20261115100336-restore-keeps-gunicorn-workers.md) — accepted; the Python restore preload stops gunicorn's master from killing workers after the restore clock jump (amends ADR-680, ADR-20261109120000)
+- [ADR-20261115194000: Platform alerts for outages and failing crons](20261115194000-platform-alerts.md) — accepted; schedd pauses an HTTP cron after 10 failed runs over 24 h and meterd emails accounts about it and about apps at ≥90% 5xx, unless they have their own error-rate rule

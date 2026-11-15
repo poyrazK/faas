@@ -1196,6 +1196,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		if errors.Is(err, ErrPermanentInvoke) {
 			retryAfter = 0
 		}
+		retryAfter = asyncTimeoutRetryDelay(inv, err, retryAfter)
 		budget := d.invocationAttemptBudget(ctx, inv)
 		retryAfter, budget = d.applicationFailure(ctx, inv, err, retryAfter, budget)
 		if errors.Is(err, ErrDispatchRefused) {
@@ -1518,6 +1519,25 @@ func (d *Drain) invocationRetryDelay(ctx context.Context, inv state.Invocation) 
 		return delay
 	}
 	return time.Duration(d.retryAfterSeconds) * time.Second
+}
+
+// asyncTimeoutBackoff is the retry curve for an async invoke whose request
+// timed out: the app received it and may still be running it, so the flat
+// default delay started a second copy beside the first (prod 2026-11-15: a
+// 45 s job behind a 30 s request timeout ran 6 times, ~32 s apart).
+var asyncTimeoutBackoff = dispatch.RetryPolicy{BaseSeconds: 30, MaxSeconds: 900}
+
+// asyncTimeoutRetryDelay stretches the retry delay of a timed-out async
+// invoke without its own retry policy onto asyncTimeoutBackoff. Other
+// sources, explicit policies and terminal failures keep retryAfter.
+func asyncTimeoutRetryDelay(inv state.Invocation, err error, retryAfter time.Duration) time.Duration {
+	if retryAfter <= 0 || inv.Source != state.InvocationAsyncInvoke || !inv.RetryPolicy().Zero() {
+		return retryAfter
+	}
+	if !errors.Is(err, ErrDispatchTimeout) && !errors.Is(err, context.DeadlineExceeded) {
+		return retryAfter
+	}
+	return max(retryAfter, asyncTimeoutBackoff.Backoff(inv.Attempts))
 }
 
 // cronPlatformRetry lets a plain HTTP cron run that Gregale refused before
