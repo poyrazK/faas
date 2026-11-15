@@ -20,7 +20,7 @@ const parityExemptionsFile = "../../docs/cli-api-parity-exemptions.txt"
 // parityExemptionCeiling is the number of frozen gaps. Closing a gap removes
 // its line and lowers this number; it may never rise, so a new API-only field
 // fails CI instead of joining the list.
-const parityExemptionCeiling = 17
+const parityExemptionCeiling = 8
 
 func jsonFields(t reflect.Type) []string {
 	var out []string
