@@ -5,6 +5,7 @@
 import type { AccountAbuseHoldAction } from '../models/AccountAbuseHoldAction.js';
 import type { AccountAbuseHoldActionResponse } from '../models/AccountAbuseHoldActionResponse.js';
 import type { AccountCreditResponse } from '../models/AccountCreditResponse.js';
+import type { AccountRiskResponse } from '../models/AccountRiskResponse.js';
 import type { AdminRefundResponse } from '../models/AdminRefundResponse.js';
 import type { AdminSetGithubWebhookSecretRequest } from '../models/AdminSetGithubWebhookSecretRequest.js';
 import type { AdminSetGithubWebhookSecretResponse } from '../models/AdminSetGithubWebhookSecretResponse.js';
@@ -20,6 +21,7 @@ import type { DataRepairHealth } from '../models/DataRepairHealth.js';
 import type { EgressFlowLogResponse } from '../models/EgressFlowLogResponse.js';
 import type { GithubRecoveryRetryResponse } from '../models/GithubRecoveryRetryResponse.js';
 import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatusResponse.js';
+import type { HeldLinksResponse } from '../models/HeldLinksResponse.js';
 import type { ObsAlertCollectionHistory } from '../models/ObsAlertCollectionHistory.js';
 import type { ObsAlertRecurrence } from '../models/ObsAlertRecurrence.js';
 import type { ObsAlertResponseTimes } from '../models/ObsAlertResponseTimes.js';
@@ -470,6 +472,83 @@ export class AdminService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         403: `code: admin_required — reading the flow log needs an operator session with MFA.`,
+      },
+    });
+  }
+  /**
+   * An account's abuse risk (operator-only).
+   * The account's abuse hold, sign-up record (country, network owner,
+   * email domain, disposable flag), links to and from abuse-held
+   * accounts, abuse strikes inside the hold window, and abuse events
+   * (holds, CPU signals, abuse scans, abuse recycles) of the last 30
+   * days, newest first.
+   *
+   * @returns AccountRiskResponse The account's abuse risk.
+   * @throws ApiError
+   */
+  public static getAccountRisk({
+    id,
+    includePii,
+  }: {
+    /**
+     * UUID of the account to review.
+     */
+    id: string,
+    /**
+     * Include email, sign-up address and user agent (audited).
+     */
+    includePii?: boolean,
+  }): CancelablePromise<AccountRiskResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/accounts/{id}/risk',
+      path: {
+        'id': id,
+      },
+      query: {
+        'include_pii': includePii,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required — reading an account's abuse risk needs an operator session with MFA.`,
+        404: `code: not_found — no account with that id.`,
+      },
+    });
+  }
+  /**
+   * New accounts linked to abuse-held accounts (operator-only).
+   * Links detected in the last `since`, newest
+   * first, with the new account's sign-up country and email domain.
+   * Defaults to the last 24 hours and 200 rows.
+   *
+   * @returns HeldLinksResponse Recent held-account links.
+   * @throws ApiError
+   */
+  public static listHeldLinks({
+    since,
+    limit,
+  }: {
+    /**
+     * Window as a duration, e.g. 24h; at most 720h.
+     */
+    since?: string,
+    /**
+     * Maximum held-account links returned; defaults to 200.
+     */
+    limit?: number,
+  }): CancelablePromise<HeldLinksResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/held-links',
+      query: {
+        'since': since,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: admin_required — the held-link review needs an operator session with MFA.`,
       },
     });
   }

@@ -4064,6 +4064,11 @@ type Querier interface {
 	// an active fork keeps (or brings back) a plaintext copy.
 	// imaged's local orphan sweep keeps these deployments' capture directories.
 	ListLiveCrashCaptureDeploymentIDs(ctx context.Context, db DBTX) ([]pgtype.UUID, error)
+	// The app and sidecar layers of deployments with a non-stale snapshot, keyed
+	// as ClaimSnapshotReplica keys them. Snapshot fan-out keeps a replica only
+	// while its layers are cached too, so these share the live captures' last
+	// eviction tier.
+	ListLiveSnapshotLayerKeys(ctx context.Context, db DBTX) ([]string, error)
 	ListLogDrainAnalyticsWithBaseline(ctx context.Context, db DBTX, arg ListLogDrainAnalyticsWithBaselineParams) ([]ListLogDrainAnalyticsWithBaselineRow, error)
 	ListMCPAdmissionHistory(ctx context.Context, db DBTX, arg ListMCPAdmissionHistoryParams) ([]ListMCPAdmissionHistoryRow, error)
 	ListMCPAttentionActions(ctx context.Context, db DBTX, arg ListMCPAttentionActionsParams) ([][]byte, error)

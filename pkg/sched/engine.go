@@ -7522,8 +7522,12 @@ func (e *Engine) ParkIdle(ctx context.Context, instanceID string, check IdlePark
 
 func (e *Engine) park(ctx context.Context, instanceID string, check *IdleParkCheck) error {
 	ins, err := e.lockedParkable(ctx, instanceID)
-	if err != nil || ins == nil {
+	if err != nil {
 		return err
+	}
+	if ins == nil {
+		e.releaseIfNoLongerResident(ctx, instanceID)
+		return nil
 	}
 	if check != nil && state.State(ins.State) == state.StateRunning {
 		if reason := check.activity(ctx, *ins); reason != "" {
@@ -7589,6 +7593,53 @@ func (e *Engine) ParkWithReason(ctx context.Context, instanceID, reason string) 
 // states. It is app-scoped and is called only on a would-be concurrency
 // rejection. Terminal rows release their reservation; snapshotting and
 // migrating rows keep RAM but no longer consume an app serving slot.
+// reservationAuditInterval is how often a scheduler reconciles its ledger
+// with the instance rows. A peer scheduler can move an instance this ledger
+// holds (an operator intent any schedd may claim): request wakes repaired
+// that at their cap, but nothing else did until the scheduler restarted.
+const reservationAuditInterval = time.Minute
+
+// ReleaseStaleReservations reconciles every app this ledger holds
+// reservations for with its instance rows, under the app's lock, and returns
+// how many reservations it released.
+func (e *Engine) ReleaseStaleReservations(ctx context.Context) int {
+	released := 0
+	for _, appID := range e.ledger.AppsWithReservations() {
+		if ctx.Err() != nil {
+			break
+		}
+		e.lockApp(appID)
+		n, err := e.reconcileAppAdmission(ctx, appID)
+		e.unlockApp(appID)
+		if err != nil {
+			e.log.Warn("sched: reservation audit", "app", logsanitize.Field(appID), "err", err)
+			continue
+		}
+		if n > 0 {
+			e.log.Info("sched: reservation audit released stale reservations", "app", logsanitize.Field(appID), "instances", n)
+			released += n
+		}
+	}
+	return released
+}
+
+// releaseIfNoLongerResident frees this ledger's reservation for an instance
+// another scheduler already parked, stopped or failed. A park that finds the
+// row gone from RUNNING used to return without touching the ledger, so the
+// owner kept counting an instance a peer had moved (an operator intent any
+// schedd may claim, or a drain a non-owner ran) until it restarted.
+func (e *Engine) releaseIfNoLongerResident(ctx context.Context, instanceID string) {
+	if !e.ledger.ResidentFor(instanceID) {
+		return
+	}
+	ins, err := e.store.InstanceByID(ctx, instanceID)
+	if err != nil || state.State(ins.State).CountsForRAM() {
+		return
+	}
+	e.ledger.Release(instanceID)
+	e.log.Info("sched: released the reservation of an instance a peer moved", "instance", instanceID, "app", logsanitize.Field(ins.AppID), "state", ins.State)
+}
+
 // admitWithStaleRepair is ledger.Admit that, when the ledger refuses at the
 // app's concurrency cap, releases the app's stale reservations (rows no
 // longer resident) and tries once more. The request gates do this before

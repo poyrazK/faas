@@ -159,6 +159,8 @@ func sessionOnlyOperatorReads(tenantID string) []string {
 		"/v1/admin/obs/incidents/deployment/" + id + "/context",
 		"/v1/admin/obs/incidents/platform_alert/recurrence",
 		"/v1/admin/egress-flows",
+		"/v1/admin/accounts/" + id + "/risk",
+		"/v1/admin/held-links",
 		"/v1/admin/managed-postgres/usage/" + id,
 		"/v1/admin/managed-postgres/accounting/" + id,
 		"/v1/admin/ops/jobs/runs",

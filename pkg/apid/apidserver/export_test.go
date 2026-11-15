@@ -2615,3 +2615,5 @@ func (s *server) SetSignupGeoForTest(country func(net.IP) string, asn func(net.I
 func (r pgHandlerEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map[string]string) *httptest.ResponseRecorder {
 	return r.doSession(p0, p1, p2, p3, p4, p5)
 }
+
+var SyntheticCheckAuthWarning = syntheticCheckAuthWarning

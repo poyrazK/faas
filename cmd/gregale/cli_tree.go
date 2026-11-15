@@ -906,6 +906,10 @@ func rewriteAppPath(args []string) ([]string, error) {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
 	verb := args[1]
+	if isAppProjectCommand(args[1:]) {
+		// `app restart|health|update --project P` runs per project app.
+		return args, nil
+	}
 	if verb == "listener" {
 		return rewriteAppListener(args)
 	}

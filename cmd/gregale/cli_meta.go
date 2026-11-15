@@ -1263,11 +1263,11 @@ var cliCommands = []cliCommand{
 		Short:   "Define SLOs and track their error budgets",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List the app's SLOs, with the measured panel for a window", Examples: []string{"gregale alert slo list --app my-api", "gregale alert slo list --app my-api --window 24h"}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "window", Short: "also show the measured SLO panel for this window", Value: "WINDOW", ClosedSet: []string{"1h", "24h", "7d"}},
 			}},
 			{Name: "create", Short: "Define an availability or latency SLO", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "name", Short: "SLO name, unique per app", Req: true, Value: "NAME"},
 				{Name: "objective", Short: "objective percentage, 90 to 99.99", Req: true, Value: "PCT"},
 				{Name: "sli", Short: "service level indicator", Value: "SLI", ClosedSet: []string{"availability", "latency"}},
@@ -1275,10 +1275,10 @@ var cliCommands = []cliCommand{
 				{Name: "window-days", Short: "rolling window", Value: "DAYS", ClosedSet: []string{"7", "30"}},
 			}},
 			{Name: "status", Short: "Show an SLO's attainment, budget remaining and burn rate", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}, Positionals: []string{"<slo-id>"}},
 			{Name: "rm", Short: "Delete one SLO", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "yes", Short: "accepted for consistency; rm does not prompt", Bool: true},
 			}, Positionals: []string{"<slo-id>"}},
 		},
@@ -1289,10 +1289,10 @@ var cliCommands = []cliCommand{
 		Short:   "Schedule HTTP checks against an app",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List the app's synthetic checks", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}},
 			{Name: "create", Short: "Schedule a GET or HEAD check on a path", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "name", Short: "check name, unique per app", Req: true, Value: "NAME"},
 				{Name: "path", Short: "path on the app (default /)", Value: "PATH"},
 				{Name: "method", Short: "HTTP method", Value: "METHOD", ClosedSet: []string{"GET", "HEAD"}},
@@ -1301,16 +1301,16 @@ var cliCommands = []cliCommand{
 				{Name: "every-minutes", Short: "interval", Value: "MIN", ClosedSet: []string{"5", "15", "60"}},
 			}},
 			{Name: "status", Short: "Show a check's uptime, latency and recent runs", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}, Positionals: []string{"<check-id>"}},
 			{Name: "pause", Short: "Stop running a check", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}, Positionals: []string{"<check-id>"}},
 			{Name: "resume", Short: "Resume a paused check", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 			}, Positionals: []string{"<check-id>"}},
 			{Name: "rm", Short: "Delete a check and its history", Flags: []cliFlag{
-				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "app", Short: "app slug (defaults to the linked app)", Value: "slug"},
 				{Name: "yes", Short: "accepted for consistency; rm does not prompt", Bool: true},
 			}, Positionals: []string{"<check-id>"}},
 		},
@@ -1841,6 +1841,7 @@ var cliCommands = []cliCommand{
 				{Name: "unset", Short: "Remove labels", Positionals: []string{"<app>", "KEY..."}},
 			}},
 			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app health my-api --wait --timeout 2m"}, Flags: []cliFlag{
+				{Name: "project", Short: "check every app of this project instead of one", Value: "PROJECT"},
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},
 				{Name: "wait", Short: "wait for a fresh healthy default-scope assessment", Bool: true},
 				{Name: "timeout", Short: "maximum wait (default 2m; requires --wait)", Value: "DURATION"},
@@ -1888,6 +1889,7 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"gregale app costs my-api", "gregale app costs my-api --month 2026-10 --json"}},
 			{Name: "rename", Short: "Rename an app; the old hostname stops routing", Positionals: []string{"<new-slug>"}, Examples: []string{"gregale app rename my-api my-api-v2"}},
 			{Name: "restart", Common: true, Short: "Restart from a snapshot or fresh configuration", Flags: []cliFlag{
+				{Name: "project", Short: "restart every app of this project instead of one", Value: "PROJECT"},
 				{Name: "fresh", Short: "cold-boot replacements with current runtime configuration"},
 				{Name: "wait", Short: "wait for processing; requires --fresh"},
 				{Name: "timeout", Short: "client deadline (default 10m)", Value: "DURATION"},
@@ -3329,7 +3331,11 @@ var cliCommands = []cliCommand{
 			{Name: "env-file", Short: "KEY=VALUE file (default: dev.env_file; local process settings or remote developer secrets)", Value: "PATH"},
 			{Name: "service-override-file", Short: "sync validated service URLs as developer secrets", Value: "PATH"},
 			{Name: "once", Short: "deploy once and exit"},
-			{Name: "stop", Short: "tear down the developer environment"},
+			{Name: "stop", Short: "tear down the developer environment (asks before deleting its database and buckets)"},
+			{Name: "app", Short: "with --stop, the dev-* app to stop, as shown by gregale dev list", Value: "SLUG"},
+			{Name: "yes", Short: "with --stop, do not ask before deleting the database and buckets"},
+			{Name: "proxy-port", Short: "local browser address for an authenticated environment (default 8788)", Value: "N"},
+			{Name: "no-proxy", Short: "do not serve the authenticated environment on localhost"},
 			{Name: "no-logs", Short: "do not attach the live runtime log stream"},
 			{Name: "open", Short: "open the developer environment URL after the first live sync"},
 			{Name: "bucket", Short: "provision a private workspace bucket; repeatable", Value: "NAME"},
@@ -3343,6 +3349,7 @@ var cliCommands = []cliCommand{
 		},
 		Subcommands: []cliSub{
 			{Name: "status", Short: "show developer-environment quota usage"},
+			{Name: "list", Short: "list the account's developer environments, wherever they were started"},
 			{Name: "bridge", Short: "run an HTTP service locally in a remote development environment", Flags: []cliFlag{
 				{Name: "environment", Short: "named development environment", Value: "ENV"},
 				{Name: "local-port", Short: "local HTTP service port", Value: "PORT"},
@@ -3450,7 +3457,7 @@ var cliCommands = []cliCommand{
 		}}, {Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
-			{Name: "source", Short: "application source directory, relative to the manifest (default: the workload holding --from, else .)", Value: "DIR"},
+			{Name: "source", Short: "application source directory, relative to the manifest (default: the workload holding --from; at a Compose root, the one service publishing ports; else .)", Value: "DIR"},
 			{Name: "scenario", Short: "scenario name", Value: "NAME"},
 			{Name: "output", Short: "new manifest path", Value: "PATH"},
 		}}, {Name: "recovery-trend", Short: "Render recovery performance trends from campaign reports", Notes: []string{"Works offline on ordered reports."}, Flags: []cliFlag{
@@ -3526,7 +3533,7 @@ var cliCommands = []cliCommand{
 			{Name: "validate", Short: "validate local scenario sources without a platform login"},
 			{Name: "preflight", Short: "check account entitlements and developer app capacity"},
 			{Name: "engine", Short: "execution engine (default real-vm)", Value: "ENGINE", ClosedSet: []string{"real-vm", "local", "simulated"}},
-			{Name: "base-url", Short: "HTTP loopback origin (optional with local.command)", Value: "URL"},
+			{Name: "base-url", Short: "loopback origin or https://<app>.gregale.dev (optional with local.command)", Value: "URL"},
 			{Name: "data", Short: "JSON or CSV case data for the local engine", Value: "PATH"},
 			{Name: "load", Short: "repeat native HTTP journeys concurrently with the local engine"},
 			{Name: "vus", Short: "concurrent users or arrival-rate concurrency cap (1..50, default 1)", Value: "N"},
@@ -6203,6 +6210,19 @@ var cliCommands = []cliCommand{
 			{Name: "restore", Short: "Restore a database to a new database", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
+				{Name: "switch", Short: "move this app to the copy, keeping its code", Value: "APP"},
+				{Name: "env", Short: "with --switch: environment whose bindings move", Value: "SCOPE"},
+				{Name: "yes", Short: "with --switch: switch without prompting", Bool: true},
+				{Name: "no-wait", Short: "with --switch: return once the switch starts", Bool: true},
+				{Name: "timeout", Short: "with --switch: wait deadline", Value: "DURATION"},
+				{Name: "poll-interval", Short: "with --switch: poll interval", Value: "DURATION"},
+			}, Notes: []string{
+				"With --switch the app moves to the copy without changing its code: it stops serving while it is fenced and drained, then cold starts on the copy.",
+				"Writes after the restore point stay only in the source database, which keeps every write.",
+				"Follow or cancel the switch with `gregale release rollback status <app> <switch-id>`.",
+			}, Examples: []string{
+				"gregale postgres restore orders --name orders-before-import --point-in-time 2026-10-30T09:00:00Z",
+				"gregale postgres restore orders --name orders-0900 --point-in-time 2026-10-30T09:00:00Z --switch my-api",
 			}},
 			{Name: "branch", Short: "Make, list and delete copy-on-write branches of a database", Notes: []string{
 				"A branch is a restore: a new database that shares its source's storage until written to. `gregale postgres branch <database> <name>` is `branch create`.",

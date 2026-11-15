@@ -80,6 +80,11 @@ func main() {
 			}()
 			return nil
 		})
+	} else {
+		// Nothing to recycle: one handler process per request starts after
+		// the resume. Register the runner itself so guest-init does not
+		// report it as an uncovered Go process.
+		internal.RegisterStatelessRunner(reportedRuntime)
 	}
 
 	// Issue #667 / ADR-078 (PR 3): read the per-request tail

@@ -167,7 +167,7 @@ type MemStore struct {
 	trafficAppsSuffix           string
 	// abuseStrikes is each resource owner's abuse recycle times inside the
 	// escalation window (RecordAccountAbuseStrike, ADR-20261113133500).
-	abuseStrikes map[string][]time.Time
+	abuseStrikes map[string][]AccountAbuseStrike
 	// signupFacts is each account's sign-up record (ADR-20261113160000).
 	signupFacts map[string]AccountSignupFacts
 	// heldLinks is each account's links to abuse-held accounts
