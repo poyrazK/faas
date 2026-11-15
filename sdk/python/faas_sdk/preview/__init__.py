@@ -1192,4 +1192,3 @@ def __getattr__(name: str):
     from importlib import import_module
 
     return getattr(import_module("faas_sdk"), name)
-
