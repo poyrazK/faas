@@ -11,7 +11,7 @@ T = TypeVar("T", bound="ResumeEnvironmentAutomationResponse")
 
 @_attrs_define
 class ResumeEnvironmentAutomationResponse:
-    """Crons enabled by resuming a stage's automation after a full environment clone."""
+    """Crons and event subscriptions enabled by resuming a stage's automation after a full environment clone."""
 
     environment: str
     """Stage whose paused automation was enabled."""
@@ -19,6 +19,10 @@ class ResumeEnvironmentAutomationResponse:
     """Number of crons enabled."""
     cron_ids: list[str]
     """Crons enabled by this call."""
+    event_subscriptions_resumed: int
+    """Number of event subscriptions enabled."""
+    event_subscription_ids: list[str]
+    """Event subscriptions enabled by this call."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -28,6 +32,10 @@ class ResumeEnvironmentAutomationResponse:
 
         cron_ids = self.cron_ids
 
+        event_subscriptions_resumed = self.event_subscriptions_resumed
+
+        event_subscription_ids = self.event_subscription_ids
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -35,6 +43,8 @@ class ResumeEnvironmentAutomationResponse:
                 "environment": environment,
                 "crons_resumed": crons_resumed,
                 "cron_ids": cron_ids,
+                "event_subscriptions_resumed": event_subscriptions_resumed,
+                "event_subscription_ids": event_subscription_ids,
             }
         )
 
@@ -49,10 +59,16 @@ class ResumeEnvironmentAutomationResponse:
 
         cron_ids = cast(list[str], d.pop("cron_ids"))
 
+        event_subscriptions_resumed = d.pop("event_subscriptions_resumed")
+
+        event_subscription_ids = cast(list[str], d.pop("event_subscription_ids"))
+
         resume_environment_automation_response = cls(
             environment=environment,
             crons_resumed=crons_resumed,
             cron_ids=cron_ids,
+            event_subscriptions_resumed=event_subscriptions_resumed,
+            event_subscription_ids=event_subscription_ids,
         )
 
         resume_environment_automation_response.additional_properties = d
