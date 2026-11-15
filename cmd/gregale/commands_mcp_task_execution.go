@@ -362,7 +362,7 @@ func guardMCPTaskExecution(ctx context.Context, c *Client, record api.TaskToolRe
 	}
 	out, err := c.CheckTaskToolReleaseIntent(ctx, record.ID, api.TaskToolReleaseIntentCheck{ReleaseFingerprint: review.Fingerprint, Execution: request})
 	if err != nil || out.Status != "approved" || out.Execution == nil || out.Execution.State != "running" || out.Execution.ClaimSHA256 != toolpublication.Digest([]byte(token)) {
-		return errors.New("Task execution is no longer authorized")
+		return errors.New("task execution is no longer authorized")
 	}
 	return nil
 }
@@ -456,7 +456,7 @@ func guardMCPNativeTaskExecution(ctx context.Context, c *Client, s *mcpNativeRel
 		return err
 	}
 	if record.Execution == nil || record.Execution.OperationID != s.TaskOperationID {
-		return errors.New("Task execution identity changed")
+		return errors.New("task execution identity changed")
 	}
 	p, dir, err := loadMCPTaskExecutionProfile(record)
 	if err != nil {

@@ -83,13 +83,14 @@ func deliverConsumerUsage(ctx context.Context, q *usageoutbox.Outbox, target str
 					PlatformTenantJwtAuthorizationRuleId: event.PlatformTenantJWTAuthorizationRuleID,
 					WindowStartUnixMs:                    event.WindowStart.UnixMilli(), RequestCount: event.RequestCount,
 					ErrorCount: event.ErrorCount, BillableUnits: event.BillableUnits,
-					Audit:              audit,
-					DiscoveredRoute:    event.DiscoveredRoute,
-					DiscoveredAtUnixMs: event.DiscoveredAtUnixMs,
-					BillingRoute:       event.BillingRoute,
-					ComputeMs:          event.ComputeMS,
-					MeterUnits:         event.MeterUnits,
-					ResponseBytes:      event.ResponseBytes,
+					Audit:                  audit,
+					DiscoveredRoute:        event.DiscoveredRoute,
+					DiscoveredAtUnixMs:     event.DiscoveredAtUnixMs,
+					DiscoveredDeploymentId: event.DiscoveredDeploymentID,
+					BillingRoute:           event.BillingRoute,
+					ComputeMs:              event.ComputeMS,
+					MeterUnits:             event.MeterUnits,
+					ResponseBytes:          event.ResponseBytes,
 				})
 				cancel()
 				if err == nil && receipt == nil {
