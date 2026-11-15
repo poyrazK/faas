@@ -70,6 +70,10 @@ recovery; local preparation checks do not establish deployed acceptance.
 | 159 | Public OpenAPI spec and capabilities endpoint | `TestPublicSurface/openapi_spec`, `TestAccountAndKeys/capabilities` | — |
 | 161 | Docs site and trust pages | `TestDocsPages` (every route not marked `unpublished` in `docs/customer-pages.json`), `TestPublicSurface/security_txt` | pages of preview and internal capabilities, which are deliberately unpublished |
 
+`TestListFileExportIsolatedCLI` extends row 156: private list exports become
+visible only after completion, preserve racing files, retain API correlation,
+and cancel live HTTP reads on SIGINT without publishing a partial destination.
+
 `TestListStreamingIsolatedCLI` extends row 156: early invocation rows, partial
 API failures with progress/correlation, and SIGINT cancelling the active read.
 
