@@ -698,6 +698,23 @@ func (b *Builderd) stopIfBuildOutpaced(ctx context.Context, claim state.Build) b
 	return true
 }
 
+// recordBuildNode records this node on a build it just claimed
+// (ADR-20261110210000 slice 3j-3): secretd admits only that node to pull the
+// app's private base images for the builder VM. Under a per-node database
+// login the claim already recorded it and this changes nothing. A failure
+// is logged, not fatal: the build still runs, and only a mirrored private
+// pull is refused.
+func (b *Builderd) recordBuildNode(ctx context.Context, buildID string) {
+	recorder, ok := b.store.(state.BuildNodeRecorder)
+	if !ok || b.builderNodeID == "" {
+		return
+	}
+	if err := recorder.RecordBuildNode(ctx, buildID, b.builderNodeID); err != nil {
+		b.log.Warn("builderd: record the build's node; private base-image pulls through the mirror will be refused",
+			"build", buildID, "err", err)
+	}
+}
+
 // requeueClaim returns a worker-owned claim to the durable queue. Production
 // stores implement the claim-fenced capability; the legacy fallback preserves
 // compatibility with older state.Store implementations.
@@ -725,6 +742,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.requeueClaimAfterCancellation(ctx, build)
 		}
 	}()
+	b.recordBuildNode(ctx, build.ID)
 
 	dep, err := b.store.DeploymentByID(ctx, build.DeploymentID)
 	if err != nil {
