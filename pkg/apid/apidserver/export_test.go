@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
+	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
@@ -609,6 +610,20 @@ func UploadSessionLockTracked(key string) bool {
 var MustSeedEdgeRuleApp = mustSeedEdgeRuleApp
 var NearestRunningTelemetryRow = nearestRunningTelemetryRow
 var NewAppSecretCredentialSink = newAppSecretCredentialSink
+
+func NewPostgresCutoverVerifierFixture(identity *age.X25519Identity, key []byte, probe func(context.Context, string, managedpostgres.CredentialAccess, int) error, client secretdpb.SecretdClient) managedpostgres.CutoverCredentialVerifier {
+	return &appSecretCredentialSink{
+		identities:   func() []*age.X25519Identity { return []*age.X25519Identity{identity} },
+		hmacKey:      func() []byte { return key },
+		probe:        probe,
+		cutoverProbe: postgresRemoteVerifier(client),
+	}
+}
+
+func CheckPostgresCutoverVerifierConfigurationForTest(ctx context.Context, getenv func(string) string) error {
+	return configurePostgresCutoverVerifier(ctx, &appSecretCredentialSink{}, getenv)
+}
+
 var NewAuditor = newAuditor
 var NewAuthedDashboardServer = newAuthedDashboardServer
 var NewAuthedDashboardServerFull = newAuthedDashboardServerFull

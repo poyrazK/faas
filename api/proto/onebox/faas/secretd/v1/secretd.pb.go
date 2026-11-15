@@ -24,6 +24,142 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type VerifyPostgresCutoverRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	AccountId        string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	CutoverId        string                 `protobuf:"bytes,2,opt,name=cutover_id,json=cutoverId,proto3" json:"cutover_id,omitempty"`
+	CredentialId     string                 `protobuf:"bytes,3,opt,name=credential_id,json=credentialId,proto3" json:"credential_id,omitempty"`
+	LeaseToken       string                 `protobuf:"bytes,4,opt,name=lease_token,json=leaseToken,proto3" json:"lease_token,omitempty"`
+	CiphertextSha256 []byte                 `protobuf:"bytes,5,opt,name=ciphertext_sha256,json=ciphertextSha256,proto3" json:"ciphertext_sha256,omitempty"`
+	Kid              string                 `protobuf:"bytes,6,opt,name=kid,proto3" json:"kid,omitempty"`
+	ValueHash        string                 `protobuf:"bytes,7,opt,name=value_hash,json=valueHash,proto3" json:"value_hash,omitempty"`
+	CredentialRef    string                 `protobuf:"bytes,8,opt,name=credential_ref,json=credentialRef,proto3" json:"credential_ref,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *VerifyPostgresCutoverRequest) Reset() {
+	*x = VerifyPostgresCutoverRequest{}
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyPostgresCutoverRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyPostgresCutoverRequest) ProtoMessage() {}
+
+func (x *VerifyPostgresCutoverRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyPostgresCutoverRequest.ProtoReflect.Descriptor instead.
+func (*VerifyPostgresCutoverRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *VerifyPostgresCutoverRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *VerifyPostgresCutoverRequest) GetCutoverId() string {
+	if x != nil {
+		return x.CutoverId
+	}
+	return ""
+}
+
+func (x *VerifyPostgresCutoverRequest) GetCredentialId() string {
+	if x != nil {
+		return x.CredentialId
+	}
+	return ""
+}
+
+func (x *VerifyPostgresCutoverRequest) GetLeaseToken() string {
+	if x != nil {
+		return x.LeaseToken
+	}
+	return ""
+}
+
+func (x *VerifyPostgresCutoverRequest) GetCiphertextSha256() []byte {
+	if x != nil {
+		return x.CiphertextSha256
+	}
+	return nil
+}
+
+func (x *VerifyPostgresCutoverRequest) GetKid() string {
+	if x != nil {
+		return x.Kid
+	}
+	return ""
+}
+
+func (x *VerifyPostgresCutoverRequest) GetValueHash() string {
+	if x != nil {
+		return x.ValueHash
+	}
+	return ""
+}
+
+func (x *VerifyPostgresCutoverRequest) GetCredentialRef() string {
+	if x != nil {
+		return x.CredentialRef
+	}
+	return ""
+}
+
+type VerifyPostgresCutoverResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyPostgresCutoverResponse) Reset() {
+	*x = VerifyPostgresCutoverResponse{}
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyPostgresCutoverResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyPostgresCutoverResponse) ProtoMessage() {}
+
+func (x *VerifyPostgresCutoverResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyPostgresCutoverResponse.ProtoReflect.Descriptor instead.
+func (*VerifyPostgresCutoverResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{1}
+}
+
 type RegistryHeader struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -34,7 +170,7 @@ type RegistryHeader struct {
 
 func (x *RegistryHeader) Reset() {
 	*x = RegistryHeader{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[0]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -46,7 +182,7 @@ func (x *RegistryHeader) String() string {
 func (*RegistryHeader) ProtoMessage() {}
 
 func (x *RegistryHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[0]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -59,7 +195,7 @@ func (x *RegistryHeader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegistryHeader.ProtoReflect.Descriptor instead.
 func (*RegistryHeader) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{0}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *RegistryHeader) GetName() string {
@@ -100,7 +236,7 @@ type RegistryFetchRequest struct {
 
 func (x *RegistryFetchRequest) Reset() {
 	*x = RegistryFetchRequest{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[1]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -112,7 +248,7 @@ func (x *RegistryFetchRequest) String() string {
 func (*RegistryFetchRequest) ProtoMessage() {}
 
 func (x *RegistryFetchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[1]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -125,7 +261,7 @@ func (x *RegistryFetchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegistryFetchRequest.ProtoReflect.Descriptor instead.
 func (*RegistryFetchRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{1}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *RegistryFetchRequest) GetAppId() string {
@@ -180,7 +316,7 @@ type RegistryFetchHead struct {
 
 func (x *RegistryFetchHead) Reset() {
 	*x = RegistryFetchHead{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[2]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -192,7 +328,7 @@ func (x *RegistryFetchHead) String() string {
 func (*RegistryFetchHead) ProtoMessage() {}
 
 func (x *RegistryFetchHead) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[2]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -205,7 +341,7 @@ func (x *RegistryFetchHead) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegistryFetchHead.ProtoReflect.Descriptor instead.
 func (*RegistryFetchHead) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{2}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *RegistryFetchHead) GetStatus() int32 {
@@ -235,7 +371,7 @@ type RegistryFetchResponse struct {
 
 func (x *RegistryFetchResponse) Reset() {
 	*x = RegistryFetchResponse{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[3]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -247,7 +383,7 @@ func (x *RegistryFetchResponse) String() string {
 func (*RegistryFetchResponse) ProtoMessage() {}
 
 func (x *RegistryFetchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[3]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -260,7 +396,7 @@ func (x *RegistryFetchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RegistryFetchResponse.ProtoReflect.Descriptor instead.
 func (*RegistryFetchResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{3}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *RegistryFetchResponse) GetFrame() isRegistryFetchResponse_Frame {
@@ -315,7 +451,7 @@ type OpenEdgeHeaderSecretRequest struct {
 
 func (x *OpenEdgeHeaderSecretRequest) Reset() {
 	*x = OpenEdgeHeaderSecretRequest{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[4]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -327,7 +463,7 @@ func (x *OpenEdgeHeaderSecretRequest) String() string {
 func (*OpenEdgeHeaderSecretRequest) ProtoMessage() {}
 
 func (x *OpenEdgeHeaderSecretRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[4]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -340,7 +476,7 @@ func (x *OpenEdgeHeaderSecretRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenEdgeHeaderSecretRequest.ProtoReflect.Descriptor instead.
 func (*OpenEdgeHeaderSecretRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{4}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *OpenEdgeHeaderSecretRequest) GetTargetAppId() string {
@@ -373,7 +509,7 @@ type OpenEdgeHeaderSecretResponse struct {
 
 func (x *OpenEdgeHeaderSecretResponse) Reset() {
 	*x = OpenEdgeHeaderSecretResponse{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[5]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -385,7 +521,7 @@ func (x *OpenEdgeHeaderSecretResponse) String() string {
 func (*OpenEdgeHeaderSecretResponse) ProtoMessage() {}
 
 func (x *OpenEdgeHeaderSecretResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[5]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -398,7 +534,7 @@ func (x *OpenEdgeHeaderSecretResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenEdgeHeaderSecretResponse.ProtoReflect.Descriptor instead.
 func (*OpenEdgeHeaderSecretResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{5}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *OpenEdgeHeaderSecretResponse) GetValue() string {
@@ -418,7 +554,7 @@ type OpenTriggerConfigRequest struct {
 
 func (x *OpenTriggerConfigRequest) Reset() {
 	*x = OpenTriggerConfigRequest{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[6]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -430,7 +566,7 @@ func (x *OpenTriggerConfigRequest) String() string {
 func (*OpenTriggerConfigRequest) ProtoMessage() {}
 
 func (x *OpenTriggerConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[6]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -443,7 +579,7 @@ func (x *OpenTriggerConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenTriggerConfigRequest.ProtoReflect.Descriptor instead.
 func (*OpenTriggerConfigRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{6}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *OpenTriggerConfigRequest) GetAppId() string {
@@ -470,7 +606,7 @@ type OpenTriggerConfigResponse struct {
 
 func (x *OpenTriggerConfigResponse) Reset() {
 	*x = OpenTriggerConfigResponse{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[7]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -482,7 +618,7 @@ func (x *OpenTriggerConfigResponse) String() string {
 func (*OpenTriggerConfigResponse) ProtoMessage() {}
 
 func (x *OpenTriggerConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[7]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -495,7 +631,7 @@ func (x *OpenTriggerConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenTriggerConfigResponse.ProtoReflect.Descriptor instead.
 func (*OpenTriggerConfigResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{7}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *OpenTriggerConfigResponse) GetConfigJson() []byte {
@@ -515,7 +651,7 @@ type OpenLogDrainHeaderRequest struct {
 
 func (x *OpenLogDrainHeaderRequest) Reset() {
 	*x = OpenLogDrainHeaderRequest{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[8]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -527,7 +663,7 @@ func (x *OpenLogDrainHeaderRequest) String() string {
 func (*OpenLogDrainHeaderRequest) ProtoMessage() {}
 
 func (x *OpenLogDrainHeaderRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[8]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -540,7 +676,7 @@ func (x *OpenLogDrainHeaderRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenLogDrainHeaderRequest.ProtoReflect.Descriptor instead.
 func (*OpenLogDrainHeaderRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{8}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *OpenLogDrainHeaderRequest) GetAppId() string {
@@ -566,7 +702,7 @@ type OpenLogDrainHeaderResponse struct {
 
 func (x *OpenLogDrainHeaderResponse) Reset() {
 	*x = OpenLogDrainHeaderResponse{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[9]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -578,7 +714,7 @@ func (x *OpenLogDrainHeaderResponse) String() string {
 func (*OpenLogDrainHeaderResponse) ProtoMessage() {}
 
 func (x *OpenLogDrainHeaderResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[9]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -591,7 +727,7 @@ func (x *OpenLogDrainHeaderResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenLogDrainHeaderResponse.ProtoReflect.Descriptor instead.
 func (*OpenLogDrainHeaderResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{9}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *OpenLogDrainHeaderResponse) GetHeader() string {
@@ -612,7 +748,7 @@ type OpenSidecarEnvRequest struct {
 
 func (x *OpenSidecarEnvRequest) Reset() {
 	*x = OpenSidecarEnvRequest{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[10]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -624,7 +760,7 @@ func (x *OpenSidecarEnvRequest) String() string {
 func (*OpenSidecarEnvRequest) ProtoMessage() {}
 
 func (x *OpenSidecarEnvRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[10]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -637,7 +773,7 @@ func (x *OpenSidecarEnvRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenSidecarEnvRequest.ProtoReflect.Descriptor instead.
 func (*OpenSidecarEnvRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{10}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *OpenSidecarEnvRequest) GetAppId() string {
@@ -670,7 +806,7 @@ type OpenSidecarEnvResponse struct {
 
 func (x *OpenSidecarEnvResponse) Reset() {
 	*x = OpenSidecarEnvResponse{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[11]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -682,7 +818,7 @@ func (x *OpenSidecarEnvResponse) String() string {
 func (*OpenSidecarEnvResponse) ProtoMessage() {}
 
 func (x *OpenSidecarEnvResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[11]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -695,7 +831,7 @@ func (x *OpenSidecarEnvResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenSidecarEnvResponse.ProtoReflect.Descriptor instead.
 func (*OpenSidecarEnvResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{11}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *OpenSidecarEnvResponse) GetValues() map[string]string {
@@ -715,7 +851,7 @@ type OpenCaptureKeyRequest struct {
 
 func (x *OpenCaptureKeyRequest) Reset() {
 	*x = OpenCaptureKeyRequest{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[12]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -727,7 +863,7 @@ func (x *OpenCaptureKeyRequest) String() string {
 func (*OpenCaptureKeyRequest) ProtoMessage() {}
 
 func (x *OpenCaptureKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[12]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -740,7 +876,7 @@ func (x *OpenCaptureKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenCaptureKeyRequest.ProtoReflect.Descriptor instead.
 func (*OpenCaptureKeyRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{12}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *OpenCaptureKeyRequest) GetAppId() string {
@@ -767,7 +903,7 @@ type OpenCaptureKeyResponse struct {
 
 func (x *OpenCaptureKeyResponse) Reset() {
 	*x = OpenCaptureKeyResponse{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[13]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -779,7 +915,7 @@ func (x *OpenCaptureKeyResponse) String() string {
 func (*OpenCaptureKeyResponse) ProtoMessage() {}
 
 func (x *OpenCaptureKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[13]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -792,7 +928,7 @@ func (x *OpenCaptureKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenCaptureKeyResponse.ProtoReflect.Descriptor instead.
 func (*OpenCaptureKeyResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{13}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *OpenCaptureKeyResponse) GetIdentity() string {
@@ -819,7 +955,7 @@ type SealedEntry struct {
 
 func (x *SealedEntry) Reset() {
 	*x = SealedEntry{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[14]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -831,7 +967,7 @@ func (x *SealedEntry) String() string {
 func (*SealedEntry) ProtoMessage() {}
 
 func (x *SealedEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[14]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -844,7 +980,7 @@ func (x *SealedEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SealedEntry.ProtoReflect.Descriptor instead.
 func (*SealedEntry) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{14}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *SealedEntry) GetKey() string {
@@ -885,7 +1021,7 @@ type OpenAppSecretsRequest struct {
 
 func (x *OpenAppSecretsRequest) Reset() {
 	*x = OpenAppSecretsRequest{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[15]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -897,7 +1033,7 @@ func (x *OpenAppSecretsRequest) String() string {
 func (*OpenAppSecretsRequest) ProtoMessage() {}
 
 func (x *OpenAppSecretsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[15]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -910,7 +1046,7 @@ func (x *OpenAppSecretsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenAppSecretsRequest.ProtoReflect.Descriptor instead.
 func (*OpenAppSecretsRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{15}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *OpenAppSecretsRequest) GetAppId() string {
@@ -936,7 +1072,7 @@ type OpenAppSecretsResponse struct {
 
 func (x *OpenAppSecretsResponse) Reset() {
 	*x = OpenAppSecretsResponse{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[16]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -948,7 +1084,7 @@ func (x *OpenAppSecretsResponse) String() string {
 func (*OpenAppSecretsResponse) ProtoMessage() {}
 
 func (x *OpenAppSecretsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[16]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -961,7 +1097,7 @@ func (x *OpenAppSecretsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenAppSecretsResponse.ProtoReflect.Descriptor instead.
 func (*OpenAppSecretsResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{16}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *OpenAppSecretsResponse) GetValues() map[string]string {
@@ -982,7 +1118,7 @@ type GrantPeerRequest struct {
 
 func (x *GrantPeerRequest) Reset() {
 	*x = GrantPeerRequest{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[17]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -994,7 +1130,7 @@ func (x *GrantPeerRequest) String() string {
 func (*GrantPeerRequest) ProtoMessage() {}
 
 func (x *GrantPeerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[17]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1007,7 +1143,7 @@ func (x *GrantPeerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GrantPeerRequest.ProtoReflect.Descriptor instead.
 func (*GrantPeerRequest) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{17}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *GrantPeerRequest) GetAppId() string {
@@ -1041,7 +1177,7 @@ type GrantPeerResponse struct {
 
 func (x *GrantPeerResponse) Reset() {
 	*x = GrantPeerResponse{}
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[18]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1053,7 +1189,7 @@ func (x *GrantPeerResponse) String() string {
 func (*GrantPeerResponse) ProtoMessage() {}
 
 func (x *GrantPeerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[18]
+	mi := &file_onebox_faas_secretd_v1_secretd_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1066,7 +1202,7 @@ func (x *GrantPeerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GrantPeerResponse.ProtoReflect.Descriptor instead.
 func (*GrantPeerResponse) Descriptor() ([]byte, []int) {
-	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{18}
+	return file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *GrantPeerResponse) GetExpiresAt() string {
@@ -1080,7 +1216,21 @@ var File_onebox_faas_secretd_v1_secretd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_secretd_v1_secretd_proto_rawDesc = "" +
 	"\n" +
-	"$onebox/faas/secretd/v1/secretd.proto\x12\x16onebox.faas.secretd.v1\":\n" +
+	"$onebox/faas/secretd/v1/secretd.proto\x12\x16onebox.faas.secretd.v1\"\xa7\x02\n" +
+	"\x1cVerifyPostgresCutoverRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12\x1d\n" +
+	"\n" +
+	"cutover_id\x18\x02 \x01(\tR\tcutoverId\x12#\n" +
+	"\rcredential_id\x18\x03 \x01(\tR\fcredentialId\x12\x1f\n" +
+	"\vlease_token\x18\x04 \x01(\tR\n" +
+	"leaseToken\x12+\n" +
+	"\x11ciphertext_sha256\x18\x05 \x01(\fR\x10ciphertextSha256\x12\x10\n" +
+	"\x03kid\x18\x06 \x01(\tR\x03kid\x12\x1d\n" +
+	"\n" +
+	"value_hash\x18\a \x01(\tR\tvalueHash\x12%\n" +
+	"\x0ecredential_ref\x18\b \x01(\tR\rcredentialRef\"\x1f\n" +
+	"\x1dVerifyPostgresCutoverResponse\":\n" +
 	"\x0eRegistryHeader\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"\xcb\x01\n" +
@@ -1155,8 +1305,9 @@ const file_onebox_faas_secretd_v1_secretd_proto_rawDesc = "" +
 	"ttlSeconds\"2\n" +
 	"\x11GrantPeerResponse\x12\x1d\n" +
 	"\n" +
-	"expires_at\x18\x01 \x01(\tR\texpiresAt2\xa9\a\n" +
-	"\aSecretd\x12o\n" +
+	"expires_at\x18\x01 \x01(\tR\texpiresAt2\xb0\b\n" +
+	"\aSecretd\x12\x84\x01\n" +
+	"\x15VerifyPostgresCutover\x124.onebox.faas.secretd.v1.VerifyPostgresCutoverRequest\x1a5.onebox.faas.secretd.v1.VerifyPostgresCutoverResponse\x12o\n" +
 	"\x0eOpenAppSecrets\x12-.onebox.faas.secretd.v1.OpenAppSecretsRequest\x1a..onebox.faas.secretd.v1.OpenAppSecretsResponse\x12`\n" +
 	"\tGrantPeer\x12(.onebox.faas.secretd.v1.GrantPeerRequest\x1a).onebox.faas.secretd.v1.GrantPeerResponse\x12o\n" +
 	"\x0eOpenCaptureKey\x12-.onebox.faas.secretd.v1.OpenCaptureKeyRequest\x1a..onebox.faas.secretd.v1.OpenCaptureKeyResponse\x12o\n" +
@@ -1178,55 +1329,59 @@ func file_onebox_faas_secretd_v1_secretd_proto_rawDescGZIP() []byte {
 	return file_onebox_faas_secretd_v1_secretd_proto_rawDescData
 }
 
-var file_onebox_faas_secretd_v1_secretd_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_onebox_faas_secretd_v1_secretd_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_onebox_faas_secretd_v1_secretd_proto_goTypes = []any{
-	(*RegistryHeader)(nil),               // 0: onebox.faas.secretd.v1.RegistryHeader
-	(*RegistryFetchRequest)(nil),         // 1: onebox.faas.secretd.v1.RegistryFetchRequest
-	(*RegistryFetchHead)(nil),            // 2: onebox.faas.secretd.v1.RegistryFetchHead
-	(*RegistryFetchResponse)(nil),        // 3: onebox.faas.secretd.v1.RegistryFetchResponse
-	(*OpenEdgeHeaderSecretRequest)(nil),  // 4: onebox.faas.secretd.v1.OpenEdgeHeaderSecretRequest
-	(*OpenEdgeHeaderSecretResponse)(nil), // 5: onebox.faas.secretd.v1.OpenEdgeHeaderSecretResponse
-	(*OpenTriggerConfigRequest)(nil),     // 6: onebox.faas.secretd.v1.OpenTriggerConfigRequest
-	(*OpenTriggerConfigResponse)(nil),    // 7: onebox.faas.secretd.v1.OpenTriggerConfigResponse
-	(*OpenLogDrainHeaderRequest)(nil),    // 8: onebox.faas.secretd.v1.OpenLogDrainHeaderRequest
-	(*OpenLogDrainHeaderResponse)(nil),   // 9: onebox.faas.secretd.v1.OpenLogDrainHeaderResponse
-	(*OpenSidecarEnvRequest)(nil),        // 10: onebox.faas.secretd.v1.OpenSidecarEnvRequest
-	(*OpenSidecarEnvResponse)(nil),       // 11: onebox.faas.secretd.v1.OpenSidecarEnvResponse
-	(*OpenCaptureKeyRequest)(nil),        // 12: onebox.faas.secretd.v1.OpenCaptureKeyRequest
-	(*OpenCaptureKeyResponse)(nil),       // 13: onebox.faas.secretd.v1.OpenCaptureKeyResponse
-	(*SealedEntry)(nil),                  // 14: onebox.faas.secretd.v1.SealedEntry
-	(*OpenAppSecretsRequest)(nil),        // 15: onebox.faas.secretd.v1.OpenAppSecretsRequest
-	(*OpenAppSecretsResponse)(nil),       // 16: onebox.faas.secretd.v1.OpenAppSecretsResponse
-	(*GrantPeerRequest)(nil),             // 17: onebox.faas.secretd.v1.GrantPeerRequest
-	(*GrantPeerResponse)(nil),            // 18: onebox.faas.secretd.v1.GrantPeerResponse
-	nil,                                  // 19: onebox.faas.secretd.v1.OpenSidecarEnvResponse.ValuesEntry
-	nil,                                  // 20: onebox.faas.secretd.v1.OpenAppSecretsResponse.ValuesEntry
+	(*VerifyPostgresCutoverRequest)(nil),  // 0: onebox.faas.secretd.v1.VerifyPostgresCutoverRequest
+	(*VerifyPostgresCutoverResponse)(nil), // 1: onebox.faas.secretd.v1.VerifyPostgresCutoverResponse
+	(*RegistryHeader)(nil),                // 2: onebox.faas.secretd.v1.RegistryHeader
+	(*RegistryFetchRequest)(nil),          // 3: onebox.faas.secretd.v1.RegistryFetchRequest
+	(*RegistryFetchHead)(nil),             // 4: onebox.faas.secretd.v1.RegistryFetchHead
+	(*RegistryFetchResponse)(nil),         // 5: onebox.faas.secretd.v1.RegistryFetchResponse
+	(*OpenEdgeHeaderSecretRequest)(nil),   // 6: onebox.faas.secretd.v1.OpenEdgeHeaderSecretRequest
+	(*OpenEdgeHeaderSecretResponse)(nil),  // 7: onebox.faas.secretd.v1.OpenEdgeHeaderSecretResponse
+	(*OpenTriggerConfigRequest)(nil),      // 8: onebox.faas.secretd.v1.OpenTriggerConfigRequest
+	(*OpenTriggerConfigResponse)(nil),     // 9: onebox.faas.secretd.v1.OpenTriggerConfigResponse
+	(*OpenLogDrainHeaderRequest)(nil),     // 10: onebox.faas.secretd.v1.OpenLogDrainHeaderRequest
+	(*OpenLogDrainHeaderResponse)(nil),    // 11: onebox.faas.secretd.v1.OpenLogDrainHeaderResponse
+	(*OpenSidecarEnvRequest)(nil),         // 12: onebox.faas.secretd.v1.OpenSidecarEnvRequest
+	(*OpenSidecarEnvResponse)(nil),        // 13: onebox.faas.secretd.v1.OpenSidecarEnvResponse
+	(*OpenCaptureKeyRequest)(nil),         // 14: onebox.faas.secretd.v1.OpenCaptureKeyRequest
+	(*OpenCaptureKeyResponse)(nil),        // 15: onebox.faas.secretd.v1.OpenCaptureKeyResponse
+	(*SealedEntry)(nil),                   // 16: onebox.faas.secretd.v1.SealedEntry
+	(*OpenAppSecretsRequest)(nil),         // 17: onebox.faas.secretd.v1.OpenAppSecretsRequest
+	(*OpenAppSecretsResponse)(nil),        // 18: onebox.faas.secretd.v1.OpenAppSecretsResponse
+	(*GrantPeerRequest)(nil),              // 19: onebox.faas.secretd.v1.GrantPeerRequest
+	(*GrantPeerResponse)(nil),             // 20: onebox.faas.secretd.v1.GrantPeerResponse
+	nil,                                   // 21: onebox.faas.secretd.v1.OpenSidecarEnvResponse.ValuesEntry
+	nil,                                   // 22: onebox.faas.secretd.v1.OpenAppSecretsResponse.ValuesEntry
 }
 var file_onebox_faas_secretd_v1_secretd_proto_depIdxs = []int32{
-	0,  // 0: onebox.faas.secretd.v1.RegistryFetchRequest.headers:type_name -> onebox.faas.secretd.v1.RegistryHeader
-	0,  // 1: onebox.faas.secretd.v1.RegistryFetchHead.headers:type_name -> onebox.faas.secretd.v1.RegistryHeader
-	2,  // 2: onebox.faas.secretd.v1.RegistryFetchResponse.head:type_name -> onebox.faas.secretd.v1.RegistryFetchHead
-	19, // 3: onebox.faas.secretd.v1.OpenSidecarEnvResponse.values:type_name -> onebox.faas.secretd.v1.OpenSidecarEnvResponse.ValuesEntry
-	14, // 4: onebox.faas.secretd.v1.OpenAppSecretsRequest.entries:type_name -> onebox.faas.secretd.v1.SealedEntry
-	20, // 5: onebox.faas.secretd.v1.OpenAppSecretsResponse.values:type_name -> onebox.faas.secretd.v1.OpenAppSecretsResponse.ValuesEntry
-	15, // 6: onebox.faas.secretd.v1.Secretd.OpenAppSecrets:input_type -> onebox.faas.secretd.v1.OpenAppSecretsRequest
-	17, // 7: onebox.faas.secretd.v1.Secretd.GrantPeer:input_type -> onebox.faas.secretd.v1.GrantPeerRequest
-	12, // 8: onebox.faas.secretd.v1.Secretd.OpenCaptureKey:input_type -> onebox.faas.secretd.v1.OpenCaptureKeyRequest
-	10, // 9: onebox.faas.secretd.v1.Secretd.OpenSidecarEnv:input_type -> onebox.faas.secretd.v1.OpenSidecarEnvRequest
-	8,  // 10: onebox.faas.secretd.v1.Secretd.OpenLogDrainHeader:input_type -> onebox.faas.secretd.v1.OpenLogDrainHeaderRequest
-	6,  // 11: onebox.faas.secretd.v1.Secretd.OpenTriggerConfig:input_type -> onebox.faas.secretd.v1.OpenTriggerConfigRequest
-	4,  // 12: onebox.faas.secretd.v1.Secretd.OpenEdgeHeaderSecret:input_type -> onebox.faas.secretd.v1.OpenEdgeHeaderSecretRequest
-	1,  // 13: onebox.faas.secretd.v1.Secretd.RegistryFetch:input_type -> onebox.faas.secretd.v1.RegistryFetchRequest
-	16, // 14: onebox.faas.secretd.v1.Secretd.OpenAppSecrets:output_type -> onebox.faas.secretd.v1.OpenAppSecretsResponse
-	18, // 15: onebox.faas.secretd.v1.Secretd.GrantPeer:output_type -> onebox.faas.secretd.v1.GrantPeerResponse
-	13, // 16: onebox.faas.secretd.v1.Secretd.OpenCaptureKey:output_type -> onebox.faas.secretd.v1.OpenCaptureKeyResponse
-	11, // 17: onebox.faas.secretd.v1.Secretd.OpenSidecarEnv:output_type -> onebox.faas.secretd.v1.OpenSidecarEnvResponse
-	9,  // 18: onebox.faas.secretd.v1.Secretd.OpenLogDrainHeader:output_type -> onebox.faas.secretd.v1.OpenLogDrainHeaderResponse
-	7,  // 19: onebox.faas.secretd.v1.Secretd.OpenTriggerConfig:output_type -> onebox.faas.secretd.v1.OpenTriggerConfigResponse
-	5,  // 20: onebox.faas.secretd.v1.Secretd.OpenEdgeHeaderSecret:output_type -> onebox.faas.secretd.v1.OpenEdgeHeaderSecretResponse
-	3,  // 21: onebox.faas.secretd.v1.Secretd.RegistryFetch:output_type -> onebox.faas.secretd.v1.RegistryFetchResponse
-	14, // [14:22] is the sub-list for method output_type
-	6,  // [6:14] is the sub-list for method input_type
+	2,  // 0: onebox.faas.secretd.v1.RegistryFetchRequest.headers:type_name -> onebox.faas.secretd.v1.RegistryHeader
+	2,  // 1: onebox.faas.secretd.v1.RegistryFetchHead.headers:type_name -> onebox.faas.secretd.v1.RegistryHeader
+	4,  // 2: onebox.faas.secretd.v1.RegistryFetchResponse.head:type_name -> onebox.faas.secretd.v1.RegistryFetchHead
+	21, // 3: onebox.faas.secretd.v1.OpenSidecarEnvResponse.values:type_name -> onebox.faas.secretd.v1.OpenSidecarEnvResponse.ValuesEntry
+	16, // 4: onebox.faas.secretd.v1.OpenAppSecretsRequest.entries:type_name -> onebox.faas.secretd.v1.SealedEntry
+	22, // 5: onebox.faas.secretd.v1.OpenAppSecretsResponse.values:type_name -> onebox.faas.secretd.v1.OpenAppSecretsResponse.ValuesEntry
+	0,  // 6: onebox.faas.secretd.v1.Secretd.VerifyPostgresCutover:input_type -> onebox.faas.secretd.v1.VerifyPostgresCutoverRequest
+	17, // 7: onebox.faas.secretd.v1.Secretd.OpenAppSecrets:input_type -> onebox.faas.secretd.v1.OpenAppSecretsRequest
+	19, // 8: onebox.faas.secretd.v1.Secretd.GrantPeer:input_type -> onebox.faas.secretd.v1.GrantPeerRequest
+	14, // 9: onebox.faas.secretd.v1.Secretd.OpenCaptureKey:input_type -> onebox.faas.secretd.v1.OpenCaptureKeyRequest
+	12, // 10: onebox.faas.secretd.v1.Secretd.OpenSidecarEnv:input_type -> onebox.faas.secretd.v1.OpenSidecarEnvRequest
+	10, // 11: onebox.faas.secretd.v1.Secretd.OpenLogDrainHeader:input_type -> onebox.faas.secretd.v1.OpenLogDrainHeaderRequest
+	8,  // 12: onebox.faas.secretd.v1.Secretd.OpenTriggerConfig:input_type -> onebox.faas.secretd.v1.OpenTriggerConfigRequest
+	6,  // 13: onebox.faas.secretd.v1.Secretd.OpenEdgeHeaderSecret:input_type -> onebox.faas.secretd.v1.OpenEdgeHeaderSecretRequest
+	3,  // 14: onebox.faas.secretd.v1.Secretd.RegistryFetch:input_type -> onebox.faas.secretd.v1.RegistryFetchRequest
+	1,  // 15: onebox.faas.secretd.v1.Secretd.VerifyPostgresCutover:output_type -> onebox.faas.secretd.v1.VerifyPostgresCutoverResponse
+	18, // 16: onebox.faas.secretd.v1.Secretd.OpenAppSecrets:output_type -> onebox.faas.secretd.v1.OpenAppSecretsResponse
+	20, // 17: onebox.faas.secretd.v1.Secretd.GrantPeer:output_type -> onebox.faas.secretd.v1.GrantPeerResponse
+	15, // 18: onebox.faas.secretd.v1.Secretd.OpenCaptureKey:output_type -> onebox.faas.secretd.v1.OpenCaptureKeyResponse
+	13, // 19: onebox.faas.secretd.v1.Secretd.OpenSidecarEnv:output_type -> onebox.faas.secretd.v1.OpenSidecarEnvResponse
+	11, // 20: onebox.faas.secretd.v1.Secretd.OpenLogDrainHeader:output_type -> onebox.faas.secretd.v1.OpenLogDrainHeaderResponse
+	9,  // 21: onebox.faas.secretd.v1.Secretd.OpenTriggerConfig:output_type -> onebox.faas.secretd.v1.OpenTriggerConfigResponse
+	7,  // 22: onebox.faas.secretd.v1.Secretd.OpenEdgeHeaderSecret:output_type -> onebox.faas.secretd.v1.OpenEdgeHeaderSecretResponse
+	5,  // 23: onebox.faas.secretd.v1.Secretd.RegistryFetch:output_type -> onebox.faas.secretd.v1.RegistryFetchResponse
+	15, // [15:24] is the sub-list for method output_type
+	6,  // [6:15] is the sub-list for method input_type
 	6,  // [6:6] is the sub-list for extension type_name
 	6,  // [6:6] is the sub-list for extension extendee
 	0,  // [0:6] is the sub-list for field type_name
@@ -1237,7 +1392,7 @@ func file_onebox_faas_secretd_v1_secretd_proto_init() {
 	if File_onebox_faas_secretd_v1_secretd_proto != nil {
 		return
 	}
-	file_onebox_faas_secretd_v1_secretd_proto_msgTypes[3].OneofWrappers = []any{
+	file_onebox_faas_secretd_v1_secretd_proto_msgTypes[5].OneofWrappers = []any{
 		(*RegistryFetchResponse_Head)(nil),
 		(*RegistryFetchResponse_BodyChunk)(nil),
 	}
@@ -1247,7 +1402,7 @@ func file_onebox_faas_secretd_v1_secretd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_secretd_v1_secretd_proto_rawDesc), len(file_onebox_faas_secretd_v1_secretd_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   21,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
