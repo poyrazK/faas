@@ -47,6 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/imaged"
 	"github.com/onebox-faas/faas/pkg/manifest"
+	"github.com/onebox-faas/faas/pkg/objectgc"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -343,6 +344,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	storageBackend, err := storage.BackendFromEnvContext(ctx)
 	if err != nil {
 		return fmt.Errorf("imaged: %w", err)
+	}
+	// ADR-20261115180000: in defer mode the shared store's deletes become
+	// requests the control plane's object GC decides.
+	if deferred, err := objectgc.DeferFromEnv(getenv, storageBackend, store, "imaged"); err != nil {
+		return fmt.Errorf("imaged: %w", err)
+	} else if deferred {
+		log.Info("imaged: shared-store deletes deferred to the control plane")
 	}
 	indexedSnapshots, err := reconcileSnapshotRepositoryIndex(ctx, store, storageBackend)
 	if err != nil {

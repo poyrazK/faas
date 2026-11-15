@@ -41,7 +41,7 @@ CREATE TABLE invocations (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), cron_id
 var attentionMigrations = []string{
 	"../../../migrations/20261113122715352_customer_attention_signals.sql",
 	"../../../migrations/20261113152905644_customer_attention_outcomes.sql",
-	"../../../migrations/20261115164603496_attention_crons_failing.sql",
+	"../../../migrations/20261115181803100_attention_crons_failing.sql",
 }
 
 func pgEvaluator(t *testing.T) (*Evaluator, *pgxpool.Pool) {
