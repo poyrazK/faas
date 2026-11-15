@@ -99,6 +99,10 @@ own interface and was never in the veth counter.
   reading, so older schedds and vmmds report nothing).
 - Instead of a new `public_tx_bytes` usage column, meterd subtracts the
   internal bytes from `usage_minutes.net_tx_bytes` when it writes each minute.
+  The subtraction happens inside the network observation, before the bytes
+  are added: financial usage evidence is append-only, and the
+  `retain_financial_usage_evidence` trigger rejects any decrease of billed
+  usage.
   Every reader of billed egress (the monthly totals trigger, the egress
   allowance and ceiling, provider usage delivery, financial evidence) then
   follows without its own change, and a node that does not report the counter

@@ -2166,9 +2166,9 @@ func testInvoiceDetailRefresh(t *testing.T, fx *Fixture) {
 	}
 }
 
-// Billing review R8-2: internal egress comes off billed net_tx_bytes once per
-// reading, never below zero, and what a minute could not absorb carries to
-// the next one.
+// Billing review R8-2: a network observation that excludes internal egress
+// adds only public bytes, excludes each internal reading once, never goes
+// below zero, and carries what a minute could not absorb to the next one.
 func testInternalEgressSubtraction(t *testing.T, fx *Fixture) {
 	observer, ok := fx.Store.(state.InternalEgressObserver)
 	if !ok {
@@ -2180,39 +2180,29 @@ func testInternalEgressSubtraction(t *testing.T, fx *Fixture) {
 		t.Fatalf("CreateInstance: %v", err)
 	}
 	minute := time.Now().UTC().Truncate(time.Hour).Add(-50 * time.Minute)
+	next := minute.Add(time.Minute)
 	before := monthlyNetTx(t, fx, minute)
-	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, minute, 1, 0, 0, 0, 0, 0, 0, 0); err != nil {
-		t.Fatalf("AppendUsage: %v", err)
-	}
-	if got, err := observer.SubtractInternalEgress(fx.Ctx, fx.App.ID, instance.ID, minute, 50); err != nil || got != 0 {
-		t.Fatalf("SubtractInternalEgress before a checkpoint = (%d, %v), want (0, nil)", got, err)
-	}
-	if _, _, err := fx.Store.AppendNetworkUsageObservation(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, minute, 1000, true, 0, true); err != nil {
-		t.Fatalf("AppendNetworkUsageObservation: %v", err)
-	}
-	steps := []struct {
-		cumulative, want int64
-	}{
-		{400, 400},  // first reading: all of it
-		{400, 0},    // replay after commit: nothing twice
-		{1500, 600}, // +1100 against the 600 left: 500 carries
-	}
-	for i, step := range steps {
-		got, err := observer.SubtractInternalEgress(fx.Ctx, fx.App.ID, instance.ID, minute, step.cumulative)
-		if err != nil || got != step.want {
-			t.Fatalf("step %d: SubtractInternalEgress(%d) = (%d, %v), want %d", i, step.cumulative, got, err, step.want)
+	for _, at := range []time.Time{minute, next} {
+		if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, at, 1, 0, 0, 0, 0, 0, 0, 0); err != nil {
+			t.Fatalf("AppendUsage: %v", err)
 		}
 	}
-	next := minute.Add(time.Minute)
-	if err := fx.Store.AppendUsage(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, next, 1, 0, 0, 0, 0, 0, 0, 0); err != nil {
-		t.Fatalf("AppendUsage(next): %v", err)
+	steps := []struct {
+		at                   time.Time
+		netTx, internal      int64
+		wantBilled, wantExcl int64
+	}{
+		{minute, 1000, 400, 600, 400}, // first readings: all of both
+		{minute, 1000, 400, 0, 0},     // replay after commit: nothing twice
+		{minute, 1600, 1500, 0, 600},  // +600 veth, +1100 internal: 500 carries
+		{next, 3000, 100, 800, 600},   // +1400 veth; reset 100 plus the 500 carried
 	}
-	if _, _, err := fx.Store.AppendNetworkUsageObservation(fx.Ctx, fx.Account.ID, fx.App.ID, instance.ID, next, 3000, true, 0, true); err != nil {
-		t.Fatalf("AppendNetworkUsageObservation(next): %v", err)
-	}
-	// The carried 500 plus a reset reading of 100 (the counter restarted).
-	if got, err := observer.SubtractInternalEgress(fx.Ctx, fx.App.ID, instance.ID, next, 100); err != nil || got != 600 {
-		t.Fatalf("SubtractInternalEgress after reset = (%d, %v), want (600, nil)", got, err)
+	for i, step := range steps {
+		billed, _, excluded, err := observer.AppendNetworkUsageObservationExcludingInternal(fx.Ctx,
+			fx.Account.ID, fx.App.ID, instance.ID, step.at, step.netTx, true, 0, true, step.internal)
+		if err != nil || billed != step.wantBilled || excluded != step.wantExcl {
+			t.Fatalf("step %d = (billed %d, excluded %d, %v), want (%d, %d)", i, billed, excluded, err, step.wantBilled, step.wantExcl)
+		}
 	}
 	// 3000 veth bytes less 1600 internal.
 	if got := monthlyNetTx(t, fx, minute) - before; got != 1400 {

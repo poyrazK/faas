@@ -1266,38 +1266,36 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 	if usage.NetTXBytes > math.MaxInt64 || usage.NetRXBytes > math.MaxInt64 {
 		return fmt.Errorf("meter: cumulative network counter exceeds int64 for instance %s", row.InstanceID)
 	}
-	deltaTx, deltaRx, err := s.store.AppendNetworkUsageObservation(ctx,
-		row.AccountID, row.AppID, row.InstanceID, row.Minute,
-		int64(usage.NetTXBytes), usage.NetTXValid,
-		int64(usage.NetRXBytes), usage.NetRXValid)
+	deltaTx, deltaRx, err := s.appendNetworkObservation(ctx, row, usage)
 	if err != nil {
 		return fmt.Errorf("meter: checkpoint network usage for instance %s: %w", row.InstanceID, err)
 	}
 	row.NetTxBytes = deltaTx
 	row.NetRxBytes = deltaRx
-	return s.subtractInternalEgress(ctx, row, usage)
+	return nil
 }
 
-// subtractInternalEgress leaves the instance's internal egress out of the
-// row's billed bytes when WithInternalEgressUnbilled is on and vmmd reported
-// the counter (billing review R8-2).
-func (s *Sampler) subtractInternalEgress(ctx context.Context, row *RolledRow, usage UsageDeltas) error {
-	if !s.internalEgressUnbilled || !usage.InternalTXValid {
-		return nil
+// appendNetworkObservation checkpoints vmmd's cumulative network counters.
+// When WithInternalEgressUnbilled is on and vmmd reported the internal
+// counter, the billed egress it adds leaves out the internal bytes (billing
+// review R8-2). Financial usage evidence is append-only, so this happens as
+// the bytes are written, never after.
+func (s *Sampler) appendNetworkObservation(ctx context.Context, row *RolledRow, usage UsageDeltas) (int64, int64, error) {
+	if observer, ok := s.store.(state.InternalEgressObserver); ok && s.internalEgressUnbilled && usage.InternalTXValid {
+		if usage.InternalTXBytes > math.MaxInt64 {
+			return 0, 0, fmt.Errorf("internal egress counter exceeds int64")
+		}
+		tx, rx, _, err := observer.AppendNetworkUsageObservationExcludingInternal(ctx,
+			row.AccountID, row.AppID, row.InstanceID, row.Minute,
+			int64(usage.NetTXBytes), usage.NetTXValid,
+			int64(usage.NetRXBytes), usage.NetRXValid,
+			int64(usage.InternalTXBytes))
+		return tx, rx, err
 	}
-	observer, ok := s.store.(state.InternalEgressObserver)
-	if !ok {
-		return nil
-	}
-	if usage.InternalTXBytes > math.MaxInt64 {
-		return fmt.Errorf("meter: internal egress counter exceeds int64 for instance %s", row.InstanceID)
-	}
-	subtracted, err := observer.SubtractInternalEgress(ctx, row.AppID, row.InstanceID, row.Minute, int64(usage.InternalTXBytes))
-	if err != nil {
-		return fmt.Errorf("meter: subtract internal egress for instance %s: %w", row.InstanceID, err)
-	}
-	row.NetTxBytes = max(row.NetTxBytes-subtracted, 0)
-	return nil
+	return s.store.AppendNetworkUsageObservation(ctx,
+		row.AccountID, row.AppID, row.InstanceID, row.Minute,
+		int64(usage.NetTXBytes), usage.NetTXValid,
+		int64(usage.NetRXBytes), usage.NetRXValid)
 }
 
 // tailSecondsFor returns the per-instance accumulated waitUntil

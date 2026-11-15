@@ -56,15 +56,20 @@ func TestPg_GatewayServiceReplyBytesQueueOnceForSubtraction(t *testing.T) {
 	if err := s.AppendUsage(ctx, acctID, appID, instance.ID, minute, 60, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.AppendNetworkUsageObservation(ctx, acctID, appID, instance.ID, minute, 10_000, true, 0, true); err != nil {
-		t.Fatal(err)
+	observe := func(netTx, internal int64) (int64, int64) {
+		t.Helper()
+		billed, _, excluded, err := s.AppendNetworkUsageObservationExcludingInternal(ctx, acctID, appID, instance.ID, minute, netTx, true, 0, true, internal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return billed, excluded
 	}
 	// Before the node reports internal egress the reply bytes stay billed.
 	if err := s.AppendGatewayUsageEventWithServiceReply(ctx, nodeID, uuid.NewString(), instance.ID, minute, 1, 0, 0, 9_000); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.SubtractInternalEgress(ctx, appID, instance.ID, minute, 100); err != nil || got != 100 {
-		t.Fatalf("first subtraction = (%d, %v), want only the 100 internal bytes", got, err)
+	if billed, excluded := observe(10_000, 100); billed != 9_900 || excluded != 100 {
+		t.Fatalf("first observation = (billed %d, excluded %d), want (9900, 100)", billed, excluded)
 	}
 	eventID := uuid.NewString()
 	for range 2 { // a replayed frame queues nothing twice
@@ -72,11 +77,11 @@ func TestPg_GatewayServiceReplyBytesQueueOnceForSubtraction(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got, err := s.SubtractInternalEgress(ctx, appID, instance.ID, minute, 150); err != nil || got != 2_050 {
-		t.Fatalf("second subtraction = (%d, %v), want 50 internal + 2000 reply bytes", got, err)
+	if billed, excluded := observe(13_000, 150); billed != 950 || excluded != 2_050 {
+		t.Fatalf("second observation = (billed %d, excluded %d), want (950, 50 internal + 2000 reply)", billed, excluded)
 	}
 	rows, err := s.UsageByHour(ctx, acctID, minute.Add(-time.Hour), minute.Add(time.Hour))
-	if err != nil || len(rows) != 1 || rows[0].NetTxBytes != 10_000-100-2_050 {
-		t.Fatalf("usage = (%+v, %v), want net_tx_bytes %d", rows, err, 10_000-100-2_050)
+	if err != nil || len(rows) != 1 || rows[0].NetTxBytes != 13_000-100-2_050 {
+		t.Fatalf("usage = (%+v, %v), want net_tx_bytes %d", rows, err, 13_000-100-2_050)
 	}
 }
