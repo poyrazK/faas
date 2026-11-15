@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -59,17 +60,26 @@ func (s *PgStore) taskQuarantineRuntime(ctx context.Context, tx pgx.Tx, r api.Ta
 	return s.taskCleanupRuntime(ctx, tx, r, in, apps, r.Execution.Recovery.Quarantine.AuthorizerKeyID, r.Execution.Recovery.Quarantine.Qualification.ExpiresAt)
 }
 func (s *PgStore) taskCleanupRuntime(ctx context.Context, tx pgx.Tx, r api.TaskToolReleaseIntentRecord, in *api.TaskToolQuarantineRequest, apps []api.TaskToolReleaseApp, owner string, expiry time.Time) (bool, error) {
-	if in == nil || in.ExpectedMCPAccessPolicy == nil || in.ExpectedMCPAccessPolicy.Validate() != nil {
+	validPolicy := in != nil && in.ExpectedMCPAccessPolicy != nil && in.ExpectedMCPAccessPolicy.Validate() == nil
+	if !validPolicy {
 		return false, nil
 	}
 	q := toolpublicationdb.New()
-	if _, err := q.LockTaskToolExecutionOwnerKey(ctx, tx, toolpublicationdb.LockTaskToolExecutionOwnerKeyParams{AccountID: mustPgUUID(r.AccountID), ID: mustPgUUID(owner)}); err != nil {
+	_, ownerErr := q.LockTaskToolExecutionOwnerKey(ctx, tx, toolpublicationdb.LockTaskToolExecutionOwnerKeyParams{AccountID: mustPgUUID(r.AccountID), ID: mustPgUUID(owner)})
+	if errors.Is(mapErr(ownerErr), ErrNotFound) {
 		return false, nil
+	}
+	if ownerErr != nil {
+		return false, ownerErr
 	}
 	metricApp := ""
 	for _, pin := range apps {
-		if _, err := q.LockTaskRecoveryApp(ctx, tx, toolpublicationdb.LockTaskRecoveryAppParams{AccountID: mustPgUUID(r.AccountID), ID: mustPgUUID(pin.Review.AppID)}); err != nil {
+		_, appErr := q.LockTaskRecoveryApp(ctx, tx, toolpublicationdb.LockTaskRecoveryAppParams{AccountID: mustPgUUID(r.AccountID), ID: mustPgUUID(pin.Review.AppID)})
+		if errors.Is(mapErr(appErr), ErrNotFound) {
 			return false, nil
+		}
+		if appErr != nil {
+			return false, appErr
 		}
 		rows, err := q.LockTaskRecoveryInstances(ctx, tx, mustPgUUID(pin.Review.AppID))
 		if err != nil {
@@ -87,13 +97,19 @@ func (s *PgStore) taskCleanupRuntime(ctx context.Context, tx pgx.Tx, r api.TaskT
 		}
 		if pin.Role == "web" {
 			policy := WithMCPAccessPolicyExpectation(ctx, r.AccountID, pin.Review.AppID, *in.ExpectedMCPAccessPolicy)
-			if err := s.checkMCPAccessPolicy(policy, tx, pin.Review.AppID); err != nil {
+			if allowed := s.checkMCPAccessPolicy(policy, tx, pin.Review.AppID) == nil; !allowed {
 				return false, nil
 			}
 		}
 	}
 	metric, err := q.LockTaskRecoveryHeartbeat(ctx, tx, mustPgUUID(metricApp))
-	if err != nil || !metric.ObservedAt.Valid || !taskRecoveryHeartbeatOK(metric.Value, metric.ObservedAt.Time, time.Now()) {
+	if errors.Is(mapErr(err), ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !metric.ObservedAt.Valid || !taskRecoveryHeartbeatOK(metric.Value, metric.ObservedAt.Time, time.Now()) {
 		return false, nil
 	}
 	return q.TaskQuarantineClockFresh(ctx, tx, toolpublicationdb.TaskQuarantineClockFreshParams{AccountID: mustPgUUID(r.AccountID), OwnerKeyID: mustPgUUID(owner), RequesterKeyID: mustPgUUID(r.RequesterKeyID), ExpiresAt: pgtype.Timestamptz{Time: expiry, Valid: true}})

@@ -1,6 +1,6 @@
 package state
 
-// adr: 20261115183906 — messages a push consumer holds keep their retention.
+// adr: 20261113180000 — messages a push consumer holds keep their retention.
 
 import (
 	"context"

@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// ADR-20261115183907: the operator console dismisses, contacts and
+// ADR-20261115175927: the operator console dismisses, contacts and
 // summarises signals through /v1, with the staff page's rules, and reads
 // the customer's own health view.
 func TestOperatorConsoleAttentionActions(t *testing.T) {

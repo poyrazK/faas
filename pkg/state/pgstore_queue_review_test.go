@@ -25,7 +25,7 @@ func TestPgQueueSuspendedOwnerMessagesDoNotExpire(t *testing.T) {
 	testQueueSuspendedOwnerMessagesDoNotExpire(t, store)
 }
 
-// adr: 20261115183906
+// adr: 20261113180000
 func TestPgQueueReplayClearsDeadLetterHorizon(t *testing.T) {
 	store, _, _ := pgWithPool(t)
 	testQueueReplayClearsDeadLetterHorizon(t, store)

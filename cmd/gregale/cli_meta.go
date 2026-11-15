@@ -209,6 +209,8 @@ type cliSub struct {
 	// FlagsAfterPositionals marks leaf commands that take a positional
 	// argument before parsing their flags, such as `tcp <slug> tls NAME --tls-mode`.
 	FlagsAfterPositionals bool
+	// output registers an optional JSON output contract; human renderers ignore it.
+	output cliOutputKind
 }
 
 // withNotes attaches help notes to a subcommand built by a helper.
@@ -2246,7 +2248,7 @@ var cliCommands = []cliCommand{
 		CompletionPositions: buildCLICompletionPositions(),
 		Subcommands: []cliSub{
 			{Name: statusLiteral, Short: "Show the current status of one build", Positionals: []string{"<id>"}},
-			{Name: "list", Short: "List builds and discover build IDs", Flags: []cliFlag{
+			{Name: "list", output: cliOutputBuildList, Short: "List builds and discover build IDs", Flags: []cliFlag{
 				{Name: "app", Short: "filter to one app", Value: "SLUG"},
 				{Name: "status", Short: "filter by lifecycle status", Value: "STATUS", ClosedSet: []string{"queued", "running", "succeeded", "failed", "cancelled"}},
 				{Name: "limit", Short: "page size (1..200)", Value: "N"},
@@ -4995,7 +4997,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "invocations",
 		Short:   "List, inspect and wait on invocations across your account",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List invocations", Flags: []cliFlag{
+			{Name: "list", output: cliOutputInvocationList, Short: "List invocations", Flags: []cliFlag{
 				{Name: "limit", Short: "page size (1-100, default 50)", Value: "N"},
 				{Name: "cursor", Short: "opaque cursor from a prior page", Value: "CURSOR"},
 				{Name: "before", Short: "alias for --cursor", Value: "CURSOR"},
