@@ -2853,6 +2853,12 @@ var methodRouteMap = map[string]string{
 	"GET /v1/invitations/{token}":                "PeekInvitation",
 	"POST /v1/invitations/{token}/accept":        "AcceptInvitation",
 	"DELETE /v1/orgs/{slug}/invitations/{token}": "RevokeInvitation",
+	// Postgres change workers (ADR-20261112140000): literal hyphen; the SDK
+	// verbs follow the operationIds.
+	"GET /v1/apps/{slug}/postgres-changes":            "GetPostgresChanges",
+	"PUT /v1/apps/{slug}/postgres-changes":            "PutPostgresChanges",
+	"DELETE /v1/apps/{slug}/postgres-changes":         "DeletePostgresChanges",
+	"PUT /v1/apps/{slug}/postgres-changes/connection": "PutPostgresChangesConnection",
 	// PR-8 §2 — cursor-paginated list of every invitation minted on
 	// the org (pending/consumed/revoked/expired). Auto-derivation
 	// yields "GetOrgsSlugInvitations" which reads as a singleton

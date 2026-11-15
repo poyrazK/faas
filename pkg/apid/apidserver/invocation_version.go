@@ -60,12 +60,9 @@ func (s *server) enqueuePreparedInvocation(ctx context.Context, inv state.Invoca
 		if !ok {
 			return state.Invocation{}, api.ErrCapacity("work policy store unavailable")
 		}
-		record, lookupErr := policyStore.AppWorkPolicyByName(ctx, inv.AppID, work[0].Policy)
-		if errors.Is(lookupErr, state.ErrNotFound) {
-			return state.Invocation{}, api.ErrValidation("unknown work policy")
-		}
-		if lookupErr != nil {
-			return state.Invocation{}, api.ErrCapacity("lookup work policy")
+		record, problem := appWorkPolicyForEnqueue(ctx, policyStore, inv.AccountID, inv.AppID, work[0].Policy)
+		if problem != nil {
+			return state.Invocation{}, problem
 		}
 		key, keyErr := workpolicy.CanonicalScalar(work[0].Key)
 		if keyErr != nil {

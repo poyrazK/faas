@@ -239,6 +239,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_COMMIT_API_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "opt-in Gregale Commit qualification gate; disabled unless explicitly set to true"},
 	{Name: "FAAS_COMMIT_DATABASE_CIDRS", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "operator-approved database address prefixes; required when the Commit relay is enabled"},
 	{Name: "FAAS_COMMIT_DATABASE_HOSTS", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "exact operator-approved database hostnames; required when the Commit relay is enabled"},
+	{Name: "FAAS_COMMIT_PUBLIC_DATABASES", Owners: []string{"schedd"}, Source: EnvSourceDefault, Default: "false", Note: "ADR-20261112140000 §6: true lets Postgres changes sources reach customer databases at any globally reachable address; other Commit sources keep the FAAS_COMMIT_DATABASE_HOSTS/CIDRS allowlist; true or false only"},
 	{Name: "FAAS_COMMIT_RELAY_ENABLED", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "opt-in Gregale Commit qualification gate; disabled unless explicitly set to true"},
 	{Name: "FAAS_COMMIT_SHA", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
 	{Name: "FAAS_COMMIT_TLS_PG_BIN_DIR", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "PostgreSQL server binaries for the private TLS acceptance fixture"},

@@ -334,7 +334,12 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !decodeJSONLimit(w, r, &req, int64(limits.MaxSourceBytesPerInvocation)) {
 		return
 	}
-	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.FlagContext, req.QueueName, req.Environment, req.RetryPolicy, req.Work)
+	work, problem := s.queueGroupKeyWork(acct, req.GroupKey, req.Work)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, req.Payload, req.FlagContext, req.QueueName, req.Environment, req.RetryPolicy, work)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -378,18 +383,26 @@ func (s *server) queueSendBatch(w http.ResponseWriter, r *http.Request, acct sta
 	for i := range resp.Results {
 		resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "not_attempted"}
 	}
-	// A single send's body limit is its message size; a batch checks each.
-	// Messages before the first oversized one are still sent, in order.
+	// A single send's body limit is its message size; a batch checks each,
+	// and each group_key (ADR-20261112193306). Messages before the first
+	// refused one are still sent, in order.
 	payloads := make([]json.RawMessage, 0, len(req.Messages))
+	works := make([]*api.InvokeWork, 0, len(req.Messages))
 	var oversized *api.Problem
 	for _, message := range req.Messages {
 		if len(message.Payload) > limits.MaxSourceBytesPerInvocation {
 			oversized = api.ErrPlanSourceBytes(limits.MaxSourceBytesPerInvocation, int64(len(message.Payload)))
 			break
 		}
+		work, problem := s.queueGroupKeyWork(acct, message.GroupKey, nil)
+		if problem != nil {
+			oversized = problem
+			break
+		}
 		payloads = append(payloads, message.Payload)
+		works = append(works, work)
 	}
-	accepted, traceID, refused := s.sendQueueBatch(r.Context(), r.Header, acct, app, req, payloads)
+	accepted, traceID, refused := s.sendQueueBatch(r.Context(), r.Header, acct, app, req, payloads, works)
 	for i, inv := range accepted {
 		resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "accepted", Message: &api.QueueSendResponse{
 			Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID, ID: inv.ID, TraceID: traceID}}
@@ -427,11 +440,17 @@ func (s *server) warnUnconsumedQueue(ctx context.Context, w http.ResponseWriter,
 // version resolution and, where the store supports it, one transaction under
 // one app lock (state.InvocationBatchEnqueuer). It returns the admitted rows
 // and, when it stopped early, the problem of the payload after them.
-func (s *server) sendQueueBatch(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, req api.QueueSendBatchRequest, payloads []json.RawMessage) ([]state.Invocation, string, *api.Problem) {
+func (s *server) sendQueueBatch(ctx context.Context, requestHeaders http.Header, acct state.Account, app state.App, req api.QueueSendBatchRequest, payloads []json.RawMessage, works []*api.InvokeWork) ([]state.Invocation, string, *api.Problem) {
 	if len(payloads) == 0 {
 		return nil, "", nil
 	}
-	template, traceID, problem := s.appMessageTemplate(ctx, acct, app, "", req.QueueName, req.Environment, req.RetryPolicy, nil)
+	// Keyed messages take their work lanes one at a time; the first one's
+	// selector checks the queue can hold keyed work at all.
+	var keyed *api.InvokeWork
+	if i := slices.IndexFunc(works, func(w *api.InvokeWork) bool { return w != nil }); i >= 0 {
+		keyed = works[i]
+	}
+	template, traceID, problem := s.appMessageTemplate(ctx, acct, app, "", req.QueueName, req.Environment, req.RetryPolicy, keyed)
 	if problem != nil {
 		return nil, "", problem
 	}
@@ -440,17 +459,21 @@ func (s *server) sendQueueBatch(ctx context.Context, requestHeaders http.Header,
 		return nil, "", problem
 	}
 	const detail = "enqueue application message"
-	if batcher, ok := s.store.(state.InvocationBatchEnqueuer); ok {
+	if batcher, ok := s.store.(state.InvocationBatchEnqueuer); ok && keyed == nil {
 		rows, err := batcher.EnqueueInvocationBatch(ctx, template, payloads)
 		if !errors.Is(err, state.ErrInvocationBatchUnsupported) {
 			return rows, traceID, s.enqueueProblem(ctx, template, err, detail)
 		}
 	}
 	accepted := make([]state.Invocation, 0, len(payloads))
-	for _, payload := range payloads {
+	for i, payload := range payloads {
 		inv := template
 		inv.Payload = payload
-		row, problem := s.enqueuePreparedInvocation(ctx, inv, detail)
+		var work *api.InvokeWork
+		if i < len(works) {
+			work = works[i]
+		}
+		row, problem := s.enqueuePreparedInvocation(ctx, inv, detail, work)
 		if problem != nil {
 			return accepted, traceID, problem
 		}
@@ -567,11 +590,13 @@ func (s *server) appMessageTemplate(ctx context.Context, acct state.Account, app
 		return state.Invocation{}, "", problem
 	}
 	if work != nil && selection.Name != "" {
-		// A named keyed row is owned by the queue trigger poller. Require an
-		// enabled push consumer so it cannot be accepted into an arbitrary name
-		// that the generic invocation drain deliberately excludes.
-		if !selection.CanPush {
-			return state.Invocation{}, "", api.ErrValidation("named keyed queue requires an enabled push consumer")
+		// A named keyed row is owned by the queue trigger poller or, on a
+		// pull binding, by pull leases (ADR-20261112193306). Require one of
+		// them so it cannot be accepted into an arbitrary name that the
+		// generic invocation drain deliberately excludes.
+		pull := selection.Binding != nil && selection.Binding.Mode == "pull" && selection.Binding.Enabled && selection.Binding.RetiredAt == nil
+		if !selection.CanPush && !pull {
+			return state.Invocation{}, "", api.ErrValidation("named keyed queue requires an enabled push consumer or pull binding")
 		}
 	}
 	traceHeaders, err := pkgtrace.MergeHeaders(ctx, nil)

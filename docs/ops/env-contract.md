@@ -160,6 +160,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMMIT_API_ENABLED` | apid | `default` |  |  | `` | opt-in Gregale Commit qualification gate; disabled unless explicitly set to true |
 | `FAAS_COMMIT_DATABASE_CIDRS` | schedd | `default` |  |  | `` | operator-approved database address prefixes; required when the Commit relay is enabled |
 | `FAAS_COMMIT_DATABASE_HOSTS` | schedd | `default` |  |  | `` | exact operator-approved database hostnames; required when the Commit relay is enabled |
+| `FAAS_COMMIT_PUBLIC_DATABASES` | schedd | `default` |  | false | `` | ADR-20261112140000 §6: true lets Postgres changes sources reach customer databases at any globally reachable address; other Commit sources keep the FAAS_COMMIT_DATABASE_HOSTS/CIDRS allowlist; true or false only |
 | `FAAS_COMMIT_RELAY_ENABLED` | schedd | `default` |  |  | `` | opt-in Gregale Commit qualification gate; disabled unless explicitly set to true |
 | `FAAS_COMMIT_SHA` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_COMMIT_TLS_PG_BIN_DIR` | shared | `dev-only` |  |  | `` | PostgreSQL server binaries for the private TLS acceptance fixture |
