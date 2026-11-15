@@ -7503,6 +7503,28 @@ type CliAuthCode struct {
 	// nil is every project (ADR-20261104085712). MemStore only: the Pg
 	// store reads it through CliAuthCodeProjects.
 	ProjectIDs []string
+	// CreatedAt and RequesterIP say when and from where the code was
+	// asked for. MemStore only: the Pg store reads them through
+	// CliAuthRequesterStore.
+	CreatedAt   time.Time
+	RequesterIP string
+}
+
+// CliAuthRequest is when and from which address a CLI login code was
+// asked for. The approval page shows it so a person approving a code
+// someone else sent can see it came from elsewhere (account audit F10).
+type CliAuthRequest struct {
+	IP        string // "" when the address was not recorded
+	CreatedAt time.Time
+}
+
+// CliAuthRequesterStore records and reads where a CLI login code came from.
+type CliAuthRequesterStore interface {
+	// RecordCliAuthRequester stores the address that minted a pending code.
+	RecordCliAuthRequester(ctx context.Context, tokenHash []byte, ip string) error
+	// CliAuthRequester returns the request facts of an unexpired code, or
+	// ErrNotFound.
+	CliAuthRequester(ctx context.Context, tokenHash []byte) (CliAuthRequest, error)
 }
 
 // CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row

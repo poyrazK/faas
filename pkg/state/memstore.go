@@ -22744,6 +22744,7 @@ func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expires
 	m.cliAuthCodes[string(tokenHash)] = CliAuthCode{
 		TokenHash: append([]byte(nil), tokenHash...),
 		ExpiresAt: expiresAt,
+		CreatedAt: time.Now(),
 	}
 	return nil
 }
@@ -22764,6 +22765,7 @@ func (m *MemStore) IssueCliAuthDeviceCode(_ context.Context, tokenHash, deviceHa
 		TokenHash:  append([]byte(nil), tokenHash...),
 		DeviceHash: append([]byte(nil), deviceHash...),
 		ExpiresAt:  expiresAt,
+		CreatedAt:  time.Now(),
 	}
 	if len(verifierHash) > 0 {
 		row.VerifierHash = append([]byte(nil), verifierHash...)
@@ -22791,6 +22793,32 @@ func (m *MemStore) ConsumeCliAuthDeviceCode(_ context.Context, deviceHash, verif
 		return m.consumeCliAuthRowLocked(key, row)
 	}
 	return api.CliAuthStatusExpired, "", ErrNotFound
+}
+
+// RecordCliAuthRequester implements CliAuthRequesterStore.
+func (m *MemStore) RecordCliAuthRequester(_ context.Context, tokenHash []byte, ip string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
+	row, ok := m.cliAuthCodes[key]
+	if !ok || row.AccountID != "" || row.ConsumedAt != nil {
+		return ErrNotFound
+	}
+	row.RequesterIP = ip
+	m.cliAuthCodes[key] = row
+	return nil
+}
+
+// CliAuthRequester implements CliAuthRequesterStore.
+func (m *MemStore) CliAuthRequester(_ context.Context, tokenHash []byte) (CliAuthRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
+	row, ok := m.cliAuthCodes[key]
+	if !ok || !row.ExpiresAt.After(time.Now()) {
+		return CliAuthRequest{}, ErrNotFound
+	}
+	return CliAuthRequest{IP: row.RequesterIP, CreatedAt: row.CreatedAt}, nil
 }
 
 // PeekCliAuthCode returns the row's status without mutating it. Used

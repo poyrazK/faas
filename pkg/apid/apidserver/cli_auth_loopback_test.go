@@ -85,15 +85,29 @@ func TestCliAuthLoopback_OneClickHandsDeviceCodeToBrowserMachine(t *testing.T) {
 		t.Fatalf("URL = %q, want code and port=49152", minted.URL)
 	}
 
-	// The page: one button, no code to type.
+	// The page names where the code came from (account audit F10): a
+	// browser elsewhere sees both addresses.
 	session := srv.issueBrowserSessionForTest(t, acct.Email)
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/cli-auth?"+u.RawQuery, nil)
+	r.RemoteAddr = "198.51.100.7:4000"
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
+	srv.ServeHTTP(rec, r)
+	if body := rec.Body.String(); !strings.Contains(body, "from <code>192.0.2.1</code>; this browser is at <code>198.51.100.7</code>") {
+		t.Fatalf("render from another address lacks the requester line: %s", body)
+	}
+
+	// The page: one button, no code to type.
+	rec = httptest.NewRecorder()
+	r = httptest.NewRequest(http.MethodGet, "/cli-auth?"+u.RawQuery, nil)
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
 	srv.ServeHTTP(rec, r)
 	body := rec.Body.String()
 	if rec.Code != http.StatusOK || !strings.Contains(body, "Authorize") {
 		t.Fatalf("render: %d %s", rec.Code, body)
+	}
+	if !strings.Contains(body, "from <code>192.0.2.1</code> (this network)") {
+		t.Fatalf("render lacks the same-network requester line: %s", body)
 	}
 	if strings.Contains(body, `placeholder="ABCD-1234"`) {
 		t.Fatalf("one-click page asks to type the code: %s", body)

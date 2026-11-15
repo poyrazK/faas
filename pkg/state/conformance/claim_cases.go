@@ -549,6 +549,40 @@ func testCliAuthDeviceCodeNeedsItsVerifier(t *testing.T, fx *Fixture) {
 	}
 }
 
+// testCliAuthRequesterIsRecordedUntilApproval pins CliAuthRequesterStore
+// (account audit F10): the minting address and time read back for the
+// approval page, and a claimed code takes no new address.
+func testCliAuthRequesterIsRecordedUntilApproval(t *testing.T, fx *Fixture) {
+	requesters, ok := fx.Store.(state.CliAuthRequesterStore)
+	if !ok {
+		t.Skip("store does not record requesters")
+	}
+	tokenHash := api.HashToken([]byte("requester-" + uuid.NewString()))
+	before := time.Now().Add(-time.Minute)
+	if err := fx.Store.IssueCliAuthCode(fx.Ctx, tokenHash, time.Now().UTC().Add(10*time.Minute)); err != nil {
+		t.Fatalf("IssueCliAuthCode: %v", err)
+	}
+	if req, err := requesters.CliAuthRequester(fx.Ctx, tokenHash); err != nil || req.IP != "" {
+		t.Fatalf("before recording: %+v, %v; want no address", req, err)
+	}
+	if err := requesters.RecordCliAuthRequester(fx.Ctx, tokenHash, "192.0.2.10"); err != nil {
+		t.Fatalf("RecordCliAuthRequester: %v", err)
+	}
+	req, err := requesters.CliAuthRequester(fx.Ctx, tokenHash)
+	if err != nil || req.IP != "192.0.2.10" || req.CreatedAt.Before(before) {
+		t.Fatalf("CliAuthRequester = %+v, %v; want 192.0.2.10 minted just now", req, err)
+	}
+	if err := fx.Store.ClaimCliAuthCode(fx.Ctx, tokenHash, fx.Account.ID); err != nil {
+		t.Fatalf("ClaimCliAuthCode: %v", err)
+	}
+	if err := requesters.RecordCliAuthRequester(fx.Ctx, tokenHash, "198.51.100.1"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("record after approval: %v, want ErrNotFound", err)
+	}
+	if _, err := requesters.CliAuthRequester(fx.Ctx, api.HashToken([]byte("never-"+uuid.NewString()))); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("unknown code: %v, want ErrNotFound", err)
+	}
+}
+
 // testDueWebhookDeliveryClaimRespectsScheduleAndLimit pins
 // ClaimDueAppWebhookDeliveries: the batch must honour both the due time and
 // the caller's limit, and must not hand the same delivery to two dispatchers.

@@ -3945,6 +3945,7 @@
       "expires_at",
       "org_id",
       "project_ids",
+      "requester_ip",
       "status",
       "token_hash",
       "verifier_hash"

@@ -3098,6 +3098,7 @@ type CliAuthCode struct {
 	OrgID        pgtype.UUID
 	ProjectIds   []pgtype.UUID
 	VerifierHash []byte
+	RequesterIp  pgtype.Text
 }
 
 type CloneCheckpointAdmissionGuard struct {
