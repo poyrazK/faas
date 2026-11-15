@@ -1218,6 +1218,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// meterd holds the alerting key.
 	go runAlertTestSends(ctx, evaluator, log)
 	startAgentApprovalNotifications(ctx, store, mailer, evaluator, ops.Registry(), log)
+	startPlatformAlerts(ctx, store, mailer, promClient, ops.Registry(), log)
 	evaluator.SetRuleRelease(release.ForAccount)
 	evaluator.SetRuleLimits(release.RuleLimits)
 	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))

@@ -2123,6 +2123,25 @@ const (
 	CronCatchUpScanMax     = 1 << 21
 )
 
+// Platform alerts (ADR-20261115194000). An HTTP cron whose newest
+// CronFailurePauseRuns finished runs all failed, the oldest of them at least
+// CronFailurePauseSpan ago, is paused (suspended_reason 'failing') and its
+// account emailed: a cron failing every 15 minutes ran 96 billed failures a
+// day for weeks unnoticed. An app whose error rate (5xx over 2xx+5xx) stayed
+// at or above AppOutageErrorRatePct over AppOutageWindow, on at least
+// AppOutageMinRequests requests, is emailed about unless it has its own
+// enabled error-rate alert rule. One email per app or cron per
+// PlatformAlertCooldown; sent notices are kept PlatformAlertRetention.
+const (
+	CronFailurePauseRuns   = 10
+	CronFailurePauseSpan   = 24 * time.Hour
+	AppOutageErrorRatePct  = 90.0
+	AppOutageWindow        = "15m"
+	AppOutageMinRequests   = 20
+	PlatformAlertCooldown  = 24 * time.Hour
+	PlatformAlertRetention = 30 * 24 * time.Hour
+)
+
 // CronHistoryRetention is how long schedd keeps a cron's settled schedule
 // decisions (schedule_occurrences) and its manual-run requests
 // (cron_fire_now_requests). It matches the longest plan's invocation result

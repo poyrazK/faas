@@ -5985,8 +5985,12 @@ func (c *capWriter) Write(b []byte) (int, error) {
 		// Fire once; idempotent under concurrent writes thanks
 		// to disabled CAS. A committed response cannot become a
 		// problem document any more (see committed).
-		if c.disabled.CompareAndSwap(false, true) && c.onCap != nil && !c.committed {
-			c.onCap()
+		if c.disabled.CompareAndSwap(false, true) {
+			if !c.committed && c.onCap != nil {
+				c.onCap()
+			} else if c.committed {
+				markResponseTruncated(c.ResponseWriter)
+			}
 		}
 		if c.exceeded.CompareAndSwap(false, true) && c.onWarn != nil {
 			c.onWarn("exceeded")
@@ -8785,6 +8789,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		if decision.path != "" {
 			requestLog = requestLog.With(decision.logAttribute())
 		}
+		if truncated := truncatedResponse(r); truncated != nil {
+			requestLog = requestLog.With("response_truncated", true, "sent_status", truncated.status, "response_bytes", truncated.Bytes)
+		}
 		if revision := TrafficPolicyRevision(r.Context()); revision != "" {
 			requestLog = requestLog.With("traffic_policy_revision", revision)
 		}
@@ -9392,6 +9399,10 @@ type statusRecorder struct {
 	// Retain the origin's privacy veto before response-header rules can
 	// remove it. The parked HEAD cache is shared with anonymous callers.
 	headCachePrivate bool
+
+	// responseTruncated is set when the body passed the plan's cap after
+	// the status went out (truncated_response_telemetry.go).
+	responseTruncated bool
 
 	// Capture the final rebound request context when the response commits.
 	trafficResponseCommittedContext context.Context

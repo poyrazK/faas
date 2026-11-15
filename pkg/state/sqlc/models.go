@@ -11983,6 +11983,22 @@ type PlanFitNotice struct {
 	NoticedAt  pgtype.Timestamptz
 }
 
+type PlatformAlertNotice struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Kind           string
+	SubjectID      string
+	Detail         []byte
+	CreatedAt      pgtype.Timestamptz
+	Status         string
+	Attempts       int32
+	NextAttemptAt  pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	LastError      string
+}
+
 type PlatformMailAgentRunCapture struct {
 	Namespace  string
 	ProducerID string

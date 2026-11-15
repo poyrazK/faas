@@ -36585,7 +36585,7 @@ CREATE TABLE public.crons (
     CONSTRAINT crons_retry_policy_check CHECK ((((retry_max >= 0) AND (retry_max <= 5)) AND ((retry_backoff_seconds >= 1) AND (retry_backoff_seconds <= 3600)) AND ((retry_max = 0) OR (cardinality(command) > 0)))),
     CONSTRAINT crons_schedule_policy_shape CHECK (((schedule_policy IS NULL) OR ((jsonb_typeof(schedule_policy) = 'object'::text) AND ((schedule_policy ->> 'version'::text) = '1'::text)))),
     CONSTRAINT crons_schedule_revision_check CHECK ((schedule_revision >= 1)),
-    CONSTRAINT crons_suspended_reason_chk CHECK ((suspended_reason = ANY (ARRAY[''::text, 'no_live_deployment'::text, 'app_deleted'::text]))),
+    CONSTRAINT crons_suspended_reason_v2_chk CHECK ((suspended_reason = ANY (ARRAY[''::text, 'no_live_deployment'::text, 'app_deleted'::text, 'failing'::text]))),
     CONSTRAINT crons_timezone_nonempty_check CHECK ((btrim(timezone) <> ''::text))
 );
 
@@ -52307,6 +52307,33 @@ CREATE TABLE public.plan_fit_notices (
 --
 
 COMMENT ON TABLE public.plan_fit_notices IS 'Last plan-fit email per billing subject: the plan and the sha256 of its over-plan app set. Written by meterd (billing review H17-4).';
+
+
+--
+-- Name: platform_alert_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_alert_notices (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject_id text NOT NULL,
+    detail jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_expires_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT platform_alert_notices_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT platform_alert_notices_detail_check CHECK ((jsonb_typeof(detail) = 'object'::text)),
+    CONSTRAINT platform_alert_notices_kind_check CHECK ((kind = ANY (ARRAY['app_outage'::text, 'cron_failing_paused'::text]))),
+    CONSTRAINT platform_alert_notices_last_error_check CHECK ((length(last_error) <= 512)),
+    CONSTRAINT platform_alert_notices_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sent'::text, 'skipped'::text, 'failed'::text]))),
+    CONSTRAINT platform_alert_notices_subject_id_check CHECK (((subject_id <> ''::text) AND (length(subject_id) <= 128)))
+);
 
 
 --
@@ -71996,6 +72023,14 @@ ALTER TABLE ONLY public.plan_fit_notices
 
 
 --
+-- Name: platform_alert_notices platform_alert_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_alert_notices
+    ADD CONSTRAINT platform_alert_notices_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: platform_mail_agent_run_capture platform_mail_agent_run_capture_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -84644,6 +84679,27 @@ CREATE INDEX pg_ratelimit_counters_preauth_refill_idx ON public.pg_ratelimit_cou
 --
 
 CREATE INDEX pg_ratelimit_counters_subject_id_app_idx ON public.pg_ratelimit_counters USING btree (subject_id) WHERE (scope = 'app'::text);
+
+
+--
+-- Name: platform_alert_notices_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_alert_notices_due_idx ON public.platform_alert_notices USING btree (next_attempt_at) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: platform_alert_notices_pending_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX platform_alert_notices_pending_uniq ON public.platform_alert_notices USING btree (kind, subject_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: platform_alert_notices_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_alert_notices_subject_idx ON public.platform_alert_notices USING btree (kind, subject_id, created_at DESC);
 
 
 --
@@ -106919,6 +106975,22 @@ ALTER TABLE ONLY public.paddle_overage_dedupe
 
 ALTER TABLE ONLY public.password_reset_tokens
     ADD CONSTRAINT password_reset_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_alert_notices platform_alert_notices_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_alert_notices
+    ADD CONSTRAINT platform_alert_notices_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_alert_notices platform_alert_notices_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_alert_notices
+    ADD CONSTRAINT platform_alert_notices_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
