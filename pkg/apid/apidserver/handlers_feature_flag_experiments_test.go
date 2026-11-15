@@ -33,8 +33,8 @@ func TestFlagExperimentsLifecycle(t *testing.T) {
 	}
 	everyone := 10000
 	if _, err := (*e.Store()).UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{
-		Scope:  state.FeatureFlagScope{AccountID: acct, ProjectID: project.ID, EnvironmentID: env.ID},
-		Actor:  acct,
+		Scope: state.FeatureFlagScope{AccountID: acct, ProjectID: project.ID, EnvironmentID: env.ID},
+		Actor: acct,
 		Config: flags.Config{Groups: map[string][]string{}, Flags: []flags.Flag{
 			{Key: "checkout", Type: "variant", Enabled: true, Default: "legacy", Variants: []flags.FlagVariant{{Key: "legacy", Weight: 5000}, {Key: "new", Weight: 5000}},
 				Rules: []flags.Rule{{ID: "weighted", Rollout: &everyone}}},
