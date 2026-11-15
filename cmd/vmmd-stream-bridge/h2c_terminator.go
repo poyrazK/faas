@@ -245,6 +245,14 @@ func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, gue
 		}
 	}
 	outboundReq.Host = host
+	// gRPC requires `te: trailers` on every request (gRPC over HTTP/2
+	// spec). TE is hop-by-hop, so the hops before this one have dropped it
+	// and x/net/http2 never adds it; grpcio's C-core server refuses a call
+	// without it. This is the hop that speaks HTTP/2 to the guest, so it
+	// restores the field.
+	if strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/grpc") {
+		outboundReq.Header.Set("Te", "trailers")
+	}
 
 	// RoundTrip — this writes the HTTP/2 connection preface +
 	// client SETTINGS to the guest, opens a new H2 stream, sends
