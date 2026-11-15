@@ -527,7 +527,7 @@ func cmdJobsRm(args []string) int {
 	// Every other non-interactive delete requires --yes; accept it here too
 	// so the same script line works (prod 2026-11-15: "job delete X --yes"
 	// printed usage and left the job).
-	kept := args[:0:0]
+	kept := make([]string, 0, len(args))
 	for _, a := range args {
 		if a != "--yes" && a != "-y" {
 			kept = append(kept, a)
