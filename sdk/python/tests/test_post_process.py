@@ -162,6 +162,9 @@ def _fixture_generator(tmp_path, monkeypatch):
     package.mkdir(parents=True)
     originals = {
         "faas_sdk/_wrapper.py": b"# existing custom wrapper\n",
+        "faas_sdk/job_runtime.py": b"# uncommitted typed worker runtime\n",
+        "faas_sdk/_typed_jobs.py": b"# uncommitted typed job handles\n",
+        "faas_sdk/job_types.py": b"# uncommitted job type generator\n",
         "faas_sdk/_project_verification.py": b"# uncommitted exact-deployment verification\n",
         "faas_sdk/preview/_binding_runner.py": b"# uncommitted verification runner\n",
         "faas_sdk/preview/_binding_runner_diagnostics.py": b"# uncommitted automatic diagnostics\n",
@@ -332,4 +335,13 @@ def test_regenerated_barrels_export_project_verification(tmp_path):
         "project_verification_target",
     ):
         assert f"{name} as {name}" in barrel.read_text()
+        assert f"{name} as {name}" in generator._PREVIEW_INIT_PY_TEMPLATE
+
+
+def test_regenerated_barrels_export_typed_jobs(tmp_path, monkeypatch):
+    generator, _, _ = _fixture_generator(tmp_path, monkeypatch)
+    for name in ("job_runtime.py", "_typed_jobs.py", "job_types.py"):
+        assert name in generator.ROOT_WRAPPER_MODULES
+    for name in ("JobContract", "TypedJob", "TypedJobRun", "JobCheckpoint", "run_job_task"):
+        assert f"{name} as {name}" in generator._INIT_PY_TEMPLATE
         assert f"{name} as {name}" in generator._PREVIEW_INIT_PY_TEMPLATE

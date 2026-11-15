@@ -506,6 +506,84 @@ and copied options at invocation, so concurrent waits and credential/endpoint
 rotation remain isolated. Existing generated methods and static services retain
 their signatures.
 
+## Typed background jobs and batches
+
+Define a version-1 `job.json` contract with `name`, `input` and `output` schemas
+for an existing Jobs template. Generate input/output types:
+
+```sh
+gregale-job-types job.json typescript job.generated.ts
+# The same command also supports python output.
+```
+
+```ts
+import { createClient, parseJobCheckpoint } from '@gregale/sdk-node';
+import { contract } from './job.generated.js';
+const job = createClient(apiURL, { token }).jobs.defineJob(contract);
+const run = await job.submit([{ id: 'import-42:row-1', value: input }], {
+  timeoutMs: 30_000, idempotencyKey: 'import-42', parallelism: 2, retryMax: 0,
+});
+// Persist before following. No payloads, SDK token or signed URLs are included.
+const saved = JSON.stringify(run.checkpoint);
+const resumed = job.resume(parseJobCheckpoint(JSON.parse(saved)));
+// With only the run ID, reconstruct a checkpoint through owned, bounded reads:
+const attached = await job.resumeById(run.checkpoint.run_id, { timeoutMs: 30_000 });
+const progress = await resumed.wait({ timeoutMs: 120_000, onProgress: console.log });
+for (const item of await resumed.results({ timeoutMs: 30_000 })) {
+  if (item.outcome === 'succeeded') useTypedResult(item.result);
+}
+const retry = await resumed.retryFailed({ timeoutMs: 30_000, idempotencyKey: 'import-42-replay' });
+```
+
+`submit` sends one mutation with the explicit stable key. `acceptance_unknown`
+means a request may have created a run; never replace its key automatically.
+The server retains keys for 24 hours. An interrupted/cancelled submit may also
+leave an accepted run. Use the same logical input/key for explicit recovery in
+that window. `status`, `wait` and `results` validate the exact account/job/run,
+contract fingerprint, input references and replay lineage. `retryFailed` uses the
+native atomic replay endpoint and image guard; successful inputs stay complete.
+
+`wait` returns native aggregate progress (`queued`, `running`, `succeeded`,
+`failed`, `cancelled`, `dead_letter`). `results` returns per-item outcomes,
+including `invalid_result` when bytes are missing, corrupt or schema-invalid.
+Managed artifacts use separate signed GETs, with no SDK token, cookies or
+redirects, and checksums verified again after downloading. External s3/gs
+artifacts require an explicit `JobStore` adapter.
+
+All operations need a positive total `timeoutMs`; a caller `signal` aborts local
+work. Local wait cancellation/deadlines do not cancel the remote job. Use
+`run.cancel({timeoutMs: 10_000})` explicitly. Defaults: 100 polls, 1s poll delay,
+256 API requests, 100 task pages and 1000 items. These are SDK processing budgets;
+server plan/admission limits still apply. Responses and result envelopes are
+bounded to 1 MiB. Signed data reads are bounded by the per-item manifest size.
+
+Runtime helpers are available from `@gregale/sdk-node/jobs/runtime`:
+`runLocalJobBatch(contract, inputs, handler, {timeoutMs, concurrency, maxAttempts})`
+runs without a control-plane client; retries default to one attempt.
+`runJobTask(contract, handler, {timeoutMs, store})` reads the native task identity,
+validates inputs/outputs, uploads result bytes and writes the native output
+manifest. Exit unsuccessfully after an error; the host publishes success after
+successful process exit. Handler context carries a stable `inputId`, `attempt`
+and cooperative `signal`. Enforce idempotent application effects using that ID;
+execution is at least once. Cancellation does not undo committed writes.
+
+The schema subset supports closed objects (`properties`, `required`,
+`additionalProperties: false`), arrays/items, strings, finite numbers, safe
+integers, booleans, null, primitive enums and length/item/numeric bounds. Unknown
+keywords (including `$ref` and `pattern`) are refused. Small inputs fit native
+opaque references; larger inputs use a caller-owned immutable store with digest
+verification. Store adapters own their credentials and cooperative I/O. The
+`localJobStore(directory)` adapter is for tests, with synthetic s3 references.
+
+See the [CSV import example](../../examples/sdk-csv-jobs/README.md) for schemas,
+generated types, PostgreSQL writes, rejection reports and failed-only recovery.
+
+
+Small typed inputs are encoded in the native job history’s `input_ref`. For data
+that should stay in an application-owned store, model an object reference in the
+input schema and fetch it in the handler. Checkpoint files retain only digests
+and identities. Numeric enum values are restricted to safe integers.
+
 ## Verify exact project deployments
 
 After apply or recovery, verify release evidence and your application's behavior:

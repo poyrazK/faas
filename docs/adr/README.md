@@ -1,3 +1,5 @@
+- [ADR-20261115170000: Typed background jobs in application SDKs](20261115170000-sdk-typed-background-jobs.md) — accepted; portable schemas and generated types, local/native runners, resumable handles and verified per-input results
+
 - [ADR-20261115120000: SDK project verification with explicit deployment evidence](20261115120000-sdk-project-verification.md) — accepted; typed Node/Python verification, identity-aware smoke checks, bounded read-only diagnostics and portable resume targets
 
 - [ADR-20261114120000: Per-plan startup window on every cold boot](20261114120000-per-plan-startup-window.md) — accepted; amends ADR-138 (2026-10-22): `startup_deadline_s` may reach the plan window (Free/Hobby 30 s, Pro 60 s, Scale 120 s; defaults unchanged) and every cold boot, not only the deploy prime, gets it in its RPC budget and watchdog reprieve; `wake_max_queue_wait_seconds` may reach 120 s (deploy-path review P1)

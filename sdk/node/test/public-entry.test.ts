@@ -36,5 +36,5 @@ test('only the preview client runs disposable executions', () => {
 test('preview subpaths live under ./preview', () => {
   const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { exports: Record<string, unknown> };
   const outside = Object.keys(pkg.exports).filter((key) => key !== './preview' && !key.startsWith('./preview/'));
-  assert.deepEqual(outside.sort(), ['.', './browser', './secrets/runtime', './workflows']);
+  assert.deepEqual(outside.sort(), ['.', './browser', './functions/runtime', './jobs/runtime', './lifecycle/runtime', './secrets/runtime', './workflows']);
 });

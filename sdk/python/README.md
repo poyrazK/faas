@@ -303,6 +303,82 @@ Release success here describes that release's recorded state and positive
 traffic; application-specific health checks and a requirement for full traffic
 remain separate decisions.
 
+## Typed background jobs and batches
+
+Create a version-1 JSON contract naming an existing Jobs template and its input
+and output schemas; generate typed Python or TypeScript clients:
+
+```sh
+python -m faas_sdk.job_types job.json python job_generated.py
+```
+
+```python
+from faas_sdk import FaaSClient, JobInput, JobCheckpoint, JobSubmitOptions, JobRunOptions
+from job_generated import contract
+
+job = client.define_job(contract)
+run = await job.submit([JobInput("import-42:row-1", input)], options=JobSubmitOptions(
+    timeout=30, idempotency_key="import-42", parallelism=2, retry_max=0,
+))
+saved = run.checkpoint.to_dict()  # persist privately before following
+resumed = job.resume(JobCheckpoint.from_dict(saved))
+# If only the run ID was saved, reconstruct from authenticated task metadata:
+attached = await job.resume_by_id(run.checkpoint.run_id, options=JobRunOptions(timeout=30))
+progress = await resumed.wait(options=JobRunOptions(timeout=120, on_progress=print))
+for item in await resumed.results(options=JobRunOptions(timeout=30)):
+    if item.result is not None:
+        use_typed_result(item.result)
+replay = await resumed.retry_failed(
+    options=JobRunOptions(timeout=30), idempotency_key="import-42-replay",
+)
+```
+
+Checkpoints work in either language and retain account/job/run IDs, input digests,
+contract fingerprint and replay lineage. They contain no payloads or credentials.
+Each read is authenticated and checked against those exact identities. A target
+is a selection document, not an authorization capability.
+
+Submissions require an explicit stable key and send one mutation. After
+`acceptance_unknown` or interruption during submission, inspect/recover using the
+same logical input and key within the server's 24-hour window; never substitute a
+fresh key automatically. Failed-only replay is explicit and uses the server's
+atomic selection and image guard. Native execution is at least once.
+
+`wait` reports native aggregate progress. `results` returns per-input outcomes and
+validated typed outputs; missing/corrupt/schema-invalid output is `invalid_result`.
+Managed obj results use native verification plus independent signed GETs, bounded
+bytes, no inherited SDK credentials/cookies/redirects, and a second checksum check.
+External s3/gs artifacts require a caller-owned `JobStore` adapter.
+
+Durations are seconds. Positive `timeout` budgets include reads, stores, delays and
+progress callbacks. Asyncio cancellation stops local observation; use
+`await run.cancel(options=JobRunOptions(timeout=10))` explicitly for remote work.
+Defaults: 100 polls, 1s delay, 256 API requests, 100 pages, 1000 items, and 1 MiB per
+response/result envelope. SDK budgets do not override server plan/admission limits.
+
+`run_local_job_batch(contract, inputs, handler, timeout=..., concurrency=...,
+max_attempts=...)` exercises the same validation locally. `run_job_task` consumes
+native task identity, validates/stores the output and writes the existing manifest.
+Exit unsuccessfully on error; native successful process exit publishes success.
+Handlers get stable `context.input_id`, `context.attempt` and
+`context.check_cancelled()`. Store callbacks own their credentials and async I/O.
+Synchronous handlers must return promptly. Use input IDs for idempotent effects;
+cancellation cannot undo committed application writes. `LocalJobStore` uses
+private files with synthetic s3 references for local testing only.
+
+Schemas support closed objects, arrays/items, strings, finite numbers, safe
+integers, booleans, null, primitive enums and length/item/numeric bounds. Unsupported
+keywords are refused. Large inputs use immutable credential-free object references
+with size/digest validation; small inputs travel in the native opaque input ref.
+See the [CSV import example](../../examples/sdk-csv-jobs/README.md) for local setup,
+generated types, progress, rejection downloads, cross-language resume and replay.
+
+
+Small typed inputs are encoded in the native job history’s `input_ref`. For data
+that should stay in an application-owned store, model an object reference in the
+input schema and fetch it in the handler. Checkpoint files retain only digests
+and identities. Numeric enum values are restricted to safe integers.
+
 ## Verify exact project deployments
 
 ```python

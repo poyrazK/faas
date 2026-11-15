@@ -170,7 +170,15 @@ asyncio.run(main())
     run([sys.executable, "-I", str(program), str(target)], cwd=tmp_path)
     positive = tmp_path / "typed.py"
     positive.write_text("""
+from __future__ import annotations
 from typing import assert_type
+from faas_sdk import JobContract,JobInput,JobSubmitOptions,JobRunOptions,JobProgress,JobItemOutcome,TypedJobRun
+async def typed_jobs(client: FaaSClient) -> None:
+    contract:JobContract[str,int]=JobContract({"version":1,"name":"typed-job","input":{"type":"string"},"output":{"type":"integer"}})
+    run=await client.define_job(contract).submit([JobInput("one","input")],options=JobSubmitOptions(timeout=1,idempotency_key="one"))
+    assert_type(run,TypedJobRun[str,int])
+    assert_type(await run.wait(options=JobRunOptions(timeout=1)),JobProgress)
+    assert_type(await run.results(options=JobRunOptions(timeout=1)),tuple[JobItemOutcome[int],...])
 from faas_sdk import FaaSClient, RequestOptions, RetryPolicy, ResponseInfo, AsyncPagination, PaginationOptions, PaginationPage, BuildWaitOptions, DeploymentWaitOptions, WaiterOptions, WaiterError, WaiterFailureCode, WaiterProgress, WaiterTimeoutError
 from faas_sdk.api.deployments import get_build
 from faas_sdk.models.build_response import BuildResponse

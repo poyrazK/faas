@@ -186,6 +186,9 @@ ROOT_WRAPPER_MODULES = (
     "_project_inspection.py",
     "_project_workflows.py",
     "_project_verification.py",
+    "job_runtime.py",
+    "_typed_jobs.py",
+    "job_types.py",
     "_wrapper.py",
     "_rfc7807.py",
     "_sse.py",
@@ -566,7 +569,7 @@ def regen(overwrite: bool = True) -> None:
                         "--quiet",
                         str(sdk_root),
                         "--exclude",
-                        "_async_request.py,_pagination.py,_waiters.py,_source_upload.py,_source_preparation.py,_source_deployment.py,_project_inspection.py,_project_workflows.py,_project_verification.py,_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
+                        "_async_request.py,_pagination.py,_waiters.py,_source_upload.py,_source_preparation.py,_source_deployment.py,_project_inspection.py,_project_workflows.py,_project_verification.py,job_runtime.py,_typed_jobs.py,job_types.py,_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
                     ],
                     check=False,
                     capture_output=True,
@@ -943,6 +946,32 @@ from ._rfc7807 import (
     parse_problem,
     raise_for_problem,
 )
+from .job_runtime import (
+    JobContract as JobContract,
+    JobError as JobError,
+    JobCode as JobCode,
+    JobInput as JobInput,
+    JobInputBinding as JobInputBinding,
+    JobContext as JobContext,
+    JobStore as JobStore,
+    LocalJobOutcome as LocalJobOutcome,
+    LocalJobStore as LocalJobStore,
+    prepare_job_input as prepare_job_input,
+    read_job_input as read_job_input,
+    decode_job_output as decode_job_output,
+    run_local_job_batch as run_local_job_batch,
+    run_job_task as run_job_task,
+)
+from ._typed_jobs import (
+    TypedJob as TypedJob,
+    TypedJobRun as TypedJobRun,
+    JobCheckpoint as JobCheckpoint,
+    JobCheckpointInput as JobCheckpointInput,
+    JobProgress as JobProgress,
+    JobRunOptions as JobRunOptions,
+    JobSubmitOptions as JobSubmitOptions,
+    JobItemOutcome as JobItemOutcome,
+)
 from ._project_verification import (
     VerificationOutcome as VerificationOutcome,
     VerificationCode as VerificationCode,
@@ -1251,6 +1280,32 @@ elsewhere its calls answer 404 no such API route.
 """
 
 # ruff: noqa: F401
+from ..job_runtime import (
+    JobContract as JobContract,
+    JobError as JobError,
+    JobCode as JobCode,
+    JobInput as JobInput,
+    JobInputBinding as JobInputBinding,
+    JobContext as JobContext,
+    JobStore as JobStore,
+    LocalJobOutcome as LocalJobOutcome,
+    LocalJobStore as LocalJobStore,
+    prepare_job_input as prepare_job_input,
+    read_job_input as read_job_input,
+    decode_job_output as decode_job_output,
+    run_local_job_batch as run_local_job_batch,
+    run_job_task as run_job_task,
+)
+from .._typed_jobs import (
+    TypedJob as TypedJob,
+    TypedJobRun as TypedJobRun,
+    JobCheckpoint as JobCheckpoint,
+    JobCheckpointInput as JobCheckpointInput,
+    JobProgress as JobProgress,
+    JobRunOptions as JobRunOptions,
+    JobSubmitOptions as JobSubmitOptions,
+    JobItemOutcome as JobItemOutcome,
+)
 from .._project_verification import (
     VerificationOutcome as VerificationOutcome,
     VerificationCode as VerificationCode,

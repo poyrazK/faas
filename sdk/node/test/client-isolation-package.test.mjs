@@ -167,11 +167,22 @@ test('packed SDK exposes isolated clients, pagination, waiters and the legacy mi
     } finally { legacy.uninstall(); globalThis.fetch = original; Object.assign(OpenAPI, config); }
   `);
   await exec(process.execPath, ['app.mjs'], { cwd: app });
+  const schema={version:1,name:'typed-job',input:{type:'string',minLength:1},output:{type:'integer',minimum:0}};
+  await writeFile(join(app,'job-contract.json'),JSON.stringify(schema));
+  await exec(process.execPath,[join(app,'node_modules/.bin/gregale-job-types'),join(app,'job-contract.json'),'typescript',join(app,'typed-job.ts')],{cwd:app});
   await writeFile(join(app, 'app.ts'), `
     import { createClient, type GregaleClient, type AppResponse, type CancelablePromise, type RequestOptions, type ResponseInfo, type ResponseObserver, type PaginationOptions, type DeploymentPagination, type DeploymentResponse, type DeploymentListResponse, type BuildResponse, type BuildListResponse, PaginationError, FaaSClient, AppsService, DeploymentsService } from '@gregale/sdk-node';
     import { createClient as createPreviewClient, type GregaleClient as PreviewClient, type ExecutionResponse, type ExecutionEvent, type ExecutionHelpers, type RequestOptions as PreviewOptions } from '@gregale/sdk-node/preview';
     import { type BuildWaitOptions, type DeploymentWaitOptions, type DeploymentWaiters, type ReleaseTimeline, type WaiterSnapshot, type WaiterProgress, WaiterError } from '@gregale/sdk-node';
+    import {contract as jobContract} from './typed-job.js';
     const client: GregaleClient = createClient('https://api.test');
+    const typedJob=client.jobs.defineJob(jobContract);
+    const typedSubmission:Promise<import('@gregale/sdk-node').TypedJobRun<number>>=typedJob.submit([{id:'one',value:'input'}],{timeoutMs:1000,idempotencyKey:'one'});
+    for(const item of await(await typedSubmission).results({timeoutMs:1000})){if(item.outcome==='succeeded'){const value:number=item.result;void value;}}
+    // @ts-expect-error generated input types reject wrong payloads
+    typedJob.submit([{id:'one',value:123}],{timeoutMs:1000,idempotencyKey:'one'});
+    // @ts-expect-error durable submissions require an explicit idempotency key
+    typedJob.submit([{id:'one',value:'input'}],{timeoutMs:1000});
     const request: CancelablePromise<AppResponse> = client.apps.getApp({ slug: 'typed' });
     request.cancel();
     const observer: ResponseObserver = (info: ResponseInfo) => { const id: string | null = info.requestId; void id; };
