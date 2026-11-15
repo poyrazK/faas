@@ -277,11 +277,15 @@ type PGBackend struct {
 	trafficRevocations atomic.Pointer[trafficrevocation.Registry]
 	publicRoutingView  atomic.Pointer[publicrouting.Registry]
 	workloadAdmissions workloadAdmissionCache
-	boots              bootTracker
-	router             Router
-	sched              Scheduler
-	log                *slog.Logger
-	metrics            *Metrics
+	// flagKills caches each deployment's X-Faas-Flag-Kills value
+	// (ADR 20261114150000 §3); nil until WithFlagKillLoader.
+	flagKills *FlagKillCache
+	// boots tracks other gateways' boots in progress (at-capacity waits).
+	boots     bootTracker
+	router    Router
+	sched     Scheduler
+	log       *slog.Logger
+	metrics   *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
 	// rechecks keeps the warm custom-domain registry rechecks briefly.

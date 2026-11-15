@@ -13557,6 +13557,20 @@ $$;
 
 
 --
+-- Name: feature_flag_versions_notify(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.feature_flag_versions_notify() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM pg_notify('feature_flags_changed', NEW.environment_id::text);
+    RETURN NULL;
+END
+$$;
+
+
+--
 -- Name: fence_deployment_cron_intent(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -91498,6 +91512,13 @@ CREATE TRIGGER executions_profile_identity BEFORE UPDATE ON public.executions FO
 --
 
 CREATE TRIGGER executions_status_transition BEFORE UPDATE ON public.executions FOR EACH ROW EXECUTE FUNCTION public.enforce_execution_status_transition();
+
+
+--
+-- Name: feature_flag_versions feature_flag_versions_notify; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER feature_flag_versions_notify AFTER INSERT ON public.feature_flag_versions FOR EACH ROW EXECUTE FUNCTION public.feature_flag_versions_notify();
 
 
 --
