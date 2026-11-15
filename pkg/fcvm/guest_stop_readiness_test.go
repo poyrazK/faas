@@ -310,6 +310,9 @@ func TestGuestBootArgsSuppressRCUStallWarnings(t *testing.T) {
 		if !strings.Contains(args, "rcupdate.rcu_cpu_stall_suppress=1") {
 			t.Errorf("%s boot args lack RCU stall suppression: %q", name, args)
 		}
+		if !strings.Contains(args, "workqueue.watchdog_thresh=0") {
+			t.Errorf("%s boot args lack workqueue lockup suppression: %q", name, args)
+		}
 	}
 }
 

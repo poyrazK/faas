@@ -10,6 +10,8 @@ Each Compose service becomes an app in one project. Gregale does not run Docker'
     gregale deploy --project --only <service>
 - Open a public service to everyone:
     gregale app update <app> --no-require-authn
+- Restart, health-check or change every app of the project at once:
+    gregale app restart --project <project> --fresh --wait
 - Follow every service's logs:
     gregale logs --project <project> --follow
 - Run a command in a fresh instance of a service:
@@ -22,3 +24,4 @@ Notes:
 - Code that dials a Compose name (redis, db) must read $GREGALE_SERVICE_<NAME>_HOST (raw TCP) or $GREGALE_SERVICE_<NAME>_URL (HTTP); the caller lists the service in depends_on. The dry run names each place.
 - A postgres service becomes a managed database bound as DATABASE_URL. Gregale does not run other datastores (redis, mysql, mongo): an app parks to a snapshot and keeps no data. Point the code at a hosted one (Upstash, PlanetScale, Atlas) with an env URL.
 - A build target or command for development (target: dev, nodemon, --reload) is deployed as written.
+- A gRPC address (PRODUCT_SERVICE_ADDR: products:3550) is rewritten to products.svc.gregale:10081. Set x-gregale-streaming and x-gregale-wake-ahead on a service instead of later app commands.

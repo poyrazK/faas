@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/guest/runners/local"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fnadapter"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 )
@@ -42,6 +43,9 @@ type localFunction struct {
 	Calls map[string]string
 	// InputSchema is checked by the local adapter on typed-client calls.
 	InputSchema json.RawMessage
+	// Workflow is the code workflow of a workflow function
+	// (ADR-20261113120824), driven locally by the dev server.
+	Workflow *api.WorkflowSpec
 	// siblings names the project's local functions; devPort is the dev
 	// server's port, known before any function is prepared.
 	siblings map[string]bool
