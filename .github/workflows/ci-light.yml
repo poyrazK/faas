@@ -347,6 +347,10 @@ jobs:
           python3 scripts/ci/deploy_preflight_test.py
           python3 scripts/ci/unit_watch_record_test.py
           python3 scripts/ci/unit_watch_test.py
+      - name: synthetic-canary SSH and notification fallback tests
+        run: make canary-transport-test
+      - name: serving-probe failure diagnostics and transport tests
+        run: python3 scripts/ops/faas_serving_probe_test.py
       - name: per-unit release selection and planning tests
         run: |
           python3 scripts/ci/host_roles_test.py

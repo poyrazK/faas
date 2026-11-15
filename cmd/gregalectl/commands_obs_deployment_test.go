@@ -296,8 +296,11 @@ func TestObsDeploymentRejectsInvalidStdin(t *testing.T) {
 func TestCmdObsVerifyDeploymentReadOnlyAndPrivateReport(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	snapshot := deploymentSnapshotTest(now)
+	snapshot.serving.value = deploymentNotificationHistoryFixture(now, "fsn-2", "last_submission_failed", now.Add(-24*time.Hour))
+	var requests atomic.Int64
 	stdout, stderr := obsBundleTestStreams(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
 		if r.Method != "GET" || r.URL.RawQuery != "" || r.Header.Get("Authorization") != "Bearer stdin-secret" {
 			t.Error("verification changed the protected read contract")
 		}
@@ -339,6 +342,13 @@ func TestCmdObsVerifyDeploymentReadOnlyAndPrivateReport(t *testing.T) {
 	var report obsDeploymentReport
 	if err := json.Unmarshal(body, &report); err != nil || report.State != "passed" || report.WaitSeconds != 1020 || report.Attempts != 1 {
 		t.Fatalf("invalid report: %s %v", body, err)
+	}
+	if report.SchemaVersion != 1 || report.Timeline == nil || len(report.Timeline.Transitions) != 3 || len(report.Timeline.Checks) != 3 {
+		t.Fatalf("private report lost its initial health observations: %s", body)
+	}
+	advisory := report.Timeline.ProbeNotifications
+	if requests.Load() != 2 || report.HadConfirmedFaults || advisory == nil || !advisory.HadSubmissionFailures || advisory.UnresolvedTrackedFailures != 1 || len(advisory.Events) != 2 || *advisory.Events[0].AttemptAtOrAfterBoundary {
+		t.Fatal("private report lost advisory history, added reads or attributed an old attempt to the rollout")
 	}
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0600 || strings.Contains(string(body)+stdout.String()+stderr.String(), "secret") {

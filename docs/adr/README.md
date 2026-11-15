@@ -1,4 +1,21 @@
 - [ADR-20261114120000: Per-plan startup window on every cold boot](20261114120000-per-plan-startup-window.md) — accepted; amends ADR-138 (2026-10-22): `startup_deadline_s` may reach the plan window (Free/Hobby 30 s, Pro 60 s, Scale 120 s; defaults unchanged) and every cold boot, not only the deploy prime, gets it in its RPC budget and watchdog reprieve; `wake_max_queue_wait_seconds` may reach 120 s (deploy-path review P1)
+
+- [ADR-20261114090001 · Deployment qualification changes and wait timing](20261114090001-deployment-qualification-progress.md) — monitoring implementation; production convergence separate
+- [ADR-20261114080000 · Diagnostics for unqualified deployment evidence](20261114080000-deployment-qualification-evidence.md) — monitoring implementation; production convergence separate
+- [ADR-20261114070000 · Deployment source read diagnostics](20261114070000-deployment-source-read-diagnostics.md) — monitoring implementation; production convergence separate
+- [ADR-20261114060000 · Retained notification fault evidence](20261114060000-deployment-notification-fault-evidence.md) — monitoring implementation; production convergence separate
+- [ADR-20261114050000 · Source diagnostics for deployment stability](20261114050000-deployment-stability-diagnostics.md) — monitoring implementation; production convergence separate
+- [ADR-20261114040000 · Optional deployment monitoring stability window](20261114040000-deployment-monitoring-stability.md) — monitoring implementation; production convergence separate
+- [ADR-20261114030000 · Advisory notification history in deployment reports](20261114030000-deployment-notification-history.md) — monitoring implementation; production convergence separate
+- [ADR-20261114020000 · Detect lost direct notification evidence](20261114020000-serving-probe-notification-telemetry.md) — monitoring implementation; production convergence separate
+- [ADR-20261114010000 · Direct node probe-notification evidence](20261114010000-node-probe-notification-lookup.md) — monitoring implementation; production convergence separate
+- [ADR-20261113233000 · Operator evidence for direct probe notifications](20261113233000-serving-probe-notification-operator-evidence.md) — monitoring implementation; production convergence separate
+- [ADR-20261113230001 · Serving-probe notification warning rules](20261113230001-serving-probe-notification-alerts.md) — monitoring implementation; production convergence separate
+- [ADR-20261113220001 · Serving-probe notification transport evidence](20261113220001-serving-probe-notification-transport.md) — monitoring implementation; production convergence separate
+- [ADR-20261113210000 · Total serving-probe attempt deadlines](20261113210000-serving-probe-attempt-deadlines.md) — monitoring implementation; production convergence separate
+- [ADR-20261113200001 · Deployment probe failure evidence](20261113200001-deployment-probe-failure-evidence.md) — monitoring implementation; production convergence separate
+- [ADR-20261113190000 · Serving-probe failure diagnostics](20261113190000-serving-probe-failure-diagnostics.md) — monitoring implementation; production convergence separate
+- [ADR-20261113180002 · Post-deployment monitoring timeline](20261113180002-post-deployment-monitoring-timeline.md) — monitoring implementation; production convergence separate
 - [ADR-20261112200001: Agent tool authoring and verified publication over MCP](20261112200001-management-mcp-tool-publication.md) — accepted; local build-tools catalog, reviewed source snapshots, staged behavioral tests and single-attempt asynchronous publication
 - [ADR-20261112180000: Local management MCP execution tools](20261112180000-management-mcp-execution-tools.md) — accepted; opt-in local-account job dispatch/status/cancellation and verified artifact downloads, caller-retained request identities and explicit hosted-consent boundaries
 # Architecture Decision Records
