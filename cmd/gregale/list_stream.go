@@ -39,6 +39,10 @@ func (w *listStreamWriter) Write(p []byte) (int, error) {
 }
 
 func streamListPages[T any](ctx context.Context, dst io.Writer, cursor string, fetch func(context.Context, string) ([]T, string, error)) (listStreamProgress, error) {
+	return streamListPagesObserved(ctx, dst, cursor, fetch, nil)
+}
+
+func streamListPagesObserved[T any](ctx context.Context, dst io.Writer, cursor string, fetch func(context.Context, string) ([]T, string, error), observe func(listStreamProgress)) (listStreamProgress, error) {
 	var progress listStreamProgress
 	writer := &listStreamWriter{dst: dst}
 	encoder := json.NewEncoder(writer)
@@ -56,6 +60,9 @@ func streamListPages[T any](ctx context.Context, dst io.Writer, cursor string, f
 			progress.ItemsEmitted++
 		}
 		progress.PagesCompleted++
+		if observe != nil {
+			observe(progress)
+		}
 		return nil
 	})
 	progress.Partial = err != nil && writer.wrote

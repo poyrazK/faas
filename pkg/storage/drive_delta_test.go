@@ -1,6 +1,6 @@
 package storage
 
-// adr: 20261115204045 — a snapshot drive is uploaded as the blocks that
+// adr: 20261115213230 — a snapshot drive is uploaded as the blocks that
 // differ from its app layer and rebuilt byte for byte on fetch.
 
 import (

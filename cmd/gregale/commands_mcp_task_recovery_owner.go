@@ -110,7 +110,7 @@ func qualifyMCPTaskRecovery(ctx context.Context, c *Client, record api.TaskToolR
 	command.Dir, command.Env = plan.WorkerPath, mcpTaskExecutionChildEnv(p, false)
 	output, err := command.Output()
 	if err != nil || strings.TrimSpace(string(output)) != "{\"qualified\":true}" {
-		return q, errors.New("Task compatibility unavailable")
+		return q, errors.New("task compatibility unavailable")
 	}
 	receipt := record.Execution.Receipt
 	s := mcpNativeReleaseState{Fingerprint: record.Intent.ReleaseFingerprint, ServingCaptured: receipt.ServingCaptured, ServingDeployment: receipt.ServingDeploymentID,
